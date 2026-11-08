@@ -55,6 +55,20 @@ describe('Study request activity', () => {
     future.finish();
   });
 
+  it('names a slow read of the review drills and leads to them in the course', async () => {
+    const read = beginStudyActivity('learning', 'course_drills', { programId: 'course-1', language: null })!;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(activities()).toMatchObject([{ status: 'pending', title: 'Loading your review drills', destination: { programId: 'course-1', tab: 'drills' } }]);
+    read.finish();
+  });
+
+  it('names a slow start of a review drill and leads to the drills in the course', async () => {
+    const start = beginStudyActivity('learning', 'start_course_drill', { programId: 'course-1', lessonId: null, material: { kind: 'passage' }, mode: 'practice', lines: 10, issues: 3 })!;
+    await vi.advanceTimersByTimeAsync(4000);
+    expect(activities()).toMatchObject([{ status: 'pending', title: 'Starting your review drill', destination: { programId: 'course-1', tab: 'drills' } }]);
+    start.finish();
+  });
+
   it('does not duplicate existing progress or mistake a queued job for completed work', () => {
     for (const command of ['prepare_learning_lesson', 'generate_learning_program', 'repair_learning_outline', 'start_learning_generation_job', 'retry_learning_generation_job', 'start_learning_practical_run']) {
       expect(beginStudyActivity('learning', command)).toBeUndefined();

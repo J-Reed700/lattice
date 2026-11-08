@@ -1,7 +1,7 @@
 //! Stage 3: one call proposes one mutation for each target pattern, as an exact edit of the clean code. Code applies
-//! the edits, so the key's line spans are read off the result and never stated by the model.
-//! When the brief has evidence, up to half the changes (rounded up) may be lesson issues: each cites the evidence it breaks
-//! and is of any pattern of the catalogue, and the others are for the first targets no lesson issue has.
+//! the edits, so the key's line spans are read off the result and never stated by the model. When the brief has
+//! evidence, up to half the changes (rounded up) may be lesson issues: each cites the evidence it breaks and is of any
+//! pattern of the catalogue, and the others are for the first targets no lesson issue has.
 
 use super::ask::{
     ask_request, describe_fault, normalise, path_schema, refuse, severity_schema, text_schema,
@@ -159,8 +159,9 @@ fn schema(rules: &Rules<'_>) -> Value {
     })
 }
 
-/// Reads the mutations and applies them to the baseline, refusing what cannot stand: a pattern missing or given
-/// twice, an edit that does not apply (with the change that fixes it), and a change that cannot be undone.
+/// Reads the mutations and applies them to the baseline, refusing what cannot stand: a lesson issue not asked for or
+/// citing what the brief does not hold, a pattern missing or given twice, an edit that does not apply (with the
+/// change that fixes it), and a change that cannot be undone.
 fn read(raw: &str, rules: &Rules<'_>) -> Result<Vec<Mutation>> {
     let (lessons, mut proposals): (Vec<Proposed>, Vec<Proposed>) = parse_json::<Proposals>(raw)?
         .mutations

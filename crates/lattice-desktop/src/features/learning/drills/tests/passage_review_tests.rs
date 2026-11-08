@@ -4,19 +4,18 @@
 
 use super::passage_tests::drilled;
 use super::support::{
-    course, spacing_passage, supported, FakeGrader, ScriptedCheck, ScriptedModel, FIGURE,
-    FIGURE_QUOTE, FIRST,
+    course, lesson_titled, lessons_of, spacing_passage, supported, FakeGrader, ScriptedCheck,
+    ScriptedModel, FIGURE, FIGURE_QUOTE, FIRST, SPACING_LESSON,
 };
 use crate::features::learning::drills::attempt_grading::AttemptGrading;
 use crate::features::learning::drills::attempts::{self, AttemptMode, AttemptStatus};
-use crate::features::learning::drills::bank::Shelf;
 use crate::features::learning::drills::dto::{
     CodeReviewFindingDto, CodeReviewMaterialDto, CodeReviewSpanDto, IssueResultKind,
-    ReviewDrillCourseDto, ReviewMaterialDto, StartedCodeReviewDto,
+    ReviewDrillCourseDto, StartedCodeReviewDto,
 };
 use crate::features::learning::drills::jobs::{spec_of, DRILL_BUILD};
 use crate::features::learning::drills::material::PassageMaterial;
-use crate::features::learning::drills::review;
+use crate::features::learning::drills::review::{self, CourseDrill};
 use crate::features::learning::tests::{fixture, pool};
 use lattice_core::domain::learning::drills::{
     targets, Assessment, FindingOutcome, IssueOutcome, Material,
@@ -27,10 +26,12 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
-fn passage(program_id: &str, topic: Option<&str>) -> ReviewMaterialDto {
-    ReviewMaterialDto::Passage {
+/// A request for a drill on a passage of the course `program_id`, from any of its lessons.
+fn passage(program_id: &str) -> CourseDrill {
+    CourseDrill {
         program_id: program_id.to_owned(),
-        topic: topic.map(str::to_owned),
+        lesson_id: None,
+        material: Material::Passage,
     }
 }
 
@@ -38,9 +39,9 @@ fn passage(program_id: &str, topic: Option<&str>) -> ReviewMaterialDto {
 async fn started() -> Result<(SqlitePool, String, String, Value)> {
     let pool = pool().await?;
     let program = course(&pool).await?;
-    drilled(&pool, "passage", &program, &spacing_passage()).await?;
-    let started =
-        review::start(&pool, &passage(&program, None), AttemptMode::Practice, 4, 2).await?;
+    let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
+    drilled(&pool, "passage", &program, &lesson, &spacing_passage()).await?;
+    let started = review::start(&pool, &passage(&program), AttemptMode::Practice, 4, 2).await?;
     let shown = serde_json::to_value(&started.dto).expect("a DTO is JSON");
     let StartedCodeReviewDto::Started { attempt_id, .. } = started.dto else {
         panic!("a drill was ready");
@@ -72,24 +73,19 @@ fn assert_none_of_the_source(shown: &Value) {
 async fn asking_for_a_passage_with_none_ready_queues_a_build_on_the_course() -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
-    let started = review::start(
-        &pool,
-        &passage(&program, Some("  spacing  ")),
-        AttemptMode::Practice,
-        6,
-        2,
-    )
-    .await?;
+    let lessons = lessons_of(&pool, &program).await?;
+    let started = review::start(&pool, &passage(&program), AttemptMode::Practice, 6, 2).await?;
     let StartedCodeReviewDto::Building { job_id } = &started.dto else {
         panic!("none was ready");
     };
     let job = JobStore::new(pool.clone()).get(job_id).await?;
     assert_eq!(job.kind, DRILL_BUILD);
-    assert_eq!(job.subject_id, Some(Shelf::Course(&program).subject()));
+    assert_eq!(job.subject_id, Some(format!("drill:{program}:passage")));
     let spec = spec_of(&job)?;
     assert_eq!(spec.material, Material::Passage);
     assert_eq!(spec.program_id.as_deref(), Some(program.as_str()));
-    assert_eq!(spec.domain.as_deref(), Some("spacing"));
+    assert_eq!(spec.lesson_id.as_deref(), Some(lessons[0].as_str()));
+    assert_eq!(spec.domain, None);
     assert_eq!(spec.lines, 6);
     let wanted: Vec<String> = targets(&Material::Passage, &[], 0, 2)
         .iter()
@@ -99,141 +95,14 @@ async fn asking_for_a_passage_with_none_ready_queues_a_build_on_the_course() -> 
     Ok(())
 }
 
-/// Marks the ready drill `id` as built for `topic`.
-async fn built_for(pool: &SqlitePool, id: &str, topic: &str) -> Result<()> {
-    sqlx::query("UPDATE learning_drills SET spec_json=json_set(spec_json,'$.domain',?) WHERE id=?")
-        .bind(topic)
-        .bind(id)
-        .execute(pool)
-        .await
-        .map_err(crate::features::learning::persistence::db)?;
-    Ok(())
-}
-
-async fn status_of(pool: &SqlitePool, id: &str) -> Result<String> {
-    sqlx::query_scalar("SELECT status FROM learning_drills WHERE id=?")
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .map_err(crate::features::learning::persistence::db)
-}
-
-#[tokio::test]
-async fn a_topic_is_not_served_a_ready_drill_built_for_no_topic_and_the_shelf_keeps_it(
-) -> Result<()> {
-    let pool = pool().await?;
-    let program = course(&pool).await?;
-    drilled(&pool, "ready", &program, &spacing_passage()).await?;
-    let started = review::start(
-        &pool,
-        &passage(&program, Some("spacing")),
-        AttemptMode::Practice,
-        4,
-        2,
-    )
-    .await?;
-    let StartedCodeReviewDto::Building { job_id } = &started.dto else {
-        panic!("the ready drill was not built for this topic: {started:?}");
-    };
-    let spec = spec_of(&JobStore::new(pool.clone()).get(job_id).await?)?;
-    assert_eq!(spec.domain.as_deref(), Some("spacing"));
-    assert_eq!(status_of(&pool, "ready").await?, "ready");
-
-    let plain = review::start(&pool, &passage(&program, None), AttemptMode::Practice, 4, 2).await?;
-    assert!(matches!(plain.dto, StartedCodeReviewDto::Started { .. }));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_topic_is_served_a_ready_drill_built_for_that_topic_and_no_topic_is_not() -> Result<()> {
-    let pool = pool().await?;
-    let program = course(&pool).await?;
-    drilled(&pool, "spacing", &program, &spacing_passage()).await?;
-    built_for(&pool, "spacing", "spacing").await?;
-
-    let plain = review::start(&pool, &passage(&program, None), AttemptMode::Practice, 4, 2).await?;
-    assert!(
-        matches!(plain.dto, StartedCodeReviewDto::Building { .. }),
-        "a drill about a topic is not a drill about anything: {plain:?}"
-    );
-    let other = review::start(
-        &pool,
-        &passage(&program, Some("sleep")),
-        AttemptMode::Practice,
-        4,
-        2,
-    )
-    .await?;
-    assert!(matches!(other.dto, StartedCodeReviewDto::Building { .. }));
-    let asked = review::start(
-        &pool,
-        &passage(&program, Some(" spacing ")),
-        AttemptMode::Practice,
-        4,
-        2,
-    )
-    .await?;
-    assert!(
-        matches!(asked.dto, StartedCodeReviewDto::Started { .. }),
-        "{asked:?}"
-    );
-    assert_eq!(status_of(&pool, "spacing").await?, "taken");
-    Ok(())
-}
-
-#[tokio::test]
-async fn asking_again_for_a_topic_finds_its_build_and_another_topic_gets_its_own() -> Result<()> {
-    let pool = pool().await?;
-    let program = course(&pool).await?;
-    let ask = |topic: Option<&'static str>| {
-        let pool = pool.clone();
-        let program = program.clone();
-        async move {
-            review::start(
-                &pool,
-                &passage(&program, topic),
-                AttemptMode::Practice,
-                4,
-                2,
-            )
-            .await
-        }
-    };
-    let first = ask(Some("spacing")).await?;
-    assert_eq!(first.dto, ask(Some("spacing")).await?.dto);
-    assert_ne!(first.dto, ask(Some("sleep")).await?.dto);
-    assert_ne!(first.dto, ask(None).await?.dto);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_blank_topic_is_no_topic() -> Result<()> {
-    let pool = pool().await?;
-    let program = course(&pool).await?;
-    let started = review::start(
-        &pool,
-        &passage(&program, Some("   ")),
-        AttemptMode::Practice,
-        4,
-        2,
-    )
-    .await?;
-    let StartedCodeReviewDto::Building { job_id } = &started.dto else {
-        panic!("none was ready");
-    };
-    let spec = spec_of(&JobStore::new(pool.clone()).get(job_id).await?)?;
-    assert_eq!(spec.domain, None);
-    Ok(())
-}
-
 #[tokio::test]
 async fn a_passage_request_that_cannot_make_a_build_is_refused() -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
     for (material, lines, count) in [
-        (passage("  ", None), 4, 2),
-        (passage(&program, None), 0, 2),
-        (passage(&program, None), 4, 0),
+        (passage("  "), 4, 2),
+        (passage(&program), 0, 2),
+        (passage(&program), 4, 0),
     ] {
         let result = review::start(&pool, &material, AttemptMode::Practice, lines, count).await;
         assert!(
@@ -250,21 +119,14 @@ async fn a_passage_drill_is_started_from_its_course_s_shelf_and_the_next_is_buil
     let pool = pool().await?;
     let program = course(&pool).await?;
     let other = course(&pool).await?;
-    drilled(&pool, "passage", &program, &spacing_passage()).await?;
-    let elsewhere =
-        review::start(&pool, &passage(&other, None), AttemptMode::Practice, 4, 2).await?;
+    let lessons = lessons_of(&pool, &program).await?;
+    drilled(&pool, "passage", &program, &lessons[0], &spacing_passage()).await?;
+    let elsewhere = review::start(&pool, &passage(&other), AttemptMode::Practice, 4, 2).await?;
     assert!(matches!(
         elsewhere.dto,
         StartedCodeReviewDto::Building { .. }
     ));
-    let started = review::start(
-        &pool,
-        &passage(&program, None),
-        AttemptMode::Interview,
-        4,
-        2,
-    )
-    .await?;
+    let started = review::start(&pool, &passage(&program), AttemptMode::Interview, 4, 2).await?;
     let StartedCodeReviewDto::Started { mode, drill, .. } = started.dto else {
         panic!("a drill was ready");
     };
@@ -282,6 +144,11 @@ async fn a_passage_drill_is_started_from_its_course_s_shelf_and_the_next_is_buil
     let spec = spec_of(&next)?;
     assert_eq!(spec.material, Material::Passage);
     assert_eq!(spec.program_id.as_deref(), Some(program.as_str()));
+    assert_eq!(
+        spec.lesson_id.as_deref(),
+        Some(lessons[1].as_str()),
+        "the drill taken is of the first lesson, which is pending"
+    );
     Ok(())
 }
 

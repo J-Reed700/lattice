@@ -2,16 +2,16 @@
 //! that starts at the first stage without one and repeats no model call and no run.
 
 use super::support::{
-    blind_answer, blind_assessment, clean_code_answer, code, entry_answer, files, judge_answer,
-    lesson_brief, lesson_check_answer, lesson_proved, plant_answer, planted, purpose, quiet,
-    review, review_answer, system, FakeGrader, FakeRunner, Harness, ScriptedModel, KILLING_TEST,
-    MODEL, SUITE,
+    blind_answer, blind_assessment, built_drill, clean_code_answer, code, entry_answer, files,
+    judge_answer, lesson_brief, lesson_check_answer, lesson_proved, plant_answer, planted, purpose,
+    quiet, review, review_answer, system, FakeGrader, FakeRunner, Harness, ScriptedModel,
+    KILLING_TEST, MODEL, SUITE,
 };
 use crate::features::learning::drills::build::{
     CleanCode, DrillBuild, Evidence, LessonChecked, ModelCall, Stage,
 };
 use crate::features::learning::drills::material::CodeMaterial;
-use crate::features::learning::drills::repository::{self, StoredDrill};
+use crate::features::learning::drills::repository::StoredDrill;
 use crate::features::learning::drills::runner::{CodeRunner, RunOutcome};
 use crate::features::learning::persistence::db;
 use lattice_core::domain::learning::drills::{Origin, Proof};
@@ -43,8 +43,7 @@ const PURPOSES: [&str; 6] = [
 ];
 
 async fn stored(harness: &Harness) -> Result<StoredDrill> {
-    let mut connection = harness.pool.acquire().await.map_err(db)?;
-    repository::oldest_ready_in(&mut connection, "python")
+    built_drill(&harness.pool)
         .await?
         .ok_or_else(|| AppError::NotFound("the stored drill".into()))
 }

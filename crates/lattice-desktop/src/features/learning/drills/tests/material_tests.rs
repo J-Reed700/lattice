@@ -279,6 +279,7 @@ fn a_passage_is_built_from_a_course_and_judged_in_sentences() {
     let without_course = DrillSpec {
         material: Material::Passage,
         patterns: vec!["fidelity.misquoted_figure".into()],
+        lesson_id: Some("lesson".into()),
         ..spec()
     };
     assert!(without_course.validate().is_err());

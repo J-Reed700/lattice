@@ -12,10 +12,11 @@ use crate::features::learning::drills::build::{
 use crate::features::learning::drills::grader::{Review, ReviewGrader};
 use crate::features::learning::drills::material::passage::{SourceFinding, SourceSays};
 use crate::features::learning::drills::material::{CodeMaterial, PassageMaterial, SourceCheck};
-use crate::features::learning::drills::repository::{self, NewDrill};
+use crate::features::learning::drills::repository::{self, NewDrill, StoredDrill};
 use crate::features::learning::drills::runner::{CodeRunner, RunOutcome};
+use crate::features::learning::drills::schedules;
 use crate::features::learning::drills::spec::DrillSpec;
-use crate::features::learning::persistence::db;
+use crate::features::learning::persistence::{db, now};
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
@@ -440,6 +441,16 @@ pub(super) fn spec() -> DrillSpec {
     }
 }
 
+/// A spec for code in Python on the course `course` built from its lesson `lesson`: ids only, for tests that queue or
+/// read a spec and never build it.
+pub(super) fn lesson_spec() -> DrillSpec {
+    DrillSpec {
+        program_id: Some("course".into()),
+        lesson_id: Some("lesson".into()),
+        ..spec()
+    }
+}
+
 pub(super) fn operator_edit() -> Edit {
     Edit {
         path: "src/limiter.py".into(),
@@ -758,11 +769,6 @@ pub(super) struct Harness {
 }
 
 impl Harness {
-    pub(super) async fn new(spec: &DrillSpec) -> Result<Self> {
-        let pool = crate::features::learning::tests::pool().await?;
-        Self::on(pool, spec).await
-    }
-
     /// A harness over a new course from [`code_spec`], and the spec of its build.
     pub(super) async fn lesson() -> Result<(Self, DrillSpec)> {
         let pool = crate::features::learning::tests::pool().await?;
@@ -916,9 +922,14 @@ pub(super) fn raised_all(drill: &Drill) -> Assessment {
     }
 }
 
-/// Puts the drill of [`proved`] into the bank, ready, as a finished build leaves it: with its suite, its runner and
-/// its evidence.
+/// [`stock_on`] for [`spec`]: a drill built for no course and no lesson.
 pub(super) async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
+    stock_on(pool, id, &spec()).await
+}
+
+/// Puts the drill of [`proved`] into the bank, ready, as a finished build for `spec` leaves it: with its suite, its
+/// runner and its evidence. The course and the lesson of `spec` must exist for the drill to keep them.
+pub(super) async fn stock_on(pool: &SqlitePool, id: &str, spec: &DrillSpec) -> Result<()> {
     let proved = proved();
     let drill = Drill {
         id: id.into(),
@@ -928,7 +939,6 @@ pub(super) async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
         key: proved.planted_key(&unchecked()),
     };
     let clean = files();
-    let spec = spec();
     let evidence = Evidence::new(
         &code(),
         &review(),
@@ -943,7 +953,7 @@ pub(super) async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
         &NewDrill {
             drill: &drill,
             clean_files: &clean,
-            spec: &spec,
+            spec,
             domain: "rate limiting",
             suite: Some(SUITE),
             source: None,
@@ -953,6 +963,32 @@ pub(super) async fn stock(pool: &SqlitePool, id: &str) -> Result<()> {
         },
     )
     .await
+}
+
+/// The drill a build stored: the only one in the pool.
+pub(super) async fn built_drill(pool: &SqlitePool) -> Result<Option<StoredDrill>> {
+    let id: Option<String> = sqlx::query_scalar("SELECT id FROM learning_drills")
+        .fetch_optional(pool)
+        .await
+        .map_err(db)?;
+    let Some(id) = id else {
+        return Ok(None);
+    };
+    let mut connection = pool.acquire().await.map_err(db)?;
+    repository::find_in(&mut connection, &id).await
+}
+
+/// Takes the stocked drill `drill_id` from the bank and opens an attempt on it, as starting a drill does, without the
+/// bank choosing it.
+pub(super) async fn opened(
+    pool: &SqlitePool,
+    drill_id: &str,
+    mode: AttemptMode,
+) -> Result<Attempt> {
+    let mut connection = pool.acquire().await.map_err(db)?;
+    let taken = repository::mark_taken_in(&mut connection, drill_id, now()).await?;
+    assert!(taken, "the drill {drill_id} was ready to be taken");
+    attempts::insert_in(&mut connection, drill_id, mode).await
 }
 
 /// A pool with every migration, a drill stocked and an attempt opened on it and submitted, and its grading job
@@ -982,12 +1018,10 @@ impl Waiting {
     ) -> Result<Self> {
         let pool = crate::features::learning::tests::pool().await?;
         stock(&pool, "drill").await?;
-        let begun = attempts::start(&pool, "python", AttemptMode::Practice)
-            .await?
-            .ok_or_else(|| AppError::InternalError("No drill was ready.".into()))?;
+        let attempt = opened(&pool, "drill", AttemptMode::Practice).await?;
         let queued = attempts::submit(
             &pool,
-            &begun.attempt.id,
+            &attempt.id,
             Submission {
                 findings,
                 fix_files,
@@ -1002,7 +1036,7 @@ impl Waiting {
         Ok(Self {
             pool,
             store,
-            attempt: begun.attempt.id,
+            attempt: attempt.id,
             job,
         })
     }
@@ -1472,6 +1506,47 @@ pub(super) async fn passage_lesson_spec(
         lesson_id: Some(lesson_titled(pool, program_id, lesson_title).await?),
         ..passage_spec(program_id)
     })
+}
+
+/// The lessons of the course `program_id`, in course order.
+pub(super) async fn lessons_of(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
+    sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal")
+        .bind(program_id)
+        .fetch_all(pool)
+        .await
+        .map_err(db)
+}
+
+/// Records that the lesson `lesson_id` of the course `program_id` does not fit `material`, on the lesson's basis now.
+pub(super) async fn record_unfit(
+    pool: &SqlitePool,
+    program_id: &str,
+    lesson_id: &str,
+    material: &Material,
+) -> Result<()> {
+    let mut connection = pool.acquire().await.map_err(db)?;
+    let basis = schedules::fit_basis_in(&mut connection, program_id, lesson_id).await?;
+    schedules::record_fit_in(
+        &mut connection,
+        program_id,
+        lesson_id,
+        material,
+        false,
+        &basis,
+        now(),
+    )
+    .await
+}
+
+/// Sets the curriculum state of the lesson `lesson_id`, such as `skipped` or `replaced`.
+pub(super) async fn set_state(pool: &SqlitePool, lesson_id: &str, state: &str) -> Result<()> {
+    sqlx::query("UPDATE learning_lessons SET curriculum_state=? WHERE id=?")
+        .bind(state)
+        .bind(lesson_id)
+        .execute(pool)
+        .await
+        .map(drop)
+        .map_err(db)
 }
 
 /// The patterns of a drill's key, each once and in the key's order, as the schedule holds them back while the drill

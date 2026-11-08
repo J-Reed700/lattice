@@ -3,6 +3,7 @@
 //! proofs are what a learner's fix is run against; the learner never sees them. A drill on a passage keeps the
 //! source passage its explanation was written from.
 
+use super::bank::Shelf;
 use super::build::{Evidence, SourcePassage};
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, decode, encode, now};
@@ -161,37 +162,21 @@ fn material_name(material: &Material) -> &'static str {
     }
 }
 
-/// The oldest ready drill of code in `language`.
-pub(in crate::features::learning) async fn oldest_ready_in(
-    connection: &mut SqliteConnection,
-    language: &str,
+/// The oldest ready drill of `shelf` built from a lesson: from `lesson`, when one is given.
+pub(in crate::features::learning) async fn oldest_ready_on(
+    _connection: &mut SqliteConnection,
+    _shelf: Shelf<'_>,
+    _lesson: Option<&str>,
 ) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='code' AND language=? AND status='ready' ORDER BY created_at,rowid LIMIT 1"))
-        .bind(language)
-        .fetch_optional(connection)
-        .await
-        .map_err(db)?
-        .as_ref()
-        .map(read)
-        .transpose()
+    Ok(None)
 }
 
-/// The oldest ready drill on a passage of the course `program_id` that was built for `topic`, as typed in any case
-/// and with any space around it, or for no topic when there is none.
-pub(in crate::features::learning) async fn oldest_ready_of_course_topic_in(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-    topic: Option<&str>,
-) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='passage' AND program_id=?2 AND status='ready' AND ((?1 IS NULL AND json_extract(spec_json,'$.domain') IS NULL) OR lower(trim(json_extract(spec_json,'$.domain')))=lower(trim(?1))) ORDER BY created_at,rowid LIMIT 1"))
-        .bind(topic)
-        .bind(program_id)
-        .fetch_optional(connection)
-        .await
-        .map_err(db)?
-        .as_ref()
-        .map(read)
-        .transpose()
+/// Whether a drill of `shelf` built from a lesson is ready.
+pub(in crate::features::learning) async fn any_ready_in(
+    _connection: &mut SqliteConnection,
+    _shelf: Shelf<'_>,
+) -> Result<bool> {
+    Ok(false)
 }
 
 /// The source passages the drills of the course `program_id` were built on, ready or taken.

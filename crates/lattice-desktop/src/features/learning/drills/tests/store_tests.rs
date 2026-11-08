@@ -2,8 +2,8 @@
 
 use super::support::{
     baseline, code, files, lesson_brief, lesson_proved, literals_mutation, planted, proved, quiet,
-    review, spec, unchecked, FakeGrader, FakeRunner, Harness, ScriptedModel, LITERALS, MODEL,
-    OPERATOR, SUITE,
+    review, unchecked, FakeGrader, FakeRunner, Harness, ScriptedModel, LITERALS, MODEL, OPERATOR,
+    SUITE,
 };
 use crate::features::learning::drills::build::store::Built;
 use crate::features::learning::drills::build::{
@@ -25,7 +25,7 @@ async fn count(harness: &Harness, table: &str) -> Result<i64> {
 #[tokio::test]
 async fn a_finished_drill_is_stored_with_its_patterns_and_the_job_completes_with_it() -> Result<()>
 {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let (model, grader, runner) = (
         ScriptedModel::new([]),
         FakeGrader::failing("unused"),
@@ -38,7 +38,7 @@ async fn a_finished_drill_is_stored_with_its_patterns_and_the_job_completes_with
         .build(&model, Some(&runner), &grader)
         .store(
             &context,
-            &spec(),
+            &spec,
             Built {
                 baseline: &baseline,
                 code: &code,
@@ -57,7 +57,7 @@ async fn a_finished_drill_is_stored_with_its_patterns_and_the_job_completes_with
     assert_eq!(job.result_ref, Some(format!("drill:{}", code.drill_id)));
 
     let mut connection = harness.pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_in(&mut connection, "python")
+    let stored = repository::find_in(&mut connection, &code.drill_id)
         .await?
         .expect("the drill is in the bank");
     assert_eq!(stored.drill.id, code.drill_id);
@@ -65,7 +65,7 @@ async fn a_finished_drill_is_stored_with_its_patterns_and_the_job_completes_with
     assert_eq!(stored.drill.files, proved.files);
     assert_eq!(stored.drill.key, proved.planted_key(&unchecked()));
     assert_eq!(stored.clean_files, files());
-    assert_eq!(stored.spec, spec());
+    assert_eq!(stored.spec, spec);
     assert_eq!(stored.domain, "rate limiting");
     assert_eq!(stored.suite.as_deref(), Some(SUITE));
     assert_eq!(stored.runner.as_deref(), Some("fake-python"));
@@ -89,7 +89,7 @@ async fn a_finished_drill_is_stored_with_its_patterns_and_the_job_completes_with
 
 #[tokio::test]
 async fn without_a_runner_no_suite_or_runner_is_stored() -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let (model, grader) = (ScriptedModel::new([]), FakeGrader::failing("unused"));
     let (code, review, planted, proved, mut baseline, blind) =
         (code(), review(), planted(), proved(), baseline(), quiet());
@@ -99,7 +99,7 @@ async fn without_a_runner_no_suite_or_runner_is_stored() -> Result<()> {
         .build(&model, None, &grader)
         .store(
             &context,
-            &spec(),
+            &spec,
             Built {
                 baseline: &baseline,
                 code: &code,
@@ -112,7 +112,7 @@ async fn without_a_runner_no_suite_or_runner_is_stored() -> Result<()> {
         )
         .await?;
     let mut connection = harness.pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_in(&mut connection, "python")
+    let stored = repository::find_in(&mut connection, &code.drill_id)
         .await?
         .expect("the drill is in the bank");
     assert_eq!(stored.suite, None);
@@ -122,7 +122,7 @@ async fn without_a_runner_no_suite_or_runner_is_stored() -> Result<()> {
 
 #[tokio::test]
 async fn a_key_that_ends_empty_stores_nothing_and_fails_the_job_with_the_reason() -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let (model, grader, runner) = (
         ScriptedModel::new([]),
         FakeGrader::failing("unused"),
@@ -145,7 +145,7 @@ async fn a_key_that_ends_empty_stores_nothing_and_fails_the_job_with_the_reason(
         .build(&model, Some(&runner), &grader)
         .store(
             &context,
-            &spec(),
+            &spec,
             Built {
                 baseline: &baseline,
                 code: &code,
@@ -183,7 +183,7 @@ async fn a_key_that_ends_empty_stores_nothing_and_fails_the_job_with_the_reason(
 #[tokio::test]
 async fn a_key_that_does_not_agree_with_its_code_is_refused_before_anything_is_stored() -> Result<()>
 {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let (model, grader, runner) = (
         ScriptedModel::new([]),
         FakeGrader::failing("unused"),
@@ -199,7 +199,7 @@ async fn a_key_that_does_not_agree_with_its_code_is_refused_before_anything_is_s
         .build(&model, Some(&runner), &grader)
         .store(
             &context,
-            &spec(),
+            &spec,
             Built {
                 baseline: &baseline,
                 code: &code,
@@ -222,7 +222,7 @@ async fn a_key_that_does_not_agree_with_its_code_is_refused_before_anything_is_s
 
 #[tokio::test]
 async fn a_job_cancelled_meanwhile_stores_nothing() -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let (model, grader, runner) = (
         ScriptedModel::new([]),
         FakeGrader::failing("unused"),
@@ -236,7 +236,7 @@ async fn a_job_cancelled_meanwhile_stores_nothing() -> Result<()> {
         .build(&model, Some(&runner), &grader)
         .store(
             &context,
-            &spec(),
+            &spec,
             Built {
                 baseline: &baseline,
                 code: &code,
@@ -323,7 +323,7 @@ async fn stored_on(
         .await?;
     assert_eq!(outcome, JobOutcome::Committed);
     let mut connection = harness.pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_in(&mut connection, "python")
+    let stored = repository::find_in(&mut connection, &code.drill_id)
         .await?
         .expect("the drill is in the bank");
     drop(connection);
