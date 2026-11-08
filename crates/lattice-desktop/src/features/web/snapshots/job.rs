@@ -214,10 +214,9 @@ impl JobHandler for WebPageSnapshotJob {
                 }
                 // The runtime defers an outage and redelivers after the backoff;
                 // the row stays pending.
-                if error.is_transient() {
-                    Err(error.outage())
-                } else {
-                    self.fail(&id, error.code(), &error.to_string()).await
+                match error.outage() {
+                    Some(outage) => Err(outage),
+                    None => self.fail(&id, error.code(), &error.to_string()).await,
                 }
             }
         }

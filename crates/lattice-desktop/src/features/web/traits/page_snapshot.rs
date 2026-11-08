@@ -123,21 +123,13 @@ pub enum CaptureError {
 }
 
 impl CaptureError {
-    /// Whether a later attempt could succeed without anything changing.
-    pub fn is_transient(&self) -> bool {
-        matches!(self, Self::Network(_) | Self::Timeout)
-    }
-
-    /// The error a job raises to be retried later, saying what the capture hit
-    /// once.
-    pub fn outage(&self) -> AppError {
+    /// The error a job raises to retry later, or `None` when a retry cannot
+    /// change the result.
+    pub fn outage(&self) -> Option<AppError> {
         match self {
-            Self::Network(detail) => AppError::Network(detail.clone()),
-            Self::Blocked { status } => AppError::HttpStatus {
-                status: *status,
-                message: format!("The site answered {status}"),
-            },
-            other => AppError::Network(other.to_string()),
+            Self::Network(detail) => Some(AppError::Network(detail.clone())),
+            Self::Timeout => Some(AppError::Network(self.to_string())),
+            _ => None,
         }
     }
 
@@ -183,7 +175,9 @@ mod tests {
 
     #[test]
     fn a_retried_capture_names_its_failure_once() {
-        let error = CaptureError::Network("connection reset".into()).outage();
+        let error = CaptureError::Network("connection reset".into())
+            .outage()
+            .unwrap();
 
         assert!(matches!(&error, AppError::Network(detail) if detail == "connection reset"));
         assert_eq!(error.to_string(), "Network error: connection reset");
@@ -191,7 +185,7 @@ mod tests {
 
     #[test]
     fn a_capture_that_ran_out_of_time_is_retried_as_a_lost_connection() {
-        let error = CaptureError::Timeout.outage();
+        let error = CaptureError::Timeout.outage().unwrap();
 
         assert!(
             matches!(&error, AppError::Network(detail) if detail == "the capture ran out of time")
@@ -199,13 +193,17 @@ mod tests {
     }
 
     #[test]
-    fn a_status_the_site_answered_is_retried_as_that_status() {
-        let error = CaptureError::Blocked { status: 429 }.outage();
-
-        assert!(
-            matches!(&error, AppError::HttpStatus { status: 429, .. }),
-            "{error:?}"
-        );
-        assert_eq!(error.to_string(), "The site answered 429");
+    fn a_capture_a_retry_cannot_change_has_no_retry_error() {
+        for error in [
+            CaptureError::Blocked { status: 429 },
+            CaptureError::Refused("address not allowed".into()),
+            CaptureError::TooLarge,
+            CaptureError::UnsupportedContentType {
+                mime: "image/png".into(),
+            },
+            CaptureError::Cancelled,
+        ] {
+            assert!(error.outage().is_none(), "{error}");
+        }
     }
 }
