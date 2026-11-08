@@ -4,10 +4,7 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::Result;
-use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    SqlitePool,
-};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::time::Duration;
 
 fn scene(label: &str, count: usize) -> serde_json::Value {
@@ -32,9 +29,7 @@ async fn active_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
 }
 
 async fn persistent_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(true);
+    let options = crate::test_support::file_options(path);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)
@@ -52,12 +47,7 @@ async fn persistent_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
 }
 
 async fn concurrent_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(true)
-        .foreign_keys(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-        .busy_timeout(Duration::from_secs(15));
+    let options = crate::test_support::file_options(path).busy_timeout(Duration::from_secs(15));
     SqlitePoolOptions::new()
         .max_connections(4)
         .connect_with(options)

@@ -14,10 +14,7 @@ use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 #[tokio::test]
 async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("sections.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options = crate::test_support::file_options(directory.path().join("sections.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
@@ -217,10 +214,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
 async fn interrupted_coverage_retains_omissions_without_reusing_them_after_correction() -> Result<()>
 {
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("coverage.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options = crate::test_support::file_options(directory.path().join("coverage.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
@@ -349,11 +343,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
 async fn interrupted_verification_reuses_completed_checks_and_rechecks_changed_evidence(
 ) -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("checkpoints.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+    let options = crate::test_support::file_options(directory.path().join("checkpoints.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())

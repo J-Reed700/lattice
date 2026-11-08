@@ -10,12 +10,7 @@ use std::time::Duration;
 
 async fn setup() -> Result<(tempfile::TempDir, SqlitePool, LearningProgramDto, String)> {
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("replacement.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-        .busy_timeout(Duration::from_secs(5));
+    let options = crate::test_support::file_options(directory.path().join("replacement.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)

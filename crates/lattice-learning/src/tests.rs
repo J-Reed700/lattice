@@ -2,10 +2,7 @@ use super::{dto::*, repository::LearningRepository};
 use crate::test_support::id;
 pub(crate) use crate::test_support::{fixture, pool};
 use lattice_core::shared::error::Result;
-use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    Row,
-};
+use sqlx::{sqlite::SqlitePoolOptions, Row};
 pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
     let mut questions = Vec::new();
     let mut keys = Vec::new();
@@ -287,9 +284,7 @@ async fn notebook_and_lesson_links_survive_database_pool_restart() -> Result<()>
     let dir = tempfile::tempdir()
         .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let path = dir.path().join("learning-memory.db");
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(true);
+    let options = crate::test_support::file_options(path);
     let first = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
@@ -371,9 +366,7 @@ async fn memory_resources_and_lesson_ids_are_isolated_between_programs() -> Resu
 #[tokio::test]
 async fn normalized_course_survives_pool_restart_and_hides_answer_keys() -> Result<()> {
     let path = std::env::temp_dir().join(format!("learning-{}.db", id()));
-    let options = SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(true);
+    let options = crate::test_support::file_options(&path);
     let first = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
@@ -879,11 +872,7 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
     let directory = tempfile::tempdir()
         .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     let path = directory.path().join("learning-sources.sqlite");
-    let options = SqliteConnectOptions::new()
-        .filename(&path)
-        .create_if_missing(true)
-        .foreign_keys(true)
-        .busy_timeout(std::time::Duration::from_secs(5));
+    let options = crate::test_support::file_options(&path);
     let pool1 = SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())

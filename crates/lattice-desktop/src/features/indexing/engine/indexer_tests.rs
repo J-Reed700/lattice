@@ -27,7 +27,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
 
-        let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", db_path.display()))
+        let pool = SqlitePool::connect_with(crate::tests::sqlite::file_options(&db_path))
             .await
             .unwrap();
 

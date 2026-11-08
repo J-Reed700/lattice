@@ -21,6 +21,17 @@ pub async fn pool() -> Result<SqlitePool> {
         .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
     Ok(pool)
 }
+/// Options for a database file in a test, set the way production sets its own:
+/// write-ahead log, normal sync, foreign keys on and a 5 s busy timeout.
+pub fn file_options(path: impl AsRef<std::path::Path>) -> sqlx::sqlite::SqliteConnectOptions {
+    sqlx::sqlite::SqliteConnectOptions::new()
+        .filename(path)
+        .create_if_missing(true)
+        .foreign_keys(true)
+        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
+        .synchronous(sqlx::sqlite::SqliteSynchronous::Normal)
+        .busy_timeout(std::time::Duration::from_secs(5))
+}
 pub fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }

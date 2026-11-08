@@ -7,19 +7,11 @@ use super::{
     study_service as service,
 };
 use serde_json::json;
-use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    SqlitePool,
-};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 async fn open(path: std::path::PathBuf) -> lattice_core::shared::error::Result<SqlitePool> {
     let database = |e: sqlx::Error| lattice_core::shared::error::AppError::Database(e.to_string());
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(true)
-        .pragma("foreign_keys", "ON")
-        .pragma("journal_mode", "WAL")
-        .pragma("synchronous", "NORMAL");
+    let options = crate::test_support::file_options(path);
     let pool = SqlitePoolOptions::new()
         .max_connections(5)
         .connect_with(options)

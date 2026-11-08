@@ -9,7 +9,7 @@
 
 #[cfg(test)]
 mod tests {
-    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+    use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
     use std::time::Duration;
     use tempfile::TempDir;
@@ -19,12 +19,7 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db_path = temp_dir.path().join("test.db");
 
-        let connect_options = SqliteConnectOptions::new()
-            .filename(&db_path)
-            .create_if_missing(true)
-            .busy_timeout(Duration::from_secs(5))
-            .pragma("journal_mode", "WAL")
-            .pragma("synchronous", "NORMAL");
+        let connect_options = crate::tests::sqlite::file_options(&db_path);
 
         let pool = SqlitePoolOptions::new()
             .max_connections(5)
