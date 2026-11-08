@@ -63,7 +63,7 @@ impl DrillBuild<'_> {
                     mutation,
                     trail,
                 } => proven.push(ProvenMutation {
-                    mutation,
+                    mutation: *mutation,
                     proof,
                     trail,
                 }),

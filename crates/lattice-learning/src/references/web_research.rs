@@ -584,10 +584,7 @@ pub(crate) async fn capture(
     web: &dyn WebServiceTrait,
     result: &WebSearchResult,
 ) -> Result<Option<CapturedLearningSource>> {
-    let page = web
-        .fetch_reference_page(&result.url)
-        .await
-        .map_err(|error| AppError::Network(format!("{}: {error}", result.url)))?;
+    let page = web.fetch_reference_page(&result.url).await?;
     let title = page
         .output
         .title

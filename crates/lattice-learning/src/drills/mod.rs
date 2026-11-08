@@ -5,6 +5,7 @@
 mod attempt_grading;
 pub mod attempts;
 pub mod bank;
+pub(crate) mod brief;
 mod budget;
 pub mod build;
 pub mod dto;
@@ -12,12 +13,14 @@ pub(crate) mod fix_grading;
 pub mod grader;
 pub mod grading;
 pub mod jobs;
+pub(crate) mod lesson;
 pub mod material;
 pub(crate) mod proof;
 pub mod repository;
 mod reveal;
 pub mod review;
 pub mod runner;
+pub(crate) mod schedules;
 pub mod spec;
 #[cfg(any(test, feature = "test-support"))]
 #[path = "tests/support.rs"]

@@ -36,23 +36,94 @@ pub struct IssueRating {
     pub rating: PatternRating,
 }
 
+/// Each key issue that gives a rating under an assessment, with the rating, in the key's order. An issue the
+/// assessment has no outcome for counts as missed, as `score` counts it. A missed issue found in review gives no
+/// rating, because it was never proven; one that was found or half found is rated like a planted issue.
+fn rated<'a>(
+    key: &'a [KeyIssue],
+    assessment: &'a Assessment,
+) -> impl Iterator<Item = (&'a KeyIssue, PatternRating)> + 'a {
+    key.iter().enumerate().filter_map(move |(position, issue)| {
+        let outcome = assessment
+            .issues
+            .get(position)
+            .map_or(IssueOutcome::Missed, |&(outcome, _)| outcome);
+        if issue.origin == Origin::FoundInReview && outcome == IssueOutcome::Missed {
+            return None;
+        }
+        Some((issue, rating(&outcome)))
+    })
+}
+
 /// The rating of each key issue's pattern under an assessment, in the key's order. An issue the assessment has no
 /// outcome for counts as missed, as `score` counts it. A missed issue found in review gives no rating, because it was
 /// never proven; one that was found or half found is rated like a planted issue.
 pub fn ratings(key: &[KeyIssue], assessment: &Assessment) -> Vec<IssueRating> {
-    key.iter()
-        .enumerate()
-        .filter_map(|(position, issue)| {
-            let outcome = assessment
-                .issues
-                .get(position)
-                .map_or(IssueOutcome::Missed, |&(outcome, _)| outcome);
-            if issue.origin == Origin::FoundInReview && outcome == IssueOutcome::Missed {
-                return None;
-            }
+    rated(key, assessment)
+        .map(|(issue, rating)| IssueRating {
+            pattern: issue.pattern.clone(),
+            rating,
+        })
+        .collect()
+}
+
+/// The floor of the mean of `ratings`, counting Again as 0, Hard as 1, Good as 2 and Easy as 3; `None` for none.
+fn mean(ratings: impl Iterator<Item = PatternRating>) -> Option<PatternRating> {
+    let (sum, count) = ratings.fold((0_usize, 0_usize), |(sum, count), rating| {
+        let points = match rating {
+            PatternRating::Again => 0,
+            PatternRating::Hard => 1,
+            PatternRating::Good => 2,
+            PatternRating::Easy => 3,
+        };
+        (sum + points, count + 1)
+    });
+    Some(match sum.checked_div(count)? {
+        0 => PatternRating::Again,
+        1 => PatternRating::Hard,
+        2 => PatternRating::Good,
+        _ => PatternRating::Easy,
+    })
+}
+
+/// The rating a review gives the lesson its drill was built from: the mean of the ratings of the issues tied to it.
+/// Every rated issue of a passage is tied to it; of code, those with a lesson link, or every rated issue when none
+/// has one. `None` when nothing is rated.
+pub fn lesson_rating(
+    material: &Material,
+    key: &[KeyIssue],
+    assessment: &Assessment,
+) -> Option<PatternRating> {
+    let only_linked = !matches!(material, Material::Passage)
+        && rated(key, assessment).any(|(issue, _)| issue.lesson.is_some());
+    mean(
+        rated(key, assessment)
+            .filter(|(issue, _)| !only_linked || issue.lesson.is_some())
+            .map(|(_, rating)| rating),
+    )
+}
+
+/// One rating per pattern, for the schedule, which takes one review per pattern per attempt: the mean of that
+/// pattern's ratings, patterns in the order they first appear.
+pub fn per_pattern(ratings: &[IssueRating]) -> Vec<IssueRating> {
+    let mut patterns: Vec<&str> = Vec::new();
+    for entry in ratings {
+        if !patterns.contains(&entry.pattern.as_str()) {
+            patterns.push(&entry.pattern);
+        }
+    }
+    patterns
+        .into_iter()
+        .filter_map(|pattern| {
+            let rating = mean(
+                ratings
+                    .iter()
+                    .filter(|rated| rated.pattern == pattern)
+                    .map(|rated| rated.rating),
+            )?;
             Some(IssueRating {
-                pattern: issue.pattern.clone(),
-                rating: rating(&outcome),
+                pattern: pattern.to_owned(),
+                rating,
             })
         })
         .collect()
@@ -65,6 +136,9 @@ pub struct PatternDue {
     pub pattern: String,
     /// `None`: never practised.
     pub due_at: Option<i64>,
+    /// A drill that plants it is ready to be taken, or out and not yet graded.
+    #[serde(default)]
+    pub pending: bool,
 }
 
 /// Where a pattern stands, in the order the next drill prefers.
@@ -76,6 +150,8 @@ enum Standing {
     New,
     /// Practised and not yet due.
     Rested,
+    /// A drill that plants it is ready to be taken, or out and not yet graded.
+    Pending,
 }
 
 struct Candidate {
@@ -94,9 +170,11 @@ struct Candidate {
 /// catalogue's order; then the rest, soonest due first. From that ranking each
 /// pick is the first pattern whose family has not been picked yet, so a drill
 /// interleaves families; when every family left has been picked, the families
-/// start over and the pick is the first of what is left. A pattern with no
-/// entry in `states` is never practised, and a pattern listed twice takes its
-/// first entry. The same inputs give the same patterns in the same order.
+/// start over and the pick is the first of what is left. Patterns a drill that
+/// is out plants are picked the same way, but only once every other pattern
+/// is. A pattern with no entry in `states` is never practised, and a pattern
+/// listed twice takes its first entry. The same inputs give the same patterns
+/// in the same order.
 pub fn targets(
     material: &Material,
     states: &[PatternDue],
@@ -106,11 +184,10 @@ pub fn targets(
     let mut candidates: Vec<Candidate> = patterns_for(material)
         .enumerate()
         .map(|(order, pattern)| {
-            let due_at = states
-                .iter()
-                .find(|state| state.pattern == pattern.id)
-                .and_then(|state| state.due_at);
+            let state = states.iter().find(|state| state.pattern == pattern.id);
+            let due_at = state.and_then(|state| state.due_at);
             let standing = match due_at {
+                _ if state.is_some_and(|state| state.pending) => Standing::Pending,
                 None => Standing::New,
                 Some(at) if at <= now => Standing::Due,
                 Some(_) => Standing::Rested,
@@ -124,22 +201,27 @@ pub fn targets(
         })
         .collect();
     candidates.sort_by_key(|candidate| (candidate.standing, candidate.due_at, candidate.order));
+    let (fresh, pending): (Vec<Candidate>, Vec<Candidate>) = candidates
+        .into_iter()
+        .partition(|candidate| candidate.standing != Standing::Pending);
     let mut chosen = Vec::new();
     let mut picked_families: Vec<Family> = Vec::new();
-    while chosen.len() < count && !candidates.is_empty() {
-        let next = candidates
-            .iter()
-            .position(|candidate| !picked_families.contains(&candidate.pattern.family));
-        let at = match next {
-            Some(at) => at,
-            None => {
-                picked_families.clear();
-                0
-            }
-        };
-        let picked = candidates.remove(at);
-        picked_families.push(picked.pattern.family);
-        chosen.push(picked.pattern);
+    for mut candidates in [fresh, pending] {
+        while chosen.len() < count && !candidates.is_empty() {
+            let next = candidates
+                .iter()
+                .position(|candidate| !picked_families.contains(&candidate.pattern.family));
+            let at = match next {
+                Some(at) => at,
+                None => {
+                    picked_families.clear();
+                    0
+                }
+            };
+            let picked = candidates.remove(at);
+            picked_families.push(picked.pattern.family);
+            chosen.push(picked.pattern);
+        }
     }
     chosen
 }

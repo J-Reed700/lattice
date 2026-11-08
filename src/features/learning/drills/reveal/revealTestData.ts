@@ -92,6 +92,7 @@ export const MAGIC_NUMBER: RevealedIssueDto = {
   finding: null,
   reason: 'No comment mentions the literals.',
   alsoValid: false,
+  lesson: null,
 };
 
 export const WRONG_OPERATOR: RevealedIssueDto = {
@@ -115,6 +116,7 @@ export const WRONG_OPERATOR: RevealedIssueDto = {
   finding: 0,
   reason: 'Your comment names the operator.',
   alsoValid: false,
+  lesson: null,
 };
 
 export const STALE_STATE: RevealedIssueDto = {
@@ -137,6 +139,7 @@ export const STALE_STATE: RevealedIssueDto = {
   finding: 1,
   reason: 'Your comment is on the right line but is about speed, not about hits that never expire.',
   alsoValid: false,
+  lesson: null,
 };
 
 /** Raised by a blind review, not planted: the key holds it after the planted issues. */
@@ -160,6 +163,7 @@ export const UNBOUNDED_GROWTH: RevealedIssueDto = {
   finding: null,
   reason: 'No comment mentions the growth.',
   alsoValid: true,
+  lesson: null,
 };
 
 export const ISSUES: RevealedIssueDto[] = [MAGIC_NUMBER, WRONG_OPERATOR, STALE_STATE];
@@ -281,7 +285,7 @@ export function gradedResult(patch: Partial<CodeReviewResultDto> = {}): CodeRevi
     startedAt: GRADED_AT - 600_000,
     submittedAt: GRADED_AT - 60_000,
     timeSpentMs: 90_000,
-    drill: { title: 'A sliding-window rate limiter', material: { kind: 'code', language: 'python' }, files: REVIEWED_FILES },
+    drill: { title: 'A sliding-window rate limiter', material: { kind: 'code', language: 'python' }, files: REVIEWED_FILES, lesson: null },
     findings: FINDINGS.map(({ span, text: said, severity }) => ({ span, text: said, severity })),
     fixFiles: null,
     error: null,

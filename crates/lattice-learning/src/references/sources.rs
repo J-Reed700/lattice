@@ -236,11 +236,7 @@ pub async fn ensure_before_use_sources(
                     "Web source has no requested URL".into(),
                 )
             })?;
-            let page = deps
-                .web
-                .fetch_reference_page(url)
-                .await
-                .map_err(|e| lattice_core::shared::error::AppError::Network(e.to_string()))?;
+            let page = deps.web.fetch_reference_page(url).await?;
             let title = page.output.title.clone().unwrap_or_else(|| url.into());
             Ok::<_, lattice_core::shared::error::AppError>(capture::web_capture(page, url, title))
         }

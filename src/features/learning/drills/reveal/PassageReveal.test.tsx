@@ -35,6 +35,7 @@ const ISSUE: RevealedIssueDto = {
   finding: 0,
   reason: 'Your comment names the figure.',
   alsoValid: false,
+  lesson: null,
 };
 
 const FIX: IssueFix = {
@@ -56,6 +57,7 @@ function passage(patch: Partial<CodeReviewResultDto> = {}): CodeReviewResultDto 
       title: 'Why spacing helps',
       material: { kind: 'passage', sourceTitle: 'Spacing and memory' },
       files: [{ path: 'explanation.md', text: REVIEWED }],
+      lesson: null,
     },
     findings: [{ span: { path: 'explanation.md', start: 2, end: 2 }, text: 'It is 14%.', severity: null }],
     reveal: revealOf({
@@ -175,6 +177,30 @@ describe('DrillReveal, a graded review of an explanation', () => {
     expect(card.getByText('What the source says')).toBeInTheDocument();
     expect(card.getByText(QUOTE)).toBeInTheDocument();
     expect(card.getByRole('button', { name: 'Show Sentence 2 in the explanation' })).toHaveTextContent('Sentence 2');
+  });
+
+  it('shows what the lesson says on the issue, with the source each sentence comes from, after what the source says', () => {
+    const lesson = {
+      lessonId: 'lesson-2',
+      sentences: [
+        { text: 'Students who spaced their study recalled **14%** more.', source: 'Spacing and memory' },
+        { text: 'Recall improves when study is spread out.', source: null },
+      ],
+    };
+    const base = passage();
+    setup({ ...base, reveal: base.reveal && { ...base.reveal, issues: [{ ...ISSUE, lesson }] } });
+    const card = within(screen.getByRole('article', { name: 'Misquoted figure' }));
+    const headings = card.getAllByRole('heading', { level: 4 }).map((heading) => heading.textContent);
+    expect(headings.slice(0, 2)).toEqual(['What the source says', 'From the lesson']);
+    expect(card.getByText(plainText('Students who spaced their study recalled **14%** more.'))).toBeInTheDocument();
+    expect(card.getByText('From Spacing and memory')).toBeInTheDocument();
+    expect(card.getByText('Recall improves when study is spread out.')).toBeInTheDocument();
+    expect(card.getByText('The lesson’s own teaching')).toBeInTheDocument();
+  });
+
+  it('shows nothing from the lesson for an issue that has none', () => {
+    setup();
+    expect(screen.queryByText('From the lesson')).toBeNull();
   });
 
   it('gives the two explanations a heading of their own and marks the planted sentence and its repair', () => {

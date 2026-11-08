@@ -290,3 +290,38 @@ async fn the_first_pace_counts_from_when_embedding_began() {
         .and_then(|number| number.parse().ok());
     assert!(pace.is_some_and(|pace| pace <= 320.0), "{text:?}");
 }
+
+#[tokio::test]
+async fn term_weights_are_the_bm25_idf_of_each_query_term_over_the_passages() -> Result<()> {
+    let sources: Vec<LearningSourceDto> = [
+        "Alpha beta gamma.",
+        "Alpha beta delta.",
+        "Alpha epsilon zeta.",
+        "Alpha eta theta.",
+        "Alpha iota kappa.",
+    ]
+    .iter()
+    .enumerate()
+    .map(|(i, text)| LearningSourceDto {
+        id: format!("s{i}"),
+        title: format!("Reference {i}"),
+        url: None,
+        excerpt: (*text).into(),
+        acquired_at: 1,
+    })
+    .collect();
+    let collection = ReferenceCollection::lexical(&sources)?;
+    let weights = collection
+        .term_weights("Alpha beta GAMMA omega x gamma")
+        .await?;
+    let idf = |passages: f64, holding: f64| ((passages - holding + 0.5) / (holding + 0.5)).ln();
+    let close = |found: Option<&f64>, expected: f64| {
+        found.is_some_and(|found| (found - expected).abs() < 1e-12)
+    };
+    assert!(close(weights.get("gamma"), idf(5.0, 1.0)), "{weights:?}");
+    assert!(close(weights.get("beta"), idf(5.0, 2.0)), "{weights:?}");
+    assert!(close(weights.get("alpha"), 1e-6), "{weights:?}");
+    assert!(!weights.contains_key("omega"), "{weights:?}");
+    assert_eq!(weights.len(), 3, "{weights:?}");
+    Ok(())
+}

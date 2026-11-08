@@ -48,7 +48,7 @@ impl WebService {
             .sourcing
             .find_with(need, deadline_less_budget(), only.as_deref())
             .await?;
-        let output = search_output(query, page, offset, max_results, search)?;
+        let output = search_output(query, page, offset, max_results, search);
         info!(
             ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX),
             results = output.result_count,
@@ -395,7 +395,7 @@ fn search_output(
     offset: usize,
     max_results: usize,
     search: Search,
-) -> Result<WebSearchOutput> {
+) -> WebSearchOutput {
     let Search {
         findings,
         alternatives_run,
@@ -406,16 +406,6 @@ fn search_output(
         .iter()
         .map(FinderOutcomeDto::from)
         .collect();
-    if findings.leads.is_empty() {
-        let said: Vec<String> = outcomes
-            .iter()
-            .map(|outcome| format!("{}: {}", outcome.finder, outcome.result))
-            .collect();
-        return Err(AppError::Network(format!(
-            "The search found nothing ({})",
-            said.join(", ")
-        )));
-    }
     let total = findings.leads.len();
     let domains = findings
         .leads
@@ -465,7 +455,7 @@ fn search_output(
                 })
             })
         });
-    Ok(WebSearchOutput {
+    WebSearchOutput {
         result_count: results.len(),
         results,
         query: query.to_string(),
@@ -480,7 +470,7 @@ fn search_output(
         followup_queries: alternatives_run,
         outcomes,
         owner: resolved_owner,
-    })
+    }
 }
 
 #[cfg(test)]

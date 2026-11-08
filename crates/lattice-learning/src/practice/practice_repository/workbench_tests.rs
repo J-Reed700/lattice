@@ -323,7 +323,7 @@ async fn an_exercise_block_supplies_the_prompt_and_rubric_and_start_replays() ->
         0,
         "explanation",
         "Gluten basics",
-        &[version_id.clone()],
+        std::slice::from_ref(&version_id),
         &[],
     )
     .await?;
@@ -618,7 +618,7 @@ async fn sources_and_solutions_are_aids_for_live_assisted_attempts_only() -> Res
         0,
         "explanation",
         "Gluten basics",
-        &[version_id.clone()],
+        std::slice::from_ref(&version_id),
         &[],
     )
     .await?;

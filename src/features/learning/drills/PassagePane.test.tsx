@@ -15,6 +15,7 @@ const DRILL: CodeReviewDrillDto = {
   title: 'Why spacing helps',
   material: { kind: 'passage', sourceTitle: 'Spacing and memory' },
   files: [{ path: 'explanation.md', text: TEXT }],
+  lesson: null,
 };
 
 /** The pane with its selection held, as the review holds it. */

@@ -166,6 +166,7 @@ async fn a_settled_refusal_is_remembered_and_says_so() {
     assert_eq!(
         cache.get("https://blocked.test/a").await,
         Some(CachedFetch::Refusal {
+            status: 403,
             reason: "HTTP 403 Forbidden".to_string(),
         })
     );

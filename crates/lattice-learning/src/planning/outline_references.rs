@@ -411,7 +411,7 @@ impl TopicResearch for SubtopicResearch<'_> {
                     continue;
                 }
                 Err(error) => {
-                    tracing::warn!(%error, "Outline reference page unavailable");
+                    tracing::warn!(%error, url = %result.url, "Outline reference page unavailable");
                     self.gathered.unavailable += 1;
                     continue;
                 }

@@ -272,7 +272,6 @@ async fn chunk_batch_writes_are_bounded_and_late_batch_failure_rolls_back() {
         "transaction adapter should use shared bulk writes"
     );
     Arc::try_unwrap(tx)
-        .ok()
         .expect("only the test owns the transaction")
         .into_inner()
         .commit()
@@ -328,9 +327,7 @@ async fn transaction_repository_follows_its_transaction() {
     );
     assert!(repo.exists(saved[0].id().as_str()).await.unwrap());
 
-    let rolled_back = Arc::try_unwrap(tx)
-        .ok()
-        .expect("only the test owns the transaction");
+    let rolled_back = Arc::try_unwrap(tx).expect("only the test owns the transaction");
     rolled_back.into_inner().rollback().await.unwrap();
     let dropped = repo.find_all().await;
     assert!(
@@ -362,9 +359,7 @@ async fn transaction_repository_follows_its_transaction() {
     repo.delete(kept.id().as_str()).await.unwrap();
     assert_eq!(RepositoryPort::count(&repo).await.unwrap(), 1);
     assert_eq!(repo.count_all().await.unwrap(), 1);
-    let committed = Arc::try_unwrap(tx)
-        .ok()
-        .expect("only the test owns the transaction");
+    let committed = Arc::try_unwrap(tx).expect("only the test owns the transaction");
     committed.into_inner().commit().await.unwrap();
     assert_eq!(
         pool_repo
