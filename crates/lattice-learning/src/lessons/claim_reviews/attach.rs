@@ -26,7 +26,9 @@ use std::sync::Arc;
 
 use self::acquire::Acquired;
 pub(crate) use self::acquire::{capture_page, PageCapture};
-use self::report::{ClaimAttachProgressDto, ClaimAttachReportDto, OtherClaimsCheckedDto};
+use self::report::{
+    ClaimAttachProgressDto, ClaimAttachReportDto, OtherClaimsCheckedDto, PutBackOutcomeDto,
+};
 use super::checker_examples::CheckerExamples;
 use super::dto::AttachEvidenceDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
@@ -528,27 +530,8 @@ async fn attach_reporting(
         source.snapshot,
         others,
     );
-    report.lines.extend(put_back.map(PutBack::line));
+    report.put_back = put_back;
     Ok(report)
-}
-
-/// What a source did for a sentence the machine took out.
-enum PutBack {
-    Back,
-    NoPlace,
-    StaysOut,
-}
-
-impl PutBack {
-    fn line(self) -> String {
-        match self {
-            Self::Back => "The source supports it, so it is back in the lesson.".into(),
-            Self::NoPlace => "The source supports it. Choose where it goes and put it back.".into(),
-            Self::StaysOut => {
-                "The source does not support it, so it stays out of the lesson.".into()
-            }
-        }
-    }
 }
 
 /// Puts the claim's taken-out sentence back when `outcome` supports it.
@@ -557,20 +540,20 @@ async fn put_back_for(
     lesson_id: &str,
     claim_id: &ClaimId,
     outcome: &AttachOutcome,
-) -> Result<PutBack> {
+) -> Result<PutBackOutcomeDto> {
     let supported = matches!(
         outcome,
         AttachOutcome::Checked(check) if matches!(check.result, CheckResult::Supported { .. })
     );
     if !supported {
-        return Ok(PutBack::StaysOut);
+        return Ok(PutBackOutcomeDto::StaysOut);
     }
     let service = super::service::ClaimReviewService::new(deps.pool.clone());
     let back = service.put_back_for_source(lesson_id, claim_id).await?;
     Ok(if back.is_some() {
-        PutBack::Back
+        PutBackOutcomeDto::Back
     } else {
-        PutBack::NoPlace
+        PutBackOutcomeDto::NoPlace
     })
 }
 

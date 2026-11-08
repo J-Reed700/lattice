@@ -7,6 +7,7 @@ import type {
   LearningClaimTally,
   LearningSufficiencyDto,
   LearningTrustLevel,
+  PutBackOutcomeDto,
   ReopenCauseDto,
   ResearchSummaryDto,
   SourceKindDto,
@@ -392,16 +393,15 @@ export type AttachSummary = {
 };
 
 /** The result line for an attach, from its report (§3.6, §4.6). */
-const PUT_BACK_LINES = [
-  'The source supports it, so it is back in the lesson.',
-  'The source supports it. Choose where it goes and put it back.',
-  'The source does not support it, so it stays out of the lesson.',
-];
+const PUT_BACK_SENTENCES: Record<PutBackOutcomeDto, string> = {
+  back: 'The source supports it, so it is back in the lesson.',
+  no_place: 'The source supports it. Choose where it goes and put it back.',
+  stays_out: 'The source does not support it, so it stays out of the lesson.',
+};
 
 export function attachSummary(report: ClaimAttachReportDto, scopeSize: number, remaining: number): AttachSummary {
   const summary = attachSummaryOf(report, scopeSize, remaining);
-  const putBack = report.lines.find((line) => PUT_BACK_LINES.includes(line));
-  return putBack && scopeSize <= 1 ? { ...summary, line: `${summary.line} ${putBack}` } : summary;
+  return report.putBack && scopeSize <= 1 ? { ...summary, line: `${summary.line} ${PUT_BACK_SENTENCES[report.putBack]}` } : summary;
 }
 
 function attachSummaryOf(report: ClaimAttachReportDto, scopeSize: number, remaining: number): AttachSummary {
