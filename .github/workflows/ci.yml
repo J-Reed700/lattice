@@ -27,18 +27,7 @@ jobs:
       max-parallel: 6
       matrix:
         sha:
-          - 4d936a6c5abef0f1b26950f5645d5bb8a8f90d32
-          - e0fe15af51a02e6c00c407de19982f4a79836aca
-          - dc7c27f58030efce1952a906b55e26bf9125bd8a
-          - e1b1d0cf226f8698b86876d3f724251553138da6
-          - 609d0b6eaea69e51ed777bf4dc17d6b4515df00d
-          - e50e055c1378e7094e13ae516dd46f56baef8f6f
-          - ae18b4b9680ad984483c5fa6da27d036552efc4a
-          - 93261898076363e0e24d5cbc028c41aab09cc671
-          - 1aab92ac3ca3271ec98c54d1af5fd73d7af3aa70
-          - b47078081464958dc5cf1957d5aad7edda410c8e
-          - 044ee8d0962e2a1b1a03943a32216d928798b3d2
-          - cf6fee58cf4f6328c377bfa3da4639b33c99a726
+          - 886244bfc33b33b56bb98f0f3bf739acde8a2c43
     steps:
       - uses: actions/checkout@v4
         with:
@@ -110,17 +99,7 @@ jobs:
             echo "::endgroup::"
             echo "red $sha exit $code"
           done <<'LIST'
-          1396f6a856b2d763ecb48d8d63c5f44e6dabdda7 src/features/learning/lessons/review/SelectionBar.test.tsx src/features/learning/lessons/review/useReviewSelection.test.tsx
-          795ef4d14d446795ce416f28cacada902f7af6f0 src/features/learning/lessons/review/ClaimQueue.selection.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.bulk.test.tsx
-          f1a08655d0a0d08a6b831681760fb565ba14ca34 src/features/learning/lessons/review/ClaimQueue.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.teaching.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.test.tsx src/features/learning/lessons/review/TeachingFindings.test.tsx src/features/learning/lessons/review/claimReviewCopy.test.ts
-          dc7c27f58030efce1952a906b55e26bf9125bd8a src/features/learning/lessons/review/TeachingFindings.test.tsx
-          609d0b6eaea69e51ed777bf4dc17d6b4515df00d src/features/learning/lessons/review/ClaimReviewScreen.noteActions.test.tsx src/features/learning/lessons/review/TeachingFindings.actions.test.tsx src/features/learning/lessons/review/TeachingFindings.test.tsx src/features/learning/lessons/review/claimReviewCopy.test.ts
-          e50e055c1378e7094e13ae516dd46f56baef8f6f src/features/learning/lessons/review/ClaimReviewScreen.noteActions.test.tsx src/features/learning/lessons/review/TeachingFindings.actions.test.tsx
-          bbcbf20ff0aac0bfeb0a169fd45e0f232f0e78c6 src/features/learning/lessons/review/ClaimReviewScreen.noteActions.test.tsx
-          93261898076363e0e24d5cbc028c41aab09cc671 src/features/learning/lessons/review/ClaimReviewScreen.restore.test.tsx
-          5c7bc5b339049bbeb6e2f423234a439a6bd9eb78 src/features/learning/lessons/review/ClaimReviewScreen.restore.test.tsx
-          044ee8d0962e2a1b1a03943a32216d928798b3d2 src/features/learning/lessons/LessonCard.edit.test.tsx src/features/learning/lessons/edit/LessonSectionEditor.test.tsx src/features/learning/lessons/review/ClaimReviewScreen.editSection.test.tsx src/features/learning/lessons/review/TeachingFindings.test.tsx
-          cf6fee58cf4f6328c377bfa3da4639b33c99a726 src/features/learning/lessons/LessonCard.edit.test.tsx
+          886244bfc33b33b56bb98f0f3bf739acde8a2c43 src/features/learning/lessons/review/ClaimReviewScreen.editSection.test.tsx src/features/learning/lessons/review/TeachingFindings.actions.test.tsx
           LIST
 
       - name: Upload each red's vitest log
