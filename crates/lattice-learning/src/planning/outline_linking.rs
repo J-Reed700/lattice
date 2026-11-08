@@ -626,7 +626,11 @@ pub(crate) async fn link(
         return Ok(log);
     }
     let scope = module.map(|index| {
-        let count = draft.candidate["modules"].as_array().map_or(0, Vec::len);
+        let count = draft
+            .candidate
+            .get("modules")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
         format!("Module {} of {count}: ", index + 1)
     });
     progress.detail(match &scope {
