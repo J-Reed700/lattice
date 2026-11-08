@@ -474,6 +474,15 @@ async fn live_build_eval() -> Result<()> {
     });
     let runtimes = BuiltinRuntimes::for_tests();
     let pool = crate::features::learning::tests::pool().await?;
+    let program = crate::features::learning::tests::fixture();
+    crate::features::learning::repository::LearningRepository::new(pool.clone())
+        .create(&program)
+        .await?;
+    let lesson_id = program
+        .modules
+        .first()
+        .and_then(|module| module.lessons.first())
+        .map(|lesson| lesson.id.clone());
     let mut summary = Vec::new();
     for language in &wanted {
         // Each drill targets the patterns the earlier ones of its language left alone, so the eval covers the catalogue.
@@ -489,8 +498,8 @@ async fn live_build_eval() -> Result<()> {
                     .map(|pattern| pattern.id.to_owned())
                     .collect(),
                 material,
-                program_id: None,
-                lesson_id: None,
+                program_id: Some(program.summary.id.clone()),
+                lesson_id: lesson_id.clone(),
             };
             tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
                 pattern: pattern.clone(),
@@ -654,6 +663,11 @@ async fn live_passage_build_eval() -> Result<()> {
     });
     let runtimes = BuiltinRuntimes::for_tests();
     let pool = copied_database(&database).await?;
+    let lesson_id: Option<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal LIMIT 1")
+        .bind(&course)
+        .fetch_optional(&pool)
+        .await
+        .map_err(db)?;
     let run = uuid::Uuid::new_v4();
     let mut tried: Vec<PatternDue> = Vec::new();
     let mut summary = Vec::new();
@@ -669,7 +683,7 @@ async fn live_passage_build_eval() -> Result<()> {
                 .collect(),
             material,
             program_id: Some(course.clone()),
-            lesson_id: None,
+            lesson_id: lesson_id.clone(),
         };
         tried.extend(spec.patterns.iter().map(|pattern| PatternDue {
             pattern: pattern.clone(),

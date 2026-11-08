@@ -18,10 +18,10 @@ pub struct DrillSpec {
     pub lines: u32,
     /// The target pattern ids, from `drills::targets`.
     pub patterns: Vec<String>,
-    /// For code, the course whose topic gave the domain, when one did; for a passage, the course whose sources it is
-    /// taken from.
+    /// The course the drill is built for: the course of its lesson.
     pub program_id: Option<String>,
-    /// The lesson of the course the drill is built from; `None` in specs from before drills were built from lessons.
+    /// The lesson of the course the drill is built from; `None` only in specs from before drills were built from
+    /// lessons, which `validate` refuses.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lesson_id: Option<String>,
 }
@@ -62,35 +62,51 @@ impl TryFrom<StoredSpec> for DrillSpec {
 
 /// Whether a drill of `material` with `lines` and `patterns` patterns can be asked for: code in a language drills are
 /// written in, or a passage; at least one line of code or sentence; and at least one pattern.
-pub fn check_request(_material: &Material, _lines: u32, _patterns: usize) -> Result<()> {
+pub fn check_request(material: &Material, lines: u32, patterns: usize) -> Result<()> {
+    if let Material::Code { language } = material {
+        if !LANGUAGES.contains(&language.as_str()) {
+            return Err(AppError::InvalidInput(format!(
+                "{language} is not a language drills are written in."
+            )));
+        }
+    }
+    if lines == 0 {
+        return Err(AppError::InvalidInput(match material {
+            Material::Code { .. } => "A drill needs at least one line of code.".into(),
+            Material::Passage => "A drill needs at least one sentence to review.".into(),
+        }));
+    }
+    if patterns == 0 {
+        return Err(AppError::InvalidInput(
+            "A drill needs at least one pattern to plant.".into(),
+        ));
+    }
     Ok(())
 }
 
 impl DrillSpec {
-    /// Whether the spec names code in a language drills are written in, or a passage of a named course; a size; a
-    /// domain that says something when it is given; a lesson, when it names one, that says something and is of a
-    /// course; and at least one pattern, each in the catalogue, applying to the
-    /// material and listed once.
+    /// Whether the spec can be built: [`check_request`] on its material, size and patterns; a course and a lesson of
+    /// it, both saying something; a domain that says something when it is given; and each pattern in the catalogue,
+    /// applying to the material and listed once.
     pub fn validate(&self) -> Result<()> {
-        match &self.material {
-            Material::Code { language } if !LANGUAGES.contains(&language.as_str()) => {
-                return Err(AppError::InvalidInput(format!(
-                    "{language} is not a language drills are written in."
-                )));
-            }
-            Material::Code { .. } => {}
-            Material::Passage if self.course().is_none() => {
+        check_request(&self.material, self.lines, self.patterns.len())?;
+        if self.course().is_none() {
+            return Err(AppError::InvalidInput(
+                "A drill names the course it is built for.".into(),
+            ));
+        }
+        match self.lesson_id.as_deref() {
+            None => {
                 return Err(AppError::InvalidInput(
-                    "A drill on a passage names the course whose sources it is taken from.".into(),
+                    "A drill is built from a lesson of its course.".into(),
                 ));
             }
-            Material::Passage => {}
-        }
-        if self.lines == 0 {
-            return Err(AppError::InvalidInput(match self.material {
-                Material::Code { .. } => "A drill needs at least one line of code.".into(),
-                Material::Passage => "A drill needs at least one sentence to review.".into(),
-            }));
+            Some(lesson_id) if lesson_id.trim().is_empty() => {
+                return Err(AppError::InvalidInput(
+                    "A drill's lesson cannot be blank.".into(),
+                ));
+            }
+            Some(_) => {}
         }
         if self
             .domain
@@ -99,23 +115,6 @@ impl DrillSpec {
         {
             return Err(AppError::InvalidInput(
                 "A drill's domain cannot be blank.".into(),
-            ));
-        }
-        if let Some(lesson_id) = &self.lesson_id {
-            if lesson_id.trim().is_empty() {
-                return Err(AppError::InvalidInput(
-                    "A drill's lesson cannot be blank.".into(),
-                ));
-            }
-            if self.course().is_none() {
-                return Err(AppError::InvalidInput(
-                    "A drill built from a lesson names the course the lesson is of.".into(),
-                ));
-            }
-        }
-        if self.patterns.is_empty() {
-            return Err(AppError::InvalidInput(
-                "A drill needs at least one pattern to plant.".into(),
             ));
         }
         self.targets().map(drop)
@@ -130,7 +129,7 @@ impl DrillSpec {
         }
     }
 
-    /// The course a passage is taken from: the spec's course, when it names one that says something.
+    /// The course the drill is built for: the spec's course, when it names one that says something.
     pub fn course(&self) -> Option<&str> {
         self.program_id
             .as_deref()

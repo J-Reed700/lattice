@@ -3,7 +3,7 @@
 //! by the `learning.drill_grading` job. The grade, the model that gave it and the reason it could not be given are in
 //! the attempt's row.
 
-use super::bank::Shelf;
+use super::bank::{self, Shelf};
 use super::build::ask::normalise;
 use super::jobs::{DRILL_GRADING, GRADING_STEPS};
 use super::repository::{self, StoredDrill};
@@ -138,12 +138,23 @@ pub struct Begun {
 /// Takes the oldest ready drill of `shelf` built from a lesson, from `lesson` when one is given, and opens an attempt
 /// on it, in one transaction. `None` when no such drill is ready.
 pub async fn start(
-    _pool: &SqlitePool,
-    _shelf: Shelf<'_>,
-    _lesson: Option<&str>,
-    _mode: AttemptMode,
+    pool: &SqlitePool,
+    shelf: Shelf<'_>,
+    lesson: Option<&str>,
+    mode: AttemptMode,
 ) -> Result<Option<Begun>> {
-    Ok(None)
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    let Some(taken) = bank::take_in(&mut transaction, shelf, lesson).await? else {
+        transaction.commit().await.map_err(db)?;
+        return Ok(None);
+    };
+    let attempt = insert_in(&mut transaction, &taken.drill.drill.id, mode).await?;
+    transaction.commit().await.map_err(db)?;
+    Ok(Some(Begun {
+        attempt,
+        drill: taken.drill,
+        next_build: taken.next_build,
+    }))
 }
 
 /// Opens an attempt on a drill the caller has taken from the bank.

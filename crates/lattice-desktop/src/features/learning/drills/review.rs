@@ -3,11 +3,14 @@
 //! returned for the caller to tell the job runtime of once they are committed.
 
 use super::attempts::{self, AttemptMode, Submission};
+use super::bank::{self, Shelf};
 use super::dto::{
     CodeReviewFileDto, CodeReviewFindingDto, CodeReviewResultDto, ReviewDrillCourseDto,
     StartedCodeReviewDto,
 };
-use super::reveal::result_of;
+use super::reveal::{learner_drill, result_of};
+use super::schedules;
+use super::spec::check_request;
 use crate::features::learning::persistence::db;
 use crate::features::learning::source_library::LearningSourceLibraryRepository;
 use lattice_core::domain::learning::drills::Material;
@@ -44,17 +47,43 @@ pub struct CourseDrill {
 /// request of no size, a lesson the course does not drill, and a course with no lesson to drill on the material are
 /// refused, and nothing is taken.
 pub async fn start(
-    _pool: &SqlitePool,
-    _asked: &CourseDrill,
-    _mode: AttemptMode,
-    _lines: u32,
-    _issues: u32,
+    pool: &SqlitePool,
+    asked: &CourseDrill,
+    mode: AttemptMode,
+    lines: u32,
+    issues: u32,
 ) -> Result<Started> {
+    let count = usize::try_from(issues).unwrap_or(usize::MAX);
+    check_request(&asked.material, lines, count)?;
+    if let Some(lesson) = asked.lesson_id.as_deref() {
+        let mut connection = pool.acquire().await.map_err(db)?;
+        if !schedules::drills_lesson_in(&mut connection, &asked.program_id, lesson).await? {
+            return Err(AppError::InvalidInput(
+                "The lesson is not one the course drills.".into(),
+            ));
+        }
+    }
+    let shelf = Shelf {
+        program_id: &asked.program_id,
+        material: &asked.material,
+    };
+    if let Some(begun) = attempts::start(pool, shelf, asked.lesson_id.as_deref(), mode).await? {
+        return Ok(Started {
+            dto: StartedCodeReviewDto::Started {
+                attempt_id: begun.attempt.id.clone(),
+                mode: begun.attempt.mode,
+                started_at: begun.attempt.started_at,
+                drill: learner_drill(&begun.drill),
+            },
+            jobs: begun.next_build.into_iter().collect(),
+        });
+    }
+    let job = bank::ensure_build(pool, shelf, asked.lesson_id.as_deref(), lines, count).await?;
     Ok(Started {
         dto: StartedCodeReviewDto::Building {
-            job_id: String::new(),
+            job_id: job.clone(),
         },
-        jobs: Vec::new(),
+        jobs: vec![job],
     })
 }
 

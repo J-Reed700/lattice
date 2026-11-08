@@ -59,7 +59,7 @@ pub struct StoredDrill {
     pub clean_files: Vec<DrillFile>,
     pub spec: DrillSpec,
     pub domain: String,
-    /// The course whose topic gave the domain, or whose source a passage is from, while the course exists.
+    /// The course the drill was built for, while it exists.
     pub program_id: Option<String>,
     /// The lesson the drill was built from, while it exists.
     pub lesson_id: Option<String>,
@@ -163,19 +163,35 @@ fn material_name(material: &Material) -> &'static str {
 
 /// The oldest ready drill of `shelf` built from a lesson: from `lesson`, when one is given.
 pub(in crate::features::learning) async fn oldest_ready_on(
-    _connection: &mut SqliteConnection,
-    _shelf: Shelf<'_>,
-    _lesson: Option<&str>,
+    connection: &mut SqliteConnection,
+    shelf: Shelf<'_>,
+    lesson: Option<&str>,
 ) -> Result<Option<StoredDrill>> {
-    Ok(None)
+    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE program_id=?1 AND material=?2 AND language IS ?3 AND status='ready' AND lesson_id IS NOT NULL AND (?4 IS NULL OR lesson_id=?4) ORDER BY created_at,rowid LIMIT 1"))
+        .bind(shelf.program_id)
+        .bind(material_name(shelf.material))
+        .bind(shelf.material.language())
+        .bind(lesson)
+        .fetch_optional(connection)
+        .await
+        .map_err(db)?
+        .as_ref()
+        .map(read)
+        .transpose()
 }
 
 /// Whether a drill of `shelf` built from a lesson is ready.
 pub(in crate::features::learning) async fn any_ready_in(
-    _connection: &mut SqliteConnection,
-    _shelf: Shelf<'_>,
+    connection: &mut SqliteConnection,
+    shelf: Shelf<'_>,
 ) -> Result<bool> {
-    Ok(false)
+    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_drills WHERE program_id=?1 AND material=?2 AND language IS ?3 AND status='ready' AND lesson_id IS NOT NULL)")
+        .bind(shelf.program_id)
+        .bind(material_name(shelf.material))
+        .bind(shelf.material.language())
+        .fetch_one(connection)
+        .await
+        .map_err(db)
 }
 
 /// The source passages the drills of the course `program_id` were built on, ready or taken.

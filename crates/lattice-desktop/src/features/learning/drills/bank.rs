@@ -1,14 +1,15 @@
-//! The bank: one drill ready per language, and one on a passage per course, so that starting a drill is instant.
-//! Taking the ready drill queues the build of the next, so the one ahead is built on the newest schedule.
+//! The bank: one drill ready on each shelf, a course's drills of one material, so that starting a drill is instant.
+//! Taking the last one queues the build of the lesson next up, so the one ahead is built on the newest schedules.
 
 use super::build::STEPS;
-use super::jobs::DRILL_BUILD;
-use super::repository::StoredDrill;
+use super::jobs::{spec_of, DRILL_BUILD};
+use super::repository::{self, DrillStatus, StoredDrill};
+use super::schedules;
 use super::spec::DrillSpec;
-use crate::features::learning::persistence::{db, hash};
-use lattice_core::domain::learning::drills::Material;
-use lattice_core::shared::error::Result;
-use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
+use crate::features::learning::persistence::{db, hash, now};
+use lattice_core::domain::learning::drills::{next_lessons, targets, Material};
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{JobStatus, JobStore, NewJob};
 use serde_json::json;
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -22,8 +23,11 @@ pub struct Shelf<'a> {
 impl<'a> Shelf<'a> {
     /// The shelf a drill built for `spec` goes on: its course's, of its material.
     pub fn of(spec: &'a DrillSpec) -> Result<Self> {
+        let program_id = spec.course().ok_or_else(|| {
+            AppError::InvalidInput("A drill names the course it is built for.".into())
+        })?;
         Ok(Self {
-            program_id: "",
+            program_id,
             material: &spec.material,
         })
     }
@@ -31,7 +35,11 @@ impl<'a> Shelf<'a> {
     /// The subject of the shelf's build jobs, which run one at a time: `drill:` then the course and the material as
     /// its pattern schedules are named, such as `drill:{program_id}:code:python` or `drill:{program_id}:passage`.
     pub fn subject(self) -> String {
-        String::new()
+        format!(
+            "drill:{}:{}",
+            self.program_id,
+            schedules::schedule_material(self.material)
+        )
     }
 }
 
@@ -74,19 +82,105 @@ pub async fn queue_build_in(
     Ok(admitted.id)
 }
 
+/// The build of `shelf` under way: the oldest pending or running one, built from `lesson`, or from any lesson when
+/// `lesson` is `None`.
+async fn under_way_in(
+    connection: &mut SqliteConnection,
+    shelf: Shelf<'_>,
+    lesson: Option<&str>,
+) -> Result<Option<String>> {
+    let jobs = JobStore::list_for_subject_in(connection, DRILL_BUILD, &shelf.subject()).await?;
+    Ok(jobs
+        .into_iter()
+        .rev()
+        .find(|job| {
+            matches!(job.status, JobStatus::Pending | JobStatus::Running)
+                && spec_of(job).is_ok_and(|found| {
+                    lesson.is_none_or(|lesson| found.lesson_id.as_deref() == Some(lesson))
+                })
+        })
+        .map(|job| job.id))
+}
+
+/// The lesson of `shelf`'s course next up for a drill on its material, `taking` (the lesson of a drill being taken)
+/// counted as pending; `None` when no lesson of the course can be drilled on it.
+async fn next_lesson_in(
+    connection: &mut SqliteConnection,
+    shelf: Shelf<'_>,
+    taking: Option<&str>,
+    now: i64,
+) -> Result<Option<String>> {
+    let states =
+        schedules::lesson_states_in(connection, shelf.program_id, shelf.material, taking).await?;
+    Ok(next_lessons(&states, now)
+        .first()
+        .map(|lesson| (*lesson).to_owned()))
+}
+
+/// The spec of a drill of `shelf` built from `lesson_id`: `lines`, and `count` patterns from the pattern schedule with
+/// `taking` held back.
+async fn spec_in(
+    connection: &mut SqliteConnection,
+    shelf: Shelf<'_>,
+    lesson_id: String,
+    lines: u32,
+    count: usize,
+    taking: &[String],
+    now: i64,
+) -> Result<DrillSpec> {
+    let states = schedules::pattern_states_in(connection, shelf.material, taking).await?;
+    Ok(DrillSpec {
+        material: shelf.material.clone(),
+        domain: None,
+        lines,
+        patterns: targets(shelf.material, &states, now, count)
+            .iter()
+            .map(|pattern| pattern.id.to_owned())
+            .collect(),
+        program_id: Some(shelf.program_id.to_owned()),
+        lesson_id: Some(lesson_id),
+    })
+}
+
 /// The id of the build of `shelf` under way for `lesson`, or for any lesson when `lesson` is `None`; or, when there is
 /// none, a new one queued: from `lesson`, or from the lesson next up, with `lines` and `count` patterns from the
 /// schedule. A learner who finds the shelf empty is told of the build already queued rather than getting another
 /// each time they ask. Refused when no lesson is asked for and none of the course's can be drilled on the material.
 /// The caller tells the job runtime once the job is committed.
 pub async fn ensure_build(
-    _pool: &SqlitePool,
-    _shelf: Shelf<'_>,
-    _lesson: Option<&str>,
-    _lines: u32,
-    _count: usize,
+    pool: &SqlitePool,
+    shelf: Shelf<'_>,
+    lesson: Option<&str>,
+    lines: u32,
+    count: usize,
 ) -> Result<String> {
-    Ok(String::new())
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    if let Some(id) = under_way_in(&mut transaction, shelf, lesson).await? {
+        transaction.commit().await.map_err(db)?;
+        return Ok(id);
+    }
+    let at = now();
+    let lesson_id = match lesson {
+        Some(lesson) => lesson.to_owned(),
+        None => next_lesson_in(&mut transaction, shelf, None, at)
+            .await?
+            .ok_or_else(|| {
+                AppError::InvalidInput(match shelf.material {
+                    Material::Code { .. } => {
+                        "None of the course's lessons can be drilled in code.".into()
+                    }
+                    Material::Passage => {
+                        "None of the course's lessons can be drilled on a passage of its sources."
+                            .into()
+                    }
+                })
+            })?,
+    };
+    let spec = spec_in(&mut transaction, shelf, lesson_id, lines, count, &[], at).await?;
+    let seed = format!("start:{}", uuid::Uuid::new_v4());
+    let id = queue_build_in(&mut transaction, &spec, &seed).await?;
+    transaction.commit().await.map_err(db)?;
+    Ok(id)
 }
 
 /// A drill given to a learner, and the build queued to follow it, if one was.
@@ -105,18 +199,65 @@ pub struct Taken {
 /// The lesson and the patterns come from the schedules: the taken drill's lesson and patterns, and those of drills
 /// ready or waiting for their grade, are pending, so they come last.
 pub async fn take(
-    _pool: &SqlitePool,
-    _shelf: Shelf<'_>,
-    _lesson: Option<&str>,
+    pool: &SqlitePool,
+    shelf: Shelf<'_>,
+    lesson: Option<&str>,
 ) -> Result<Option<Taken>> {
-    Ok(None)
+    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    let taken = take_in(&mut transaction, shelf, lesson).await?;
+    transaction.commit().await.map_err(db)?;
+    Ok(taken)
 }
 
 /// [`take`] inside the caller's transaction: what it took and queued is the caller's to commit.
 pub(in crate::features::learning) async fn take_in(
-    _connection: &mut SqliteConnection,
-    _shelf: Shelf<'_>,
-    _lesson: Option<&str>,
+    connection: &mut SqliteConnection,
+    shelf: Shelf<'_>,
+    lesson: Option<&str>,
 ) -> Result<Option<Taken>> {
-    Ok(None)
+    let Some(mut drill) = repository::oldest_ready_on(connection, shelf, lesson).await? else {
+        return Ok(None);
+    };
+    let at = now();
+    if !repository::mark_taken_in(connection, &drill.drill.id, at).await? {
+        return Ok(None);
+    }
+    drill.status = DrillStatus::Taken;
+    drill.taken_at = Some(at);
+    if repository::any_ready_in(connection, shelf).await?
+        || under_way_in(connection, shelf, None).await?.is_some()
+    {
+        return Ok(Some(Taken {
+            drill,
+            next_build: None,
+        }));
+    }
+    let Some(next) = next_lesson_in(connection, shelf, drill.lesson_id.as_deref(), at).await?
+    else {
+        return Ok(Some(Taken {
+            drill,
+            next_build: None,
+        }));
+    };
+    let mut taking: Vec<String> = Vec::new();
+    for issue in &drill.drill.key {
+        if !taking.contains(&issue.pattern) {
+            taking.push(issue.pattern.clone());
+        }
+    }
+    let spec = spec_in(
+        connection,
+        shelf,
+        next,
+        drill.spec.lines,
+        drill.spec.patterns.len().max(1),
+        &taking,
+        at,
+    )
+    .await?;
+    let next_build = queue_build_in(connection, &spec, &format!("next:{}", drill.drill.id)).await?;
+    Ok(Some(Taken {
+        drill,
+        next_build: Some(next_build),
+    }))
 }

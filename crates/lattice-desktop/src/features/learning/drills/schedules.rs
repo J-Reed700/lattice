@@ -271,11 +271,18 @@ pub(in crate::features::learning) async fn lesson_states_in(
 
 /// Whether the course drills the lesson: it is one of the course's, and not replaced or skipped.
 pub(in crate::features::learning) async fn drills_lesson_in(
-    _connection: &mut SqliteConnection,
-    _program_id: &str,
-    _lesson_id: &str,
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    lesson_id: &str,
 ) -> Result<bool> {
-    Ok(false)
+    sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM learning_lessons WHERE program_id=? AND id=? AND curriculum_state NOT IN ('replaced','skipped'))",
+    )
+    .bind(program_id)
+    .bind(lesson_id)
+    .fetch_one(connection)
+    .await
+    .map_err(db)
 }
 
 /// Whether the lesson can be drilled in `material` (`code` or `passage`): unless it is recorded as not fitting on the
