@@ -1,11 +1,11 @@
 name: CI
 
-# Never merges. Each tests-first commit of the web-failures fix runs on its own
-# tree: its new and changed tests must fail on their assertions, and every
-# other test must pass. The jobs check out those commits by hash, so this
-# branch's own tree is never built.
+# Never merges. Writes the TypeScript bindings of #386's head, so the commit
+# that brings them up to date carries the generator's own output. Named like
+# main's job, with its env, so main's Rust cache is the one restored.
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review]
 
 concurrency:
   group: reds-${{ github.sha }}
@@ -16,27 +16,16 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # Named like main's job, with its env, so main's Rust cache is the one restored.
   rust-check:
-    name: rust ${{ matrix.mode }} ${{ matrix.sha }}
+    name: write bindings ${{ matrix.sha }}
     runs-on: ubuntu-24.04
     env:
       LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
     strategy:
-      fail-fast: false
-      max-parallel: 6
       matrix:
-        include:
-          # A web failure says what happened: the tests-first tree, with the
-          # lesson's busy-website test added.
-          - mode: red
-            sha: cf68c699460d83ee5acbba5abcf64be8846f5aba
-            built_as_is: true
-          # A status line names the code and reason once.
-          - mode: red
-            sha: e148b7e83d7f269d6434fc146eedd818b094bd95
-            built_as_is: true
+        sha:
+          - 10feafbd7051a65244a9e48f02213766dcacbbd7
     steps:
       - uses: actions/checkout@v4
         with:
@@ -46,111 +35,6 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-
-      - name: Install Linux system deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libgtk-3-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev \
-            patchelf
-
-      - name: Add swap for the test build
-        run: |
-          sudo fallocate -l 16G /ci-swapfile
-          sudo chmod 600 /ci-swapfile
-          sudo mkswap /ci-swapfile
-          sudo swapon /ci-swapfile
-          free -m
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: rust-check
-          save-if: false
-
-      - name: Apply the integrated tree's compile fixes
-        if: matrix.mode == 'red' && !matrix.built_as_is
-        run: |
-          git fetch -q --depth=1 origin ${{ github.event.pull_request.head.sha }}
-          git show FETCH_HEAD:.github/reds/compile_fixups.py > "$RUNNER_TEMP/compile_fixups.py"
-          python3 "$RUNNER_TEMP/compile_fixups.py"
-          git diff --stat
-
-      - name: Create build placeholders for the desktop tests
-        if: matrix.mode == 'red'
-        run: |
-          mkdir -p dist
-          touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
-                crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu
-
-      - name: Core, learning and desktop tests on this tree
-        if: matrix.mode == 'red'
-        run: cargo test --locked -p lattice-core -p lattice-learning -p lattice-desktop --lib --no-fail-fast
-
-      - name: Create build placeholders for source checks
-        if: matrix.mode == 'integration'
-        run: |
-          mkdir -p dist
-          touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
-                crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu
-
-      - name: cargo fmt --check
-        id: fmt
-        if: matrix.mode == 'integration'
-        continue-on-error: true
-        run: cargo fmt --all -- --check
-
-      - name: cargo clippy
-        id: clippy
-        if: matrix.mode == 'integration'
-        continue-on-error: true
-        working-directory: crates/lattice-desktop
-        run: cargo clippy --workspace --all-targets
-
-      - name: All desktop Rust unit, command and integration tests
-        id: tests
-        if: matrix.mode == 'integration'
-        continue-on-error: true
-        working-directory: crates/lattice-desktop
-        run: cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast
-
-      - name: generated bindings are current
-        id: bindings
-        if: matrix.mode == 'integration'
-        continue-on-error: true
-        working-directory: crates/lattice-desktop
-        shell: bash
-        run: ../../target/debug/export_bindings --check
-
-      - name: Outcomes
-        if: always() && matrix.mode == 'integration'
-        shell: bash
-        run: |
-          printf '%s\n' "fmt ${{ steps.fmt.outcome }}" "clippy ${{ steps.clippy.outcome }}" \
-            "tests ${{ steps.tests.outcome }}" "bindings ${{ steps.bindings.outcome }}"
-          [ "${{ steps.fmt.outcome }} ${{ steps.clippy.outcome }} ${{ steps.tests.outcome }} ${{ steps.bindings.outcome }}" = "success success success success" ]
-
-  # The generated files for the integrated tree, to commit as they are: nothing is built where they are committed.
-  bindings-writer:
-    name: write bindings ${{ matrix.sha }}
-    if: false
-    runs-on: ubuntu-24.04
-    env:
-      LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
-      CARGO_PROFILE_DEV_DEBUG: line-tables-only
-    strategy:
-      matrix:
-        sha:
-          - 802a2b5d8df575a1041ead8cd25afb528a3bd258
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ matrix.sha }}
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
 
       - name: Install Linux system deps
         run: |
@@ -180,9 +64,13 @@ jobs:
           touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
                 crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu
 
+      - name: Build the generator
+        working-directory: crates/lattice-desktop
+        run: cargo build --locked --workspace --features lattice-desktop/bindings-export --bin export_bindings
+
       - name: Write the bindings
         working-directory: crates/lattice-desktop
-        run: cargo run --locked --features bindings-export --bin export_bindings
+        run: ../../target/debug/export_bindings
 
       - name: What the generator changed
         run: git diff --stat -- src/lib/bindings.ts src/shared/ipc/routes.generated.ts
@@ -194,146 +82,3 @@ jobs:
             src/lib/bindings.ts
             src/shared/ipc/routes.generated.ts
           if-no-files-found: error
-
-  integration-frontend:
-    name: integration frontend ${{ matrix.sha }}
-    if: false
-    runs-on: ubuntu-24.04
-    strategy:
-      fail-fast: false
-      matrix:
-        sha:
-          - 802a2b5d8df575a1041ead8cd25afb528a3bd258
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ matrix.sha }}
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-
-      - run: npm ci
-
-      - name: npm vulnerability audit
-        id: audit
-        continue-on-error: true
-        run: npm audit --audit-level=high
-
-      - name: Verify bundled Python interpreter and standard library
-        id: runtime
-        continue-on-error: true
-        run: npm run learning:runtime:verify
-
-      - name: Type-check
-        id: types
-        continue-on-error: true
-        run: npm run type-check
-
-      - name: Type-check browser journeys
-        id: types_e2e
-        continue-on-error: true
-        run: npm run type-check:e2e
-
-      - name: Generated IPC contract consumers
-        id: contracts
-        continue-on-error: true
-        run: npm run contracts:check
-
-      - name: Lint
-        id: lint
-        continue-on-error: true
-        run: npm run lint
-
-      - name: Unit tests and enforced coverage floors
-        id: unit
-        continue-on-error: true
-        run: npm run test:coverage
-
-      - name: Renderer production build
-        id: build
-        continue-on-error: true
-        run: npx vite build
-
-      - name: Initial renderer JavaScript budget
-        id: budget
-        continue-on-error: true
-        run: node scripts/check-initial-js-budget.mjs dist
-
-      - name: Install browsers for smoke tests
-        run: npx playwright install --with-deps chromium webkit
-
-      - name: Browser smoke tests
-        id: e2e
-        continue-on-error: true
-        run: npm run test:e2e
-
-      - name: Upload browser reports and failure artifacts
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: integration-browser-results-${{ matrix.sha }}
-          path: |
-            e2e-results/html/
-            e2e-results/results.json
-            e2e-results/artifacts/
-          if-no-files-found: warn
-          retention-days: 14
-
-      - name: Outcomes
-        if: always()
-        shell: bash
-        run: |
-          outcomes="audit=${{ steps.audit.outcome }} runtime=${{ steps.runtime.outcome }} types=${{ steps.types.outcome }} types_e2e=${{ steps.types_e2e.outcome }} contracts=${{ steps.contracts.outcome }} lint=${{ steps.lint.outcome }} unit=${{ steps.unit.outcome }} build=${{ steps.build.outcome }} budget=${{ steps.budget.outcome }} e2e=${{ steps.e2e.outcome }}"
-          failed=0
-          for o in $outcomes; do echo "$o"; case "$o" in *=success) ;; *) failed=1 ;; esac; done
-          exit $failed
-
-  vitest:
-    name: vitest reds
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event.pull_request.head.sha }}
-          fetch-depth: 0
-
-      - name: Setup Node
-        uses: actions/setup-node@v4
-        with:
-          node-version: '24'
-          cache: 'npm'
-          cache-dependency-path: package-lock.json
-
-      - name: Each tests-first commit's changed test files on its own tree
-        shell: bash
-        run: |
-          mkdir -p "$RUNNER_TEMP/reds"
-          last_lock=""
-          while read -r sha files; do
-            [ -n "$sha" ] || continue
-            git checkout -q --force "$sha"
-            lock="$(git rev-parse "$sha:package-lock.json")"
-            if [ "$lock" != "$last_lock" ]; then
-              npm ci --no-audit --no-fund > "$RUNNER_TEMP/reds/npm-$sha.log" 2>&1 || { echo "npm ci failed at $sha"; tail -40 "$RUNNER_TEMP/reds/npm-$sha.log"; exit 1; }
-              last_lock="$lock"
-            fi
-            echo "::group::red $sha"
-            if npx vitest run $files > "$RUNNER_TEMP/reds/$sha.log" 2>&1; then code=0; else code=$?; fi
-            cat "$RUNNER_TEMP/reds/$sha.log"
-            echo "::endgroup::"
-            echo "red $sha exit $code"
-          done <<'LIST'
-          99b2da3ef4d0724befa910779a32df540648eeef src/lib/errorHandling.test.ts
-          LIST
-
-      - name: Upload each red's vitest log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: vitest-reds
-          path: ${{ runner.temp }}/reds/
-          retention-days: 14
