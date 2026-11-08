@@ -14,10 +14,7 @@ use lattice_core::{
     shared::error::{AppError, Result},
 };
 use serde_json::json;
-use sqlx::{
-    sqlite::{SqliteConnectOptions, SqlitePoolOptions},
-    SqlitePool,
-};
+use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -57,10 +54,7 @@ async fn active_memory_pool() -> Result<SqlitePool> {
     crate::tests::pool().await
 }
 async fn file_pool(path: std::path::PathBuf) -> Result<SqlitePool> {
-    let options = SqliteConnectOptions::new()
-        .filename(path)
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options = crate::test_support::file_options(path);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)

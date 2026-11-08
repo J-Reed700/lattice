@@ -13,7 +13,7 @@ use lattice_core::application::contracts::web::{FetchUrlContentOutput, Reference
 use lattice_core::domain::provenance::{Origin, ProvenanceSignals, PAGE_SIGNALS_VERSION};
 use lattice_core::shared::error::Result;
 use serde_json::{json, Value};
-use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions, SqliteSynchronous};
+use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::time::Duration;
 
@@ -44,12 +44,7 @@ pub(super) async fn course() -> Result<Course> {
 /// connection, so a write can wait on another. The file goes with the guard.
 pub(super) async fn course_on_file() -> Result<(Course, tempfile::TempDir)> {
     let directory = tempfile::tempdir().expect("a temporary directory");
-    let options = SqliteConnectOptions::new()
-        .filename(directory.path().join("course.db"))
-        .create_if_missing(true)
-        .journal_mode(SqliteJournalMode::Wal)
-        .synchronous(SqliteSynchronous::Normal)
-        .foreign_keys(true)
+    let options = crate::test_support::file_options(directory.path().join("course.db"))
         .busy_timeout(Duration::from_secs(30));
     let pool = SqlitePoolOptions::new()
         .max_connections(3)

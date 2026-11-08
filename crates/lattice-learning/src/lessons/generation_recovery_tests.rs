@@ -103,12 +103,38 @@ async fn a_busy_database_is_waited_out_and_never_blamed_on_the_model() {
 }
 
 #[tokio::test]
+async fn a_website_status_defers_only_when_a_retry_can_change_it() {
+    let pool = crate::tests::pool().await.unwrap();
+    let (_, job) = repository_tests::queued_job(&pool).await;
+    let job = JobStore::new(pool).get(&job.id).await.unwrap();
+
+    let busy = AppError::HttpStatus {
+        status: 503,
+        message: "HTTP 503 Service Unavailable fetching https://example.org/a".into(),
+    };
+    let JobFailure::Defer(deferral) = lesson_failure(&job, &busy) else {
+        panic!("a busy website is deferred, not failed");
+    };
+    assert_eq!(
+        deferral.progress_message,
+        "A website is busy; saved work will resume automatically"
+    );
+
+    let gone = AppError::HttpStatus {
+        status: 404,
+        message: "HTTP 404 Not Found fetching https://example.org/a".into(),
+    };
+    let JobFailure::Fail { code, message } = lesson_failure(&job, &gone) else {
+        panic!("a missing page is failed, not deferred");
+    };
+    assert_eq!(code, "generation_failed");
+    assert_eq!(message, "HTTP 404 Not Found fetching https://example.org/a");
+}
+
+#[tokio::test]
 async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("reconnect.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options = crate::test_support::file_options(directory.path().join("reconnect.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())
@@ -278,10 +304,8 @@ async fn fidelity_propagates_connection_loss_without_creating_a_factual_finding(
 async fn source_limit_failure_retries_after_restart_without_losing_saved_checks() -> Result<()> {
     use crate::{dto::*, source_library::*};
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("source-recovery.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options =
+        crate::test_support::file_options(directory.path().join("source-recovery.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())

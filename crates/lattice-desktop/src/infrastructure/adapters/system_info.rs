@@ -255,7 +255,6 @@ impl SystemInfoAdapter {
         // (denied crate-wide) rejects, and it returns None when nvidia-smi prints nothing.
         let (name, vram_str) = output_str.trim().split_once(',')?;
         let vram_gb = vram_str
-            .trim()
             .split_whitespace()
             .next()
             .and_then(|s| s.parse::<f64>().ok())

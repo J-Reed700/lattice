@@ -2,6 +2,7 @@
 
 mod decision_tests;
 mod ledger_tests;
+mod put_back_tests;
 mod rules_tests;
 mod trust_tests;
 

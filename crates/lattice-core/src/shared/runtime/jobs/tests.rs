@@ -649,10 +649,7 @@ async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Resul
     // pool of its own on the same file, so on a loaded machine only that
     // write meets the busy store.
     let directory = tempfile::tempdir().unwrap();
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("jobs.db"))
-        .create_if_missing(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal);
+    let options = crate::shared::testing::sqlite::file_options(directory.path().join("jobs.db"));
     let setup = sqlx::sqlite::SqlitePoolOptions::new()
         .connect_with(options.clone())
         .await
@@ -727,6 +724,36 @@ async fn transient_errors_defer_and_other_errors_fail() -> Result<()> {
         assert_eq!(saved.finished_at.is_some(), expected == JobStatus::Failed);
     }
     Ok(())
+}
+
+#[test]
+fn an_http_status_is_transient_only_when_waiting_can_change_it() {
+    let answered = |status: u16| AppError::HttpStatus {
+        status,
+        message: format!("HTTP {status}: the site answered"),
+    };
+    for status in [429, 502, 503, 504] {
+        let error = answered(status);
+        assert!(JobFailure::is_transient(&error), "{status}");
+        assert!(error.is_recoverable(), "{status}");
+        assert!(
+            !JobFailure::is_outage(&error),
+            "{status}: one site's answer is not an outage"
+        );
+    }
+    for status in [400, 401, 403, 404, 410, 500] {
+        let error = answered(status);
+        assert!(!JobFailure::is_transient(&error), "{status}");
+        assert!(!error.is_recoverable(), "{status}");
+        assert!(!JobFailure::is_outage(&error), "{status}");
+        assert!(matches!(
+            JobFailure::classify(&error),
+            JobFailure::Fail { .. }
+        ));
+    }
+    let lost = AppError::Network("connection reset".into());
+    assert!(JobFailure::is_transient(&lost));
+    assert!(JobFailure::is_outage(&lost));
 }
 
 #[tokio::test]
@@ -1080,12 +1107,9 @@ async fn observers_see_each_transition_of_a_job() -> Result<()> {
 #[tokio::test]
 async fn startup_recovery_waits_for_a_concurrent_writer() -> Result<()> {
     let directory = tempfile::tempdir().unwrap();
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("startup-recovery.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-        .busy_timeout(Duration::from_secs(5));
+    let options = crate::shared::testing::sqlite::file_options(
+        directory.path().join("startup-recovery.sqlite"),
+    );
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)

@@ -2,5 +2,5 @@
 
 use lattice_learning::drills::test_support as support;
 
-#[path = "../drills/live_build_eval.rs"]
+#[path = "live_build_eval.rs"]
 mod live_build_eval;

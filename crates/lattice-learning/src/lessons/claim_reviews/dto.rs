@@ -50,6 +50,8 @@ pub struct LessonClaimReviewDto {
     /// held by claims waiting for the user resumes only then.
     pub changed_since_stop: bool,
     pub claims: Vec<ClaimReviewItemDto>,
+    /// The lesson's sections, for choosing where a sentence goes back.
+    pub sections: Vec<ReviewSectionDto>,
     /// Teaching-review findings the repairs did not settle: the lesson
     /// publishes with these waiting for the user.
     pub teaching_findings: Vec<super::teaching_findings::TeachingFindingDto>,
@@ -142,6 +144,40 @@ pub struct ClaimReviewItemDto {
     pub also_supported: Vec<ClaimSupportDto>,
     /// What research tried.
     pub tried: ResearchSummaryDto,
+    /// For a claim the machine took out: whether its sentence goes back where
+    /// it was or the user chooses the section.
+    pub place: Option<PutBackPlaceDto>,
+    /// For a sentence the machine took out whose place is known: the unit it goes
+    /// back into, as the lesson stands now.
+    pub put_back_unit: Option<usize>,
+    /// For a claim the machine rewrote: what it said and what it says now.
+    pub rewritten: Option<RewrittenDto>,
+}
+
+/// Whether the place of a taken-out sentence is known.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum PutBackPlaceDto {
+    Known,
+    Choose,
+}
+
+/// A sentence the machine rewrote, with what replaced it, as plain text.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RewrittenDto {
+    pub original: String,
+    pub rewrite: String,
+    /// The reason the check gave, when it recorded one.
+    pub why: Option<String>,
+}
+
+/// A section of the lesson: its index and title.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct ReviewSectionDto {
+    pub index: usize,
+    pub title: String,
 }
 
 /// One checker's latest verdict on a claim.
@@ -522,6 +558,8 @@ pub enum ClaimActionKindDto {
     AttachEvidence,
     ResearchWithHint,
     Unconfirm,
+    PutBack,
+    RestoreOriginal,
     Undo,
 }
 
@@ -534,6 +572,8 @@ impl From<ClaimActionKind> for ClaimActionKindDto {
             ClaimActionKind::AttachEvidence => Self::AttachEvidence,
             ClaimActionKind::ResearchWithHint => Self::ResearchWithHint,
             ClaimActionKind::Unconfirm => Self::Unconfirm,
+            ClaimActionKind::PutBack => Self::PutBack,
+            ClaimActionKind::RestoreOriginal => Self::RestoreOriginal,
             ClaimActionKind::Undo => Self::Undo,
         }
     }
@@ -559,6 +599,15 @@ pub enum ClaimActionRequestDto {
     ResearchWithHint {
         hint: String,
     },
+    /// Put a sentence the machine took out back: as it was (`text` null) or
+    /// as the user writes it. `section` (0-based) puts it at the end of that
+    /// section; null puts it where it was.
+    PutBack {
+        text: Option<String>,
+        section: Option<u32>,
+    },
+    /// Put the sentence the machine rewrote back in place of the rewrite.
+    RestoreOriginal,
     Undo,
 }
 

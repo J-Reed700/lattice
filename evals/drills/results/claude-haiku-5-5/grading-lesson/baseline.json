@@ -1,0 +1,23 @@
+{
+  "model": "claude-haiku-5-5",
+  "runs": 6,
+  "failed": 0,
+  "ever_wrong": [
+    "06-javascript-the-await-lesson-cited-where-the-await-is/finding/2",
+    "07-typescript-the-together-lesson-cited-on-a-single-request/finding/0"
+  ],
+  "issues": {
+    "worst_agree": 33,
+    "total": 33,
+    "worst_rate": 1.0,
+    "best_rate": 1.0,
+    "spread": 0
+  },
+  "findings": {
+    "worst_agree": 34,
+    "total": 35,
+    "worst_rate": 0.9714285714285714,
+    "best_rate": 1.0,
+    "spread": 1
+  }
+}

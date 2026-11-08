@@ -371,7 +371,7 @@ fn tally(report: &mut Redecided, before: &ClaimState, verdict: &GateVerdict) {
 }
 
 /// A re-decision's provenance: the machine, no job, the review's checker.
-fn machine(review: &LessonReview) -> EventProvenance {
+pub(super) fn machine(review: &LessonReview) -> EventProvenance {
     EventProvenance {
         actor: Actor::Machine,
         at: now(),

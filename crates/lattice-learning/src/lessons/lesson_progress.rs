@@ -38,6 +38,8 @@ struct State {
     ceilings: Vec<u32>,
     #[cfg(test)]
     stages: Vec<String>,
+    #[cfg(test)]
+    phases: Vec<LearningGenerationPhase>,
 }
 
 #[derive(Clone, Default)]
@@ -223,6 +225,10 @@ pub(crate) fn received(text: &str) {
 pub(crate) fn phase(phase: LearningGenerationPhase, message: impl Into<String>) {
     let _ = CURRENT.try_with(|progress| {
         let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+        #[cfg(test)]
+        if state.activity.phase != phase || state.activity.phase_started_at == 0 {
+            state.phases.push(phase);
+        }
         let activity = &mut state.activity;
         if activity.phase != phase || activity.phase_started_at == 0 {
             activity.phase = phase;
@@ -235,6 +241,7 @@ pub(crate) fn phase(phase: LearningGenerationPhase, message: impl Into<String>) 
                 activity.recent_steps.remove(0);
             }
         }
+        activity.reached = activity.reached.max(phase);
     });
     stage(message);
 }
@@ -266,6 +273,7 @@ pub(crate) fn lesson(title: &str) {
             state.sorted = 0;
         }
         state.activity.lesson_title = Some(title.into());
+        state.activity.reached = LearningGenerationPhase::default();
     });
 }
 
@@ -520,8 +528,8 @@ pub(crate) async fn traced<T>(future: impl std::future::Future<Output = T>) -> (
     (value, trace)
 }
 
-/// The activity a job restarts with: where it left off, its time and its
-/// calls counted anew.
+/// The activity a job restarts with: where it left off, its time, its calls
+/// and the phases it reached counted anew.
 fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
     let mut activity: LearningGenerationActivity = saved
         .and_then(|activity| serde_json::from_value(activity).ok())
@@ -529,6 +537,7 @@ fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
     // A new run starts by reopening references, even when the prior run
     // stopped in that same phase. Do not count time with the app closed.
     activity.phase_started_at = 0;
+    activity.reached = LearningGenerationPhase::default();
     activity.model_calls = 0;
     activity.model_calls_ceiling = None;
     activity.model_calls_ceiling_rises = 0;
@@ -548,6 +557,18 @@ pub(crate) async fn staged<T>(future: impl std::future::Future<Output = T>) -> (
         .stages
         .clone();
     (value, stages)
+}
+
+/// Runs `future` with fresh progress and returns each phase it changed to, in
+/// order, and every stage it showed.
+#[cfg(test)]
+pub(crate) async fn phased<T>(
+    future: impl std::future::Future<Output = T>,
+) -> (T, Vec<LearningGenerationPhase>, Vec<String>) {
+    let progress = Progress::default();
+    let value = CURRENT.scope(progress.clone(), future).await;
+    let state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
+    (value, state.phases.clone(), state.stages.clone())
 }
 
 impl Progress {

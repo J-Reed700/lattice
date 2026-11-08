@@ -9,13 +9,13 @@ import { LearningModelNotice } from '@/features/learning/curriculum/LearningMode
 import { ProgramBuilder } from '@/features/learning/curriculum/ProgramBuilder';
 import { clearProgramBuilderDraft } from '@/features/learning/curriculum/programBuilderDraft';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
-import { CodeReviewDrillScreen } from '@/features/learning/drills/CodeReviewDrillScreen';
 import type { FrameworkAction } from '@/features/learning/habits';
 import { ClaimReviewScreen } from '@/features/learning/lessons/review/ClaimReviewScreen';
 import { ExportAllCourses } from '@/features/learning/portability/ExportAllCourses';
 import { ImportCourseFlow } from '@/features/learning/portability/ImportCourseFlow';
 import { useExportAllPending } from '@/features/learning/portability/useLearningPortability';
 import { FlashcardDeckView } from '@/features/learning/recall/flashcards/FlashcardDeckView';
+import { readLastCourse, writeLastCourse } from '@/features/learning/workspace/lastCourse';
 import { ProgramLibrary } from '@/features/learning/workspace/ProgramLibrary';
 import { StudyActivityPanel } from '@/features/learning/workspace/StudyActivityPanel';
 import {
@@ -114,13 +114,6 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     setScreen('programs');
     setSelectedId(null);
   }, [requestedDeck]);
-  // The code review drills (`?drills=open`) likewise leave the program they were opened from.
-  const drillsOpen = searchParams.get('drills') === 'open';
-  useEffect(() => {
-    if (!drillsOpen) return;
-    setScreen('programs');
-    setSelectedId(null);
-  }, [drillsOpen]);
   // The review screen is the address `?course=…&lesson=…&review=claims` (§2.3).
   const reviewCourse = searchParams.get('review') === 'claims' ? searchParams.get('course') : null;
   const reviewLesson = reviewCourse ? searchParams.get('lesson') : null;
@@ -224,6 +217,27 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
     }
   };
 
+  const latestSelectDestination = useRef(handleSelectDestination);
+  latestSelectDestination.current = handleSelectDestination;
+  useEffect(() => {
+    if (selectedId) writeLastCourse(selectedId);
+  }, [selectedId]);
+  // `?drills=open` (the command palette) opens the review drills of the course opened last, else of the first active one.
+  const drillsLink = searchParams.get('drills') === 'open';
+  const programList = programs.data;
+  useEffect(() => {
+    if (!drillsLink || !programList) return;
+    setSearchParams((current) => {
+      const next = new URLSearchParams(current);
+      next.delete('drills');
+      return next;
+    }, { replace: true });
+    const active = programList.filter((item) => item.status === 'active');
+    const last = readLastCourse();
+    const target = active.find((item) => item.id === last) ?? active[0];
+    if (target) latestSelectDestination.current({ programId: target.id, tab: 'drills' });
+  }, [drillsLink, programList, setSearchParams]);
+
   const handleSelectFramework = (action: FrameworkAction) => {
     if (action === 'interleaving') {
       flashcardsRef.current?.scrollIntoView({ block: 'start' });
@@ -242,7 +256,6 @@ function LearningStudioContent({ destination, exportingAll, onOpenDestination }:
   };
 
   if (flashcardRoute && !selectedId && screen === 'programs') return <FlashcardDeckView />;
-  if (drillsOpen && !selectedId && screen === 'programs') return <CodeReviewDrillScreen onBack={() => setSearchParams({})} />;
   if (screen === 'import' || screen === 'export-all') return <div className="studio-page-scroll h-full min-h-0 overflow-y-auto bg-background"><div className="mx-auto max-w-3xl"><button type="button" disabled={exportingAll} onClick={() => setScreen('programs')} className="mb-2 inline-flex min-h-10 items-center gap-2 text-sm text-text-muted hover:text-text-primary disabled:opacity-50"><ArrowLeft size={16} /> All programs</button>{screen === 'import' ? <ImportCourseFlow headingLevel={2} onImported={openImported} /> : <ExportAllCourses />}</div></div>;
   if (screen === 'builder') return <div className="h-full min-h-0 overflow-y-auto bg-background px-5 py-7 sm:px-8"><LearningModelNotice /><ProgramBuilder onOpenDraft={() => { if (generate.progress?.programId) { setSelectedId(generate.progress.programId); setScreen('programs'); } }} progress={generate.progress} cancelling={generate.cancelling} onStop={() => { void generate.cancel(); }} cancelError={generate.cancelError} pending={generate.isPending} error={generate.error ?? undefined} onGenerate={create} onCancel={() => setScreen('programs')} /></div>;
 

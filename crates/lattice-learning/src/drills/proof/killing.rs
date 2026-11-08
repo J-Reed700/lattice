@@ -132,7 +132,7 @@ impl ProofStrategy for KillingTest<'_> {
             if let (RunOutcome::Passed, RunOutcome::Failed { .. }) = (&clean, &changed) {
                 return Ok(ProofVerdict::Proven {
                     proof: Proof::Killed { test },
-                    mutation: case.mutation.clone(),
+                    mutation: Box::new(case.mutation.clone()),
                     trail,
                 });
             }

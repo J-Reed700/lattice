@@ -143,6 +143,68 @@ async fn a_pass_that_fixes_the_defect_publishes_with_nothing_waiting() -> Result
 }
 
 #[tokio::test]
+async fn a_lessons_own_repair_stays_in_the_review_phase() -> Result<()> {
+    let model = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        retitle("Corrected example"),
+        review(None),
+    ]);
+    let (reviewed, phases, stages) =
+        crate::lesson_progress::phased(run(&model, lesson(EXCERPT))).await;
+    reviewed?;
+    assert_eq!(phases, vec![crate::lesson_progress::Phase::Review]);
+    assert!(stages
+        .iter()
+        .any(|stage| stage == "Correcting the lesson from review findings"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_quiz_batch_reviewed_inside_a_lesson_job_changes_no_phase() -> Result<()> {
+    let issue = json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."]}).to_string();
+    let patch = json!({"edits":[{"path":"/wrong","before":true,"after":false}]}).to_string();
+    let model = model(vec![issue, patch, json!({"issues":[]}).to_string()]);
+    let (reviewed, phases, stages) = crate::lesson_progress::phased(async {
+        crate::lesson_progress::phase(
+            crate::lesson_progress::Phase::Evidence,
+            "Verifying factual claims",
+        );
+        review_and_repair(
+            &model,
+            "Author quiz questions",
+            "Require a correct comparison",
+            &json!({"type":"object"}),
+            json!({"wrong":true}).to_string(),
+            2000,
+        )
+        .await
+    })
+    .await;
+    reviewed?;
+    assert_eq!(phases, vec![crate::lesson_progress::Phase::Evidence]);
+    let quiz: Vec<_> = stages
+        .iter()
+        .filter(|stage| stage.contains("quiz"))
+        .map(String::as_str)
+        .collect();
+    assert_eq!(
+        quiz,
+        [
+            "Checking the quiz questions' answer keys",
+            "Reviewing the quiz questions",
+            "Correcting the quiz questions from review findings",
+            "Checking the quiz questions' answer keys",
+            "Rechecking the corrected quiz questions",
+        ]
+    );
+    assert!(!stages.iter().any(|stage| stage.contains("lesson")));
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_revised_quotation_that_still_matches_no_reference_waits_instead_of_failing() -> Result<()>
 {
     let model = model(vec![

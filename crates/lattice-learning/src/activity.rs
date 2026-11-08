@@ -135,13 +135,32 @@ fn phase_words(phase: LearningGenerationPhase) -> &'static str {
         LearningGenerationPhase::References => "Preparing reference material",
         LearningGenerationPhase::Writing => "Building the lesson draft",
         LearningGenerationPhase::Review => "Reviewing teaching and assessments",
-        LearningGenerationPhase::Inventory => "Identifying factual claims",
+        LearningGenerationPhase::Inventory => "Identifying factual statements",
         LearningGenerationPhase::Coverage => "Checking every section is covered",
         LearningGenerationPhase::Examples => "Checking worked examples",
-        LearningGenerationPhase::Evidence => "Verifying factual claims",
-        LearningGenerationPhase::Research => "Researching unresolved claims",
+        LearningGenerationPhase::Evidence => "Verifying factual statements",
+        LearningGenerationPhase::Research => "Researching unresolved statements",
         LearningGenerationPhase::Repair => "Repairing the draft",
+        LearningGenerationPhase::Questions => "Writing quiz questions",
         LearningGenerationPhase::Publishing => "Saving the verified lesson",
+    }
+}
+
+/// The step of the lesson's progress view a phase shows under, as
+/// `lessonPreparationActivity.ts` groups them.
+fn progress_step(phase: LearningGenerationPhase) -> u8 {
+    match phase {
+        LearningGenerationPhase::References => 0,
+        LearningGenerationPhase::Writing => 1,
+        LearningGenerationPhase::Review => 2,
+        LearningGenerationPhase::Inventory
+        | LearningGenerationPhase::Coverage
+        | LearningGenerationPhase::Examples => 3,
+        LearningGenerationPhase::Evidence
+        | LearningGenerationPhase::Research
+        | LearningGenerationPhase::Repair => 4,
+        LearningGenerationPhase::Questions => 5,
+        LearningGenerationPhase::Publishing => 6,
     }
 }
 
@@ -194,7 +213,7 @@ fn lesson_item(
         ActivityProgress::of(
             u64::from(activity.checks_completed),
             u64::from(activity.checks_total),
-            "claims checked",
+            "statements checked",
         )
     });
     let lessons_done = (job.progress_total > 1).then(|| {
@@ -204,9 +223,12 @@ fn lesson_item(
             "lessons",
         )
     });
-    item = item
-        .detail(phase_words(activity.phase))
-        .progress(checks.or(lessons_done));
+    let detail = if progress_step(activity.phase) < progress_step(activity.reached) {
+        "Checking the repaired draft again"
+    } else {
+        phase_words(activity.phase)
+    };
+    item = item.detail(detail).progress(checks.or(lessons_done));
     match activity.model_name {
         Some(name) if activity.model_running => item.uses(ActivityResource::Model { name }),
         _ => item,
@@ -269,5 +291,95 @@ fn outline_item(
             item.uses(ActivityResource::Model { name: name.clone() })
         }
         _ => item,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn running_preparation(activity: LearningGenerationActivity) -> JobRecord {
+        JobRecord {
+            id: "job-1".into(),
+            kind: "learning.lesson_preparation".into(),
+            subject_id: Some("program-1".into()),
+            operation_id: "operation-1".into(),
+            payload_hash: "hash".into(),
+            status: JobStatus::Running,
+            requested: serde_json::json!({}),
+            progress_current: 0,
+            progress_total: 1,
+            progress_message: String::new(),
+            activity: serde_json::to_value(activity).ok(),
+            staged_result: None,
+            result_ref: None,
+            error_code: None,
+            cause_code: None,
+            error_message: None,
+            retry_of_job_id: None,
+            retry_count: 0,
+            retry_not_before: None,
+            created_at: 0,
+            started_at: Some(0),
+            finished_at: None,
+            heartbeat_at: None,
+        }
+    }
+
+    #[test]
+    fn a_running_preparation_counts_statements_checked_and_names_its_phase_in_statements() {
+        let job = running_preparation(LearningGenerationActivity {
+            phase: LearningGenerationPhase::Evidence,
+            checks_completed: 2,
+            checks_total: 4,
+            ..Default::default()
+        });
+        let item = lesson_item(&job, &HashMap::new(), &HashMap::new());
+        assert_eq!(item.detail.as_deref(), Some("Verifying factual statements"));
+        assert_eq!(
+            item.progress.map(|progress| progress.unit),
+            Some("statements checked".to_string())
+        );
+        assert_eq!(
+            phase_words(LearningGenerationPhase::Inventory),
+            "Identifying factual statements"
+        );
+        assert_eq!(
+            phase_words(LearningGenerationPhase::Research),
+            "Researching unresolved statements"
+        );
+    }
+
+    #[test]
+    fn a_check_the_repaired_draft_goes_back_through_is_named_as_that() {
+        use LearningGenerationPhase as Phase;
+        let detail = |phase, reached| {
+            let job = running_preparation(LearningGenerationActivity {
+                phase,
+                reached,
+                ..Default::default()
+            });
+            lesson_item(&job, &HashMap::new(), &HashMap::new()).detail
+        };
+        assert_eq!(
+            detail(Phase::Review, Phase::Repair).as_deref(),
+            Some("Checking the repaired draft again")
+        );
+        assert_eq!(
+            detail(Phase::Coverage, Phase::Repair).as_deref(),
+            Some("Checking the repaired draft again")
+        );
+        assert_eq!(
+            detail(Phase::Evidence, Phase::Repair).as_deref(),
+            Some("Verifying factual statements")
+        );
+        assert_eq!(
+            detail(Phase::Repair, Phase::Repair).as_deref(),
+            Some("Repairing the draft")
+        );
+        assert_eq!(
+            detail(Phase::Review, Phase::Review).as_deref(),
+            Some("Reviewing teaching and assessments")
+        );
     }
 }

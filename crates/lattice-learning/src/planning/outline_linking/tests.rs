@@ -659,3 +659,121 @@ async fn a_chooser_reason_is_kept_whole() {
         reason.chars().count()
     );
 }
+
+/// Records the progress the run reports while the chooser is being asked.
+struct Watching<'a> {
+    inner: ScriptedModel,
+    progress: &'a OutlineProgress,
+    seen: std::sync::Mutex<Vec<(OutlineStage, Option<String>)>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Watching<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        let now = self.progress.snapshot();
+        self.seen.lock().unwrap().push((now.stage, now.detail));
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+fn two_modules() -> OutlineDraft {
+    let summary = |text: &str| json!({"text":text,"sourceIndex":null,"quote":""});
+    draft(json!({"modules":[
+        {"title":"Comparisons","prerequisiteIndices":[],
+         "summary":summary("Compare treatment groups."),"outcomes":[],"lessons":[]},
+        {"title":"Assignment","prerequisiteIndices":[],
+         "summary":summary("Explain how random assignment limits confounding when groups are compared."),
+         "outcomes":[],"lessons":[]}
+    ]}))
+}
+
+fn watching<'a>(progress: &'a OutlineProgress, link_id: &str) -> Watching<'a> {
+    Watching {
+        inner: model(vec![json!({"links":[
+            {"id":link_id,"candidate":"p1","reason":"The passage explains random assignment."}
+        ]})]),
+        progress,
+        seen: std::sync::Mutex::new(vec![]),
+    }
+}
+
+#[tokio::test]
+async fn linking_one_module_leaves_the_stage_the_revision_is_in() {
+    let progress = OutlineProgress::default();
+    progress.stage(OutlineStage::Repairing);
+    let llm = watching(&progress, "/modules/1/summary");
+    link(&llm, &mut two_modules(), &sources(), Some(1), &progress)
+        .await
+        .unwrap();
+    assert_eq!(progress.snapshot().stage, OutlineStage::Repairing);
+    assert_eq!(llm.seen.lock().unwrap()[0].0, OutlineStage::Repairing);
+}
+
+#[tokio::test]
+async fn linking_the_whole_outline_is_the_citation_stage() {
+    let progress = OutlineProgress::default();
+    progress.stage(OutlineStage::Repairing);
+    let llm = watching(&progress, "/modules/1/summary");
+    link(&llm, &mut two_modules(), &sources(), None, &progress)
+        .await
+        .unwrap();
+    assert_eq!(progress.snapshot().stage, OutlineStage::CheckingCitations);
+    assert_eq!(
+        llm.seen.lock().unwrap()[0].0,
+        OutlineStage::CheckingCitations
+    );
+}
+
+#[tokio::test]
+async fn linking_one_module_names_the_module_and_says_one_item() {
+    let progress = OutlineProgress::default();
+    let llm = watching(&progress, "/modules/1/summary");
+    link(&llm, &mut two_modules(), &sources(), Some(1), &progress)
+        .await
+        .unwrap();
+    assert_eq!(
+        llm.seen.lock().unwrap()[0].1.as_deref(),
+        Some("Module 2 of 2: linking 1 item to references (0 already linked)")
+    );
+    assert_eq!(
+        progress.snapshot().detail.as_deref(),
+        Some("Module 2 of 2: linked 1 item; 1 of 1 decided")
+    );
+}
+
+#[tokio::test]
+async fn linking_the_whole_outline_says_one_outline_item() {
+    let progress = OutlineProgress::default();
+    let llm = watching(&progress, "/modules/0/summary");
+    let mut one = draft(json!({"modules":[
+        {"title":"Assignment","prerequisiteIndices":[],
+         "summary":{"text":"Explain how random assignment limits confounding when groups are compared.","sourceIndex":null,"quote":""},
+         "outcomes":[],"lessons":[]}
+    ]}));
+    link(&llm, &mut one, &sources(), None, &progress)
+        .await
+        .unwrap();
+    assert_eq!(
+        llm.seen.lock().unwrap()[0].1.as_deref(),
+        Some("Linking 1 outline item to references (0 already linked)")
+    );
+    assert_eq!(
+        progress.snapshot().detail.as_deref(),
+        Some("Linked 1 outline item; 1 of 1 decided")
+    );
+}

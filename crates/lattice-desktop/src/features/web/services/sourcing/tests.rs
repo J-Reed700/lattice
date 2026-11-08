@@ -645,3 +645,63 @@ async fn a_scope_that_has_not_moved_is_searched_as_asked() {
         ["https://json-schema.org/understanding-json-schema/reference/object"]
     );
 }
+
+fn plain_http() -> crate::features::web::services::finders::FinderHttp {
+    crate::features::web::services::finders::FinderHttp {
+        client: reqwest::Client::new(),
+        pacer: Arc::new(
+            crate::features::web::services::web::SitePacer::with_interval(Duration::ZERO),
+        ),
+        parsers: Arc::new(tokio::sync::Semaphore::new(2)),
+        contact: None,
+        public_only: false,
+    }
+}
+
+/// Following a page's links: a status the page answered is a status, and a
+/// server that never answered is a lost connection.
+#[tokio::test]
+async fn following_a_page_names_the_status_it_answered_and_a_dead_server_as_network() {
+    use crate::features::web::services::finders::{wikidata::Wikidata, wikipedia::Wikipedia};
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&server)
+        .await;
+    let gone = url::Url::parse(&format!("{}/gone", server.uri())).unwrap();
+    let dead = {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").unwrap();
+        let port = listener.local_addr().unwrap().port();
+        drop(listener);
+        url::Url::parse(&format!("http://127.0.0.1:{port}/page")).unwrap()
+    };
+    let owner = Arc::new(super::OwnerResolver::with_system_clock(
+        Arc::new(Wikidata::new(plain_http())),
+        Arc::new(Wikipedia::new(plain_http())),
+        None,
+        lattice_core::domain::sourcing::SourcingPolicy::default(),
+    ));
+    let service = SourcingService::new(Vec::new(), SourcingSettingsDto::default(), BTreeSet::new())
+        .with_owner_and_http(owner, plain_http());
+
+    let error = service
+        .leads_from_page(&gone, None, budget(PLENTY))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, lattice_core::shared::error::AppError::HttpStatus { status: 404, message } if message == &format!("HTTP 404 fetching {gone}")),
+        "{error:?}"
+    );
+
+    let error = service
+        .leads_from_page(&dead, None, budget(PLENTY))
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, lattice_core::shared::error::AppError::Network(message) if message.starts_with(&format!("Failed to fetch {dead}: "))),
+        "{error:?}"
+    );
+}

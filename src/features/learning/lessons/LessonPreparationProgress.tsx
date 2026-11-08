@@ -16,11 +16,11 @@ import { LEARNING_PROGRAMS_KEY, learningProgramKey } from '@/features/learning/w
 import type { LearningGenerationJob } from '@/lib/bindings';
 import { jobErrorToError } from '@/lib/errorHandling';
 
-const workflow = ['References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Publish'];
+const workflow = ['References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Quiz questions', 'Publish'];
 
 /** "Re-checking 81 claims against 72 new references". */
 function recheckLine(references: number, claims: number): string {
-  return `Re-checking ${claims} ${claims === 1 ? 'claim' : 'claims'} against ${references} new ${references === 1 ? 'reference' : 'references'}`;
+  return `Re-checking ${claims} ${claims === 1 ? 'statement' : 'statements'} against ${references} new ${references === 1 ? 'reference' : 'references'}`;
 }
 
 /** A finished job's lessons are new course content: reload the course. */
@@ -41,7 +41,7 @@ const HOLD_WORDS: Record<Exclude<ReviewHold, 'claims'>, string> = {
   resolved: 'everything is resolved · resume to publish',
 };
 
-/** One held lesson: "<title> — 33 claims need you · Review". Never a failure, never the claims themselves. */
+/** One held lesson: "<title> — 33 statements need you · Review". Never a failure, never the claims themselves. */
 function HeldLessonLine({ programId, lessonId, title, onReview }: { programId: string; lessonId: string; title: string; onReview?: ReviewOpener }) {
   const review = useLessonClaimReview(programId, lessonId).data;
   const waiting = review?.claims.filter(isWaitingForYou).length ?? null;
@@ -108,7 +108,7 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
   const currentChecks = active && !queued && activity?.phase === 'evidence';
   // Research saved references; this step of the pass checks claims again against them.
   const recheck = currentChecks && activity?.newReferences != null ? recheckLine(activity.newReferences, activity.checksTotal) : null;
-  const bar = hasChecks ? { label: 'Claim checks this pass', value: activity.checksCompleted, max: activity.checksTotal, text: `${activity.checksCompleted} of ${activity.checksTotal} checked` } : null;
+  const bar = hasChecks ? { label: 'Statement checks this pass', value: activity.checksCompleted, max: activity.checksTotal, text: `${activity.checksCompleted} of ${activity.checksTotal} checked` } : null;
   // The plan: what the statements were sorted into, and the calls made so far beside the most there can be.
   const calls = activity ? callsLine(activity) : null;
   const showCurrentStep = active && !queued && Boolean(activity);
@@ -143,17 +143,17 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
     {expanded && <div id={detailsId} className="mt-3 space-y-4 border-t border-accent/15 pt-3">
       {showCurrentStep && job ? <LessonPreparationCurrentStep job={job} now={now} /> : <div>
         <h4 className="text-base font-semibold text-text-primary">{paused ? phase ? `Paused at: ${phase.title}` : 'Saved work is available' : reconnecting ? 'Preparation interrupted' : queued ? 'Waiting for a preparation slot' : phase?.title ?? (active ? 'Starting lesson preparation' : 'Saved work is available')}</h4>
-        <p className="mt-2 text-sm leading-6 text-text-secondary">{paused ? 'Preparation stays paused until you choose Resume, even after reopening the app. Your draft and completed checkpoints are saved.' : reconnecting ? null : queued ? 'Your request is saved. Preparation continues automatically when a worker is available.' : phase?.detail ?? 'Preparation includes writing, reviewing the teaching and answer keys, and checking factual claims against saved references.'}</p>
+        <p className="mt-2 text-sm leading-6 text-text-secondary">{paused ? 'Preparation stays paused until you choose Resume, even after reopening the app. Your draft and completed checkpoints are saved.' : reconnecting ? null : queued ? 'Your request is saved. Preparation continues automatically when a worker is available.' : phase?.detail ?? 'Preparation includes writing, reviewing the teaching and answer keys, and checking factual statements against saved references.'}</p>
         {reconnecting && phase && <p className="mt-2 text-xs leading-5 text-text-secondary">Last step: {phase.title}. When preparation resumes, it reuses completed checks and repeats unfinished work.</p>}
         {!paused && <p className="mt-2 wrap-break-word text-xs leading-5 text-text-muted" aria-live="polite">{job?.progressMessage || 'Saving the preparation request…'}</p>}
         {paused && <p className="mt-2 text-xs leading-5 text-text-secondary">Lesson writing and fact-checking use the main model in Settings. Changing only the utility model does not change these checks. Switching the main model currently starts drafting and verification again.</p>}
       </div>}
       {job && job.progressTotal > 1 && <p className="text-xs text-text-muted">{job.progressCompleted}/{job.progressTotal} lessons staged · Publication follows verification.</p>}
-      <ol aria-label="Preparation workflow" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
+      <ol aria-label="Preparation workflow" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">
         {workflow.map((label, index) => <li key={label} aria-current={active && !queued && phase?.group === index ? 'step' : undefined} className={`rounded-lg border px-3 py-2 text-xs ${active && !queued && phase?.group === index ? 'border-accent/50 bg-accent/10 font-semibold text-text-primary' : 'border-border text-text-muted'}`}><span className="mr-1.5 tabular-nums opacity-60">{index + 1}</span>{label}</li>)}
       </ol>
       {activity && (activity.statements || calls || hasChecks) && <div aria-label="Statement checks" className="rounded-xl border border-border bg-background/70 p-4">
-        {hasChecks && <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="font-semibold text-text-primary">{recheck ?? (currentChecks ? 'Claim checks this pass' : 'Last claim checks')}</span><span className="tabular-nums text-text-secondary">{activity.checksCompleted} / {activity.checksTotal} checked</span></div>}
+        {hasChecks && <div className="flex flex-wrap justify-between gap-2 text-xs"><span className="font-semibold text-text-primary">{recheck ?? (currentChecks ? 'Statement checks this pass' : 'Last statement checks')}</span><span className="tabular-nums text-text-secondary">{activity.checksCompleted} / {activity.checksTotal} checked</span></div>}
         {activity.statements && <p className="mt-3 text-sm leading-6 text-text-primary">{statementsLine(activity.statements)}</p>}
         {calls && <p className="mt-1 text-sm tabular-nums text-text-secondary">{calls}</p>}
         {hasChecks && <dl className="mt-3 grid grid-cols-2 gap-3 text-xs">
@@ -162,7 +162,7 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
         </dl>}
       </div>}
       {activity?.claims && <div className="rounded-xl border border-border bg-background/70 p-4 text-xs leading-5">
-        <h4 className="font-semibold text-text-primary">Claims</h4>
+        <h4 className="font-semibold text-text-primary">Statements</h4>
         <p className="mt-1 tabular-nums text-text-secondary">{jobTallyLine(activity.claims)}</p>
       </div>}
       <p className="flex flex-wrap items-center gap-2 text-xs leading-5 text-text-secondary"><Save size={14} className="shrink-0 text-accent" aria-hidden="true" /><span className="font-medium text-text-primary">{activity?.lastCheckpointAt ? `Checkpoint saved at ${new Date(activity.lastCheckpointAt).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' })}` : 'Progress saves automatically'}.</span>

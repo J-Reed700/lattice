@@ -231,10 +231,10 @@ impl FunctionExecutor {
                 .map_err(|e| AppError::Network(format!("Failed to call Wikipedia API: {}", e)))?;
 
             if !response.status().is_success() {
-                return Err(AppError::Network(format!(
-                    "Wikipedia API returned HTTP {}",
-                    response.status()
-                )));
+                return Err(AppError::HttpStatus {
+                    status: response.status().as_u16(),
+                    message: format!("Wikipedia API returned HTTP {}", response.status()),
+                });
             }
 
             let payload = response
@@ -324,10 +324,10 @@ impl FunctionExecutor {
                 .map_err(|e| AppError::Network(format!("Failed to call Wikipedia API: {}", e)))?;
 
             if !response.status().is_success() {
-                return Err(AppError::Network(format!(
-                    "Wikipedia summary returned HTTP {}",
-                    response.status()
-                )));
+                return Err(AppError::HttpStatus {
+                    status: response.status().as_u16(),
+                    message: format!("Wikipedia summary returned HTTP {}", response.status()),
+                });
             }
 
             let payload = response

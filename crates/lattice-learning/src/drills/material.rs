@@ -5,7 +5,7 @@
 //!
 //! `CodeMaterial` is code; `PassageMaterial` is an explanation of a passage of a course's source.
 
-mod code;
+pub(crate) mod code;
 pub(crate) mod passage;
 
 pub(crate) use code::CodeMaterial;
@@ -39,6 +39,8 @@ pub struct PlantWording {
     pub prompt: String,
     /// Whether each change comes with a test that observes it, or the reason none can.
     pub asks_verification: bool,
+    /// The most lesson issues the planter may plant: 0 when it is told of none.
+    pub lesson_issues: usize,
 }
 
 /// What the blind reviewer and the describer of a problem it found are told.
@@ -118,10 +120,10 @@ pub trait DrillMaterial: Send + Sync {
     /// How a learner's fix of `issue` is checked, on `tools`.
     fn fix_strategy<'a>(&'a self, issue: &KeyIssue, tools: Tools<'a>) -> Box<dyn FixStrategy + 'a>;
 
-    /// Stage 5. What the blind reviewer and the describer are told.
+    /// Stage 6. What the blind reviewer and the describer are told.
     fn reviewer_wording(&self, spec: &DrillSpec) -> ReviewerWording;
 
-    /// Stage 5. What both are shown beside the material of `baseline`, when they are shown anything: for a passage,
+    /// Stage 6. What both are shown beside the material of `baseline`, when they are shown anything: for a passage,
     /// the source it was written from.
     fn reviewer_context(&self, _baseline: &Baseline) -> Option<String> {
         None

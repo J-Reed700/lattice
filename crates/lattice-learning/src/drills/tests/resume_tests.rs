@@ -1,14 +1,15 @@
-//! The build as a whole: six stages in a fixed order, a checkpoint after each of the first five, and a resumed job
+//! The build as a whole: seven steps in a fixed order, a checkpoint after each of the first six, and a resumed job
 //! that starts at the first stage without one and repeats no model call and no run.
 
 use super::support::{
-    blind_answer, blind_assessment, clean_code_answer, code, entry_answer, files, judge_answer,
-    plant_answer, planted, proved, purpose, quiet, review, review_answer, spec, system, FakeGrader,
-    FakeRunner, Harness, ScriptedModel, KILLING_TEST, MODEL, SUITE,
+    blind_answer, blind_assessment, built_drill, clean_code_answer, code, code_check_answer,
+    entry_answer, files, judge_answer, lesson_brief, lesson_check_answer, lesson_proved,
+    plant_answer, planted, purpose, quiet, review, review_answer, system, FakeGrader, FakeRunner,
+    Harness, ScriptedModel, KILLING_TEST, MODEL, SUITE,
 };
-use crate::drills::build::{DrillBuild, Evidence, ModelCall, Stage};
+use crate::drills::build::{CleanCode, DrillBuild, Evidence, LessonChecked, ModelCall, Stage};
 use crate::drills::material::CodeMaterial;
-use crate::drills::repository::{self, StoredDrill};
+use crate::drills::repository::StoredDrill;
 use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::persistence::db;
 use lattice_core::domain::learning::drills::{Origin, Proof};
@@ -21,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 /// judge of the smell (the killed one asks nothing), the blind review and the one extra described.
 fn answers() -> Vec<String> {
     vec![
+        code_check_answer(true),
         clean_code_answer(),
         review_answer(vec![]),
         plant_answer(),
@@ -30,7 +32,8 @@ fn answers() -> Vec<String> {
     ]
 }
 
-const PURPOSES: [&str; 6] = [
+const PURPOSES: [&str; 7] = [
+    "code fit check",
     "clean code",
     "clean review",
     "plant",
@@ -40,8 +43,7 @@ const PURPOSES: [&str; 6] = [
 ];
 
 async fn stored(harness: &Harness) -> Result<StoredDrill> {
-    let mut connection = harness.pool.acquire().await.map_err(db)?;
-    repository::oldest_ready_in(&mut connection, "python")
+    built_drill(&harness.pool)
         .await?
         .ok_or_else(|| AppError::NotFound("the stored drill".into()))
 }
@@ -62,14 +64,14 @@ fn every_call(evidence: &Evidence) -> Vec<ModelCall> {
 
 #[tokio::test]
 async fn the_stages_run_in_order_each_leaves_a_checkpoint_and_the_drill_is_stored() -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let model = ScriptedModel::new(answers());
     let runner = FakeRunner::killing_the_operator();
     let grader = FakeGrader::new(blind_assessment());
     let context = harness.context().await?;
     let outcome = harness
         .build(&model, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await?;
     assert_eq!(outcome, JobOutcome::Committed);
     assert_eq!(model.purposes(), PURPOSES);
@@ -82,6 +84,7 @@ async fn the_stages_run_in_order_each_leaves_a_checkpoint_and_the_drill_is_store
             "drill-build-v1:clean_review",
             "drill-build-v1:plant",
             "drill-build-v1:prove",
+            "drill-build-v1:lesson_check",
             "drill-build-v1:blind_review"
         ]
     );
@@ -121,7 +124,7 @@ async fn the_stages_run_in_order_each_leaves_a_checkpoint_and_the_drill_is_store
     assert_eq!(drill.clean_files, files());
     assert_eq!(drill.suite.as_deref(), Some(SUITE));
     assert_eq!(drill.runner.as_deref(), Some("fake-python"));
-    assert_eq!(drill.domain, "rate limiting");
+    assert_eq!(drill.domain, "Spacing study over sessions");
 
     // The evidence names the model of every call, and holds the runs and the judge's reason.
     let calls = every_call(&drill.evidence);
@@ -136,17 +139,17 @@ async fn the_stages_run_in_order_each_leaves_a_checkpoint_and_the_drill_is_store
 
 #[tokio::test]
 async fn progress_is_reported_for_each_stage() -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let model = ScriptedModel::new(answers());
     let runner = FakeRunner::killing_the_operator();
     let grader = FakeGrader::new(blind_assessment());
     let context = harness.context().await?;
     harness
         .build(&model, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await?;
     let messages: Vec<String> = sqlx::query_scalar(
-        "SELECT message FROM job_events WHERE job_id=? AND message LIKE '% of 6)' ORDER BY ordinal",
+        "SELECT message FROM job_events WHERE job_id=? AND message LIKE '% of 7)' ORDER BY ordinal",
     )
     .bind(&harness.job)
     .fetch_all(&harness.pool)
@@ -155,12 +158,13 @@ async fn progress_is_reported_for_each_stage() -> Result<()> {
     assert_eq!(
         messages,
         [
-            "Writing the code (1 of 6)",
-            "Reviewing the code (2 of 6)",
-            "Planting the defects (3 of 6)",
-            "Proving the defects (4 of 6)",
-            "Reviewing the drill blind (5 of 6)",
-            "Storing the drill (6 of 6)"
+            "Writing the code (1 of 7)",
+            "Reviewing the code (2 of 7)",
+            "Planting the defects (3 of 7)",
+            "Proving the defects (4 of 7)",
+            "Checking the lesson's issues (5 of 7)",
+            "Reviewing the drill blind (6 of 7)",
+            "Storing the drill (7 of 7)"
         ]
     );
     Ok(())
@@ -168,7 +172,7 @@ async fn progress_is_reported_for_each_stage() -> Result<()> {
 
 /// The run a crash interrupts after `done` stages, then the run that resumes it.
 async fn crash_after(done: usize, calls_before: usize) -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
 
     let first = ScriptedModel::new(answers().into_iter().take(calls_before));
     let runner = FakeRunner::killing_the_operator();
@@ -176,7 +180,7 @@ async fn crash_after(done: usize, calls_before: usize) -> Result<()> {
     let context = harness.context().await?;
     let error = harness
         .build(&first, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await
         .unwrap_err();
     assert!(
@@ -199,7 +203,7 @@ async fn crash_after(done: usize, calls_before: usize) -> Result<()> {
     let context = harness.context().await?;
     let outcome = harness
         .build(&second, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await?;
     assert_eq!(outcome, JobOutcome::Committed);
     assert_eq!(
@@ -224,8 +228,11 @@ async fn crash_after(done: usize, calls_before: usize) -> Result<()> {
 
 #[tokio::test]
 async fn a_job_resumed_after_each_checkpoint_repeats_no_call() -> Result<()> {
-    // The number of calls the first run makes, per stage done: 1, 2, 3 and 4.
-    for (done, calls_before) in [(1, 1), (2, 2), (3, 3), (4, 4)] {
+    // The number of calls the first run makes, per stage done: the fit check and the code are 2, then 3 and 4; the
+    // lesson check of a drill with no lesson issue asks nothing, so the run that stops at the blind review has made
+    // five calls and saved five stages. A run that stops after the fit check alone saves no stage, and the resumed
+    // run does not ask it again.
+    for (done, calls_before) in [(0, 1), (1, 2), (2, 3), (3, 4), (5, 5)] {
         crash_after(done, calls_before).await?;
     }
     Ok(())
@@ -234,12 +241,18 @@ async fn a_job_resumed_after_each_checkpoint_repeats_no_call() -> Result<()> {
 #[tokio::test]
 async fn a_job_resumed_with_every_checkpoint_stores_the_drill_with_no_call_and_no_run() -> Result<()>
 {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
+    let proved = lesson_proved(&[1], &[]);
+    let checked = LessonChecked {
+        links: vec![lesson_brief().link(&[1]), None],
+        checks: Vec::new(),
+    };
     let outputs = [
         (Stage::CleanCode, serde_json::to_value(code())?),
         (Stage::CleanReview, serde_json::to_value(review())?),
         (Stage::Plant, serde_json::to_value(planted())?),
-        (Stage::Prove, serde_json::to_value(proved())?),
+        (Stage::Prove, serde_json::to_value(&proved)?),
+        (Stage::LessonCheck, serde_json::to_value(&checked)?),
         (Stage::BlindReview, serde_json::to_value(quiet())?),
     ];
     for (stage, output) in &outputs {
@@ -256,7 +269,7 @@ async fn a_job_resumed_with_every_checkpoint_stores_the_drill_with_no_call_and_n
     let context = harness.context().await?;
     let outcome = harness
         .build(&model, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await?;
     assert_eq!(outcome, JobOutcome::Committed);
     assert!(model.requests().is_empty());
@@ -264,13 +277,77 @@ async fn a_job_resumed_with_every_checkpoint_stores_the_drill_with_no_call_and_n
     assert!(grader.seen().is_empty());
     let drill = stored(&harness).await?;
     assert_eq!(drill.drill.id, code().drill_id);
-    assert_eq!(drill.drill.key, proved().planted_key());
+    assert_eq!(drill.drill.key, proved.planted_key(&checked));
+    assert_eq!(drill.drill.key[0].lesson, lesson_brief().link(&[1]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_job_saved_after_the_prove_stage_resumes_at_the_lesson_check() -> Result<()> {
+    let (harness, spec) = Harness::lesson().await?;
+    let clean = CleanCode {
+        brief: Some(lesson_brief()),
+        basis: Some("basis-1".into()),
+        ..code()
+    };
+    let outputs = [
+        (Stage::CleanCode, serde_json::to_value(clean)?),
+        (Stage::CleanReview, serde_json::to_value(review())?),
+        (Stage::Plant, serde_json::to_value(planted())?),
+        (
+            Stage::Prove,
+            serde_json::to_value(lesson_proved(&[1], &[]))?,
+        ),
+    ];
+    for (stage, output) in &outputs {
+        assert!(
+            harness
+                .store
+                .put_checkpoint(&harness.job, &stage.key(), output)
+                .await?
+        );
+    }
+    let model = ScriptedModel::new([
+        lesson_check_answer(true, true),
+        blind_answer(),
+        entry_answer(),
+    ]);
+    let runner = FakeRunner::killing_the_operator();
+    let grader = FakeGrader::new(blind_assessment());
+    let context = harness.context().await?;
+    let outcome = harness
+        .build(&model, Some(&runner), &grader)
+        .run(&context, &spec)
+        .await?;
+    assert_eq!(outcome, JobOutcome::Committed);
+    assert_eq!(
+        model.purposes(),
+        ["lesson check", "blind review", "key entry"],
+        "the stages before it are not asked again"
+    );
+    assert!(harness
+        .store
+        .checkpoint(&harness.job, &Stage::LessonCheck.key())
+        .await?
+        .is_some());
+    let drill = stored(&harness).await?;
+    assert_eq!(drill.drill.key[0].lesson, lesson_brief().link(&[1]));
+    assert_eq!(drill.drill.key[1].lesson, None);
+    assert_eq!(drill.evidence.lesson_checks.len(), 1);
+    assert_eq!(drill.evidence.lesson_checks[0].issue, "planted-1");
+    assert!(drill.evidence.lesson_checks[0].breaks && drill.evidence.lesson_checks[0].follows);
+    let fits: Vec<(i64, String)> =
+        sqlx::query_as("SELECT fits,basis FROM learning_drill_lesson_fits WHERE material='code'")
+            .fetch_all(&harness.pool)
+            .await
+            .map_err(db)?;
+    assert!(fits.is_empty(), "a code drill records no fit: {fits:?}");
     Ok(())
 }
 
 #[tokio::test]
 async fn a_checkpoint_that_does_not_read_is_made_again() -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     harness
         .store
         .put_checkpoint(
@@ -285,7 +362,7 @@ async fn a_checkpoint_that_does_not_read_is_made_again() -> Result<()> {
     let context = harness.context().await?;
     let outcome = harness
         .build(&model, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await?;
     assert_eq!(outcome, JobOutcome::Committed);
     assert_eq!(model.purposes(), PURPOSES);
@@ -295,7 +372,7 @@ async fn a_checkpoint_that_does_not_read_is_made_again() -> Result<()> {
 #[tokio::test]
 async fn a_run_cancelled_under_the_builds_token_stops_the_job_and_saves_nothing_of_its_stage(
 ) -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let cancel = CancellationToken::new();
     let trigger = cancel.clone();
     let runner = FakeRunner::new(move |_, _| {
@@ -312,12 +389,12 @@ async fn a_run_cancelled_under_the_builds_token_stops_the_job_and_saves_nothing_
         &harness.pool,
         cancel,
     )
-    .run(&context, &spec())
+    .run(&context, &spec)
     .await?;
     assert_eq!(outcome, JobOutcome::Stopped);
     assert_eq!(
         model.requests().len(),
-        1,
+        2,
         "the answer is not asked for again"
     );
     for stage in Stage::ALL {
@@ -341,8 +418,12 @@ async fn a_run_cancelled_under_the_builds_token_stops_the_job_and_saves_nothing_
 
 #[tokio::test]
 async fn a_suite_that_never_finishes_fails_the_job_and_a_missing_runtime_defers_it() -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
-    let model = ScriptedModel::new([clean_code_answer(), clean_code_answer()]);
+    let (harness, spec) = Harness::lesson().await?;
+    let model = ScriptedModel::new([
+        code_check_answer(true),
+        clean_code_answer(),
+        clean_code_answer(),
+    ]);
     let runner = FakeRunner::new(|_, _| RunOutcome::TimedOut {
         output: String::new(),
     });
@@ -350,7 +431,7 @@ async fn a_suite_that_never_finishes_fails_the_job_and_a_missing_runtime_defers_
     let context = harness.context().await?;
     let error = harness
         .build(&model, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await
         .unwrap_err();
     assert!(
@@ -361,7 +442,7 @@ async fn a_suite_that_never_finishes_fails_the_job_and_a_missing_runtime_defers_
         matches!(JobFailure::classify(&error), JobFailure::Fail { .. }),
         "a suite or code that loops must not be retried for ever"
     );
-    assert_eq!(model.requests().len(), 2);
+    assert_eq!(model.requests().len(), 3);
 
     let model = ScriptedModel::new([clean_code_answer()]);
     let runner = FakeRunner::new(|_, _| RunOutcome::Unavailable {
@@ -369,7 +450,7 @@ async fn a_suite_that_never_finishes_fails_the_job_and_a_missing_runtime_defers_
     });
     let error = harness
         .build(&model, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await
         .unwrap_err();
     assert!(
@@ -382,14 +463,14 @@ async fn a_suite_that_never_finishes_fails_the_job_and_a_missing_runtime_defers_
 
 #[tokio::test]
 async fn no_prompt_forbids_what_a_pattern_needs() -> Result<()> {
-    let harness = Harness::new(&spec()).await?;
+    let (harness, spec) = Harness::lesson().await?;
     let model = ScriptedModel::new(answers());
     let runner = FakeRunner::killing_the_operator();
     let grader = FakeGrader::new(blind_assessment());
     let context = harness.context().await?;
     harness
         .build(&model, Some(&runner), &grader)
-        .run(&context, &spec())
+        .run(&context, &spec)
         .await?;
     let requests = model.requests();
     for request in &requests {

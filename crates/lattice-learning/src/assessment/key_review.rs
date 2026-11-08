@@ -159,7 +159,7 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
                     let mut finding = ReviewFinding::new(FindingKind::AnswerKey, Some(FindingSite::Question(answer.index)), format!(
                         "Question {} has a disputed or ambiguous answer key: its authored index is {authored}, but an independent solution found indices {:?}. {} Rewrite the question and choices so exactly one answer follows from the literal prompt; verify its key and explanation.",
                         answer.index + 1, answer.correct_indices, answer.reason
-                    ));
+                    )).with_summary("A second, independent solution disagreed with the answer key.");
                     finding.passage = question.get("prompt").and_then(Value::as_str).map(str::to_owned);
                     finding
                 })
@@ -376,6 +376,10 @@ mod tests {
         let issues = check(&model, &candidate()).await?;
         assert_eq!(issues.len(), 1);
         assert!(issues[0].note.starts_with("Question 1 has a disputed"));
+        assert_eq!(
+            issues[0].summary,
+            "A second, independent solution disagreed with the answer key."
+        );
         assert_eq!(issues[0].site, Some(FindingSite::Question(0)));
         assert_eq!(issues[0].passage.as_deref(), Some("Question 0"));
         let prompts = model.prompts.lock().unwrap();

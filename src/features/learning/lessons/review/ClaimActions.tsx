@@ -71,7 +71,7 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
   };
   const accept = () => {
     if (needsNote && form !== 'note') { onFormChange('note'); return; }
-    if (needsNote && !note.trim()) { setFormError('Write a note saying why the claim is right despite the source.'); return; }
+    if (needsNote && !note.trim()) { setFormError('Write a note saying why the statement is right despite the source.'); return; }
     void run({ action: 'confirm', note: note.trim() || null, sourceVersionIds: supporting ? [supporting.source.sourceVersionId] : [] }, 'confirm');
   };
   const saveEdit = () => {
@@ -87,7 +87,7 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
 
   return (
     <div className="space-y-3">
-      <div role="toolbar" aria-label="Claim actions" className="flex flex-wrap gap-2">
+      <div role="toolbar" aria-label="Statement actions" className="flex flex-wrap gap-2">
         {available.has('confirm') && <Button type="button" size="lg" variant={variant('accept')} disabled={busy} onClick={accept} aria-keyshortcuts="A">
           {needsNote ? 'Accept with a note' : 'Accept'}
         </Button>}
@@ -117,9 +117,9 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
       </div>
 
       {form === 'note' && <div className="rounded-xl border border-border bg-background p-4">
-        <label htmlFor={`${id}-note`} className="text-xs font-medium text-text-secondary">Why the claim is right (required)</label>
+        <label htmlFor={`${id}-note`} className="text-xs font-medium text-text-secondary">Why the statement is right (required)</label>
         <textarea id={`${id}-note`} autoFocus value={note} onChange={(event) => setNote(event.target.value)} rows={3} required className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
-        <p className="mt-1 text-xs text-text-muted">A source says otherwise, so your note is kept with the claim and shown in its history.</p>
+        <p className="mt-1 text-xs text-text-muted">A source says otherwise, so your note is kept with the statement and shown in its history.</p>
         <div className="mt-3 flex gap-2">
           <Button type="button" disabled={busy || !note.trim()} onClick={accept}>Accept with this note</Button>
           <Button type="button" variant="ghost" onClick={() => onFormChange(null)}>Cancel</Button>
@@ -139,7 +139,7 @@ export function ClaimActions({ item, sharing, suggested, busy, error, form, onFo
       {form === 'hint' && <div className="rounded-xl border border-border bg-background p-4">
         <label htmlFor={`${id}-hint`} className="text-xs font-medium text-text-secondary">What to search for</label>
         <input id={`${id}-hint`} autoFocus value={hint} onChange={(event) => setHint(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') search(); }} className="mt-1 w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm" />
-        <p className="mt-1 text-xs text-text-muted">Your words are searched as written, then the claim is checked against what is found.</p>
+        <p className="mt-1 text-xs text-text-muted">Your words are searched as written, then the statement is checked against what is found.</p>
         <div className="mt-3 flex gap-2">
           <Button type="button" disabled={busy} onClick={search}>Search</Button>
           <Button type="button" variant="ghost" onClick={() => onFormChange(null)}>Cancel</Button>

@@ -10,7 +10,7 @@ use crate::features::learning::tests;
 use crate::infrastructure::passage_index::build::BATCH_SIZE;
 use crate::infrastructure::passage_index::testing::{BatchGate, FakeEmbedder, FixedEmbedders};
 use lattice_core::shared::{AppError, Result};
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::Arc;
@@ -20,11 +20,7 @@ use std::time::Duration;
 /// reads, as the app's has: the one-connection test database would make a
 /// running build's progress write wait on the build's own read.
 pub(super) async fn pool(dir: &Path) -> Result<SqlitePool> {
-    let options = SqliteConnectOptions::new()
-        .filename(dir.join("lattice.db"))
-        .create_if_missing(true)
-        .busy_timeout(Duration::from_secs(5))
-        .pragma("journal_mode", "WAL");
+    let options = crate::tests::sqlite::file_options(dir.join("lattice.db"));
     let pool = SqlitePoolOptions::new()
         .max_connections(4)
         .connect_with(options)

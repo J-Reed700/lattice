@@ -77,10 +77,10 @@ describe('SourceTrustSettings', () => {
     render(<SourceTrustSettings />);
     expect(screen.getByText('britannica.com treated as institutional everywhere')).toBeInTheDocument();
     expect(screen.getByText('“Edited encyclopedia”')).toBeInTheDocument();
-    expect(screen.getByText('1 of 4 claims its pages supported was overturned.')).toBeInTheDocument();
+    expect(screen.getByText('1 of 4 statements its pages supported was overturned.')).toBeInTheDocument();
     expect(screen.getByText('Trust kew.org as primary for: Botany')).toBeInTheDocument();
     expect(screen.getAllByText('No verdicts on its pages yet.')).toHaveLength(1);
-    expect(screen.getByText('1 of 1 claim its pages supported was overturned.')).toBeInTheDocument();
+    expect(screen.getByText('1 of 1 statement its pages supported was overturned.')).toBeInTheDocument();
   });
 
   it('resets a site override by its scope, but never a per-source one', () => {
@@ -99,10 +99,12 @@ describe('SourceTrustSettings', () => {
     expect(screen.getByText('override in use')).toBeInTheDocument();
   });
 
-  it('shows the bars in force for each claim kind', () => {
+  it('shows the bars in force for each statement kind', () => {
     render(<SourceTrustSettings />);
     expect(screen.getByText('12 verdicts recorded · policy 3')).toBeInTheDocument();
     expect(screen.getByRole('columnheader', { name: 'Primary' })).toBeInTheDocument();
+    expect(screen.getByRole('columnheader', { name: 'Statement kind' })).toBeInTheDocument();
+    expect(screen.getByText('How often the local checker was wrong on statements you labelled, per checker model.')).toBeInTheDocument();
     expect(screen.getByText('Alone from authoritative')).toBeInTheDocument();
     expect(screen.getByText('Only corroboration')).toBeInTheDocument();
     expect(screen.getByText('4 verdicts, 100% held')).toBeInTheDocument();
@@ -148,13 +150,13 @@ describe('SourceTrustSettings', () => {
     h.checker = { data: [] };
     render(<SourceTrustSettings />);
     expect(screen.getByText('None yet. Set one from a source’s “Change trust…” menu.')).toBeInTheDocument();
-    expect(screen.getByText('No labelled claims yet. Each confirmation, removal, edit or added source labels one.')).toBeInTheDocument();
+    expect(screen.getByText('No labelled statements yet. Each confirmation, removal, edit or added source labels one.')).toBeInTheDocument();
   });
 
   it('reports checker accuracy per model', () => {
     render(<SourceTrustSettings />);
     expect(screen.getByText('qwen-9b:')).toBeInTheDocument();
-    expect(screen.getByText(/1 labelled claim · false flags/)).toBeInTheDocument();
+    expect(screen.getByText(/1 labelled statement · false flags/)).toBeInTheDocument();
   });
 
   describe('provenance export', () => {

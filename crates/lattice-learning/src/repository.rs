@@ -246,7 +246,7 @@ impl LearningRepository {
         let sources = sqlx::query("SELECT s.* FROM learning_sources s WHERE s.program_id=? AND (
                 EXISTS(SELECT 1 FROM learning_source_library l WHERE l.program_id=s.program_id AND l.active_version_id=s.id AND l.deleted_at IS NULL)
                 OR EXISTS(SELECT 1 FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(b.source_ids_json) WHERE value=s.id))
-                OR EXISTS(SELECT 1 FROM learning_assessment_candidates c WHERE c.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(c.source_version_ids_json) WHERE value=s.id))
+                OR EXISTS(SELECT 1 FROM learning_assessment_candidates c WHERE c.program_id=s.program_id AND c.review_status<>'dropped' AND EXISTS(SELECT 1 FROM json_each(c.source_version_ids_json) WHERE value=s.id))
                 OR EXISTS(SELECT 1 FROM learning_card_drafts d WHERE d.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(d.source_ids_json) WHERE value=s.id))
                 OR EXISTS(SELECT 1 FROM learning_card_origins o WHERE o.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(o.source_ids_json) WHERE value=s.id))
             ) ORDER BY s.rowid")

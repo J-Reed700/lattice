@@ -109,7 +109,17 @@ impl Passes {
                     if !known.note.contains(finding.note.as_str()) {
                         known.note = format!("{} {}", known.note, finding.note);
                     }
+                    if known.summary.is_empty() {
+                        known.summary = finding.summary;
+                    } else if !finding.summary.is_empty()
+                        && !known.summary.lines().any(|line| line == finding.summary)
+                    {
+                        known.summary = format!("{}\n{}", known.summary, finding.summary);
+                    }
                     known.passage = known.passage.take().or(finding.passage);
+                    if known.sentence != finding.sentence {
+                        known.sentence = None;
+                    }
                 }
                 None => current.push(finding),
             }
@@ -283,5 +293,42 @@ mod tests {
         };
         assert_eq!(send.len(), 1);
         assert_eq!(send[0].note, "First. Second.");
+    }
+
+    #[test]
+    fn the_summaries_of_two_notes_about_one_place_stay_together() {
+        let mut passes = Passes::default();
+        let Next::Repair { send, .. } = passes.next(vec![
+            section(0, "First.").with_summary("One problem."),
+            section(0, "Second.").with_summary("Another problem."),
+            section(0, "Third.").with_summary("One problem."),
+            section(0, "Fourth."),
+        ]) else {
+            panic!("expected a repair");
+        };
+        assert_eq!(send.len(), 1);
+        assert_eq!(send[0].summary, "One problem.\nAnother problem.");
+    }
+
+    /// A note about one sentence lets the user take that sentence out, so a
+    /// note that now stands for more than one has no sentence.
+    #[test]
+    fn a_merged_note_keeps_its_sentence_only_while_every_note_in_it_is_about_that_sentence() {
+        let about = |sentence: &str| section(0, "A note.").with_sentence(sentence);
+        let merged = |findings: Vec<ReviewFinding>| {
+            let mut passes = Passes::default();
+            let Next::Repair { send, .. } = passes.next(findings) else {
+                panic!("expected a repair");
+            };
+            assert_eq!(send.len(), 1);
+            send[0].sentence.clone()
+        };
+        assert_eq!(
+            merged(vec![about("One."), about("One.")]).as_deref(),
+            Some("One.")
+        );
+        assert_eq!(merged(vec![about("One."), about("Two.")]), None);
+        assert_eq!(merged(vec![about("One."), section(0, "Other.")]), None);
+        assert_eq!(merged(vec![section(0, "Other."), about("One.")]), None);
     }
 }

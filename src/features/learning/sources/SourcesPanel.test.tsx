@@ -182,7 +182,7 @@ describe('Learning Studio Sources workspace', () => {
     expect(mocks.addText.mock.calls[1][0]).toEqual(firstRequest);
   });
 
-  it('adding a source checks the waiting claims and links to the review', async () => {
+  it('adding a source checks the waiting statements and links to the review', async () => {
     const user = userEvent.setup();
     const openReview = vi.fn();
     const recheck = { lessons: 1, tried: 33, verified: 12, notVerified: 18, noPassage: 3, stopped: null };
@@ -193,7 +193,7 @@ describe('Learning Studio Sources workspace', () => {
     await user.type(screen.getByLabelText('Title'), 'Parish register, 1740–1760');
     await user.type(screen.getByLabelText('Saved text'), 'Baptisms recorded in the parish between 1740 and 1760.');
     await user.click(screen.getByRole('button', { name: 'Save source' }));
-    expect(await screen.findByText('Checked 33 waiting claims against it: 12 verified.')).toBeVisible();
+    expect(await screen.findByText('Checked 33 waiting statements against it: 12 verified.')).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Open the review' }));
     expect(openReview).toHaveBeenCalledTimes(1);
   });

@@ -288,7 +288,7 @@ impl std::fmt::Display for Exhausted {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(
             f,
-            "No further public search can help {} unresolved claim{} ({} search{} already tried)",
+            "No further public search can help {} unresolved statement{} ({} search{} already tried)",
             self.claims,
             if self.claims == 1 { "" } else { "s" },
             self.searched,
@@ -581,7 +581,7 @@ async fn research<'a>(
     crate::lesson_progress::phase(
         crate::lesson_progress::Phase::Research,
         match kind {
-            Gaps::Claims => "Finding authoritative references for unresolved claims",
+            Gaps::Claims => "Finding authoritative references for unresolved statements",
             Gaps::Topics => "Finding references for lesson topics no saved reference covers",
         },
     );
@@ -749,7 +749,7 @@ async fn research<'a>(
                 Ok(Some(captured)) => captured,
                 Ok(None) => continue,
                 Err(error) => {
-                    tracing::warn!(%error, "Lesson research page unavailable");
+                    tracing::warn!(%error, url = %result.url, "Lesson research page unavailable");
                     capture_failed = true;
                     continue;
                 }

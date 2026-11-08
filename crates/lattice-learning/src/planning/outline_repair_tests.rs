@@ -221,9 +221,9 @@ async fn an_unsupported_assertion_is_narrowed_then_removed_then_left_for_the_use
     assert!(issue.exhausted);
     assert_eq!(issue.claim, removed);
     assert!(review.note.starts_with("1 finding remain"));
-    assert!(review
-        .note
-        .contains("was not supported by the saved references"));
+    assert!(review.note.contains(&format!(
+        "the statement \"{removed}\" was not supported by the saved references."
+    )));
     let prompts = calls(&llm);
     assert_eq!(prompts.len(), 7);
     assert!(prompts[2].starts_with("Source passages:"));

@@ -227,7 +227,10 @@ impl Waiting {
         .err()
         .unwrap()
         .to_string();
-        assert!(error.starts_with("Needs your review: 1 claim"), "{error}");
+        assert!(
+            error.starts_with("Needs your review: 1 statement"),
+            "{error}"
+        );
         let held = held_for_review(&self.pool, &self.lesson_id, &self.job_id)
             .await?
             .unwrap();

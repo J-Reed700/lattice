@@ -919,12 +919,9 @@ async fn concurrent_retries_of_one_memory_operation_serialize_idempotently() {
     let temp = tempfile::tempdir().unwrap();
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(5)
-        .connect_with(
-            sqlx::sqlite::SqliteConnectOptions::new()
-                .filename(temp.path().join("memory-concurrency.db"))
-                .create_if_missing(true)
-                .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal),
-        )
+        .connect_with(crate::tests::sqlite::file_options(
+            temp.path().join("memory-concurrency.db"),
+        ))
         .await
         .unwrap();
     setup_schema(&pool).await;

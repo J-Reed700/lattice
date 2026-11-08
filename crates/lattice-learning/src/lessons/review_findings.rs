@@ -87,10 +87,17 @@ pub struct ReviewFinding {
     /// `None` for a reviewer's issue until the evidence check places it;
     /// an issue it cannot place is about the whole lesson.
     pub site: Option<FindingSite>,
-    /// What the repair is asked to correct and the user is shown.
+    /// What the repair is asked to correct. It is written for the model.
     pub note: String,
+    /// What is wrong, in plain words, for the user. Empty when the producer
+    /// wrote none.
+    #[serde(default)]
+    pub summary: String,
     /// The passage the reviewer chose, when it chose one.
     pub passage: Option<String>,
+    /// The whole sentence a sentence-level quotation finding is about.
+    #[serde(default)]
+    pub sentence: Option<String>,
 }
 
 impl ReviewFinding {
@@ -99,8 +106,29 @@ impl ReviewFinding {
             kind,
             site,
             note: note.into(),
+            summary: String::new(),
             passage: None,
+            sentence: None,
         }
+    }
+
+    /// This finding with the whole `sentence` it is about; none when blank.
+    pub fn with_sentence(mut self, sentence: &str) -> Self {
+        self.sentence = (!sentence.trim().is_empty()).then(|| sentence.trim().to_owned());
+        self
+    }
+
+    /// This finding with the plain-words `summary` the user is shown.
+    pub fn with_summary(mut self, summary: impl Into<String>) -> Self {
+        self.summary = summary.into();
+        self
+    }
+
+    /// This finding with `passage` as the passage it is about; none when
+    /// `passage` is blank.
+    pub fn with_passage(mut self, passage: &str) -> Self {
+        self.passage = (!passage.trim().is_empty()).then(|| passage.to_owned());
+        self
     }
 
     pub fn key(&self) -> FindingKey {
@@ -108,6 +136,25 @@ impl ReviewFinding {
             kind: self.kind,
             site: self.site.unwrap_or(FindingSite::Lesson),
         }
+    }
+}
+
+/// `items` as a plain list: "a", "a and b", "a, b and c".
+pub(crate) fn join_plain(items: &[String]) -> String {
+    match items {
+        [] => String::new(),
+        [only] => only.clone(),
+        [first @ .., last] => format!("{} and {last}", first.join(", ")),
+    }
+}
+
+/// How a summary names the part a site is: "section 3", "question 2" or
+/// "the lesson".
+pub(crate) fn plain_part(site: FindingSite) -> String {
+    match site {
+        FindingSite::Lesson => "the lesson".to_owned(),
+        FindingSite::Section(index) => format!("section {}", index + 1),
+        FindingSite::Question(index) => format!("question {}", index + 1),
     }
 }
 
@@ -183,9 +230,7 @@ pub(crate) fn unit(candidate: &Value, finding: &ReviewFinding) -> Unit {
                     |title| format!("Section {}: {title}", index + 1),
                 ),
                 sha256,
-                passage: (finding.kind == FindingKind::Quotation)
-                    .then(|| text(block, "quote"))
-                    .flatten(),
+                passage: None,
             }
         }
         FindingSite::Question(index) => {
@@ -194,7 +239,7 @@ pub(crate) fn unit(candidate: &Value, finding: &ReviewFinding) -> Unit {
                 title: format!("Question {}", index + 1),
                 sha256,
                 passage: if finding.kind == FindingKind::Quotation {
-                    text(question, "quote")
+                    None
                 } else {
                     text(question, "prompt")
                 },
@@ -255,6 +300,47 @@ mod tests {
                 .id(),
             "teaching:lesson"
         );
+    }
+
+    #[test]
+    fn a_list_reads_as_plain_words() {
+        let list =
+            |items: &[&str]| join_plain(&items.iter().map(|i| (*i).to_owned()).collect::<Vec<_>>());
+        assert_eq!(list(&[]), "");
+        assert_eq!(list(&["30"]), "30");
+        assert_eq!(list(&["30", "seconds"]), "30 and seconds");
+        assert_eq!(
+            list(&["30", "seconds", "retry once"]),
+            "30, seconds and retry once"
+        );
+    }
+
+    #[test]
+    fn a_part_is_named_by_its_place_in_the_lesson_counted_from_one() {
+        assert_eq!(plain_part(FindingSite::Section(2)), "section 3");
+        assert_eq!(plain_part(FindingSite::Question(1)), "question 2");
+        assert_eq!(plain_part(FindingSite::Lesson), "the lesson");
+    }
+
+    #[test]
+    fn a_summary_is_set_apart_from_the_note_written_for_the_model() {
+        let finding = ReviewFinding::new(FindingKind::Teaching, None, "Fix blocks[2].")
+            .with_summary("The example is wrong.");
+        assert_eq!(finding.note, "Fix blocks[2].");
+        assert_eq!(finding.summary, "The example is wrong.");
+        assert_eq!(
+            ReviewFinding::new(FindingKind::Teaching, None, "x").summary,
+            ""
+        );
+    }
+
+    #[test]
+    fn a_quotation_finding_is_not_handed_the_part_s_quote_as_its_passage() {
+        let candidate = json!({"blocks":[{"title":"Sums","body":"Add.","quote":"The excerpt this whole section cites."}],"questions":[{"prompt":"What is 2+2?","quote":"The excerpt this question cites."}]});
+        for site in [FindingSite::Section(0), FindingSite::Question(0)] {
+            let finding = ReviewFinding::new(FindingKind::Quotation, Some(site), "x");
+            assert_eq!(unit(&candidate, &finding).passage, None, "{site:?}");
+        }
     }
 
     #[test]

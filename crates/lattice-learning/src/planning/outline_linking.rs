@@ -505,6 +505,14 @@ fn apply(
     }
 }
 
+fn plural(count: usize, noun: &str) -> String {
+    if count == 1 {
+        noun.to_owned()
+    } else {
+        format!("{noun}s")
+    }
+}
+
 /// Link the items of `draft` (one module after a rewrite, or all of them) to
 /// the saved references. Typography is restored and inexact author citations
 /// removed first; verified items and receipted decisions cost no model call.
@@ -515,7 +523,9 @@ pub(crate) async fn link(
     module: Option<usize>,
     progress: &OutlineProgress,
 ) -> Result<LinkLog> {
-    progress.stage(OutlineStage::CheckingCitations);
+    if module.is_none() {
+        progress.stage(OutlineStage::CheckingCitations);
+    }
     crate::outline_citations::restore_source_quotes(&mut draft.candidate, sources);
     let mut log = LinkLog {
         removed_unmatched: strip_unmatched(&mut draft.candidate, sources, module),
@@ -615,10 +625,26 @@ pub(crate) async fn link(
         );
         return Ok(log);
     }
-    progress.detail(format!(
-        "Linking {total} outline items to references ({} already linked)",
-        log.linked
-    ));
+    let scope = module.map(|index| {
+        let count = draft
+            .candidate
+            .get("modules")
+            .and_then(Value::as_array)
+            .map_or(0, Vec::len);
+        format!("Module {} of {count}: ", index + 1)
+    });
+    progress.detail(match &scope {
+        Some(scope) => format!(
+            "{scope}linking {total} {} to references ({} already linked)",
+            plural(total, "item"),
+            log.linked
+        ),
+        None => format!(
+            "Linking {total} outline {} to references ({} already linked)",
+            plural(total, "item"),
+            log.linked
+        ),
+    });
     // A batch that still does not fit the window is halved below.
     let mut groups: Vec<Vec<Pending>> = Vec::new();
     while !pending.is_empty() {
@@ -731,10 +757,18 @@ pub(crate) async fn link(
             }
         }
         done += group.len();
-        progress.detail(format!(
-            "Linked {} outline items; {done} of {total} decided",
-            log.linked
-        ));
+        progress.detail(match &scope {
+            Some(scope) => format!(
+                "{scope}linked {} {}; {done} of {total} decided",
+                log.linked,
+                plural(log.linked as usize, "item")
+            ),
+            None => format!(
+                "Linked {} outline {}; {done} of {total} decided",
+                log.linked,
+                plural(log.linked as usize, "item")
+            ),
+        });
     }
     tracing::info!(
         linked = log.linked,

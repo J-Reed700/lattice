@@ -33,6 +33,23 @@ describe('ClaimQueue', () => {
     expect(screen.queryByRole('button', { name: /Add a source for these/ })).not.toBeInTheDocument();
   });
 
+  it('says which teaching notes wait instead of everything being resolved', () => {
+    setup({ groups: [], teachingWaiting: 2 });
+    expect(screen.getByText('No statements wait for you. 2 teaching notes do.')).toBeInTheDocument();
+    expect(screen.queryByText('Everything is resolved.')).not.toBeInTheDocument();
+  });
+
+  it('says one teaching note waits in the singular', () => {
+    setup({ groups: [], teachingWaiting: 1 });
+    expect(screen.getByText('No statements wait for you. 1 teaching note does.')).toBeInTheDocument();
+  });
+
+  it('keeps the statements out of the line while some wait', () => {
+    setup({ teachingWaiting: 2 });
+    expect(screen.queryByText(/No statements wait for you/)).not.toBeInTheDocument();
+    expect(screen.queryByText('Everything is resolved.')).not.toBeInTheDocument();
+  });
+
   it('changes the grouping mode from the select', async () => {
     const props = setup();
     await userEvent.selectOptions(screen.getByLabelText('Group by'), 'fix');
@@ -65,7 +82,7 @@ describe('ClaimQueue', () => {
 
   it('collapses and reopens a group from its header', async () => {
     setup();
-    const section = screen.getByRole('region', { name: /2 claims/ });
+    const section = screen.getByRole('region', { name: /2 statements/ });
     const header = within(section).getAllByRole('button')[0];
     expect(header).toHaveAttribute('aria-expanded', 'true');
     await userEvent.click(header);
@@ -95,7 +112,7 @@ describe('ClaimQueue', () => {
     const props = setup();
     await userEvent.click(screen.getByRole('button', { name: 'Add a source for these 3' }));
     expect(props.onAddSource).toHaveBeenLastCalledWith(expect.objectContaining({ key: 'queue', source: null, claims: expect.arrayContaining([expect.objectContaining({ claimId: 'claim-3' })]) }));
-    const section = screen.getByRole('region', { name: /2 claims/ });
+    const section = screen.getByRole('region', { name: /2 statements/ });
     await userEvent.click(within(section).getByRole('button', { name: 'Add a source for these 2' }));
     expect(props.onAddSource).toHaveBeenLastCalledWith(expect.objectContaining({ key: '0' }));
     // A group of one gets no bulk row; a group without a source offers no accept.
@@ -108,7 +125,7 @@ describe('ClaimQueue', () => {
     const claims = [numbered(1, 0), numbered(2, 1)];
     const groups = [{ key: 'source-s', label: 'Guide', detail: 'example.org · online book', claims, source }];
     const props = setup({ groups, busy: false });
-    expect(screen.getByText('example.org · online book · 2 claims')).toBeInTheDocument();
+    expect(screen.getByText('example.org · online book · 2 statements')).toBeInTheDocument();
     await userEvent.click(screen.getByRole('button', { name: 'Accept this source for all 2' }));
     expect(props.onAcceptSource).toHaveBeenCalledWith(groups[0]);
   });
@@ -176,16 +193,16 @@ describe('ClaimQueue', () => {
   it('shows resolved claims behind a toggle and selects one', async () => {
     const done = claimItem({ ...numbered(9, 2), state: { state: 'general_knowledge', at: 1 } });
     const props = setup({ resolved: [done], activeId: 'claim-9' });
-    expect(screen.queryByRole('list', { name: 'Resolved claims' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Resolved statements' })).not.toBeInTheDocument();
     const toggle = screen.getByRole('button', { name: 'Show resolved (1)' });
     await userEvent.click(toggle);
     expect(toggle).toHaveTextContent('Hide resolved');
-    const row = within(screen.getByRole('list', { name: 'Resolved claims' })).getByRole('button');
+    const row = within(screen.getByRole('list', { name: 'Resolved statements' })).getByRole('button');
     expect(row).toHaveTextContent('Common knowledge');
     expect(row).toHaveAttribute('aria-current', 'true');
     await userEvent.click(row);
     expect(props.onSelect).toHaveBeenCalledWith('claim-9');
     await userEvent.click(toggle);
-    expect(screen.queryByRole('list', { name: 'Resolved claims' })).not.toBeInTheDocument();
+    expect(screen.queryByRole('list', { name: 'Resolved statements' })).not.toBeInTheDocument();
   });
 });

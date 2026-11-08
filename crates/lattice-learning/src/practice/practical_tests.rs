@@ -478,19 +478,14 @@ async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files
 #[tokio::test]
 async fn practical_draft_survives_closing_and_reopening_file_backed_database() -> Result<()> {
     use crate::lab_runtime::LearningLabFile;
-    use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-    use std::str::FromStr;
+    use sqlx::sqlite::SqlitePoolOptions;
 
     let directory = tempfile::tempdir().map_err(|error| AppError::Database(error.to_string()))?;
     let database_path = directory.path().join("learning-studio.sqlite");
-    let options = || {
-        SqliteConnectOptions::from_str(&format!("sqlite:{}", database_path.display()))
-            .map(|options| options.create_if_missing(true).foreign_keys(true))
-            .map_err(|error| AppError::Database(error.to_string()))
-    };
+    let options = || crate::test_support::file_options(&database_path);
     let pool = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect_with(options()?)
+        .connect_with(options())
         .await
         .map_err(db)?;
     sqlx::migrate!("../lattice-desktop/migrations")
@@ -517,7 +512,7 @@ async fn practical_draft_survives_closing_and_reopening_file_backed_database() -
 
     let reopened = SqlitePoolOptions::new()
         .max_connections(1)
-        .connect_with(options()?)
+        .connect_with(options())
         .await
         .map_err(db)?;
     let restored = LearningPracticalRepository::new(reopened.clone())

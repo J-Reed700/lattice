@@ -2,12 +2,12 @@
 //! reviews, and that cancelling it stops the model and stores nothing.
 
 use super::support::{
-    blind_answer, blind_assessment, clean_code_answer, entry_answer, grade_answer, judge_answer,
-    messages, plant_answer, review_answer, spec, ScriptedModel,
+    blind_answer, blind_assessment, built_drill, clean_code_answer, code_check_answer, code_spec,
+    entry_answer, grade_answer, judge_answer, lesson_spec, messages, plant_answer, review_answer,
+    ScriptedModel,
 };
 use crate::drills::bank::queue_build;
 use crate::drills::jobs::{drill_job_config, judge_grader, spec_of, DrillBuildWorker, DRILL_BUILD};
-use crate::drills::repository;
 use crate::embedded_runtime::BuiltinRuntimes;
 use crate::generation_jobs::pinned_for_test;
 use crate::persistence::db;
@@ -72,15 +72,39 @@ async fn a_job_names_the_drill_it_builds() -> Result<()> {
                 operation_id: uuid::Uuid::new_v4().to_string(),
                 payload_hash: "h".into(),
                 requested,
-                progress_total: 6,
+                progress_total: 7,
                 message: "Waiting".into(),
             })
             .await?;
         let job = store.get(&admitted.id).await?;
         assert!(matches!(spec_of(&job), Err(AppError::InvalidInput(_))));
     }
-    let queued = queue_build(&pool, &spec(), "named").await?;
-    assert_eq!(spec_of(&store.get(&queued).await?)?, spec());
+    let queued = queue_build(&pool, &lesson_spec(), "named").await?;
+    assert_eq!(spec_of(&store.get(&queued).await?)?, lesson_spec());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_build_queued_before_drills_had_lessons_is_refused_by_its_spec() -> Result<()> {
+    let pool = pool().await?;
+    let store = JobStore::new(pool.clone());
+    let admitted = store
+        .submit(&NewJob {
+            kind: DRILL_BUILD.into(),
+            subject_id: Some("python".into()),
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            payload_hash: "h".into(),
+            requested: json!({"spec": {"language": "python", "domain": null, "lines": 40, "patterns": ["readability.magic_number"], "programId": null}}),
+            progress_total: 7,
+            message: "Waiting".into(),
+        })
+        .await?;
+    let job = store.get(&admitted.id).await?;
+    let error = spec_of(&job).unwrap_err();
+    assert!(
+        matches!(&error, AppError::InvalidInput(message) if message.contains("lesson")),
+        "{error:?}"
+    );
     Ok(())
 }
 
@@ -101,6 +125,7 @@ async fn run_to_the_end(pool: &SqlitePool, worker: DrillBuildWorker, id: &str) -
 async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_review() -> Result<()> {
     let pool = pool().await?;
     let model = Arc::new(ScriptedModel::new([
+        code_check_answer(true),
         clean_code_answer(),
         review_answer(vec![]),
         plant_answer(),
@@ -110,7 +135,8 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
         grade_answer(),
         entry_answer(),
     ]));
-    let id = queue_build(&pool, &spec(), "end to end").await?;
+    let spec = code_spec(&pool).await?;
+    let id = queue_build(&pool, &spec, "end to end").await?;
     run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
 
     let job = JobStore::new(pool.clone()).get(&id).await?;
@@ -118,6 +144,7 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
     assert_eq!(
         model.purposes(),
         [
+            "code fit check",
             "clean code",
             "clean review",
             "plant",
@@ -129,10 +156,7 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
         ],
         "without a runner both defects are judged, and one call grades the review"
     );
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_in(&mut connection, "python")
-        .await?
-        .expect("the drill is in the bank");
+    let stored = built_drill(&pool).await?.expect("the drill is in the bank");
     assert_eq!(job.result_ref, Some(format!("drill:{}", stored.drill.id)));
     assert_eq!(stored.suite, None);
     assert_eq!(stored.runner, None);
@@ -150,7 +174,7 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
     assert_eq!(stored.drill.key[2].id, "review-1");
 
     let requests = model.requests();
-    let grade = messages(&requests[6]);
+    let grade = messages(&requests[7]);
     assert!(
         grade[1]
             .1
@@ -176,7 +200,7 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
 #[tokio::test]
 async fn a_model_outage_defers_the_build_and_stores_nothing() -> Result<()> {
     let pool = pool().await?;
-    let id = queue_build(&pool, &spec(), "outage").await?;
+    let id = queue_build(&pool, &code_spec(&pool).await?, "outage").await?;
     let outage = DrillBuildWorker {
         pool: pool.clone(),
         load_llm: Arc::new(|| {
@@ -203,6 +227,7 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
     let pool = pool().await?;
     let nothing = || json!({"issues": [], "findings": []}).to_string();
     let model = Arc::new(ScriptedModel::new([
+        code_check_answer(true),
         clean_code_answer(),
         review_answer(vec![]),
         plant_answer(),
@@ -212,7 +237,8 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
         nothing(),
         nothing(),
     ]));
-    let id = queue_build(&pool, &spec(), "ungradable").await?;
+    let spec = code_spec(&pool).await?;
+    let id = queue_build(&pool, &spec, "ungradable").await?;
     run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
 
     let store = JobStore::new(pool.clone());
@@ -276,7 +302,8 @@ async fn cancelling_a_build_stops_its_model_call_and_stores_nothing() -> Result<
     let model = Arc::new(Hang {
         started: AtomicUsize::new(0),
     });
-    let id = queue_build(&pool, &spec(), "cancelled").await?;
+    let spec = code_spec(&pool).await?;
+    let id = queue_build(&pool, &spec, "cancelled").await?;
     let runtime = JobRuntime::new(pool.clone());
     runtime
         .register(

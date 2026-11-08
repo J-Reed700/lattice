@@ -7,17 +7,24 @@ import { invalidateLearningSourceDependents } from '@/features/learning/api/lear
 import { learningClaimReviewKey, learningLessonEvidencePrefix } from '@/features/learning/api/learningQueryKeys';
 import { learningSourcesKey } from '@/features/learning/sources/useLearningSources';
 import type { AttachEvidenceDto, AttachScopeDto, ClaimAttachProgressDto, ClaimAttachReportDto } from '@/lib/bindings';
+import { failureToError } from '@/lib/errorHandling';
 
 export type AddSourceVariables = {
-  /** The claim the attach is recorded on: the first of the scope. */
-  claimId: string;
   expectedRevision: number;
   evidence: AttachEvidenceDto;
-  scope: AttachScopeDto;
-};
+} & (
+  | {
+    /** The claim the attach is recorded on: the first of the scope. */
+    claimId: string;
+    scope: AttachScopeDto;
+  }
+  /** The lesson as a whole, with no claim chosen first. */
+  | { lesson: true }
+);
 
 /**
- * "Add a source" over `attach_learning_claim_evidence` (§3.6, §5.3): the
+ * "Add a source" over `attach_learning_claim_evidence`, or over
+ * `attach_learning_lesson_source` for the whole lesson (§3.6, §5.3): the
  * stage it is at, live, and the report when it ends. No timeout: the fetch's
  * own failure or the checker's error ends it. Cancel stops listening; the
  * server finishes the claim it is on (the ledger is append-only).
@@ -31,15 +38,16 @@ export function useAddSource(programId: string, lessonId: string) {
 
   const mutation = useMutation<ClaimAttachReportDto | null, Error, AddSourceVariables>({
     retry: false,
-    mutationFn: async ({ claimId, expectedRevision, evidence, scope }) => {
+    mutationFn: async (variables) => {
       const token = ++run.current;
       setProgress(null);
-      const result = await api.attachLearningClaimEvidence(
-        { programId, lessonId, claimId, expectedRevision, evidence, scope },
-        (update) => { if (run.current === token) setProgress(update); },
-      );
+      const { expectedRevision, evidence } = variables;
+      const onProgress = (update: ClaimAttachProgressDto) => { if (run.current === token) setProgress(update); };
+      const result = 'lesson' in variables
+        ? await api.attachLearningLessonSource({ programId, lessonId, expectedRevision, evidence }, onProgress)
+        : await api.attachLearningClaimEvidence({ programId, lessonId, claimId: variables.claimId, expectedRevision, evidence, scope: variables.scope }, onProgress);
       if (run.current !== token) return null;
-      if (!result.ok) throw new Error(result.error);
+      if (!result.ok) throw failureToError(result);
       return result.data;
     },
     onSettled: async () => {

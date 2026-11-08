@@ -1,12 +1,11 @@
 import { Channel } from '@tauri-apps/api/core';
 
 import type * as Wire from '@/lib/bindings';
-import { studyActivityCall } from '@/lib/studyActivity';
 import type { CommandName } from '@/shared/ipc/transport';
 import type { ApiResult } from '@/types';
 
-const learningCall = <T>(command: CommandName, args?: Record<string, unknown>) =>
-  studyActivityCall<T>('learning', command, args);
+import { learningCall } from './learningCall';
+import { lessonReviewApi } from './lessonReview';
 
 async function invokeCommand<T>(
   command: CommandName,
@@ -101,41 +100,7 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningOutlineEvidenceDto | null>> =>
     learningCall('get_learning_outline_evidence', { programId }),
 
-  /** null before the lesson's first verification pass. */
-  getLearningLessonClaimReview: (
-    programId: string,
-    lessonId: string,
-  ): Promise<ApiResult<Wire.LessonClaimReviewDto | null>> =>
-    learningCall('get_learning_lesson_claim_review', { programId, lessonId }),
-
-  resolveLearningClaim: (
-    request: Wire.ResolveLearningClaimRequestDto,
-  ): Promise<ApiResult<Wire.ResolveLearningClaimResultDto>> =>
-    learningCall('resolve_learning_claim', { request }),
-
-  /**
-   * Add a link, file, pasted text or saved passage as a course source and
-   * check the claims in scope against it, reporting each stage (§5.3).
-   */
-  attachLearningClaimEvidence: (
-    request: Wire.AttachLearningClaimEvidenceRequestDto,
-    onProgress: (update: Wire.ClaimAttachProgressDto) => void,
-  ): Promise<ApiResult<Wire.ClaimAttachReportDto>> =>
-    learningCall('attach_learning_claim_evidence', {
-      request,
-      onProgress: new Channel<Wire.ClaimAttachProgressDto>(onProgress),
-    }),
-
-  /** "Keep as written" on a teaching finding the repairs did not settle. */
-  keepLearningTeachingFinding: (
-    request: Wire.KeepLearningTeachingFindingRequestDto,
-  ): Promise<ApiResult<void>> =>
-    learningCall('keep_learning_teaching_finding', { request }),
-
-  resumeLearningLessonReview: (
-    request: Wire.ResumeLearningLessonReviewRequestDto,
-  ): Promise<ApiResult<Wire.LearningGenerationJob>> =>
-    learningCall('resume_learning_lesson_review', { request }),
+  ...lessonReviewApi,
 
   captureLearningSourceSnapshot: (
     request: Wire.CaptureLearningSourceSnapshotRequestDto,

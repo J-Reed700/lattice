@@ -85,17 +85,21 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
   sheet?: ReactNode;
   /** The lesson is published. */
   published?: boolean;
+  /** Opens the editor on this statement's section; null where the statement is not in a section's text of a published lesson. */
+  onEditSection?: (() => void) | null;
+  /** Opens the editor on this statement's question; null where the statement is not about a question of a published lesson. */
+  onEditQuestion?: (() => void) | null;
   /** A back link for the stacked narrow layout. */
   back?: ReactNode;
   /** The action row is a sticky bar at narrow widths. */
   stickyActions?: boolean;
-}>(({ programId, item, position, total, onPrevious, onNext, sharing, busy, error, form, onFormChange, onAct, onAcceptSource, onAddSource, closest, onOpenSource, onOpenRelevant, sheet, back, stickyActions = false, published = false }, statementRef) => {
+}>(({ programId, item, position, total, onPrevious, onNext, sharing, busy, error, form, onFormChange, onAct, onAcceptSource, onAddSource, closest, onOpenSource, onOpenRelevant, sheet, back, onEditSection = null, onEditQuestion = null, stickyActions = false, published = false }, statementRef) => {
   const waiting = isWaitingForYou(item);
   const why = whyItWaits(item);
   const support = item.support;
   const label = waiting ? null : verifiedLabel(item.sufficiency);
   return (
-    <article aria-label="Claim in focus" className="space-y-5">
+    <article aria-label="Statement in focus" className="space-y-5">
       <header className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           {back}
@@ -103,8 +107,8 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
         </div>
         <div className="flex items-center gap-1 text-xs tabular-nums text-text-muted">
           <span aria-live="off">{position} of {total}</span>
-          <Button type="button" size="icon" variant="ghost" aria-label="Previous claim" disabled={!onPrevious} onClick={() => onPrevious?.()}><ChevronLeft aria-hidden="true" /></Button>
-          <Button type="button" size="icon" variant="ghost" aria-label="Next claim" disabled={!onNext} onClick={() => onNext?.()}><ChevronRight aria-hidden="true" /></Button>
+          <Button type="button" size="icon" variant="ghost" aria-label="Previous statement" disabled={!onPrevious} onClick={() => onPrevious?.()}><ChevronLeft aria-hidden="true" /></Button>
+          <Button type="button" size="icon" variant="ghost" aria-label="Next statement" disabled={!onNext} onClick={() => onNext?.()}><ChevronRight aria-hidden="true" /></Button>
         </div>
       </header>
 
@@ -131,6 +135,8 @@ export const ClaimInFocus = forwardRef<HTMLParagraphElement, {
       <div className={stickyActions ? 'sticky bottom-0 -mx-4 border-t border-border bg-surface px-4 pb-3 pt-3' : undefined}>
         <ClaimActions item={item} sharing={sharing} suggested={why.fixes[0] ?? 'accept'} busy={busy} error={error} form={form}
           onFormChange={onFormChange} onAct={onAct} onAcceptSource={onAcceptSource} onAddSource={onAddSource} closest={Boolean(closest)} published={published} />
+        {onEditSection && <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={onEditSection}>Edit the section</Button>}
+        {onEditQuestion && <Button type="button" variant="ghost" size="sm" className="mt-2" onClick={onEditQuestion}>Edit the question</Button>}
       </div>
 
       <p aria-hidden="true" className="flex flex-wrap gap-x-3 gap-y-1 text-[11px] text-text-muted [@media(pointer:coarse)]:hidden">

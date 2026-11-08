@@ -10,5 +10,6 @@ pub(crate) mod provenance;
 mod reference_text;
 pub mod snapshot;
 pub(crate) mod sourcing;
+pub(crate) mod status_error;
 pub(crate) mod wayback;
 pub mod web;

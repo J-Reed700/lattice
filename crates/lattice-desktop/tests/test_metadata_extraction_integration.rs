@@ -25,6 +25,9 @@ use std::fs;
 use std::path::PathBuf;
 use tempfile::TempDir;
 
+#[path = "common/sqlite.rs"]
+mod sqlite_support;
+
 // Simple test context
 struct TestContext {
     pool: SqlitePool,
@@ -36,7 +39,7 @@ impl TestContext {
         let temp_dir = tempfile::tempdir()?;
         let db_path = temp_dir.path().join("test.db");
 
-        let pool = SqlitePool::connect(&format!("sqlite:{}?mode=rwc", db_path.display())).await?;
+        let pool = SqlitePool::connect_with(sqlite_support::file_options(&db_path)).await?;
 
         lattice::infrastructure::persistence::database::init::initialize_database(&pool).await?;
 

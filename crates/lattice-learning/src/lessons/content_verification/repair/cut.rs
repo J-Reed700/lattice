@@ -9,7 +9,7 @@ use super::super::sections::{answer_lost, gap_around_code, gaps, unit_label, unp
 use super::super::*;
 use super::goal_words;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome};
-use lattice_core::domain::learning::claim_review::ClaimId;
+use lattice_core::domain::learning::claim_review::{ClaimId, CutPlace};
 use lattice_core::shared::text::sentences;
 
 /// What taking a claim's text out of its field comes to.
@@ -86,6 +86,32 @@ fn sentence(text: &str, quote: &str) -> Cut {
     }
     out.push_str(text.get(text.trim_end().len()..).unwrap_or_default());
     Cut::Done(out)
+}
+
+/// What cutting `quote` out of `text` takes, in the first place it occurs
+/// (every sentence it touches), and the sentences kept on either side.
+pub(super) fn cut_place(text: &str, quote: &str) -> Option<CutPlace> {
+    let at = text.find(quote).filter(|_| !quote.trim().is_empty())?;
+    let end = at + quote.len();
+    let spans = sentences(text);
+    let touched: Vec<usize> = spans
+        .iter()
+        .enumerate()
+        .filter(|(_, span)| span.0 < end && span.1 > at)
+        .map(|(index, _)| index)
+        .collect();
+    let (first, last) = (*touched.first()?, *touched.last()?);
+    let kept = |index: Option<usize>| {
+        let &(start, stop) = spans.get(index?)?;
+        text.get(start..stop).map(str::to_owned)
+    };
+    Some(CutPlace {
+        sentence: text
+            .get(spans.get(first)?.0..spans.get(last)?.1)?
+            .to_owned(),
+        before: kept(first.checked_sub(1)),
+        after: kept(last.checked_add(1)),
+    })
 }
 
 /// `text` without the fenced block whose code is `code`.
@@ -239,6 +265,15 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                             gaps(&place.field, text, &after)
                         };
                         ledger.cuts.take(place.unit_index, label, (places, lost));
+                    }
+                    if let (false, Some(text)) = (example, text.as_deref()) {
+                        let quote = match decision {
+                            Some(CutOf::Sentence(sentence)) => sentence,
+                            _ => place.quote.as_str(),
+                        };
+                        if let Some(cut) = cut_place(text, quote) {
+                            ledger.note_cut(&id, cut);
+                        }
                     }
                     if let Some(slot) = pointer
                         .as_deref()

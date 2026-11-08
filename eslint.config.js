@@ -24,7 +24,7 @@ const VIEW_BACKEND_IMPORTS = [
   '@/lib/api', '**/lib/api',
   '@/lib/bindings', '**/lib/bindings',
   '@/shared/ipc/**', '**/shared/ipc/**',
-  '**/api/client', '**/files/api/documents',
+  '**/api/client', '**/files/api/documents', '**/learning/api/lessonReview',
 ];
 
 const VIEW_NATIVE_MESSAGE =

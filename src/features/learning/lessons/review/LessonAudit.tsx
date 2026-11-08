@@ -29,10 +29,10 @@ export function LessonAuditLine({ programId, lessonId }: { programId: string; le
 }
 
 function resultLine(result: LearningLessonAuditResultDto): string {
-  if (result.disputes > 0) return `The Verifier disputes ${result.disputes} ${result.disputes === 1 ? 'claim' : 'claims'}; the lesson needs your review.`;
+  if (result.disputes > 0) return `The Verifier disputes ${result.disputes} ${result.disputes === 1 ? 'statement' : 'statements'}; the lesson needs your review.`;
   if (result.outcome === 'deferred') return result.message ?? 'The audit is waiting to retry.';
   if (result.outcome === 'stopped') return [result.message, result.fix && `Fix: ${result.fix}`].filter(Boolean).join(' ') || 'The audit stopped.';
-  return result.message ?? 'The Verifier agrees with every claim it checked.';
+  return result.message ?? 'The Verifier agrees with every statement it checked.';
 }
 
 /** "Audit this lesson now" on a ready lesson of a course that opted in (§14.3). */

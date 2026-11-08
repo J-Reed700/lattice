@@ -3,8 +3,8 @@
 
 use super::support::{
     baseline, build, files, idle_grader, judge_answer, literals_edit, literals_mutation,
-    operator_edit, operator_mutation, planted, spec, FakeRunner, ScriptedModel, KILLING_TEST,
-    LITERALS, OPERATOR,
+    operator_edit, operator_mutation, planted, spec, unchecked, FakeRunner, ScriptedModel,
+    KILLING_TEST, LITERALS, OPERATOR,
 };
 use crate::drills::build::{Mutation, Planted, Trail, Verification};
 use crate::tests::pool;
@@ -49,7 +49,7 @@ async fn every_mutation_proven_gives_the_files_the_spans_and_the_planted_key() -
     // The killing test runs on both versions; the suite on the smell.
     assert_eq!(runner.runs().len(), 3);
 
-    let key = proved.planted_key();
+    let key = proved.planted_key(&unchecked());
     assert_eq!(key[0].id, "planted-1");
     assert_eq!(key[0].pattern, OPERATOR);
     assert_eq!(key[0].severity, Severity::Major);
@@ -116,6 +116,7 @@ async fn a_mutation_that_cannot_be_undone_once_another_is_dropped_is_dropped_too
         consequence: "The clock is never kept.".into(),
         explanation: "The clock is dropped. Keep it.".into(),
         verification: Verification::Unobservable("It is a state error that needs a clock.".into()),
+        lesson_sentences: vec![],
     };
     let second = Mutation {
         pattern: "correctness.off_by_one".into(),
@@ -128,6 +129,7 @@ async fn a_mutation_that_cannot_be_undone_once_another_is_dropped_is_dropped_too
         consequence: "A call is counted a tick early.".into(),
         explanation: "The time is shifted. Record the time itself.".into(),
         verification: Verification::Unobservable("No test can observe the shift.".into()),
+        lesson_sentences: vec![],
     };
     let planted = Planted {
         mutations: vec![first, second],

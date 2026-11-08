@@ -5,6 +5,7 @@ import {
   barLine,
   impactLine,
   overrideLines,
+  relationLine,
   redecidedLine,
   sufficiencyNote,
   TRUST_LEVELS,
@@ -40,16 +41,16 @@ describe('trust presentation', () => {
     ]);
   });
 
-  it('says how many checked claims an override re-decides', () => {
-    expect(impactLine({ versions: 1, claims: 3, lessons: 2 }, 'source')).toBe('3 checked claims in 2 lessons rest on this source; they will be re-decided.');
-    expect(impactLine({ versions: 4, claims: 1, lessons: 1 }, 'site')).toBe('1 checked claim in 1 lesson rests on this site; it will be re-decided.');
-    expect(impactLine({ versions: 4, claims: 0, lessons: 0 }, 'site')).toBe('No checked claim rests on this site; later checks use the new level.');
+  it('says how many checked statements an override re-decides', () => {
+    expect(impactLine({ versions: 1, claims: 3, lessons: 2 }, 'source')).toBe('3 checked statements in 2 lessons rest on this source; they will be re-decided.');
+    expect(impactLine({ versions: 4, claims: 1, lessons: 1 }, 'site')).toBe('1 checked statement in 1 lesson rests on this site; it will be re-decided.');
+    expect(impactLine({ versions: 4, claims: 0, lessons: 0 }, 'site')).toBe('No checked statement rests on this site; later checks use the new level.');
   });
 
   it('says what re-deciding did after an override change', () => {
     expect(redecidedLine({ verified: 2, reopened: 1, stillFailing: 0, notLevelled: 1, lessons: 2 }))
-      .toBe('2 claims verified · 1 claim reopened for you · 1 claim left as it was: a source in it was never assessed.');
-    expect(redecidedLine({ verified: 0, reopened: 0, stillFailing: 0, notLevelled: 0, lessons: 0 })).toBe('No claim’s decision changed.');
+      .toBe('2 statements verified · 1 statement reopened for you · 1 statement left as it was: a source in it was never assessed.');
+    expect(redecidedLine({ verified: 0, reopened: 0, stillFailing: 0, notLevelled: 0, lessons: 0 })).toBe('No statement’s decision changed.');
   });
 
   it('states the bar in force, and says when only corroboration meets it', () => {
@@ -57,13 +58,13 @@ describe('trust presentation', () => {
     expect(barLine({ ...SPECIFICATION_BAR, lowestAccepted: null })).toBe('No single source is enough for how an API, standard or rule is defined now; it needs independent sources that agree');
   });
 
-  it('shows a published claim’s kind, subject and label', () => {
+  it('shows a published statement’s kind, subject and label', () => {
     expect(sufficiencyNote({ claimKind: 'specification', subject: 'C#', sufficient: true, bar: null, label: 'secondary', missing: null, ceiling: null, reasons: [] }))
-      .toBe('Specification claim about C# · per a secondary source, not the owner’s documentation');
-    expect(sufficiencyNote({ claimKind: 'practice', subject: null, sufficient: true, bar: null, label: null, missing: null, ceiling: null, reasons: [] })).toBe('Practice claim');
+      .toBe('Specification statement about C# · per a secondary source, not the owner’s documentation');
+    expect(sufficiencyNote({ claimKind: 'practice', subject: null, sufficient: true, bar: null, label: null, missing: null, ceiling: null, reasons: [] })).toBe('Practice statement');
   });
 
-  it('counts verified claims by the best level of their support', () => {
+  it('counts verified statements by the best level of their support', () => {
     const passage = (level: 'primary' | 'established' | null) => ({
       sourceVersionId: 'v', title: 't', url: null, text: 'x', startByte: 0, endByte: 1, retrievalKind: 'hybrid',
       trust: level ? trustOf(level) : null,
@@ -73,8 +74,13 @@ describe('trust presentation', () => {
       passages: levels.map(passage), resolution: 'verified', note: null, sufficiency: null,
     });
     expect(verifiedByLevel([claim(['primary', 'established']), claim(['primary']), claim(['established']), claim([null])])).toEqual([
-      '2 claims verified against primary sources', '1 against established sources', '1 against sources not weighed for standing',
+      '2 statements verified against primary sources', '1 against established sources', '1 against sources not weighed for standing',
     ]);
     expect(verifiedByLevel([claim([null])])).toEqual([]);
+  });
+
+  it('says a citation was made for a statement', () => {
+    const relation = { kind: 'cited_for_claim', fromVersionId: 'v1', toVersionId: null, toUrl: 'https://example.org/page' } as const;
+    expect(relationLine(relation, 'v1', () => null)).toBe('Cited for a statement https://example.org/page');
   });
 });

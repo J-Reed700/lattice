@@ -87,8 +87,22 @@ describe('Learning Studio Plan editor', () => {
     const disclosure = earlier.closest('details')!;
     expect(disclosure).not.toHaveAttribute('open');
     const lines = within(disclosure).getAllByRole('listitem').map((item) => item.textContent);
-    expect(lines[0]).toMatch(/^Paused at Verifying factual claims · /);
-    expect(lines[1]).toMatch(/^Stopped at Verifying factual claims · .* · The model rejected the request\.$/);
+    expect(lines[0]).toMatch(/^Paused at Verifying factual statements · /);
+    expect(lines[1]).toMatch(/^Stopped at Verifying factual statements · .* · The model rejected the request\.$/);
+  });
+
+  it('names an earlier attempt that stopped while the repaired draft was checked again by that step', async () => {
+    const running = plan().jobs[0];
+    mocks.getPlan.mockResolvedValue(ok(plan({ jobs: [
+      { ...running, id: 'job-b', status: 'cancelled', retryOfJobId: null, createdAt: 1_790_000_100_000, finishedAt: 1_790_000_101_000, error: null,
+        activity: { phase: 'review', reached: 'repair', phaseStartedAt: 0, lastActivityAt: 0, lastCheckpointAt: null, lessonTitle: null, modelName: null, modelRunning: false, responseCharacters: 0, modelAttempt: 0, verificationPass: 2, checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null, recentSteps: [] } },
+      { ...running, id: 'job-c', retryOfJobId: 'job-b', createdAt: 1_790_000_200_000 },
+    ] })));
+    renderPlan();
+    await userEvent.click(await screen.findByRole('button', { name: 'Details' }));
+    const disclosure = screen.getByText('Earlier attempts (1)').closest('details')!;
+    const lines = within(disclosure).getAllByRole('listitem').map((item) => item.textContent);
+    expect(lines[0]).toMatch(/^Paused at Checking the repaired draft again · /);
   });
 
   it('lists an attempt an update ended as history, with nothing to resume or retry', async () => {

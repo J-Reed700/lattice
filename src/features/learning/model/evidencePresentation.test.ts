@@ -46,7 +46,7 @@ describe('how a statement was checked, in words', () => {
     expect(checkWords(classed({ label }))).toBe(expected);
   });
 
-  it('names the passage that states the statement, not just the first one it was compared with', () => {
+  it('names the passage that supports the statement, not just the first one it was compared with', () => {
     const passages = [titled('v1', 'Release notes'), titled('v2', 'API reference')];
     const parts = [{ part: 'The API returns pixels', kind: 'stated' as const, sourceVersionId: 'v2' }];
     expect(checkWords(classed({ passages, parts, label: 'attributed' }))).toBe('According to API reference');

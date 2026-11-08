@@ -53,11 +53,10 @@ impl SqliteClusterRepository {
 
     fn decode_centroid(bytes: &[u8]) -> Vec<f32> {
         bytes
-            .chunks_exact(4)
-            .filter_map(|c| {
-                let arr: [u8; 4] = [*c.first()?, *c.get(1)?, *c.get(2)?, *c.get(3)?];
-                Some(f32::from_le_bytes(arr))
-            })
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|c| f32::from_le_bytes(*c))
             .collect()
     }
 }

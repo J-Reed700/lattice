@@ -479,7 +479,8 @@ mod tests;
 
 pub use answers::{normalize_answer, parse_number, show_number, text_matches};
 pub use checks::{
-    cloze_blanks, key_leaks, length_biased, near_duplicate, validate_candidate, TRUE_FALSE,
+    cloze_blanks, key_leaks, length_biased, near_duplicate, validate_candidate,
+    SINGLE_CHOICE_OPTIONS, TRUE_FALSE,
 };
 pub use scoring::{
     answer_hint, grade_keyed, key_reveal, part_results, KeyReveal, KeyedGrade, KeyedOutcome,

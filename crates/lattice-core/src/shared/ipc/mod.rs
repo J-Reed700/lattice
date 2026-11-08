@@ -202,6 +202,8 @@ pub enum ErrorCode {
     // Network Errors
     /// Network operation failed
     NetworkError,
+    /// A web server answered with an error status
+    HttpStatus,
     /// Request timeout
     Timeout,
     /// Rate limit exceeded

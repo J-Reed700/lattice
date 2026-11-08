@@ -256,7 +256,7 @@ pub(in crate::lessons::content_verification) async fn group(
         let mut claims: Vec<usize> = pending.iter().map(|item| item.ordinal).collect();
         claims.dedup();
         crate::lesson_progress::stage(format!(
-            "Comparing {} claims of section {} with their evidence",
+            "Comparing {} statements of section {} with their evidence",
             claims.len(),
             pending.first().map_or(0, |item| item.unit) + 1
         ));
@@ -294,7 +294,9 @@ pub(in crate::lessons::content_verification) async fn group(
             Err(error) => return Err(error),
         };
         if judgments.len() != pending.len() {
-            return Err(invalid("Incomplete claim batch; no lesson was published."));
+            return Err(invalid(
+                "Incomplete statement batch; no lesson was published.",
+            ));
         }
         let mut unresolved = Vec::new();
         for (item, judgment) in pending.into_iter().zip(judgments) {

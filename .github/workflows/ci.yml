@@ -26,9 +26,133 @@ env:
   REDS: ${{ (endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
 
 jobs:
+  # A pull request runs only the jobs its files can affect. Any doubt, an
+  # unknown path or a failure here runs everything.
+  changes:
+    name: changed paths
+    runs-on: ubuntu-latest
+    permissions:
+      pull-requests: read
+      contents: read
+    outputs:
+      rust: ${{ steps.paths.outputs.rust }}
+      web: ${{ steps.paths.outputs.web }}
+      all: ${{ steps.paths.outputs.all }}
+      rust_packages: ${{ steps.crates.outputs.packages }}
+    steps:
+      - uses: actions/checkout@v4
+        continue-on-error: true
+      - id: paths
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+        run: |
+          fail_safe() { echo rust=true >> "$GITHUB_OUTPUT"; echo web=true >> "$GITHUB_OUTPUT"; echo all=true >> "$GITHUB_OUTPUT"; }
+          if [ "$EVENT" != "pull_request" ]; then fail_safe; exit 0; fi
+          if ! gh api --paginate "repos/${{ github.repository }}/pulls/${{ github.event.pull_request.number }}/files" --jq '.[] | .filename, (.previous_filename // empty)' > files.txt; then
+            fail_safe; exit 0
+          fi
+          python3 - <<'PYCODE' || fail_safe
+          import os
+          files = [line.strip() for line in open('files.txt') if line.strip()]
+          rust_dirs = ('crates/', 'scripts/', 'evals/', '.cargo/', '.config/')
+          rust_names = {'Cargo.toml', 'Cargo.lock', 'rust-toolchain', 'rust-toolchain.toml', 'clippy.toml', 'rustfmt.toml', 'deny.toml', 'src/lib/bindings.ts', 'src/shared/ipc/routes.generated.ts'}
+          web_dirs = ('src/', 'e2e/', 'public/', 'scripts/')
+          def is_rust(f):
+              if f.startswith('evals/') and 'results' in f.split('/'):
+                  return False
+              return f.startswith(rust_dirs) or f in rust_names
+          def is_web(f):
+              return f.startswith(web_dirs) or ('/' not in f and not f.endswith('.md'))
+          def is_quiet(f):
+              return f.startswith(('docs/', 'evals/')) or f.endswith('.md')
+          rust = any(is_rust(f) for f in files)
+          web = any(is_web(f) for f in files)
+          every = not files or len(files) >= 3000 or any(f.startswith('.github/') or not (is_rust(f) or is_web(f) or is_quiet(f)) for f in files)
+          open('rust-files.txt', 'w').write(''.join(f + '\n' for f in files if is_rust(f)))
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
+              print('rust=' + str(rust).lower(), 'web=' + str(web).lower(), 'all=' + str(every).lower(), sep=chr(10), file=out)
+          PYCODE
+
+      - id: crates
+        shell: bash
+        env:
+          EVENT: ${{ github.event_name }}
+          ALL: ${{ steps.paths.outputs.all }}
+        run: |
+          if [ "$EVENT" = "pull_request" ] && [ "$ALL" != "true" ] && [ -f rust-files.txt ]; then
+            python3 scripts/ci/rust_packages.py rust-files.txt >> "$GITHUB_OUTPUT" || echo "packages=--workspace" >> "$GITHUB_OUTPUT"
+          else
+            echo "packages=--workspace" >> "$GITHUB_OUTPUT"
+          fi
+
+  rust-lint:
+    name: cargo fmt and clippy (${{ matrix.os }})
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true') }}
+    runs-on: ${{ matrix.os }}
+    env:
+      CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # Not RUST_* or CARGO_*: rust-cache hashes those into its key, so PRs would miss main's cache.
+      PACKAGE_ARGS: ${{ needs.changes.outputs.rust_packages || '--workspace' }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Install Linux system deps
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          # Tauri 2 + webkit dependencies on Ubuntu.
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libgtk-3-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            patchelf
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: rust-lint
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+          cache-on-failure: true
+
+      - name: Create build placeholders for source checks
+        shell: bash
+        run: |
+          mkdir -p dist
+          case "${{ runner.os }}" in
+            Linux) touch crates/lattice-desktop/binaries/llama-server-x86_64-unknown-linux-gnu \
+                         crates/lattice-desktop/binaries/llama-server-cpu-x86_64-unknown-linux-gnu ;;
+            macOS) triple="$(rustc -vV | awk '/^host:/ {print $2}')"
+                   touch "crates/lattice-desktop/binaries/llama-server-$triple" ;;
+            Windows) touch crates/lattice-desktop/binaries/llama-server-x86_64-pc-windows-msvc.exe \
+                           crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
+          esac
+
+      - name: cargo fmt --check
+        if: runner.os == 'Linux'
+        run: cargo fmt --all -- --check
+
+      # The workspace defines additional safety lints in Cargo.toml. Any
+      # warning fails the build.
+      - name: cargo clippy
+        working-directory: crates/lattice-desktop
+        run: cargo clippy ${{ env.PACKAGE_ARGS }} --all-targets -- -D warnings
+
   # Build on each supported platform to catch target-specific dependencies.
   rust-check:
     name: cargo check (${{ matrix.os }})
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true' }}
     runs-on: ${{ matrix.os }}
     # Intel source checks precede publication of its first sidecar. This
     # debug-only override cannot produce a release bundle; the package job
@@ -38,19 +162,20 @@ jobs:
       # Backtraces keep file and line. Full debug info made the cache too big
       # to keep and the test build too big for the Ubuntu runner's memory.
       CARGO_PROFILE_DEV_DEBUG: line-tables-only
+      # Not RUST_* or CARGO_*: rust-cache hashes those into its key, so PRs would miss main's cache.
+      PACKAGE_ARGS: ${{ needs.changes.outputs.rust_packages || '--workspace' }}
     strategy:
       fail-fast: false
-      # GitHub runs five macOS jobs at a time for the account, and every pull
-      # request used to ask for five, so main's runs waited hours behind them.
-      # Intel Macs, the slowest runners, are checked on pushes to main only,
-      # and a draft pull request gets its macOS jobs when it is marked ready.
+      # Macs run on pushes to main only. The account gets a few macOS runners at
+      # a time, so a pull request that asked for them waited an hour or more.
+      # A draft runs Ubuntu only; marking it ready runs Windows too.
       matrix:
         os: >-
           ${{ fromJSON((endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows'))
           && (endsWith(github.head_ref, '-reds-windows') && '["windows-latest"]' || '["ubuntu-24.04"]')
-          || format('["ubuntu-24.04", "windows-latest"{0}{1}]',
-          github.event.pull_request.draft != true && ', "macos-latest"' || '',
-          github.event_name == 'push' && ', "macos-15-intel"' || '')) }}
+          || (github.event.pull_request.draft && '["ubuntu-24.04"]'
+          || (github.event_name == 'push' && '["ubuntu-24.04", "windows-latest", "macos-latest", "macos-15-intel"]'
+          || '["ubuntu-24.04", "windows-latest"]'))) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -87,7 +212,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: rust-check
-          save-if: ${{ github.ref == 'refs/heads/main' }}
+          save-if: ${{ github.ref == 'refs/heads/main' && runner.os != 'macOS' }}
           cache-on-failure: true
 
       # Debug builds accept empty sidecars; the sidecar-binaries job checks
@@ -105,17 +230,11 @@ jobs:
                            crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe ;;
           esac
 
-      - name: cargo fmt --check
-        if: runner.os == 'Linux' && env.REDS != 'true'
-        run: cargo fmt --all -- --check
-
-      # Clippy checks everything cargo check did, so it runs in its place, first.
-      # The workspace defines additional safety lints in Cargo.toml. Existing
-      # warnings are not promoted to errors yet.
+      # macOS lints here so it takes no extra macOS runner.
       - name: cargo clippy
-        if: env.REDS != 'true'
+        if: runner.os == 'macOS' && env.REDS != 'true'
         working-directory: crates/lattice-desktop
-        run: cargo clippy --workspace --all-targets
+        run: cargo clippy ${{ env.PACKAGE_ARGS }} --all-targets -- -D warnings
 
       # Prove the manifest is actually in the executables rather than inferring
       # it from a green run. The first attempt at this fix emitted link args
@@ -144,7 +263,7 @@ jobs:
           # os error 1455), which rustc reports as E0786 invalid metadata.
           # The same selection and features as the test step, which then has
           # nothing left to build; checked are the desktop crate's executables.
-          cargo test --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
+          cargo test --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-run --message-format=json -j 2 > $json
           if ($LASTEXITCODE -ne 0) {
             Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
@@ -167,13 +286,32 @@ jobs:
             Write-Host "OK $exe"
           }
 
-      - uses: taiki-e/install-action@v2
-        with:
-          tool: cargo-nextest
+      - name: Install cargo-nextest through the GitHub API
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          NEXTEST_VERSION: 0.9.151
+        run: |
+          case "$RUNNER_OS" in
+            Linux) target=x86_64-unknown-linux-gnu; sha=1d4ce302b820c41f4b89c5fb9bce45f0f0c94882c1cf08fc360caf08be6e7df4 ;;
+            Windows) target=x86_64-pc-windows-msvc; sha=e51bdb4b5883df48f335381b287378edb244318fac65ae0adaf6b9e69298246b ;;
+            macOS) target=universal-apple-darwin; sha=d1d7d025d4bfc9fb154cd76aea3949bd78534829a0589abefa6e5dd4edb135dd ;;
+          esac
+          asset="cargo-nextest-$NEXTEST_VERSION-$target.tar.gz"
+          cd "$RUNNER_TEMP"
+          for attempt in 1 2 3 4 5; do
+            gh release download "cargo-nextest-$NEXTEST_VERSION" --repo nextest-rs/nextest --pattern "$asset" --clobber && break
+            [ "$attempt" -lt 5 ] || exit 1
+            sleep 15
+          done
+          if command -v sha256sum >/dev/null; then actual="$(sha256sum "$asset" | awk '{print $1}')"; else actual="$(shasum -a 256 "$asset" | awk '{print $1}')"; fi
+          [ "$actual" = "$sha" ] || { echo "::error::$asset SHA-256 is $actual, expected $sha"; exit 1; }
+          tar -xzf "$asset" -C "$(dirname "$(command -v cargo)")"
+          cargo nextest --version
 
       - name: All desktop Rust unit, command and integration tests
         working-directory: crates/lattice-desktop
-        run: cargo nextest run --locked --workspace --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
+        run: cargo nextest run --locked ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib --bins --tests --no-fail-fast --profile ci
 
       - name: Upload the test timings
         if: ${{ !cancelled() }}
@@ -184,13 +322,13 @@ jobs:
           if-no-files-found: warn
 
       - name: Execute C#, Rust, React and Python container exercises
-        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true'
+        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true' && (env.PACKAGE_ARGS == '--workspace' || contains(env.PACKAGE_ARGS, 'lattice-learning'))
         working-directory: crates/lattice-desktop
         timeout-minutes: 20
-        run: cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
+        run: cargo test ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib runtime::runtime_catalog::tests::docker_ -- --ignored --test-threads=1
 
       - name: Verify container staging and containment
-        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true'
+        if: matrix.os == 'ubuntu-24.04' && env.REDS != 'true' && (env.PACKAGE_ARGS == '--workspace' || contains(env.PACKAGE_ARGS, 'lattice-learning'))
         working-directory: crates/lattice-desktop
         timeout-minutes: 5
         shell: bash
@@ -198,7 +336,7 @@ jobs:
           image_id="$(docker image inspect --format '{{.Id}}' python:3.13.16-slim)"
           LATTICE_LAB_SMOKE_IMAGE_ID="$image_id" \
             LATTICE_LAB_SMOKE_ENGINE=docker \
-            cargo test --workspace --features lattice-desktop/bindings-export --lib runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
+            cargo test ${{ env.PACKAGE_ARGS }} --features lattice-desktop/bindings-export --lib runtime::lab_runtime::tests::opt_in_container_smoke_proves_runtime_containment_and_read_only_checks -- --ignored --test-threads=1
 
       - name: generated bindings are current
         if: env.REDS != 'true'
@@ -208,7 +346,8 @@ jobs:
 
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && github.event.pull_request.draft != true && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ${{ matrix.os }}
     # No cap of our own. A cold Intel release build runs 75-95 minutes, and a
     # job cancelled at a cap never saves its Rust cache, so main never got a
@@ -216,21 +355,21 @@ jobs:
     # too. GitHub's own six-hour limit still ends a hung job.
     strategy:
       fail-fast: false
-      # Macs run as in rust-check: Apple Silicon unless the pull request is a
-      # draft, Intel on pushes to main only. The list is
-      # built whole because GitHub applies include after exclude, so an
-      # excluded Intel entry would come back as its own job.
+      # Pull requests that are ready for review build and exercise the app on
+      # Ubuntu. Windows and the Macs run on pushes to main only: a cold Windows
+      # release build takes 45 to 55 minutes, and macOS runners are few. The
+      # list is built whole because GitHub applies include after exclude, so an
+      # excluded entry would come back as its own job.
       # Hosted Windows runners use Server, not Windows 11. Keep the actual
       # runner visible; Windows 11 installation remains a release check.
       matrix:
         include: >-
-          ${{ fromJSON(format('[{0}{1}{2}]',
-          '{"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false},
-          {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false}',
-          github.event.pull_request.draft != true
-          && ', {"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false}' || '',
+          ${{ fromJSON(format('[{0}{1}]',
+          '{"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false}',
           github.event_name == 'push'
-          && ', {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
+          && ', {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false},
+          {"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false},
+          {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
@@ -266,6 +405,13 @@ jobs:
           key: desktop-compatibility-${{ matrix.name }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
           cache-on-failure: true
+      # Not on Intel: its restored cache holds the shipped profile, and another profile changes every fingerprint.
+      - name: Faster release build for pull requests
+        if: github.event_name == 'pull_request' && !matrix.intel
+        shell: bash
+        run: |
+          echo "CARGO_PROFILE_RELEASE_LTO=false" >> "$GITHUB_ENV"
+          echo "CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16" >> "$GITHUB_ENV"
       - name: Fetch verified published sidecars
         if: ${{ !matrix.intel }}
         shell: bash
@@ -291,6 +437,50 @@ jobs:
           lock.write_text('\n'.join(lines) + '\n')
           PYCODE
       - run: npm ci
+      - name: Cache Tauri's bundling tools
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: tauri-tools-${{ runner.os }}-
+      # The pinned values come from the tauri-cli version's nsis/mod.rs; update them with the CLI.
+      - name: Fetch Tauri's NSIS tools through the GitHub API
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tools = Join-Path $env:LOCALAPPDATA 'tauri'
+          $nsis = Join-Path $tools 'NSIS'
+          $dll = Join-Path $nsis 'Plugins\x86-unicode\additional\nsis_tauri_utils.dll'
+          if ((Test-Path (Join-Path $nsis 'makensis.exe')) -and (Test-Path $dll)) {
+            Write-Host 'NSIS tools already present'
+            return
+          }
+          function Get-Asset($tag, $repo, $pattern, $sha1) {
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              gh release download $tag --repo $repo --pattern $pattern --dir $env:RUNNER_TEMP --clobber | Out-Host
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 5) { throw "gh release download $tag failed after $attempt attempts" }
+              Start-Sleep -Seconds 15
+            }
+            $file = Join-Path $env:RUNNER_TEMP $pattern
+            $actual = (Get-FileHash -Algorithm SHA1 $file).Hash
+            if ($actual -ine $sha1) { throw "$pattern SHA1 $actual does not match $sha1" }
+            return $file
+          }
+          if (Test-Path $nsis) { Remove-Item -Recurse -Force $nsis }
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          $zip = Get-Asset 'nsis-3.11' 'tauri-apps/binary-releases' 'nsis-3.11.zip' 'EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D'
+          Expand-Archive -Path $zip -DestinationPath $tools -Force
+          Rename-Item (Join-Path $tools 'nsis-3.11') 'NSIS'
+          $utils = Get-Asset 'nsis_tauri_utils-v0.5.3' 'tauri-apps/nsis-tauri-utils' 'nsis_tauri_utils.dll' '75197FEE3C6A814FE035788D1C34EAD39349B860'
+          New-Item -ItemType Directory -Force (Split-Path $dll) | Out-Null
+          Copy-Item $utils $dll
+          foreach ($required in 'makensis.exe', 'Bin\makensis.exe', 'Include\MUI2.nsh') {
+            if (-not (Test-Path (Join-Path $nsis $required))) { throw "NSIS tools incomplete: $required is missing" }
+          }
       - name: Build and install isolated package candidate
         run: npm run test:desktop:build -- --release
       - name: Exercise the native desktop app (macOS and Windows)
@@ -322,7 +512,8 @@ jobs:
   # Syntax-aware layer checks complement the filesystem-state guard.
   repository-barrier:
     name: architecture boundary checks
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -335,23 +526,41 @@ jobs:
       - run: python3 -m unittest discover -s scripts/sql_tests -p 'test_*.py'
       - run: python3 -m unittest scripts/test_tauri_command_inventory.py
       - run: python3 -m unittest scripts/test_replay_claude.py
+      - run: python3 -m unittest scripts/ci/test_rust_packages.py
       - run: python3 scripts/check-tauri-command-inventory.py
 
   dependency-audit:
     name: Dependency vulnerability audit
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) }}
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
-      - name: Install cargo-audit
-        run: cargo install cargo-audit --locked
+      - name: Install cargo-audit through the GitHub API
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          AUDIT_VERSION: 0.22.2
+        run: |
+          asset="cargo-audit-x86_64-unknown-linux-gnu-v$AUDIT_VERSION.tgz"
+          cd "$RUNNER_TEMP"
+          for attempt in 1 2 3 4 5; do
+            gh release download "cargo-audit/v$AUDIT_VERSION" --repo rustsec/rustsec --pattern "$asset" --clobber && break
+            [ "$attempt" -lt 5 ] || exit 1
+            sleep 15
+          done
+          echo "ab28a1bdb54db4d5d8ad5981cf1f959410370b3d28250dbd35f6a44248620e39  $asset" | sha256sum --check
+          tar -xzf "$asset" --strip-components=1 -C "$(dirname "$(command -v cargo)")" "cargo-audit-x86_64-unknown-linux-gnu-v$AUDIT_VERSION/cargo-audit"
+          cargo audit --version
       - name: Desktop advisories
         working-directory: crates/lattice-desktop
         run: cargo audit --deny yanked --file ../../Cargo.lock
 
   frontend:
     name: frontend (type-check, lint, test)
+    needs: changes
+    if: ${{ needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true' }}
     # Playwright 1.58 does not support Ubuntu 26.04, which ubuntu-latest is now.
     runs-on: ubuntu-24.04
     steps:
@@ -410,22 +619,93 @@ jobs:
         if: env.REDS != 'true'
         run: node scripts/check-initial-js-budget.mjs dist
 
-      - name: Install browsers for smoke tests
-        if: env.REDS != 'true'
-        run: npx playwright install --with-deps chromium webkit
+  # Each slice runs in its own job: the smoke tests were 20 of the frontend
+  # job's 31 min, Chromium's 116 tests about 7 and WebKit on one worker.
+  browser-smoke:
+    name: browser smoke (${{ matrix.slice }})
+    needs: changes
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
+    # Playwright 1.58 does not support Ubuntu 26.04, which ubuntu-latest is now.
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slice: chromium
+            browser: chromium
+            args: --project=web-smoke
+          - slice: webkit-1of2
+            browser: webkit
+            args: --project=webkit-smoke --shard=1/2
+          - slice: webkit-2of2
+            browser: webkit
+            args: --project=webkit-smoke --shard=2/2
+    steps:
+      - uses: actions/checkout@v4
 
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: 'npm'
+          cache-dependency-path: package-lock.json
+
+      - run: npm ci
+
+      - name: Install browsers for smoke tests
+        run: npx playwright install --with-deps ${{ matrix.browser }}
+
+      # Playwright's webServer builds and serves the renderer itself.
       - name: Browser smoke tests
-        if: env.REDS != 'true'
-        run: npm run test:e2e
+        run: npm run test:e2e -- ${{ matrix.args }}
 
       - name: Upload browser reports and failure artifacts
-        if: always() && env.REDS != 'true'
+        if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: frontend-browser-results
+          name: browser-results-${{ matrix.slice }}
           path: |
             e2e-results/html/
             e2e-results/results.json
             e2e-results/artifacts/
           if-no-files-found: warn
           retention-days: 14
+
+  # Main's caches sit at the 10 GB limit; PR caches and superseded main caches evicted the useful ones.
+  prune-caches:
+    name: prune caches
+    needs: [changes, rust-check, rust-lint, desktop-compatibility, repository-barrier, dependency-audit, frontend, browser-smoke]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete pull request caches and superseded main caches
+        shell: bash
+        run: |
+          gh cache list --limit 1000 --json id,key,ref,createdAt,sizeInBytes > caches.json
+          python3 - <<'PYCODE'
+          import json, subprocess
+          caches = json.load(open('caches.json'))
+          doomed = [c for c in caches if c['ref'].startswith('refs/pull/')]
+          groups = {}
+          for c in caches:
+              if c['ref'] == 'refs/heads/main':
+                  groups.setdefault(c['key'].rsplit('-', 1)[0], []).append(c)
+          for group in groups.values():
+              group.sort(key=lambda c: c['createdAt'], reverse=True)
+              doomed.extend(group[1:])
+          gone = set()
+          for c in doomed:
+              result = subprocess.run(['gh', 'cache', 'delete', str(c['id'])], capture_output=True, text=True)
+              if result.returncode == 0:
+                  gone.add(c['id'])
+                  print(f"deleted {c['key']} ({c['ref']}) {c['sizeInBytes'] / 1e6:.0f} MB")
+              else:
+                  print(f"::warning::could not delete {c['key']}: {result.stderr.strip()}")
+          kept = sum(c['sizeInBytes'] for c in caches if c['id'] not in gone)
+          print(f"kept {kept / 1e6:.0f} MB")
+          PYCODE

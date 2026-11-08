@@ -833,12 +833,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
 }
 
 async fn shared_file_pool(directory: &std::path::Path) -> Result<SqlitePool> {
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.join("plan.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true)
-        .journal_mode(sqlx::sqlite::SqliteJournalMode::Wal)
-        .busy_timeout(std::time::Duration::from_secs(5));
+    let options = crate::test_support::file_options(directory.join("plan.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options)

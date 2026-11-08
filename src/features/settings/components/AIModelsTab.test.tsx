@@ -117,6 +117,7 @@ describe('Downloaded model chat selection', () => {
 
   it('allows assigning llama.cpp connection to Utility and Verifier', async () => {
     const user = await renderModels();
+    expect(screen.getByText(/Lesson statement audits/)).toBeInTheDocument();
     expect(row('Local model').getByText('Utility')).toHaveAttribute('data-active-role', 'utility');
 
     const llamaDialog = await openRowConfig(user, 'llama.cpp connection');

@@ -9,18 +9,14 @@ use crate::{
     tests,
 };
 use lattice_core::shared::error::Result;
-use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
-use std::str::FromStr;
+use sqlx::sqlite::SqlitePoolOptions;
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
 async fn file_pool(path: &std::path::Path) -> Result<sqlx::SqlitePool> {
-    let options = SqliteConnectOptions::from_str(&format!("sqlite://{}", path.display()))
-        .map_err(|error| lattice_core::shared::error::AppError::Database(error.to_string()))?
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options = crate::test_support::file_options(path);
     SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options)

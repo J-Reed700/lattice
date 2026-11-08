@@ -130,10 +130,7 @@ impl LLMPort for BatchModel {
 #[tokio::test]
 async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("adaptive-batches.db"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options = crate::test_support::file_options(directory.path().join("adaptive-batches.db"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
@@ -355,10 +352,8 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
 async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_missing_work(
 ) -> Result<()> {
     let directory = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(directory.path().join("restore-before-model.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options =
+        crate::test_support::file_options(directory.path().join("restore-before-model.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect_with(options.clone())
@@ -407,7 +402,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     assert!(
         progress
             .progress_message
-            .starts_with("Comparing 3 claims of section 1 with their evidence"),
+            .starts_with("Comparing 3 statements of section 1 with their evidence"),
         "{}",
         progress.progress_message
     );
@@ -455,10 +450,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
 #[tokio::test]
 async fn completed_batch_siblings_survive_interruption_during_individual_fallback() -> Result<()> {
     let dir = tempfile::tempdir()?;
-    let options = sqlx::sqlite::SqliteConnectOptions::new()
-        .filename(dir.path().join("batch.sqlite"))
-        .create_if_missing(true)
-        .foreign_keys(true);
+    let options = crate::test_support::file_options(dir.path().join("batch.sqlite"));
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(2)
         .connect_with(options.clone())

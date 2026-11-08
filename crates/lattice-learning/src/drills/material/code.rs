@@ -7,8 +7,10 @@ mod clean;
 mod judge;
 mod plant;
 mod review;
+mod teaches;
 
 pub(super) use judge::judge_wording;
+pub(crate) use teaches::basis_of;
 
 use super::{DrillMaterial, PlantWording, ReviewerWording, StageCtx};
 use crate::drills::build::{Baseline, CleanCode, CleanReview, Mutation};
@@ -63,7 +65,12 @@ impl DrillMaterial for CodeMaterial<'_> {
         baseline: &Baseline,
         targets: &[&'static Pattern],
     ) -> PlantWording {
-        self.code_plant_wording(language_of(spec), baseline, targets)
+        let evidence = baseline
+            .brief
+            .as_ref()
+            .is_some_and(|brief| !brief.evidence.is_empty());
+        let lesson_issues = if evidence { spec.lesson_issues() } else { 0 };
+        self.code_plant_wording(language_of(spec), baseline, targets, lesson_issues)
     }
 
     fn proof_strategy<'a>(

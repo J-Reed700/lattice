@@ -66,11 +66,11 @@ impl ClaimLedger {
             return Some(self.stop_reason(
                 "claim_left_out",
                 format!(
-                    "The pass named no statement for \"{}\", though the lesson still holds its sentence, \"{}\". The claim is kept as it was, not ended.",
+                    "The pass named no statement for \"{}\", though the lesson still holds its sentence, \"{}\". The statement is kept as it was, not ended.",
                     entry.statement(),
                     entry.location().quote
                 ),
-                "The draft is saved. Resume this lesson to read it again. If it stops here again, report this lesson's claim review so its extraction can be repaired.",
+                "The draft is saved. Resume this lesson to read it again. If it stops here again, report this lesson's statement review so its extraction can be repaired.",
             ));
         }
         for id in &self.findings {
@@ -110,7 +110,7 @@ impl ClaimLedger {
                         taken.step,
                         taken.outcome
                     ),
-                    "The draft is saved. Report this lesson's claim review so its record can be repaired.",
+                    "The draft is saved. Report this lesson's statement review so its record can be repaired.",
                 ));
             }
         }
@@ -130,18 +130,18 @@ impl ClaimLedger {
         let more = match standing.len() {
             1 => String::new(),
             others => format!(
-                " ({} more claims the machine ended have their sentences in it too)",
+                " ({} more statements the machine ended have their sentences in it too)",
                 others - 1
             ),
         };
         let reason = self.stop_reason(
             "ended_claim_stands",
             format!(
-                "The lesson still holds \"{}\", which the claim \"{}\" stood on until the machine ended it{more}. A lesson is not published with a sentence no claim answers for.",
+                "The lesson still holds \"{}\", which the statement \"{}\" stood on until the machine ended it{more}. A lesson is not published with a sentence no statement answers for.",
                 first.location().quote,
                 first.statement()
             ),
-            "Open the lesson's claim review: undo the removal to check the sentence, or take the sentence out of the draft, then resume this lesson.",
+            "Open the lesson's statement review: undo the removal to check the sentence, or take the sentence out of the draft, then resume this lesson.",
         );
         Some((reason, standing.len()))
     }
@@ -237,7 +237,7 @@ impl ClaimLedger {
                     "The checks stopped because a whole pass changed nothing: {}.",
                     waits.join("; ")
                 ),
-                "Resume this lesson to try again. If it stops here again, report this lesson's claim review.",
+                "Resume this lesson to try again. If it stops here again, report this lesson's statement review.",
             )
         };
         self.stop(raw, reason).await

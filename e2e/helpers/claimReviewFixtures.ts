@@ -49,6 +49,7 @@ export function claimFixture(options: ClaimOptions) {
     } : null,
     alsoSupported: [],
     tried: { searches: 3, pagesRead: 12, pagesMentioning: 0, stated: false, relevant: [] },
+    place: null, putBackUnit: null, rewritten: null,
   };
 }
 
@@ -69,13 +70,14 @@ export async function holdLessonForReview(page: Page, claims: ReturnType<typeof 
     state.planWorkspace.jobs = [{
       id: 'held-job', programId: state.planWorkspace.programId, operationId: 'operation', kind: 'lesson_preparation', payloadSha256: 'fixture',
       baseRevisionNumber: state.planWorkspace.programRevision, status: 'completed', progressCompleted: 1, progressTotal: 1,
-      progressMessage: `Needs your review: ${held.length} claims`, activity: null, resultId: `needs_review:${lesson.id}`, error: null, retryOfJobId: null,
+      progressMessage: `Needs your review: ${held.length} statements`, activity: null, resultId: `needs_review:${lesson.id}`, error: null, retryOfJobId: null,
       createdAt: finishedAt - 3_600_000, startedAt: finishedAt - 3_600_000, finishedAt,
     }];
     state.claimReviews[lesson.id] = {
       lessonId: lesson.id, programId: state.planWorkspace.programId, state: 'needs_review', revision: 3, pass: 2, stopReason: null, changedSinceStop: false,
       counts: { verified: alreadyVerified, confirmed: 0, queued: held.length, open: 0, removedByYou: 0, editedByYou: 0, rewritten: 0 },
       teachingFindings: [],
+      sections: [...new Map(held.map((claim) => [claim.location.unitIndex, { index: claim.location.unitIndex, title: claim.location.unitTitle }])).values()],
       claims: held,
     };
     return { id: lesson.id, title: lesson.title };

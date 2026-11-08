@@ -1,0 +1,292 @@
+# Review drills in the course: every drill is built from one lesson
+
+Date: 2026-11-07. Status: design. The ask: "Either allow the drills to plug into a course to form its drills around,
+or move drills into the course like where tutor is. Whatever makes the most sense." The call made here: drills move
+into the course, and each drill is built from one of its lessons. It builds on `2026-11-04-code-review-drills.md` and
+`2026-11-05-spot-the-errors-drills.md`; the pipeline, the key, grading and the reveal stay as they are.
+
+## 0. What a drill is built from today
+
+- **No course reaches a code drill.** `review::start` gives code no domain and no course (`review.rs:45`). The clean
+  stage then takes the least recently used of 38 hard-coded areas (`bank::DOMAINS`: "payments and refunds", "rate
+  limiting", …). The original design meant the domain to be "the course's topic" (§2, step 1); the build never wired
+  it.
+- **The same patterns every time.** `targets()` is always called with no states (`review.rs:56`, `bank.rs:244`). The
+  pattern schedule was step 5 of the drills design and was never built. So every drill of a size plants the first
+  pattern of each family in catalogue order. Ratings go to `learning_drill_attempts.ratings_json` and are never read.
+- **A passage drill knows its course but not its lesson.** The course comes from a dropdown, and the passage is the
+  least-drilled paragraph of any of the course's sources.
+- **It lives outside the course.** The section sits on the Studio landing page and opens at `/studio?drills=open`.
+
+Nothing in a drill relates to what the learner is studying. The result is generic: idiomatic code about payments with
+an off-by-one and a swallowed exception, whatever the course is.
+
+## 1. The decision
+
+**Drills move into the course.** The course workspace's Practice tab gets a third view, **Review drills**, beside
+"Written practice" and "Code & simulations". It goes in Practice rather than a new top-level tab beside Tutor because
+a drill is practice on the course's lessons, and Practice already heads its views with the module and lesson. The top
+bar already holds seven tabs. The Studio landing section, its route and the course dropdown go.
+
+**Every drill is built from one lesson.** That lesson is the next one the lesson schedule offers (§5), or the one the
+learner picks. The lesson gives a code drill its subject and some of its defects, and gives a passage drill its
+passage. Plugging drills into a course from the Studio would have needed the same per-lesson build. It would only
+have added a course picker in a second place, and the drills would still have been away from the lessons they test.
+
+The methods, each fitted to where it acts:
+- **Erroneous examples of the lesson's own ideas.** A planted defect that breaks what the lesson teaches is an
+  erroneous example of that idea. Finding and explaining it beats studying correct examples alone on delayed tests
+  (Große & Renkl, 2007; McLaren, Adams & Mayer, 2015).
+- **Retrieval practice and successive relearning per lesson.** A lesson comes back for another drill on its own FSRS
+  schedule until its ideas are reliably found (Rawson & Dunlosky, 2011).
+- **A pretest for a lesson not studied yet,** with the reveal as the feedback. Attempting first improves later
+  learning when feedback follows (Richland, Kornell & Kao, 2009).
+- **Interleaving within a drill.** Catalogue patterns keep alternating families (Rohrer & Taylor, 2007), and lesson
+  issues sit beside catalogue issues, so the learner has to tell a broken idea from a generic defect.
+
+## 2. The lesson brief
+
+Code builds a brief of the lesson when the build starts and saves it in the first checkpoint (`CleanCode.brief`), so a
+resumed build and every later stage see the same text:
+
+- **The course:** title, goal and what the learner already knows (`prior_knowledge`).
+- **The module:** title, summary and outcomes.
+- **The lesson:** title and objective.
+- **Evidence, numbered L1, L2, ….**
+  - *A prepared lesson:* its teaching blocks (explanation, worked example, contrast, recap) cut into sentences with
+    the core's `Flowed` segmenter: the `Prose` breaks, except that a line break which only wraps a line is not a cut;
+    a sentence end at a line end still is, and so is a line that opens a block (list item, quote, heading, table row,
+    rule). A fenced code block counts as one unit. The check, practice and reflection blocks are left out because they
+    are questions, not teaching.
+  - *An outline lesson:* the course's source passages retrieved for the lesson, each under its source title. The query
+    is the lesson's title and objective plus the module's title and outcomes, through `ReferenceCollection` as
+    `snapshot_passages` does. It takes as much as the lesson's planned minutes take to read
+    (`estimated_minutes` × 238 words a minute, the mean silent reading rate for non-fiction, Brysbaert 2019), within
+    what the request's window leaves (`source_room`), and always its first passage.
+
+The room is counted on the planter's request with no code in it, the code and the defects reserved: it is the largest
+request that carries the brief, so a brief that fits it fits the others. A prepared lesson's evidence is a prefix of its
+units. A build whose brief, or whose first unit or passage, does not fit fails with the model's window as the reason.
+
+Both courses in the app today are outlines: 18 lessons, none prepared, sources only. So every brief there is source
+passages until lessons are prepared. Everything in a brief is data, never instructions, as passages already are.
+
+## 3. Code drills on a lesson
+
+- **Language.** The learner chooses it, and the choice is kept per course: the course offers the language its latest
+  code drill was taken in. Before its first, it offers the catalogue language that most of the fenced code in its
+  prepared lessons is written in; otherwise the one the learner's latest code drill of any course was taken in;
+  otherwise the catalogue's first. The view remembers a language picked for a course, so a pick whose drill is still
+  being built is not lost.
+- **The code fit check.** Before the brief is built, the model is asked whether the lesson teaches something code can
+  show: whether a program can follow or break what it teaches (rules, techniques, designs, algorithms, checks, limits,
+  the order of steps, or ways of handling data, failures, security or privacy). A lesson that has the learner draw,
+  explain or defend a design teaches that design. One whose whole content is done by people (how to speak, present,
+  rehearse, negotiate or study; terms to remember or say aloud; facts no program acts on) does not. The model gives its
+  reason first. The verdict is stored for the lesson with its basis, the check's text and the lesson's module, title
+  and objective, so a lesson is asked about once until one of them changes. A lesson turned down gives no code drill:
+  the build fails with the reason, and the lesson is not offered next for code (§5). It stays offered for
+  explanations. A built drill's outcome does not decide this: a drill can keep no lesson issue on a lesson that
+  teaches code, because the planter found no place for one or the lesson check failed it.
+- **The writer** gets the brief instead of a domain. It writes realistic code in which the lesson's ideas are at work,
+  used correctly. `DOMAINS`, `next_domain`, `least_recently_used` and `domain_uses` are removed.
+- **Two kinds of planted issue.** A drill of n issues (3, 4 or 5, by size):
+  - **Lesson issues:** up to ⌈n/2⌉ defects that each break something the lesson teaches, so that a reviewer who knows
+    only the cited evidence can tell from it that the changed code is wrong. Each cites the evidence it breaks
+    (`lessonSentences`: the evidence numbers) and names a catalogue pattern as its shape: the pattern its defect is an
+    instance of, which the key, the proof and grading need. The code was written so the lesson is at work in it.
+    Before its changes, the planter says in `lessonUse` where the code does what the evidence teaches, with the
+    evidence numbers. It plants the lesson issues first, one at each such place, up to ⌈n/2⌉: fewer only when the code
+    does fewer of those things, none only when it does none. `lessonSentences` comes first in each change, and
+    `lessonUse` before the changes. A brief with no evidence asks for none: the planter is told of lesson issues only
+    when there is evidence to cite.
+  - **Catalogue issues:** the other n − i: one for each of the first patterns of the schedule's ranking (§5) that no
+    lesson issue has, in order. A lesson issue may take a pattern of the ranking, and every issue is of a different
+    pattern, so the catalogue issues then take the next pattern instead.
+
+  `read()` checks the split. It accepts 0 to ⌈n/2⌉ lesson issues with valid, distinct sentence numbers, and requires
+  the catalogue issues to be exactly those patterns, with every issue of a different pattern. The schema gives
+  `lessonSentences` the range of evidence numbers and gives `pattern` the material's whole pattern list.
+- **The proof** of every issue is chosen by its pattern's family, unchanged. A proven lesson issue then gets a
+  **lesson check**, a stage of its own between the proof and the blind review, checkpointed like the others (a build
+  has seven stages): a judge is shown the cited sentences, the clean code and the changed code, and answers with
+  reasons first, then whether the changed code fails to do something those sentences say, so that a reviewer who
+  knows only them could tell it is wrong, and whether the clean code does what they say.
+  - It fails the check but passed its proof: it stays in the key as a plain issue with no lesson link.
+  - It fails its proof: it is dropped, as today.
+- **The key.** `KeyIssue` gets `lesson: Option<LessonLink { lesson_id, sentences }>`, a serde default, so old keys
+  read as `None`. Each sentence keeps the title of the source it comes from (`LessonSentence { text, source }`),
+  because an outline lesson's evidence comes from several sources. Code copies the sentences and their sources from
+  the brief by number; the model never copies them. The drill row gets `lesson_id`.
+- **Grading.** The judge's task shows the cited sentences under the issue's pattern ("From the lesson: …"). A finding
+  that names the broken idea in the lesson's words is then found, not only one that names the pattern.
+- **The reveal.** It shows "From the lesson", the sentences and their source, and a link to the lesson.
+
+## 4. Passage drills on a lesson
+
+The passage comes from the lesson:
+- *A prepared lesson:* the sources its blocks cite.
+- *An outline lesson:* the course's sources.
+
+Either way the passages are ranked by the brief's query. A passage is the hit's paragraph grown to hold the
+explanation's sentences, and a paragraph holding at least twice that many is cut into runs of that many, the last taking
+any left over. Sentences are counted and cut as flowed text: a line break that only wraps a line is not a sentence end,
+while a list item, table row or heading is a unit of its own, so a hard-wrapped source gives the same runs as an
+unwrapped one. Of the places the first page of hits overlaps, the pick is the one no drill has used that holds the most
+of the search's term weight; a tie goes to the better-ranked hit. When the first page holds none unused, the next, twice
+as deep, is read. Once all have been used, it is the one used longest ago, because drilling a lesson again on the same
+passage is the point of relearning. Before a place is explained, the passage check asks the model whether it teaches the
+lesson: whether most of what it says, links, navigation and notices left out, teaches a part of the subject the lesson's
+title names, as facts, definitions, how something works, comparisons, figures, steps, rules or advice. It need not cover
+the whole lesson. A place about a course rather than its subject (a request for a course, instructions to a model, an
+outline, a list of topics that names them without teaching them), boilerplate, or a place mostly about something else is
+turned down, and the next place in the same order is asked about. Term weight alone favours exactly those: a list of a
+course's topics holds more of a lesson's words than a paragraph that explains one. A verdict is stored for the lesson
+with its basis, the check's text and the lesson's module, title and objective, so a place is asked about once for a
+lesson until one of them changes. The explanation is written with the lesson's title as its topic. Clean review,
+planting and the source check are unchanged, except that the source check shows the checker the passage's sentences as
+flowed text too. If the sources hold no passage that teaches the lesson, that build fails with the reason, and the
+lesson is recorded as having nothing to drill from in passages (§7).
+
+## 5. What comes back when: two schedules
+
+Both use recall's FSRS-6 `CardSchedule::review` with no target, and both are written once, in the transaction that
+records the grade (`record_graded_in`). An attempt is graded only once (a regrade is only for one that couldn't be
+graded), so no review log is needed. SQLite's `BEGIN IMMEDIATE` serialises concurrent gradings' read-modify-writes.
+
+- **Patterns:** one schedule per material (`code:python`, `passage`) and pattern. Every rated issue rates its pattern,
+  as `ratings()` does today. `targets()` reads these states.
+- **Lessons:** one schedule per course and lesson. The issues tied to the lesson rate it: in a passage drill, every
+  rated issue; in code, those with a lesson link, or every rated issue when none has one, because the code was written
+  on the lesson's subject. Without a rating the lesson would stay "never drilled" and come first again every time. The
+  rating is the floor of their mean, counting Again as 0 up to Easy as 3. For example, found, found and missed gives
+  Hard.
+- **Pending.** The next build is queued the moment a drill is taken, before it is graded. Without a pending state the
+  next drill would repeat the same lesson and the same new patterns. A lesson or pattern is pending in three cases:
+  a drill of it is submitted and waiting for its grade, it is ready on a shelf (any shelf of the course, for a lesson;
+  any shelf of the material, for a pattern), or it belongs to the drill being taken as the next build is queued. An
+  open attempt the learner walked away from is not pending, so its lesson comes back. A ready drill from before this
+  change is never served again, so it holds nothing back.
+- **The order** (pure functions in core, deterministic):
+
+  | Rank | Lessons (`next_lesson`) | Patterns (`targets`, families interleaved as today) |
+  |---|---|---|
+  | 1 | due, earliest first | due, earliest first |
+  | 2 | never drilled: the current lesson, then completed lessons in course order, then the rest in course order (a pretest) | new, in catalogue order |
+  | 3 | rested, soonest due first | rested, soonest due first |
+  | 4 | pending | pending |
+
+  Pending is ranked last rather than left out, so a one-lesson course still gets drills. A pending pattern is planted
+  only once every other pattern is, even when its family has not been picked in the round. A lesson that does not fit
+  the material is left out: for code, one the code fit check turned down (§3); for passages, one whose sources hold no
+  passage that teaches it (§4).
+
+FSRS never schedules a lesson sooner than a day. For a course studied in a day, that means each lesson is drilled once
+and then the weakest come back first. A course has no interview date today. When it has one, the lesson schedule
+takes it as its target, as a recall deck does: gaps before the target shrink to a share of the time left (Cepeda et
+al., 2008).
+
+## 6. The bank, per course
+
+- A **shelf** is a course and a material (code in a language, or passages). It keeps one ready drill. Taking it queues
+  the build of the next-up lesson in the same transaction, as today, but only when no other drill of the shelf is
+  ready or building. Builds of a shelf run one at a time under the job subject `drill:{program_id}:{material}`.
+- **Asking for a lesson** takes the ready drill only if it was built for that lesson. Otherwise a build for the lesson
+  is queued and the learner is told it is under way.
+- **Drills from before this change** have no lesson and are never served again. Their attempts stay readable. A
+  pending build queued before the change fails cleanly with a reason; its spec has no lesson.
+
+## 7. Persistence
+
+Three migrations. The first:
+- `learning_drills.lesson_id TEXT REFERENCES learning_lessons(id) ON DELETE SET NULL`, with an index for the shelf:
+  `(program_id, material, language, status, created_at)`. It replaces the bank's older indexes by language, by course
+  and by program. The domain-use index goes with `DOMAINS`, and an index on `lesson_id` serves deleting a lesson.
+- `learning_drill_pattern_schedules(material, pattern_id, …)`: the `CardSchedule` fields, keyed by
+  `(material, pattern_id)`. A row exists once a review has rated the pattern.
+- `learning_drill_lesson_schedules(program_id, lesson_id, …)`: the same fields, keyed by `(program_id, lesson_id)`.
+  The pair references the lesson within its course, so a lesson of another course cannot be recorded, and the row
+  cascades with the course and the lesson.
+- `learning_drill_lesson_fits(program_id, lesson_id, material, fits, basis, decided_at)` records whether a lesson can
+  be drilled in passages. Whether it can be drilled in code is the code fit check's verdict (the third migration).
+  - It is written when a passage drill of the lesson is stored (it fits) and when a passage pick finds nothing that
+    teaches the lesson (it does not).
+  - `basis` hashes the evidence the decision rested on: the lesson's blocks when it is prepared, and the course's
+    active source versions, which a prepared lesson's passages come from too. A record whose basis no longer matches
+    is ignored. So preparing the lesson or changing a source asks the question again, and no retrieval runs to find
+    that out.
+
+The second adds `learning_drill_passage_checks(program_id, lesson_id, version_id, start_byte, end_byte, basis, teaches,
+reason, model, checked_at)`: the passage check's verdict on a passage for a lesson (§4), one per lesson and passage,
+replaced by a new verdict, and gone with the course, the lesson or the source version.
+
+The third adds `learning_drill_code_checks(program_id, lesson_id, basis, teaches, reason, model, checked_at)`: the code
+fit check's verdict on a lesson (§3), one per lesson, replaced by a new verdict, and gone with the course or the lesson.
+A lesson fits code unless its verdict on the basis it has now says it does not.
+
+`DrillSpec` gets `lesson_id`. `patterns` becomes the ranked catalogue targets, n of them. The most lesson issues to
+plant, ⌈n/2⌉ for code and 0 for a passage, is derived from them (`lesson_issues()`), so no spec stores it.
+`validate()` requires a course and a lesson for every new spec.
+
+## 8. Commands and the view
+
+- `start_course_drill { programId, lessonId?, material: code{language} | passage, mode, lines, issues }` replaces
+  `start_review_drill`. It answers as today: started, or building. A course that is not there is not found, and a
+  passage drill of a course with no source text is refused unless one is ready.
+- `course_drills(programId, language?)` gives:
+  - the language code drills are offered in: the one asked for, or the course's (§3);
+  - for code in that language and for passages, what a start with no lesson comes to: its lesson, and whether a drill
+    of it is ready, being built or still to build, decided as the start decides it;
+  - whether the course has a source with text, without which no passage drill is built;
+  - each lesson by module, with its standing (due, new, rested, pending), when it is due, and whether it fits code
+    and passages;
+  - the course's ten latest attempts, to continue or open.
+- Submit, result, regrade and `code_review_languages` are unchanged. The drill names its lesson, by the title the
+  lesson has now, and the reveal gives each issue's lesson sentences with their sources. `review_drill_courses` goes,
+  with the passage topic.
+- **The view, Practice › Review drills:**
+  - The chooser: the lesson ("Next: …" preselected, grouped by module, each lesson with its standing), what to review
+    (code in a language, or an explanation of the lesson's sources), the size and the mode.
+  - The course's recent drills.
+  - The drill itself: today's review, grading and reveal screens, with the lesson named above them.
+
+  The command palette's "Review drills" opens it for the last course opened.
+
+## 9. Measured before it ships
+
+On a copy of the app's data, on Haiku, with every result naming its model:
+
+- 20 code and 10 passage drills across the two courses' lessons, every key issue read by hand.
+- Bars:
+  - every drill is about its lesson;
+  - at least 95% of the lesson links shown really break the cited sentences;
+  - at least 95% of planted issues are real, as before.
+- Reported: how many lesson issues each drill kept (and how many lessons got none), and how often the lesson check
+  failed.
+- `live_grading_eval` is re-run, with fixtures that include lesson issues, at the old bar of 0.9 agreement or better.
+
+## 10. Build order
+
+Each step is test first, built by an agent and reviewed line by line, and ends with one integrated build:
+
+1. **Core (pure):** `LessonLink` on `KeyIssue`; the lesson rating; `next_lesson`; pending in `targets`; the language
+   of a course's code.
+2. **Schedules:** the migration and repositories. Grading writes both schedules in its transaction, and the bank
+   reads them for `targets` and `next_lesson`.
+3. **Builds from the brief,** in two parts:
+   - 3a: the brief, frozen in the first checkpoint; the writer on it; the passage pick by lesson; `DOMAINS` removed;
+   - 3b: the planter's lesson issues and the key's links; the lesson check stage; the judge's task; the fit recorded
+     when a drill is stored.
+4. **The bank per course and the commands.**
+5. **The view:**
+   - Practice › Review drills, and the reveal's "From the lesson";
+   - the palette entry;
+   - the Studio section and its route removed.
+6. **Measure (§9),** then a proof run in a test build on a copy of the data.
+
+Calls for Josh. The defaults are what gets built unless he says otherwise:
+- **Where:** Practice › Review drills (default), or a top-level Drills tab beside Tutor. Moving it is a one-line
+  change.
+- **The split:** up to half of a code drill's issues come from the lesson, rounded up (default).
+- **Code review practicals:** the Practical tab's "code review" kind, which is never graded, stays as it is (default).
+  The alternative is to make it open a review drill on the lesson instead.

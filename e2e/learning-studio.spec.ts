@@ -95,7 +95,7 @@ test('Lesson preparation explains verification and research across navigation an
     state.planWorkspace.jobs = [{
       id: 'resumable-job', programId: state.planWorkspace.programId, operationId: 'operation',
       kind: 'lesson_preparation', payloadSha256: 'fixture', baseRevisionNumber: state.planWorkspace.programRevision,
-      status: 'running', progressCompleted: 0, progressTotal: 1, progressMessage: 'Checked 77 of 164 claims against saved references · 30 unchanged checks reused',
+      status: 'running', progressCompleted: 0, progressTotal: 1, progressMessage: 'Checked 77 of 164 statements against saved references · 30 unchanged checks reused',
       resultId: null, error: null, retryOfJobId: null, createdAt: Date.now() - 3_600_000, startedAt: Date.now() - 3_600_000, finishedAt: null,
       activity: { phase: 'evidence', phaseStartedAt: Date.now() - 600_000, lastActivityAt: Date.now() - 95_000, lastCheckpointAt: Date.now() - 96_000,
         lessonTitle: lesson.title, modelName: 'Reference checker', modelRunning: true, responseCharacters: 0, modelAttempt: 1,
@@ -111,7 +111,7 @@ test('Lesson preparation explains verification and research across navigation an
   await expect(panel.getByRole('status')).toContainText('Preparing Compare observations · Fact checks & repairs');
   await expect(panel.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '77');
   await panel.getByRole('button', { name: 'Details' }).click();
-  await expect(panel.getByRole('heading', { name: 'Verifying factual claims' })).toBeVisible();
+  await expect(panel.getByRole('heading', { name: 'Verifying factual statements' })).toBeVisible();
   await expect(panel.getByText('164 statements: 90 to check against their sources, 54 to check for consistency, 20 common knowledge')).toBeVisible();
   await expect(panel.getByText('112 calls so far, at most 278')).toBeVisible();
   await expect(panel.getByText('Saved checks reused')).toBeVisible();
@@ -128,7 +128,7 @@ test('Lesson preparation explains verification and research across navigation an
   await panel.getByRole('button', { name: 'Details' }).click();
   // Collapsed keeps the bar and Pause; the details leave the page.
   await expect(panel.getByRole('progressbar')).toHaveCount(1);
-  await expect(panel.getByRole('heading', { name: 'Verifying factual claims' })).toHaveCount(0);
+  await expect(panel.getByRole('heading', { name: 'Verifying factual statements' })).toHaveCount(0);
   await expect(panel.getByRole('button', { name: 'Pause lesson preparation' })).toBeVisible();
   await panel.getByRole('button', { name: 'Details' }).click();
   await openStudioSection(page, 'Sources');
@@ -136,10 +136,10 @@ test('Lesson preparation explains verification and research across navigation an
     const state = (window as unknown as { __LATTICE_LEARNING_STATE__: { planWorkspace: { jobs: Array<{ progressMessage: string; activity: { phase: string; modelRunning: boolean } }> } } }).__LATTICE_LEARNING_STATE__;
     state.planWorkspace.jobs[0].activity.phase = 'research';
     state.planWorkspace.jobs[0].activity.modelRunning = false;
-    state.planWorkspace.jobs[0].progressMessage = 'Saving additional references for unresolved claims';
+    state.planWorkspace.jobs[0].progressMessage = 'Saving additional references for unresolved statements';
   });
   await openStudioSection(page, 'Lessons');
-  await expect(panel.getByRole('heading', { name: 'Researching unresolved claims' })).toBeVisible();
+  await expect(panel.getByRole('heading', { name: 'Researching unresolved statements' })).toBeVisible();
   await expect(panel.getByText(/77 \/ 164 checked/)).toBeVisible();
   await page.setViewportSize({ width: 390, height: 844 });
   await panel.getByRole('button', { name: 'Pause lesson preparation' }).scrollIntoViewIfNeeded();
@@ -243,7 +243,7 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   await openProgram(page);
   await page.getByRole("button", { name: "View lesson evidence" }).first().click();
   const evidence = page.getByRole("region", { name: "Lesson evidence" }).first();
-  await expect(evidence.getByText(/14 claims verified against sources/)).toBeVisible();
+  await expect(evidence.getByText(/14 statements verified against sources/)).toBeVisible();
   await expect(evidence.getByText("A careful comparison records the chosen measure and observation period.")).toBeVisible();
   await expect(evidence.getByText("The saved reference supports this teaching claim.")).toBeVisible();
   await evidence.locator("summary").filter({ hasText: "Public field notes" }).click();
@@ -256,11 +256,11 @@ test("Learning Studio citations trace saved evidence and support clean reading a
   await expect(reader).toHaveCount(0);
   await page.screenshot({ path: `e2e-results/learning-reference-mvp-${browserName}.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
-  await expect(evidence.getByText(/14 claims verified against sources/)).toBeVisible();
+  await expect(evidence.getByText(/14 statements verified against sources/)).toBeVisible();
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(true);
 
   const section = page.locator('#lesson-lesson-observation-section-0');
-  await section.locator('summary').filter({ hasText: 'Evidence · 1 checked claim' }).click();
+  await section.locator('summary').filter({ hasText: 'Evidence · 1 checked statement' }).click();
   await expect(section.getByText('A careful comparison records the chosen measure and observation period.')).toBeVisible();
   await section.locator('summary').filter({ hasText: 'Public field notes' }).click();
   await expect(section.getByText(excerptSentinel, { exact: true })).toBeVisible();

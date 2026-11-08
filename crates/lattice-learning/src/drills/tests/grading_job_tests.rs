@@ -3,8 +3,8 @@
 
 use super::support::{
     blind_assessment, extra_finding, files, fix_answer, grade_answer, last, operator_finding,
-    operator_fixed, proved, review_assessment, FakeGrader, FakeRunner, ScriptedModel, Waiting,
-    LITERALS, MODEL, OPERATOR,
+    operator_fixed, proved, review_assessment, unchecked, FakeGrader, FakeRunner, ScriptedModel,
+    Waiting, LITERALS, MODEL, OPERATOR,
 };
 use crate::drills::attempts::{self, AttemptStatus};
 use crate::drills::grader::{Review, ReviewGrader};
@@ -79,7 +79,7 @@ async fn a_submitted_review_is_graded_and_the_grade_is_stored_whole() -> Result<
 
     let attempt = waiting.attempt().await?;
     assert_eq!(attempt.status, AttemptStatus::Graded);
-    let key = proved().planted_key();
+    let key = proved().planted_key(&unchecked());
     assert_eq!(attempt.assessment, Some(review_assessment()));
     assert_eq!(
         attempt.score,

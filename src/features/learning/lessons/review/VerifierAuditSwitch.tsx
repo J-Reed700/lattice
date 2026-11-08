@@ -48,7 +48,7 @@ export function VerifierAuditSwitch({ programId }: { programId: string }) {
           <h3 className="flex items-center gap-2 font-serif text-xl text-text-primary"><ShieldCheck size={18} className="text-accent" aria-hidden="true" />Audit lessons with your Verifier</h3>
           <p id={helpId} className="mt-2 max-w-2xl text-xs leading-5 text-text-secondary">
             {data.destination
-              ? `Before a lesson becomes ready, its full text, its claims and the exact cited passages are sent to ${data.destination} for a second check. A disputed claim waits for your review; the audit never edits the lesson.`
+              ? `Before a lesson becomes ready, its full text, its statements and the exact cited passages are sent to ${data.destination} for a second check. A disputed statement waits for your review; the audit never edits the lesson.`
               : 'No Verifier model is set. Choose one in Settings → Downloaded.'}
           </p>
         </div>
@@ -69,7 +69,7 @@ export function VerifierAuditSwitch({ programId }: { programId: string }) {
           <DialogTitle>Audit lessons with your Verifier model before publishing</DialogTitle>
           <DialogDescription asChild>
             <div className="space-y-3 text-sm leading-6 text-text-secondary">
-              <p>Before a lesson of “{course}” becomes ready, its full lesson text (every section, question, answer and explanation), every factual claim extracted from it, and the exact cited passages from your references are sent to <strong className="text-text-primary">{data.destination ?? provider}</strong> for a second check. Nothing else from your library is sent. If the Verifier is allowed to search the web, the claim statements are also sent to your configured web search.</p>
+              <p>Before a lesson of “{course}” becomes ready, its full lesson text (every section, question, answer and explanation), every factual statement extracted from it, and the exact cited passages from your references are sent to <strong className="text-text-primary">{data.destination ?? provider}</strong> for a second check. Nothing else from your library is sent. If the Verifier is allowed to search the web, the statements are also sent to your configured web search.</p>
               <p>Your provider’s usage terms and pricing apply; Lattice shows the tokens sent and received for each audit. You can turn this off at any time; audits already running stop at the next batch.</p>
             </div>
           </DialogDescription>

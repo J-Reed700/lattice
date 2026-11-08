@@ -570,8 +570,18 @@ mod coverage_gaps_tests;
 #[path = "claim_ledger_tests.rs"]
 mod claim_ledger_tests;
 
+#[path = "put_back_published_tests.rs"]
+mod put_back_published_tests;
+#[path = "report_tests.rs"]
+mod report_tests;
 #[path = "settle_published_tests.rs"]
 mod settle_published_tests;
+
+#[path = "edit_section_tests.rs"]
+mod edit_section_tests;
+
+#[path = "edit_question_tests.rs"]
+mod edit_question_tests;
 
 #[path = "claim_position_tests.rs"]
 mod claim_position_tests;
@@ -1555,6 +1565,7 @@ pub(crate) fn attest(lesson_id: &str, lesson: &PreparedLearningLesson) -> Lesson
         embedding_model: None,
         page_budget: None,
         unexecuted_languages: vec![],
+        replaced_findings: Vec::new(),
     }
 }
 

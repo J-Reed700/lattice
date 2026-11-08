@@ -4,7 +4,6 @@ import { Archive, ArrowRight, BookOpenCheck, Layers3, Plus, Upload } from 'lucid
 
 import { Skeleton } from '@/components/Skeleton';
 import { Button } from '@/components/ui/button';
-import { CodeReviewDrillsSection } from '@/features/learning/drills/CodeReviewDrillsSection';
 import { StudyHabitsBar, type FrameworkAction } from '@/features/learning/habits';
 import { FlashcardsSection } from '@/features/learning/recall/flashcards/FlashcardsSection';
 import { CourseTangentsSection } from '@/features/learning/tangents/CourseTangentsSection';
@@ -84,7 +83,6 @@ export function ProgramLibrary({ programs, loading, error, onRetry, onOpen, onBu
       {Boolean(programs?.some((program) => program.status === 'active')) && <p className="studio-progress-caption">Lesson completion is self-reported. Quiz and assessment results are recorded inside each program.</p>}
     </section>
     <FlashcardsSection ref={flashcardsRef} />
-    <CodeReviewDrillsSection />
     <footer className="studio-library-footer"><span>Topic or source-based · Review the outline before lessons</span><span>Programs stay on this device</span></footer>
   </div>;
 }

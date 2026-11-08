@@ -84,10 +84,10 @@ describe('Durable lesson preparation progress', () => {
     const view = show();
     // Collapsed: one status line and the bar; the details are not on the page.
     expect(await screen.findByRole('status')).toHaveTextContent('Preparing Understanding observations · Fact checks & repairs');
-    expect(screen.getByRole('progressbar', { name: 'Claim checks this pass' })).toHaveAttribute('aria-valuenow', '77');
-    expect(screen.queryByRole('heading', { name: 'Verifying factual claims' })).not.toBeInTheDocument();
+    expect(screen.getByRole('progressbar', { name: 'Statement checks this pass' })).toHaveAttribute('aria-valuenow', '77');
+    expect(screen.queryByRole('heading', { name: 'Verifying factual statements' })).not.toBeInTheDocument();
     await openDetails();
-    expect(screen.getByRole('heading', { name: 'Verifying factual claims' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Verifying factual statements' })).toBeVisible();
     expect(screen.getByText('77 / 164 checked')).toBeVisible();
     expect(screen.getByText('87')).toBeVisible();
     expect(screen.getByText('164 statements: 90 to check against their sources, 54 to check for consistency, 20 common knowledge')).toBeVisible();
@@ -106,16 +106,54 @@ describe('Durable lesson preparation progress', () => {
     expect(screen.getByText('Checking every section is covered')).toBeVisible();
     current = { ...current, progressMessage: 'Saving additional references', activity: { ...current.activity!, phase: 'research', modelRunning: false } };
     await view.client.invalidateQueries();
-    expect(await screen.findByRole('heading', { name: 'Researching unresolved claims' })).toBeVisible();
-    expect(screen.getByText('Last claim checks')).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Researching unresolved statements' })).toBeVisible();
+    expect(screen.getByText('Last statement checks')).toBeVisible();
     expect(screen.queryByText('Waiting for model output')).not.toBeInTheDocument();
     view.unmount(); view.client.clear();
     const reopened = show();
     expect(await screen.findByRole('status')).toHaveTextContent('Fact checks & repairs');
     await openDetails();
-    expect(screen.getByRole('heading', { name: 'Researching unresolved claims' })).toBeVisible();
+    expect(screen.getByRole('heading', { name: 'Researching unresolved statements' })).toBeVisible();
     expect(screen.getByText('77 / 164 checked')).toBeVisible();
     reopened.unmount(); reopened.client.clear();
+  });
+
+  it('lists the quiz stage between fact checks and publishing, and marks Publish current when the lesson is saved', async () => {
+    const current: LearningGenerationJob = { ...job, activity: {
+      phase: 'publishing', phaseStartedAt: Date.now() - 5_000, lastActivityAt: Date.now() - 1_000,
+      lastCheckpointAt: null, lessonTitle: 'Understanding observations', modelName: 'Test model',
+      modelRunning: false, responseCharacters: 0, modelAttempt: 1, verificationPass: 1,
+      checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null,
+      statements: null, modelCalls: 0, modelCallsCeiling: null, recentSteps: [],
+    } };
+    api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
+    const view = show();
+    await screen.findByRole('status');
+    await openDetails();
+    const steps = within(screen.getByRole('list', { name: 'Preparation workflow' })).getAllByRole('listitem');
+    expect(steps.map((step) => step.textContent?.replace(/^\d+/, ''))).toEqual([
+      'References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Quiz questions', 'Publish',
+    ]);
+    expect(steps.filter((step) => step.getAttribute('aria-current') === 'step').map((step) => step.textContent)).toEqual(['7Publish']);
+    view.unmount(); view.client.clear();
+  });
+
+  it('keeps Fact checks & repairs current while the repaired draft goes back through the teaching review', async () => {
+    const current: LearningGenerationJob = { ...job, activity: {
+      phase: 'review', reached: 'repair', phaseStartedAt: Date.now() - 5_000, lastActivityAt: Date.now() - 1_000,
+      lastCheckpointAt: null, lessonTitle: 'Understanding observations', modelName: 'Test model',
+      modelRunning: false, responseCharacters: 0, modelAttempt: 1, verificationPass: 2,
+      checksCompleted: 0, checksTotal: 0, checksReused: 0, newReferences: null, claims: null,
+      statements: null, modelCalls: 0, modelCallsCeiling: null, recentSteps: [],
+    } };
+    api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [current] } }));
+    const view = show();
+    expect(await screen.findByRole('status')).toHaveTextContent('Preparing Understanding observations · Fact checks & repairs');
+    await openDetails();
+    const steps = within(screen.getByRole('list', { name: 'Preparation workflow' })).getAllByRole('listitem');
+    expect(steps.filter((step) => step.getAttribute('aria-current') === 'step').map((step) => step.textContent)).toEqual(['5Fact checks & repairs']);
+    expect(screen.getByRole('heading', { name: 'Checking the repaired draft again' })).toBeVisible();
+    view.unmount(); view.client.clear();
   });
 
   it('rejoins an existing job, polls real progress, and refreshes the lesson on completion', async () => {
@@ -162,7 +200,7 @@ describe('Durable lesson preparation progress', () => {
     expect(screen.queryByText(/40 calls so far/)).not.toBeInTheDocument();
     current = { ...current, activity: { ...current.activity!, checksCompleted: 73, phase: 'research', modelRunning: false } };
     await view.client.invalidateQueries();
-    expect(await screen.findByRole('heading', { name: 'Researching unresolved claims' })).toBeVisible();
+    expect(await screen.findByRole('heading', { name: 'Researching unresolved statements' })).toBeVisible();
     expect(screen.getByText('73 / 73 checked')).toBeVisible();
     expect(screen.getByText(/Checking finished\. Additional evidence is being researched/)).toBeVisible();
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument();
@@ -233,7 +271,7 @@ describe('Durable lesson preparation progress', () => {
     expect(api.cancel).toHaveBeenCalledWith(expect.objectContaining({ programId: 'program-1', jobId: 'job-1', expectedRevision: 44 }));
     expect(await screen.findByRole('button', { name: 'Resume lesson preparation' })).toBeEnabled();
     expect(screen.getByRole('status')).toHaveTextContent('Lesson preparation paused');
-    expect(screen.getByRole('status')).toHaveTextContent('at verifying factual claims');
+    expect(screen.getByRole('status')).toHaveTextContent('at verifying factual statements');
     expect(screen.queryByRole('alert')).not.toBeInTheDocument();
     expect(screen.queryByText('Cancelled')).not.toBeInTheDocument();
     expect(screen.queryByText('Waiting to retry')).not.toBeInTheDocument();
@@ -289,12 +327,12 @@ describe('Durable lesson preparation progress', () => {
   });
 
   it('shows a held lesson as one line with Review, never as a failure', async () => {
-    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', resultId: 'needs_review:lesson-1', progressMessage: 'Needs your review: 1 claim', finishedAt: Date.now() - 1_000 }] } });
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', resultId: 'needs_review:lesson-1', progressMessage: 'Needs your review: 1 statement', finishedAt: Date.now() - 1_000 }] } });
     api.review.mockResolvedValue({ ok: true, data: review([claimItem()]) });
     const onReview = vi.fn();
     const { client, unmount } = show(onReview);
     const region = await screen.findByRole('region', { name: 'Lesson preparation' });
-    expect(await within(region).findByText('— 1 claim needs you')).toBeVisible();
+    expect(await within(region).findByText('— 1 statement needs you')).toBeVisible();
     expect(within(region).getByText('Phase changes')).toBeVisible();
     expect(api.review).toHaveBeenCalledWith('program-1', 'lesson-1');
     // The claims themselves live on the review screen, never here.
@@ -306,7 +344,7 @@ describe('Durable lesson preparation progress', () => {
     unmount(); client.clear();
   });
 
-  it('counts claims per state while preparation runs, in the review\'s words', async () => {
+  it('counts statements per state while preparation runs, in the review\'s words', async () => {
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, activity: {
       phase: 'repair', phaseStartedAt: Date.now(), lastActivityAt: Date.now(), lastCheckpointAt: Date.now(),
       lessonTitle: 'Understanding observations', modelName: 'Test model', modelRunning: true,
@@ -317,7 +355,7 @@ describe('Durable lesson preparation progress', () => {
     const { client, unmount } = show();
     await screen.findByRole('status');
     await openDetails();
-    expect(screen.getByText('5 claims need you · 108 verified · 2 being checked')).toBeVisible();
+    expect(screen.getByText('5 statements need you · 108 verified · 2 being checked')).toBeVisible();
     expect(screen.queryByText(/gives up on a claim/)).not.toBeInTheDocument();
     unmount(); client.clear();
   });
@@ -333,9 +371,9 @@ describe('Durable lesson preparation progress', () => {
     const { client, unmount } = show();
     await screen.findByRole('status');
     await openDetails();
-    expect(screen.getByText('Re-checking 89 claims against 72 new references')).toBeVisible();
+    expect(screen.getByText('Re-checking 89 statements against 72 new references')).toBeVisible();
     expect(screen.getByText('Still to re-check')).toBeVisible();
-    expect(screen.getByText('3 claims need you · 5 verified · 81 being checked')).toBeVisible();
+    expect(screen.getByText('3 statements need you · 5 verified · 81 being checked')).toBeVisible();
     expect(screen.queryByText(/being repaired/)).not.toBeInTheDocument();
     unmount(); client.clear();
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, activity: {
@@ -353,12 +391,12 @@ describe('Durable lesson preparation progress', () => {
     view.unmount(); view.client.clear();
   });
 
-  it('shows a lesson held only by an audit stop as waiting, never "0 claims", with Review', async () => {
-    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', resultId: 'needs_review:lesson-1', progressMessage: 'Needs your review: 0 claims', finishedAt: Date.now() - 1_000 }] } });
+  it('shows a lesson held only by an audit stop as waiting, never "0 statements", with Review', async () => {
+    api.plan.mockResolvedValue({ ok: true, data: { jobs: [{ ...job, status: 'completed', resultId: 'needs_review:lesson-1', progressMessage: 'Needs your review: 0 statements', finishedAt: Date.now() - 1_000 }] } });
     api.review.mockResolvedValue({ ok: true, data: review([], { stopReason: { code: 'verifier_unset', message: 'Audit cannot run: no Verifier model is set.', fix: 'Choose one in Settings → Downloaded, or turn the audit off for this course.', at: 1, request: null } }) });
     const { client, unmount } = show(vi.fn());
     expect(await screen.findByText('— waiting for the independent check')).toBeVisible();
-    expect(screen.queryByText(/0 claims/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/0 statements/)).not.toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Review' })).toBeEnabled();
     unmount(); client.clear();
   });
