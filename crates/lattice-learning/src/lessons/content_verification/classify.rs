@@ -41,11 +41,15 @@ pub(super) struct ToSort<'a> {
 pub(crate) const CITED_KINDS: [&str; 3] = ["explanation", "contrast", "recap"];
 
 /// The figures of a text: each run of digits, with its decimal or thousands
-/// separators.
+/// separators, except a number a label word precedes ("Source 0", "Option
+/// 2", "Step 3"): that numbers a part of the text and states nothing.
 pub(crate) fn figures(text: &str) -> impl Iterator<Item = &str> {
-    lazy_regex::regex!(r"\d+(?:[.,]\d+)*")
-        .find_iter(text)
-        .map(|found| found.as_str())
+    lazy_regex::regex!(
+        r"(?i)\b(?:source|option|choice|idea|step|example|exercise|question|lesson|module)s?\s+#?\d+(?:[.,]\d+)*\b|(\d+(?:[.,]\d+)*)"
+    )
+    .captures_iter(text)
+    .filter_map(|captures| captures.get(1))
+    .map(|found| found.as_str())
 }
 
 /// The figures a part's own case states, which a sentence of it restates

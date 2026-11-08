@@ -208,6 +208,11 @@ pub(super) struct SourceMention {
     pub(super) index: u64,
 }
 
+/// Whether `text` names a source by its index, as "Source 2".
+pub(crate) fn names_a_source(text: &str) -> bool {
+    !source_mentions(text).is_empty()
+}
+
 /// Every "Source N" (or "source N") in `text`, as the lesson's writer names
 /// a source by its index.
 pub(super) fn source_mentions(text: &str) -> Vec<SourceMention> {
