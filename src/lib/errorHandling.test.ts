@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { ErrorCode } from '../types/api/errorCodes';
 import { describeFailure, learnerError, parseApiError, waitingSentence } from './errorHandling';
+import { ErrorCode } from '../types/api/errorCodes';
 
 describe('parseApiError', () => {
   it('keeps a backend error as the generated ApiError', () => {
