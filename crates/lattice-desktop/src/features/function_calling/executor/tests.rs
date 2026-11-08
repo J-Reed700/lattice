@@ -695,6 +695,39 @@ async fn web_search_result_carries_every_providers_outcome() {
     assert_eq!(data["outcomes"][1]["leads"], 1);
 }
 
+/// A search the engines answered with nothing reaches the model as a result:
+/// no results, and the engines that answered empty. Guard: passes with or
+/// without the search service raising for it.
+#[tokio::test]
+async fn web_search_with_no_results_tells_the_model_there_were_none() {
+    use lattice_core::application::contracts::web::FinderOutcomeDto;
+
+    let web = Arc::new(MockWebService::new());
+    web.set_search_results(Vec::new());
+    web.set_search_outcomes(vec![FinderOutcomeDto {
+        finder: "duckduckgo".into(),
+        result: "empty".into(),
+        leads: 0,
+        elapsed_ms: 120,
+        cause: None,
+    }]);
+    let executor = FunctionExecutor::new(test_executor_services(
+        Arc::new(MockFunctionRegistry::new()) as Arc<dyn FunctionRegistryTrait>,
+        web as Arc<dyn WebServiceTrait>,
+    ));
+
+    let result = executor
+        .handle_web_search(&serde_json::json!({ "query": "no such thing" }))
+        .await
+        .unwrap();
+
+    assert!(result.success, "{:?}", result.error_message);
+    let data = result.data.expect("search data");
+    assert_eq!(data["result_count"], 0);
+    assert_eq!(data["results"], serde_json::json!([]));
+    assert_eq!(data["outcomes"][0]["result"], "empty");
+}
+
 #[tokio::test]
 async fn test_execute_find_sources() {
     use lattice_core::application::contracts::web::WebSearchResult;
@@ -918,6 +951,31 @@ async fn a_custom_tool_can_call_an_endpoint_on_this_machine() {
         result.error_message
     );
     assert_eq!(guard_probe::requests_received(&endpoint).await, 1);
+}
+
+/// A custom endpoint that answers an error status is reported as the answer
+/// it gave, not as a lost connection.
+#[tokio::test]
+async fn a_custom_tool_endpoint_that_answers_an_error_status_is_not_a_lost_connection() {
+    use wiremock::matchers::any;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let endpoint = MockServer::start().await;
+    Mock::given(any())
+        .respond_with(ResponseTemplate::new(404))
+        .mount(&endpoint)
+        .await;
+    let executor = executor_with_custom_tool(
+        Arc::new(MockLinksWebService { leads: Vec::new() }),
+        &format!("{}/search", endpoint.uri()),
+    );
+
+    let result = call_local_search(&executor).await;
+
+    let message = result.error_message.unwrap_or_default();
+    assert!(message.contains("local_search"), "{message}");
+    assert!(message.contains("HTTP 404"), "{message}");
+    assert!(!message.contains("Network error"), "{message}");
 }
 
 /// A URL the model chooses is read through the web service and its guard, so

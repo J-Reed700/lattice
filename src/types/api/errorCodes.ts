@@ -37,6 +37,7 @@ export const ErrorCode = {
 
   // Network Errors
   NETWORK_ERROR: 'NETWORK_ERROR',
+  HTTP_STATUS: 'HTTP_STATUS',
   TIMEOUT: 'TIMEOUT',
   RATE_LIMIT_EXCEEDED: 'RATE_LIMIT_EXCEEDED',
 

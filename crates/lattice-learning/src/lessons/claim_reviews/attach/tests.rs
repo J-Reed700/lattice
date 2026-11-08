@@ -226,6 +226,7 @@ enum Reply {
         content: String,
     },
     Error(fn(String) -> AppError, String),
+    Status(u16, String),
 }
 
 struct ScriptedWeb {
@@ -243,6 +244,14 @@ impl ScriptedWeb {
                 content: page["content"].as_str().unwrap().into(),
             }
         } else {
+            let message: String = fetch["message"].as_str().unwrap().into();
+            if fetch["error"] == "http_status" {
+                let status = u16::try_from(fetch["status"].as_u64().unwrap()).unwrap();
+                return Self {
+                    reply: Reply::Status(status, message),
+                    fetched: Mutex::new(0),
+                };
+            }
             let error: fn(String) -> AppError = match fetch["error"].as_str().unwrap() {
                 "network" => AppError::Network,
                 "invalid_input" => AppError::InvalidInput,
@@ -250,7 +259,7 @@ impl ScriptedWeb {
                 "service_not_available" => AppError::ServiceNotAvailable,
                 other => panic!("unknown fixture error {other}"),
             };
-            Reply::Error(error, fetch["message"].as_str().unwrap().into())
+            Reply::Error(error, message)
         };
         Self {
             reply,
@@ -293,6 +302,10 @@ impl WebServiceTrait for ScriptedWeb {
                 read_via: Default::default(),
             }),
             Reply::Error(error, message) => Err(error(message.clone())),
+            Reply::Status(status, message) => Err(AppError::HttpStatus {
+                status: *status,
+                message: message.clone(),
+            }),
         }
     }
     fn validate_url(&self, _url: &str) -> Result<()> {

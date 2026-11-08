@@ -9,7 +9,8 @@
       "name": "forbidden",
       "url": "https://news.example.com/2026/10/water-at-altitude",
       "fetch": {
-        "error": "network",
+        "error": "http_status",
+        "status": 403,
         "message": "HTTP 403 Forbidden: Forbidden"
       },
       "expect": {
@@ -30,7 +31,8 @@
       "name": "refused earlier, served from the refusal cache",
       "url": "https://news.example.com/2026/10/water-at-altitude",
       "fetch": {
-        "error": "network",
+        "error": "http_status",
+        "status": 403,
         "message": "HTTP 403 Forbidden (this site refused earlier; not retried)"
       },
       "expect": {
@@ -51,7 +53,8 @@
       "name": "login required",
       "url": "https://news.example.com/2026/10/water-at-altitude",
       "fetch": {
-        "error": "network",
+        "error": "http_status",
+        "status": 401,
         "message": "HTTP 401 Unauthorized: Unauthorized"
       },
       "expect": {
@@ -72,7 +75,8 @@
       "name": "rate limited",
       "url": "https://news.example.com/2026/10/water-at-altitude",
       "fetch": {
-        "error": "network",
+        "error": "http_status",
+        "status": 429,
         "message": "HTTP 429 Too Many Requests: Too Many Requests"
       },
       "expect": {
@@ -182,12 +186,37 @@
       "name": "not found",
       "url": "https://news.example.com/2026/10/water-at-altitude",
       "fetch": {
-        "error": "network",
+        "error": "http_status",
+        "status": 404,
         "message": "HTTP 404 Not Found: Not Found"
       },
       "expect": {
         "kind": "unreachable",
         "message": "news.example.com answered HTTP 404; the page could not be read.",
+        "nextSteps": [
+          {
+            "step": "retry"
+          },
+          {
+            "step": "paste_text",
+            "origin": "https://news.example.com/2026/10/water-at-altitude"
+          },
+          {
+            "step": "add_file"
+          }
+        ]
+      }
+    },
+    {
+      "name": "no answer",
+      "url": "https://news.example.com/2026/10/water-at-altitude",
+      "fetch": {
+        "error": "network",
+        "message": "Failed to fetch URL: connection refused"
+      },
+      "expect": {
+        "kind": "unreachable",
+        "message": "news.example.com could not be read: Failed to fetch URL: connection refused",
         "nextSteps": [
           {
             "step": "retry"
