@@ -28,7 +28,7 @@ fn review(defect: Option<&str>) -> String {
 }
 
 fn actionable() -> String {
-    json!({"issue-0":{"verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"requirementId":null,"reason":"The example's printed result contradicts the value the code returns."}}).to_string()
+    json!({"issue-0":{"verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The example's printed result contradicts the value the code returns."}}).to_string()
 }
 
 fn retitle(after: &str) -> String {
@@ -124,6 +124,16 @@ async fn a_defect_one_repair_did_not_fix_publishes_and_waits_for_the_user() -> R
     assert!(waiting.finding.note.contains("instead of the number"));
     assert!(waiting.finding.passage.is_some());
     assert_eq!(model.prompts.lock().unwrap().len(), 5);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_reviewer_is_told_to_name_a_part_by_its_label_or_title() -> Result<()> {
+    let model = model(vec![review(None)]);
+    run(&model, lesson(EXCERPT)).await?;
+    let prompts = model.prompts.lock().unwrap();
+    assert!(prompts[0].contains("by its label"));
+    assert!(prompts[0].contains("never by its section-N key or its index"));
     Ok(())
 }
 

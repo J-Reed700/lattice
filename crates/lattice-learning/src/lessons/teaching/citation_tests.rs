@@ -37,7 +37,7 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
         if let Some(issues) = review.get_mut("issues") {
             *issues = json!(["Correct the example's claimed behavior using the reference."]);
         }
-        let decision = json!({"issue-0":{"verdict":if actionable {"actionable"} else {"not_established"},"basis":"external_fact","evidenceIds":["reference-0"],"requirementId":null,"reason":"The source comparison determines whether this proposed correction is justified."}});
+        let decision = json!({"issue-0":{"verdict":if actionable {"actionable"} else {"not_established"},"basis":"external_fact","evidenceIds":["reference-0"],"partId":"lesson","requirementId":null,"reason":"The source comparison determines whether this proposed correction is justified."}});
         let mut outputs = vec![review.to_string(), decision.to_string()];
         if actionable {
             outputs.extend([json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(), approval().to_string()]);
