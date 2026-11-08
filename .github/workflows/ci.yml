@@ -166,17 +166,14 @@ jobs:
       PACKAGE_ARGS: ${{ needs.changes.outputs.rust_packages || '--workspace' }}
     strategy:
       fail-fast: false
-      # GitHub runs five macOS jobs at a time for the account, and every pull
-      # request used to ask for five, so main's runs waited hours behind them.
-      # Intel Macs, the slowest runners, are checked on pushes to main only,
-      # and a draft pull request gets its macOS jobs when it is marked ready.
+      # Macs run on pushes to main only. The account gets a few macOS runners at
+      # a time, so a pull request that asked for them waited an hour or more.
       matrix:
         os: >-
           ${{ fromJSON((endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows'))
           && (endsWith(github.head_ref, '-reds-windows') && '["windows-latest"]' || '["ubuntu-24.04"]')
-          || format('["ubuntu-24.04", "windows-latest"{0}{1}]',
-          github.event.pull_request.draft != true && ', "macos-latest"' || '',
-          github.event_name == 'push' && ', "macos-15-intel"' || '')) }}
+          || (github.event_name == 'push' && '["ubuntu-24.04", "windows-latest", "macos-latest", "macos-15-intel"]'
+          || '["ubuntu-24.04", "windows-latest"]')) }}
     steps:
       - uses: actions/checkout@v4
 
@@ -329,7 +326,7 @@ jobs:
   desktop-compatibility:
     name: Desktop compatibility (${{ matrix.name }})
     needs: changes
-    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
+    if: ${{ !(endsWith(github.head_ref, '-reds') || endsWith(github.head_ref, '-reds-windows')) && github.event.pull_request.draft != true && (needs.changes.outputs.rust == 'true' || needs.changes.outputs.web == 'true' || needs.changes.outputs.all == 'true') }}
     runs-on: ${{ matrix.os }}
     # No cap of our own. A cold Intel release build runs 75-95 minutes, and a
     # job cancelled at a cap never saves its Rust cache, so main never got a
@@ -337,21 +334,21 @@ jobs:
     # too. GitHub's own six-hour limit still ends a hung job.
     strategy:
       fail-fast: false
-      # Macs run as in rust-check: Apple Silicon unless the pull request is a
-      # draft, Intel on pushes to main only. The list is
-      # built whole because GitHub applies include after exclude, so an
-      # excluded Intel entry would come back as its own job.
+      # Pull requests that are ready for review build and exercise the app on
+      # Ubuntu. Windows and the Macs run on pushes to main only: a cold Windows
+      # release build takes 45 to 55 minutes, and macOS runners are few. The
+      # list is built whole because GitHub applies include after exclude, so an
+      # excluded entry would come back as its own job.
       # Hosted Windows runners use Server, not Windows 11. Keep the actual
       # runner visible; Windows 11 installation remains a release check.
       matrix:
         include: >-
-          ${{ fromJSON(format('[{0}{1}{2}]',
-          '{"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false},
-          {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false}',
-          github.event.pull_request.draft != true
-          && ', {"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false}' || '',
+          ${{ fromJSON(format('[{0}{1}]',
+          '{"name": "Ubuntu-24.04-x64", "os": "ubuntu-24.04", "intel": false}',
           github.event_name == 'push'
-          && ', {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
+          && ', {"name": "Windows-x64-Server-2025", "os": "windows-2025", "intel": false},
+          {"name": "macOS-Apple-Silicon", "os": "macos-15", "intel": false},
+          {"name": "macOS-Intel", "os": "macos-15-intel", "intel": true}' || '')) }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
