@@ -926,19 +926,16 @@ fn passage_json(name: &str, stored: &StoredDrill, seconds: f64) -> Value {
     })
 }
 
-/// The passage drill for a person to read: the source, the explanation as the learner reviews it, each planted error
-/// with its proof, what was dropped, the clean review and the models.
-fn passage_markdown(name: &str, _course: &str, stored: &StoredDrill, seconds: f64) -> String {
+/// The passage drill for a person to read: what it took from its lesson, the source, the explanation as the learner
+/// reviews it, each planted error with its proof, what was dropped, the clean review and the models.
+fn passage_markdown(name: &str, course: &str, stored: &StoredDrill, seconds: f64) -> String {
     let evidence = &stored.evidence;
     let mut out = format!("# {} ({name})\n\n", stored.drill.title);
-    if let Some(brief) = &evidence.brief {
-        out.push_str(&format!("- Course: {}\n", brief.course));
-    }
     out.push_str(&format!(
-        "- Lesson: {}\n- Built by: {}\n- Built in {seconds:.0} seconds\n\n",
+        "- Course: {course}\n- Lesson: {}\n- Built by: {}\n- Built in {seconds:.0} seconds\n\n",
         stored.domain, stored.model
     ));
-    out.push_str(&brief_section(evidence.brief.as_ref()));
+    out.push_str("## The lesson\n\nThe passage was picked by the lesson's title, objective, module and outcomes, and the writer was given the lesson's title as the topic. A passage drill is built without the lesson's brief.\n\n");
 
     out.push_str("## The source passage\n\n");
     match &stored.source {
