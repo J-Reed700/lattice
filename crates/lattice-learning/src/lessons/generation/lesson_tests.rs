@@ -426,6 +426,7 @@ fn the_writer_keeps_to_its_own_lesson_and_writes_steps_and_questions_well() {
 #[test]
 fn the_writers_lesson_sequence_gives_each_lessons_objective_and_marks_the_current_one() {
     let mut program = crate::tests::fixture();
+    program.modules[0].lessons.truncate(1);
     let template = program.modules[0].lessons[0].clone();
     let mut other = template.clone();
     other.id = "other-lesson".into();
