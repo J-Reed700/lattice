@@ -241,6 +241,7 @@ pub(crate) fn phase(phase: LearningGenerationPhase, message: impl Into<String>) 
                 activity.recent_steps.remove(0);
             }
         }
+        activity.reached = activity.reached.max(phase);
     });
     stage(message);
 }
@@ -272,6 +273,7 @@ pub(crate) fn lesson(title: &str) {
             state.sorted = 0;
         }
         state.activity.lesson_title = Some(title.into());
+        state.activity.reached = LearningGenerationPhase::default();
     });
 }
 
@@ -526,8 +528,8 @@ pub(crate) async fn traced<T>(future: impl std::future::Future<Output = T>) -> (
     (value, trace)
 }
 
-/// The activity a job restarts with: where it left off, its time and its
-/// calls counted anew.
+/// The activity a job restarts with: where it left off, its time, its calls
+/// and the phases it reached counted anew.
 fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
     let mut activity: LearningGenerationActivity = saved
         .and_then(|activity| serde_json::from_value(activity).ok())
@@ -535,6 +537,7 @@ fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
     // A new run starts by reopening references, even when the prior run
     // stopped in that same phase. Do not count time with the app closed.
     activity.phase_started_at = 0;
+    activity.reached = LearningGenerationPhase::default();
     activity.model_calls = 0;
     activity.model_calls_ceiling = None;
     activity.model_calls_ceiling_rises = 0;

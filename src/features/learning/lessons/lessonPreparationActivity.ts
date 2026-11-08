@@ -1,7 +1,9 @@
 import { heldLessonIds } from '@/features/learning/lessons/review/claimReviewPresentation';
 import type { LearningGenerationActivity, LearningGenerationJob, LearningGenerationPhase, LearningStatementPlan } from '@/lib/bindings';
 
-export const PREPARATION_PHASES: Record<LearningGenerationPhase, { title: string; detail: string; next: string; group: number }> = {
+export type PreparationPhase = { title: string; detail: string; next: string; group: number };
+
+export const PREPARATION_PHASES: Record<LearningGenerationPhase, PreparationPhase> = {
   references: { title: 'Preparing reference material', detail: 'Loading saved sources and building the searchable passages used to check this lesson.', next: 'Write or restore the lesson draft.', group: 0 },
   writing: { title: 'Building the lesson draft', detail: 'Writing explanations, examples, practice activities and assessments using the saved references.', next: 'Review the teaching and independently check assessment answers.', group: 1 },
   review: { title: 'Reviewing teaching and assessments', detail: 'Checking the explanations, citations and answer keys. Problems found here may send a section back for revision.', next: 'Identify factual statements and check that every section is covered.', group: 2 },
@@ -14,6 +16,22 @@ export const PREPARATION_PHASES: Record<LearningGenerationPhase, { title: string
   questions: { title: 'Writing quiz questions', detail: 'Writing practice questions from the verified lesson. Each question and its answer key is checked before it is kept; a question that fails a check is left out.', next: 'Save the lesson and its quiz questions.', group: 5 },
   publishing: { title: 'Saving the verified lesson', detail: 'Confirming the lesson and sources still match the verification report, then making the finished material available.', next: 'The prepared lesson opens for study.', group: 6 },
 };
+
+/**
+ * The step a job shows: its phase, or, while a repaired draft goes back
+ * through an earlier check, that check at the furthest step reached.
+ */
+export function shownPhase(activity: LearningGenerationActivity): PreparationPhase {
+  const current = PREPARATION_PHASES[activity.phase];
+  const furthest = PREPARATION_PHASES[activity.reached ?? activity.phase].group;
+  if (furthest <= current.group) return current;
+  return {
+    title: 'Checking the repaired draft again',
+    detail: `${current.title}, now on the repaired draft. Unchanged checks can be reused.`,
+    next: current.next,
+    group: furthest,
+  };
+}
 
 /** "73 statements: 36 to check against their sources, 29 to check for consistency, 8 common knowledge". */
 export function statementsLine(plan: LearningStatementPlan): string {
@@ -44,7 +62,7 @@ export function preparingLine(activity: LearningGenerationActivity | null | unde
   if (activity.phase === 'evidence' && activity.checksTotal > 0) {
     return `Preparing · ${activity.checksCompleted} of ${activity.checksTotal} checked`;
   }
-  return `Preparing · ${PREPARATION_PHASES[activity.phase].title}`;
+  return `Preparing · ${shownPhase(activity).title}`;
 }
 
 export function preparationDuration(seconds: number): string {
@@ -63,7 +81,7 @@ export type PreparationState = {
   queued: boolean;
   /** Waiting for the model or network, and retrying by itself. */
   reconnecting: boolean;
-  phase?: (typeof PREPARATION_PHASES)[LearningGenerationPhase];
+  phase?: PreparationPhase;
   /** Lessons held for the user's review: not a failure. */
   held: string[];
 };
@@ -75,7 +93,7 @@ export function preparationState(job: LearningGenerationJob | undefined, pending
     paused: job?.status === 'cancelled',
     queued,
     reconnecting: queued && Boolean(job?.error),
-    phase: job?.activity ? PREPARATION_PHASES[job.activity.phase] : undefined,
+    phase: job?.activity ? shownPhase(job.activity) : undefined,
     held: heldLessonIds(job),
   };
 }

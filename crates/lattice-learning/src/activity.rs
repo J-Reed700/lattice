@@ -146,6 +146,24 @@ fn phase_words(phase: LearningGenerationPhase) -> &'static str {
     }
 }
 
+/// The step of the lesson's progress view a phase shows under, as
+/// `lessonPreparationActivity.ts` groups them.
+fn progress_step(phase: LearningGenerationPhase) -> u8 {
+    match phase {
+        LearningGenerationPhase::References => 0,
+        LearningGenerationPhase::Writing => 1,
+        LearningGenerationPhase::Review => 2,
+        LearningGenerationPhase::Inventory
+        | LearningGenerationPhase::Coverage
+        | LearningGenerationPhase::Examples => 3,
+        LearningGenerationPhase::Evidence
+        | LearningGenerationPhase::Research
+        | LearningGenerationPhase::Repair => 4,
+        LearningGenerationPhase::Questions => 5,
+        LearningGenerationPhase::Publishing => 6,
+    }
+}
+
 fn lesson_item(
     job: &JobRecord,
     courses: &HashMap<String, String>,
@@ -205,9 +223,12 @@ fn lesson_item(
             "lessons",
         )
     });
-    item = item
-        .detail(phase_words(activity.phase))
-        .progress(checks.or(lessons_done));
+    let detail = if progress_step(activity.phase) < progress_step(activity.reached) {
+        "Checking the repaired draft again"
+    } else {
+        phase_words(activity.phase)
+    };
+    item = item.detail(detail).progress(checks.or(lessons_done));
     match activity.model_name {
         Some(name) if activity.model_running => item.uses(ActivityResource::Model { name }),
         _ => item,
