@@ -26,6 +26,7 @@ fn put_back(sentence: &str, anchor: Anchor) -> Change {
         pointer: "/blocks/0/body".into(),
         anchor,
         sentence: sentence.into(),
+        cuts: Vec::new(),
     }
 }
 

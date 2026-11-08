@@ -855,11 +855,14 @@ pub enum ClaimEvent {
     },
     /// What the user's removal took out of a published section: the exact
     /// text (the sentence with the whitespace beside it) and the shortest
-    /// text before it that occurs once, `None` at the start, so an undo can
-    /// write it back where it was.
+    /// texts that occur once in what was left and end (`follows`) or start
+    /// (`precedes`) where it was taken from, `None` at the start or the end
+    /// of the section, so an undo can write it back only where they still
+    /// meet.
     TextRemoved {
         text: String,
-        after: Option<String>,
+        follows: Option<String>,
+        precedes: Option<String>,
     },
 }
 

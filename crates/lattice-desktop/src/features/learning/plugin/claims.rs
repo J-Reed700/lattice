@@ -44,7 +44,9 @@ pub struct ResolveLearningClaimRequestDto {
 }
 
 /// One action for several claims at once (`Confirm`, `Remove`, `PutBack` of
-/// a sentence as it was, or `Undo` of the last such batch).
+/// a sentence as it was, or `Undo` of the last such batch). An Undo takes the
+/// claims back in the reverse of the order sent, so send the batch's own
+/// order: the last one done is the first one undone.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ResolveLearningClaimsRequestDto {

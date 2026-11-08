@@ -5,10 +5,9 @@
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §5.1, §6.2, §9.
 
 use super::claim_ledger::ClaimLedger;
-use super::insert_sentence;
 use super::*;
 use lattice_core::domain::learning::claim_review::{
-    Actor, Anchor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, UserAction,
+    Actor, Anchor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, CutPlace, UserAction,
 };
 
 /// The user's research hint for a claim waiting for them, until a research
@@ -103,6 +102,7 @@ enum Change {
         pointer: String,
         anchor: Anchor,
         sentence: String,
+        cuts: Vec<CutPlace>,
     },
     Replace {
         pointer: String,
@@ -126,6 +126,7 @@ fn changes(entries: &[ClaimLedgerEntry], candidate: &Value) -> Vec<Change> {
                     pointer,
                     anchor: place.anchor.clone(),
                     sentence: sentence.clone(),
+                    cuts: cuts_in(entries, &place.field),
                 });
             }
             continue;
@@ -193,7 +194,10 @@ struct Applied {
 /// saw it, when a repair has changed it since.
 fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) -> Applied {
     let mut applied = Applied::default();
-    for change in changes {
+    let (put_backs, changes): (Vec<Change>, Vec<Change>) = changes
+        .into_iter()
+        .partition(|change| matches!(change, Change::PutBack { .. }));
+    for change in put_backs.into_iter().chain(changes) {
         match change {
             Change::Edit {
                 claim,
@@ -233,6 +237,7 @@ fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) 
                 pointer,
                 anchor,
                 sentence,
+                cuts,
             } => {
                 let Some(text) = candidate.pointer(&pointer).and_then(Value::as_str) else {
                     continue;
@@ -240,8 +245,7 @@ fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) 
                 if text.contains(sentence.as_str()) {
                     continue;
                 }
-                let put = insert_sentence(text, &anchor, &sentence)
-                    .or_else(|| insert_sentence(text, &Anchor::End, &sentence));
+                let put = put_sentence(text, &sentence, &cuts, &anchor);
                 if let (Some(put), Some(slot)) = (put, candidate.pointer_mut(&pointer)) {
                     *slot = Value::String(put);
                 }
@@ -278,6 +282,18 @@ fn apply(previous: Option<&Value>, candidate: &mut Value, changes: Vec<Change>) 
         }
     }
     applied
+}
+
+/// `candidate` with the put backs the user asked for that it does not hold
+/// yet written in, as the next pass writes them.
+pub(crate) fn with_pending_put_backs(candidate: &Value, entries: &[ClaimLedgerEntry]) -> Value {
+    let put_backs = changes(entries, candidate)
+        .into_iter()
+        .filter(|change| matches!(change, Change::PutBack { .. }))
+        .collect();
+    let mut copy = candidate.clone();
+    apply(None, &mut copy, put_backs);
+    copy
 }
 
 /// Whether the user changed something the draft does not hold yet.

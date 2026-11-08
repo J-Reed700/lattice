@@ -7,7 +7,7 @@
 use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{
-    Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
+    span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
@@ -58,11 +58,16 @@ pub(super) fn without_sentence(body: &str, range: (usize, usize)) -> String {
     format!("{kept_before}{separator}{kept_after}")
 }
 
+/// What a removal took out: the text, and the shortest texts that end
+/// (`follows`) and start (`precedes`) where it was taken from.
+pub(super) type Removal = (String, Option<String>, Option<String>);
+
 /// What `without_sentence` took out of `old` to leave `new`, and where: the
-/// text itself, and the shortest text before it in `new` that occurs once
-/// (`None` when it was taken from the start). `None` when the two do not
-/// differ by one deletion, or no text before it names its place.
-pub(super) fn removal_text(old: &str, new: &str) -> Option<(String, Option<String>)> {
+/// text itself, and the shortest texts in `new` that occur once and end and
+/// start at the junction (`None` when it was taken from the start or the end).
+/// `None` when the two do not differ by one deletion, or no text beside the
+/// junction names its place.
+pub(super) fn removal_text(old: &str, new: &str) -> Option<Removal> {
     let at = old
         .chars()
         .zip(new.chars())
@@ -75,16 +80,27 @@ pub(super) fn removal_text(old: &str, new: &str) -> Option<(String, Option<Strin
     if format!("{}{}{}", new.get(..at)?, text, new.get(at..)?) != old || text.is_empty() {
         return None;
     }
+    let once = |context: &&str| span_of(new, context).is_some();
     let before = new.get(..at)?;
-    if before.is_empty() {
-        return Some((text.to_owned(), None));
-    }
-    before
-        .char_indices()
-        .rev()
-        .map(|(start, _)| before.get(start..).unwrap_or_default())
-        .find(|context| new.matches(*context).count() == 1)
-        .map(|context| (text.to_owned(), Some(context.to_owned())))
+    let follows = if before.is_empty() {
+        None
+    } else {
+        let mut suffixes = before
+            .char_indices()
+            .rev()
+            .filter_map(|(start, _)| before.get(start..));
+        Some(suffixes.find(once)?.to_owned())
+    };
+    let after = new.get(at..)?;
+    let precedes = if after.is_empty() {
+        None
+    } else {
+        let mut prefixes = after
+            .char_indices()
+            .filter_map(|(start, c)| after.get(..start + c.len_utf8()));
+        Some(prefixes.find(once)?.to_owned())
+    };
+    Some((text.to_owned(), follows, precedes))
 }
 
 /// Whether a line's text before the sentence is only the marker of a list
@@ -162,10 +178,11 @@ pub(super) async fn remove_in(
     let new_body = without_sentence(&body, range);
     let taken = removal_text(&body, &new_body);
     for entry in &removed {
-        if let Some((text, after)) = &taken {
+        if let Some((text, follows, precedes)) = &taken {
             let event = ClaimEvent::TextRemoved {
                 text: text.clone(),
-                after: after.clone(),
+                follows: follows.clone(),
+                precedes: precedes.clone(),
             };
             let machine = EventProvenance {
                 actor: Actor::Machine,

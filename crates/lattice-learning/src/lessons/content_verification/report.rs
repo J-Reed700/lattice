@@ -246,9 +246,10 @@ impl LessonVerificationReport {
     }
 
     /// Puts back the findings kept for the claims in `claims`, at `at` or
-    /// where they stood.
+    /// where they stood: the latest entry only, since an older one holds
+    /// findings a later change already replaced.
     fn restore_replaced(&mut self, claims: &HashSet<String>, at: Option<usize>) {
-        while let Some(held) = self
+        if let Some(held) = self
             .replaced_findings
             .iter()
             .rposition(|replaced| claims.contains(&replaced.by))

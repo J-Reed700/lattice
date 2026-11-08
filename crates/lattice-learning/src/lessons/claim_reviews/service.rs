@@ -164,7 +164,7 @@ impl ClaimReviewService {
             .iter()
             .find(|entry| entry.claim_id().0 == claim_id)
             .ok_or_else(|| AppError::NotFound("No claim with that id in this lesson.".into()))?;
-        let resolution = self.plan(&review, lesson_id, entry, action).await?;
+        let resolution = self.plan(&review, lesson_id, entry, action, None).await?;
         self.carry_out(
             &review,
             lesson_id,
@@ -176,8 +176,10 @@ impl ClaimReviewService {
 
     /// Applies one action to every claim in `claim_ids`, all or nothing:
     /// each claim is checked as `resolve` checks it, and when any is refused
-    /// nothing is written. Undo takes the claims' last action back and needs
-    /// the revision the batch returned. Returns the review's new revision.
+    /// nothing is written. Undo takes the claims' last action back, the last
+    /// one done first, and needs the revision the batch returned. Put backs
+    /// are placed one after the other, each against the text the ones before
+    /// it leave. Returns the review's new revision.
     pub async fn resolve_many(
         &self,
         lesson_id: &str,
@@ -229,11 +231,43 @@ impl ClaimReviewService {
         if chosen.is_empty() {
             return Err(AppError::InvalidInput(NO_STATEMENTS.into()));
         }
+        if kind == ClaimActionKind::Undo {
+            chosen.reverse();
+        }
+        let published = review.state == LessonReviewState::Ready;
+        let mut staged = if kind == ClaimActionKind::PutBack {
+            Some(
+                self.put_back_units(&review, lesson_id, &ledger.claims)
+                    .await?,
+            )
+        } else {
+            None
+        };
+        let mut brought_back: HashSet<ClaimId> = HashSet::new();
         let mut planned = Vec::new();
         let mut refused: Vec<AppError> = Vec::new();
         for &entry in &chosen {
-            match self.plan(&review, lesson_id, entry, action.clone()).await {
-                Ok(resolution) => planned.push(Planned { entry, resolution }),
+            if brought_back.contains(entry.claim_id()) {
+                let resolution = Self::put_back_with_sibling(entry);
+                planned.push(Planned { entry, resolution });
+                continue;
+            }
+            let result = self
+                .plan(&review, lesson_id, entry, action.clone(), staged.as_ref())
+                .await;
+            match result {
+                Ok(resolution) => {
+                    if let Some(units) = staged.as_mut() {
+                        put_back::stage(units, &ledger.claims, entry, &resolution.event, published);
+                        brought_back.insert(entry.claim_id().clone());
+                        brought_back.extend(
+                            put_back::siblings(&ledger.claims, entry)
+                                .into_iter()
+                                .map(|other| other.claim_id().clone()),
+                        );
+                    }
+                    planned.push(Planned { entry, resolution });
+                }
                 Err(
                     error @ (AppError::InvalidInput(_)
                     | AppError::InvalidState(_)
@@ -272,6 +306,7 @@ impl ClaimReviewService {
         lesson_id: &str,
         entry: &ClaimLedgerEntry,
         action: ClaimActionRequestDto,
+        staged: Option<&Value>,
     ) -> Result<Resolution> {
         let kind = action_kind(&action);
         if review.state == LessonReviewState::Ready {
@@ -289,7 +324,8 @@ impl ClaimReviewService {
                 return Err(AppError::InvalidState(NEEDS_NOTE.into()));
             }
         }
-        self.resolution(review, lesson_id, entry, action).await
+        self.resolution(review, lesson_id, entry, action, staged)
+            .await
     }
 
     /// Writes the planned claims' events and text changes in one
@@ -462,6 +498,7 @@ impl ClaimReviewService {
         lesson_id: &str,
         entry: &ClaimLedgerEntry,
         action: ClaimActionRequestDto,
+        staged: Option<&Value>,
     ) -> Result<Resolution> {
         let user = |action: UserAction, note: Option<String>, label: Option<LabelSource>| {
             let trust = match &action {
@@ -545,7 +582,7 @@ impl ClaimReviewService {
                 user(UserAction::ResearchWithHint { hint }, None, None)
             }
             ClaimActionRequestDto::PutBack { text, section } => {
-                self.putting_back(review, lesson_id, entry, text, section)
+                self.putting_back(review, lesson_id, entry, text, section, staged)
                     .await
             }
             ClaimActionRequestDto::RestoreOriginal => self.restoring_original(entry),

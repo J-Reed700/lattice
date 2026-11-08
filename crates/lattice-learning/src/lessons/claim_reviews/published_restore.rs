@@ -15,11 +15,14 @@ use super::actions::{in_section_body, ONLY_SECTION};
 use super::published_edit::{
     gone, placed, section_body, update_report, write_section_body, CHANGED,
 };
+use super::published_remove::Removal;
 use super::put_back::siblings;
 use super::repository::{append_in, load_in};
-use crate::content_verification::{insert_sentence, remove_sentence, WrittenBack};
+use crate::content_verification::{insert_sentence, put_at_junction, remove_sentence, WrittenBack};
 
 const BY_HAND: &str = "The section changed after this; undo it by hand.";
+const AFTER_IT: &str = "This section changed after you removed this sentence, so it can't go back on its own. Edit the section to add it back.";
+const FIRST_UNDO: &str = "First undo the other sentences you removed from this section.";
 const PUT_BACK_REASON: &str = "You put this sentence back; it was not checked against the sources.";
 const RESTORED_REASON: &str = "You restored the original sentence; it was not checked again.";
 
@@ -108,6 +111,7 @@ pub(super) async fn apply_in(
     };
     append_in(connection, lesson_id, claim_id, user.clone(), event.clone()).await?;
     let mut done = HashSet::from([claim_id.clone()]);
+    let mut taken_with: HashSet<String> = HashSet::new();
     if is_put_back(event) {
         for other in siblings(&ledger.claims, target) {
             append_in(
@@ -119,6 +123,7 @@ pub(super) async fn apply_in(
             )
             .await?;
             done.insert(other.claim_id().clone());
+            taken_with.insert(other.claim_id().0.clone());
         }
     }
     for id in &replaced {
@@ -129,7 +134,8 @@ pub(super) async fn apply_in(
         append_in(connection, lesson_id, id, user.clone(), superseded).await?;
     }
     write_section_body(connection, lesson_id, unit, &new_body).await?;
-    let ids: HashSet<String> = replaced.iter().map(|id| id.0.clone()).collect();
+    let mut ids: HashSet<String> = replaced.iter().map(|id| id.0.clone()).collect();
+    ids.extend(taken_with);
     update_report(connection, &review.program_id, lesson_id, |report| {
         report.written_back(&WrittenBack {
             unit,
@@ -174,17 +180,41 @@ struct Undoing {
 }
 
 /// What the removal at `ordinal` took out of the claim's section: the text and
-/// what precedes it, as the last `TextRemoved` before it recorded them.
-fn removal_of(entry: &ClaimLedgerEntry, ordinal: u32) -> Option<(String, Option<String>)> {
+/// the texts either side of it, as the last `TextRemoved` before it recorded
+/// them.
+fn removal_of(entry: &ClaimLedgerEntry, ordinal: u32) -> Option<Removal> {
     entry
         .events()
         .iter()
         .rev()
         .filter(|record| record.ordinal < ordinal)
         .find_map(|record| match &record.event {
-            ClaimEvent::TextRemoved { text, after } => Some((text.clone(), after.clone())),
+            ClaimEvent::TextRemoved {
+                text,
+                follows,
+                precedes,
+            } => Some((text.clone(), follows.clone(), precedes.clone())),
             _ => None,
         })
+}
+
+/// Why a removal cannot go back: another sentence the user removed from the
+/// section is still out, or the section changed.
+fn removal_refusal(claims: &[ClaimLedgerEntry], unit: usize, removed: &Removal) -> AppError {
+    let still_out = claims.iter().any(|entry| {
+        entry.location().unit_index == unit
+            && in_section_body(entry)
+            && last_user_event(entry).is_some_and(|(ordinal, event)| {
+                matches!(
+                    event,
+                    ClaimEvent::UserAction {
+                        action: UserAction::Remove,
+                        ..
+                    }
+                ) && removal_of(entry, ordinal).is_some_and(|other| other != *removed)
+            })
+    });
+    AppError::InvalidState(if still_out { FIRST_UNDO } else { AFTER_IT }.into())
 }
 
 fn last_user_event(entry: &ClaimLedgerEntry) -> Option<(u32, &ClaimEvent)> {
@@ -293,19 +323,13 @@ pub(super) async fn undo_in(
             let removed = removal_of(target, ordinal).ok_or_else(by_hand)?;
             let unit = target.location().unit_index;
             let body = section_body(connection, lesson_id, unit).await?;
-            let at = match &removed.1 {
-                None => 0,
-                Some(context) if body.matches(context.as_str()).count() == 1 => body
-                    .find(context.as_str())
-                    .map(|start| start + context.len())
-                    .ok_or_else(by_hand)?,
-                Some(_) => return Err(by_hand()),
-            };
-            let (head, tail) = (body.get(..at), body.get(at..));
-            let (Some(head), Some(tail)) = (head, tail) else {
-                return Err(by_hand());
-            };
-            let new_body = format!("{head}{}{tail}", removed.0);
+            let new_body = put_at_junction(
+                &body,
+                &removed.0,
+                removed.1.as_deref(),
+                removed.2.as_deref(),
+            )
+            .ok_or_else(|| removal_refusal(&ledger.claims, unit, &removed))?;
             let mut undone = vec![(claim_id.clone(), ordinal)];
             undone.extend(ledger.claims.iter().filter_map(|entry| {
                 let (other, last) = last_user_event(entry)?;

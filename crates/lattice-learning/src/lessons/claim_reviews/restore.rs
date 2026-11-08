@@ -5,8 +5,8 @@
 
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
-    ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry, LessonReview, LessonReviewState,
-    Revision, UserAction,
+    Anchor, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry, LessonReview,
+    LessonReviewState, PutPlace, Revision, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
@@ -15,6 +15,7 @@ use super::actions::in_section_body;
 use super::dto::ClaimActionRequestDto;
 use super::put_back::{self, Lesson};
 use super::service::{ClaimReviewService, Resolution};
+use crate::content_verification::with_pending_put_backs;
 
 const BLANK: &str = "Write the sentence you want to put back.";
 pub(super) const NOT_TAKEN_OUT: &str = "Only a sentence the machine took out can be put back.";
@@ -31,8 +32,40 @@ fn resolution(action: UserAction) -> Resolution {
 }
 
 impl ClaimReviewService {
+    /// The lesson's text a put back is placed in: a published lesson's as it
+    /// is, a draft's with the put backs the next pass has yet to write.
+    pub(super) async fn put_back_units(
+        &self,
+        review: &LessonReview,
+        lesson_id: &str,
+        claims: &[ClaimLedgerEntry],
+    ) -> Result<Value> {
+        let units = self.units(review, &review.program_id, lesson_id).await?;
+        Ok(if review.state == LessonReviewState::Ready {
+            units
+        } else {
+            with_pending_put_backs(&units, claims)
+        })
+    }
+
+    /// The put back of a claim whose sentence an earlier claim of the same
+    /// batch brings back: nothing of its own to write.
+    pub(super) fn put_back_with_sibling(entry: &ClaimLedgerEntry) -> Resolution {
+        let location = entry.location();
+        resolution(UserAction::PutBack {
+            sentence: put_back::sentence_of(entry),
+            edited: false,
+            place: PutPlace {
+                unit_index: location.unit_index,
+                field: location.field.clone(),
+                anchor: Anchor::End,
+            },
+        })
+    }
+
     /// The put back of `entry`'s sentence as the user asked: where it was or
-    /// at the end of `section`, as it was or as `text` writes it.
+    /// at the end of `section`, as it was or as `text` writes it. In a
+    /// batch `staged` is the text the put backs before it left.
     pub(super) async fn putting_back(
         &self,
         review: &LessonReview,
@@ -40,6 +73,7 @@ impl ClaimReviewService {
         entry: &ClaimLedgerEntry,
         text: Option<String>,
         section: Option<u32>,
+        staged: Option<&Value>,
     ) -> Result<Resolution> {
         if !entry.allows(ClaimActionKind::PutBack) {
             return Err(AppError::InvalidState(NOT_TAKEN_OUT.into()));
@@ -52,9 +86,18 @@ impl ClaimReviewService {
         let edited = written.as_deref().is_some_and(|text| text != original);
         let sentence = written.unwrap_or(original);
         let ledger = self.store().load(lesson_id).await?;
-        let units = self.units(review, &review.program_id, lesson_id).await?;
+        let loaded;
+        let units = match staged {
+            Some(units) => units,
+            None => {
+                loaded = self
+                    .put_back_units(review, lesson_id, &ledger.claims)
+                    .await?;
+                &loaded
+            }
+        };
         let lesson = Lesson {
-            units: &units,
+            units,
             published: review.state == LessonReviewState::Ready,
         };
         let place = put_back::resolve(&lesson, &ledger.claims, entry, section)?;

@@ -5,8 +5,8 @@
 
 use lattice_core::domain::learning::acceptance::Outcome;
 use lattice_core::domain::learning::claim_review::{
-    span_of, Anchor, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState,
-    EventProvenance, PutPlace,
+    span_of, Anchor, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, CutPlace,
+    EventProvenance, PutPlace, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
@@ -15,7 +15,10 @@ use std::collections::HashSet;
 
 use super::repository::{append_in, load_in};
 
-use crate::content_verification::{field_text, located_quote};
+use crate::content_verification::{
+    cuts_in, field_pointer, field_text, insert_sentence, located_quote, put_place, put_sentence,
+    Placing,
+};
 
 pub(super) const CHOOSE: &str = "Choose the section to put it back in.";
 pub(super) const NO_SECTION: &str = "That section is not in the lesson.";
@@ -148,10 +151,16 @@ fn surviving_unit(claims: &[ClaimLedgerEntry], entry: &ClaimLedgerEntry) -> Opti
     units.all(|other| other == unit).then_some(unit)
 }
 
+/// Every cut the machine recorded in `field`, the claim's own included.
+fn cuts_with(claims: &[ClaimLedgerEntry], entry: &ClaimLedgerEntry, field: &str) -> Vec<CutPlace> {
+    cuts_in(claims.iter().chain(std::iter::once(entry)), field)
+}
+
 /// Where the claim's taken-out sentence goes back, when the ledger and the
-/// text say: beside a recorded neighbour that is still in the text, else
-/// beside the claims around it, else the end of its field. `None` when the
-/// place cannot be known.
+/// text say: where the cuts' records put it among the sentences that are
+/// still in the text, else beside the claims around it, else the end of its
+/// field. `None` when the place cannot be known, or the text holds a
+/// sentence the records do not account for where it stood.
 pub(super) fn place(
     lesson: &Lesson<'_>,
     claims: &[ClaimLedgerEntry],
@@ -159,22 +168,24 @@ pub(super) fn place(
 ) -> Option<PutPlace> {
     let field = entry.location().field.clone();
     if let Some(cut) = entry.cut_place() {
-        let neighbours = [
-            cut.before.as_ref().map(|text| (text, true)),
-            cut.after.as_ref().map(|text| (text, false)),
-        ];
-        for (text, after) in neighbours.into_iter().flatten() {
-            if let Some(unit_index) = lesson.unit_holding(&field, text) {
-                let anchor = if after {
-                    Anchor::After(text.clone())
-                } else {
-                    Anchor::Before(text.clone())
-                };
-                return Some(PutPlace {
-                    unit_index,
-                    field,
-                    anchor,
-                });
+        let unit = [cut.before.as_ref(), cut.after.as_ref()]
+            .into_iter()
+            .flatten()
+            .find_map(|text| lesson.unit_holding(&field, text));
+        if let Some(unit_index) = unit {
+            let text = lesson.text(unit_index, &field)?;
+            let cuts = cuts_with(claims, entry, &field);
+            let refs: Vec<&CutPlace> = cuts.iter().collect();
+            match put_place(&text, &cut.sentence, &refs) {
+                Placing::At(anchor) => {
+                    return Some(PutPlace {
+                        unit_index,
+                        field,
+                        anchor,
+                    })
+                }
+                Placing::Ambiguous => return None,
+                Placing::Unknown => {}
             }
         }
     }
@@ -312,4 +323,40 @@ pub(super) async fn write_draft_in(
         append_in(connection, lesson_id, id, user.clone(), event.clone()).await?;
     }
     Ok(put)
+}
+
+/// `units` with the put back `event` written in, as the commit (a published
+/// lesson) or the next pass (a draft) writes it: what the put backs after it
+/// in a batch are placed against.
+pub(super) fn stage(
+    units: &mut Value,
+    claims: &[ClaimLedgerEntry],
+    entry: &ClaimLedgerEntry,
+    event: &ClaimEvent,
+    published: bool,
+) {
+    let ClaimEvent::UserAction {
+        action: UserAction::PutBack {
+            sentence, place, ..
+        },
+        ..
+    } = event
+    else {
+        return;
+    };
+    let Some(pointer) = field_pointer(units, place.unit_index, &place.field) else {
+        return;
+    };
+    let Some(text) = units.pointer(&pointer).and_then(Value::as_str) else {
+        return;
+    };
+    let put = if published {
+        insert_sentence(text, &place.anchor, sentence)
+    } else {
+        let cuts = cuts_with(claims, entry, &place.field);
+        put_sentence(text, sentence, &cuts, &place.anchor)
+    };
+    if let (Some(put), Some(slot)) = (put, units.pointer_mut(&pointer)) {
+        *slot = Value::String(put);
+    }
 }

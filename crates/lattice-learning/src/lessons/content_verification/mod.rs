@@ -31,8 +31,8 @@ use citations::{
 #[cfg(test)]
 pub(crate) use claim_ledger::locate;
 pub(crate) use claim_ledger::{
-    field_text, held_for_review, held_lessons, located, located_quote, review_outcome, unit_texts,
-    HeldForReview,
+    field_pointer, field_text, held_for_review, held_lessons, located, located_quote,
+    review_outcome, unit_texts, HeldForReview,
 };
 mod class_checks;
 mod classify;
@@ -60,7 +60,9 @@ mod learner_view;
 pub(crate) use learner_view::ClaimStates;
 mod portability;
 mod put_text;
-pub(crate) use put_text::{insert_sentence, put_place, remove_sentence, Placing};
+pub(crate) use put_text::{
+    cuts_in, insert_sentence, put_at_junction, put_place, put_sentence, remove_sentence, Placing,
+};
 mod quote_claims;
 mod readings;
 mod resolution;
@@ -97,6 +99,7 @@ mod report;
 pub(crate) use report::{TakenOut, WrittenBack, WrittenOver};
 pub mod research;
 mod review_pass;
+pub(crate) use review_pass::with_pending_put_backs;
 mod round;
 mod rounds;
 pub(crate) use rounds::Rounds;
