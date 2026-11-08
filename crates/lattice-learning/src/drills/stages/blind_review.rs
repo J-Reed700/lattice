@@ -1,4 +1,4 @@
-//! Stage 5: a fresh reviewer, told nothing of the key, reviews the drill's files. The grader, the one judgement of a
+//! Stage 6: a fresh reviewer, told nothing of the key, reviews the drill's files. The grader, the one judgement of a
 //! review against a key, judges its findings. A finding the grader calls a valid extra is described as an entry of
 //! the key, so that a learner who finds it is credited; how findable each planted issue was is kept as evidence.
 
@@ -6,7 +6,9 @@ use super::ask::{
     ask_request, describe_fault, normalise, path_schema, refuse, render_files, severity_schema,
     text_schema,
 };
-use super::outputs::{Baseline, BlindReview, Findability, Proved, ReviewedFinding, Trail};
+use super::outputs::{
+    Baseline, BlindReview, Findability, LessonChecked, Proved, ReviewedFinding, Trail,
+};
 use super::DrillBuild;
 use crate::drills::budget;
 use crate::drills::grader::Review;
@@ -68,7 +70,7 @@ enum Described {
 }
 
 impl DrillBuild<'_> {
-    /// Stage 5. What a fresh reviewer found, how the grader judged it, how findable each planted issue was, and the
+    /// Stage 6. What a fresh reviewer found, how the grader judged it, how findable each planted issue was, and the
     /// issues the review added to the key. With no planted issue there is no key to judge against, and nothing is
     /// asked.
     pub(crate) async fn blind_review(
@@ -76,8 +78,9 @@ impl DrillBuild<'_> {
         spec: &DrillSpec,
         baseline: &Baseline,
         proved: &Proved,
+        checked: &LessonChecked,
     ) -> Result<BlindReview> {
-        let planted = proved.planted_key();
+        let planted = proved.planted_key(checked);
         let mut trail = Trail::default();
         if planted.is_empty() {
             return Ok(BlindReview {
@@ -214,6 +217,7 @@ impl DrillBuild<'_> {
                     reason: reason.clone(),
                 },
                 origin: Origin::FoundInReview,
+                lesson: None,
             });
         }
         Ok(BlindReview {

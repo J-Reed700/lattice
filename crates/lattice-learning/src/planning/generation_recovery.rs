@@ -51,6 +51,7 @@ pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
         .and_then(|activity| serde_json::to_value(activity).ok());
     let message = match error {
         AppError::Network(_) => "Connection interrupted; saved work will resume automatically",
+        AppError::HttpStatus { .. } => "A website is busy; saved work will resume automatically",
         AppError::RateLimitExceeded(_) => {
             "The model service is rate limiting requests; preparation will retry automatically"
         }

@@ -1,5 +1,6 @@
 //! Shared builders for the drills' tests.
 
+mod brief_tests;
 mod catalogue_tests;
 mod diff_tests;
 mod drill_tests;
@@ -7,6 +8,7 @@ mod edits_tests;
 mod fix_tests;
 mod grading_tests;
 mod key_tests;
+mod lessons_tests;
 mod ratings_tests;
 mod schedule_tests;
 
@@ -51,6 +53,7 @@ fn issue(severity: Severity, start: u32, end: u32) -> KeyIssue {
             reason: "The edit changes the bound.".to_owned(),
         },
         origin: Origin::Planted,
+        lesson: None,
     }
 }
 

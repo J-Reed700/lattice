@@ -1403,13 +1403,13 @@ async setConversationCourse(request: SetConversationCourseRequestDto) : Promise<
 }
 },
 /**
- * Starts a drill on `material`, code in a language or a passage of a course: an attempt on a ready one, or, when none
- * is ready, the build that will make one. `lines` (lines of code, or sentences) and `patterns_count` size that build.
- * The drill comes back as the learner may see it, never with its key or its source.
+ * Starts a drill of the course on `material`, from the lesson asked for or, with none, the one next up: an attempt
+ * on a ready drill of it or, when none is ready, the build that will make one. `lines` (lines of code, or sentences)
+ * and `issues` size that build. The drill comes back as the learner may see it, never with its key or its source.
  */
-async startReviewDrill(material: ReviewMaterialDto, mode: AttemptMode, lines: number, patternsCount: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
+async startCourseDrill(programId: string, lessonId: string | null, material: DrillMaterialDto, mode: AttemptMode, lines: number, issues: number) : Promise<Result<StartedCodeReviewDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_review_drill", { material, mode, lines, patternsCount }) };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_course_drill", { programId, lessonId, material, mode, lines, issues }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -1456,11 +1456,13 @@ async codeReviewLanguages() : Promise<string[]> {
     return await TAURI_INVOKE("plugin:learning|code_review_languages");
 },
 /**
- * The courses a drill on a passage can draw on: those with at least one source.
+ * A course's review drills: the language code drills are offered in (`language`, or the one the course suggests),
+ * what a start with no lesson comes to for code and for passages, each lesson's standing by module, and the latest
+ * attempts.
  */
-async reviewDrillCourses() : Promise<Result<ReviewDrillCourseDto[], ApiError>> {
+async courseDrills(programId: string, language: string | null) : Promise<Result<CourseDrillsDto, ApiError>> {
     try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|review_drill_courses") };
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_drills", { programId, language }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4287,9 +4289,14 @@ export type AppError =
  */
 { InvalidInput: string } |
 /**
- * Network errors
+ * The request got no answer: DNS, connect, TLS, a reset or a timeout.
  */
 { Network: string } |
+/**
+ * A web server answered with an error status instead of what was asked
+ * for; the connection worked. `message` says what it answered.
+ */
+{ HttpStatus: { status: number; message: string } } |
 /**
  * File too large to process
  */
@@ -5303,7 +5310,12 @@ export type ClusterRunDto = { runId: string; ranAt: string; docCount: number; cl
 /**
  * The drill as the learner may see it.
  */
-export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDto; files: CodeReviewFileDto[] }
+export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDto; files: CodeReviewFileDto[];
+/**
+ * The lesson the drill was built from, while it exists; none for a drill from before drills were built from
+ * lessons.
+ */
+lesson: DrillLessonRefDto | null }
 /**
  * One file of a drill, as the learner reads it or leaves it.
  */
@@ -5739,6 +5751,50 @@ export type CorpusTypeCountDto = { type: string; count: number }
  */
 export type CountedSupportDto = { sourceVersionId: string; level: LearningTrustLevel | null }
 /**
+ * One of a course's latest attempts, as its drills view lists it.
+ */
+export type CourseDrillAttemptDto = { attemptId: string; status: AttemptStatus; mode: AttemptMode; startedAt: number;
+/**
+ * The drill's title.
+ */
+title: string; material: DrillMaterialDto;
+/**
+ * The lesson the drill was built from, while it exists.
+ */
+lesson: DrillLessonRefDto | null;
+/**
+ * How the review fared, once it is graded.
+ */
+score: CodeReviewScoreDto | null }
+/**
+ * A course's review drills, as its Practice view reads them.
+ */
+export type CourseDrillsDto = {
+/**
+ * The language code drills are offered in: the one asked for, or the one the course suggests.
+ */
+language: string;
+/**
+ * What a code drill in `language` with no lesson asked for comes to; none when no lesson can be drilled in code.
+ */
+nextCode: NextDrillDto | null;
+/**
+ * What an explanation with no lesson asked for comes to; none when no lesson can be drilled on a passage.
+ */
+nextPassage: NextDrillDto | null;
+/**
+ * The course has a source with text, which an explanation's passage is taken from.
+ */
+hasSources: boolean;
+/**
+ * The course's modules in order, each with its lessons a drill can be built from.
+ */
+modules: DrillModuleDto[];
+/**
+ * The course's latest attempts, newest first.
+ */
+recent: CourseDrillAttemptDto[] }
+/**
  * Where a course's evidence index stands.
  */
 export type CourseIndexStatusDto =
@@ -6055,6 +6111,68 @@ geometry: VisionGeometry;
  */
 projector_bytes: number }
 /**
+ * A lesson a drill can be built from, and where its drills stand.
+ */
+export type DrillLessonDto = { lessonId: string; title: string; standing: DrillStandingDto;
+/**
+ * When its drills are next due; none while no drill of it has been rated.
+ */
+dueAt: number | null;
+/**
+ * A code drill can be built from it: false once one kept none of the lesson's ideas, until the lesson or the
+ * course's sources change.
+ */
+fitsCode: boolean;
+/**
+ * An explanation can be built from it: false once the course's sources held no passage for it, until the lesson
+ * or the sources change.
+ */
+fitsPassage: boolean;
+/**
+ * The course's current lesson.
+ */
+current: boolean;
+/**
+ * The learner marked it done.
+ */
+completed: boolean }
+/**
+ * The lesson of a course a drill was built from.
+ */
+export type DrillLessonRefDto = { programId: string; lessonId: string;
+/**
+ * The lesson's title now.
+ */
+title: string }
+/**
+ * What a drill of a course is on: code in a language, or an explanation of a passage of the course's sources.
+ */
+export type DrillMaterialDto = { kind: "code"; language: string } | { kind: "passage" }
+/**
+ * A module of the course, and its lessons a drill can be built from.
+ */
+export type DrillModuleDto = { moduleId: string; title: string; lessons: DrillLessonDto[] }
+/**
+ * Where a lesson's drills stand.
+ */
+export type DrillStandingDto =
+/**
+ * Rated, and due again.
+ */
+"due" |
+/**
+ * No drill of it has been rated.
+ */
+"new" |
+/**
+ * Rated, and not due yet.
+ */
+"rested" |
+/**
+ * A drill of it is out and not yet graded, or ready to be taken.
+ */
+"pending"
+/**
  * A published lesson's question as the user rewrote it, with the question
  * they opened.
  */
@@ -6215,6 +6333,10 @@ export type ErrorCode =
  * Network operation failed
  */
 "NETWORK_ERROR" |
+/**
+ * A web server answered with an error status
+ */
+"HTTP_STATUS" |
 /**
  * Request timeout
  */
@@ -9134,6 +9256,26 @@ export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
 export type ModelWindowDto = { contextWindow: number | null; maxOutputTokens: number | null }
 export type MoveConversationToSpaceRequestDto = { conversationId: string; spaceId: string }
 export type MutateLearningAssessmentFormRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number }
+/**
+ * The lesson a start with no lesson asked for draws on, and what it comes to.
+ */
+export type NextDrillDto = { lessonId: string; status: NextDrillStatus }
+/**
+ * Whether the lesson a start with no lesson draws on has a drill ready, one being built, or neither.
+ */
+export type NextDrillStatus =
+/**
+ * A drill of it is ready, and the start opens an attempt on it.
+ */
+"ready" |
+/**
+ * A build of it is under way, and the start waits for it.
+ */
+"building" |
+/**
+ * The start queues its build.
+ */
+"to_build"
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }
 /**
  * Onboarding state — what the user has already been through.
@@ -9686,7 +9828,27 @@ reason: string;
 /**
  * Not planted: a blind review raised it. Raising it counts for the learner and leaving it costs nothing.
  */
-alsoValid: boolean }
+alsoValid: boolean;
+/**
+ * What the issue breaks of the lesson the drill was built from; none for an issue of the catalogue alone.
+ */
+lesson: RevealedLessonLinkDto | null }
+/**
+ * The lesson's words a key issue goes against, as the reveal shows them under "From the lesson".
+ */
+export type RevealedLessonLinkDto = { lessonId: string;
+/**
+ * In the order the key cites them: a sentence, or a whole block of the lesson's code, each.
+ */
+sentences: RevealedLessonSentenceDto[] }
+/**
+ * One unit of a lesson's words, and where it comes from.
+ */
+export type RevealedLessonSentenceDto = { text: string;
+/**
+ * The title of the source it comes from; none for the lesson's own teaching.
+ */
+source: string | null }
 /**
  * The source passage of a drill on a passage, as the reveal shows it.
  */
@@ -9695,15 +9857,7 @@ export type RevealedSourceDto = { title: string; text: string;
  * The version of the source the passage is the exact text of.
  */
 versionId: string }
-/**
- * A course a drill on a passage can draw on.
- */
-export type ReviewDrillCourseDto = { programId: string; title: string }
 export type ReviewLearningRecallCardRequestDto = { reviewId: string; programId: string; cardId: string; expectedReviewCount: number; rating: StudyRating; selectedOption: number | null }
-/**
- * What a learner asks to review: code in a language, or a passage from one of their courses.
- */
-export type ReviewMaterialDto = { kind: "code"; language: string } | { kind: "passage"; programId: string; topic: string | null }
 /**
  * A section of the lesson: its index and title.
  */

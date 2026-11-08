@@ -14,6 +14,7 @@ const drill = {
     { path: 'a.py', text: 'a = 1\n' },
     { path: 'b.py', text: 'b = 1\n' },
   ],
+  lesson: null,
 };
 
 const session: Session = { attemptId: 'attempt-1', mode: 'practice', startedAt: 1, drill, limitMs: null };

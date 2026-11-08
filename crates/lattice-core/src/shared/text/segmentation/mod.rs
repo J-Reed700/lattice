@@ -21,7 +21,7 @@ pub use align::{align, common_subsequence, Alignment, Fate};
 pub use code::Code;
 pub use measure::{Bytes, Chars, Measure, Words};
 pub use pack::{partition, windows, Overflow, Plan, Rung};
-pub use prose::Prose;
+pub use prose::{Flowed, Prose};
 
 /// A byte range of a text, both ends on char boundaries.
 pub type Span = std::ops::Range<usize>;
@@ -80,7 +80,17 @@ pub fn units<B: Boundaries + ?Sized>(text: &str, boundaries: &B, at_least: Stren
 /// The byte spans of `text`'s sentences, trimmed of surrounding whitespace,
 /// in order and without the empty ones.
 pub fn sentences(text: &str) -> Vec<(usize, usize)> {
-    units(text, &Prose, Strength::Sentence)
+    trimmed_spans(text, &Prose)
+}
+
+/// [`sentences`] of hard-wrapped text: a line break inside a paragraph cuts
+/// only where it ends a sentence or opens a block ([`Flowed`]).
+pub fn flowed_sentences(text: &str) -> Vec<(usize, usize)> {
+    trimmed_spans(text, &Flowed)
+}
+
+fn trimmed_spans<B: Boundaries>(text: &str, boundaries: &B) -> Vec<(usize, usize)> {
+    units(text, boundaries, Strength::Sentence)
         .into_iter()
         .filter_map(|span| {
             let piece = text.get(span.clone())?;

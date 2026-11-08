@@ -1,7 +1,7 @@
 //! The migration: the tables, what deleting a drill or a course does, the constraints, and the indexes the bank's
 //! queries use.
 
-use super::support::{code, files, planted, proved, quiet, review, spec, MODEL, SUITE};
+use super::support::{code, files, planted, proved, quiet, review, spec, unchecked, MODEL, SUITE};
 use crate::drills::build::Evidence;
 use crate::drills::repository::{self, DrillStatus, NewDrill};
 use crate::persistence::db;
@@ -18,11 +18,18 @@ async fn add(pool: &SqlitePool, id: &str, program_id: Option<&str>) -> Result<()
         material: Material::code("python"),
         title: "A limiter".into(),
         files: proved.files.clone(),
-        key: proved.planted_key(),
+        key: proved.planted_key(&unchecked()),
     };
     let mut spec = spec();
     spec.program_id = program_id.map(str::to_owned);
-    let evidence = Evidence::new(&code(), &review(), &planted(), &proved, &quiet());
+    let evidence = Evidence::new(
+        &code(),
+        &review(),
+        &planted(),
+        &proved,
+        &unchecked(),
+        &quiet(),
+    );
     let mut connection = pool.acquire().await.map_err(db)?;
     repository::insert_in(
         &mut connection,
@@ -55,12 +62,19 @@ async fn the_tables_and_their_indexes_exist() -> Result<()> {
     .await
     .map_err(db)?;
     for name in [
+        "learning_drill_code_checks",
+        "learning_drill_lesson_fits",
+        "learning_drill_lesson_fits_lesson",
+        "learning_drill_lesson_schedules",
+        "learning_drill_lesson_schedules_lesson",
+        "learning_drill_passage_checks",
+        "learning_drill_passage_checks_version",
+        "learning_drill_pattern_schedules",
         "learning_drill_patterns",
         "learning_drill_patterns_pattern",
         "learning_drills",
-        "learning_drills_bank",
-        "learning_drills_domains",
-        "learning_drills_program",
+        "learning_drills_lesson",
+        "learning_drills_shelf",
     ] {
         assert!(
             names.iter().any(|found| found == name),
@@ -75,19 +89,26 @@ async fn a_drill_comes_back_as_it_went_in_with_a_row_for_each_pattern() -> Resul
     let pool = pool().await?;
     add(&pool, "drill", None).await?;
     let mut connection = pool.acquire().await.map_err(db)?;
-    let stored = repository::oldest_ready_in(&mut connection, "python")
+    let stored = repository::find_in(&mut connection, "drill")
         .await?
         .expect("the drill");
     drop(connection);
     assert_eq!(stored.drill.id, "drill");
     assert_eq!(stored.drill.files, proved().files);
-    assert_eq!(stored.drill.key, proved().planted_key());
+    assert_eq!(stored.drill.key, proved().planted_key(&unchecked()));
     assert_eq!(stored.clean_files, files());
     assert_eq!(stored.spec, spec());
     assert_eq!(stored.status, DrillStatus::Ready);
     assert_eq!(
         stored.evidence,
-        Evidence::new(&code(), &review(), &planted(), &proved(), &quiet())
+        Evidence::new(
+            &code(),
+            &review(),
+            &planted(),
+            &proved(),
+            &unchecked(),
+            &quiet()
+        )
     );
     assert_eq!(
         scalar(
@@ -222,25 +243,38 @@ async fn a_row_must_agree_with_its_status_and_pair_its_suite_with_its_runner() -
 #[tokio::test]
 async fn the_banks_queries_use_their_indexes() -> Result<()> {
     let pool = pool().await?;
-    for (sql, index) in [
+    let oldest = format!(
+        "EXPLAIN QUERY PLAN SELECT id {}",
+        repository::OLDEST_READY_ON
+    );
+    let any = format!("EXPLAIN QUERY PLAN {}", repository::ANY_READY_IN);
+    for (query, index) in [
         (
-            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE language='python' AND status='ready' ORDER BY created_at,rowid LIMIT 1",
-            "learning_drills_bank",
+            sqlx::query(&oldest).bind("p").bind("code").bind("python").bind(None::<&str>),
+            "learning_drills_shelf",
         ),
         (
-            "EXPLAIN QUERY PLAN SELECT domain,max(created_at) FROM learning_drills WHERE language='python' GROUP BY domain",
-            "learning_drills_domains",
+            sqlx::query(&oldest).bind("p").bind("code").bind("python").bind(Some("l")),
+            "learning_drills_shelf",
         ),
         (
-            "EXPLAIN QUERY PLAN SELECT drill_id FROM learning_drill_patterns WHERE pattern_id='errors.swallowed_exception'",
+            sqlx::query(&any).bind("p").bind("code").bind("python"),
+            "learning_drills_shelf",
+        ),
+        (
+            sqlx::query("EXPLAIN QUERY PLAN SELECT drill_id FROM learning_drill_patterns WHERE pattern_id='errors.swallowed_exception'"),
             "learning_drill_patterns_pattern",
         ),
         (
-            "EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p'",
-            "learning_drills_program",
+            sqlx::query("EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE program_id='p'"),
+            "learning_drills_shelf",
+        ),
+        (
+            sqlx::query("EXPLAIN QUERY PLAN SELECT id FROM learning_drills WHERE lesson_id='l'"),
+            "learning_drills_lesson",
         ),
     ] {
-        let plan: Vec<String> = sqlx::query(sql)
+        let plan: Vec<String> = query
             .fetch_all(&pool)
             .await
             .map_err(db)?
@@ -249,7 +283,7 @@ async fn the_banks_queries_use_their_indexes() -> Result<()> {
             .collect();
         assert!(
             plan.iter().any(|step| step.contains(index)),
-            "{sql} plans {plan:?}"
+            "{index} plans {plan:?}"
         );
     }
     Ok(())

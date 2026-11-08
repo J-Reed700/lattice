@@ -3,6 +3,7 @@
 //! a bounded body.
 
 use crate::features::web::services::identity;
+use crate::features::web::services::status_error::status_error;
 use crate::features::web::services::web::{
     build_public_client, public_web_client, validate_url_resolved,
 };
@@ -329,20 +330,7 @@ impl WebCaptureServiceTrait for WebCaptureService {
         if !response.status().is_success() {
             let status = response.status();
             warn!(status = %status, url = %url, "URL fetch failed");
-            return Err(match status {
-                reqwest::StatusCode::FORBIDDEN
-                | reqwest::StatusCode::TOO_MANY_REQUESTS
-                | reqwest::StatusCode::SERVICE_UNAVAILABLE => AppError::Network(format!(
-                    "HTTP {} {}: Site blocked automated access. Try importing the PDF or local file version.",
-                    status.as_u16(),
-                    status.canonical_reason().unwrap_or("Unknown"),
-                )),
-                _ => AppError::Network(format!(
-                    "HTTP {}: {}",
-                    status,
-                    status.canonical_reason().unwrap_or("Unknown")
-                )),
-            });
+            return Err(status_error(status));
         }
 
         // Get final URL (after redirects)

@@ -1,0 +1,218 @@
+{
+  "name": "05-sql-it-ignores-what-we-were-taught",
+  "kind": "lesson_vague",
+  "why": "The findings on the migration and on the NULL comparison, both issues that cite the lesson, say only that the code is not written as the lesson said and that the line ignores what was taught. They point at the right lines and name no cause: half found for each, and both findings match their issue. The password written into the script is named in full: found. Preferring block comments is a remark about style: false positive. The date() call that defeats the index is not mentioned: missed.",
+  "drill": {
+    "id": "customer-tiers",
+    "language": "sql",
+    "title": "Customer tiers migration and two queries",
+    "files": [
+      {
+        "path": "tiers.sql",
+        "text": "-- 2026-11-02: add the reporting login, give every customer a tier from their lifetime spend, and index orders by time.\n-- Run once with psql, as the owner of the orders database.\n\nCREATE ROLE reporting LOGIN PASSWORD 'rpt-2026-jackal';\n\nALTER TABLE customers ADD COLUMN tier text NOT NULL DEFAULT 'standard';\n\nUPDATE customers SET tier = 'gold' WHERE lifetime_cents >= 500000;\n\nUPDATE customers SET tier = 'silver' WHERE lifetime_cents >= 100000 AND tier = 'standard';\n\nCREATE INDEX orders_placed_at_idx ON orders (placed_at);\n\n-- Orders placed on one day.\nSELECT id, customer_id\nFROM orders\nWHERE date(placed_at) = :'day';\n\n-- Customers who were not referred by the partner programme.\nSELECT id, email\nFROM customers\nWHERE referrer_id <> :partner_id;\n"
+      }
+    ],
+    "key": [
+      {
+        "id": "tiers-password-in-the-script",
+        "pattern": "security.hardcoded_secret",
+        "severity": "critical",
+        "span": {
+          "path": "tiers.sql",
+          "start": 4,
+          "end": 4
+        },
+        "consequence": "The reporting login's password is written in a script that lives in version control, so anyone who can read the repository can log in as that role, and changing the password means editing a migration.",
+        "fix": {
+          "path": "tiers.sql",
+          "before": "CREATE ROLE reporting LOGIN PASSWORD 'rpt-2026-jackal';",
+          "after": "CREATE ROLE reporting LOGIN PASSWORD :'reporting_password';"
+        },
+        "explanation": "The script creates the role with a literal password. Pass it in from outside, as a psql variable that the caller fills from a secret store, so that it never enters the repository and can be rotated without a release.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the psql variable that carries the password with a literal password."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tiers-migration-without-transaction",
+        "pattern": "errors.partial_update_without_rollback",
+        "severity": "major",
+        "span": {
+          "path": "tiers.sql",
+          "start": 6,
+          "end": 12
+        },
+        "consequence": "If any statement after the first fails, for instance the index build, the ones before it have already been committed: customers are left with a tier column and half-assigned tiers, and the script cannot just be run again because the ADD COLUMN would fail.",
+        "fix": {
+          "path": "tiers.sql",
+          "before": "ALTER TABLE customers ADD COLUMN tier text NOT NULL DEFAULT 'standard';\n\nUPDATE customers SET tier = 'gold' WHERE lifetime_cents >= 500000;\n\nUPDATE customers SET tier = 'silver' WHERE lifetime_cents >= 100000 AND tier = 'standard';\n\nCREATE INDEX orders_placed_at_idx ON orders (placed_at);",
+          "after": "BEGIN;\n\nALTER TABLE customers ADD COLUMN tier text NOT NULL DEFAULT 'standard';\n\nUPDATE customers SET tier = 'gold' WHERE lifetime_cents >= 500000;\n\nUPDATE customers SET tier = 'silver' WHERE lifetime_cents >= 100000 AND tier = 'standard';\n\nCREATE INDEX orders_placed_at_idx ON orders (placed_at);\n\nCOMMIT;"
+        },
+        "explanation": "The migration changes the schema and updates data in several statements with no transaction around them, so a failure partway leaves the database half migrated. Wrap them in BEGIN and COMMIT; PostgreSQL rolls back DDL as well.",
+        "proof": {
+          "judged": {
+            "reason": "The edit removes the BEGIN and COMMIT that wrap the statements in the clean code."
+          }
+        },
+        "origin": "planted",
+        "lesson": {
+          "lesson_id": "lesson-1",
+          "sentences": [
+            {
+              "text": "Statements that must succeed or fail together go in one transaction, so a failure part-way leaves nothing behind."
+            }
+          ]
+        }
+      },
+      {
+        "id": "tiers-day-lookup-defeats-the-index",
+        "pattern": "performance.unindexed_lookup",
+        "severity": "major",
+        "span": {
+          "path": "tiers.sql",
+          "start": 17,
+          "end": 17
+        },
+        "consequence": "date(placed_at) applies a function to the indexed column, so PostgreSQL cannot use orders_placed_at_idx and reads the whole orders table for every day asked for.",
+        "fix": {
+          "path": "tiers.sql",
+          "before": "WHERE date(placed_at) = :'day';",
+          "after": "WHERE placed_at >= :'day'\n  AND placed_at < :'day'::timestamptz + interval '1 day';"
+        },
+        "explanation": "The condition wraps placed_at in date(), which hides the column from the index that the migration builds. Compare the bare column with the start and the end of the day.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces the range on placed_at with a call of date() on it, which the index created above cannot serve."
+          }
+        },
+        "origin": "planted"
+      },
+      {
+        "id": "tiers-null-referrer-dropped",
+        "pattern": "correctness.null_comparison_in_sql",
+        "severity": "major",
+        "span": {
+          "path": "tiers.sql",
+          "start": 22,
+          "end": 22
+        },
+        "consequence": "A customer who was not referred has a NULL referrer_id, and NULL <> x is unknown, not true, so those customers are left out: the query returns only people who were referred by someone else.",
+        "fix": {
+          "path": "tiers.sql",
+          "before": "WHERE referrer_id <> :partner_id;",
+          "after": "WHERE referrer_id IS DISTINCT FROM :partner_id;"
+        },
+        "explanation": "<> never matches a NULL, so customers with no referrer disappear from a query meant to find everyone not referred by the partner programme. Use IS DISTINCT FROM, which treats NULL as a value.",
+        "proof": {
+          "judged": {
+            "reason": "The edit replaces IS DISTINCT FROM with <>, which is unknown when referrer_id is NULL."
+          }
+        },
+        "origin": "planted",
+        "lesson": {
+          "lesson_id": "lesson-1",
+          "sentences": [
+            {
+              "text": "A comparison with NULL is neither true nor false but unknown, so a row whose value is NULL never passes = or <>.",
+              "source": "NULL in SQL"
+            },
+            {
+              "text": "To keep such rows, test for them explicitly with IS NULL or IS DISTINCT FROM."
+            }
+          ]
+        }
+      }
+    ]
+  },
+  "clean": [
+    {
+      "path": "tiers.sql",
+      "text": "-- 2026-11-02: add the reporting login, give every customer a tier from their lifetime spend, and index orders by time.\n-- Run once with psql, as the owner of the orders database.\n\nCREATE ROLE reporting LOGIN PASSWORD :'reporting_password';\n\nBEGIN;\n\nALTER TABLE customers ADD COLUMN tier text NOT NULL DEFAULT 'standard';\n\nUPDATE customers SET tier = 'gold' WHERE lifetime_cents >= 500000;\n\nUPDATE customers SET tier = 'silver' WHERE lifetime_cents >= 100000 AND tier = 'standard';\n\nCREATE INDEX orders_placed_at_idx ON orders (placed_at);\n\nCOMMIT;\n\n-- Orders placed on one day.\nSELECT id, customer_id\nFROM orders\nWHERE placed_at >= :'day'\n  AND placed_at < :'day'::timestamptz + interval '1 day';\n\n-- Customers who were not referred by the partner programme.\nSELECT id, email\nFROM customers\nWHERE referrer_id IS DISTINCT FROM :partner_id;\n"
+    }
+  ],
+  "review": [
+    {
+      "span": {
+        "path": "tiers.sql",
+        "start": 6,
+        "end": 12
+      },
+      "text": "This migration is not written the way the lesson said to write one.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "tiers.sql",
+        "start": 22,
+        "end": 22
+      },
+      "text": "This line ignores what we were taught.",
+      "severity": null
+    },
+    {
+      "span": {
+        "path": "tiers.sql",
+        "start": 4,
+        "end": 4
+      },
+      "text": "The password for the reporting role is written into the script. It is in version control for anyone to read, and changing it means editing a migration.",
+      "severity": "major"
+    },
+    {
+      "span": {
+        "path": "tiers.sql",
+        "start": 14,
+        "end": 14
+      },
+      "text": "Use block comments, -- comments are easy to miss.",
+      "severity": "nit"
+    }
+  ],
+  "labels": {
+    "issues": [
+      {
+        "found": {
+          "finding": 2
+        }
+      },
+      {
+        "half_found": {
+          "finding": 0
+        }
+      },
+      "missed",
+      {
+        "half_found": {
+          "finding": 1
+        }
+      }
+    ],
+    "findings": [
+      {
+        "matches": {
+          "issues": [
+            1
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            3
+          ]
+        }
+      },
+      {
+        "matches": {
+          "issues": [
+            0
+          ]
+        }
+      },
+      "false_positive"
+    ]
+  }
+}

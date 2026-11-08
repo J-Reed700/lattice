@@ -2,8 +2,8 @@
 //! judge when a run proves nothing, and the real built-in runtime.
 
 use super::support::{
-    fix_answer, last, messages, operator_fixed, proved, raised_all, FakeRunner, ScriptedModel,
-    KILLING_TEST, LITERALS_AFTER, LITERALS_BEFORE, OPERATOR_AFTER, SUITE,
+    fix_answer, last, messages, operator_fixed, proved, raised_all, unchecked, FakeRunner,
+    ScriptedModel, KILLING_TEST, LITERALS_AFTER, LITERALS_BEFORE, OPERATOR_AFTER, SUITE,
 };
 use crate::drills::fix_grading::{choose, grade_fix, FixCase, StrategyKind};
 use crate::drills::material::CodeMaterial;
@@ -28,7 +28,7 @@ fn drill() -> Drill {
         material: Material::code("python"),
         title: "A sliding-window rate limiter".into(),
         files: proved.files.clone(),
-        key: proved.planted_key(),
+        key: proved.planted_key(&unchecked()),
     }
 }
 
@@ -877,6 +877,7 @@ mod beside {
             explanation: format!("Say what is wrong with {id}."),
             proof,
             origin,
+            lesson: None,
         }
     }
 

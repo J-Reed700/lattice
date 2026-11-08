@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 
-import { describeFailure, parseApiError } from './errorHandling';
+import { describeFailure, learnerError, parseApiError, waitingSentence } from './errorHandling';
+import { ErrorCode } from '../types/api/errorCodes';
 
 describe('parseApiError', () => {
   it('keeps a backend error as the generated ApiError', () => {
@@ -47,5 +48,20 @@ describe('describeFailure', () => {
       details: { code: 'EXTRACTION_ERROR', message: 'Content extraction failed: a.pdf (bad xref)', details: 'bad xref' },
     })).toBe('Content extraction failed: a.pdf (bad xref)');
     expect(describeFailure({ ok: false, error: 'database is locked' })).toBe('database is locked');
+  });
+});
+
+describe('a website that answered with an error status', () => {
+  const answered = { code: 'HTTP_STATUS', message: 'HTTP 403 Forbidden: Site blocked automated access.', details: null };
+
+  it('is a website problem, not a lost connection to the model server', () => {
+    const { headline, raw } = learnerError(parseApiError(answered));
+    expect(headline).toBe('The website answered with an error.');
+    expect(raw).toBe('HTTP 403 Forbidden: Site blocked automated access.');
+  });
+
+  it('is waited out as a busy website', () => {
+    expect(waitingSentence(ErrorCode.HTTP_STATUS))
+      .toBe('The website is busy. Lattice tries again shortly.');
   });
 });

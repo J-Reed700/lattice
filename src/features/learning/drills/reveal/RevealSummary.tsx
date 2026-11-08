@@ -3,8 +3,8 @@ import { useEffect, useId, useRef, type ReactNode } from 'react';
 import { Check, X } from 'lucide-react';
 
 import { Badge } from '@/components/ui/badge';
-import { kindOf } from '@/features/learning/drills/drillMaterial';
-import { MODE_LABEL, durationText, momentOf, percentText, plural } from '@/features/learning/drills/reveal/revealCopy';
+import { drillMeta, kindOf } from '@/features/learning/drills/drillMaterial';
+import { durationText, momentOf, percentText, plural } from '@/features/learning/drills/reveal/revealCopy';
 import { leadingLine } from '@/features/learning/drills/reveal/revealPresentation';
 import { eyebrow, panel } from '@/features/learning/drills/reveal/revealStyle';
 import { severityLabel, severityTone } from '@/features/learning/drills/severity';
@@ -41,7 +41,7 @@ export function RevealSummary({ result, reveal }: { result: CodeReviewResultDto;
   return (
     <section aria-labelledby={headingId} className={`${panel} overflow-hidden`}>
       <header className="border-b border-border bg-surface-raised px-5 py-5 sm:px-6">
-        <p className={eyebrow}>Result · {MODE_LABEL[result.mode]} · {result.drill.material.kind === 'code' ? result.drill.material.language : 'Explanation'}</p>
+        <p className={eyebrow}>Result · {drillMeta(result.drill, result.mode)}</p>
         <h2 id={headingId} ref={headingRef} tabIndex={-1} className="mt-1 font-serif text-2xl leading-tight text-text-primary outline-hidden">
           {result.drill.title}
         </h2>

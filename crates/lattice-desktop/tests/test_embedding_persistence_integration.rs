@@ -174,8 +174,10 @@ async fn test_embedding_dimensions_correct() -> Result<()> {
 
         // Convert to f32 and verify count
         let floats: Vec<f32> = embedding_bytes
-            .chunks_exact(4)
-            .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .map(|chunk| f32::from_le_bytes(*chunk))
             .collect();
 
         assert_eq!(
@@ -517,8 +519,10 @@ async fn get_document_embeddings(pool: &SqlitePool, doc_id: &str) -> Result<Vec<
         .map(|row| {
             let bytes: Vec<u8> = row.get("embedding");
             bytes
-                .chunks_exact(4)
-                .map(|chunk| f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]))
+                .as_chunks::<4>()
+                .0
+                .iter()
+                .map(|chunk| f32::from_le_bytes(*chunk))
                 .collect()
         })
         .collect();

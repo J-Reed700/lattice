@@ -130,10 +130,8 @@ impl RescoreVectorStore {
                 if self.read_slot(path, handle, key, bytes).is_err() {
                     return false;
                 }
-                for (value, chunk) in vector.iter_mut().zip(bytes.chunks_exact(F32_BYTES)) {
-                    let mut raw = [0u8; F32_BYTES];
-                    raw.copy_from_slice(chunk);
-                    *value = f32::from_le_bytes(raw);
+                for (value, chunk) in vector.iter_mut().zip(bytes.as_chunks::<F32_BYTES>().0) {
+                    *value = f32::from_le_bytes(*chunk);
                 }
                 !vector.iter().all(|v| *v == 0.0) && vector.iter().all(|v| v.is_finite())
             }

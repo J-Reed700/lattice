@@ -749,7 +749,7 @@ async fn research<'a>(
                 Ok(Some(captured)) => captured,
                 Ok(None) => continue,
                 Err(error) => {
-                    tracing::warn!(%error, "Lesson research page unavailable");
+                    tracing::warn!(%error, url = %result.url, "Lesson research page unavailable");
                     capture_failed = true;
                     continue;
                 }

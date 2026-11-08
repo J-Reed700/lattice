@@ -52,7 +52,7 @@ pub enum ProofVerdict {
     /// The mutation stands as `mutation`, which is not the one proven when the strategy asked for a new edit.
     Proven {
         proof: Proof,
-        mutation: Mutation,
+        mutation: Box<Mutation>,
         trail: Trail,
     },
     /// The mutation is dropped, and this is why.
@@ -234,7 +234,7 @@ pub(crate) async fn judge(
             proof: Proof::Judged {
                 reason: judgement.reason,
             },
-            mutation: mutation.clone(),
+            mutation: Box::new(mutation.clone()),
             trail,
         })
     } else {

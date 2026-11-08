@@ -3,7 +3,7 @@
 //! by the `learning.drill_grading` job. The grade, the model that gave it and the reason it could not be given are in
 //! the attempt's row.
 
-use super::bank;
+use super::bank::{self, Shelf};
 use super::build::ask::normalise;
 use super::jobs::{DRILL_GRADING, GRADING_STEPS};
 use super::repository::{self, StoredDrill};
@@ -126,31 +126,25 @@ pub struct Queued {
     pub job: Option<String>,
 }
 
-/// An attempt just opened, the drill it is on, and the build queued to replace that drill.
+/// An attempt just opened, the drill it is on, and the build queued to follow that drill, when one was.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Begun {
     pub attempt: Attempt,
     pub drill: StoredDrill,
-    /// The caller tells the job runtime once the job is committed.
-    pub next_build: String,
+    /// The build queued to follow it, when one was; the caller tells the job runtime once the job is committed.
+    pub next_build: Option<String>,
 }
 
-/// Takes the oldest ready drill of `language` from the bank and opens an attempt on it, in one transaction. `None`
-/// when no drill of the language is ready.
-pub async fn start(pool: &SqlitePool, language: &str, mode: AttemptMode) -> Result<Option<Begun>> {
-    start_on(pool, bank::Shelf::Language(language), None, mode).await
-}
-
-/// [`start`] on the drills of `shelf`: a language's code, or the passages of a course, those built for `topic` or,
-/// when there is none, for no topic.
-pub async fn start_on(
+/// Takes the oldest ready drill of `shelf` built from a lesson, from `lesson` when one is given, and opens an attempt
+/// on it, in one transaction. `None` when no such drill is ready.
+pub async fn start(
     pool: &SqlitePool,
-    shelf: bank::Shelf<'_>,
-    topic: Option<&str>,
+    shelf: Shelf<'_>,
+    lesson: Option<&str>,
     mode: AttemptMode,
 ) -> Result<Option<Begun>> {
     let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-    let Some(taken) = bank::take_topic_in(&mut transaction, shelf, topic).await? else {
+    let Some(taken) = bank::take_in(&mut transaction, shelf, lesson).await? else {
         transaction.commit().await.map_err(db)?;
         return Ok(None);
     };
@@ -335,6 +329,33 @@ pub(crate) async fn record_ungraded_in(
         .map_err(db)?
         .rows_affected()
         == 1)
+}
+
+/// The latest attempts on drills of the course, newest first, at most `limit`, each with the drill it is on.
+pub(crate) async fn recent_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    limit: u32,
+) -> Result<Vec<(Attempt, StoredDrill)>> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT a.id FROM learning_drill_attempts a JOIN learning_drills d ON d.id=a.drill_id WHERE d.program_id=? ORDER BY a.started_at DESC,a.rowid DESC LIMIT ?",
+    )
+    .bind(program_id)
+    .bind(i64::from(limit))
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(db)?;
+    let mut recent = Vec::with_capacity(ids.len());
+    for id in ids {
+        let Some(attempt) = find_in(connection, &id).await? else {
+            continue;
+        };
+        let Some(drill) = repository::find_in(connection, &attempt.drill_id).await? else {
+            continue;
+        };
+        recent.push((attempt, drill));
+    }
+    Ok(recent)
 }
 
 /// The attempt with this id.

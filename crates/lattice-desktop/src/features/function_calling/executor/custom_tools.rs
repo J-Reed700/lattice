@@ -56,11 +56,14 @@ impl FunctionExecutor {
                 })?;
 
             if !response.status().is_success() {
-                return Err(AppError::Network(format!(
-                    "Custom tool '{}' returned HTTP {}",
-                    tool.name,
-                    response.status()
-                )));
+                return Err(AppError::HttpStatus {
+                    status: response.status().as_u16(),
+                    message: format!(
+                        "Custom tool '{}' returned HTTP {}",
+                        tool.name,
+                        response.status()
+                    ),
+                });
             }
 
             let payload = response.json::<serde_json::Value>().await.map_err(|e| {

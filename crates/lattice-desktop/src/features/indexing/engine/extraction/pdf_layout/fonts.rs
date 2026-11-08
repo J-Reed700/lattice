@@ -56,7 +56,7 @@ impl FontWidths {
         let mut glyphs = 0;
         let mut spaces = 0;
         if self.two_byte {
-            for pair in bytes.chunks_exact(2) {
+            for pair in bytes.as_chunks::<2>().0 {
                 let code = pair
                     .first()
                     .zip(pair.get(1))

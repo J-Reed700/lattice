@@ -330,7 +330,7 @@ fn root_digest(schema_version: i64, entries: &[LearningPackManifestEntry]) -> St
     hasher.update(b"schema");
     hasher.update([0]);
     hasher.update(schema_version.to_be_bytes());
-    hasher.update([b'\n']);
+    hasher.update(b"\n");
     for entry in entries {
         hasher.update(entry.path.as_bytes());
         hasher.update([0]);
@@ -352,7 +352,7 @@ fn root_digest(schema_version: i64, entries: &[LearningPackManifestEntry]) -> St
             LearningPackEntryKind::PracticalArtifact => b"practical_artifact",
         };
         hasher.update(kind);
-        hasher.update([b'\n']);
+        hasher.update(b"\n");
     }
     format!("{:x}", hasher.finalize())
 }
