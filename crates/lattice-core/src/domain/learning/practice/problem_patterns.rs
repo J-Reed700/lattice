@@ -203,10 +203,50 @@ pub fn find_pattern(id: &str) -> Option<&'static ProblemPattern> {
     PROBLEM_PATTERNS.iter().find(|pattern| pattern.id == id)
 }
 
+fn normalize(s: &str) -> String {
+    let mut result = String::with_capacity(s.len() + 2);
+    result.push(' ');
+    for c in s.chars() {
+        if c.is_alphanumeric() {
+            result.push(c.to_ascii_lowercase());
+        } else {
+            result.push(' ');
+        }
+    }
+    result.push(' ');
+    result
+}
+
 /// Returns the pattern name if `statement` names any pattern in `patterns` (or any catalogue pattern name) case-insensitively.
-///
-/// Stage 1 non-panicking stub: returns None so refusal checks fail.
-pub fn statement_names_pattern(_statement: &str, _patterns: &[String]) -> Option<&'static str> {
+pub fn statement_names_pattern(statement: &str, patterns: &[String]) -> Option<&'static str> {
+    let haystack = normalize(statement);
+
+    // First check specifically requested patterns
+    for pattern_id in patterns {
+        if let Some(pattern) = find_pattern(pattern_id) {
+            let needle = normalize(pattern.name);
+            if haystack.contains(&needle) {
+                return Some(pattern.name);
+            }
+            let id_needle = normalize(pattern.id);
+            if haystack.contains(&id_needle) {
+                return Some(pattern.name);
+            }
+        }
+    }
+
+    // Then check all catalogue patterns
+    for pattern in PROBLEM_PATTERNS {
+        let needle = normalize(pattern.name);
+        if haystack.contains(&needle) {
+            return Some(pattern.name);
+        }
+        let id_needle = normalize(pattern.id);
+        if haystack.contains(&id_needle) {
+            return Some(pattern.name);
+        }
+    }
+
     None
 }
 

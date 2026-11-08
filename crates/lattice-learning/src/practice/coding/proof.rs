@@ -6,9 +6,9 @@
 use std::collections::BTreeMap;
 use tokio_util::sync::CancellationToken;
 
-use crate::drills::runner::CodeRunner;
-use crate::practice::coding::harness::CaseHarness;
-use crate::practice::coding::problem::{Case, CaseResult, Misreading, ProblemSpec};
+use crate::drills::runner::{CodeRunner, RunOutcome};
+use crate::practice::coding::harness::{run_cases, CaseHarness};
+use crate::practice::coding::problem::{Case, CaseResult, CaseStatus, Misreading, ProblemSpec};
 
 /// The minimum number of killed misreadings required for a problem to be proven.
 pub const MIN_KILLED_MISREADINGS: usize = 2;
@@ -38,51 +38,127 @@ pub struct ProvedProblem {
 }
 
 /// Proves the reference solution passes all cases and records timings for scale cases.
-///
-/// Stage 1 non-panicking stub: returns default empty timings without verifying.
 pub async fn prove_reference(
-    _runner: &dyn CodeRunner,
-    _harness: &dyn CaseHarness,
-    _spec: &ProblemSpec,
-    _reference: &str,
-    _cases: &[Case],
-    _cancel: CancellationToken,
+    runner: &dyn CodeRunner,
+    harness: &dyn CaseHarness,
+    spec: &ProblemSpec,
+    reference: &str,
+    cases: &[Case],
+    cancel: CancellationToken,
 ) -> Result<BTreeMap<String, u64>, ProofError> {
-    Ok(BTreeMap::new())
+    if cancel.is_cancelled() {
+        return Err(ProofError::Cancelled);
+    }
+
+    let (outcome, results) = run_cases(runner, harness, spec, reference, cases, cancel)
+        .await
+        .map_err(|_| ProofError::Cancelled)?;
+
+    let mut failed_cases = Vec::new();
+    let mut reference_ms = BTreeMap::new();
+
+    for result in &results {
+        if result.status != CaseStatus::Passed {
+            failed_cases.push(result.case_id.clone());
+        }
+    }
+
+    if !failed_cases.is_empty() || outcome != RunOutcome::Passed {
+        return Err(ProofError::ReferenceFailed {
+            failed_cases,
+            results,
+        });
+    }
+
+    for case in cases {
+        if case.scale {
+            let elapsed = results
+                .iter()
+                .find(|r| r.case_id == case.id)
+                .and_then(|r| r.elapsed_ms)
+                .unwrap_or(0);
+            reference_ms.insert(case.id.clone(), elapsed);
+        }
+    }
+
+    Ok(reference_ms)
 }
 
 /// Proves misreadings against all test cases:
 /// - Drops misreadings that pass every case.
 /// - Records `killed_by` case IDs for misreadings that fail at least one case.
 /// - Requires at least `MIN_KILLED_MISREADINGS` (2) killed misreadings.
-///
-/// Stage 1 non-panicking stub: returns the candidate misreadings unmodified without running.
 pub async fn prove_misreadings(
-    _runner: &dyn CodeRunner,
-    _harness: &dyn CaseHarness,
-    _spec: &ProblemSpec,
+    runner: &dyn CodeRunner,
+    harness: &dyn CaseHarness,
+    spec: &ProblemSpec,
     candidate_misreadings: &[Misreading],
-    _cases: &[Case],
-    _cancel: CancellationToken,
+    cases: &[Case],
+    cancel: CancellationToken,
 ) -> Result<Vec<Misreading>, ProofError> {
-    Ok(candidate_misreadings.to_vec())
+    if cancel.is_cancelled() {
+        return Err(ProofError::Cancelled);
+    }
+
+    let mut proven_misreadings = Vec::new();
+
+    for candidate in candidate_misreadings {
+        if cancel.is_cancelled() {
+            return Err(ProofError::Cancelled);
+        }
+
+        let (outcome, results) =
+            run_cases(runner, harness, spec, &candidate.code, cases, cancel.clone())
+                .await
+                .map_err(|_| ProofError::Cancelled)?;
+
+        let mut killed_by = Vec::new();
+        for result in &results {
+            if result.status != CaseStatus::Passed {
+                killed_by.push(result.case_id.clone());
+            }
+        }
+
+        if killed_by.is_empty() && outcome != RunOutcome::Passed {
+            if let Some(first_case) = cases.first() {
+                killed_by.push(first_case.id.clone());
+            }
+        }
+
+        if !killed_by.is_empty() {
+            let mut misreading = candidate.clone();
+            misreading.killed_by = killed_by;
+            proven_misreadings.push(misreading);
+        }
+    }
+
+    if proven_misreadings.len() < MIN_KILLED_MISREADINGS {
+        return Err(ProofError::InsufficientMisreadings {
+            killed: proven_misreadings.len(),
+            required: MIN_KILLED_MISREADINGS,
+        });
+    }
+
+    Ok(proven_misreadings)
 }
 
 /// Proves a candidate problem by proving its reference and its misreadings.
-///
-/// Stage 1 non-panicking stub.
 pub async fn prove_problem(
-    _runner: &dyn CodeRunner,
-    _harness: &dyn CaseHarness,
-    _spec: &ProblemSpec,
-    _reference: &str,
+    runner: &dyn CodeRunner,
+    harness: &dyn CaseHarness,
+    spec: &ProblemSpec,
+    reference: &str,
     candidate_misreadings: &[Misreading],
-    _cases: &[Case],
-    _cancel: CancellationToken,
+    cases: &[Case],
+    cancel: CancellationToken,
 ) -> Result<ProvedProblem, ProofError> {
+    let reference_ms =
+        prove_reference(runner, harness, spec, reference, cases, cancel.clone()).await?;
+    let proven_misreadings =
+        prove_misreadings(runner, harness, spec, candidate_misreadings, cases, cancel).await?;
     Ok(ProvedProblem {
-        proven_misreadings: candidate_misreadings.to_vec(),
-        reference_ms: BTreeMap::new(),
+        proven_misreadings,
+        reference_ms,
     })
 }
 
@@ -135,8 +211,73 @@ mod tests {
         ) -> Vec<LearningLabFile> {
             Vec::new()
         }
-        fn results(&self, _stdout: &str, _nonce: &str) -> Vec<CaseResult> {
-            Vec::new()
+        fn results(&self, stdout: &str, _nonce: &str) -> Vec<CaseResult> {
+            if stdout.contains("return []") {
+                vec![
+                    CaseResult {
+                        case_id: "case-1".into(),
+                        status: CaseStatus::Failed,
+                        actual: Some("[]".into()),
+                        printed: String::new(),
+                        error: None,
+                        elapsed_ms: Some(2),
+                    },
+                    CaseResult {
+                        case_id: "case-2".into(),
+                        status: CaseStatus::Passed,
+                        actual: Some("[0, 1]".into()),
+                        printed: String::new(),
+                        error: None,
+                        elapsed_ms: Some(2),
+                    },
+                ]
+            } else if stdout.contains("return [1, 2]") {
+                vec![
+                    CaseResult {
+                        case_id: "case-1".into(),
+                        status: CaseStatus::Failed,
+                        actual: Some("[1, 2]".into()),
+                        printed: String::new(),
+                        error: None,
+                        elapsed_ms: Some(2),
+                    },
+                    CaseResult {
+                        case_id: "case-2".into(),
+                        status: CaseStatus::Failed,
+                        actual: Some("[1, 2]".into()),
+                        printed: String::new(),
+                        error: None,
+                        elapsed_ms: Some(2),
+                    },
+                ]
+            } else {
+                vec![
+                    CaseResult {
+                        case_id: "case-1".into(),
+                        status: CaseStatus::Passed,
+                        actual: Some("[0, 1]".into()),
+                        printed: String::new(),
+                        error: None,
+                        elapsed_ms: Some(2),
+                    },
+                    CaseResult {
+                        case_id: "case-2".into(),
+                        status: CaseStatus::Passed,
+                        actual: Some("[0, 1]".into()),
+                        printed: String::new(),
+                        error: None,
+                        elapsed_ms: Some(2),
+                    },
+                    CaseResult {
+                        case_id: "case-scale".into(),
+                        status: CaseStatus::Passed,
+                        actual: Some("[9998, 9999]".into()),
+                        printed: String::new(),
+                        error: None,
+                        elapsed_ms: Some(42),
+                    },
+                ]
+            }
         }
     }
 
