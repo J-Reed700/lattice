@@ -69,6 +69,8 @@ pub struct FileIntent {
 
 /// This process's id in `file_intents.run_id`.
 pub fn run_id() -> &'static str {
+    // global-state: the process's own id, as its pid is; each intent it records
+    // must carry the one value.
     static RUN_ID: OnceLock<String> = OnceLock::new();
     RUN_ID.get_or_init(|| uuid::Uuid::new_v4().to_string())
 }

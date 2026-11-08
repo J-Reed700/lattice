@@ -23,7 +23,7 @@ use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 use crate::features::learning::content_verification::located_quote;
 use crate::features::learning::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::features::learning::curriculum_repository::LearningCurriculumRepository;
-use crate::features::learning::persistence::{db, now};
+use crate::features::learning::persistence::now;
 use crate::features::learning::plan_dto::LearningGenerationJobActionRequestDto;
 use crate::features::learning::references::trust::outcomes::VerdictScope;
 use lattice_core::shared::text::plain_text;
@@ -426,15 +426,13 @@ impl ClaimReviewService {
             if !in_section_body(entry) {
                 return Err(AppError::InvalidInput(ONLY_SECTION.into()));
             }
-            return sqlx::query_scalar(
-                "SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?",
-            )
-            .bind(lesson_id)
-            .bind(i64::try_from(entry.location().unit_index).unwrap_or(i64::MAX))
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| AppError::NotFound("The claim's section is not in the lesson.".into()));
+            return self
+                .store
+                .block_body(lesson_id, entry.location().unit_index)
+                .await?
+                .ok_or_else(|| {
+                    AppError::NotFound("The claim's section is not in the lesson.".into())
+                });
         }
         let draft = self
             .drafts
