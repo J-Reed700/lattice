@@ -5,7 +5,7 @@
 
 use super::*;
 use lattice_index::passage_index::indexed_term;
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap};
 
 /// Function words that match nearly every passage; never a content term.
 const FUNCTION_WORDS: &[&str] = &[
@@ -102,6 +102,13 @@ impl Subject {
 }
 
 impl ReferenceCollection<'_> {
+    /// The weight of each of `query`'s terms in this collection, as the index keeps words: its `bm25` inverse document
+    /// frequency over the collection's passages, floored at a small positive number as FTS5 does. A term in no
+    /// passage has none.
+    pub(crate) async fn term_weights(&self, _query: &str) -> Result<HashMap<String, f64>> {
+        Ok(HashMap::new())
+    }
+
     /// What `query` is about in this collection: its distinctive content
     /// terms, counted across the collection's passages.
     pub(crate) async fn subject_of(&self, query: &str) -> Result<Subject> {

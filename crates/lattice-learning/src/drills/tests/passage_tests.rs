@@ -359,6 +359,59 @@ async fn another_lesson_of_the_course_takes_the_passage_its_own_words_find() -> 
     Ok(())
 }
 
+#[tokio::test]
+async fn a_passage_drill_takes_the_paragraph_of_a_hit_its_lessons_words_are_in() -> Result<()> {
+    let pool = pool().await?;
+    let opening = "The committee met on a Tuesday to discuss a study. Members reviewed the agenda with care. Minutes were circulated to everyone afterwards. Nothing was decided about the catering.";
+    let closing = "Spacing sessions apart helps recall. Learners who study across several sessions improve their recall. Spreading the work out lets them explain the concept. Short gaps between sessions help much less.";
+    let text = [opening, closing].join("\n\n");
+    assert!(text.len() < 1200, "{}", text.len());
+    let program = course_of(&pool, &[("Meeting notes", text.as_str())]).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let (version, _) = source_titled(&pool, &program, "Meeting notes").await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.text, closing);
+    assert!(
+        !picked.text.contains("Nothing was decided"),
+        "{}",
+        picked.text
+    );
+    assert_eq!(picked.version_id, version);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_hits_paragraph_is_taken_by_the_weight_of_the_words_it_holds_and_not_their_count(
+) -> Result<()> {
+    let pool = pool().await?;
+    let common = "The spacing study sessions began in March. Staff booked the hall for each date. Tea was served at the break. Attendance was recorded by the clerk.";
+    let rare = "Every recall of a stored concept left a trace. Researchers logged each trace with a timestamp. The logs were archived in the basement. Nobody opened the archive for years.";
+    let text = [common, rare].join("\n\n");
+    let others: Vec<(String, String)> = (0..5)
+        .map(|number| {
+            (
+                format!("Site {number}"),
+                format!("The spacing study sessions of site {number} were short. Volunteers wore blue badges. Coffee was free. Parking was limited."),
+            )
+        })
+        .collect();
+    let mut sources: Vec<(&str, &str)> = vec![("Meeting notes", text.as_str())];
+    sources.extend(
+        others
+            .iter()
+            .map(|(title, body)| (title.as_str(), body.as_str())),
+    );
+    let program = course_of(&pool, &sources).await?;
+    let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
+    let (version, _) = source_titled(&pool, &program, "Meeting notes").await?;
+
+    let picked = next_passage(&pool, &spec).await?;
+    assert_eq!(picked.version_id, version);
+    assert_eq!(picked.text, rare);
+    Ok(())
+}
+
 /// The id of the active version of the source of the course `program_id` titled `title`.
 async fn version_of(pool: &SqlitePool, program_id: &str, title: &str) -> Result<String> {
     Ok(source_titled(pool, program_id, title).await?.0)

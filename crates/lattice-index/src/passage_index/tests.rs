@@ -4,7 +4,9 @@ use super::chunking::NewPassage;
 use super::live::LiveIndexes;
 use super::registry;
 use super::store::{PassageStore, DB_FILE, META_IDENTITY};
-use super::text_search::{match_expression, PassageTextSearch};
+use super::text_search::{
+    match_expression, match_words, query_terms, PassageTextSearch, WordMatch, MAX_TERMS,
+};
 use super::vectors::{vectors_path, Vectors};
 use async_trait::async_trait;
 use lattice_core::application::ports::{EmbeddingPort, TextSearchPort};
@@ -469,6 +471,34 @@ mod text_search {
         assert_eq!(
             match_expression("handle_retry").as_deref(),
             Some("\"handle_retry\"*")
+        );
+    }
+
+    #[test]
+    fn query_terms_are_the_lower_cased_distinct_words_a_match_uses() {
+        assert_eq!(
+            query_terms("Retry the RETRY a x Backoff_policy, retry!"),
+            ["retry", "the", "backoff_policy"]
+        );
+        assert!(query_terms("a ! ?").is_empty());
+        let many = (0..MAX_TERMS * 2)
+            .map(|number| format!("word{number}"))
+            .collect::<Vec<_>>()
+            .join(" ");
+        let kept: Vec<String> = (0..MAX_TERMS)
+            .map(|number| format!("word{number}"))
+            .collect();
+        assert_eq!(query_terms(&many), kept);
+        let expression = match_words(&many, WordMatch::Whole).unwrap();
+        assert_eq!(expression.matches(" OR ").count(), MAX_TERMS - 1);
+        assert!(expression.ends_with(&format!("\"word{}\"", MAX_TERMS - 1)));
+        assert_eq!(
+            match_words("where is \"retry\" NEAR(x)?", WordMatch::Prefix).as_deref(),
+            Some("\"where\"* OR \"is\" OR \"retry\"* OR \"near\"*")
+        );
+        assert_eq!(
+            match_words("where is \"retry\" NEAR(x)?", WordMatch::Whole).as_deref(),
+            Some("\"where\" OR \"is\" OR \"retry\" OR \"near\"")
         );
     }
 
