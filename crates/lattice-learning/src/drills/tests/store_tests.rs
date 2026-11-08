@@ -8,8 +8,10 @@ use super::support::{
 use crate::drills::build::store::Built;
 use crate::drills::build::{CleanCode, DroppedMutation, LessonCheck, LessonChecked, Proved, Trail};
 use crate::drills::repository::{self, DrillStatus, StoredDrill};
+use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
 use crate::persistence::db;
+use lattice_core::domain::learning::drills::Material;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobOutcome, JobStatus};
 
@@ -279,6 +281,16 @@ async fn fits_of(harness: &Harness, material: &str) -> Result<Vec<(i64, String)>
         .map_err(db)
 }
 
+/// Whether the lesson the stored drill was built from still fits code.
+async fn lesson_fits_code(harness: &Harness, stored: &StoredDrill) -> Result<bool> {
+    let (Some(program), Some(lesson)) = (stored.program_id.as_deref(), stored.lesson_id.as_deref())
+    else {
+        return Err(AppError::InternalError("The drill has no lesson.".into()));
+    };
+    let mut connection = harness.pool.acquire().await.map_err(db)?;
+    schedules::lesson_fits_in(&mut connection, program, lesson, &Material::code("python")).await
+}
+
 /// Stores the drill of `proved` with `checked` and the clean stage `code` on a new course's lesson, and returns the
 /// harness it was stored in.
 async fn stored_with(
@@ -336,7 +348,7 @@ fn with_basis() -> CleanCode {
 }
 
 #[tokio::test]
-async fn a_stored_drill_keeps_the_lesson_link_in_its_key_and_the_checks_in_its_evidence_and_the_lesson_fits_code(
+async fn a_stored_drill_keeps_the_lesson_link_in_its_key_and_the_checks_in_its_evidence_and_records_no_fit_for_code(
 ) -> Result<()> {
     let link = lesson_brief().link(&[1]);
     let checked = LessonChecked {
@@ -348,15 +360,13 @@ async fn a_stored_drill_keeps_the_lesson_link_in_its_key_and_the_checks_in_its_e
     assert_eq!(stored.drill.key[0].lesson, link);
     assert_eq!(stored.drill.key[1].lesson, None);
     assert_eq!(stored.evidence.lesson_checks, checked.checks);
-    assert_eq!(
-        fits_of(&harness, "code").await?,
-        [(1, "basis-1".to_owned())]
-    );
+    assert!(fits_of(&harness, "code").await?.is_empty());
     Ok(())
 }
 
 #[tokio::test]
-async fn a_drill_with_no_linked_issue_records_that_the_lesson_does_not_fit_code() -> Result<()> {
+async fn a_code_drill_with_no_linked_issue_records_no_fit_and_the_lesson_still_fits_code(
+) -> Result<()> {
     let failed = LessonChecked {
         links: vec![None, None],
         checks: vec![check_of("planted-1", &[1], false)],
@@ -365,31 +375,26 @@ async fn a_drill_with_no_linked_issue_records_that_the_lesson_does_not_fit_code(
         stored_with(with_basis(), lesson_proved(&[1], &[]), failed.clone()).await?;
     assert_eq!(stored.drill.key[0].lesson, None);
     assert_eq!(stored.evidence.lesson_checks, failed.checks);
-    assert_eq!(
-        fits_of(&harness, "code").await?,
-        [(0, "basis-1".to_owned())]
-    );
+    assert!(fits_of(&harness, "code").await?.is_empty());
+    assert!(lesson_fits_code(&harness, &stored).await?);
 
     let (harness, stored) = stored_with(with_basis(), proved(), unchecked()).await?;
     assert!(stored.evidence.lesson_checks.is_empty());
-    assert_eq!(
-        fits_of(&harness, "code").await?,
-        [(0, "basis-1".to_owned())]
-    );
+    assert!(fits_of(&harness, "code").await?.is_empty());
+    assert!(lesson_fits_code(&harness, &stored).await?);
     Ok(())
 }
 
 #[tokio::test]
-async fn a_drill_whose_clean_stage_has_no_basis_records_nothing() -> Result<()> {
+async fn a_code_drill_records_no_fit_whether_or_not_its_clean_stage_has_a_basis() -> Result<()> {
     let checked = LessonChecked {
         links: vec![lesson_brief().link(&[1]), None],
         checks: vec![check_of("planted-1", &[1], true)],
     };
     let (harness, _) = stored_with(with_basis(), lesson_proved(&[1], &[]), checked.clone()).await?;
-    assert_eq!(
-        fits_of(&harness, "code").await?.len(),
-        1,
-        "with a basis it is recorded"
+    assert!(
+        fits_of(&harness, "code").await?.is_empty(),
+        "with a basis it is not recorded either"
     );
     let (harness, stored) = stored_with(code(), lesson_proved(&[1], &[]), checked).await?;
     assert!(stored.drill.key[0].lesson.is_some());

@@ -62,6 +62,7 @@ async fn the_tables_and_their_indexes_exist() -> Result<()> {
     .await
     .map_err(db)?;
     for name in [
+        "learning_drill_code_checks",
         "learning_drill_lesson_fits",
         "learning_drill_lesson_fits_lesson",
         "learning_drill_lesson_schedules",

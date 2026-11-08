@@ -2,8 +2,8 @@
 //! the code. A count is only what the build needs: one mutation for each target.
 
 use super::support::{
-    blind_answer, blind_assessment, clean_code_answer, entry_answer, judge_answer, plant_answer,
-    review_answer, FakeGrader, FakeRunner, Harness, ScriptedModel,
+    blind_answer, blind_assessment, clean_code_answer, code_check_answer, entry_answer,
+    judge_answer, plant_answer, review_answer, FakeGrader, FakeRunner, Harness, ScriptedModel,
 };
 use crate::practice::practice_tests::text_length_rules;
 use lattice_core::shared::error::Result;
@@ -12,6 +12,7 @@ use lattice_core::shared::error::Result;
 async fn the_schemas_of_a_build_hold_no_text_length_cap() -> Result<()> {
     let (harness, spec) = Harness::lesson().await?;
     let model = ScriptedModel::new([
+        code_check_answer(true),
         clean_code_answer(),
         review_answer(vec![]),
         plant_answer(),
@@ -27,7 +28,7 @@ async fn the_schemas_of_a_build_hold_no_text_length_cap() -> Result<()> {
         .run(&context, &spec)
         .await?;
     let requests = model.requests();
-    assert_eq!(requests.len(), 6);
+    assert_eq!(requests.len(), 7);
     for request in &requests {
         let schema = request
             .json_schema
@@ -50,7 +51,7 @@ async fn an_answer_is_never_cut_down_by_the_code() -> Result<()> {
         "suite": long
     })
     .to_string();
-    let model = ScriptedModel::new([answer]);
+    let model = ScriptedModel::new([code_check_answer(true), answer]);
     let runner = FakeRunner::passing();
     let grader = FakeGrader::failing("unused");
     let code = harness

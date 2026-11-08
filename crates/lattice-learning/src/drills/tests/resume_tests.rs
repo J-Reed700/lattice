@@ -2,10 +2,10 @@
 //! that starts at the first stage without one and repeats no model call and no run.
 
 use super::support::{
-    blind_answer, blind_assessment, built_drill, clean_code_answer, code, entry_answer, files,
-    judge_answer, lesson_brief, lesson_check_answer, lesson_proved, plant_answer, planted, purpose,
-    quiet, review, review_answer, system, FakeGrader, FakeRunner, Harness, ScriptedModel,
-    KILLING_TEST, MODEL, SUITE,
+    blind_answer, blind_assessment, built_drill, clean_code_answer, code, code_check_answer,
+    entry_answer, files, judge_answer, lesson_brief, lesson_check_answer, lesson_proved,
+    plant_answer, planted, purpose, quiet, review, review_answer, system, FakeGrader, FakeRunner,
+    Harness, ScriptedModel, KILLING_TEST, MODEL, SUITE,
 };
 use crate::drills::build::{CleanCode, DrillBuild, Evidence, LessonChecked, ModelCall, Stage};
 use crate::drills::material::CodeMaterial;
@@ -22,6 +22,7 @@ use tokio_util::sync::CancellationToken;
 /// judge of the smell (the killed one asks nothing), the blind review and the one extra described.
 fn answers() -> Vec<String> {
     vec![
+        code_check_answer(true),
         clean_code_answer(),
         review_answer(vec![]),
         plant_answer(),
@@ -31,7 +32,8 @@ fn answers() -> Vec<String> {
     ]
 }
 
-const PURPOSES: [&str; 6] = [
+const PURPOSES: [&str; 7] = [
+    "code fit check",
     "clean code",
     "clean review",
     "plant",
@@ -226,9 +228,11 @@ async fn crash_after(done: usize, calls_before: usize) -> Result<()> {
 
 #[tokio::test]
 async fn a_job_resumed_after_each_checkpoint_repeats_no_call() -> Result<()> {
-    // The number of calls the first run makes, per stage done: 1, 2 and 3; the lesson check of a drill with no lesson
-    // issue asks nothing, so the run that stops at the blind review has made four calls and saved five stages.
-    for (done, calls_before) in [(1, 1), (2, 2), (3, 3), (5, 4)] {
+    // The number of calls the first run makes, per stage done: the fit check and the code are 2, then 3 and 4; the
+    // lesson check of a drill with no lesson issue asks nothing, so the run that stops at the blind review has made
+    // five calls and saved five stages. A run that stops after the fit check alone saves no stage, and the resumed
+    // run does not ask it again.
+    for (done, calls_before) in [(0, 1), (1, 2), (2, 3), (3, 4), (5, 5)] {
         crash_after(done, calls_before).await?;
     }
     Ok(())
@@ -337,7 +341,7 @@ async fn a_job_saved_after_the_prove_stage_resumes_at_the_lesson_check() -> Resu
             .fetch_all(&harness.pool)
             .await
             .map_err(db)?;
-    assert_eq!(fits, [(1, "basis-1".to_owned())]);
+    assert!(fits.is_empty(), "a code drill records no fit: {fits:?}");
     Ok(())
 }
 
@@ -390,7 +394,7 @@ async fn a_run_cancelled_under_the_builds_token_stops_the_job_and_saves_nothing_
     assert_eq!(outcome, JobOutcome::Stopped);
     assert_eq!(
         model.requests().len(),
-        1,
+        2,
         "the answer is not asked for again"
     );
     for stage in Stage::ALL {
@@ -415,7 +419,11 @@ async fn a_run_cancelled_under_the_builds_token_stops_the_job_and_saves_nothing_
 #[tokio::test]
 async fn a_suite_that_never_finishes_fails_the_job_and_a_missing_runtime_defers_it() -> Result<()> {
     let (harness, spec) = Harness::lesson().await?;
-    let model = ScriptedModel::new([clean_code_answer(), clean_code_answer()]);
+    let model = ScriptedModel::new([
+        code_check_answer(true),
+        clean_code_answer(),
+        clean_code_answer(),
+    ]);
     let runner = FakeRunner::new(|_, _| RunOutcome::TimedOut {
         output: String::new(),
     });
@@ -434,7 +442,7 @@ async fn a_suite_that_never_finishes_fails_the_job_and_a_missing_runtime_defers_
         matches!(JobFailure::classify(&error), JobFailure::Fail { .. }),
         "a suite or code that loops must not be retried for ever"
     );
-    assert_eq!(model.requests().len(), 2);
+    assert_eq!(model.requests().len(), 3);
 
     let model = ScriptedModel::new([clean_code_answer()]);
     let runner = FakeRunner::new(|_, _| RunOutcome::Unavailable {

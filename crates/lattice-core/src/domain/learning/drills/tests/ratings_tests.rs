@@ -274,10 +274,24 @@ fn a_code_lesson_counts_only_the_issues_tied_to_it() {
 }
 
 #[test]
-fn a_code_lesson_with_no_tied_issue_has_no_rating() {
+fn a_code_lesson_with_no_tied_issue_is_rated_by_every_rated_issue() {
     let code = Material::code("python");
-    let key = [issue_of("correctness.off_by_one", 3)];
-    let graded = assessment(vec![found(0)], vec![]);
+    let key = [
+        issue_of("correctness.off_by_one", 3),
+        issue_of("readability.magic_number", 9),
+    ];
+    let graded = assessment(vec![found(0), missed()], vec![]);
+    assert_eq!(
+        lesson_rating(&code, &key, &graded),
+        Some(PatternRating::Hard)
+    );
+}
+
+#[test]
+fn a_code_lesson_with_nothing_rated_has_no_rating() {
+    let code = Material::code("python");
+    let key = [review_found(Severity::Major, 3, 3)];
+    let graded = assessment(vec![missed()], vec![]);
     assert_eq!(lesson_rating(&code, &key, &graded), None);
 }
 
