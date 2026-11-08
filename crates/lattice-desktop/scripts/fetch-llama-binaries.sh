@@ -170,7 +170,7 @@ if command -v gh >/dev/null 2>&1 && gh auth status >/dev/null 2>&1; then
 else
   command -v curl >/dev/null 2>&1 || die "install gh or curl to download the binaries"
   for file in "${FILES[@]}" SHA256SUMS.txt; do
-    curl --fail --location --silent --show-error --retry 3 \
+    curl --fail --location --silent --show-error --retry 5 --retry-max-time 120 \
       --output "$STAGING/$file" \
       "https://github.com/$REPO/releases/download/$RELEASE/$file"
   done

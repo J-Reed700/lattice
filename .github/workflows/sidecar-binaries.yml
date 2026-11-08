@@ -63,4 +63,6 @@ jobs:
 
       - name: Fetch, verify and run the pinned binaries
         shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
