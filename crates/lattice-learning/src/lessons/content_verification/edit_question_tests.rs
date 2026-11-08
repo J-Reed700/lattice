@@ -1079,3 +1079,72 @@ async fn the_choices_and_the_right_answer_stored_before_a_change_lose_their_rati
     assert_eq!(rows(&course).await?[0].4, "[]");
     Ok(())
 }
+
+const LONGEST: &str = "It keeps them exactly as the file wrote them, spaces and all.";
+const LONGEST_REFUSAL: &str = "The correct option stands out as much the longest.";
+const LEAK_REFUSAL: &str = "The question's stem gives away its answer.";
+
+fn right_choice_much_the_longest() -> QuestionText {
+    let mut choices = C0.map(String::from).to_vec();
+    choices[0] = LONGEST.into();
+    QuestionText { choices, ..q0() }
+}
+
+fn prompt_giving_away_the_right_choice() -> QuestionText {
+    QuestionText {
+        prompt: format!("{P0} It keeps them."),
+        ..q0()
+    }
+}
+
+#[tokio::test]
+async fn an_edit_the_quiz_engine_would_refuse_is_refused_and_writes_nothing() -> Result<()> {
+    let course = published().await?;
+    let seen = snapshot(&course).await?;
+    let cases = [
+        (right_choice_much_the_longest(), LONGEST_REFUSAL),
+        (prompt_giving_away_the_right_choice(), LEAK_REFUSAL),
+    ];
+
+    for (after, text) in cases {
+        let result = edit(&course, 0, q0(), after.clone(), false).await;
+        assert!(
+            matches!(result, Err(AppError::InvalidInput(_))),
+            "{after:?}: {result:?}"
+        );
+        assert_eq!(refused(result), text, "{after:?}");
+        assert_eq!(snapshot(&course).await?, seen);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_dry_run_gives_the_same_refusals_as_the_save() -> Result<()> {
+    let course = published().await?;
+    let seen = snapshot(&course).await?;
+    let cases = [
+        (right_choice_much_the_longest(), LONGEST_REFUSAL),
+        (prompt_giving_away_the_right_choice(), LEAK_REFUSAL),
+    ];
+
+    for (after, text) in cases {
+        let result = edit(&course, 0, q0(), after.clone(), true).await;
+        assert_eq!(refused(result), text, "{after:?}");
+        assert_eq!(snapshot(&course).await?, seen);
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_longest_right_choice_of_two_is_not_refused() -> Result<()> {
+    let course = published().await?;
+    let after = QuestionText {
+        choices: vec![LONGEST.into(), "It trims them.".into()],
+        ..q0()
+    };
+
+    let saved = edit(&course, 0, q0(), after, false).await?;
+
+    assert!(saved.changed);
+    Ok(())
+}
