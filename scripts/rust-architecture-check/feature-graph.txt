@@ -15,4 +15,6 @@
 allow features::batch features::indexing  # batch import drives indexing's IndexFileUseCase once per queued file
 allow features::batch features::web  # batch import drives web's IngestWebUrlUseCase once per queued URL
 allow features::compare features::search  # compare's ScopedLibrarySearch port has one adapter over search's hybrid use case
+allow features::initialization features::model_management  # first-run setup picks its chat model with model_management's recommender
+allow features::model_management features::llm  # the recommender's MachineProfileProbe and GgufHeaderSource adapters read the machine and GGUF headers with llm's engine rather than a second probe and reader
 allow features::web features::indexing  # a page read that fetches a PDF reads it with indexing's ContentExtractor rather than a second PDF reader
