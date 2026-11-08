@@ -4221,9 +4221,14 @@ export type AppError =
  */
 { InvalidInput: string } |
 /**
- * Network errors
+ * The request got no answer: DNS, connect, TLS, a reset or a timeout.
  */
 { Network: string } |
+/**
+ * A web server answered with an error status instead of what was asked
+ * for; the connection worked. `message` says what it answered.
+ */
+{ HttpStatus: { status: number; message: string } } |
 /**
  * File too large to process
  */
