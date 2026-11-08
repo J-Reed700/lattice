@@ -198,6 +198,7 @@ pub async fn prepare_bank_now(
                 source_quote: item.source_quote,
                 lesson_id: item.lesson_id,
                 origin: "bank",
+                review_status: "agreed",
             })
             .collect();
         let mut tx = pool.begin().await.map_err(db)?;
@@ -286,6 +287,7 @@ impl JobHandler for QuizBankWorker {
                     source_quote: item.source_quote,
                     lesson_id: item.lesson_id,
                     origin: "bank",
+                    review_status: "agreed",
                 })
                 .collect();
             let mut tx = self.pool.begin().await.map_err(db)?;

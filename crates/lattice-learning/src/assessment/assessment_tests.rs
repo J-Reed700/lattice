@@ -636,6 +636,7 @@ pub(crate) async fn fill_bank(
                 source_quote: String::new(),
                 lesson_id: lesson_id.clone(),
                 origin: "bank",
+                review_status: "agreed",
             });
         }
     }
@@ -1416,5 +1417,233 @@ async fn a_submitted_quiz_reveals_the_wrong_choice_reasons_it_was_drawn_with() -
         "Bravo fails here."
     );
     assert_eq!(reveal.distractor_rationales[quiz.position("Alpha")], "");
+    Ok(())
+}
+
+/// Three questions; the second has its right choice much the longest of four.
+pub(crate) const PLACED_PROMPTS: [&str; 3] = [
+    "Which layer of the atmosphere holds most of its weather?",
+    "What does a barometer record over a day?",
+    "Why do tides rise and fall twice daily?",
+];
+
+pub(crate) fn placed_questions() -> Vec<(&'static str, [&'static str; 4], usize)> {
+    vec![
+        (
+            PLACED_PROMPTS[0],
+            ["Troposphere", "Mesosphere", "Exosphere", "Ionosphere"],
+            0,
+        ),
+        (
+            PLACED_PROMPTS[1],
+            [
+                "Air pressure, which falls ahead of a storm and rises as skies clear again",
+                "Wind",
+                "Rain",
+                "Heat",
+            ],
+            0,
+        ),
+        (
+            PLACED_PROMPTS[2],
+            ["Lunar pull", "Solar wind", "Ocean salt", "Glacier melt"],
+            0,
+        ),
+    ]
+}
+
+/// A program with its first lesson published with `placed_questions`.
+async fn placed_lesson(pool: &SqlitePool) -> Result<(String, String)> {
+    let program = crate::tests::fixture();
+    let programs = LearningRepository::new(pool.clone());
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    let program_id = program.summary.id.clone();
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    programs
+        .prepare(
+            &program_id,
+            &lesson_id,
+            1,
+            &crate::tests::prepared_with_questions(&lesson_id, &placed_questions()),
+        )
+        .await?;
+    Ok((program_id, lesson_id))
+}
+
+#[tokio::test]
+async fn a_lesson_question_the_bank_rejects_keeps_its_place_as_dropped() -> Result<()> {
+    let pool = migrated().await?;
+    let (_, lesson_id) = placed_lesson(&pool).await?;
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT prompt,review_status FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid",
+    )
+    .bind(&lesson_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    let expected: Vec<(String, String)> = PLACED_PROMPTS
+        .iter()
+        .zip(["agreed", "dropped", "agreed"])
+        .map(|(prompt, status)| ((*prompt).to_string(), status.to_string()))
+        .collect();
+    assert_eq!(rows, expected);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, lesson_id) = placed_lesson(&pool).await?;
+    let dropped: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND review_status='dropped'",
+    )
+    .bind(&lesson_id)
+    .fetch_optional(&pool)
+    .await
+    .map_err(db)?;
+    let dropped = dropped.unwrap_or_default();
+    assert!(
+        !dropped.is_empty(),
+        "the rejected question is kept, marked dropped"
+    );
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some(lesson_id),
+    };
+    fill_bank(&pool, &program_id, &scope).await?;
+    let mut connection = pool.acquire().await.map_err(db)?;
+    let bank = LearningAssessmentRepository::bank_in(&mut *connection, &program_id).await?;
+    assert!(bank.iter().all(|c| c.candidate.id != dropped));
+    drop(connection);
+    let form = LearningAssessmentRepository::new(pool.clone())
+        .start_quiz(
+            &StartLearningQuizRequestDto {
+                operation_id: id(),
+                form_id: id(),
+                program_id,
+                scope,
+                mode: LearningQuizMode::Graded,
+                retake_of_form_id: None,
+            },
+            "start",
+        )
+        .await?;
+    assert!(!form.items.is_empty());
+    assert!(form.items.iter().all(|item| item.id != dropped));
+    Ok(())
+}
+
+/// A program accepted at revision 1, its lessons not yet published.
+async fn accepted_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
+    let program = crate::tests::fixture();
+    let programs = LearningRepository::new(pool.clone());
+    programs.create(&program).await?;
+    programs
+        .accept(&AcceptLearningProgramRequestDto {
+            program_id: program.summary.id.clone(),
+            expected_revision: 0,
+            title: program.summary.title.clone(),
+        })
+        .await?;
+    Ok(program)
+}
+
+async fn publish_questions(
+    pool: &SqlitePool,
+    program_id: &str,
+    lesson_id: &str,
+    revision: i64,
+    questions: &[(&str, [&str; 4], usize)],
+) -> Result<()> {
+    LearningRepository::new(pool.clone())
+        .prepare(
+            program_id,
+            lesson_id,
+            revision,
+            &crate::tests::prepared_with_questions(lesson_id, questions),
+        )
+        .await
+}
+
+async fn lesson_rows(pool: &SqlitePool, lesson_id: &str) -> Result<Vec<(String, String)>> {
+    sqlx::query_as(
+        "SELECT prompt,review_status FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid",
+    )
+    .bind(lesson_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)
+}
+
+fn rows_of(prompts: &[&str], statuses: &[&str]) -> Vec<(String, String)> {
+    prompts
+        .iter()
+        .zip(statuses)
+        .map(|(prompt, status)| ((*prompt).to_string(), (*status).to_string()))
+        .collect()
+}
+
+#[tokio::test]
+async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Result<()> {
+    let pool = migrated().await?;
+    let program = accepted_program(&pool).await?;
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    let prompts = [
+        "What does the pwd command print?",
+        "Which command shows the permissions of every file in the current directory?",
+        "Which command shows the owner of every file in the current directory?",
+    ];
+    assert!(engine::near_duplicate(prompts[1], prompts[2]));
+    publish_questions(
+        &pool,
+        &program.summary.id,
+        &lesson_id,
+        1,
+        &[
+            (
+                prompts[0],
+                [
+                    "Working directory",
+                    "Home folder",
+                    "Free space",
+                    "Shell name",
+                ],
+                0,
+            ),
+            (prompts[1], ["ls -l", "ls -a", "ls -d", "ls -R"], 0),
+            (prompts[2], ["stat", "ls -n", "id", "who"], 0),
+        ],
+    )
+    .await?;
+    assert_eq!(
+        lesson_rows(&pool, &lesson_id).await?,
+        rows_of(&prompts, &["agreed", "agreed", "agreed"])
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_question_repeated_from_the_program_stays_in_its_place_as_dropped() -> Result<()> {
+    let pool = migrated().await?;
+    let program = accepted_program(&pool).await?;
+    let program_id = program.summary.id.clone();
+    let earlier = program.modules[0].lessons[1].id.clone();
+    let lesson_id = program.modules[0].lessons[0].id.clone();
+    // The first copy of the biased question is stored unshuffled, so the
+    // second one has the same content.
+    let questions = placed_questions();
+    publish_questions(&pool, &program_id, &earlier, 1, &questions[1..2]).await?;
+    publish_questions(&pool, &program_id, &lesson_id, 2, &questions).await?;
+    assert_eq!(
+        lesson_rows(&pool, &lesson_id).await?,
+        rows_of(&PLACED_PROMPTS, &["agreed", "dropped", "agreed"])
+    );
     Ok(())
 }
