@@ -3,8 +3,9 @@
 -- `sentence` is the whole sentence a sentence-level quotation finding is about. A row recorded before this column
 -- has none; it is read back with the sentence its note completes, when it completes one.
 --
--- A waiting finding is resolved when the user takes the sentence out of the lesson ('removed') or adds a source that
--- supports it ('source_added'). `resolution` and `resolved_at` are set together, and only in the 'resolved' state.
+-- A waiting finding is resolved when the user adds a source that supports the sentence ('source_added').
+-- `resolution` and `resolved_at` are set together, and only in the 'resolved' state. That a sentence was removed
+-- from the lesson is not stored: it is worked out from the claims' ledger and the section's text when the review is read.
 --
 -- The state's CHECK names the states, so adding 'resolved' rebuilds the table: copy, drop, rename. Nothing refers to
 -- this table, so the drop cascades to no other rows.
@@ -26,7 +27,7 @@ CREATE TABLE learning_lesson_teaching_findings_resolution (
   job_id TEXT,
   found_at INTEGER NOT NULL,
   kept_at INTEGER CHECK((state = 'kept') = (kept_at IS NOT NULL)),
-  resolution TEXT CHECK(resolution IN ('removed','source_added')),
+  resolution TEXT CHECK(resolution IN ('source_added')),
   resolved_at INTEGER,
   CHECK((state = 'resolved') = (resolution IS NOT NULL)),
   CHECK((state = 'resolved') = (resolved_at IS NOT NULL)),

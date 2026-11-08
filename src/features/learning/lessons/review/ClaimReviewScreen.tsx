@@ -16,7 +16,7 @@ import { SelectionBar } from '@/features/learning/lessons/review/SelectionBar';
 import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import { AuditHold, FocusMessage, StopReason } from '@/features/learning/lessons/review/ReviewHolds';
 import { ReviewSourceReader, type ReaderRequest } from '@/features/learning/lessons/review/ReviewSourceReader';
-import { isTeachingWaiting, TeachingFindings } from '@/features/learning/lessons/review/TeachingFindings';
+import { isTeachingWaiting, TeachingFindings, teachingNoteId } from '@/features/learning/lessons/review/TeachingFindings';
 import { useClaimReviewSession } from '@/features/learning/lessons/review/useClaimReviewSession';
 import { useResumeLearningLessonReview, useSettleTeachingFindings } from '@/features/learning/lessons/review/useLessonClaimReview';
 import { useReviewDrop, type DroppedSource } from '@/features/learning/lessons/review/useReviewDrop';
@@ -119,7 +119,7 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     { id: 'review-legend', keys: 'Shift+?', description: 'Keyboard keys', handler: () => setLegend((open) => !open) },
   ], [session]);
   useKeyboardShortcuts(shortcuts, { context: 'review', enabled: !anyOpen && !session.acting });
-  const escape = useMemo(() => [{ id: 'review-escape', keys: 'Escape', description: 'Close a form, then the screen', handler: () => {
+  const escape = useMemo(() => [{ id: 'review-escape', keys: 'Escape', description: 'Close a form, then the screen', global: Boolean(sheet) && !session.form, handler: () => {
     if (reader || trusting) return; // the dialog closes itself
     if (session.form) session.setForm(null);
     else if (sheet) setSheet(null);
@@ -186,8 +186,9 @@ export function ClaimReviewScreen({ programId, lessonId, lessonTitle, courseRevi
     onAdded={(report, summary, scope) => {
       const findingKey = sheet.findingKey;
       setSheet(null);
-      session.added(report, summary, scope);
-      if (findingKey && summary.stated) void settleNote(findingKey);
+      if (!findingKey) { session.added(report, summary, scope); return; }
+      requestAnimationFrame(() => document.getElementById(teachingNoteId(findingKey))?.focus());
+      if (summary.stated) void settleNote(findingKey); else session.setMessage(summary.line);
     }} />;
 
   const focus = (() => {

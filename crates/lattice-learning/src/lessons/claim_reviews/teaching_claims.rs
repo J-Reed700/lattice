@@ -1,8 +1,9 @@
 //! The claims a teaching note's sentence stands on, so the user can take the
-//! sentence out or add a source for it from the note. A waiting note names the
-//! live claims whose sentence in the published section is exactly the note's;
-//! a note resolved by removing the sentence names the claims that removal ended,
-//! which taking it back needs. Draft lessons have none.
+//! sentence out or add a source for it from the note. A note names the live
+//! claims whose sentence in the published section is exactly the note's. When
+//! the section no longer holds the sentence and the user's removal of it
+//! stands, the note shows as removed and names the claims that removal ended,
+//! which taking it back needs; nothing stores that. Draft lessons have none.
 
 use std::collections::HashMap;
 
@@ -15,6 +16,7 @@ use super::published_edit::{gone, placed};
 use super::teaching_findings::{
     TeachingFindingDto, TeachingFindingSiteDto, TeachingFindingStateDto, TeachingResolutionDto,
 };
+use crate::content_verification::claim_quote;
 use crate::persistence::db;
 
 /// The published sections' text, by section index.
@@ -38,7 +40,8 @@ pub(super) async fn section_bodies(
         .collect())
 }
 
-/// Fills in the claim ids of each section note that is about a sentence.
+/// Fills in the claim ids of each section note that is about a sentence, and
+/// shows a note removed while the user's removal of its sentence stands.
 pub(super) fn name_claims(
     ledger: &Ledger,
     bodies: &HashMap<usize, String>,
@@ -54,46 +57,50 @@ pub(super) fn name_claims(
         ) else {
             continue;
         };
+        let body = bodies.get(&unit).map_or("", String::as_str);
         let in_unit = |entry: &&ClaimLedgerEntry| {
             in_section_body(entry) && entry.location().unit_index == unit
         };
-        let removed = finding.state == TeachingFindingStateDto::Resolved
-            && finding.resolution == Some(TeachingResolutionDto::Removed);
-        finding.claim_ids = match (finding.state, removed) {
-            (TeachingFindingStateDto::Resolved, false) => Vec::new(),
-            (_, true) => ledger
-                .claims
-                .iter()
-                .filter(in_unit)
-                .filter(|entry| {
-                    matches!(
-                        entry.state(),
-                        ClaimState::Removed {
-                            by: Actor::User,
-                            ..
-                        }
-                    ) && entry.location().quote.trim() == sentence
-                })
-                .map(|entry| entry.claim_id().0.clone())
-                .collect(),
-            _ => {
-                let Some(body) = bodies.get(&unit) else {
-                    continue;
-                };
-                ledger
-                    .claims
-                    .iter()
-                    .filter(in_unit)
-                    .filter(|entry| !gone(entry))
-                    .filter(|entry| {
-                        placed(entry, body)
-                            .and_then(|(start, end)| body.get(start..end))
-                            .is_some_and(|text| text.trim() == sentence)
-                    })
-                    .map(|entry| entry.claim_id().0.clone())
-                    .collect()
-            }
+        let live: Vec<String> = ledger
+            .claims
+            .iter()
+            .filter(in_unit)
+            .filter(|entry| !gone(entry))
+            .filter(|entry| {
+                placed(entry, body)
+                    .and_then(|(start, end)| body.get(start..end))
+                    .is_some_and(|text| text.trim() == sentence)
+            })
+            .map(|entry| entry.claim_id().0.clone())
+            .collect();
+        if !live.is_empty() {
+            finding.claim_ids = live;
+            continue;
+        }
+        if body.contains(sentence) {
+            continue;
+        }
+        let removals: Vec<(String, i64)> = ledger
+            .claims
+            .iter()
+            .filter(in_unit)
+            .filter_map(|entry| match entry.state() {
+                ClaimState::Removed {
+                    at,
+                    by: Actor::User,
+                } if claim_quote(&entry.location().quote, entry.statement()).trim() == sentence => {
+                    Some((entry.claim_id().0.clone(), *at))
+                }
+                _ => None,
+            })
+            .collect();
+        let Some(latest) = removals.iter().map(|(_, at)| *at).max() else {
+            continue;
         };
+        finding.state = TeachingFindingStateDto::Resolved;
+        finding.resolution = Some(TeachingResolutionDto::Removed);
+        finding.resolved_at = Some(latest);
+        finding.claim_ids = removals.into_iter().map(|(id, _)| id).collect();
     }
 }
 

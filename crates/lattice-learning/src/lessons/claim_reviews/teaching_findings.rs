@@ -57,7 +57,8 @@ pub enum TeachingFindingStateDto {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
 pub enum TeachingResolutionDto {
-    /// The sentence was removed from the lesson.
+    /// The user's removal of the sentence stands: worked out when the review is
+    /// read, never stored.
     Removed,
     /// A source that supports the sentence was added.
     SourceAdded,
@@ -71,8 +72,6 @@ pub enum TeachingSettleDto {
     Keep,
     /// Take a kept or resolved finding back: it becomes waiting.
     Reopen,
-    /// The sentence was removed: waiting becomes resolved.
-    Removed,
     /// A source was added for the sentence: waiting becomes resolved.
     SourceAdded,
 }
@@ -107,7 +106,8 @@ pub struct TeachingFindingDto {
     pub passage_role: TeachingPassageRoleDto,
     /// The whole sentence a quotation finding is about, when it is about one.
     pub sentence: Option<String>,
-    /// The live claims on exactly that sentence in the published section.
+    /// The live claims on exactly that sentence in the published section; for a
+    /// note shown removed, the claims the user's removal ended.
     pub claim_ids: Vec<String>,
     /// How a resolved finding was resolved.
     pub resolution: Option<TeachingResolutionDto>,
@@ -304,7 +304,6 @@ impl TeachingFindingsRepository {
                     sentence,
                     claim_ids: Vec::new(),
                     resolution: match row.get::<Option<String>, _>("resolution").as_deref() {
-                        Some("removed") => Some(TeachingResolutionDto::Removed),
                         Some("source_added") => Some(TeachingResolutionDto::SourceAdded),
                         _ => None,
                     },
@@ -378,13 +377,6 @@ impl TeachingFindingsRepository {
         let at = now();
         let (from, to, kept_at, resolution, resolved_at) = match settle {
             TeachingSettleDto::Keep => (&["waiting"][..], "kept", Some(at), None, None),
-            TeachingSettleDto::Removed => (
-                &["waiting"][..],
-                "resolved",
-                None,
-                Some("removed"),
-                Some(at),
-            ),
             TeachingSettleDto::SourceAdded => (
                 &["waiting"][..],
                 "resolved",

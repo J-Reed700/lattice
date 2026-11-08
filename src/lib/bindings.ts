@@ -10398,7 +10398,8 @@ passageRole: TeachingPassageRoleDto;
  */
 sentence: string | null;
 /**
- * The live claims on exactly that sentence in the published section.
+ * The live claims on exactly that sentence in the published section; for a
+ * note shown removed, the claims the user's removal ended.
  */
 claimIds: string[];
 /**
@@ -10468,7 +10469,8 @@ export type TeachingPassageRoleDto =
  */
 export type TeachingResolutionDto =
 /**
- * The sentence was removed from the lesson.
+ * The user's removal of the sentence stands: worked out when the review is
+ * read, never stored.
  */
 "removed" |
 /**
@@ -10487,10 +10489,6 @@ export type TeachingSettleDto =
  * Take a kept or resolved finding back: it becomes waiting.
  */
 "reopen" |
-/**
- * The sentence was removed: waiting becomes resolved.
- */
-"removed" |
 /**
  * A source was added for the sentence: waiting becomes resolved.
  */
