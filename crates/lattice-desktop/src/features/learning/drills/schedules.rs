@@ -269,6 +269,15 @@ pub(in crate::features::learning) async fn lesson_states_in(
     Ok(standings)
 }
 
+/// Whether the course drills the lesson: it is one of the course's, and not replaced or skipped.
+pub(in crate::features::learning) async fn drills_lesson_in(
+    _connection: &mut SqliteConnection,
+    _program_id: &str,
+    _lesson_id: &str,
+) -> Result<bool> {
+    Ok(false)
+}
+
 /// Whether the lesson can be drilled in `material` (`code` or `passage`): unless it is recorded as not fitting on the
 /// basis it has now.
 async fn fits_in(
@@ -316,7 +325,8 @@ pub(in crate::features::learning) async fn fit_basis_in(
     hash(&json!({"blocks": blocks, "sources": sources}))
 }
 
-/// Records whether the lesson fits `material`, and the basis the decision rests on, replacing an earlier record.
+/// Records whether the lesson fits `material`, and the basis the decision rests on, replacing an earlier record;
+/// nothing, when the lesson is no longer one of the course's.
 pub(in crate::features::learning) async fn record_fit_in(
     connection: &mut SqliteConnection,
     program_id: &str,
@@ -326,7 +336,7 @@ pub(in crate::features::learning) async fn record_fit_in(
     basis: &str,
     now: i64,
 ) -> Result<()> {
-    sqlx::query("INSERT INTO learning_drill_lesson_fits(program_id,lesson_id,material,fits,basis,decided_at) VALUES(?,?,?,?,?,?) ON CONFLICT(program_id,lesson_id,material) DO UPDATE SET fits=excluded.fits,basis=excluded.basis,decided_at=excluded.decided_at")
+    sqlx::query("INSERT INTO learning_drill_lesson_fits(program_id,lesson_id,material,fits,basis,decided_at) SELECT ?1,?2,?3,?4,?5,?6 WHERE EXISTS(SELECT 1 FROM learning_lessons WHERE program_id=?1 AND id=?2) ON CONFLICT(program_id,lesson_id,material) DO UPDATE SET fits=excluded.fits,basis=excluded.basis,decided_at=excluded.decided_at")
         .bind(program_id)
         .bind(lesson_id)
         .bind(fit_material(material))

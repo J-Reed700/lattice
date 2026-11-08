@@ -3,6 +3,7 @@
 //! proofs are what a learner's fix is run against; the learner never sees them. A drill on a passage keeps the
 //! source passage its explanation was written from.
 
+use super::bank::Shelf;
 use super::build::{Evidence, SourcePassage};
 use super::spec::DrillSpec;
 use crate::features::learning::persistence::{db, decode, encode, now};
@@ -153,6 +154,13 @@ pub(in crate::features::learning) async fn insert_in(
 /// The columns `read` reads.
 const COLUMNS: &str = "id,material,language,source_json,title,domain,program_id,lesson_id,spec_json,clean_files_json,files_json,key_json,evidence_json,suite,runner,model,status,created_at,taken_at";
 
+/// What follows `SELECT <columns>` in `oldest_ready_on`: ?1 is the course, ?2 the material, ?3 the language and ?4 the
+/// lesson, or null for any.
+pub(in crate::features::learning) const OLDEST_READY_ON: &str = "";
+
+/// The query of `any_ready_in`: ?1 is the course, ?2 the material and ?3 the language.
+pub(in crate::features::learning) const ANY_READY_IN: &str = "";
+
 /// The name a material is stored under.
 fn material_name(material: &Material) -> &'static str {
     match material {
@@ -161,37 +169,21 @@ fn material_name(material: &Material) -> &'static str {
     }
 }
 
-/// The oldest ready drill of code in `language`.
-pub(in crate::features::learning) async fn oldest_ready_in(
-    connection: &mut SqliteConnection,
-    language: &str,
+/// The oldest ready drill of `shelf` built from a lesson: from `lesson`, when one is given.
+pub(in crate::features::learning) async fn oldest_ready_on(
+    _connection: &mut SqliteConnection,
+    _shelf: Shelf<'_>,
+    _lesson: Option<&str>,
 ) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='code' AND language=? AND status='ready' ORDER BY created_at,rowid LIMIT 1"))
-        .bind(language)
-        .fetch_optional(connection)
-        .await
-        .map_err(db)?
-        .as_ref()
-        .map(read)
-        .transpose()
+    Ok(None)
 }
 
-/// The oldest ready drill on a passage of the course `program_id` that was built for `topic`, as typed in any case
-/// and with any space around it, or for no topic when there is none.
-pub(in crate::features::learning) async fn oldest_ready_of_course_topic_in(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-    topic: Option<&str>,
-) -> Result<Option<StoredDrill>> {
-    sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE material='passage' AND program_id=?2 AND status='ready' AND ((?1 IS NULL AND json_extract(spec_json,'$.domain') IS NULL) OR lower(trim(json_extract(spec_json,'$.domain')))=lower(trim(?1))) ORDER BY created_at,rowid LIMIT 1"))
-        .bind(topic)
-        .bind(program_id)
-        .fetch_optional(connection)
-        .await
-        .map_err(db)?
-        .as_ref()
-        .map(read)
-        .transpose()
+/// Whether a drill of `shelf` built from a lesson is ready.
+pub(in crate::features::learning) async fn any_ready_in(
+    _connection: &mut SqliteConnection,
+    _shelf: Shelf<'_>,
+) -> Result<bool> {
+    Ok(false)
 }
 
 /// The source passages the drills of the course `program_id` were built on, ready or taken.
@@ -240,20 +232,6 @@ pub(in crate::features::learning) async fn mark_taken_in(
     .map_err(db)?
     .rows_affected()
         == 1)
-}
-
-/// For each domain used for `language`, when a drill of it was last built.
-pub(in crate::features::learning) async fn domain_uses(
-    pool: &SqlitePool,
-    language: &str,
-) -> Result<Vec<(String, i64)>> {
-    sqlx::query_as::<_, (String, i64)>(
-        "SELECT domain,max(created_at) FROM learning_drills WHERE language=? GROUP BY domain",
-    )
-    .bind(language)
-    .fetch_all(pool)
-    .await
-    .map_err(db)
 }
 
 fn read(row: &SqliteRow) -> Result<StoredDrill> {
