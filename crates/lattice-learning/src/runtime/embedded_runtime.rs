@@ -144,9 +144,15 @@ impl BuiltinRuntimes {
     }
 
     /// Runtimes on the source tree's Python bundle, for one test.
-    #[cfg(test)]
-    pub(crate) fn for_tests() -> Self {
+    #[cfg(any(test, feature = "test-support"))]
+    pub fn for_tests() -> Self {
         Self::new(PythonRuntime::source_tree())
+    }
+
+    /// What a Python run on these runtimes is given.
+    #[cfg(feature = "test-support")]
+    pub fn python_bundle(&self) -> Option<python_runtime::PythonBundle> {
+        self.python.as_ref().map(PythonRuntime::bundle)
     }
 
     /// Whether each built-in runtime can run here, and why not when it cannot.

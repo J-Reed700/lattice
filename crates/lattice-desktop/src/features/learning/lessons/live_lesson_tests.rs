@@ -1050,7 +1050,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         "This replay has no Verifier audit adapter; it must not bypass an enabled audit"
     );
     let worker = LessonGenerationWorker {
-        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
+        runtimes: crate::features::learning::tests::runtimes(),
         research_web: Some(Arc::new(
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),

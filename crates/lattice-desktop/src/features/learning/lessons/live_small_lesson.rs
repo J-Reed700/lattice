@@ -415,7 +415,7 @@ pub(super) fn worker(
     courses: Option<Arc<crate::features::learning::references::course_index::CourseIndexes>>,
 ) -> LessonGenerationWorker {
     LessonGenerationWorker {
-        runtimes: crate::features::learning::embedded_runtime::BuiltinRuntimes::for_tests(),
+        runtimes: crate::features::learning::tests::runtimes(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
             let llm: Arc<dyn LLMPort> = model.clone();

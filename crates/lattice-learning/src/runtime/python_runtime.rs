@@ -54,7 +54,7 @@ impl PythonRuntime {
     }
 
     /// The bundle in the source tree, which the lib tests run on.
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-support"))]
     pub(super) fn source_tree() -> Option<Self> {
         Self::verify(source_tree_root()).ok()
     }
@@ -78,7 +78,7 @@ fn module_cache_dir() -> Option<PathBuf> {
     Some(std::env::temp_dir().join("lattice-learning-python-test-modules"))
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 fn source_tree_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../lattice-desktop/resources/learning-python")
 }
