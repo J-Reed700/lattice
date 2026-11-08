@@ -11,7 +11,11 @@ use serde_json::Value;
 
 /// The findings about a protected sentence: their passage holds one, or
 /// lies inside one.
-pub(super) fn on_protected(findings: &[ReviewFinding], protected: &[Protected]) -> Vec<FindingKey> {
+pub(super) fn on_protected(
+    _candidate: &Value,
+    findings: &[ReviewFinding],
+    protected: &[Protected],
+) -> Vec<FindingKey> {
     findings
         .iter()
         .filter(|finding| {

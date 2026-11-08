@@ -610,7 +610,11 @@ async fn review_material(
             findings.retain(|finding| !finding.note.trim().is_empty());
             // A finding about a sentence a live claim stands on waits for
             // the user: the review does not rewrite what passed (§10.3).
-            passes.hold(protected::on_protected(&findings, context.protected));
+            passes.hold(protected::on_protected(
+                &candidate_value,
+                &findings,
+                context.protected,
+            ));
             match passes.next(findings) {
                 Next::Done(set_aside) => {
                     if !set_aside.is_empty() {

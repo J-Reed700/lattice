@@ -852,3 +852,122 @@ fn what_was_recorded_of_a_section_that_is_no_longer_there_is_dropped() {
     assert_eq!(cuts.taken.keys().copied().collect::<Vec<_>>(), [0]);
     assert!(cuts.going.is_empty());
 }
+
+#[tokio::test]
+async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sections_already_settled(
+) -> Result<()> {
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let defect_review = json!({
+        "issues": [],
+        "blockChecks": crate::teaching_review::fixture_checks(vec![
+            json!({
+                "index": 0,
+                "passageId": "section-0-passage-0",
+                "finding": "Section 0 needs wording edit.",
+                "hasDefect": true,
+            }),
+            json!({
+                "index": 1,
+                "passageId": "section-1-passage-0",
+                "finding": "Section 1 is good.",
+                "hasDefect": false,
+            }),
+            json!({
+                "index": 2,
+                "passageId": "section-2-passage-0",
+                "finding": "Section 2 is good.",
+                "hasDefect": false,
+            }),
+        ])
+    })
+    .to_string();
+
+    let actionable_evidence = json!({
+        "issue-0": {
+            "verdict": "actionable",
+            "basis": "internal_conflict",
+            "evidenceIds": ["blocks-0"],
+            "partId": "blocks-0",
+            "requirementId": null,
+            "reason": "Section 0 defect."
+        }
+    })
+    .to_string();
+
+    let fix_edit = json!({
+        "edits": [
+            {
+                "path": "/blocks/0/body",
+                "before": "One. Two. Three.",
+                "after": "One. Two. Refined.",
+            }
+        ]
+    })
+    .to_string();
+
+    let clean_review = json!({
+        "issues": [],
+        "blockChecks": crate::teaching_review::fixture_checks(vec![
+            json!({
+                "index": 0,
+                "passageId": "section-0-passage-0",
+                "finding": "Section 0 is good.",
+                "hasDefect": false,
+            }),
+            json!({
+                "index": 1,
+                "passageId": "section-1-passage-0",
+                "finding": "Section 1 is good.",
+                "hasDefect": false,
+            }),
+            json!({
+                "index": 2,
+                "passageId": "section-2-passage-0",
+                "finding": "Section 2 is good.",
+                "hasDefect": false,
+            }),
+        ])
+    })
+    .to_string();
+
+    let llm = model(&[
+        serde_json::from_str(&defect_review)?,
+        serde_json::from_str(&actionable_evidence)?,
+        serde_json::from_str(&fix_edit)?,
+        serde_json::from_str(&clean_review)?,
+    ]);
+
+    let mut ledger = ClaimLedger::open(&llm, "{}").await?;
+    let mut lesson = lesson();
+    lesson["questions"] = json!([]);
+    ledger.cuts.go(1, "Example".into());
+
+    let settled = settle(
+        &llm,
+        ("{}", &json!({"type":"object"}), 4_000),
+        &references,
+        &lesson.to_string(),
+        &mut ledger,
+    )
+    .await?;
+
+    let Settled::Again(edited_str) = settled else {
+        panic!("expected Settled::Again on first pass");
+    };
+
+    let settled_again = settle(
+        &llm,
+        ("{}", &json!({"type":"object"}), 4_000),
+        &references,
+        &edited_str,
+        &mut ledger,
+    )
+    .await?;
+
+    assert!(matches!(settled_again, Settled::Done));
+    assert_eq!(llm.outputs.lock().unwrap().len(), 0);
+
+    Ok(())
+}
