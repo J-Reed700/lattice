@@ -664,3 +664,211 @@ async fn a_note_written_after_the_edit_does_not_say_the_section_changed() -> Res
     assert_eq!(changed_after(&store, &course.lesson_id).await?, [false; 3]);
     Ok(())
 }
+
+async fn report_of(course: &Course) -> Result<LessonVerificationReport> {
+    Ok(serde_json::from_str(&stored_report(course).await?.1)?)
+}
+
+fn rewrite_of<'a>(
+    unit: usize,
+    title: &'a str,
+    body: &'a str,
+    ended: &'a HashSet<String>,
+    written: &'a [(&'a str, &'a ClaimId)],
+) -> Rewritten<'a> {
+    Rewritten {
+        unit,
+        new_title: title,
+        new_body: body,
+        ended,
+        written,
+        at: 7,
+    }
+}
+
+fn push_without_claim(report: &mut LessonVerificationReport, quote: &str) {
+    let mut finding = report
+        .findings
+        .iter()
+        .find(|finding| finding.unit == 0)
+        .unwrap()
+        .clone();
+    finding.claim_id = None;
+    finding.quote = quote.into();
+    finding.statement = quote.into();
+    report.findings.push(finding);
+}
+
+#[tokio::test]
+async fn the_rewritten_report_keeps_a_finding_with_no_claim_whose_quote_the_body_holds_twice(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let mut report = report_of(&course).await?;
+    push_without_claim(&mut report, "Twice here.");
+    let mine = ClaimId("mine".into());
+    let ended = HashSet::new();
+
+    report.rewritten(&rewrite_of(
+        0,
+        "A title",
+        "Twice here. Twice here. Mine is new.",
+        &ended,
+        &[("Mine is new.", &mine)],
+    ));
+
+    assert!(report
+        .findings
+        .iter()
+        .any(|finding| finding.quote == "Twice here."));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_rewritten_report_keeps_a_finding_with_no_claim_whose_quote_is_the_new_title(
+) -> Result<()> {
+    let course = unchecked().await?;
+    let mut report = report_of(&course).await?;
+    push_without_claim(&mut report, "A new title");
+    let ended = HashSet::new();
+
+    report.rewritten(&rewrite_of(
+        0,
+        "A new title",
+        "Some other text.",
+        &ended,
+        &[],
+    ));
+
+    assert!(report
+        .findings
+        .iter()
+        .any(|finding| finding.quote == "A new title"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn with_nothing_dropped_the_written_findings_follow_the_units_last_finding() -> Result<()> {
+    let course = unchecked().await?;
+    let mut report = report_of(&course).await?;
+    let last = report
+        .findings
+        .iter()
+        .rposition(|finding| finding.unit == 0)
+        .unwrap();
+    assert!(report.findings.iter().any(|finding| finding.unit == 1));
+    let before = report.findings.len();
+    let mine = ClaimId("mine".into());
+    let ended = HashSet::new();
+
+    report.rewritten(&rewrite_of(
+        0,
+        "Section 0",
+        &section(GOOD),
+        &ended,
+        &[("Mine is new.", &mine)],
+    ));
+
+    assert_eq!(report.findings.len(), before + 1);
+    assert_eq!(report.findings[last + 1].claim_id.as_deref(), Some("mine"));
+    assert_eq!(report.findings[last + 2].unit, 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn with_nothing_dropped_and_no_finding_of_the_unit_the_written_ones_go_last() -> Result<()> {
+    let course = unchecked().await?;
+    let mut report = report_of(&course).await?;
+    let before = report.findings.len();
+    let mine = ClaimId("mine".into());
+    let ended = HashSet::new();
+
+    report.rewritten(&rewrite_of(
+        9,
+        "Section 9",
+        "Mine is new.",
+        &ended,
+        &[("Mine is new.", &mine)],
+    ));
+
+    assert_eq!(report.findings.len(), before + 1);
+    let last = report.findings.last().unwrap();
+    assert_eq!(last.claim_id.as_deref(), Some("mine"));
+    assert_eq!(last.unit, 9);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_new_title_with_no_statement_on_the_old_one_writes_no_statement() -> Result<()> {
+    let course = unchecked().await?;
+    let (_, body) = text_of(&course, 0).await?;
+
+    let outcome = rewrite(&course, 0, "A better title", &body, false).await?;
+
+    assert!(outcome.changed);
+    assert_eq!(outcome.sentences_written, 0);
+    let ledger = ledger(&course).await?;
+    assert!(ledger
+        .claims
+        .iter()
+        .all(|entry| entry.statement() != "A better title"));
+    let report = stored_report(&course).await?.1;
+    assert!(findings(&report)
+        .iter()
+        .all(|finding| finding["statement"] != json!("A better title")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_title_whose_statement_is_edited_is_written_as_a_statement_confirmed_by_the_user(
+) -> Result<()> {
+    use lattice_core::domain::learning::claim_review::{
+        ClaimEvent, ClaimLocation, EventProvenance, UnitKind, UnverifiedReason,
+    };
+    let course = unchecked().await?;
+    let store = ClaimReviewRepository::new(course.pool.clone());
+    let id = ClaimId("on-the-title".into());
+    let machine = EventProvenance {
+        actor: Actor::Machine,
+        at: 1,
+        job_id: None,
+        app_version: "test".into(),
+        checker_model: None,
+    };
+    let mut revision = ledger(&course).await?.revision;
+    for event in [
+        ClaimEvent::Extracted {
+            location: ClaimLocation::locate(0, UnitKind::Block, "title", "Section 0", "Section 0"),
+            statement: "Section 0".into(),
+        },
+        ClaimEvent::PublishedUnverified {
+            reason: UnverifiedReason::Unchecked,
+        },
+    ] {
+        revision = store
+            .append(&course.lesson_id, &id, machine.clone(), event, revision)
+            .await?;
+    }
+    let (_, body) = text_of(&course, 0).await?;
+
+    let outcome = rewrite(&course, 0, "A better title", &body, false).await?;
+
+    assert_eq!(outcome.statements_changed, 1);
+    assert_eq!(outcome.sentences_written, 1);
+    let ledger = ledger(&course).await?;
+    let written = entry_for(&ledger, "A better title");
+    assert!(matches!(written.state(), ClaimState::Confirmed { .. }));
+    assert_eq!(written.location().field, "title");
+    let old = ledger
+        .claims
+        .iter()
+        .find(|entry| entry.claim_id() == &id)
+        .unwrap();
+    assert!(matches!(
+        old.state(),
+        ClaimState::Edited {
+            by: Actor::User,
+            ..
+        }
+    ));
+    Ok(())
+}

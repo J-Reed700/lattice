@@ -76,6 +76,19 @@ describe('Lesson card section editing', () => {
     expect(screen.getByRole('status', { name: 'Section editing' })).toHaveTextContent('Section saved.');
   });
 
+  it('shows no Edit button on a recap held for recall first, and one once the recap is shown', async () => {
+    const recallFirst: LearningLessonDto = { ...ready, blocks: [
+      { kind: 'explanation', title: 'Boiling', body: 'Water boils when its vapour pressure meets the air pressure.', sourceIds: [] },
+      { kind: 'reflection', title: 'From memory', body: 'Explain boiling in your own words.', sourceIds: [] },
+      { kind: 'recap', title: 'Key takeaways', body: '- Pressure sets the boiling point.', sourceIds: [] },
+    ] as LearningLessonDto['blocks'] };
+    show(recallFirst, true);
+    expect(screen.getByRole('button', { name: 'Edit section 1: Boiling' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Edit section 3: Key takeaways' })).not.toBeInTheDocument();
+    await userEvent.click(screen.getByRole('button', { name: 'Show them now' }));
+    expect(await screen.findByRole('button', { name: 'Edit section 3: Key takeaways' })).toBeVisible();
+  });
+
   it('shows no Edit button on the draft sections of a lesson held for review', async () => {
     api.plan.mockResolvedValue({ ok: true, data: { jobs: [held] } });
     api.review.mockResolvedValue({ ok: true, data: review([unsupportedItem(1)]) });
