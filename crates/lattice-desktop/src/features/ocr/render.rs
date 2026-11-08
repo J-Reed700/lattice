@@ -13,12 +13,14 @@ use base64::prelude::{Engine as _, BASE64_STANDARD};
 use lattice_core::application::ports::OcrError;
 
 /// Nominal rendering resolution. 150 dpi keeps 8-point type legible.
+#[cfg(any(target_os = "macos", test))]
 const RENDER_DPI: f64 = 150.0;
 
 /// Pixel ceiling for one rendered page: 150 dpi on a US Letter page. The
 /// projector resizes every image to at most 1,003,520 pixels anyway, so a
 /// poster or an A3 plan rendered at full resolution would only cost encode
 /// time and request size.
+#[cfg(any(target_os = "macos", test))]
 const MAX_RENDER_PIXELS: f64 = 2_200_000.0;
 
 /// Largest image file sent as-is. A phone photo is a few megabytes; anything
@@ -93,6 +95,7 @@ fn image_file(path: &Path, page: u32, mime: &'static str) -> Result<PageImage, O
 
 /// Pixel dimensions and scale (pixels per point) for a page of
 /// `width_pt` × `height_pt` points, or `None` for a page with no area.
+#[cfg(any(target_os = "macos", test))]
 pub(crate) fn render_size(width_pt: f64, height_pt: f64) -> Option<(usize, usize, f64)> {
     if !(width_pt.is_finite() && height_pt.is_finite() && width_pt >= 1.0 && height_pt >= 1.0) {
         return None;
