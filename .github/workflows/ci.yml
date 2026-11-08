@@ -125,12 +125,6 @@ jobs:
           maximum-size: 24GB
           disk-root: "C:"
 
-      - name: Time the linker in the Windows test build
-        if: matrix.os == 'windows-latest'
-        shell: pwsh
-        run: |
-          "RUSTFLAGS=-C link-arg=/TIME -W linker-messages" >> $env:GITHUB_ENV
-
       # Prove the manifest is actually in the executables rather than inferring
       # it from a green run. The first attempt at this fix emitted link args
       # that Cargo silently dropped for the lib harness, and a passing job
@@ -141,6 +135,7 @@ jobs:
         shell: pwsh
         run: |
           Get-CimInstance Win32_OperatingSystem | Format-List TotalVisibleMemorySize, TotalVirtualMemorySize, FreeVirtualMemory
+          Get-CimInstance Win32_Processor | Format-List Name, NumberOfCores, NumberOfLogicalProcessors, MaxClockSpeed
           Get-PSDrive C, D | Format-Table Name, Used, Free
           $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' |
                 Sort-Object FullName | Select-Object -Last 1
@@ -189,30 +184,44 @@ jobs:
           path: target/cargo-timings/cargo-timing.html
           if-no-files-found: warn
 
-      - name: Print the linker timing messages
-        if: always() && matrix.os == 'windows-latest'
+      - name: Time one rebuild of the desktop lib test with each linker
+        if: matrix.os == 'windows-latest'
+        working-directory: crates/lattice-desktop
         shell: pwsh
+        env:
+          RUSTC_BOOTSTRAP: "1"
         run: |
-          $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
-          $n = 0
-          if (Test-Path $json) {
-            Get-Content $json | ForEach-Object {
-              $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
-              if ($m -and $m.reason -eq 'compiler-message' -and $m.message.rendered -match '(?i)time') {
-                $n++
-                Write-Host ($m.target.name + ' [' + ($m.target.kind -join ',') + ']')
-                Write-Host $m.message.rendered
-              }
-            }
+          $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' |
+                Sort-Object FullName | Select-Object -Last 1
+          if (-not $mt) { throw "mt.exe not found in the Windows SDK" }
+          $env:PATH = $mt.DirectoryName + ';' + $env:PATH
+          $pattern = '(?i)link|total|codegen_crate|LLVM_passes|type_check|borrowck|monomorph|generate_crate_metadata|analysis'
+          $deps = Join-Path (Resolve-Path ../../target).Path 'debug\deps'
+          function Time-Rebuild($label, $file, $extra) {
+            $path = Join-Path $env:RUNNER_TEMP $file
+            $sw = [Diagnostics.Stopwatch]::StartNew()
+            cargo rustc --locked -p lattice-desktop --lib --profile test --features bindings-export -- -Z time-passes @extra 2>&1 | Tee-Object -FilePath $path | Out-Host
+            $code = $LASTEXITCODE
+            $sw.Stop()
+            Write-Host "=== $label : exit $code, wall $([math]::Round($sw.Elapsed.TotalSeconds, 1)) s"
+            Get-Content $path | Where-Object { $_ -match '^\s*Compiling ' -and $_ -notmatch 'lattice-desktop' } | ForEach-Object { Write-Host "other crate rebuilt: $_" }
+            Get-Content $path | Where-Object { $_ -match $pattern } | ForEach-Object { Write-Host $_ }
+            $exe = Get-ChildItem (Join-Path $deps 'lattice-*.exe') | Sort-Object LastWriteTime | Select-Object -Last 1
+            if ($exe) { Write-Host "$label test exe: $($exe.Name) $($exe.Length) bytes" }
+            return [int]$code
           }
-          if ($n -eq 0) { Write-Host "no linker timing messages found" } else { Write-Host "$n linker timing messages" }
+          $codeA = Time-Rebuild 'link.exe' 'passes-link.txt' @()
+          if ($codeA -ne 0) { throw "the link.exe rebuild failed with exit code $codeA" }
+          $codeB = Time-Rebuild 'rust-lld' 'passes-lld.txt' @('-C', 'linker=rust-lld.exe')
+          Write-Host "rust-lld rebuild exit code: $codeB"
+          exit 0
 
-      - name: Upload the Windows test build's JSON
+      - name: Upload the time-passes output
         if: always() && matrix.os == 'windows-latest'
         uses: actions/upload-artifact@v4
         with:
-          name: windows-testbuild-json
-          path: ${{ runner.temp }}/testbuild.json
+          name: windows-time-passes
+          path: ${{ runner.temp }}/passes-*.txt
           if-no-files-found: warn
 
       - uses: taiki-e/install-action@v2
