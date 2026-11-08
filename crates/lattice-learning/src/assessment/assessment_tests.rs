@@ -1519,7 +1519,7 @@ async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
     };
     fill_bank(&pool, &program_id, &scope).await?;
     let mut connection = pool.acquire().await.map_err(db)?;
-    let bank = LearningAssessmentRepository::bank_in(&mut *connection, &program_id).await?;
+    let bank = LearningAssessmentRepository::bank_in(&mut connection, &program_id).await?;
     assert!(bank.iter().all(|c| c.candidate.id != dropped));
     drop(connection);
     let form = LearningAssessmentRepository::new(pool.clone())

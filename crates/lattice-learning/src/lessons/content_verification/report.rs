@@ -151,13 +151,13 @@ impl LessonVerificationReport {
         };
         let first = self.findings.iter().position(dropped);
         self.findings.retain(|finding| !dropped(finding));
-        let mut at = first.unwrap_or_else(|| {
+        let at = first.unwrap_or_else(|| {
             self.findings
                 .iter()
                 .rposition(|finding| finding.unit == rewrite.unit)
                 .map_or(self.findings.len(), |last| last + 1)
         });
-        for (text, successor) in rewrite.written {
+        for (offset, (text, successor)) in rewrite.written.iter().enumerate() {
             let finding = Finding {
                 unit: rewrite.unit,
                 quote: (*text).to_owned(),
@@ -176,8 +176,7 @@ impl LessonVerificationReport {
                 class: None,
                 two_pass: Default::default(),
             };
-            self.findings.insert(at, finding);
-            at += 1;
+            self.findings.insert(at + offset, finding);
         }
         self.content_sha256 = digest(
             &json!([

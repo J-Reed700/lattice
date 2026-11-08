@@ -207,17 +207,9 @@ async fn published() -> Result<Course> {
     assert_eq!(stored, 3);
     let unit = SECTIONS;
     claim(&course, unit, UnitKind::Question, "prompt", P0, P0).await?;
-    for slot in 1..4 {
+    for (slot, choice) in C0.iter().copied().enumerate().skip(1) {
         let field = format!("options/{slot}");
-        claim(
-            &course,
-            unit,
-            UnitKind::Question,
-            &field,
-            C0[slot],
-            C0[slot],
-        )
-        .await?;
+        claim(&course, unit, UnitKind::Question, &field, choice, choice).await?;
     }
     for sentence in [E0_FIRST, E0_SECOND] {
         claim(

@@ -191,10 +191,8 @@ fn validate(kind: LearningItemFormat, after: &QuestionText) -> Result<()> {
                 return refuse(NO_RIGHT);
             }
         }
-        LearningItemFormat::TrueFalse => {
-            if !after.right.is_some_and(|right| right < 2) {
-                return refuse(NO_RIGHT);
-            }
+        LearningItemFormat::TrueFalse if !after.right.is_some_and(|right| right < 2) => {
+            return refuse(NO_RIGHT);
         }
         _ => {}
     }

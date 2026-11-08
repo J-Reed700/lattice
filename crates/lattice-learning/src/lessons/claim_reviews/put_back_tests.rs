@@ -105,7 +105,7 @@ fn a_sentence_goes_after_the_sentence_that_stood_before_it_found_by_text_not_by_
         Some("Cool it."),
     );
     assert_eq!(
-        place(&here(&units), &[gone.clone()], &gone),
+        place(&here(&units), std::slice::from_ref(&gone), &gone),
         Some(put(1, Anchor::After("Heat it.".into())))
     );
 }
@@ -119,7 +119,7 @@ fn a_sentence_goes_before_the_one_after_it_when_the_one_before_is_gone_too() {
         Some("Cool it."),
     );
     assert_eq!(
-        place(&here(&units), &[gone.clone()], &gone),
+        place(&here(&units), std::slice::from_ref(&gone), &gone),
         Some(put(1, Anchor::Before("Cool it.".into())))
     );
 }
@@ -128,7 +128,7 @@ fn a_sentence_goes_before_the_one_after_it_when_the_one_before_is_gone_too() {
 fn a_neighbour_that_stands_in_two_sections_is_not_a_place() {
     let units = lesson(&["Heat it.", "Heat it. Cool it."]);
     let gone = cut(claim("c1", 0, "Boil it.", None), Some("Heat it."), None);
-    let placed = place(&here(&units), &[gone.clone()], &gone);
+    let placed = place(&here(&units), std::slice::from_ref(&gone), &gone);
     assert_eq!(
         placed.map(|place| place.unit_index),
         Some(0),
@@ -154,7 +154,7 @@ fn an_old_cut_with_no_claim_beside_it_goes_to_the_end_of_its_field() {
     let units = lesson(&["Heat it."]);
     let gone = claim("c1", 0, "Boil it.", Some((9, 17)));
     assert_eq!(
-        place(&here(&units), &[gone.clone()], &gone),
+        place(&here(&units), std::slice::from_ref(&gone), &gone),
         Some(put(0, Anchor::End))
     );
 }
@@ -189,10 +189,10 @@ fn after_a_section_went_out_a_sentence_with_no_survivor_of_its_section_has_no_kn
 fn the_user_may_choose_the_section_even_when_the_place_is_known() {
     let units = lesson(&["Loops repeat.", "Heat it. Cool it."]);
     let gone = cut(claim("c1", 1, "Boil it.", None), Some("Heat it."), None);
-    let chosen = resolve(&here(&units), &[gone.clone()], &gone, Some(0)).unwrap();
+    let chosen = resolve(&here(&units), std::slice::from_ref(&gone), &gone, Some(0)).unwrap();
     assert_eq!(chosen, put(0, Anchor::End));
-    let known = resolve(&here(&units), &[gone.clone()], &gone, None).unwrap();
+    let known = resolve(&here(&units), std::slice::from_ref(&gone), &gone, None).unwrap();
     assert_eq!(known, put(1, Anchor::After("Heat it.".into())));
-    let missing = resolve(&here(&units), &[gone.clone()], &gone, Some(9)).unwrap_err();
+    let missing = resolve(&here(&units), std::slice::from_ref(&gone), &gone, Some(9)).unwrap_err();
     assert!(matches!(missing, AppError::InvalidInput(_)));
 }
