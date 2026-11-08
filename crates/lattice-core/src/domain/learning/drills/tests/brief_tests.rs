@@ -50,6 +50,116 @@ fn prose_is_cut_into_its_sentences_trimmed_with_no_empty_unit() {
 }
 
 #[test]
+fn a_hard_wrapped_paragraph_is_cut_into_whole_sentences() {
+    let text = "Confidence thresholds with\nabstention and human review for anything uncertain. Watch for drift\nas new types arrive.";
+    assert_eq!(
+        evidence_units(text),
+        strings(&[
+            "Confidence thresholds with\nabstention and human review for anything uncertain.",
+            "Watch for drift\nas new types arrive."
+        ])
+    );
+}
+
+#[test]
+fn a_sentence_ending_at_a_line_end_still_ends_its_unit() {
+    assert_eq!(
+        evidence_units("One sentence ends here.\nAnother starts here."),
+        strings(&["One sentence ends here.", "Another starts here."])
+    );
+}
+
+#[test]
+fn list_items_stay_apart_and_an_items_continuation_joins_it() {
+    let text =
+        "Topics:\n- Classification, with thresholds\n  and abstention.\n- Extraction of fields.";
+    assert_eq!(
+        evidence_units(text),
+        strings(&[
+            "Topics:",
+            "- Classification, with thresholds\n  and abstention.",
+            "- Extraction of fields."
+        ])
+    );
+    let ordered = "Steps:\n1. Collect the inputs\n   and check them.\n2. Run it.";
+    assert_eq!(
+        evidence_units(ordered),
+        strings(&[
+            "Steps:",
+            "1. Collect the inputs\n   and check them.",
+            "2. Run it."
+        ])
+    );
+}
+
+#[test]
+fn bullets_from_extracted_text_stay_apart() {
+    assert_eq!(
+        evidence_units("Points:\n• First point\n• Second point"),
+        strings(&["Points:", "• First point", "• Second point"])
+    );
+}
+
+#[test]
+fn a_quotes_continuation_lines_join_and_a_quote_after_other_text_starts_a_unit() {
+    let quote = "> an external system of record, with retries and\n> human approval gates for risky actions.";
+    assert_eq!(evidence_units(quote), strings(&[quote]));
+    assert_eq!(
+        evidence_units("The note says\n> quoted words that\n> go on"),
+        strings(&["The note says", "> quoted words that\n> go on"])
+    );
+}
+
+#[test]
+fn a_heading_line_is_its_own_unit_when_text_follows() {
+    assert_eq!(
+        evidence_units("## Title\nBody text that wraps\nonto the next line."),
+        strings(&["## Title", "Body text that wraps\nonto the next line."])
+    );
+}
+
+#[test]
+fn an_abbreviation_at_a_line_end_does_not_cut() {
+    let text = "Use a known set, e.g.\nthe labels the model was given.";
+    assert_eq!(evidence_units(text), strings(&[text]));
+}
+
+#[test]
+fn a_tables_rows_stay_one_unit_each_after_a_line_of_text() {
+    assert_eq!(
+        evidence_units("Costs by tier:\n| tier | cost |\n| low | 1 |\n| high | 5 |"),
+        strings(&[
+            "Costs by tier:",
+            "| tier | cost |",
+            "| low | 1 |",
+            "| high | 5 |"
+        ])
+    );
+}
+
+#[test]
+fn a_rule_line_cuts_before_and_after_it() {
+    assert_eq!(
+        evidence_units("Text one\nwraps here\n---\nText two\nwraps too"),
+        strings(&["Text one\nwraps here", "---", "Text two\nwraps too"])
+    );
+}
+
+#[test]
+fn a_fenced_block_in_the_middle_of_prose_is_one_unit_and_the_text_after_it_starts_a_unit() {
+    let text =
+        "Intro that wraps\nonto a line.\n```sh\nls -la\n```\nAfter text that wraps\nonto a line.";
+    assert_eq!(
+        evidence_units(text),
+        strings(&[
+            "Intro that wraps\nonto a line.",
+            "```sh\nls -la\n```",
+            "After text that wraps\nonto a line."
+        ])
+    );
+}
+
+#[test]
 fn a_fenced_block_is_one_unit_with_its_fences_and_the_prose_around_it_is_cut() {
     let text = "Spacing raises recall. Gaps matter.\n\n```python\nschedule(3)\n\nreview()\n```\n\nThe gap grows. Reviews get rarer.\n";
     assert_eq!(
