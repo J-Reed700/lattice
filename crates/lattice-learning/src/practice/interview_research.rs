@@ -584,7 +584,9 @@ async fn capture_needs(
                     }
                 }
                 Ok(None) => {}
-                Err(err) => tracing::warn!(%err, "Company research page could not be captured"),
+                Err(err) => {
+                    tracing::warn!(%err, %url, "Company research page could not be captured")
+                }
             }
         }
     }

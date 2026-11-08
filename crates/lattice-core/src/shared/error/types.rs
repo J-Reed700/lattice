@@ -52,8 +52,12 @@ pub enum AppError {
     /// Invalid input from user
     InvalidInput(String),
 
-    /// Network errors
+    /// The request got no answer: DNS, connect, TLS, a reset or a timeout.
     Network(String),
+
+    /// A web server answered with an error status instead of what was asked
+    /// for; the connection worked. `message` says what it answered.
+    HttpStatus { status: u16, message: String },
 
     /// File too large to process
     FileTooLarge {
@@ -273,6 +277,7 @@ impl AppError {
             AppError::PermissionDenied(_) => "PERMISSION_DENIED",
             AppError::InvalidInput(_) => "INVALID_INPUT",
             AppError::Network(_) => "NETWORK_ERROR",
+            AppError::HttpStatus { .. } => "HTTP_STATUS",
             AppError::FileTooLarge { .. } => "FILE_TOO_LARGE",
             AppError::FileStorage(_) => "FILE_STORAGE_ERROR",
             AppError::FileNotFound { .. } => "FILE_NOT_FOUND",
@@ -354,6 +359,13 @@ impl AppError {
         }
     }
 
+    /// Whether a web server's error status says to try again later: too many
+    /// requests, or a gateway or service that is down or busy. Any other
+    /// status is the server's settled answer.
+    pub fn is_retry_later_status(status: u16) -> bool {
+        matches!(status, 429 | 502 | 503 | 504)
+    }
+
     /// Check if the error is recoverable (user can retry)
     pub fn is_recoverable(&self) -> bool {
         match self {
@@ -362,6 +374,7 @@ impl AppError {
             | AppError::Io { .. }
             | AppError::RateLimitExceeded(_)
             | AppError::ConcurrentModification { .. } => true,
+            AppError::HttpStatus { status, .. } => Self::is_retry_later_status(*status),
             AppError::Domain(err) => err.is_retryable(),
             AppError::Application(err) => err.is_recoverable(),
             _ => false,
@@ -537,16 +550,9 @@ impl fmt::Display for AppError {
                 "Permission denied: {}. Please check file permissions.",
                 e
             ),
-            AppError::InvalidInput(e) => write!(
-                f,
-                "Invalid input: {}. Please check your input and try again.",
-                e
-            ),
-            AppError::Network(e) => write!(
-                f,
-                "Network error: {}. Please check your connection.",
-                e
-            ),
+            AppError::InvalidInput(e) => write!(f, "Invalid input: {}", e),
+            AppError::Network(e) => write!(f, "Network error: {}", e),
+            AppError::HttpStatus { message, .. } => write!(f, "{}", message),
             AppError::FileTooLarge { path, size_bytes, max_size_bytes } => write!(
                 f,
                 "File is too large to index: {} ({} MB). Maximum size is {} MB. Consider splitting the file or excluding it from indexing.",

@@ -233,6 +233,74 @@ async fn a_refusal_the_archive_cannot_rescue_is_remembered() {
     );
 }
 
+/// Nothing archived for any URL: the availability index and CDX both answer
+/// with nothing.
+async fn nothing_archived(server: &MockServer) {
+    Mock::given(path("/wayback/available"))
+        .respond_with(ResponseTemplate::new(200).set_body_string(AVAILABILITY_NONE))
+        .mount(server)
+        .await;
+    Mock::given(path("/cdx/search/cdx"))
+        .respond_with(ResponseTemplate::new(200).set_body_string("[]"))
+        .mount(server)
+        .await;
+}
+
+/// A site that answered a status is an answer, not a lost connection; a read
+/// that never got an answer is the lost connection.
+#[tokio::test]
+async fn a_live_status_is_an_http_status_and_a_failed_read_is_a_network_error() {
+    let dir = TempDir::new().unwrap();
+    let server = MockServer::start().await;
+    nothing_archived(&server).await;
+    let service = service(&dir, &server, SourcingSettingsDto::default());
+
+    let error = after_live_404(&service, GONE).await.unwrap_err();
+    let AppError::HttpStatus { status, message } = &error else {
+        panic!("a 404 is an answer, not a lost connection: {error:?}");
+    };
+    assert_eq!(*status, 404);
+    assert!(message.starts_with("HTTP 404 Not Found. "), "{message}");
+    assert!(message.contains(NOTHING_ARCHIVED), "{message}");
+
+    let down = "https://down.example/report";
+    let error = service
+        .rescue_or_refuse(
+            down,
+            &Url::parse(down).unwrap(),
+            LiveFailure::Transport("connection refused".into()),
+            Instant::now(),
+            PageRead::Chat,
+        )
+        .await
+        .unwrap_err();
+    assert!(
+        matches!(&error, AppError::Network(message) if message.starts_with("Failed to fetch URL: connection refused")),
+        "{error:?}"
+    );
+}
+
+/// The remembered refusal is the site's answer still: it keeps its status.
+#[tokio::test]
+async fn a_refusal_served_from_the_cache_keeps_its_status() {
+    let dir = TempDir::new().unwrap();
+    let server = MockServer::start().await;
+    nothing_archived(&server).await;
+    let service = service(&dir, &server, SourcingSettingsDto::default());
+    after_live_404(&service, GONE).await.unwrap_err();
+
+    let error = service.read_page(GONE).await.unwrap_err();
+
+    let AppError::HttpStatus { status, message } = &error else {
+        panic!("a remembered refusal is still the site's answer: {error:?}");
+    };
+    assert_eq!(*status, 404);
+    assert!(
+        message.ends_with("(this site refused earlier; not retried)"),
+        "{message}"
+    );
+}
+
 /// The archive switch off: nothing is sent, a dated read says why it cannot
 /// be done, and a refusal is settled as it was before the archive existed.
 #[tokio::test]

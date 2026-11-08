@@ -85,11 +85,14 @@ impl WebService {
                         )
                         .await;
                 }
-                Err(AppError::Network(format!(
-                    "{}. {}",
-                    failure.describe(),
-                    miss.note
-                )))
+                let message = format!("{}. {}", failure.describe(), miss.note);
+                Err(match failure {
+                    LiveFailure::Status(status) => AppError::HttpStatus {
+                        status: status.as_u16(),
+                        message,
+                    },
+                    LiveFailure::Transport(_) => AppError::Network(message),
+                })
             }
         }
     }

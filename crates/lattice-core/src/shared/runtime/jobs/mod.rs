@@ -164,6 +164,7 @@ impl JobFailure {
             AppError::Network(_)
             | AppError::ServiceNotAvailable(_)
             | AppError::RateLimitExceeded(_) => true,
+            AppError::HttpStatus { status, .. } => AppError::is_retry_later_status(*status),
             error => Self::is_database_busy(error),
         }
     }
