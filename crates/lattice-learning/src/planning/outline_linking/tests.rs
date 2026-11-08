@@ -702,7 +702,7 @@ fn two_modules() -> OutlineDraft {
     ]}))
 }
 
-fn watching(progress: &OutlineProgress, link_id: &str) -> Watching<'_> {
+fn watching<'a>(progress: &'a OutlineProgress, link_id: &str) -> Watching<'a> {
     Watching {
         inner: model(vec![json!({"links":[
             {"id":link_id,"candidate":"p1","reason":"The passage explains random assignment."}
