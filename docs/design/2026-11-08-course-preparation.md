@@ -64,10 +64,11 @@ Cross-lesson coordination moves from outputs (recaps) to an input made before an
 - **The plan carries no claims.** Topics, terms and actions only. Truth stays where it is checked today, in the lesson's verification.
 - **Storage.** One row per lesson, `learning_course_plan_lessons(program, outline revision, lesson)`. A revision is planned when every lesson of the outline has a row.
   - `ensure` reads the rows. Only when some are missing does it make one call. It saves every entry in one write transaction (`ON CONFLICT DO NOTHING`), then reads again.
-  - It is idempotent and holds no lock: two overlapping calls both return what the first to commit saved.
+  - The save and read-back make it idempotent: callers that share no lock both return what the first to commit saved.
   - An unreadable row is an error, never a missing one.
-- **When it is made.** A `course_plan` job runs as soon as the outline is made or repaired, so the learner sees each lesson's topics with the outline. Starting the course keeps the plan, because accepting doesn't change the outline revision. A lesson job also ensures the plan before it writes, which covers courses made before this change and a plan whose job failed.
-- **Single-flight.** Callers serialize on the per-course lock from piece 3. The composition root builds that lock once and gives it to both the lesson worker and the plan worker. Cost: one call per outline revision.
+- **When it is made.** A `course_plan` job runs as soon as the outline is made or repaired, so the learner sees each lesson's topics with the outline. Starting the course keeps the plan, because accepting doesn't change the outline revision. A lesson job also ensures the plan before it writes, which covers a plan whose job failed.
+- **Written lessons are planned from what they taught.** The planning request carries each already-written lesson's section titles (explanation, worked example, contrast blocks) and recap body under `taught`. The planner gives that lesson's entry from what it taught, not from its objective, and plans the other lessons around it. This is how the design covers courses made before this change with no legacy code: their plan is made on first use by the same `ensure`. A course whose outline is revised after some lessons were written takes the same path.
+- **Single-flight.** `ensure` takes the per-course lock from piece 3 itself: a fast read, then the lock, then a second read, and only then a plan. Overlapping callers make one call, one per outline revision. The composition root builds ONE `CourseSetups` and shares it between the lesson worker and the plan worker. The lock is not reentrant, so `ensure` is never called inside course setup.
 - **The learner can change the topics.** Until a lesson's writer starts, the learner can:
   - edit its entry by hand;
   - ask for a change: one Interactive call rewrites the selected lessons' entries against the whole plan;
@@ -88,12 +89,12 @@ Research mapping: Skeleton-of-Thought (Ning et al., 2023) expands a shared skele
 
 The job runtime's own principle (`JobKindConfig::new`): "contention for a shared backend such as the model is that backend's scheduler's decision, not the job runtime's." Per-course exclusivity exists only because lesson jobs share course state. Shrink that to what is actually shared:
 
-- **Course setup** goes in one per-program critical section, held only while setup runs. The lock is a keyed value that the worker owns and the composition root builds. It is not a static, because the architecture check's global-state rule forbids that.
+- **Course setup** goes in one per-program critical section, held only while setup runs. The lock is a keyed value inside `CourseSetups`, which the composition root builds once for all its users. It is not a static, because the architecture check's global-state rule forbids that.
 - The section covers: `seed_accepted`, `refresh_sources` (before-use refresh uses `expected_revision`, so concurrent refreshes conflict), `sweep_admission`, and bringing the course index current. Already safe and left as is: `seed_accepted` (BEGIN IMMEDIATE + re-check), admission sweeps (idempotent), trust writes (INSERT OR REPLACE), and per-job checkpoints.
 - **Research saves** dedupe in the database inside the save transaction (same program, same page), not only against the in-memory `sources` list in `research/saving.rs`.
 - **Publishing** two lessons of one course concurrently must not conflict. Since #415 a job's `content_revision` is the outline revision only; a test proves it.
 
-Then `lesson_job_config()` drops `exclusive_per_subject`.
+Then `lesson_job_config()` drops `exclusive_per_subject`, so the lessons of one course prepare side by side.
 
 ### 4. Order and capacity: one place, the backend's scheduler
 
@@ -122,7 +123,9 @@ Consequences, with no lane count to tune:
 
 - **Course progress line** in the header, derived from job rows: "4 of 18 lessons ready · 2 preparing · 11 waiting · 1 needs attention" (zero parts omitted).
 - **Pace from measured history only.** "About one lesson every N min so far" is the median gap between consecutive finishes, counting only gaps where the later lesson was already queued when the earlier one finished. Idle time, such as a day between sessions or lessons prepared one at a time, never counts. The line is hidden until such a gap exists.
-- **Waiting state.** A running lesson whose current call is queued at the scheduler shows "Waiting for the model", not a frozen stage. Comes with piece 3's flip.
+- **Waiting state.** A running lesson whose current call is queued at the scheduler shows "Waiting for the model", not a frozen stage. A lesson is waiting while it has a request queued at the scheduler and none holding a slot.
+  - The mechanism is a task-local observer scope in lattice-core `jobs::admission` (queued, left_queue, holding, released), in the style of the rank. `QueuedRequest` and `HeldSlot` guards keep the counts exact when a request is cancelled or dropped.
+  - It does not use the progress panel's call count, because a structured call registers there twice.
 - **Errors.** A failed lesson, module, start or ahead request shows its error. Today `prepareError` passes only `prepare.error`. The error shown is the one from the latest preparation action, and only on the course it was for.
 - **Keep awake** (Josh's call, separate PR). While lesson or quiz jobs run, hold a system-required power request (Windows) or an idle-sleep-disabling activity (macOS). The display may sleep. Released when the queue is idle.
 
@@ -140,7 +143,7 @@ Consequences, with no lane count to tune:
 
 - **Per-course lane count.** It duplicates capacity knowledge outside the scheduler, needs a per-backend number, and doesn't order calls, so lesson 1 is slowed by lesson 2's check burst.
 - **Draft gate.** Lesson N+1 waits for N's first draft and reads its draft recap. That couples jobs: a cross-job wait, a failure chain if N fails, and a recap that repairs may change. It also only overlaps verification.
-- **Drop recaps, keep objectives.** Free, but its quality is unknown. It is the baseline arm of the plan's A/B.
+- **Drop recaps, keep objectives.** Free, but its quality is unknown.
 - **A continuity pass after parallel writing.** It edits published-to-be text after the fact and re-triggers verification of every edited part.
 
 ## Build order
@@ -149,13 +152,15 @@ Consequences, with no lane count to tune:
 |---|---|---|
 | A #441 (reds #439) | Start this course (module 1), one module ahead, course progress UI, error surfacing (pieces 1, 5 minus waiting/keep-awake) | any time |
 | B #442 (reds #438) | Ranked admission + head reservation (piece 4) | any time |
-| C #444 (reds #443) | Course plan (piece 2) | after a Haiku A/B in #450's two test apps: one outline, lessons 1–3 of module 1 prepared one after another in each arm, read by hand |
+| C #444 (reds #443, #469) | Course plan (piece 2), including planning a written lesson from what it taught | after lessons 1–3 of module 1, prepared side by side on Haiku in the parallel test app #459, are read by hand: each recalls what came before, bridges to the next, repeats nothing, and teaches every step before using it |
 | D #440 (reds #437) | Shared course state safety (piece 3 minus the flip) | any time; no behaviour change |
 | E #436 (reds #435) | Keep awake | any time (Josh: yes, if not intrusive; system-required only, the display may sleep) |
 | G1 #446 (reds #445, follow-up reds #449) | Topics planned with the outline: the course_plan job, get/plan/edit/change/undo, per-entry history, the edit lock, the plan digest on a verified lesson | after C |
 | G2 #447 (reds #448) | Topics under each lesson and the "Review topics" screen | after G1 |
-| F | Flip: lessons of a course side by side, the plan worker and lesson worker share the course lock, "Waiting for the model" | after B, C, D, G |
-| #450 | The A/B's two test apps (never merges) | never |
+| F1 #464 (reds #462) | Flip: lessons of a course side by side, the shared `CourseSetups`, the lock inside `ensure` | after G1; carries merges of B and D |
+| F2 #463 (reds #461) | "Waiting for the model" (piece 5) | after B |
+| #459 | Main + B + C + D + the flip: the parallel test app (never merges) | never |
+| #460 | The same tree on normal CI (never merges) | never |
 
 ## Calls for Josh
 
