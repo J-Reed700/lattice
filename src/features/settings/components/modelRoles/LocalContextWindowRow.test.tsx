@@ -36,7 +36,7 @@ describe('LocalContextWindowRow', () => {
     mockUpdateSettings.mockReset().mockResolvedValue({});
   });
 
-  it('unticking "Model\'s max" saves nothing and leaves the field empty for the user', async () => {
+  it('unticking "Fit each model to this machine" saves nothing and leaves the field empty for the user', async () => {
     renderRow();
 
     await userEvent.setup().click(fitEach());

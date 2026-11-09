@@ -237,10 +237,9 @@ impl SidecarRegistry {
 
     /// The configuration of the running server a role asking for `config` is
     /// handed: the one that differs from it in nothing but its fitted windows.
-    /// Fitting again could pick another window than the running server has,
-    /// and the other window is a new key, so a second copy of the model: the
-    /// GPU probe is cached, other models load and unload, and available RAM
-    /// is read live.
+    /// Fitting again reads available RAM live, and other models load and
+    /// unload, so it can pick another window: a new key, and a second copy of
+    /// the model.
     pub fn running_alike(&self, config: &SidecarConfig) -> Option<SidecarConfig> {
         running_alike(&self.running_servers(), config)
     }
