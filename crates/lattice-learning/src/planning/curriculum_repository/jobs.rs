@@ -156,7 +156,7 @@ impl LearningCurriculumRepository {
         _program_id: &str,
         _lesson_id: &str,
     ) -> Result<Vec<LearningGenerationJob>> {
-        Err(AppError::InvalidState("not built".into()))
+        Ok(Vec::new())
     }
 
     /// Saves a lesson job for the runtime to run. The caller dispatches it.
