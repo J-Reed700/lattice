@@ -108,7 +108,9 @@ A statement with no passage to be read against (no citation and no section quote
 |---|---|---|---|
 | `r.read` | `Read(Consistency)` | 1 | Stands → `r.veto` · Refuted → `r.rewrite` · NeedsSource ⇒ Sourced the first time the statement changes class, → end Unverified once it has |
 | `r.veto` | `Read(Veto)` | 3 | Stands → end Consistent · Refuted → `r.ground` |
-| `r.ground` | `Read(Ground)` | 1 | Stands → end Consistent · Refuted → `r.rewrite` |
+| `r.ground` | `Read(Ground)` | 1 | Stands → end Consistent · Refuted → `r.correct` |
+| `r.correct` | `Rewrite(correct what the veto found; keep the rest of the sentence)`, told the veto's reason and the ground's | 1 | Rewritten → `r.final` · NotApplied → `r.correct.again` |
+| `r.correct.again` | the same, told why | 1 | Rewritten → `r.final` · NotApplied → `r.cut` |
 | `r.rewrite` | `Rewrite(agree with the passages; correct what the reason names)` | 1 | Rewritten → `r.final` · NotApplied → `r.rewrite.again` |
 | `r.rewrite.again` | the same, told why | 1 | Rewritten → `r.final` · NotApplied → `r.cut` |
 | `r.final` | `Read(Consistency)` | 1 | Stands → `r.reveto` · Refuted → `r.cut` · NeedsSource → end Unverified |

@@ -218,6 +218,7 @@ fn a_rewrite_is_ahead_of_every_node_that_can_reach_one() {
         (Reasoning, "r.read"),
         (Reasoning, "r.veto"),
         (Reasoning, "r.ground"),
+        (Reasoning, "r.correct"),
         (Reasoning, "r.rewrite"),
         (Common, "c.read"),
         (Common, "c.ground"),
