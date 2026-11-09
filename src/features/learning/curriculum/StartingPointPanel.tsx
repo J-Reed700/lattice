@@ -5,7 +5,7 @@ import { useLearningProgram } from '@/features/learning/workspace/useLearningStu
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
 import type { SubmitLearningDiagnosticRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
-import { isConflictError } from '@/features/learning/practice/shared/useAutosave';
+import { isConflict } from '@/lib/api';
 
 
 export function StartingPointPanel({ programId, onStudy, onChallenge }: { programId: string; onStudy?: (lessonId: string) => void; onChallenge?: (lessonId: string) => void }) {
@@ -66,7 +66,7 @@ export function StartingPointPanel({ programId, onStudy, onChallenge }: { progra
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
         setError(message);
-        setConflict(/changed elsewhere|reload|revision/i.test(message));
+        setConflict(isConflict(cause));
         return false;
       } finally { setSaving(false); }
     })();
@@ -90,7 +90,7 @@ export function StartingPointPanel({ programId, onStudy, onChallenge }: { progra
       responses: diagnostic.prompts.map((p) => ({ promptId: p.id, response: values.current[p.id] ?? '' })),
     };
     try { await submit.mutateAsync(finalRequest.current); finalRequest.current = null; setError(''); }
-    catch (cause) { const message = cause instanceof Error ? cause.message : String(cause); setError(message); setConflict(isConflictError(cause) || /changed|reload|revision/i.test(message)); }
+    catch (cause) { const message = cause instanceof Error ? cause.message : String(cause); setError(message); setConflict(isConflict(cause)); }
   };
   const reload = async (keep: boolean) => {
     const [refreshed] = await Promise.all([plan.refetch(), program.refetch()]);

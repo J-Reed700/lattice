@@ -1,141 +1,214 @@
 import { act, renderHook } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { isConflictError, useAutosave } from './useAutosave';
+import { isConflict } from '@/lib/api';
 
-describe('isConflictError', () => {
-  it('returns true when details.code is CONFLICT', () => {
-    expect(isConflictError({ details: { code: 'CONFLICT' } })).toBe(true);
-    expect(
-      isConflictError({
-        message: 'Conflict occurred',
-        details: { code: 'CONFLICT', message: 'Version mismatch' },
-      }),
-    ).toBe(true);
-  });
+import { useAutosave } from './useAutosave';
 
-  it('returns false when details.code is absent or different', () => {
-    expect(isConflictError(null)).toBe(false);
-    expect(isConflictError(undefined)).toBe(false);
-    expect(isConflictError(new Error('revision conflict occurred'))).toBe(false);
-    expect(isConflictError({ details: { code: 'NETWORK_ERROR' } })).toBe(false);
+vi.mock('@/lib/api', () => ({ isConflict: vi.fn(() => false) }));
+
+const DELAY = 300;
+
+function deferred<T>() {
+  let resolve!: (value: T) => void;
+  let reject!: (reason: unknown) => void;
+  const promise = new Promise<T>((done, fail) => {
+    resolve = done;
+    reject = fail;
   });
-});
+  return { promise, resolve, reject };
+}
+
+interface Props {
+  value: string;
+  revision?: number;
+  enabled?: boolean;
+}
+
+function setup(save: (value: string, revision: number) => Promise<{ revision: number }>, initial: Props = { value: 'first' }) {
+  return renderHook(
+    ({ value, revision = 1, enabled = true }: Props) => useAutosave({ value, revision, save, delayMs: DELAY, enabled }),
+    { initialProps: initial },
+  );
+}
 
 describe('useAutosave', () => {
   beforeEach(() => {
     vi.useFakeTimers();
+    vi.mocked(isConflict).mockReset();
+    vi.mocked(isConflict).mockReturnValue(false);
   });
+  afterEach(() => vi.useRealTimers());
 
-  afterEach(() => {
-    vi.useRealTimers();
-  });
-
-  it('transitions idle -> saving -> saved on value change', async () => {
-    let resolveSave: () => void = () => {};
-    const onSave = vi.fn().mockImplementation(
-      () =>
-        new Promise<void>((resolve) => {
-          resolveSave = resolve;
-        }),
-    );
-
-    const { result, rerender } = renderHook(
-      ({ value }) => useAutosave({ value, onSave, delayMs: 300 }),
-      { initialProps: { value: 'initial text' } },
-    );
-
-    expect(result.current.status).toBe('idle');
-
-    // Update value to trigger autosave debounce
-    rerender({ value: 'updated text' });
-
-    // Status is still idle before debounce completes
-    expect(result.current.status).toBe('idle');
-
-    // Advance timer past debounce delay
-    act(() => {
-      vi.advanceTimersByTime(300);
-    });
-
-    expect(result.current.status).toBe('saving');
-    expect(onSave).toHaveBeenCalledWith('updated text');
-
-    // Complete the in-flight save promise
+  it('saves nothing on mount and waits for the pause before saving a change', async () => {
+    const save = vi.fn().mockResolvedValue({ revision: 2 });
+    const { result, rerender } = setup(save);
     await act(async () => {
-      resolveSave();
+      await vi.advanceTimersByTimeAsync(DELAY * 2);
     });
+    expect(save).not.toHaveBeenCalled();
+    expect(result.current.state).toBe('idle');
 
-    expect(result.current.status).toBe('saved');
-    expect(result.current.conflict).toBe(false);
+    rerender({ value: 'second' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY - 1);
+    });
+    expect(save).not.toHaveBeenCalled();
+    rerender({ value: 'third' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY - 1);
+    });
+    expect(save).not.toHaveBeenCalled();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(1);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(save).toHaveBeenCalledWith('third', 1);
+    expect(result.current.state).toBe('saved');
     expect(result.current.error).toBeNull();
   });
 
-  it('transitions to conflict when error has details.code === CONFLICT', async () => {
-    const conflictError = {
-      message: 'Revision conflict',
-      details: { code: 'CONFLICT' },
-    };
-    const onSave = vi.fn().mockRejectedValue(conflictError);
-
-    const { result, rerender } = renderHook(
-      ({ value }) => useAutosave({ value, onSave, delayMs: 300 }),
-      { initialProps: { value: 'initial' } },
-    );
-
-    rerender({ value: 'changed' });
-
+  it('passes the revision and moves on to the revision each save returns', async () => {
+    const save = vi.fn().mockResolvedValueOnce({ revision: 2 }).mockResolvedValueOnce({ revision: 3 });
+    const { rerender } = setup(save);
+    rerender({ value: 'second' });
     await act(async () => {
-      vi.advanceTimersByTime(300);
+      await vi.advanceTimersByTimeAsync(DELAY);
     });
-
-    expect(result.current.status).toBe('conflict');
-    expect(result.current.conflict).toBe(true);
-
-    act(() => {
-      result.current.clearConflict();
+    rerender({ value: 'third' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY);
     });
-
-    expect(result.current.conflict).toBe(false);
-    expect(result.current.status).toBe('idle');
+    expect(save.mock.calls).toEqual([
+      ['second', 1],
+      ['third', 2],
+    ]);
   });
 
-  it('transitions to error when a non-conflict error occurs', async () => {
-    const onSave = vi.fn().mockRejectedValue(new Error('Network error'));
-
-    const { result, rerender } = renderHook(
-      ({ value }) => useAutosave({ value, onSave, delayMs: 300 }),
-      { initialProps: { value: 'initial' } },
-    );
-
-    rerender({ value: 'changed' });
-
-    await act(async () => {
-      vi.advanceTimersByTime(300);
-    });
-
-    expect(result.current.status).toBe('error');
-    expect(result.current.conflict).toBe(false);
-    expect(result.current.error).toBe('Network error');
-  });
-
-  it('flushes immediately on demand without waiting for debounce', async () => {
-    const onSave = vi.fn().mockResolvedValue(undefined);
-
-    const { result, rerender } = renderHook(
-      ({ value }) => useAutosave({ value, onSave, delayMs: 500 }),
-      { initialProps: { value: 'first' } },
-    );
+  it('reports a conflict when isConflict says so, and not for a message that merely sounds like one', async () => {
+    const stale = Object.assign(new Error('Revision changed; reload and retry.'), { details: { code: 'CONFLICT' } });
+    vi.mocked(isConflict).mockImplementation((error) => error === stale);
+    const save = vi.fn().mockRejectedValueOnce(stale).mockRejectedValueOnce(new Error('The revision changed on disk'));
+    const { result, rerender } = setup(save);
 
     rerender({ value: 'second' });
-
-    // Flush immediately without waiting 500ms
     await act(async () => {
-      const saved = await result.current.flush();
-      expect(saved).toBe(true);
+      await vi.advanceTimersByTimeAsync(DELAY);
     });
+    expect(isConflict).toHaveBeenCalledWith(stale);
+    expect(result.current.state).toBe('conflict');
+    expect(result.current.error).toBe('Revision changed; reload and retry.');
 
-    expect(onSave).toHaveBeenCalledWith('second');
-    expect(result.current.status).toBe('saved');
+    rerender({ value: 'third' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY);
+    });
+    expect(result.current.state).toBe('error');
+    expect(result.current.error).toBe('The revision changed on disk');
+  });
+
+  it('does not repeat a failed save by itself, and flush tries it again', async () => {
+    const save = vi.fn().mockRejectedValueOnce(new Error('Connection interrupted')).mockResolvedValueOnce({ revision: 2 });
+    const { result, rerender } = setup(save);
+    rerender({ value: 'second' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY * 5);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(result.current.state).toBe('error');
+
+    await act(async () => {
+      await result.current.flush();
+    });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1]).toEqual(save.mock.calls[0]);
+    expect(result.current.state).toBe('saved');
+    expect(result.current.error).toBeNull();
+  });
+
+  it('saves again once a newer revision arrives after a conflict', async () => {
+    vi.mocked(isConflict).mockReturnValue(true);
+    const save = vi.fn().mockRejectedValueOnce(new Error('stale')).mockResolvedValueOnce({ revision: 6 });
+    const { result, rerender } = setup(save);
+    rerender({ value: 'second' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY);
+    });
+    expect(result.current.state).toBe('conflict');
+
+    rerender({ value: 'second', revision: 5 });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1]).toEqual(['second', 5]);
+    expect(result.current.state).toBe('saved');
+  });
+
+  it('flush saves at once without waiting for the pause, and skips an unchanged value', async () => {
+    const save = vi.fn().mockResolvedValue({ revision: 2 });
+    const { result, rerender } = setup(save);
+    await act(async () => {
+      await result.current.flush();
+    });
+    expect(save).not.toHaveBeenCalled();
+
+    rerender({ value: 'second' });
+    await act(async () => {
+      await result.current.flush();
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY * 2);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+  });
+
+  it('keeps saves in order: a change made while one is in flight waits for it', async () => {
+    const first = deferred<{ revision: number }>();
+    const save = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce({ revision: 3 });
+    const { result, rerender } = setup(save);
+    rerender({ value: 'second' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY);
+    });
+    expect(result.current.state).toBe('saving');
+
+    rerender({ value: 'third' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      first.resolve({ revision: 2 });
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(save.mock.calls).toEqual([
+      ['second', 1],
+      ['third', 2],
+    ]);
+  });
+
+  it('saves nothing while disabled, and takes the value it is enabled with as already saved', async () => {
+    const save = vi.fn().mockResolvedValue({ revision: 2 });
+    const { rerender } = setup(save, { value: 'first', enabled: false });
+    rerender({ value: 'second', enabled: false });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY * 3);
+    });
+    expect(save).not.toHaveBeenCalled();
+
+    rerender({ value: 'second', enabled: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY * 3);
+    });
+    expect(save).not.toHaveBeenCalled();
+
+    rerender({ value: 'third', enabled: true });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY);
+    });
+    expect(save).toHaveBeenCalledWith('third', 1);
   });
 });

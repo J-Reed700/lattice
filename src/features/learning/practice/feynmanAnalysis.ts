@@ -1,5 +1,5 @@
 import { keyPoints } from '@/features/learning/recall/flashcards/retrieval';
-import type { LearningBlockKind, LearningLessonDto, LearningModuleDto } from '@/lib/bindings';
+import type * as Wire from '@/lib/bindings';
 
 export type FeynmanRating = 'Simple & Clear' | 'Has Unexplained Jargon' | 'Needs More Explanation';
 
@@ -22,7 +22,7 @@ export interface LessonPoint {
 }
 
 /** The sections that teach an idea, as opposed to practising or reviewing it. */
-const TEACHING_KINDS = new Set<LearningBlockKind>(['explanation', 'worked_example', 'contrast']);
+const TEACHING_KINDS = new Set<Wire.LearningBlockKind>(['explanation', 'worked_example', 'contrast']);
 
 /**
  * What the course says about `concept`: the key points of the section it
@@ -30,7 +30,7 @@ const TEACHING_KINDS = new Set<LearningBlockKind>(['explanation', 'worked_exampl
  * otherwise the module's outcomes. The Feynman technique's third step is
  * going back to the source to find what the explanation missed or got wrong.
  */
-export function lessonPoints(concept: string, lesson?: LearningLessonDto | null, module?: LearningModuleDto | null): LessonPoint[] {
+export function lessonPoints(concept: string, lesson?: Wire.LearningLessonDto | null, module?: Wire.LearningModuleDto | null): LessonPoint[] {
   const named = lesson?.blocks.find((block) => block.title.trim() !== '' && block.title.trim() === concept.trim());
   if (named) {
     const items = keyPoints(named.body);
@@ -79,7 +79,7 @@ export const EXPLANATION_CUE_PHRASES = [
   'it works like',
 ];
 
-export function extractTechnicalTerms(lesson?: LearningLessonDto | null, targetConcept?: string): string[] {
+export function extractTechnicalTerms(lesson?: Wire.LearningLessonDto | null, targetConcept?: string): string[] {
   const textCorpus = [
     targetConcept ?? '',
     lesson?.title ?? '',
@@ -134,7 +134,7 @@ export function findDenseSentences(text: string): string[] {
   return dense;
 }
 
-export function computeLessonVerbatim(explanation: string, lesson?: LearningLessonDto | null): { percent: number; phrases: string[] } {
+export function computeLessonVerbatim(explanation: string, lesson?: Wire.LearningLessonDto | null): { percent: number; phrases: string[] } {
   if (!lesson) return { percent: 0, phrases: [] };
   const lessonCorpus = [
     lesson.title,
@@ -195,10 +195,12 @@ export function generateBeginnerQuestions(
   return questions;
 }
 
+const escapeRegExp = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
 export function analyzeFeynmanExplanation(
   explanation: string,
   analogy = '',
-  lesson?: LearningLessonDto | null,
+  lesson?: Wire.LearningLessonDto | null,
   targetConcept = ''
 ): FeynmanAnalysis {
   const trimmed = explanation.trim();
@@ -212,7 +214,7 @@ export function analyzeFeynmanExplanation(
   const flaggedJargon: string[] = [];
 
   for (const term of technicalTerms) {
-    const regex = new RegExp(`\\b${term}\\b`, 'i');
+    const regex = new RegExp(`\\b${escapeRegExp(term)}\\b`, 'i');
     if (regex.test(lowerExp)) {
       usedTerms.push(term);
       if (!hasPlainLanguageCueNear(trimmed, term)) {

@@ -1,204 +1,115 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
-export type AutosaveStatus = 'idle' | 'pending' | 'saving' | 'saved' | 'error' | 'conflict';
-export type AutosaveState = AutosaveStatus;
+import { isConflict } from '@/lib/api';
+import { getErrorMessage } from '@/lib/errorUtils';
+
+/** How long typing must pause before a change is saved. */
+export const AUTOSAVE_DELAY_MS = 650;
+
+export type AutosaveState = 'idle' | 'saving' | 'saved' | 'conflict' | 'error';
 
 export interface UseAutosaveOptions<T> {
   value: T;
-  saved?: T;
-  onSave?: (value: T) => Promise<unknown>;
-  save?: (value: T) => Promise<unknown>;
+  /** The revision the next save is made against; each save moves on to the one it returns. */
+  revision: number;
+  save: (value: T, expectedRevision: number) => Promise<{ revision: number }>;
   delayMs?: number;
-  isEqual?: (a: T, b: T) => boolean;
-  equals?: (a: T, b: T) => boolean;
+  /** While false nothing is saved. Turning it on takes the current value as already saved. */
   enabled?: boolean;
 }
 
 export interface UseAutosaveResult {
-  status: AutosaveStatus;
   state: AutosaveState;
   error: string | null;
-  conflict: boolean;
-  clearConflict: () => void;
-  flush: () => Promise<boolean>;
-  retry: () => Promise<void>;
-  reset: () => void;
+  /** Saves now if the value differs from the last saved one, and resolves once the attempt ends. */
+  flush: () => Promise<void>;
 }
 
-export type Autosave = UseAutosaveResult;
-
 /**
- * Checks if an error represents an optimistic locking / revision conflict.
- * Uses structured error details (`details?.code === 'CONFLICT'`) rather than regex heuristics.
- */
-export function isConflictError(error: unknown): boolean {
-  if (!error || typeof error !== 'object') return false;
-  const candidate = error as { details?: { code?: string }; code?: string };
-  return candidate.details?.code === 'CONFLICT' || candidate.code === 'CONFLICT';
-}
-
-export const isConflict = isConflictError;
-
-const defaultIsEqual = <T>(a: T, b: T): boolean => a === b;
-
-/**
- * Shared autosave hook with debounce, flush, retry, and structured conflict handling.
+ * Saves `value` after a pause in changes, one save at a time, against a revision.
+ * A failed save is not repeated until the value changes, `flush` is called, or, after
+ * a conflict, a newer revision arrives.
  */
 export function useAutosave<T>({
   value,
-  saved,
-  onSave,
+  revision,
   save,
-  delayMs = 500,
-  isEqual,
-  equals,
+  delayMs = AUTOSAVE_DELAY_MS,
   enabled = true,
 }: UseAutosaveOptions<T>): UseAutosaveResult {
-  const [status, setStatus] = useState<AutosaveStatus>('idle');
+  const [state, setState] = useState<AutosaveState>('idle');
   const [error, setError] = useState<string | null>(null);
-  const [conflict, setConflict] = useState(false);
 
-  const valueRef = useRef<T>(value);
-  valueRef.current = value;
-
-  const savedValueRef = useRef<T>(saved !== undefined ? saved : value);
+  const latest = useRef({ value, save });
+  latest.current = { value, save };
+  const revisionRef = useRef(revision);
+  const savedRef = useRef(value);
+  const stateRef = useRef<AutosaveState>('idle');
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const inFlightRef = useRef<Promise<boolean> | null>(null);
-  const saveFn = onSave ?? save;
-  const onSaveRef = useRef(saveFn);
-  onSaveRef.current = saveFn;
-  const equalFn = isEqual ?? equals ?? defaultIsEqual;
-  const isEqualRef = useRef(equalFn);
-  isEqualRef.current = equalFn;
+  const chainRef = useRef<Promise<void>>(Promise.resolve());
   const mountedRef = useRef(true);
+
+  const report = useCallback((next: AutosaveState, message: string | null) => {
+    stateRef.current = next;
+    if (!mountedRef.current) return;
+    setState(next);
+    setError(message);
+  }, []);
+
+  const clearTimer = useCallback(() => {
+    if (timerRef.current !== null) clearTimeout(timerRef.current);
+    timerRef.current = null;
+  }, []);
+
+  const saveIfChanged = useCallback(async () => {
+    const current = latest.current.value;
+    if (Object.is(current, savedRef.current)) return;
+    report('saving', null);
+    try {
+      const saved = await latest.current.save(current, revisionRef.current);
+      savedRef.current = current;
+      revisionRef.current = saved.revision;
+      report('saved', null);
+    } catch (cause) {
+      report(isConflict(cause) ? 'conflict' : 'error', getErrorMessage(cause, 'Your work could not be saved.'));
+    }
+  }, [report]);
+
+  const flush = useCallback(() => {
+    clearTimer();
+    chainRef.current = chainRef.current.then(saveIfChanged);
+    return chainRef.current;
+  }, [clearTimer, saveIfChanged]);
 
   useEffect(() => {
     mountedRef.current = true;
     return () => {
       mountedRef.current = false;
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
+      clearTimer();
     };
-  }, []);
+  }, [clearTimer]);
 
-  const clearConflict = useCallback(() => {
-    if (!mountedRef.current) return;
-    setConflict(false);
-    setError(null);
-    setStatus('idle');
-  }, []);
-
-  const performSave = useCallback(async (valToSave: T): Promise<boolean> => {
-    if (inFlightRef.current) return inFlightRef.current;
-
-    const promise = (async () => {
-      if (mountedRef.current) {
-        setStatus('saving');
-        setError(null);
-      }
-      try {
-        await onSaveRef.current?.(valToSave);
-        savedValueRef.current = valToSave;
-        if (mountedRef.current) {
-          setStatus('saved');
-          setConflict(false);
-          setError(null);
-        }
-        return true;
-      } catch (err) {
-        const conflictDetected = isConflictError(err);
-        const errorMessage =
-          err instanceof Error
-            ? err.message
-            : typeof (err as { message?: string })?.message === 'string'
-              ? (err as { message: string }).message
-              : 'Failed to save';
-
-        if (mountedRef.current) {
-          if (conflictDetected) {
-            setStatus('conflict');
-            setConflict(true);
-            setError(errorMessage);
-          } else {
-            setStatus('error');
-            setConflict(false);
-            setError(errorMessage);
-          }
-        }
-        return false;
-      } finally {
-        inFlightRef.current = null;
-      }
-    })();
-
-    inFlightRef.current = promise;
-    return promise;
-  }, []);
-
-  const flush = useCallback(async (): Promise<boolean> => {
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    const currentVal = valueRef.current;
-    if (isEqualRef.current(currentVal, savedValueRef.current)) {
-      return true;
-    }
-    return performSave(currentVal);
-  }, [performSave]);
-
-  const retry = useCallback(async (): Promise<void> => {
-    await flush();
-  }, [flush]);
-
-  const reset = useCallback(() => {
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    savedValueRef.current = valueRef.current;
-    if (mountedRef.current) {
-      setStatus('idle');
-      setConflict(false);
-      setError(null);
-    }
-  }, []);
-
-  // Debounced autosave effect on value changes
   useEffect(() => {
     if (!enabled) return;
-    if (isEqualRef.current(value, savedValueRef.current)) {
-      return;
-    }
+    savedRef.current = latest.current.value;
+    report('idle', null);
+  }, [enabled, report]);
 
-    if (timerRef.current !== null) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
+  useEffect(() => {
+    revisionRef.current = revision;
+    if (enabled && stateRef.current === 'conflict') void flush();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [revision]);
 
+  useEffect(() => {
+    if (!enabled || Object.is(value, savedRef.current)) return;
+    clearTimer();
     timerRef.current = setTimeout(() => {
       timerRef.current = null;
-      void performSave(valueRef.current);
+      void flush();
     }, delayMs);
+    return clearTimer;
+  }, [value, enabled, delayMs, clearTimer, flush]);
 
-    return () => {
-      if (timerRef.current !== null) {
-        clearTimeout(timerRef.current);
-        timerRef.current = null;
-      }
-    };
-  }, [value, delayMs, enabled, performSave]);
-
-  return {
-    status,
-    state: status,
-    error,
-    conflict,
-    clearConflict,
-    flush,
-    retry,
-    reset,
-  };
+  return { state, error, flush };
 }
