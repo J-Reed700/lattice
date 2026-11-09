@@ -149,6 +149,12 @@ fn teaches(name: &str) -> bool {
     !["kind", "citations", "quote"].contains(&name)
 }
 
+/// Whether the text at `path`, a JSON pointer or a `/`-joined path, is
+/// taught: no segment of it names a field [`teaches`] leaves out.
+pub(crate) fn teaches_path(path: &str) -> bool {
+    path.split('/').all(teaches)
+}
+
 fn collect(value: &Value, counts: &mut Counts) {
     match value {
         Value::String(text) => {
