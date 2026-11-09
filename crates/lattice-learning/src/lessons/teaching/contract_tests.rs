@@ -300,6 +300,9 @@ async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_s
         .finding
         .note
         .contains("the -l option of ls"));
+    let note = &result.set_aside[0].finding.note;
+    assert!(note.contains("Teach it in this step"), "{note}");
+    assert!(!note.contains("Teach it before this point"), "{note}");
     Ok(())
 }
 

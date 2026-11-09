@@ -541,6 +541,20 @@ fn the_writer_teaches_exactly_its_lessons_planned_ideas_and_never_a_later_lesson
     );
 }
 
+#[test]
+fn the_writer_makes_what_an_action_needs_with_a_command_it_teaches() {
+    let requirements = writer_requirements();
+
+    assert!(
+        requirements.contains("needs something to exist first"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("teaches that command where it is first used"),
+        "{requirements}"
+    );
+}
+
 fn writer_requirements() -> String {
     let program = crate::tests::fixture();
     let lesson = program.modules[0].lessons[0].clone();
