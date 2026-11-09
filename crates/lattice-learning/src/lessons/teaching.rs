@@ -691,7 +691,7 @@ async fn review_material(
             "Correcting the quiz questions from review findings"
         });
         let repaired = if can_edit_spans {
-            let edit_system = format!("You are editing a rejected draft. Correct only the established teaching defects. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. {}", super::text_edits::instructions(schema));
+            let edit_system = format!("You are editing a rejected draft. Correct only the established teaching defects. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. The learner sees only the lesson: added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. {}", super::text_edits::instructions(schema));
             let prompt: Map<String, Value> = parts
                 .into_iter()
                 .map(|(key, value)| (key.to_owned(), value))
@@ -713,7 +713,7 @@ async fn review_material(
             let prompt: Map<String, Value> = [("task", json!("Repair the teaching material"))]
                 .into_iter()
                 .chain(parts)
-                .chain([("instruction", json!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review in the learner-facing material."))])
+                .chain([("instruction", json!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review, the course plan or the sources' excerpts in the learner-facing material."))])
                 .map(|(key, value)| (key.to_owned(), value))
                 .collect();
             let request = writer_excerpts::Request {
