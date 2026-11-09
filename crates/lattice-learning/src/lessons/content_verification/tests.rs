@@ -996,7 +996,12 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
                 }
                 let mut patch = self::context(prompt)["candidate"].clone();
                 for block in patch["blocks"].as_array_mut().unwrap() {
-                    block["body"] = json!(block["body"].as_str().unwrap().replace(BAD, GOOD));
+                    let good = if block["title"].as_str().unwrap().contains("second") {
+                        format!("Note that {GOOD}")
+                    } else {
+                        GOOD.to_owned()
+                    };
+                    block["body"] = json!(block["body"].as_str().unwrap().replace(BAD, &good));
                 }
                 return Ok(repair_body(prompt, patch["blocks"][0]["body"].clone()));
             }

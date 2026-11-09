@@ -323,6 +323,7 @@ fn confine_text(
             .is_some_and(|sentence| failed_texts.contains(sentence))
     };
     let own: HashSet<String> = repeats::keys(before).into_iter().collect();
+    let mut dropped = false;
     // What comes before the first sentence is whitespace no repair needs.
     let mut out = String::from(old.lead);
     let mut reverted = Vec::new();
@@ -382,7 +383,9 @@ fn confine_text(
                                 || (own.contains(key) && !replaced_keys.contains(key))
                         })
                     });
-                    if !repeat {
+                    if repeat {
+                        dropped = true;
+                    } else {
                         out.push_str(new.piece(k));
                     }
                 }
@@ -404,6 +407,9 @@ fn confine_text(
         return Err(invalid(format!(
             "The repair changed a sentence that already passed (\"{lost}\"); the draft is kept."
         )));
+    }
+    if dropped && !before.ends_with(char::is_whitespace) {
+        out.truncate(out.trim_end().len());
     }
     Ok((out, reverted))
 }
