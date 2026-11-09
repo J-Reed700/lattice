@@ -94,7 +94,6 @@ export function useCodeReviewDrill(programId: string) {
           startedAt: started.startedAt,
           drill: started.drill,
           limitMs: limitOf(started.mode, minutes),
-          issues: sizeOf(stateRef.current.options.size, stateRef.current.options.material).issues,
         },
       });
     },

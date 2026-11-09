@@ -3,23 +3,18 @@ import { useId } from 'react';
 import { ISSUE_OUTCOME } from '@/features/learning/drills/reveal/revealCopy';
 import type { RankedIssue } from '@/features/learning/drills/reveal/revealPresentation';
 import { sectionHeading } from '@/features/learning/drills/reveal/revealStyle';
-import { CriteriaList, type CriterionView } from '@/features/learning/practice/shared/CriteriaList';
+import { CriteriaList, type CriterionLevel, type CriterionView } from '@/features/learning/practice/shared/CriteriaList';
 import type { IssueResultKind } from '@/lib/bindings';
 
-const MAX_CREDIT = 2;
-
-/** Found earns full credit, half found half of it, missed none. */
-const CREDIT: Record<IssueResultKind, number> = { found: 2, half_found: 1, missed: 0 };
+const LEVEL: Record<IssueResultKind, CriterionLevel> = { found: 'met', half_found: 'partly', missed: 'not_met' };
 
 function criterionOf(entry: RankedIssue): CriterionView {
   const { issue } = entry;
   return {
     id: issue.id,
     title: issue.patternName,
-    points: CREDIT[issue.outcome],
-    maxPoints: MAX_CREDIT,
+    outcome: { label: ISSUE_OUTCOME[issue.outcome].label, level: LEVEL[issue.outcome] },
     evidence: [],
-    feedback: ISSUE_OUTCOME[issue.outcome].label,
   };
 }
 

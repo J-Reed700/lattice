@@ -21,12 +21,11 @@ interface Picked {
   range: ExplorerLineRange;
 }
 
-function taskLine(passage: boolean, issues: number | undefined): string {
+function taskLine(passage: boolean, issues: number): string {
+  const thing = passage ? 'error' : 'issue';
   const material = passage ? 'explanation' : 'code';
-  const things = passage ? 'error' : 'issue';
-  const each = issues === 1 ? 'it' : 'each';
-  const which = issues === undefined ? `${things}s` : plural(issues, things);
-  return `Find the ${which} in this ${material}, and say what is wrong and how to fix ${each}.`;
+  if (issues === 1) return `Find the ${thing} in this ${material}, and say what is wrong and how to fix it.`;
+  return `Find the ${plural(issues, thing)} in this ${material}, and say what is wrong and how to fix each.`;
 }
 
 /** The time the attempt has run, counted from when it started, against the limit the learner chose. */
@@ -129,7 +128,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
       </header>
 
       <p className="border-b border-border-subtle bg-surface-sunken px-4 py-2 text-xs font-medium text-text-secondary sm:px-6">
-        {taskLine(passage, session.issues)}
+        {taskLine(passage, session.drill.issues)}
       </p>
 
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
