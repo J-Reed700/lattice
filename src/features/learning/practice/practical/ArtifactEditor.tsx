@@ -39,7 +39,7 @@ export function ArtifactEditor({
   capability: LearningLabRuntimeCapability | undefined;
 }) {
   const isEdited = (file: LearningLabFile) => {
-    const starter = activeActivity.starterFiles.find((candidate) => candidate.path === file.path);
+    const starter = activeActivity.files.find((candidate) => candidate.path === file.path);
     return starter !== undefined && starter.content !== file.content;
   };
 
