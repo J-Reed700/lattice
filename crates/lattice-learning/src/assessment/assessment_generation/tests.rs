@@ -526,3 +526,15 @@ async fn the_writer_is_told_a_prompt_states_every_value_its_answer_depends_on() 
     );
     Ok(())
 }
+
+#[test]
+fn the_writer_is_told_options_are_shuffled_so_they_are_named_by_their_words() {
+    assert!(
+        SYSTEM.contains("shuffled order"),
+        "SYSTEM must say options are shown in a shuffled order"
+    );
+    assert!(
+        SYSTEM.contains("never by its position, number or letter"),
+        "SYSTEM must forbid naming an option by position, number or letter"
+    );
+}
