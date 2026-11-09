@@ -1416,3 +1416,14 @@ fn an_answer_key_without_reasons_keeps_its_form_and_an_old_key_still_parses() {
         serde_json::json!(["", "Two fails."])
     );
 }
+
+#[track_caller]
+pub(crate) fn assert_conflict<T: std::fmt::Debug>(result: Result<T>) {
+    use lattice_core::shared::ipc::{ApiError, ErrorCode};
+    match result {
+        Err(error @ lattice_core::shared::error::AppError::Conflict(_)) => {
+            assert_eq!(ApiError::from(error).code, ErrorCode::Conflict);
+        }
+        other => panic!("expected Conflict, got {other:?}"),
+    }
+}
