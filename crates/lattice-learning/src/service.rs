@@ -255,9 +255,9 @@ fn validate_outline(modules: &[LearningModuleDto], sources: &[LearningSourceDto]
             }
             not_blank(&l.title, "Lesson title")?;
             not_blank(&l.objective, "Lesson objective")?;
-            if !(1..=600).contains(&l.estimated_minutes) {
+            if l.estimated_minutes < 1 {
                 return Err(AppError::InvalidInput(
-                    "Lesson estimate must be between 1 and 600 minutes.".into(),
+                    "Lesson estimate must be at least 1 minute.".into(),
                 ));
             }
             if l.preparation != LearningPreparation::Outline || !l.blocks.is_empty() {
