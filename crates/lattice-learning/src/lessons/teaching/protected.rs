@@ -132,11 +132,90 @@ fn leaves<'v>(value: &'v Value, path: String, out: &mut Vec<(String, &'v str)>) 
     }
 }
 
+/// Every sentence of the unit's teaching text that no protected sentence
+/// overlaps.
+fn unprotected_sentences(
+    section: &Value,
+    (unit, block): (usize, bool),
+    protected: &[Protected],
+    targets: &mut Vec<Protected>,
+) {
+    for field in unit_fields(section, block) {
+        let Some(text) = section
+            .pointer(&format!("/{field}"))
+            .and_then(Value::as_str)
+        else {
+            continue;
+        };
+        for (start, end) in lattice_core::shared::text::sentences(text) {
+            let sentence = &text[start..end];
+            let guarded = protected.iter().any(|item| {
+                item.field == field
+                    && (sentence.contains(item.quote.as_str()) || item.quote.contains(sentence))
+            });
+            if !guarded {
+                targets.push(Protected {
+                    unit,
+                    field: field.clone(),
+                    quote: sentence.to_owned(),
+                    released: false,
+                });
+            }
+        }
+    }
+}
+
+/// `value` and everything under it as targets, a string by its whole text.
+fn whole_value(value: &Value, path: String, unit: usize, targets: &mut Vec<Protected>) {
+    let child = |key: &str| format!("{path}/{key}");
+    targets.push(Protected {
+        unit,
+        field: path.clone(),
+        quote: value.as_str().unwrap_or_default().to_owned(),
+        released: false,
+    });
+    match value {
+        Value::Object(fields) => {
+            for (key, value) in fields {
+                whole_value(value, child(key), unit, targets);
+            }
+        }
+        Value::Array(items) => {
+            for (index, value) in items.iter().enumerate() {
+                whole_value(value, child(&index.to_string()), unit, targets);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Whether `finding` is about all of a question or a check: its site is the
+/// unit, or it has none and its passage lies in the unit.
+fn about_whole_unit(
+    section: &Value,
+    block: bool,
+    finding: &ReviewFinding,
+    fields: &[(String, &str)],
+) -> bool {
+    let whole = !block || section.get("kind").and_then(Value::as_str) == Some("check");
+    let named = match finding.site {
+        Some(FindingSite::Section(_) | FindingSite::Question(_)) => true,
+        Some(FindingSite::Lesson) | None => finding
+            .passage
+            .as_deref()
+            .map(str::trim)
+            .filter(|passage| !passage.is_empty())
+            .is_some_and(|passage| fields.iter().any(|(_, text)| text.contains(passage))),
+    };
+    whole && named
+}
+
 /// The sentences `sent` names in `section` (`unit`, and whether it is a
 /// block): each finding's passage where any field holds it; for a finding
 /// with no passage, every sentence of the unit's teaching text that no
 /// protected sentence overlaps (`protected` holds the sentences that are not
-/// released).
+/// released). A finding about a question or a check names all of it: its
+/// sentences, and for a question its key, and its citations.
 fn targets_of(
     section: &Value,
     (unit, block): (usize, bool),
@@ -147,6 +226,16 @@ fn targets_of(
     leaves(section, String::new(), &mut fields);
     let mut targets = Vec::new();
     for finding in sent {
+        if about_whole_unit(section, block, finding, &fields) {
+            unprotected_sentences(section, (unit, block), protected, &mut targets);
+            if let (false, Some(key)) = (block, section.get("correctIndex")) {
+                whole_value(key, "correctIndex".into(), unit, &mut targets);
+            }
+            if let Some(citations) = section.get("citations") {
+                whole_value(citations, "citations".into(), unit, &mut targets);
+            }
+            continue;
+        }
         match finding.passage.as_deref().map(str::trim) {
             Some(passage) if !passage.is_empty() => {
                 for (field, text) in &fields {
@@ -160,32 +249,7 @@ fn targets_of(
                     }
                 }
             }
-            _ => {
-                for field in unit_fields(section, block) {
-                    let Some(text) = section
-                        .pointer(&format!("/{field}"))
-                        .and_then(Value::as_str)
-                    else {
-                        continue;
-                    };
-                    for (start, end) in lattice_core::shared::text::sentences(text) {
-                        let sentence = &text[start..end];
-                        let guarded = protected.iter().any(|item| {
-                            item.field == field
-                                && (sentence.contains(item.quote.as_str())
-                                    || item.quote.contains(sentence))
-                        });
-                        if !guarded {
-                            targets.push(Protected {
-                                unit,
-                                field: field.clone(),
-                                quote: sentence.to_owned(),
-                                released: false,
-                            });
-                        }
-                    }
-                }
-            }
+            _ => unprotected_sentences(section, (unit, block), protected, &mut targets),
         }
     }
     targets
