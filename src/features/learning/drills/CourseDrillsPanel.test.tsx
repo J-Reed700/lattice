@@ -1193,7 +1193,9 @@ describe('handing the review in', () => {
     api.submitCodeReview.mockResolvedValue(submitted({ mode: 'interview', drill: rust }));
     api.codeReviewResult.mockResolvedValue(graded({ mode: 'interview', drill: rust }));
     const { user } = show();
-    await user.selectOptions(await screen.findByRole('combobox', { name: 'Lesson' }), 'lesson-1');
+    const lessons = await screen.findByRole('combobox', { name: 'Lesson' });
+    await waitFor(() => expect(lessons).toBeEnabled());
+    await user.selectOptions(lessons, 'lesson-1');
     await startDrill(user);
     expect(api.startCourseDrill).toHaveBeenLastCalledWith('course-1', 'lesson-1', { kind: 'code', language: 'rust' }, 'interview', 140, 5);
     await comment(user, 'Something.');
