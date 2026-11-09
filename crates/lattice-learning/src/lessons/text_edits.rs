@@ -11,7 +11,7 @@ pub(super) const INSTRUCTIONS: &str = "Give edits, never a replacement lesson or
 /// the repairs so that a repair cannot undo what the writer was told.
 pub(super) const NEVER_SAY_WHERE: &str = "Never say in the lesson's text where a statement comes from, by number or by name, and never refer to an excerpt, passage or tutorial: no \"Source 2\", no \"as source 0 describes\", no \"In the project's tutorial, ...\", no \"According to the guide, ...\" and no \"Citation:\" line.";
 pub(super) const QUOTED_WORDING: &str =
-    "Quotation marks mark wording quoted from a source, and only in a cited sentence.";
+    "Wording quoted from a source goes in double quotation marks, and only in a cited sentence; never put wording in single quotation marks.";
 pub(super) const UNQUOTED_REMARKS: &str = "A misconception, a learner's thought, something a friend says or an example remark is written in the lesson's own sentence without quotation marks. Commands and their output go in code formatting.";
 
 /// What the teaching repair is told besides [`INSTRUCTIONS`] when a lesson's
