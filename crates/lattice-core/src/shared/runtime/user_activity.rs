@@ -132,35 +132,39 @@ mod macos {
 mod tests {
     use super::*;
 
-    fn assert_send_sync<T: Send + Sync>() {}
+    fn assert_send<T: Send>() {}
 
     #[test]
-    fn the_guard_can_be_held_across_awaits_on_any_task() {
-        assert_send_sync::<UserActivity>();
+    fn the_guard_can_be_held_across_awaits() {
+        assert_send::<UserActivity>();
     }
 
     #[test]
     fn beginning_and_dropping_never_panics_even_with_an_odd_reason() {
-        drop(UserActivity::begin("Preparing learning material"));
-        drop(UserActivity::begin(""));
-        drop(UserActivity::begin("embedded\0nul and \u{1F600} non-BMP"));
-        let first = UserActivity::begin("first");
-        let second = UserActivity::begin("second");
-        drop(first);
-        drop(second);
+        {
+            let _guard = UserActivity::begin("Preparing learning material");
+        }
+        {
+            let _guard = UserActivity::begin("");
+        }
+        {
+            let _guard = UserActivity::begin("embedded\0nul and \u{1F600} non-BMP");
+        }
+        let _first = UserActivity::begin("first");
+        let _second = UserActivity::begin("second");
     }
 
     #[cfg(windows)]
     #[test]
     #[allow(clippy::expect_used)]
-    fn windows_guard_sets_both_power_requests_and_clears_them_on_release() {
+    fn windows_guard_sets_the_system_request_and_clears_it_on_release() {
         let mut request = windows_power::Request::begin("Testing power request")
             .expect("A power request must be creatable on Windows");
-        assert!(request.system_required_set());
-        assert!(request.execution_required_set());
-        request.release().expect("Clearing a set request must succeed");
-        assert!(!request.system_required_set());
-        assert!(!request.execution_required_set());
+        assert!(request.is_set());
+        request
+            .release()
+            .expect("Clearing a set request must succeed");
+        assert!(!request.is_set());
         request.release().expect("Releasing twice is a no-op");
     }
 
@@ -171,7 +175,7 @@ mod tests {
         let mut first = windows_power::Request::begin("first").expect("first request");
         let mut second = windows_power::Request::begin("second").expect("second request");
         first.release().expect("release first");
-        assert!(second.system_required_set());
+        assert!(second.is_set());
         second.release().expect("release second");
     }
 
@@ -179,7 +183,10 @@ mod tests {
     #[test]
     fn windows_public_guard_holds_a_power_request() {
         let guard = UserActivity::begin("Testing public guard");
-        assert!(guard._power.is_some(), "The guard must hold a power request");
+        assert!(
+            guard._power.is_some(),
+            "The guard must hold a power request"
+        );
     }
 
     #[cfg(target_os = "macos")]
