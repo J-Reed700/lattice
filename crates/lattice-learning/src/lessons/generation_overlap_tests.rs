@@ -37,6 +37,9 @@ impl Recorder {
 impl LLMPort for Recorder {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (_, user) = crate::lessons::structured_call::task_messages(request);
+        if let Some(plan) = crate::lessons::course_plan::fixture_response(user) {
+            return Ok(CompletionResponse::from_text(plan));
+        }
         self.requests.lock().unwrap().push(user.to_owned());
         Ok(CompletionResponse::from_text("{\"items\":[]}"))
     }
@@ -108,28 +111,60 @@ fn prepared(
     prepared
 }
 
+/// Plans the course's topics on `planner`.
+pub(crate) async fn plan_course(
+    pool: &SqlitePool,
+    program_id: &str,
+    planner: &dyn LLMPort,
+) -> Result<crate::dto::LearningProgramDto> {
+    let program = LearningRepository::new(pool.clone())
+        .get(program_id)
+        .await?;
+    let revision = crate::lessons::course_plan::outline_revision(pool, program_id).await?;
+    crate::lessons::course_plan::ensure(pool, planner, &program, revision).await?;
+    Ok(program)
+}
+
+/// Plans the course on `planner` and saves the first lesson's prepared,
+/// verified teaching as `job_id`'s checkpoint. Returns the lesson's id.
+pub(crate) async fn save_verified(
+    pool: &SqlitePool,
+    job_id: &str,
+    program_id: &str,
+    planner: &dyn LLMPort,
+) -> Result<String> {
+    let program = plan_course(pool, program_id, planner).await?;
+    let revision = crate::lessons::course_plan::outline_revision(pool, program_id).await?;
+    let plan = crate::lessons::course_plan::stored(pool, &program, revision)
+        .await?
+        .unwrap();
+    let sources = LearningRepository::new(pool.clone())
+        .verification_sources(program_id)
+        .await?;
+    let lesson = &program.modules[0].lessons[0];
+    let prepared = prepared(lesson, &sources[0].id);
+    LearningCurriculumRepository::new(pool.clone())
+        .save_lesson_checkpoint(
+            job_id,
+            &lesson.id,
+            "prepared-v2",
+            serde_json::json!({
+                "plan": crate::content_verification::digest(&serde_json::to_string(&plan)?),
+                "lesson": prepared,
+            }),
+        )
+        .await?;
+    Ok(lesson.id.clone())
+}
+
 /// Runs the course's first lesson job through the real worker and runtime
 /// with its lesson already prepared and verified, as a resumed job has it,
 /// and `model` as the Learning model.
 pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> Result<Published> {
-    let (repo, job) = repository_tests::queued_job(pool).await;
-    let program = LearningRepository::new(pool.clone())
-        .get(&job.program_id)
-        .await?;
-    let sources = LearningRepository::new(pool.clone())
-        .verification_sources(&job.program_id)
-        .await?;
-    let lesson = &program.modules[0].lessons[0];
-    let prepared = prepared(lesson, &sources[0].id);
+    let (_, job) = repository_tests::queued_job(pool).await;
     let store = JobStore::new(pool.clone());
     store.claim(&job.id).await?.unwrap();
-    repo.save_lesson_checkpoint(
-        &job.id,
-        &lesson.id,
-        "prepared-v1",
-        serde_json::to_value(&prepared)?,
-    )
-    .await?;
+    let lesson_id = save_verified(pool, &job.id, &job.program_id, model.as_ref()).await?;
     store.suspend(&job.id).await?;
     let llm: Arc<dyn LLMPort> = model;
     let worker = LessonGenerationWorker {
@@ -147,7 +182,7 @@ pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> R
     run_attempt(worker, &job.id).await?;
     Ok(Published {
         program_id: job.program_id,
-        lesson_id: lesson.id.clone(),
+        lesson_id,
         job_id: job.id,
     })
 }

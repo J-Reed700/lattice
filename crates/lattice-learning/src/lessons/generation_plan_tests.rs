@@ -88,8 +88,11 @@ async fn a_lesson_job_makes_the_course_plan_before_the_lesson_is_written() {
     assert_eq!(saved, 4, "a row for each lesson of the outline");
 }
 
-/// Answers the lesson's evidence plan, keeps what else it is asked, and
-/// refuses that, which ends the job at the lesson writer's request.
+/// Answers every request but the lesson writer's, which it keeps and refuses,
+/// which ends the job at the writer's request. Only the writer's request
+/// carries the course plan; the evidence plan's carries the catalog alone.
+/// Its evidence plan searches for words of the course's only source, so the
+/// lesson has a passage to be written from.
 struct AnswersEvidenceThenStops {
     asked: Mutex<Vec<String>>,
 }
@@ -98,9 +101,9 @@ struct AnswersEvidenceThenStops {
 impl LLMPort for AnswersEvidenceThenStops {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (_, user) = crate::lessons::structured_call::task_messages(request);
-        if user.contains("referenceCatalog") {
+        if !user.contains("coursePlan") {
             return Ok(CompletionResponse::from_text(
-                r#"{"topics":[{"topic":"the central idea","queries":["central idea"]}]}"#
+                r#"{"topics":[{"topic":"the bounded passage","queries":["bounded passage"]}]}"#
                     .to_owned(),
             ));
         }
@@ -108,7 +111,7 @@ impl LLMPort for AnswersEvidenceThenStops {
         Err(AppError::InvalidState("stopped at the writer".into()))
     }
     fn model_name(&self) -> &str {
-        "plan-fixture"
+        "persistence-fixture"
     }
     fn count_tokens(&self, text: &str) -> usize {
         text.len() / 4
@@ -186,5 +189,143 @@ async fn a_lesson_job_writes_from_the_entry_the_learner_edited() {
     assert!(
         asked.iter().all(|user| !user.contains(PLAN_TASK)),
         "the plan is read, not made again"
+    );
+}
+
+fn worker_on(pool: &SqlitePool, llm: Arc<dyn LLMPort>) -> LessonGenerationWorker {
+    LessonGenerationWorker {
+        runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
+        pool: pool.clone(),
+        load_llm: Arc::new(move || {
+            let llm = llm.clone();
+            Box::pin(async move { Ok(pinned_for_test(llm)) })
+        }),
+        courses: None,
+        refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
+        research_web: None,
+        verifier: None,
+    }
+}
+
+/// A lesson job that stopped before it published: claimed, then suspended,
+/// with the course planned and, when `verified`, its first lesson prepared
+/// and verified. Returns the job's id, its course and the lesson.
+async fn stopped_job(pool: &SqlitePool, verified: bool) -> (String, String, String) {
+    let (_, job) = repository_tests::queued_job(pool).await;
+    let store = lattice_core::shared::runtime::jobs::JobStore::new(pool.clone());
+    assert!(store.claim(&job.id).await.unwrap().is_some());
+    let planner = PlansThenStops {
+        tasks: Mutex::new(Vec::new()),
+    };
+    let lesson = if verified {
+        overlap_tests::save_verified(pool, &job.id, &job.program_id, &planner)
+            .await
+            .unwrap()
+    } else {
+        let program = overlap_tests::plan_course(pool, &job.program_id, &planner)
+            .await
+            .unwrap();
+        program.modules[0].lessons[0].id.clone()
+    };
+    store.suspend(&job.id).await.unwrap();
+    (job.id, job.program_id, lesson)
+}
+
+async fn learner_rewrites(pool: &SqlitePool, program_id: &str, lesson_id: &str) {
+    use crate::lessons::course_plan::{
+        edit_entry, outline_revision, EditCoursePlanEntryRequestDto, PlannedLesson,
+    };
+    let revision = outline_revision(pool, program_id).await.unwrap();
+    edit_entry(
+        pool,
+        EditCoursePlanEntryRequestDto {
+            program_id: program_id.to_owned(),
+            outline_revision: revision,
+            expected_entry_revision: 1,
+            topics: PlannedLesson {
+                lesson_id: lesson_id.to_owned(),
+                ideas: vec!["an idea the learner wrote".into()],
+                terms: Vec::new(),
+                actions: Vec::new(),
+                contrast: String::new(),
+            },
+        },
+    )
+    .await
+    .unwrap();
+}
+
+/// The first idea the lesson writer was given for the lesson it writes, or
+/// `None` when it was never asked.
+fn written_from(model: &AnswersEvidenceThenStops) -> Option<String> {
+    let asked = model.asked.lock().unwrap().clone();
+    let writer = asked.iter().find(|user| user.contains("coursePlan"))?;
+    let request: serde_json::Value = serde_json::from_str(writer).unwrap();
+    request["courseSequence"]["coursePlan"][0]["ideas"][0]
+        .as_str()
+        .map(str::to_owned)
+}
+
+async fn ready_lessons(pool: &SqlitePool, lesson_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT count(*) FROM learning_lessons WHERE id=? AND preparation='ready'")
+        .bind(lesson_id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn a_verified_lesson_is_written_again_when_its_entry_was_edited_before_the_retry() {
+    let pool = crate::tests::pool().await.unwrap();
+    let (job, program_id, lesson) = stopped_job(&pool, true).await;
+    learner_rewrites(&pool, &program_id, &lesson).await;
+    let model = Arc::new(AnswersEvidenceThenStops {
+        asked: Mutex::new(Vec::new()),
+    });
+
+    run_attempt(worker_on(&pool, model.clone()), &job)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        written_from(&model).as_deref(),
+        Some("an idea the learner wrote"),
+        "the old lesson was published instead of one written from the edit"
+    );
+    assert_eq!(ready_lessons(&pool, &lesson).await, 0);
+}
+
+#[tokio::test]
+async fn a_verified_lesson_is_reused_when_the_plan_is_unchanged() {
+    let pool = crate::tests::pool().await.unwrap();
+    let (job, _, lesson) = stopped_job(&pool, true).await;
+    let model = Arc::new(AnswersEvidenceThenStops {
+        asked: Mutex::new(Vec::new()),
+    });
+
+    run_attempt(worker_on(&pool, model.clone()), &job)
+        .await
+        .unwrap();
+
+    assert_eq!(written_from(&model), None, "the writer was asked again");
+    assert_eq!(ready_lessons(&pool, &lesson).await, 1);
+}
+
+#[tokio::test]
+async fn a_lesson_stopped_while_drafting_is_written_from_the_edited_entry() {
+    let pool = crate::tests::pool().await.unwrap();
+    let (job, program_id, lesson) = stopped_job(&pool, false).await;
+    learner_rewrites(&pool, &program_id, &lesson).await;
+    let model = Arc::new(AnswersEvidenceThenStops {
+        asked: Mutex::new(Vec::new()),
+    });
+
+    run_attempt(worker_on(&pool, model.clone()), &job)
+        .await
+        .unwrap();
+
+    assert_eq!(
+        written_from(&model).as_deref(),
+        Some("an idea the learner wrote")
     );
 }

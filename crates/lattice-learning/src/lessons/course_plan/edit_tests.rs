@@ -237,7 +237,7 @@ async fn an_edit_of_a_ready_lesson_is_refused() {
     .await;
 
     assert!(
-        matches!(&refused, Err(AppError::InvalidState(text)) if text.contains("being written")),
+        matches!(&refused, Err(AppError::InvalidState(text)) if text.contains("already written")),
         "{refused:?}"
     );
 }
