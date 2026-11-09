@@ -94,11 +94,19 @@ pub(crate) fn generated_source_ids(
         }
         return Ok(Vec::new());
     }
-    let source = evidence_source(
-        sources,
-        index.ok_or_else(|| invalid("Source-backed material needs a source citation."))?,
-        quote,
-    )?;
+    let index = index.ok_or_else(|| invalid("Source-backed material needs a source citation."))?;
+    let source = match evidence_source(sources, index, quote) {
+        Ok(source) => source,
+        Err(strict) => match sources.get(index) {
+            Some(source)
+                if crate::outline_citations::exact_source_quote(&source.excerpt, quote)
+                    .is_some() =>
+            {
+                source
+            }
+            _ => return Err(strict),
+        },
+    };
     Ok(vec![source.id.clone()])
 }
 
