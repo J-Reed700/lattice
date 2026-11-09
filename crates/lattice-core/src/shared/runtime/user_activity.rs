@@ -1,10 +1,14 @@
-//! Keep explicit user work eligible to run while its macOS window is inactive.
-//! The assertion lasts only for active work, not queueing or retry backoff, and
-//! allows normal display and system sleep. Other platforms need no assertion.
+//! Keep explicit user work running while its window is inactive and the PC is
+//! idle. While a guard is held, macOS skips App Nap and idle system sleep and
+//! Windows holds a system-required power request. The display may still sleep,
+//! and lid-close or a chosen Sleep still works. The hold lasts only for active
+//! work, not queueing or retry backoff. Other platforms hold nothing.
 
 pub struct UserActivity {
     #[cfg(target_os = "macos")]
     _activity: Option<macos::Activity>,
+    #[cfg(windows)]
+    _power: Option<windows_power::Request>,
 }
 
 impl UserActivity {
@@ -22,10 +26,144 @@ impl UserActivity {
                 _activity: activity,
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
+        {
+            let power = match windows_power::Request::begin(reason) {
+                Ok(request) => Some(request),
+                Err(error) => {
+                    tracing::warn!(%error, "Could not keep the PC awake for active user work");
+                    None
+                }
+            };
+            Self { _power: power }
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
         {
             let _ = reason;
             Self {}
+        }
+    }
+}
+
+#[cfg(windows)]
+mod windows_power {
+    use windows::{
+        core::PWSTR,
+        Win32::{
+            Foundation::{CloseHandle, HANDLE},
+            System::{
+                Power::{
+                    PowerClearRequest, PowerCreateRequest, PowerRequestExecutionRequired,
+                    PowerRequestSystemRequired, PowerSetRequest, POWER_REQUEST_TYPE,
+                },
+                Threading::{
+                    POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0,
+                },
+            },
+        },
+    };
+
+    use crate::shared::error::AppError;
+
+    // POWER_REQUEST_CONTEXT_VERSION in winnt.h.
+    const CONTEXT_VERSION: u32 = 0;
+
+    // A power request object is per process and not tied to a thread, unlike
+    // SetThreadExecutionState, so it survives tokio moving the task.
+    pub(super) struct Request {
+        handle: Option<HANDLE>,
+        system: bool,
+        execution: bool,
+    }
+
+    fn win(error: windows::core::Error) -> AppError {
+        AppError::ServiceNotAvailable(error.to_string())
+    }
+
+    impl Request {
+        pub(super) fn begin(reason: &str) -> Result<Self, AppError> {
+            let mut text: Vec<u16> = reason
+                .encode_utf16()
+                .filter(|unit| *unit != 0)
+                .chain(std::iter::once(0))
+                .collect();
+            let context = REASON_CONTEXT {
+                Version: CONTEXT_VERSION,
+                Flags: POWER_REQUEST_CONTEXT_SIMPLE_STRING,
+                Reason: REASON_CONTEXT_0 {
+                    SimpleReasonString: PWSTR(text.as_mut_ptr()),
+                },
+            };
+            // SAFETY: `context` and the NUL-terminated `text` it points to
+            // outlive the call, which only reads them.
+            #[allow(unsafe_code)]
+            let handle = unsafe { PowerCreateRequest(&context) }.map_err(win)?;
+            // From here a failure drops `request`, which closes the handle.
+            let mut request = Self {
+                handle: Some(handle),
+                system: false,
+                execution: false,
+            };
+            request.system = set(handle, PowerRequestSystemRequired)?;
+            // Keeps this desktop process running if the system enters Modern
+            // Standby despite the system request.
+            request.execution = set(handle, PowerRequestExecutionRequired)?;
+            tracing::info!("Holding the PC awake for active user work");
+            Ok(request)
+        }
+
+        pub(super) fn system_required_set(&self) -> bool {
+            self.system
+        }
+
+        pub(super) fn execution_required_set(&self) -> bool {
+            self.execution
+        }
+
+        pub(super) fn release(&mut self) -> Result<(), AppError> {
+            let Some(handle) = self.handle else {
+                return Ok(());
+            };
+            let mut outcome = Ok(());
+            if self.system {
+                self.system = false;
+                outcome = clear(handle, PowerRequestSystemRequired);
+            }
+            if self.execution {
+                self.execution = false;
+                let cleared = clear(handle, PowerRequestExecutionRequired);
+                outcome = outcome.and(cleared);
+            }
+            self.handle = None;
+            // SAFETY: the handle came from PowerCreateRequest and is closed
+            // only here, after which `handle` is None.
+            #[allow(unsafe_code)]
+            let closed = unsafe { CloseHandle(handle) }.map_err(win);
+            outcome.and(closed)
+        }
+    }
+
+    fn set(handle: HANDLE, kind: POWER_REQUEST_TYPE) -> Result<bool, AppError> {
+        // SAFETY: `handle` is a live power request handle.
+        #[allow(unsafe_code)]
+        let set = unsafe { PowerSetRequest(handle, kind) };
+        set.map(|()| true).map_err(win)
+    }
+
+    fn clear(handle: HANDLE, kind: POWER_REQUEST_TYPE) -> Result<(), AppError> {
+        // SAFETY: `handle` is a live power request handle.
+        #[allow(unsafe_code)]
+        let cleared = unsafe { PowerClearRequest(handle, kind) };
+        cleared.map_err(win)
+    }
+
+    impl Drop for Request {
+        fn drop(&mut self) {
+            if let Err(error) = self.release() {
+                tracing::warn!(%error, "Could not release the PC-awake request");
+            } else {
+                tracing::info!("Released the PC-awake request after user work");
+            }
         }
     }
 }
@@ -40,9 +178,10 @@ mod macos {
 
     use crate::shared::error::AppError;
 
-    // Public Foundation NSActivityOptions. UserInitiated with the idle-system-
-    // sleep bit removed: prevent App Nap, without overriding sleep preferences.
-    const USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP: u64 = 0x00FF_FFFF & !(1 << 20);
+    // Public Foundation NSActivityOptions: UserInitiated, which includes
+    // NSActivityIdleSystemSleepDisabled (1 << 20). The display-sleep bit is
+    // not set, so the screen may still turn off.
+    pub(super) const ACTIVITY_OPTIONS: u64 = 0x00FF_FFFF;
 
     pub(super) struct Activity {
         process: StrongPtr,
@@ -54,6 +193,11 @@ mod macos {
     // guard has one owner, never exposes them, and ends the activity exactly once.
     #[allow(unsafe_code)]
     unsafe impl Send for Activity {}
+
+    // SAFETY: nothing is reachable through a shared reference; the retained
+    // objects are touched only in begin and Drop.
+    #[allow(unsafe_code)]
+    unsafe impl Sync for Activity {}
 
     impl Activity {
         pub(super) fn begin(reason: &str) -> Result<Self, AppError> {
@@ -87,7 +231,7 @@ mod macos {
                     let token: *mut Object = process_ref
                         .send_message(
                             Sel::register("beginActivityWithOptions:reason:"),
-                            (USER_INITIATED_ALLOWING_IDLE_SYSTEM_SLEEP, text),
+                            (ACTIVITY_OPTIONS, text),
                         )
                         .map_err(|e| AppError::InternalError(e.to_string()))?;
                     if token.is_null() {
@@ -95,7 +239,7 @@ mod macos {
                             "Could not begin user activity".to_string(),
                         ));
                     }
-                    tracing::info!("Protected active user work from App Nap");
+                    tracing::info!("Protected active user work from App Nap and idle sleep");
                     Ok(Self {
                         process: StrongPtr::retain(process),
                         token: StrongPtr::retain(token),
@@ -158,7 +302,9 @@ mod tests {
             .expect("A power request must be creatable on Windows");
         assert!(request.system_required_set());
         assert!(request.execution_required_set());
-        request.release().expect("Clearing a set request must succeed");
+        request
+            .release()
+            .expect("Clearing a set request must succeed");
         assert!(!request.system_required_set());
         assert!(!request.execution_required_set());
         request.release().expect("Releasing twice is a no-op");
@@ -179,7 +325,10 @@ mod tests {
     #[test]
     fn windows_public_guard_holds_a_power_request() {
         let guard = UserActivity::begin("Testing public guard");
-        assert!(guard._power.is_some(), "The guard must hold a power request");
+        assert!(
+            guard._power.is_some(),
+            "The guard must hold a power request"
+        );
     }
 
     #[cfg(target_os = "macos")]
