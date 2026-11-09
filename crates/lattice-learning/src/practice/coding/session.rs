@@ -3,7 +3,7 @@
 
 mod aids;
 mod cases;
-mod evidence;
+pub mod evidence;
 mod view;
 
 pub use self::aids::{CodingAids, LiveAids};
