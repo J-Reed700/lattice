@@ -132,12 +132,24 @@ pub enum LearningPracticalRunStatus {
 pub struct CaseCheckDetailDto {
     pub case_id: String,
     pub category: String,
-    pub args: Vec<String>,
+    pub visibility: crate::practice::coding::problem::CaseVisibility,
+    pub scale: bool,
+    /// A learner example run as a case.
+    pub mine: bool,
+    pub status: crate::practice::coding::problem::CaseStatus,
+    pub args: Option<Vec<String>>,
     pub expected: Option<String>,
     pub actual: Option<String>,
-    pub printed: String,
+    pub printed: Option<String>,
     pub error: Option<String>,
-    pub visibility: crate::practice::coding::problem::Visibility,
+    pub elapsed_ms: Option<u64>,
+}
+
+impl CaseCheckDetailDto {
+    /// What a reader without the setting's leave may see of a hidden case: its category and status.
+    pub(crate) fn without_hidden_content(self) -> Self {
+        self
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]

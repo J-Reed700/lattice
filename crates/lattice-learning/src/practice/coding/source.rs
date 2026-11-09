@@ -332,6 +332,14 @@ mod tests {
         ) -> Result<RunOutcome> {
             Ok(RunOutcome::Passed)
         }
+        async fn run_capturing(
+            &self,
+            _files: &[LearningLabFile],
+            _read_only_paths: &[String],
+            _cancel: CancellationToken,
+        ) -> Result<(RunOutcome, String)> {
+            Ok((RunOutcome::Passed, String::new()))
+        }
     }
 
     struct MockHarness;
