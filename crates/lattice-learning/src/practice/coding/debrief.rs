@@ -14,7 +14,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::domain::learning::practice::{
-    Scorecard, ScorecardEvidence, ScorecardRow, ScoreStatus,
+    ScoreStatus, Scorecard, ScorecardEvidence, ScorecardRow,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -187,7 +187,11 @@ pub fn facts(evidence: &SessionEvidence) -> DebriefFactsDto {
     ]
     .into_iter()
     .filter_map(|rung| {
-        let given = evidence.hints.iter().filter(|hint| hint.rung == rung).count();
+        let given = evidence
+            .hints
+            .iter()
+            .filter(|hint| hint.rung == rung)
+            .count();
         (given > 0).then(|| RungCountDto {
             rung,
             count: count(given),
@@ -225,7 +229,12 @@ Each row gets feedback about what this session demonstrated, and one next step: 
 fn system() -> String {
     let criteria = CRITERIA
         .iter()
-        .map(|criterion| format!("- {} ({}): {}", criterion.title, criterion.id, criterion.earns))
+        .map(|criterion| {
+            format!(
+                "- {} ({}): {}",
+                criterion.title, criterion.id, criterion.earns
+            )
+        })
         .collect::<Vec<_>>()
         .join("\n");
     SYSTEM_RULES.replace("{criteria}", &criteria)
@@ -296,7 +305,11 @@ fn files_json(files: &[LearningLabFile]) -> Value {
     )
 }
 
-fn run_json(evidence: &SessionEvidence, run: &EvidenceRun, previous: Option<&EvidenceRun>) -> Value {
+fn run_json(
+    evidence: &SessionEvidence,
+    run: &EvidenceRun,
+    previous: Option<&EvidenceRun>,
+) -> Value {
     let failing: Vec<Value> = run
         .results
         .iter()
@@ -339,7 +352,14 @@ fn prompt(evidence: &SessionEvidence) -> Result<String> {
         .runs
         .iter()
         .enumerate()
-        .map(|(at, run)| run_json(evidence, run, at.checked_sub(1).and_then(|before| evidence.runs.get(before))))
+        .map(|(at, run)| {
+            run_json(
+                evidence,
+                run,
+                at.checked_sub(1)
+                    .and_then(|before| evidence.runs.get(before)),
+            )
+        })
         .collect();
     let last_files = evidence.runs.last().map(|run| run.files.as_slice());
     let body = json!({
@@ -362,8 +382,9 @@ fn prompt(evidence: &SessionEvidence) -> Result<String> {
         "finalDraft": if last_files == Some(evidence.draft.as_slice()) { Value::Null } else { files_json(&evidence.draft) },
         "hints": evidence.hints.iter().map(|hint| json!({"ordinal": hint.ordinal, "rung": tag(&hint.rung), "text": hint.text, "stage": tag(&hint.stage)})).collect::<Vec<_>>(),
     });
-    serde_json::to_string_pretty(&body)
-        .map_err(|error| AppError::InternalError(format!("The session could not be written out: {error}")))
+    serde_json::to_string_pretty(&body).map_err(|error| {
+        AppError::InternalError(format!("The session could not be written out: {error}"))
+    })
 }
 
 // ---- what the model answers ----
@@ -425,8 +446,11 @@ fn refuse(message: impl Into<String>) -> AppError {
 
 /// The answer as a whole, or why it cannot be read: every criterion exactly once, a strong answer written.
 fn read(raw: &str) -> Result<RawAnswer> {
-    let answer: RawAnswer = serde_json::from_str(raw)
-        .map_err(|error| refuse(format!("The debrief was not valid JSON for its schema: {error}.")))?;
+    let answer: RawAnswer = serde_json::from_str(raw).map_err(|error| {
+        refuse(format!(
+            "The debrief was not valid JSON for its schema: {error}."
+        ))
+    })?;
     for criterion in &CRITERIA {
         let rows = answer
             .rows
@@ -441,10 +465,14 @@ fn read(raw: &str) -> Result<RawAnswer> {
         }
     }
     if answer.rows.len() != CRITERIA.len() {
-        return Err(refuse("A row names a criterion that is not one of the four."));
+        return Err(refuse(
+            "A row names a criterion that is not one of the four.",
+        ));
     }
     if answer.approach.trim().is_empty() || answer.complexity.trim().is_empty() {
-        return Err(refuse("The approach and the complexity of a strong answer must be written."));
+        return Err(refuse(
+            "The approach and the complexity of a strong answer must be written.",
+        ));
     }
     Ok(answer)
 }
@@ -462,7 +490,10 @@ fn resolve(
                 .find(|turn| turn.id == item.reference)
                 .ok_or_else(|| format!("quote: there is no turn {}.", item.reference))?;
             if turn.speaker != LearningSimulationSpeaker::Learner {
-                return Err(format!("quote: turn {} is not the learner's.", item.reference));
+                return Err(format!(
+                    "quote: turn {} is not the learner's.",
+                    item.reference
+                ));
             }
             if item.text.is_empty() || !turn.content.contains(&item.text) {
                 return Err(format!(
@@ -518,7 +549,12 @@ fn resolve(
             .reference
             .parse::<u32>()
             .ok()
-            .filter(|ordinal| evidence.examples.iter().any(|example| example.ordinal == *ordinal))
+            .filter(|ordinal| {
+                evidence
+                    .examples
+                    .iter()
+                    .any(|example| example.ordinal == *ordinal)
+            })
             .map(|ordinal| ScorecardEvidence::Example { ordinal })
             .ok_or_else(|| format!("example: there is no example {}.", item.reference)),
         RawKind::Hint => item
@@ -537,12 +573,20 @@ fn failures(evidence: &SessionEvidence, answer: &RawAnswer) -> Vec<String> {
     for row in &answer.rows {
         let id = row.criterion_id.as_str();
         match (row.status, row.points) {
-            (RawStatus::Observed, None) => failed.push(format!("{id}: an observed row needs points.")),
-            (RawStatus::Observed, Some(points)) if !(0..=i64::from(MAX_POINTS)).contains(&points) => {
-                failed.push(format!("{id}: points must be from 0 to {MAX_POINTS}, not {points}."));
+            (RawStatus::Observed, None) => {
+                failed.push(format!("{id}: an observed row needs points."))
+            }
+            (RawStatus::Observed, Some(points))
+                if !(0..=i64::from(MAX_POINTS)).contains(&points) =>
+            {
+                failed.push(format!(
+                    "{id}: points must be from 0 to {MAX_POINTS}, not {points}."
+                ));
             }
             (RawStatus::InsufficientEvidence, Some(_)) => {
-                failed.push(format!("{id}: a row without enough evidence has no points."));
+                failed.push(format!(
+                    "{id}: a row without enough evidence has no points."
+                ));
             }
             _ => {}
         }
@@ -597,7 +641,11 @@ fn settle(evidence: &SessionEvidence, answer: RawAnswer) -> Result<Debrief> {
             },
             points: scored,
             max_points: MAX_POINTS,
-            evidence: if scored.is_some() { checked } else { Vec::new() },
+            evidence: if scored.is_some() {
+                checked
+            } else {
+                Vec::new()
+            },
             feedback: row.feedback.clone(),
             next_step: row.next_step.clone(),
         });

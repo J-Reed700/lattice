@@ -4,8 +4,8 @@ use serde::Serialize;
 
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::coding::dto::{
-    stages_of, ClockDto, CodeHintDto, CodingExampleDto, CodingRunDto, CodingSessionDto,
-    CaseViewDto, CodingStage, ExampleCoverageDto,
+    stages_of, CaseViewDto, ClockDto, CodeHintDto, CodingExampleDto, CodingRunDto,
+    CodingSessionDto, CodingStage, ExampleCoverageDto,
 };
 use crate::practice::coding::problem::{
     CodingSetting, CodingTask, Problem, ProblemClarification, ProblemSignature,
@@ -232,7 +232,11 @@ impl WorkspaceObservation {
             ids.push(run.run_id.clone());
             ids.extend(run.cases.iter().map(|case| case.case_id.clone()));
         }
-        ids.extend(self.problem_examples.iter().map(|case| case.case_id.clone()));
+        ids.extend(
+            self.problem_examples
+                .iter()
+                .map(|case| case.case_id.clone()),
+        );
         ids
     }
 
@@ -298,7 +302,10 @@ impl WorkspaceObservation {
             }
         }
         if !self.has_baseline {
-            line("Changes since you last looked: you have not looked at the draft before.".to_owned());
+            line(
+                "Changes since you last looked: you have not looked at the draft before."
+                    .to_owned(),
+            );
         } else if self.changes.is_empty() {
             line("Changes since you last looked: none.".to_owned());
         } else {
@@ -308,7 +315,10 @@ impl WorkspaceObservation {
                     LineChangeKind::Added => "added",
                     LineChangeKind::Removed => "removed",
                 };
-                line(format!("{mark} {} line {}: {}", change.path, change.line, change.text));
+                line(format!(
+                    "{mark} {} line {}: {}",
+                    change.path, change.line, change.text
+                ));
             }
         }
         match &self.last_run {
@@ -386,8 +396,7 @@ pub(crate) mod test_support {
     use crate::practice::coding::dto::{CodeHintRung, PublicProblemDto};
     use crate::practice::coding::problem::{
         CaseCompare, CaseStatus, CaseVisibility, Misreading, ProblemCase, ProblemDifficulty,
-        ProblemSpec,
-        SignatureParam,
+        ProblemSpec, SignatureParam,
     };
 
     pub const REFERENCE: &str = "def total(values):\n    return REFERENCE_SECRET_BODY\n";
@@ -461,7 +470,11 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn session(problem: &Problem, setting: CodingSetting, stage: CodingStage) -> CodingSessionDto {
+    pub fn session(
+        problem: &Problem,
+        setting: CodingSetting,
+        stage: CodingStage,
+    ) -> CodingSessionDto {
         let task = CodingTask::Problem;
         CodingSessionDto {
             session_id: SESSION_ID.to_owned(),
@@ -525,7 +538,10 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn observation(setting: CodingSetting, stage: CodingStage) -> (Problem, WorkspaceObservation) {
+    pub fn observation(
+        setting: CodingSetting,
+        stage: CodingStage,
+    ) -> (Problem, WorkspaceObservation) {
         let problem = problem();
         let session = session(&problem, setting, stage);
         let observation = observe(&problem, &session, None);
@@ -608,7 +624,10 @@ mod tests {
         let first = lattice_core::domain::learning::practice::problem_patterns::PROBLEM_PATTERNS
             .first()
             .map(|pattern| pattern.name.to_owned());
-        assert_eq!(observation.pattern_names, first.into_iter().collect::<Vec<_>>());
+        assert_eq!(
+            observation.pattern_names,
+            first.into_iter().collect::<Vec<_>>()
+        );
     }
 
     #[test]
@@ -616,7 +635,11 @@ mod tests {
         let (_, observation) = observation(CodingSetting::Coached, CodingStage::Plan);
         assert_eq!(
             observation.stages_reached,
-            vec![CodingStage::Understand, CodingStage::Examples, CodingStage::Plan]
+            vec![
+                CodingStage::Understand,
+                CodingStage::Examples,
+                CodingStage::Plan
+            ]
         );
     }
 
@@ -771,7 +794,9 @@ mod tests {
         let (_, observation) = observation(CodingSetting::Coached, CodingStage::Plan);
         let text = observation.render();
         let names = observation.pattern_names.join(", ");
-        assert!(text.contains(&format!("Techniques the problem is built around: {names}\n")));
+        assert!(text.contains(&format!(
+            "Techniques the problem is built around: {names}\n"
+        )));
         assert!(!text.contains("never name"));
     }
 

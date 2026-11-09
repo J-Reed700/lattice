@@ -54,9 +54,8 @@ fn opens(line: &str) -> Option<(char, usize)> {
 }
 
 fn closes(line: &str, marker: char, width: usize) -> bool {
-    fence(line).is_some_and(|(found, run, rest)| {
-        found == marker && run >= width && rest.trim().is_empty()
-    })
+    fence(line)
+        .is_some_and(|(found, run, rest)| found == marker && run >= width && rest.trim().is_empty())
 }
 
 /// Whether `code`, as `solution.py`, passes every case of `problem`. A run that times out does not pass.
@@ -67,15 +66,8 @@ pub async fn passes_every_case(
     code: &str,
     cancel: CancellationToken,
 ) -> Result<bool> {
-    let (outcome, results) = run_cases(
-        runner,
-        harness,
-        &problem.spec,
-        code,
-        &problem.cases,
-        cancel,
-    )
-    .await?;
+    let (outcome, results) =
+        run_cases(runner, harness, &problem.spec, code, &problem.cases, cancel).await?;
     if !matches!(outcome, RunOutcome::TimedOut { .. }) {
         if let Some(why) = outcome.says_nothing() {
             return Err(AppError::InvalidState(why));
@@ -103,9 +95,7 @@ pub async fn parses_as_python(
             content: code.to_owned(),
         },
     ];
-    let (outcome, _) = runner
-        .run_capturing(&files, &[entrypoint], cancel)
-        .await?;
+    let (outcome, _) = runner.run_capturing(&files, &[entrypoint], cancel).await?;
     match outcome {
         RunOutcome::Passed => Ok(true),
         RunOutcome::Failed { .. } | RunOutcome::TimedOut { .. } => Ok(false),

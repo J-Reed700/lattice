@@ -98,7 +98,11 @@ fn invalid(message: String) -> AppError {
 mod tests {
     use super::*;
 
-    fn row(status: ScoreStatus, points: Option<u8>, evidence: Vec<ScorecardEvidence>) -> ScorecardRow {
+    fn row(
+        status: ScoreStatus,
+        points: Option<u8>,
+        evidence: Vec<ScorecardEvidence>,
+    ) -> ScorecardRow {
         ScorecardRow {
             criterion_id: "code".into(),
             title: "Code".into(),

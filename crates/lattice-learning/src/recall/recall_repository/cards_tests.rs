@@ -388,11 +388,7 @@ async fn reviews_must_fit_the_card_format_and_the_program() -> Result<()> {
     recall
         .review_card(&review(&pid, &free.card_id, None))
         .await?;
-    tests::assert_conflict(
-        recall
-            .review_card(&review(&pid, &free.card_id, None))
-            .await,
-    );
+    tests::assert_conflict(recall.review_card(&review(&pid, &free.card_id, None)).await);
     let reviewed = recall
         .review_card(&review(&pid, &quiz.card_id, Some(2)))
         .await?;

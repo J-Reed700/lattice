@@ -1428,14 +1428,20 @@ async fn due_lists_no_problem_patterns_for_a_course_with_a_no_code_verdict() {
         .await
         .unwrap();
     let due = due_with_fit(&ctx).await;
-    assert!(due.items.iter().all(|item| item.kind != DueKind::CodingPatterns));
+    assert!(due
+        .items
+        .iter()
+        .all(|item| item.kind != DueKind::CodingPatterns));
 }
 
 #[tokio::test]
 async fn due_lists_no_problem_patterns_while_the_fit_is_being_checked() {
     let ctx = Ctx::new().await;
     let due = due_with_fit(&ctx).await;
-    assert!(due.items.iter().all(|item| item.kind != DueKind::CodingPatterns));
+    assert!(due
+        .items
+        .iter()
+        .all(|item| item.kind != DueKind::CodingPatterns));
 }
 
 #[tokio::test]
@@ -1454,5 +1460,8 @@ async fn due_lists_problem_patterns_for_a_course_with_a_profile_language() {
         .await
         .unwrap();
     let due = due_with_fit(&ctx).await;
-    assert!(due.items.iter().any(|item| item.kind == DueKind::CodingPatterns));
+    assert!(due
+        .items
+        .iter()
+        .any(|item| item.kind == DueKind::CodingPatterns));
 }

@@ -314,7 +314,10 @@ async fn a_clean_answer_is_asked_for_once_and_becomes_the_scorecard() {
         .iter()
         .map(|row| row.title.as_str())
         .collect();
-    assert_eq!(titles, ["Problem solving", "Code", "Testing", "Communication"]);
+    assert_eq!(
+        titles,
+        ["Problem solving", "Code", "Testing", "Communication"]
+    );
     assert!(debrief.scorecard.rows.iter().all(|row| row.max_points == 4));
     let solving = row_of(&debrief, "problem_solving");
     assert_eq!(solving.status, ScoreStatus::Observed);
@@ -326,7 +329,10 @@ async fn a_clean_answer_is_asked_for_once_and_becomes_the_scorecard() {
             text: "a dictionary of the numbers".into()
         }]
     );
-    assert_eq!(debrief.approach, "Remember what you have seen in a dictionary.");
+    assert_eq!(
+        debrief.approach,
+        "Remember what you have seen in a dictionary."
+    );
     assert_eq!(debrief.complexity, "O(n) time, O(n) space");
     debrief.scorecard.validate().expect("a valid scorecard");
 }
@@ -501,7 +507,11 @@ async fn every_failure_goes_back_in_the_one_re_ask() {
         Some(3),
         vec![quote("t1", "words nobody said")],
     );
-    rows[1] = row("code", Some(4), vec![lines_item("r1", "solution.py", 1, 99)]);
+    rows[1] = row(
+        "code",
+        Some(4),
+        vec![lines_item("r1", "solution.py", 1, 99)],
+    );
     rows[2] = row("testing", Some(2), vec![example_item("42")]);
     let (result, model) = debrief_with(vec![answer(rows), answer(good_rows())], &evidence()).await;
     result.expect("a debrief");
@@ -516,7 +526,11 @@ async fn every_failure_goes_back_in_the_one_re_ask() {
 #[tokio::test]
 async fn it_asks_at_most_twice() {
     let mut rows = good_rows();
-    rows[0] = row("problem_solving", Some(3), vec![quote("t1", "nothing like it")]);
+    rows[0] = row(
+        "problem_solving",
+        Some(3),
+        vec![quote("t1", "nothing like it")],
+    );
     let (result, model) = debrief_with(
         vec![answer(rows.clone()), answer(rows.clone()), answer(rows)],
         &evidence(),
@@ -571,7 +585,9 @@ async fn a_run_an_example_and_a_hint_that_exist_are_kept() {
     assert_eq!(
         row_of(&debrief, "code").evidence,
         [
-            ScorecardEvidence::Run { run_id: "r1".into() },
+            ScorecardEvidence::Run {
+                run_id: "r1".into()
+            },
             ScorecardEvidence::Example { ordinal: 0 },
             ScorecardEvidence::Hint { ordinal: 0 },
         ]
@@ -648,18 +664,36 @@ fn facts_count_runs_submits_hints_and_settings() {
             .collect::<Vec<_>>(),
         [(CodeHintRung::Nudge, 2), (CodeHintRung::Plan, 1)]
     );
-    assert_eq!(facts.settings, [CodingSetting::Coached, CodingSetting::Mock]);
+    assert_eq!(
+        facts.settings,
+        [CodingSetting::Coached, CodingSetting::Mock]
+    );
 }
 
 fn timeline() -> Vec<CodingEventRow> {
     vec![
         event(0, "stage", json!({"to": "understand"}), 0),
         event(1, "opened", json!({}), 1_000),
-        event(2, "stage", json!({"from": "understand", "to": "examples", "skipped": []}), 4_000),
+        event(
+            2,
+            "stage",
+            json!({"from": "understand", "to": "examples", "skipped": []}),
+            4_000,
+        ),
         event(3, "closed", json!({}), 6_000),
         event(4, "opened", json!({}), 100_000),
-        event(5, "stage", json!({"from": "examples", "to": "plan", "skipped": []}), 101_000),
-        event(6, "stage", json!({"from": "plan", "to": "code", "skipped": []}), 105_000),
+        event(
+            5,
+            "stage",
+            json!({"from": "examples", "to": "plan", "skipped": []}),
+            101_000,
+        ),
+        event(
+            6,
+            "stage",
+            json!({"from": "plan", "to": "code", "skipped": []}),
+            105_000,
+        ),
         event(7, "run", json!({"runId": "r1"}), 106_000),
         event(8, "opened", json!({}), 200_000),
         event(9, "closed", json!({}), 203_000),
@@ -774,6 +808,9 @@ fn a_bug_fix_lists_its_own_stages() {
 
     assert_eq!(
         times(&session),
-        [(CodingStage::Reproduce, 2_000), (CodingStage::Locate, 3_000)]
+        [
+            (CodingStage::Reproduce, 2_000),
+            (CodingStage::Locate, 3_000)
+        ]
     );
 }

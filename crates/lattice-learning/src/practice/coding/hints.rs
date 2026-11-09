@@ -187,7 +187,9 @@ fn bad_lines(hinting: &Hinting<'_>, hint: &CodeHint) -> Option<String> {
         return Some("A Line hint names the file its lines are in, in `path`.".into());
     };
     let Some(file) = hinting.draft.iter().find(|file| file.path == path) else {
-        return Some(format!("`path` {path} is not one of the candidate's files."));
+        return Some(format!(
+            "`path` {path} is not one of the candidate's files."
+        ));
     };
     let count = file.content.lines().count();
     hint.lines
@@ -373,9 +375,7 @@ async fn write_checked(
 mod tests {
     use super::*;
     use crate::practice::coding::dto::CodingStage;
-    use lattice_core::application::ports::llm_port::{
-        CompletionRequest, CompletionResponse,
-    };
+    use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use lattice_core::domain::learning::practice::PROBLEM_PATTERNS;
     use std::collections::VecDeque;
     use std::sync::Mutex;
@@ -459,7 +459,10 @@ mod tests {
         CodeHint {
             lines,
             path: path.map(str::to_owned),
-            ..hint(CodeHintRung::Line, "This return ends the loop on the first pass.")
+            ..hint(
+                CodeHintRung::Line,
+                "This return ends the loop on the first pass.",
+            )
         }
     }
 
@@ -475,7 +478,10 @@ mod tests {
     async fn a_clean_hint_of_every_rung_is_accepted() {
         let fixture = Fixture::new();
         for rung in [CodeHintRung::Nudge, CodeHintRung::Idea, CodeHintRung::Plan] {
-            assert_eq!(refused(&fixture, CodingSetting::Mock, &hint(rung, CLEAN)).await, None);
+            assert_eq!(
+                refused(&fixture, CodingSetting::Mock, &hint(rung, CLEAN)).await,
+                None
+            );
         }
         let line = line_hint(vec![3], Some("solution.py"));
         assert_eq!(refused(&fixture, CodingSetting::Mock, &line).await, None);
@@ -485,12 +491,16 @@ mod tests {
     async fn blank_text_or_a_blank_reason_is_refused() {
         let fixture = Fixture::new();
         let blank_text = hint(CodeHintRung::Nudge, "  \n ");
-        assert!(refused(&fixture, CodingSetting::Mock, &blank_text).await.is_some());
+        assert!(refused(&fixture, CodingSetting::Mock, &blank_text)
+            .await
+            .is_some());
         let blank_reason = CodeHint {
             reason: " ".into(),
             ..hint(CodeHintRung::Nudge, CLEAN)
         };
-        assert!(refused(&fixture, CodingSetting::Mock, &blank_reason).await.is_some());
+        assert!(refused(&fixture, CodingSetting::Mock, &blank_reason)
+            .await
+            .is_some());
     }
 
     #[tokio::test]
@@ -498,8 +508,13 @@ mod tests {
         let fixture = Fixture::new();
         let fenced = "Remember them:\n```python\nx\n```";
         for rung in [CodeHintRung::Nudge, CodeHintRung::Idea] {
-            assert!(refused(&fixture, CodingSetting::Mock, &hint(rung, fenced)).await.is_some());
-            assert_eq!(refused(&fixture, CodingSetting::Mock, &hint(rung, CLEAN)).await, None);
+            assert!(refused(&fixture, CodingSetting::Mock, &hint(rung, fenced))
+                .await
+                .is_some());
+            assert_eq!(
+                refused(&fixture, CodingSetting::Mock, &hint(rung, CLEAN)).await,
+                None
+            );
         }
     }
 
@@ -507,8 +522,13 @@ mod tests {
     async fn a_plan_block_that_parses_as_python_is_refused() {
         let fixture = Fixture::new();
         let runnable = hint(CodeHintRung::Plan, "Steps:\n```\nPARSES\n```");
-        assert!(refused(&fixture, CodingSetting::Mock, &runnable).await.is_some());
-        let steps = hint(CodeHintRung::Plan, "Steps:\n```\n1. remember each number\n```");
+        assert!(refused(&fixture, CodingSetting::Mock, &runnable)
+            .await
+            .is_some());
+        let steps = hint(
+            CodeHintRung::Plan,
+            "Steps:\n```\n1. remember each number\n```",
+        );
         assert_eq!(refused(&fixture, CodingSetting::Mock, &steps).await, None);
     }
 
@@ -525,7 +545,9 @@ mod tests {
         ];
         for refused_hint in cases {
             assert!(
-                refused(&fixture, CodingSetting::Mock, &refused_hint).await.is_some(),
+                refused(&fixture, CodingSetting::Mock, &refused_hint)
+                    .await
+                    .is_some(),
                 "{refused_hint:?}"
             );
         }
@@ -540,25 +562,35 @@ mod tests {
             text: "Try this:\n```python\nPASSES\n```".into(),
             ..line_hint(vec![2], Some("solution.py"))
         };
-        assert!(refused(&fixture, CodingSetting::Mock, &solving).await.is_some());
+        assert!(refused(&fixture, CodingSetting::Mock, &solving)
+            .await
+            .is_some());
         let fragment = CodeHint {
             text: "Try this:\n```python\nfragment\n```".into(),
             ..line_hint(vec![2], Some("solution.py"))
         };
-        assert_eq!(refused(&fixture, CodingSetting::Mock, &fragment).await, None);
+        assert_eq!(
+            refused(&fixture, CodingSetting::Mock, &fragment).await,
+            None
+        );
     }
 
     #[tokio::test]
     async fn a_line_of_the_reference_is_refused_word_for_word() {
         let fixture = Fixture::new();
-        let verbatim = hint(CodeHintRung::Plan, "Then store it with `seen[n] = i` each time.");
+        let verbatim = hint(
+            CodeHintRung::Plan,
+            "Then store it with `seen[n] = i` each time.",
+        );
         let why = refused(&fixture, CodingSetting::Mock, &verbatim).await;
         assert!(why.is_some_and(|why| !why.contains("seen[n] = i")));
         let in_reason = CodeHint {
             reason: "Because `if target - n in seen:` is the test.".into(),
             ..hint(CodeHintRung::Nudge, CLEAN)
         };
-        assert!(refused(&fixture, CodingSetting::Mock, &in_reason).await.is_some());
+        assert!(refused(&fixture, CodingSetting::Mock, &in_reason)
+            .await
+            .is_some());
     }
 
     #[tokio::test]
@@ -571,7 +603,12 @@ mod tests {
             "Does the loop need an else:?",
         ] {
             assert_eq!(
-                refused(&fixture, CodingSetting::Mock, &hint(CodeHintRung::Plan, text)).await,
+                refused(
+                    &fixture,
+                    CodingSetting::Mock,
+                    &hint(CodeHintRung::Plan, text)
+                )
+                .await,
                 None,
                 "{text}"
             );
@@ -582,7 +619,11 @@ mod tests {
     async fn the_pattern_name_is_allowed_only_on_a_coached_idea() {
         let fixture = Fixture::new();
         let text = format!("This is a case for {}.", fixture.pattern_name());
-        for setting in [CodingSetting::Coached, CodingSetting::Mock, CodingSetting::Watched] {
+        for setting in [
+            CodingSetting::Coached,
+            CodingSetting::Mock,
+            CodingSetting::Watched,
+        ] {
             for rung in [
                 CodeHintRung::Nudge,
                 CodeHintRung::Idea,
@@ -626,7 +667,10 @@ mod tests {
     #[test]
     fn the_rungs_come_in_order_and_the_top_one_stays() {
         assert_eq!(next_rung(&[]), CodeHintRung::Nudge);
-        assert_eq!(next_rung(&given(&[CodeHintRung::Nudge])), CodeHintRung::Idea);
+        assert_eq!(
+            next_rung(&given(&[CodeHintRung::Nudge])),
+            CodeHintRung::Idea
+        );
         assert_eq!(
             next_rung(&given(&[CodeHintRung::Nudge, CodeHintRung::Idea])),
             CodeHintRung::Plan
@@ -700,11 +744,17 @@ mod tests {
     async fn a_refused_hint_is_asked_for_again_with_the_reason() {
         let fixture = Fixture::new();
         let llm = Scripted::new(&[&answer(BAD), &answer(CLEAN)]);
-        let hint = written(&llm, &fixture, CodeHintRung::Plan).await.expect("second answer is clean");
-        assert_eq!(hint.text, CLEAN);
-        let why = refused(&fixture, CodingSetting::Mock, &self::hint(CodeHintRung::Plan, BAD))
+        let hint = written(&llm, &fixture, CodeHintRung::Plan)
             .await
-            .expect("the first answer is refused");
+            .expect("second answer is clean");
+        assert_eq!(hint.text, CLEAN);
+        let why = refused(
+            &fixture,
+            CodingSetting::Mock,
+            &self::hint(CodeHintRung::Plan, BAD),
+        )
+        .await
+        .expect("the first answer is refused");
         let requests = llm.requests();
         assert_eq!(requests.len(), 2);
         assert!(format!("{:?}", requests[1]).contains(&why));
@@ -714,8 +764,13 @@ mod tests {
     async fn two_refused_answers_fail_as_an_unusable_model_answer() {
         let fixture = Fixture::new();
         let llm = Scripted::new(&[&answer(BAD), &answer(BAD), &answer(CLEAN)]);
-        let error = written(&llm, &fixture, CodeHintRung::Plan).await.unwrap_err();
-        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+        let error = written(&llm, &fixture, CodeHintRung::Plan)
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(error, AppError::ModelAnswerUnusable(_)),
+            "{error:?}"
+        );
         assert_eq!(llm.requests().len(), 2);
     }
 
@@ -723,7 +778,9 @@ mod tests {
     async fn a_clean_first_answer_is_the_only_call() {
         let fixture = Fixture::new();
         let llm = Scripted::new(&[&answer(CLEAN)]);
-        written(&llm, &fixture, CodeHintRung::Nudge).await.expect("clean");
+        written(&llm, &fixture, CodeHintRung::Nudge)
+            .await
+            .expect("clean");
         assert_eq!(llm.requests().len(), 1);
     }
 
@@ -738,9 +795,13 @@ mod tests {
         })
         .to_string();
         let llm = Scripted::new(&[&with_lines, &with_lines]);
-        let nudge = written(&llm, &fixture, CodeHintRung::Nudge).await.expect("clean");
+        let nudge = written(&llm, &fixture, CodeHintRung::Nudge)
+            .await
+            .expect("clean");
         assert!(nudge.lines.is_empty() && nudge.path.is_none());
-        let line = written(&llm, &fixture, CodeHintRung::Line).await.expect("clean");
+        let line = written(&llm, &fixture, CodeHintRung::Line)
+            .await
+            .expect("clean");
         assert_eq!(line.lines, vec![3]);
         assert_eq!(line.path.as_deref(), Some("solution.py"));
     }
@@ -748,7 +809,11 @@ mod tests {
 
     #[test]
     fn the_naming_rule_is_in_every_request_that_does_not_allow_a_name() {
-        for setting in [CodingSetting::Coached, CodingSetting::Mock, CodingSetting::Watched] {
+        for setting in [
+            CodingSetting::Coached,
+            CodingSetting::Mock,
+            CodingSetting::Watched,
+        ] {
             for rung in [
                 CodeHintRung::Nudge,
                 CodeHintRung::Idea,

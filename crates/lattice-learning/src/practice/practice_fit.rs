@@ -5,8 +5,8 @@ use crate::generation::parse_json;
 use crate::lessons::structured_call::complete_checked_request;
 use crate::model_call;
 use crate::persistence::{hash, now};
-use crate::practice_repository::LearningPracticeRepository;
 use crate::practice_repository::FitState;
+use crate::practice_repository::LearningPracticeRepository;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -72,13 +72,8 @@ fn schema() -> serde_json::Value {
 }
 
 async fn ask(llm: &dyn LLMPort, outline: &CourseOutline) -> Result<Judgement> {
-    let request = model_call::structured(
-        SYSTEM,
-        prompt(outline),
-        schema(),
-        FIT_ANSWER_TOKENS,
-        "low",
-    );
+    let request =
+        model_call::structured(SYSTEM, prompt(outline), schema(), FIT_ANSWER_TOKENS, "low");
     complete_checked_request(llm, request, None, None, |raw| {
         let judgement: Judgement = parse_json(raw)?;
         if judgement.reason.trim().is_empty() {
@@ -126,9 +121,7 @@ fn known(state: &FitState) -> Result<PracticeFitDto> {
     }
     let basis = basis_of(&state.outline)?;
     Ok(match &state.stored {
-        Some(stored) if stored.basis == basis => {
-            fit(stored.teaches_code, stored.reason.clone())
-        }
+        Some(stored) if stored.basis == basis => fit(stored.teaches_code, stored.reason.clone()),
         _ => PracticeFitDto {
             code: CodeFit::Checking,
             reason: None,

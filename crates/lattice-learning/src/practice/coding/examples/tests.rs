@@ -55,7 +55,10 @@ async fn an_example_with_the_wrong_arity_is_invalid_and_runs_nothing() {
     .await
     .unwrap();
     assert_eq!(checked.verdict, ExampleVerdict::Invalid);
-    assert!(checked.why_invalid.as_deref().is_some_and(|why| why.contains("2 argument")));
+    assert!(checked
+        .why_invalid
+        .as_deref()
+        .is_some_and(|why| why.contains("2 argument")));
     assert!(runner.files_seen.lock().unwrap().is_empty());
 }
 
@@ -63,7 +66,10 @@ async fn an_example_with_the_wrong_arity_is_invalid_and_runs_nothing() {
 async fn an_example_that_is_not_a_literal_is_invalid_and_names_the_value() {
     let argument = check(&["2", NOT_A_LITERAL], "2").await;
     assert_eq!(argument.verdict, ExampleVerdict::Invalid);
-    assert!(argument.why_invalid.as_deref().is_some_and(|why| why.contains("for b")));
+    assert!(argument
+        .why_invalid
+        .as_deref()
+        .is_some_and(|why| why.contains("for b")));
 
     let expected = check(&["2", "3"], NOT_A_LITERAL).await;
     assert_eq!(expected.verdict, ExampleVerdict::Invalid);

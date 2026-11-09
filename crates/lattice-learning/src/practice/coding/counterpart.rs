@@ -7,13 +7,13 @@ use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::drills::runner::CodeRunner;
+use crate::lessons::structured_call::{complete_checked_request, reask};
+use crate::model_call;
 use crate::practice::coding::harness::CaseHarness;
 use crate::practice::coding::observation::WorkspaceObservation;
 use crate::practice::coding::policy::{CodingCue, CodingPolicy};
 use crate::practice::coding::problem::Problem;
 use crate::practice::coding::solution_check::{code_blocks, passes_every_case};
-use crate::lessons::structured_call::{complete_checked_request, reask};
-use crate::model_call;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::problem_patterns::named_in;
 use lattice_core::shared::error::{AppError, Result};
@@ -127,7 +127,12 @@ fn accept(
         .cases
         .iter()
         .map(|case| case.id.clone())
-        .chain(problem.misreadings.iter().map(|misreading| misreading.id.clone()))
+        .chain(
+            problem
+                .misreadings
+                .iter()
+                .map(|misreading| misreading.id.clone()),
+        )
         .chain(observation.internal_ids());
     for id in internal.filter(|id| !id.is_empty()) {
         if content.contains(&id) {
@@ -248,10 +253,10 @@ pub async fn respond(
 mod tests {
     use super::*;
     use crate::practice::coding::dto::CodingStage;
+    use crate::practice::coding::observation::observe;
     use crate::practice::coding::observation::test_support::{
         failing_run, observation, session, MISREADING_ID,
     };
-    use crate::practice::coding::observation::observe;
     use crate::practice::coding::policy::policy_for;
     use crate::practice::coding::problem::{CodingSetting, CodingTask};
     use lattice_core::domain::learning::practice::problem_patterns::PROBLEM_PATTERNS;
@@ -271,7 +276,11 @@ mod tests {
         base.to_string()
     }
 
-    fn accepted(setting: CodingSetting, cue: &CodingCue, raw: &str) -> Result<Option<CounterpartReply>> {
+    fn accepted(
+        setting: CodingSetting,
+        cue: &CodingCue,
+        raw: &str,
+    ) -> Result<Option<CounterpartReply>> {
         let (problem, observation) = observation(setting, CodingStage::Code);
         let policy = policy_for(setting, CodingTask::Problem);
         accept(raw, &problem, policy.as_ref(), cue, &observation)
@@ -286,7 +295,9 @@ mod tests {
 
     #[test]
     fn a_clean_reply_is_accepted_with_its_lines() {
-        let raw = with(serde_json::json!({"content": "Check line 2.", "lines": [2], "path": "solution.py"}));
+        let raw = with(
+            serde_json::json!({"content": "Check line 2.", "lines": [2], "path": "solution.py"}),
+        );
         let reply = accepted(CodingSetting::Coached, &CodingCue::Reply, &raw);
         assert_eq!(
             reply.ok().flatten(),
@@ -301,7 +312,10 @@ mod tests {
     #[test]
     fn a_blank_reply_is_refused() {
         let result = accepted(CodingSetting::Coached, &CodingCue::Reply, &json("  \n "));
-        assert!(matches!(result, Err(AppError::InvalidInput(_))), "{result:?}");
+        assert!(
+            matches!(result, Err(AppError::InvalidInput(_))),
+            "{result:?}"
+        );
     }
 
     #[test]
@@ -322,30 +336,47 @@ mod tests {
     #[test]
     fn lines_with_no_path_mean_the_solution_file() {
         let last = with(serde_json::json!({"lines": [3]}));
-        let reply = accepted(CodingSetting::Coached, &CodingCue::Reply, &last).ok().flatten();
-        assert_eq!(reply.and_then(|reply| reply.path), Some("solution.py".to_owned()));
+        let reply = accepted(CodingSetting::Coached, &CodingCue::Reply, &last)
+            .ok()
+            .flatten();
+        assert_eq!(
+            reply.and_then(|reply| reply.path),
+            Some("solution.py".to_owned())
+        );
         let past = with(serde_json::json!({"lines": [4]}));
         assert!(accepted(CodingSetting::Coached, &CodingCue::Reply, &past).is_err());
     }
 
     #[test]
     fn a_reply_naming_the_pattern_is_refused() {
-        let name = PROBLEM_PATTERNS.first().map(|pattern| pattern.name).unwrap_or_default();
-        let raw = json(&format!("This is a classic {} problem.", name.to_lowercase()));
+        let name = PROBLEM_PATTERNS
+            .first()
+            .map(|pattern| pattern.name)
+            .unwrap_or_default();
+        let raw = json(&format!(
+            "This is a classic {} problem.",
+            name.to_lowercase()
+        ));
         let why = reason(accepted(CodingSetting::Coached, &CodingCue::Reply, &raw));
         assert!(why.contains(name), "{why}");
     }
 
     #[test]
     fn a_clarification_answer_not_verbatim_is_refused() {
-        let raw = with(serde_json::json!({"content": "Yes, it can be empty.", "clarification": "0"}));
+        let raw =
+            with(serde_json::json!({"content": "Yes, it can be empty.", "clarification": "0"}));
         assert!(accepted(CodingSetting::Mock, &CodingCue::Reply, &raw).is_err());
     }
 
     #[test]
     fn a_clarification_answer_verbatim_is_accepted() {
-        let raw = with(serde_json::json!({"content": "Yes, and its total is 0. Anything else?", "clarification": "0"}));
-        assert!(accepted(CodingSetting::Mock, &CodingCue::Reply, &raw).ok().flatten().is_some());
+        let raw = with(
+            serde_json::json!({"content": "Yes, and its total is 0. Anything else?", "clarification": "0"}),
+        );
+        assert!(accepted(CodingSetting::Mock, &CodingCue::Reply, &raw)
+            .ok()
+            .flatten()
+            .is_some());
     }
 
     #[test]
@@ -356,17 +387,26 @@ mod tests {
 
     #[test]
     fn your_call_needs_its_sentence() {
-        let missing = with(serde_json::json!({"content": "It is up to you.", "clarification": "your_call"}));
+        let missing =
+            with(serde_json::json!({"content": "It is up to you.", "clarification": "your_call"}));
         assert!(accepted(CodingSetting::Mock, &CodingCue::Reply, &missing).is_err());
-        let said = with(serde_json::json!({"content": "Your call: state your assumption.", "clarification": "your_call"}));
-        assert!(accepted(CodingSetting::Mock, &CodingCue::Reply, &said).ok().flatten().is_some());
+        let said = with(
+            serde_json::json!({"content": "Your call: state your assumption.", "clarification": "your_call"}),
+        );
+        assert!(accepted(CodingSetting::Mock, &CodingCue::Reply, &said)
+            .ok()
+            .flatten()
+            .is_some());
     }
 
     #[test]
     fn an_internal_id_is_refused() {
         for id in ["case-hidden-1", MISREADING_ID] {
             let raw = json(&format!("Your code fails {id}."));
-            assert!(accepted(CodingSetting::Coached, &CodingCue::Reply, &raw).is_err(), "{id}");
+            assert!(
+                accepted(CodingSetting::Coached, &CodingCue::Reply, &raw).is_err(),
+                "{id}"
+            );
         }
     }
 
@@ -379,7 +419,13 @@ mod tests {
         let policy = policy_for(CodingSetting::Coached, CodingTask::Problem);
         for id in ["run-77777777-aaaa", "5b1f0c2e-1111-4222-8333-444455556666"] {
             let raw = json(&format!("See {id}."));
-            let result = accept(&raw, &problem, policy.as_ref(), &CodingCue::Reply, &observation);
+            let result = accept(
+                &raw,
+                &problem,
+                policy.as_ref(),
+                &CodingCue::Reply,
+                &observation,
+            );
             assert!(result.is_err(), "{id}");
         }
     }
@@ -389,7 +435,10 @@ mod tests {
         let raw = json("What is the cost? And why that structure?");
         assert!(accepted(CodingSetting::Mock, &CodingCue::Reply, &raw).is_err());
         assert!(accepted(CodingSetting::Watched, &CodingCue::Reply, &raw).is_err());
-        assert!(accepted(CodingSetting::Coached, &CodingCue::Reply, &raw).ok().flatten().is_some());
+        assert!(accepted(CodingSetting::Coached, &CodingCue::Reply, &raw)
+            .ok()
+            .flatten()
+            .is_some());
     }
 
     #[test]
@@ -403,7 +452,10 @@ mod tests {
             CodingCue::StageOpened(CodingStage::Plan),
         ];
         for cue in cues {
-            assert!(accepted(CodingSetting::Watched, &cue, &silent).is_err(), "{cue:?}");
+            assert!(
+                accepted(CodingSetting::Watched, &cue, &silent).is_err(),
+                "{cue:?}"
+            );
         }
         assert_eq!(
             accepted(CodingSetting::Watched, &CodingCue::Checkpoint, &silent).ok(),
@@ -414,10 +466,12 @@ mod tests {
     #[test]
     fn speaking_on_a_checkpoint_is_checked_like_any_reply() {
         let spoken = with(serde_json::json!({"content": "Why a loop here?", "speak": true}));
-        assert!(accepted(CodingSetting::Watched, &CodingCue::Checkpoint, &spoken)
-            .ok()
-            .flatten()
-            .is_some());
+        assert!(
+            accepted(CodingSetting::Watched, &CodingCue::Checkpoint, &spoken)
+                .ok()
+                .flatten()
+                .is_some()
+        );
         let blank = with(serde_json::json!({"content": " ", "speak": true}));
         assert!(accepted(CodingSetting::Watched, &CodingCue::Checkpoint, &blank).is_err());
     }
@@ -426,20 +480,29 @@ mod tests {
     fn a_reply_wrapped_in_a_json_fence_is_accepted() {
         let fenced = format!("```json\n{}\n```", json("Check line 2."));
         let reply = accepted(CodingSetting::Coached, &CodingCue::Reply, &fenced);
-        assert_eq!(reply.ok().flatten().map(|reply| reply.content), Some("Check line 2.".to_owned()));
+        assert_eq!(
+            reply.ok().flatten().map(|reply| reply.content),
+            Some("Check line 2.".to_owned())
+        );
     }
 
     #[test]
     fn an_answer_that_is_not_the_json_asked_for_is_refused() {
         let result = accepted(CodingSetting::Coached, &CodingCue::Reply, "plain words");
-        assert!(matches!(result, Err(AppError::InvalidInput(_))), "{result:?}");
+        assert!(
+            matches!(result, Err(AppError::InvalidInput(_))),
+            "{result:?}"
+        );
     }
 
     #[tokio::test]
     async fn a_code_block_that_passes_every_case_is_refused() {
         let content = "Try this:\n```python\ndef total(values):\n    return sum(values)\n```\n";
         let result = refuse_passing_blocks(content, |_code| async { Ok(true) }).await;
-        assert!(matches!(result, Err(AppError::InvalidInput(_))), "{result:?}");
+        assert!(
+            matches!(result, Err(AppError::InvalidInput(_))),
+            "{result:?}"
+        );
     }
 
     #[tokio::test]
@@ -452,7 +515,8 @@ mod tests {
     #[tokio::test]
     async fn every_block_is_run_and_any_passing_one_refuses() {
         let content = "```python\nfirst\n```\ntext\n```python\nsecond\n```\n";
-        let result = refuse_passing_blocks(content, |code| async move { Ok(code.contains("second")) }).await;
+        let result =
+            refuse_passing_blocks(content, |code| async move { Ok(code.contains("second")) }).await;
         assert!(result.is_err());
     }
 
@@ -472,7 +536,10 @@ mod tests {
             Err::<bool, _>(AppError::ServiceNotAvailable("no runtime".into()))
         })
         .await;
-        assert!(matches!(result, Err(AppError::ServiceNotAvailable(_))), "{result:?}");
+        assert!(
+            matches!(result, Err(AppError::ServiceNotAvailable(_))),
+            "{result:?}"
+        );
     }
 
     #[test]

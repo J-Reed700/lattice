@@ -324,7 +324,10 @@ async fn due_problem_patterns_are_one_item_that_names_no_pattern() {
     assert_eq!(item.due_at, NOW - 2 * DAY_MS);
     for pattern in PROBLEM_PATTERNS {
         assert!(
-            !item.label.to_lowercase().contains(&pattern.name.to_lowercase()),
+            !item
+                .label
+                .to_lowercase()
+                .contains(&pattern.name.to_lowercase()),
             "the label names {}",
             pattern.name
         );
@@ -394,9 +397,8 @@ async fn due_coding_items_are_left_out_of_a_course_where_code_does_not_fit() {
         .await
         .expect("due");
 
-    let kinds = |due: &PracticeDueDto| -> Vec<DueKind> {
-        due.items.iter().map(|item| item.kind).collect()
-    };
+    let kinds =
+        |due: &PracticeDueDto| -> Vec<DueKind> { due.items.iter().map(|item| item.kind).collect() };
     assert_eq!(kinds(&without), [DueKind::DrillPatterns]);
     assert_eq!(without.items[0].material.as_deref(), Some("passage"));
     assert_eq!(

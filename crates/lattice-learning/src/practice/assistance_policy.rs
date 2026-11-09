@@ -81,7 +81,10 @@ mod tests {
     #[test]
     fn coding_full_help_allows_every_kind() {
         for help in HELPS {
-            assert!(CodingAssistance.allows(help, HelpLevel::FullHelp), "{help:?}");
+            assert!(
+                CodingAssistance.allows(help, HelpLevel::FullHelp),
+                "{help:?}"
+            );
         }
     }
 
@@ -95,15 +98,24 @@ mod tests {
     #[test]
     fn coding_no_help_allows_nothing() {
         for help in HELPS {
-            assert!(!CodingAssistance.allows(help, HelpLevel::NoHelp), "{help:?}");
+            assert!(
+                !CodingAssistance.allows(help, HelpLevel::NoHelp),
+                "{help:?}"
+            );
         }
     }
 
     #[test]
     fn written_practice_table() {
         for help in HELPS {
-            assert!(WrittenAssistance.allows(help, HelpLevel::FullHelp), "{help:?}");
-            assert!(!WrittenAssistance.allows(help, HelpLevel::NoHelp), "{help:?}");
+            assert!(
+                WrittenAssistance.allows(help, HelpLevel::FullHelp),
+                "{help:?}"
+            );
+            assert!(
+                !WrittenAssistance.allows(help, HelpLevel::NoHelp),
+                "{help:?}"
+            );
         }
         assert!(WrittenAssistance.allows(Help::Hint, HelpLevel::HintsOnly));
         assert!(WrittenAssistance.allows(Help::Tutor, HelpLevel::HintsOnly));
@@ -112,21 +124,36 @@ mod tests {
 
     #[test]
     fn a_written_mode_has_its_level() {
-        assert_eq!(written_level(&LearningPracticeMode::Explore), HelpLevel::FullHelp);
-        assert_eq!(written_level(&LearningPracticeMode::Practice), HelpLevel::HintsOnly);
-        assert_eq!(written_level(&LearningPracticeMode::Demonstrate), HelpLevel::NoHelp);
+        assert_eq!(
+            written_level(&LearningPracticeMode::Explore),
+            HelpLevel::FullHelp
+        );
+        assert_eq!(
+            written_level(&LearningPracticeMode::Practice),
+            HelpLevel::HintsOnly
+        );
+        assert_eq!(
+            written_level(&LearningPracticeMode::Demonstrate),
+            HelpLevel::NoHelp
+        );
     }
 
     #[test]
     fn a_tutor_request_asks_for_the_help_it_gives() {
         use LearningPracticeHintLevel::*;
         let hint = LearningTutorRequestKind::Hint;
-        assert_eq!(written_help(&hint, Some(&WorkedExplanation)), Help::WorkedSolution);
+        assert_eq!(
+            written_help(&hint, Some(&WorkedExplanation)),
+            Help::WorkedSolution
+        );
         for level in [OrientingQuestion, ConceptOrSource, PartialStrategy] {
             assert_eq!(written_help(&hint, Some(&level)), Help::Hint, "{level:?}");
         }
         assert_eq!(written_help(&hint, None), Help::Hint);
-        for kind in [LearningTutorRequestKind::Question, LearningTutorRequestKind::Critique] {
+        for kind in [
+            LearningTutorRequestKind::Question,
+            LearningTutorRequestKind::Critique,
+        ] {
             assert_eq!(written_help(&kind, None), Help::Tutor);
             assert_eq!(written_help(&kind, Some(&PartialStrategy)), Help::Tutor);
         }

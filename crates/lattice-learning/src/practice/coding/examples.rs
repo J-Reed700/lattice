@@ -96,9 +96,7 @@ async fn literal_problems(
                 .map_err(|error| AppError::Serialization(error.to_string()))?,
         },
     ];
-    let (outcome, stdout) = runner
-        .run_capturing(&files, &[entrypoint], cancel)
-        .await?;
+    let (outcome, stdout) = runner.run_capturing(&files, &[entrypoint], cancel).await?;
     if let RunOutcome::Cancelled | RunOutcome::Unavailable { .. } = outcome {
         return Err(AppError::InvalidState(
             outcome

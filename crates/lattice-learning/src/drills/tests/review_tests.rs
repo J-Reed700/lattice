@@ -1007,7 +1007,8 @@ async fn an_issue_a_blind_review_raised_is_revealed_as_also_valid_and_a_planted_
 }
 
 #[tokio::test]
-async fn the_learner_is_told_how_many_issues_were_planted_and_not_how_many_were_found_in_review() -> Result<()> {
+async fn the_learner_is_told_how_many_issues_were_planted_and_not_how_many_were_found_in_review(
+) -> Result<()> {
     let waiting = Waiting::new(vec![operator_finding()], None).await?;
     let (_, mut stored) = attempts::get(&waiting.pool, &waiting.attempt).await?;
     let planted = stored.drill.key[0].clone();

@@ -127,7 +127,9 @@ fn cue_for(setting: CodingSetting, task: CodingTask, event: &CodingEvent) -> Opt
             (CodingSetting::Watched, _) => Some(CodingCue::Checkpoint),
             (CodingSetting::Mock, _) => None,
         },
-        CodingEvent::DraftPaused { changed } => (watched && *changed).then_some(CodingCue::Checkpoint),
+        CodingEvent::DraftPaused { changed } => {
+            (watched && *changed).then_some(CodingCue::Checkpoint)
+        }
         CodingEvent::Idle => coached.then_some(CodingCue::Idle),
     }
 }
@@ -166,7 +168,8 @@ const RULES: &str = "Speak about the learner's code, runs and examples only from
 
 const FORMAT: &str = "Answer as JSON: content is what you say; lines are the line numbers of the learner's code that you refer to, or none; path is the file those lines are in, or null; clarification is as described above.";
 
-const SPEAK: &str = " Also set \"speak\" to false to stay silent, in which case content may be empty.";
+const SPEAK: &str =
+    " Also set \"speak\" to false to stay silent, in which case content may be empty.";
 
 fn stage_names(stages: &[CodingStage]) -> String {
     stages
@@ -176,7 +179,11 @@ fn stage_names(stages: &[CodingStage]) -> String {
         .join(" and ")
 }
 
-fn cue_instruction(setting: CodingSetting, cue: &CodingCue, state: &WorkspaceObservation) -> String {
+fn cue_instruction(
+    setting: CodingSetting,
+    cue: &CodingCue,
+    state: &WorkspaceObservation,
+) -> String {
     let coached = setting == CodingSetting::Coached;
     match cue {
         CodingCue::Opening if coached => format!(
@@ -327,7 +334,11 @@ mod tests {
             ),
             (
                 "stage moved, both asked-for stages skipped",
-                moved(Stage::Understand, Stage::Code, &[Stage::Examples, Stage::Plan]),
+                moved(
+                    Stage::Understand,
+                    Stage::Code,
+                    &[Stage::Examples, Stage::Plan],
+                ),
                 [
                     Some(Cue::StageOpened(Stage::Code)),
                     Some(Cue::AskForSkipped(vec![Stage::Examples, Stage::Plan])),
@@ -413,7 +424,11 @@ mod tests {
     #[test]
     fn what_is_asked_for_when_skipped_follows_the_task() {
         let event = moved(Stage::Reproduce, Stage::Fix, &[Stage::Locate]);
-        let skipped_reproduce = moved(Stage::Locate, Stage::Verify, &[Stage::Reproduce, Stage::Fix]);
+        let skipped_reproduce = moved(
+            Stage::Locate,
+            Stage::Verify,
+            &[Stage::Reproduce, Stage::Fix],
+        );
         for setting in [CodingSetting::Mock, CodingSetting::Watched] {
             let (_, observation) = observation(setting, Stage::Reproduce);
             let policy = policy_for(setting, CodingTask::BugFix);
@@ -442,7 +457,10 @@ mod tests {
             assert!(!higher.outranks(higher), "{higher:?} outranks itself");
             for lower in ranked.iter().skip(index + 1) {
                 assert!(higher.outranks(lower), "{higher:?} must outrank {lower:?}");
-                assert!(!lower.outranks(higher), "{lower:?} must not outrank {higher:?}");
+                assert!(
+                    !lower.outranks(higher),
+                    "{lower:?} must not outrank {higher:?}"
+                );
             }
         }
     }
@@ -450,7 +468,9 @@ mod tests {
     #[test]
     fn cues_of_one_kind_do_not_outrank_each_other() {
         assert!(!Cue::StageOpened(Stage::Plan).outranks(&Cue::StageOpened(Stage::Code)));
-        assert!(!Cue::RunReview(CodingRunScope::All).outranks(&Cue::RunReview(CodingRunScope::Input)));
+        assert!(
+            !Cue::RunReview(CodingRunScope::All).outranks(&Cue::RunReview(CodingRunScope::Input))
+        );
     }
 
     #[test]

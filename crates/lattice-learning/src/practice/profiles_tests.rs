@@ -336,7 +336,10 @@ async fn written_practice_starts_from_the_learners_details() -> Result<()> {
     repo.start(&after, "after").await?;
     let prompt = repo.get_session(&after.session_id).await?.task_prompt;
     assert!(prompt.starts_with(&plain), "{prompt}");
-    assert!(prompt.contains("Preparing for a backend interview"), "{prompt}");
+    assert!(
+        prompt.contains("Preparing for a backend interview"),
+        "{prompt}"
+    );
     Ok(())
 }
 
@@ -390,19 +393,22 @@ async fn checking_stores_the_verdict_with_its_model_and_returns_it() -> Result<(
     );
     assert_eq!(model.calls(), 1);
 
-    let stored: (i64, String) = sqlx::query_as(
-        "SELECT teaches_code,model FROM learning_practice_fits WHERE program_id=?",
-    )
-    .bind(&program.summary.id)
-    .fetch_one(&pool)
-    .await
-    .map_err(db)?;
+    let stored: (i64, String) =
+        sqlx::query_as("SELECT teaches_code,model FROM learning_practice_fits WHERE program_id=?")
+            .bind(&program.summary.id)
+            .fetch_one(&pool)
+            .await
+            .map_err(db)?;
     assert_eq!(stored, (1, "verdict".to_string()));
 
     assert_eq!(practice_fit(&repo, &program.summary.id).await?, checked);
     let again = check_practice_fit(&repo, &model, &program.summary.id).await?;
     assert_eq!(again, checked);
-    assert_eq!(model.calls(), 1, "a verdict on the current basis is not asked for again");
+    assert_eq!(
+        model.calls(),
+        1,
+        "a verdict on the current basis is not asked for again"
+    );
     Ok(())
 }
 
@@ -468,5 +474,8 @@ fn the_fallback_task_speaks_to_the_learner_and_adds_their_details_as_a_last_line
     assert_eq!(fallback_task_prompt("Explain hash maps", Some("  ")), plain);
     assert_eq!(fallback_task_prompt("Explain hash maps", Some("")), plain);
     let with = fallback_task_prompt("Explain hash maps", Some(" a backend interview "));
-    assert_eq!(with, format!("{plain}\n\nYou are preparing for: a backend interview"));
+    assert_eq!(
+        with,
+        format!("{plain}\n\nYou are preparing for: a backend interview")
+    );
 }

@@ -6,9 +6,7 @@ use super::dto::{CodeHintRung, DueItemDto, DueKind, PatternRatingDto, PracticeDu
 use crate::drills::schedules;
 use crate::persistence::db;
 use lattice_core::domain::learning::drills::{Material, PatternRating};
-use lattice_core::domain::learning::practice::{
-    problem_pattern, ProblemPattern, PROBLEM_PATTERNS,
-};
+use lattice_core::domain::learning::practice::{problem_pattern, ProblemPattern, PROBLEM_PATTERNS};
 use lattice_core::shared::error::Result;
 use sqlx::SqliteConnection;
 
@@ -122,8 +120,10 @@ pub async fn targets_in(
         })
         .collect();
     ranked.sort_by_key(|&(standing, due_at, order, _)| (standing, due_at, order));
-    let mut left: Vec<&'static ProblemPattern> =
-        ranked.into_iter().map(|(_, _, _, pattern)| pattern).collect();
+    let mut left: Vec<&'static ProblemPattern> = ranked
+        .into_iter()
+        .map(|(_, _, _, pattern)| pattern)
+        .collect();
     let mut chosen: Vec<String> = Vec::with_capacity(left.len());
     let mut picked_families: Vec<&'static ProblemPattern> = Vec::new();
     while !left.is_empty() {
@@ -252,7 +252,11 @@ pub async fn practice_due_in(
         let what = material.language().unwrap_or("passage");
         items.push(DueItemDto {
             kind: DueKind::DrillPatterns,
-            label: plural(count, &format!("{what} pattern"), &format!("{what} patterns")),
+            label: plural(
+                count,
+                &format!("{what} pattern"),
+                &format!("{what} patterns"),
+            ),
             count,
             due_at: first,
             lesson_id: None,

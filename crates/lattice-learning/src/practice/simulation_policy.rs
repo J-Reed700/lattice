@@ -60,11 +60,7 @@ impl<'a> TurnPolicy<SimulationState<'a>> for InterviewQuestionsPolicy {
     type Event = SimulationEvent;
     type Cue = SimulationCue;
 
-    fn cue(
-        &self,
-        event: &SimulationEvent,
-        _state: &SimulationState<'a>,
-    ) -> Option<SimulationCue> {
+    fn cue(&self, event: &SimulationEvent, _state: &SimulationState<'a>) -> Option<SimulationCue> {
         Some(cue_of(event))
     }
 
@@ -76,12 +72,7 @@ impl<'a> TurnPolicy<SimulationState<'a>> for InterviewQuestionsPolicy {
         .to_string()
     }
 
-    fn check(
-        &self,
-        content: &str,
-        cue: &SimulationCue,
-        state: &SimulationState<'a>,
-    ) -> Result<()> {
+    fn check(&self, content: &str, cue: &SimulationCue, state: &SimulationState<'a>) -> Result<()> {
         match (cue, state.interview_plan) {
             (SimulationCue::Turn, Some(plan)) => {
                 validate_interviewer_reply(content, state.session, plan)
@@ -95,11 +86,7 @@ impl<'a> TurnPolicy<SimulationState<'a>> for ScenarioPolicy {
     type Event = SimulationEvent;
     type Cue = SimulationCue;
 
-    fn cue(
-        &self,
-        event: &SimulationEvent,
-        _state: &SimulationState<'a>,
-    ) -> Option<SimulationCue> {
+    fn cue(&self, event: &SimulationEvent, _state: &SimulationState<'a>) -> Option<SimulationCue> {
         Some(cue_of(event))
     }
 
