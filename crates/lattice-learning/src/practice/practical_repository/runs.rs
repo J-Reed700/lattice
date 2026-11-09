@@ -36,7 +36,6 @@ fn coding_harness(coding: &CodingRunStart) -> Result<(PreparedHarness, Vec<Learn
             nonce,
             cases: coding.cases.clone(),
             mine_ids: coding.mine_ids.clone(),
-            coding_session_id: coding.coding_session_id.clone(),
         },
         evaluator,
     ))
