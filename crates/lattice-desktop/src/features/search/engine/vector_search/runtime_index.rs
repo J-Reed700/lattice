@@ -104,7 +104,7 @@ impl RuntimeVectorIndex {
                 Err(AppError::ModelLoadFailed("Embedding model changed. Restart Lattice to open its prepared search generation.".into()))
             };
         }
-        crate::features::search::embedding_generation::prepare(pool, model).await?;
+        crate::infrastructure::ml::embedding_generation::prepare(pool, model).await?;
         let rows = generation::restore(pool, &identity, model.dimension()).await?;
         // Opened exactly as startup opens a bound index — same file name, same
         // compression, coalesced saves and a manifest writer — so the next

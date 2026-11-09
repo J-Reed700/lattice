@@ -174,7 +174,7 @@ pub async fn build_with_compression(
             // artifact identity, so the loader is always present here.
             if let Some(open_model) = backfill_model {
                 let model = open_model().await?;
-                crate::features::search::embedding_generation::prepare(&db_pool, model.as_ref())
+                crate::infrastructure::ml::embedding_generation::prepare(&db_pool, model.as_ref())
                     .await?;
                 // The backfill moved SQLite, so this pass always rebuilds.
                 open_or_rebuild_streaming(

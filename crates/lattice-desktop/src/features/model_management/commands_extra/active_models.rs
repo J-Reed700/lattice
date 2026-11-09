@@ -232,7 +232,7 @@ pub async fn set_active_embedding_model_impl(
     let model = container
         .open_embedding_for_activation(&candidate, load_identity)
         .await?;
-    crate::features::search::embedding_generation::prepare(container.db_pool(), model.as_ref())
+    crate::infrastructure::ml::embedding_generation::prepare(container.db_pool(), model.as_ref())
         .await?;
 
     match use_case
