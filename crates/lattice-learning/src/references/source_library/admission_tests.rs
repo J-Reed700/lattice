@@ -337,3 +337,38 @@ async fn no_research_source_is_listed_as_unused_while_a_lesson_is_being_prepared
         .is_empty());
     Ok(())
 }
+
+#[tokio::test]
+async fn a_sweep_that_cannot_mark_every_page_marks_none() -> Result<()> {
+    let pool = tests::pool().await?;
+    let program_id = active_program(&pool).await?;
+    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let article = format!("# Reading files\n{}", words(400));
+    for url in ["https://docs.example.org/a", "https://docs.example.org/b"] {
+        save(
+            &library,
+            &program_id,
+            SourceAddedBy::Research,
+            (url, "Reading files", &article),
+        )
+        .await?;
+    }
+    let marked = || async {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM learning_source_versions WHERE admission_policy IS NOT NULL",
+        )
+        .fetch_one(&pool)
+        .await
+        .map_err(db)
+    };
+    let before = marked().await?;
+    sqlx::query(&format!("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_versions WHEN (SELECT COUNT(*) FROM learning_source_versions WHERE admission_policy IS NOT NULL)>={} BEGIN SELECT RAISE(ABORT, 'refused for the test'); END", before + 1))
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+
+    assert!(library.sweep_admission(&program_id).await.is_err());
+
+    assert_eq!(marked().await?, before);
+    Ok(())
+}
