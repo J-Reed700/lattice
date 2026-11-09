@@ -16,6 +16,13 @@ export interface DueStripProps {
 }
 
 /** What is due from drills and coding, most overdue first, with one button for the first. */
+/** Due before the start of the learner's local day; what came due earlier today is still due today. */
+export function isOverdue(dueAt: number, now: number): boolean {
+  const startOfDay = new Date(now);
+  startOfDay.setHours(0, 0, 0, 0);
+  return dueAt < startOfDay.getTime();
+}
+
 export function DueStrip({ items, loading, error, onRetry, now = Date.now(), onStart }: DueStripProps) {
   const uid = useId();
   const list = items ?? [];
@@ -32,7 +39,7 @@ export function DueStrip({ items, loading, error, onRetry, now = Date.now(), onS
       {list.length > 0 && (
         <ul className="m-0 list-none divide-y divide-border-subtle p-0">
           {list.map((item) => {
-            const overdue = item.dueAt < now;
+            const overdue = isOverdue(item.dueAt, now);
             return (
               <li key={`${item.kind}:${item.lessonId ?? ''}:${item.material ?? ''}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
                 <span className="font-medium text-text-primary">{item.label}</span>
