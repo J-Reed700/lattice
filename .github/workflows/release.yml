@@ -103,14 +103,14 @@ jobs:
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installerswhere.exe'
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
           $vs = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
           if (-not $vs) { throw 'Visual Studio was not found.' }
           $redist = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
           if (-not $redist) { throw "No VC\Redist\MSVC version under $vs" }
           $crt = Get-ChildItem (Join-Path $redist.FullName 'x64') -Directory -Filter 'Microsoft.VC14*.CRT' | Select-Object -First 1
           if (-not $crt) { throw "No Microsoft.VC14*.CRT folder under $($redist.FullName)d" }
-          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**in\Hostx64d\dumpbin.exe' | Select-Object -First 1
+          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
           if (-not $dumpbin) { throw 'dumpbin.exe was not found.' }
           $desktop = 'crates/lattice-desktop'
           $target = (cargo metadata --format-version 1 --no-deps --manifest-path "$desktop/Cargo.toml" | ConvertFrom-Json).target_directory
@@ -173,8 +173,8 @@ jobs:
           if (-not (Test-Path (Join-Path $installed 'resources\learning-python'))) { throw "resources\learning-python is missing from $installed" }
           # Every import must resolve beside the binary, or be a Windows system DLL.
           # The runner has the redist installed system-wide, so redist DLLs must sit beside the binary.
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installerswhere.exe'
-          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**in\Hostx64d\dumpbin.exe' | Select-Object -First 1
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
           if (-not $dumpbin) { throw 'dumpbin.exe was not found.' }
           $vs = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
           $redistRoot = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
