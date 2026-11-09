@@ -727,7 +727,7 @@ impl LearningPracticalRepository {
         .await
         .map_err(db)?;
         let run_id: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM learning_practical_runs WHERE coding_session_id=? ORDER BY created_at DESC,id DESC LIMIT 1",
+            "SELECT id FROM learning_practical_runs WHERE coding_session_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
         )
         .bind(session_id)
         .fetch_optional(&mut *tx)

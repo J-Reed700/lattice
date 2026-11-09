@@ -66,7 +66,7 @@ async fn runs_on(
     session_id: &str,
     only: Option<&str>,
 ) -> Result<Vec<StoredRun>> {
-    let rows = sqlx::query("SELECT * FROM learning_practical_runs WHERE coding_session_id=?1 AND (?2 IS NULL OR id=?2) ORDER BY created_at,id")
+    let rows = sqlx::query("SELECT * FROM learning_practical_runs WHERE coding_session_id=?1 AND (?2 IS NULL OR id=?2) ORDER BY created_at,rowid")
         .bind(session_id)
         .bind(only)
         .fetch_all(&mut *connection)
