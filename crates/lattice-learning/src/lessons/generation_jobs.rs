@@ -664,3 +664,7 @@ mod recovery_tests;
 #[cfg(test)]
 #[path = "generation_overlap_tests.rs"]
 pub(crate) mod overlap_tests;
+
+#[cfg(test)]
+#[path = "generation_setup_tests.rs"]
+mod setup_tests;
