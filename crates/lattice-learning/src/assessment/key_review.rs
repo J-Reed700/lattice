@@ -360,6 +360,52 @@ mod tests {
     fn answer(index: usize, selected: usize) -> Value {
         json!({"index":index,"correctIndices":[selected],"reason":"The selected option follows from the literal question."})
     }
+    fn wide_candidate() -> Value {
+        json!({"questions":(0..3).map(|i|json!({"prompt":format!("Question {i}"),"options":["A","B","C","D","E","F"],"correctIndex":0,"explanation":"AUTHORED_SECRET","quote":"Reference context."})).collect::<Vec<_>>()})
+    }
+    #[tokio::test]
+    async fn a_question_with_six_options_may_have_five_correct_and_index_five() -> Result<()> {
+        use crate::practice::practice_tests::Reply;
+        let wide = json!({"index":0,"correctIndices":[0,1,2,3,5],"reason":"Five options follow."});
+        let answers = (0..3)
+            .map(|i| json!({"index":i,"correctIndices":[0,1,2,3,5],"reason":wide["reason"]}))
+            .collect::<Vec<_>>();
+        let llm = Reply::new(json!({"answers":answers}).to_string());
+        let issues = check(&llm, &wide_candidate()).await?;
+        assert_eq!(issues.len(), 3);
+        let schemas = llm.schemas.lock().unwrap().clone();
+        let items = &schemas[0]["properties"]["answers"]["items"]["properties"]["correctIndices"];
+        assert_eq!(items["items"]["maximum"], 5);
+        assert!(items.get("maxItems").is_none());
+        Ok(())
+    }
+    #[tokio::test]
+    async fn the_bank_solve_schema_follows_the_questions_it_keys() {
+        use crate::practice::practice_tests::Reply;
+        let item = LearningAssessmentCandidate {
+            id: uuid::Uuid::new_v4().to_string(),
+            outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
+            format: engine::LearningItemFormat::MultiSelect,
+            difficulty: 3,
+            prompt: "Which options follow?".into(),
+            options: (0..6).map(|i| format!("Option {i}")).collect(),
+            left: vec![],
+            source_version_ids: vec![],
+            rubric: vec![],
+            key: engine::LearningAssessmentKey::Choices([0, 1].into_iter().collect()),
+            explanation: "Two follow.".into(),
+            distractor_rationales: vec![],
+        };
+        let llm = Reply::new("{}");
+        let _ = review_bank_items(&llm, &[(&item, "Reference quote.")]).await;
+        let schemas = llm.schemas.lock().unwrap().clone();
+        let fields = &schemas[0]["properties"]["answers"]["items"]["properties"];
+        assert_eq!(fields["correctIndices"]["items"]["maximum"], 5);
+        assert_eq!(fields["matches"]["items"]["maximum"], 5);
+        for field in ["correctIndices", "blankAnswers", "matches", "orderedValues"] {
+            assert!(fields[field].get("maxItems").is_none(), "{field}");
+        }
+    }
     fn model(replies: Vec<Value>) -> ScriptedModel {
         ScriptedModel {
             outputs: Mutex::new(replies.into_iter().map(|v| v.to_string()).collect()),
