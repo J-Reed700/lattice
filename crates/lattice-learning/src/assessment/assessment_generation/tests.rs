@@ -538,3 +538,49 @@ fn the_writer_is_told_options_are_shuffled_so_they_are_named_by_their_words() {
         "SYSTEM must forbid naming an option by position, number or letter"
     );
 }
+
+#[test]
+fn the_instructions_say_what_do_not_repeat_requires() {
+    assert!(
+        SYSTEM.contains("doNotRepeat"),
+        "SYSTEM never names doNotRepeat"
+    );
+    assert!(
+        SYSTEM.contains("never asks one of them again"),
+        "SYSTEM never says a new item does not ask one of its questions again"
+    );
+}
+
+#[test]
+fn do_not_repeat_holds_every_existing_prompt_in_full() {
+    let mut need = need("Explain iron oxide reduction.".into(), 1);
+    need.existing_prompts = (0..45)
+        .map(|i| format!("Question {i}: {}", "which case decides it? ".repeat(12)))
+        .collect();
+    assert!(need
+        .existing_prompts
+        .iter()
+        .all(|p| p.chars().count() > 160));
+    let batch = Batch {
+        need: &need,
+        count: 1,
+        notes: vec![],
+        repair: None,
+    };
+
+    let skeleton = batch.skeleton();
+
+    let listed: Vec<&str> = skeleton["doNotRepeat"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(listed.len(), need.existing_prompts.len());
+    for prompt in &need.existing_prompts {
+        assert!(
+            listed.contains(&prompt.as_str()),
+            "cut or missing: {prompt}"
+        );
+    }
+}
