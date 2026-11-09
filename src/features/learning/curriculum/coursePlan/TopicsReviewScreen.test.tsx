@@ -3,6 +3,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { learningCoursePlanKey } from '@/features/learning/api/learningQueryKeys';
 import { entry, ok, planView, topics } from '@/features/learning/curriculum/coursePlan/coursePlanFixtures';
 import { TopicsReviewScreen } from '@/features/learning/curriculum/coursePlan/TopicsReviewScreen';
 import type { CoursePlanEntryDto, LearningProgramDto } from '@/lib/bindings';
@@ -15,12 +16,12 @@ vi.mock('@/lib/api', () => ({ default: {
   undoLearningCoursePlanEntry: api.undo,
 } }));
 
-const lesson = (id: string, title: string) => ({ id, title, objective: '', estimatedMinutes: 10, preparation: 'outline', blocks: [], completed: false });
+const lesson = (id: string, title: string, preparation = 'outline') => ({ id, title, objective: '', estimatedMinutes: 10, preparation, blocks: [], completed: false });
 const course = {
   summary: { id: 'program-1', title: 'Circulation', status: 'active', revision: 3 },
   modules: [
     { id: 'module-1', title: 'The pump', summary: '', outcomes: [], lessons: [lesson('lesson-1', 'The heart'), lesson('lesson-2', 'Valves')] },
-    { id: 'module-2', title: 'The pipes', summary: '', outcomes: [], lessons: [lesson('lesson-3', 'Vessels')] },
+    { id: 'module-2', title: 'The pipes', summary: '', outcomes: [], lessons: [lesson('lesson-3', 'Vessels', 'ready')] },
   ],
   sources: [],
 } as unknown as LearningProgramDto;
@@ -35,7 +36,7 @@ function show() {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
   const onBack = vi.fn();
   render(<QueryClientProvider client={client}><TopicsReviewScreen program={course} onBack={onBack} /></QueryClientProvider>);
-  return { onBack };
+  return { onBack, client };
 }
 const card = (name: string) => screen.getByRole('article', { name });
 
@@ -162,8 +163,72 @@ describe('Review topics', () => {
     show();
     await user.click(within(await screen.findByRole('article', { name: 'The heart' })).getByRole('button', { name: 'Edit' }));
     await user.click(screen.getByRole('button', { name: 'Save' }));
-    expect(await screen.findByRole('alert')).toBeVisible();
+    expect(await within(card('The heart')).findByRole('alert')).toBeVisible();
+    expect(screen.getAllByRole('alert')).toHaveLength(1);
     await waitFor(() => expect(api.get).toHaveBeenCalledTimes(2));
+  });
+
+  it('shows a refused bulk change in the bulk form, not at the top of the page', async () => {
+    const user = userEvent.setup();
+    api.change.mockResolvedValue({ ok: false, error: 'These topics changed since you opened them.' });
+    show();
+    await user.click(await screen.findByRole('checkbox', { name: 'Select The heart' }));
+    await user.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Ask for a change' }));
+    await user.type(screen.getByRole('textbox', { name: 'What should change?' }), 'Shorter');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    const alert = await screen.findByRole('alert');
+    expect(alert.closest('form')).toContainElement(screen.getByRole('textbox', { name: 'What should change?' }));
+  });
+
+  it('shows a refused change under the card it was asked on', async () => {
+    const user = userEvent.setup();
+    api.change.mockResolvedValue({ ok: false, error: 'These topics changed since you opened them.' });
+    show();
+    await user.click(within(await screen.findByRole('article', { name: 'Valves' })).getByRole('button', { name: 'Ask for a change' }));
+    await user.type(within(card('Valves')).getByRole('textbox', { name: 'What should change?' }), 'Simpler');
+    await user.click(within(card('Valves')).getByRole('button', { name: 'Send' }));
+    expect(await within(card('Valves')).findByRole('alert')).toBeVisible();
+    expect(within(card('The heart')).queryByRole('alert')).not.toBeInTheDocument();
+  });
+
+  it('saves an edit against the revisions it was opened on, even if the plan moved meanwhile', async () => {
+    const user = userEvent.setup();
+    api.edit.mockResolvedValue({ ok: false, error: 'These topics changed since you opened them.' });
+    const { client } = show();
+    await user.click(within(await screen.findByRole('article', { name: 'The heart' })).getByRole('button', { name: 'Edit' }));
+    const moved = entries();
+    moved[0] = entry('lesson-1', { entryRevision: 7 });
+    client.setQueryData(learningCoursePlanKey('program-1'), planView(moved, { outlineRevision: 5 }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await waitFor(() => expect(api.edit).toHaveBeenCalledWith(expect.objectContaining({ outlineRevision: 4, expectedEntryRevision: 3 })));
+  });
+
+  it('keeps the selection when one card asks for a change, and clears it after a bulk change', async () => {
+    const user = userEvent.setup();
+    api.change.mockResolvedValue(ok(planView(entries())));
+    show();
+    await user.click(await screen.findByRole('checkbox', { name: 'Select The heart' }));
+    await user.click(within(card('Valves')).getByRole('button', { name: 'Ask for a change' }));
+    await user.type(within(card('Valves')).getByRole('textbox', { name: 'What should change?' }), 'Simpler');
+    await user.click(within(card('Valves')).getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(api.change).toHaveBeenCalledTimes(1));
+    expect(screen.getByRole('toolbar', { name: '1 lesson selected' })).toBeVisible();
+    expect(screen.getByRole('checkbox', { name: 'Select The heart' })).toBeChecked();
+    await user.click(within(screen.getByRole('toolbar')).getByRole('button', { name: 'Ask for a change' }));
+    await user.type(screen.getByRole('textbox', { name: 'What should change?' }), 'Shorter');
+    await user.click(screen.getByRole('button', { name: 'Send' }));
+    await waitFor(() => expect(api.change).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(screen.queryByRole('toolbar')).not.toBeInTheDocument());
+  });
+
+  it('says a lesson that is already written has fixed topics, and not that it is being written', async () => {
+    const list = entries();
+    list[2] = entry('lesson-3', { editable: false });
+    api.get.mockResolvedValue(ok(planView(list)));
+    show();
+    await screen.findByRole('article', { name: 'Vessels' });
+    expect(within(card('Vessels')).getByText('Already written; its topics are fixed')).toBeVisible();
+    expect(within(card('Vessels')).queryByText('Being written; its topics are fixed')).not.toBeInTheDocument();
   });
 
   it('goes back to the course', async () => {
