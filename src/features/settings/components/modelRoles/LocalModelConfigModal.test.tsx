@@ -164,6 +164,24 @@ describe('LocalModelConfigModal', () => {
     });
   });
 
+  it('warns at the trained window when not even the weights fit and none is saved', () => {
+    render(
+      <TooltipProvider>
+        <LocalModelConfigModal
+          isOpen
+          onClose={vi.fn()}
+          model={sampleModel({ fits_context_length: 0 })}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('spinbutton', { name: 'Context Length' })).toHaveValue(32768);
+    expect(
+      screen.getByText("May not fit in this machine's memory — about 0 tokens fit"),
+    ).toBeInTheDocument();
+    expect(screen.queryByText(/Loads at/)).not.toBeInTheDocument();
+  });
+
   it('follows the KV cache setting while no window is saved', async () => {
     const user = userEvent.setup();
     render(
