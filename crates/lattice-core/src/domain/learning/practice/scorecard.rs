@@ -65,8 +65,33 @@ impl Scorecard {
     /// The invariants every scorecard keeps: points iff observed, points at most the maximum, an observed row has
     /// evidence.
     pub fn validate(&self) -> Result<()> {
-        Err(AppError::InvalidState("not built yet".into()))
+        for row in &self.rows {
+            let id = &row.criterion_id;
+            if row.max_points == 0 {
+                return Err(invalid(format!("{id} has no points to give.")));
+            }
+            match (row.status, row.points) {
+                (ScoreStatus::Observed, None) => {
+                    return Err(invalid(format!("{id} is observed and has no points.")))
+                }
+                (ScoreStatus::InsufficientEvidence, Some(_)) => {
+                    return Err(invalid(format!("{id} lacks evidence and has points.")))
+                }
+                (ScoreStatus::Observed, Some(points)) if points > row.max_points => {
+                    return Err(invalid(format!("{id} has more points than its maximum.")))
+                }
+                (ScoreStatus::Observed, Some(_)) if row.evidence.is_empty() => {
+                    return Err(invalid(format!("{id} is scored on no evidence.")))
+                }
+                _ => {}
+            }
+        }
+        Ok(())
     }
+}
+
+fn invalid(message: String) -> AppError {
+    AppError::InvalidState(message)
 }
 
 #[cfg(test)]
