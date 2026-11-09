@@ -242,24 +242,7 @@ impl ImageRepository {
         conversation_id: &str,
         ids: &[String],
     ) -> Result<Vec<ImageRow>> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut select: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
-            "SELECT {COLUMNS} FROM chat_images WHERE conversation_id = "
-        ));
-        select.push_bind(conversation_id).push(" AND id IN (");
-        let mut list = select.separated(", ");
-        for id in ids {
-            list.push_bind(id);
-        }
-        list.push_unseparated(")");
-        let rows: Vec<ImageRow> = select
-            .build_query_as()
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
-        Ok(in_order(rows, ids))
+        rows_in_conversation(&self.pool, conversation_id, ids).await
     }
 
     /// Gives the conversation's rows among `ids` that no other message holds
@@ -274,7 +257,11 @@ impl ImageRepository {
         message_id: &str,
         request_id: &str,
     ) -> Result<Vec<ImageRow>> {
-        let candidates = self.in_conversation(conversation_id, ids).await?;
+        if ids.is_empty() {
+            return Ok(Vec::new());
+        }
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let candidates = rows_in_conversation(&mut *tx, conversation_id, ids).await?;
         let claimable: Vec<String> = candidates
             .into_iter()
             .filter(|row| {
@@ -287,7 +274,6 @@ impl ImageRepository {
         if claimable.is_empty() {
             return Ok(Vec::new());
         }
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
         for id in &claimable {
             sqlx::query(
                 "UPDATE chat_images SET message_id = ?, request_id = ?, ref = 'claim:' || id \
@@ -484,6 +470,32 @@ impl ImageRepository {
         .await
         .map_err(db)
     }
+}
+
+/// The conversation's rows among `ids`, in the order `ids` names them.
+async fn rows_in_conversation(
+    executor: impl sqlx::Executor<'_, Database = Sqlite>,
+    conversation_id: &str,
+    ids: &[String],
+) -> Result<Vec<ImageRow>> {
+    if ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut select: QueryBuilder<Sqlite> = QueryBuilder::new(format!(
+        "SELECT {COLUMNS} FROM chat_images WHERE conversation_id = "
+    ));
+    select.push_bind(conversation_id).push(" AND id IN (");
+    let mut list = select.separated(", ");
+    for id in ids {
+        list.push_bind(id);
+    }
+    list.push_unseparated(")");
+    let rows: Vec<ImageRow> = select
+        .build_query_as()
+        .fetch_all(executor)
+        .await
+        .map_err(db)?;
+    Ok(in_order(rows, ids))
 }
 
 /// `rows` in the order `ids` names them; ids with no row are skipped.
