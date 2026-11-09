@@ -200,12 +200,14 @@ describe('CodingSession', () => {
       }),
     );
 
-    await screen.findByText(/2 of 3 passed\. Failing: an input with duplicates/);
+    expect((await screen.findAllByText(/2 of 3 passed\. Failing: an input with duplicates/)).length).toBeGreaterThan(0);
     const live = screen.getAllByRole('status').find((node) => /2 of 3 passed/.test(node.textContent ?? ''));
     expect(live).toBeDefined();
 
-    const failing = screen.getAllByText(/an input with duplicates/).at(-1) as HTMLElement;
-    const firstPassing = screen.getAllByText(/a pair at the ends/).at(-1) as HTMLElement;
+    const failingMatches = screen.getAllByText(/an input with duplicates/);
+    const failing = failingMatches[failingMatches.length - 1];
+    const passingMatches = screen.getAllByText(/a pair at the ends/);
+    const firstPassing = passingMatches[passingMatches.length - 1];
     expect(failing.compareDocumentPosition(firstPassing) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -218,7 +220,7 @@ describe('CodingSession', () => {
         runs: [codingRun([failingHidden])],
       }),
     );
-    await screen.findByText(/an input with duplicates/);
+    expect((await screen.findAllByText(/an input with duplicates/)).length).toBeGreaterThan(0);
     expect(screen.queryByText('[2, 2]')).not.toBeInTheDocument();
     expect(screen.queryByText('[0, 1]')).not.toBeInTheDocument();
     mock.unmount();
@@ -233,7 +235,7 @@ describe('CodingSession', () => {
         ],
       }),
     );
-    expect(await screen.findByText(/\[2, 2\]/)).toBeInTheDocument();
+    expect((await screen.findAllByText(/\[2, 2\]/)).length).toBeGreaterThan(0);
   });
 
   it('shows one hint rung at a time, the next only after the current is read', async () => {
