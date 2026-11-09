@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
@@ -63,7 +64,7 @@ const toWorkspace = () => ({ programId: 'program-1', sessions: currentWorkspace.
 const updateRevision = () => { if (currentSession) currentSession.summary.revision += 1; };
 const renderWorkbench = (chosenLesson = lesson, embedded = false, attemptId?: string | null) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
-  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
+  const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}><MemoryRouter>{children}</MemoryRouter></QueryClientProvider>;
   return render(<PracticeWorkbenchPanel program={program} lesson={chosenLesson} embedded={embedded} attemptId={attemptId} taskKind={embedded ? 'guided' : 'independent'} />, { wrapper });
 };
 
@@ -163,7 +164,7 @@ describe('Learning Studio grounded practice workbench', () => {
     const user = userEvent.setup();
     currentSession!.summary.taskKind = 'guided';
     currentWorkspace.sessions = [{ ...currentSession!.summary }];
-    mocks.save.mockImplementationOnce(async () => ({ ok: false, error: Object.assign(new Error('Stale.'), { details: { code: 'CONFLICT' } }) }));
+    mocks.save.mockImplementationOnce(async () => ({ ok: false, error: 'Stale.', details: { code: 'CONFLICT', message: 'Stale.' } }));
     renderWorkbench(lesson, true);
     await user.type(await screen.findByRole('textbox', { name: 'Your working' }), 'My first step.');
     expect(await screen.findAllByRole('button', { name: 'Reload the saved attempt · keep my text' })).toHaveLength(1);
