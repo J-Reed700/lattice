@@ -899,7 +899,37 @@ fn a_right_choice_much_longer_than_the_others_is_a_finding_at_its_question() {
     );
     let notes = first_question_notes(&candidate);
     assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].contains("close in length"), "{notes:?}");
+    assert!(notes[0].contains("Shorten the right choice"), "{notes:?}");
+}
+
+fn lengths_case(key_length: usize) -> Vec<String> {
+    let options = [
+        "a".repeat(45),
+        "b".repeat(28),
+        "c".repeat(key_length),
+        "d".repeat(45),
+    ];
+    let candidate = question_case(
+        "Which one is right?",
+        options.each_ref().map(String::as_str),
+        2,
+    );
+    first_question_notes(&candidate)
+}
+
+#[test]
+fn a_long_right_choice_is_told_the_measured_lengths_and_its_limit() {
+    let notes = lengths_case(73);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    for expected in ["73", "45", "72 characters or fewer"] {
+        assert!(notes[0].contains(expected), "{expected}: {notes:?}");
+    }
+}
+
+#[test]
+fn a_right_choice_exactly_at_its_limit_is_no_finding() {
+    let notes = lengths_case(72);
+    assert!(notes.is_empty(), "{notes:?}");
 }
 
 #[test]

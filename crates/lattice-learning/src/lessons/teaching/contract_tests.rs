@@ -842,3 +842,59 @@ async fn an_untaught_idea_or_contrast_is_told_its_name_is_the_plans_label_and_a_
     assert!(!term.contains("copying the label"), "{term}");
     Ok(())
 }
+
+const SHOWN: &str = "what it is for, exactly how to do it, and the result the learner should get";
+
+#[tokio::test]
+async fn check_two_counts_teaching_where_a_step_asks_for_it() -> Result<()> {
+    let system = contract::SYSTEM;
+    let start = system.find("2. usedBeforeTaught").unwrap();
+    let end = system.find("3. contradictions:").unwrap();
+    let check = &system[start..end];
+    let criterion = format!(
+        "or that it treats as known, which the lesson has not taught by the words that ask for it and which priorKnowledge and the actions and terms of earlierLessons do not cover. The lesson has taught it when an earlier part, or this part before or in those words, says {SHOWN}: words that ask for it and say all of this teach it where it is used."
+    );
+    assert!(check.contains(&criterion), "{check}");
+    assert!(
+        !system.contains("which no earlier part of this lesson teaches"),
+        "{check}"
+    );
+
+    let scripted = scripted(vec![reviewed(3)]);
+    let model = Routed::new(&scripted, vec![]);
+    let candidate = lesson(["One.", "Two.", "Three."]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let drafting = model.drafting();
+    let brief = format!(
+        "an earlier part, or the same part up to and including the words that ask for it, and whether that place says {SHOWN}"
+    );
+    assert!(drafting[0].contains(&brief), "{}", drafting[0]);
+    Ok(())
+}
+
+#[test]
+fn check_two_asks_for_a_noun_phrase_never_a_sentence() {
+    let system = contract::SYSTEM;
+    assert!(
+        system.contains(
+            "Give the part, the words copied exactly where the learner is asked to use it, and in what the name of what it asks for: a noun phrase, never a sentence."
+        ),
+        "{system}"
+    );
+    assert!(!system.contains("and what it is."), "{system}");
+}
+
+#[tokio::test]
+async fn the_check_and_the_note_define_shown_how_in_the_same_words() -> Result<()> {
+    let note = finding_note(
+        json!([]),
+        json!([used(1, "Apply the second method", "the second method")]),
+        "Teach it in this step",
+    )
+    .await?;
+    let (_, rest) = note.split_once("where it is first used (").unwrap();
+    let (phrase, _) = rest.split_once(')').unwrap();
+    assert_eq!(phrase, SHOWN, "{note}");
+    assert!(contract::SYSTEM.contains(phrase), "{}", contract::SYSTEM);
+    Ok(())
+}
