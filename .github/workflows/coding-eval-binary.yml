@@ -65,10 +65,10 @@ jobs:
           if ($LASTEXITCODE -ne 0) { throw "building the lib tests failed" }
           $exes = @(Get-Content $json | ForEach-Object {
               $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
-              if ($m -and $m.reason -eq 'compiler-artifact' -and $m.target.name -eq 'lattice_desktop' `
+              if ($m -and $m.reason -eq 'compiler-artifact' -and $m.target.name -eq 'lattice' `
                   -and $m.target.kind -contains 'lib' -and $m.profile.test -eq $true -and $m.executable) { $m.executable }
             })
-          if ($exes.Count -ne 1) { throw "expected exactly one lattice_desktop lib test executable, found $($exes.Count): $($exes -join ', ')" }
+          if ($exes.Count -ne 1) { throw "expected exactly one lattice lib test executable, found $($exes.Count): $($exes -join ', ')" }
           "TEST_EXE=$($exes[0])" >> $env:GITHUB_ENV
           Write-Host $exes[0]
 
