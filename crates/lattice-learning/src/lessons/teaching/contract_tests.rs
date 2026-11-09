@@ -89,6 +89,10 @@ impl LLMPort for Routed<'_> {
     }
 }
 
+fn protected_sentence(unit: usize, quote: &str) -> Protected {
+    serde_json::from_value(json!({"unit": unit, "field": "body", "quote": quote})).unwrap()
+}
+
 fn scripted(outputs: Vec<String>) -> ScriptedModel {
     ScriptedModel {
         outputs: Mutex::new(outputs.into()),
@@ -362,11 +366,10 @@ async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Re
         "The list shows names.",
         "Type ls Documents to list that folder.",
     ]);
-    let protected = [Protected {
-        unit: 0,
-        field: "body".into(),
-        quote: "Commands like ls take no folder name.".into(),
-    }];
+    let protected = [protected_sentence(
+        0,
+        "Commands like ls take no folder name.",
+    )];
     let result = run(&model, &candidate, &context(&[], &[]), &protected).await?;
     assert_eq!(
         waiting(&result),
@@ -409,11 +412,10 @@ async fn a_finding_in_a_section_with_protected_sentences_is_repaired_when_it_tou
         "Run pwd to print the folder you are in. Type ls -l to see sizes.",
         "Read the names.",
     ]);
-    let protected = [Protected {
-        unit: 1,
-        field: "body".into(),
-        quote: "Run pwd to print the folder you are in.".into(),
-    }];
+    let protected = [protected_sentence(
+        1,
+        "Run pwd to print the folder you are in.",
+    )];
     let result = run(&model, &candidate, &context(&[], &[]), &protected).await?;
     assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
     assert_eq!(
@@ -452,11 +454,10 @@ async fn teaching_can_be_added_beside_an_editable_sentence_in_a_section_with_pro
         "Run pwd to print the folder you are in. Then look at the list.",
         "Read the names.",
     ]);
-    let protected = [Protected {
-        unit: 1,
-        field: "body".into(),
-        quote: "Run pwd to print the folder you are in.".into(),
-    }];
+    let protected = [protected_sentence(
+        1,
+        "Run pwd to print the folder you are in.",
+    )];
     let ctx = context(&[], &[OPEN_TERMINAL]);
     let result = run(&model, &candidate, &ctx, &protected).await?;
     assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
