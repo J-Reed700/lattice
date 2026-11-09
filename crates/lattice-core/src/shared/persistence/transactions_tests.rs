@@ -142,20 +142,112 @@ fn line_of(text: &str, offset: usize) -> usize {
         .map_or(1, |before| before.matches('\n').count() + 1)
 }
 
-fn deferred_begins(text: &str) -> Vec<usize> {
-    let mut end = text.len();
-    let mut offset = 0;
-    let mut lines = text.split_inclusive('\n').peekable();
-    while let Some(line) = lines.next() {
-        if line.trim_end() == "#[cfg(test)]"
-            && lines.peek().is_some_and(|next| next.starts_with("mod "))
+fn find(bytes: &[u8], from: usize, pattern: &[u8]) -> Option<usize> {
+    let rest = bytes.get(from..)?;
+    rest.windows(pattern.len())
+        .position(|window| window == pattern)
+        .map(|position| from + position)
+}
+
+fn item_end(bytes: &[u8], start: usize) -> Option<usize> {
+    let mut i = start;
+    let mut parens = 0_i32;
+    let mut braces = 0_i32;
+    let mut entered = false;
+    while let Some(&c) = bytes.get(i) {
+        let next = bytes.get(i + 1).copied();
+        if c == b'/' && next == Some(b'/') {
+            i = find(bytes, i, b"\n").unwrap_or(bytes.len());
+        } else if c == b'/' && next == Some(b'*') {
+            i = find(bytes, i + 2, b"*/").map_or(bytes.len(), |end| end + 2);
+        } else if c == b'"' {
+            i += 1;
+            while let Some(&inside) = bytes.get(i) {
+                if inside == b'"' {
+                    break;
+                }
+                i += if inside == b'\\' { 2 } else { 1 };
+            }
+            i += 1;
+        } else if c == b'r'
+            && !i
+                .checked_sub(1)
+                .and_then(|before| bytes.get(before))
+                .is_some_and(|&before| before.is_ascii_alphanumeric() || before == b'_')
+            && raw_string_end(bytes, i).is_some()
         {
-            end = offset;
-            break;
+            i = raw_string_end(bytes, i).unwrap_or(bytes.len());
+        } else if c == b'\'' {
+            if next == Some(b'\\') {
+                i = find(bytes, i + 2, b"'").map_or(bytes.len(), |end| end + 1);
+            } else if bytes.get(i + 2) == Some(&b'\'') {
+                i += 3;
+            } else {
+                i += 1;
+            }
+        } else {
+            match c {
+                b'(' | b'[' => parens += 1,
+                b')' | b']' => parens -= 1,
+                b';' if parens == 0 && braces == 0 => return None,
+                b'{' if parens == 0 => {
+                    braces += 1;
+                    entered = true;
+                }
+                b'}' if parens == 0 => {
+                    braces -= 1;
+                    if entered && braces == 0 {
+                        return Some(i + 1);
+                    }
+                }
+                _ => {}
+            }
+            i += 1;
         }
-        offset += line.len();
     }
-    let production = text.get(..end).unwrap_or(text);
+    None
+}
+
+fn raw_string_end(bytes: &[u8], at: usize) -> Option<usize> {
+    let mut j = at + 1;
+    let mut hashes = 0;
+    while bytes.get(j) == Some(&b'#') {
+        hashes += 1;
+        j += 1;
+    }
+    if bytes.get(j) != Some(&b'"') {
+        return None;
+    }
+    let mut closing = vec![b'"'];
+    closing.extend(std::iter::repeat_n(b'#', hashes));
+    Some(find(bytes, j + 1, &closing).map_or(bytes.len(), |end| end + closing.len()))
+}
+
+fn without_test_items(text: &str) -> String {
+    let bytes = text.as_bytes();
+    let mut blanked = bytes.to_vec();
+    let mut offset = 0;
+    for line in text.split_inclusive('\n') {
+        let next = offset + line.len();
+        if line.trim() == "#[cfg(test)]" {
+            if let Some(end) = item_end(bytes, next) {
+                if let Some(span) = blanked.get_mut(offset..end) {
+                    for byte in span {
+                        if *byte != b'\n' {
+                            *byte = b' ';
+                        }
+                    }
+                }
+            }
+        }
+        offset = next;
+    }
+    String::from_utf8_lossy(&blanked).into_owned()
+}
+
+fn deferred_begins(text: &str) -> Vec<usize> {
+    let production = without_test_items(text);
+    let production = production.as_str();
     let mut found = Vec::new();
     for (offset, _) in production.match_indices(".begin()") {
         let after = production.get(offset + ".begin()".len()..).unwrap_or("");
