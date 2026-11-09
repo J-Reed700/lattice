@@ -2353,9 +2353,9 @@ fn with_no_window_saved_a_server_starts_at_the_largest_window_that_fits() {
     assert_eq!(config.context_size, fits);
 
     // What other models hold leaves a smaller window.
-    let held = 2 * GIB;
+    let held = 400_000_000;
     let beside = ornith_fit(memory_room(&caps, true, held).unwrap()).unwrap();
-    assert!(beside < fits);
+    assert!(0 < beside && beside < fits, "beside {beside}, fits {fits}");
     let config = start_ornith(&path, LocalServerOptions::default(), &caps, held);
     assert_eq!(config.context_size, beside);
 }
