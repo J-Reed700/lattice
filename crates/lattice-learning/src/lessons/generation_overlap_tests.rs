@@ -334,18 +334,22 @@ async fn two_lessons_of_one_course_publish_at_the_same_time() -> Result<()> {
     }
     let jobs = [&first, &second];
 
+    let staged = [
+        [(lessons[0].id.clone(), prepared(lessons[0], &sources[0].id))],
+        [(lessons[1].id.clone(), prepared(lessons[1], &sources[0].id))],
+    ];
     let (one, other) = tokio::join!(
         repo.publish_prepared(
             &jobs[0].id,
             i64::from(jobs[0].base_revision_number),
-            &[(lessons[0].id.clone(), prepared(lessons[0], &sources[0].id))],
+            &staged[0],
             &[],
             Some("persistence-fixture"),
         ),
         repo.publish_prepared(
             &jobs[1].id,
             i64::from(jobs[1].base_revision_number),
-            &[(lessons[1].id.clone(), prepared(lessons[1], &sources[0].id))],
+            &staged[1],
             &[],
             Some("persistence-fixture"),
         ),
