@@ -434,6 +434,102 @@ async fn research_persists_full_capture_and_deduplicates_without_approving_claim
     .await
 }
 
+fn saved_page(url: &str, text: &str) -> crate::source_library::CapturedLearningSource {
+    crate::source_library::CapturedLearningSource {
+        title: "Research methods".into(),
+        publisher: None,
+        requested_url: Some(url.into()),
+        resolved_url: Some(url.into()),
+        text: text.into(),
+        truncated: false,
+        extraction_version: "test_v1".into(),
+        signals: crate::references::trust::capture::not_extracted("test fixture"),
+    }
+}
+
+/// Saves two pages at once, each as a lesson that read the course's sources
+/// before the other saved anything: how many saves returned a new source, and
+/// how many sources the course gained.
+async fn save_together(pages: [(&str, &str); 2]) -> Result<(usize, usize)> {
+    let pool = crate::tests::pool().await?;
+    let repo = LearningRepository::new(pool.clone());
+    let mut program = crate::tests::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    repo.create(&program).await?;
+    let before = repo.verification_sources(&program.summary.id).await?.len();
+    let context = Context {
+        pool: pool.clone(),
+        program_id: program.summary.id.clone(),
+        topic: program.summary.goal.clone(),
+        web: web(false),
+        searched: Default::default(),
+    };
+    let library = crate::source_library::LearningSourceLibraryRepository::new(pool);
+    let saving = Saving {
+        context: &context,
+        program_repo: &repo,
+        library: &library,
+    };
+    let (mut first_sources, mut first_urls) = (Vec::new(), HashSet::new());
+    let (mut second_sources, mut second_urls) = (Vec::new(), HashSet::new());
+    let (first, second) = tokio::join!(
+        saving.save(
+            &mut first_sources,
+            &mut first_urls,
+            pages[0].0,
+            saved_page(pages[0].0, pages[0].1),
+            None
+        ),
+        saving.save(
+            &mut second_sources,
+            &mut second_urls,
+            pages[1].0,
+            saved_page(pages[1].0, pages[1].1),
+            None
+        ),
+    );
+    let returned = [first?, second?].iter().flatten().count();
+    let held = repo.verification_sources(&program.summary.id).await?.len();
+    Ok((returned, held - before))
+}
+
+#[tokio::test]
+async fn two_lessons_saving_the_same_page_leave_one_source() -> Result<()> {
+    let (returned, added) = save_together([
+        ("https://example.org/same", CAPTURE),
+        ("https://example.org/same#section", CAPTURE),
+    ])
+    .await?;
+    assert_eq!((returned, added), (1, 1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_lessons_saving_the_same_address_with_different_text_leave_one_source() -> Result<()> {
+    let (returned, added) = save_together([
+        ("https://example.org/same", CAPTURE),
+        (
+            "https://example.org/same",
+            "The page was edited between the two reads.",
+        ),
+    ])
+    .await?;
+    assert_eq!((returned, added), (1, 1));
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_lessons_saving_different_pages_leave_two_sources() -> Result<()> {
+    let other = format!("{CAPTURE} A second page says more.");
+    let (returned, added) = save_together([
+        ("https://example.org/one", CAPTURE),
+        ("https://example.org/two", other.as_str()),
+    ])
+    .await?;
+    assert_eq!((returned, added), (2, 2));
+    Ok(())
+}
+
 #[tokio::test]
 async fn research_rejects_truncated_pages_and_does_not_search_for_judge_failures() -> Result<()> {
     let pool = crate::tests::pool().await?;
