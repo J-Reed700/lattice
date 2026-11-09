@@ -349,7 +349,7 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
     let mut seen = HashSet::new();
     for (index, block) in blocks.iter().enumerate() {
         let mut reported = HashSet::new();
-        for sentence in teaching_sentences(text(block, "body")) {
+        for sentence in repeats::comparable(text(block, "body")) {
             let key = repeats::key(&sentence);
             if !seen.insert(key.clone()) && reported.insert(key) {
                 findings.push(

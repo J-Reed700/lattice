@@ -1,7 +1,9 @@
 //! Whether a sentence a repair writes is one the lesson already has. Two
 //! sentences are the same when they are equal after trimming and collapsing
-//! whitespace runs.
-use crate::generation::teaching_sentences;
+//! whitespace runs. Only the sentences of a paragraph are compared: not
+//! headings, list items, table rows, code, or the strong label that opens a
+//! paragraph, which lessons repeat on purpose.
+use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
 
@@ -13,9 +15,79 @@ pub(crate) fn key(sentence: &str) -> String {
     sentence.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
-/// The compared teaching sentences of `text`, in order.
+fn is_item(line: &str) -> bool {
+    if let Some(rest) = line.strip_prefix(['-', '*', '+']) {
+        return rest.starts_with(char::is_whitespace);
+    }
+    let digits = line.chars().take_while(char::is_ascii_digit).count();
+    digits > 0
+        && line
+            .get(digits..)
+            .and_then(|rest| rest.strip_prefix(['.', ')']))
+            .is_some_and(|rest| rest.starts_with(char::is_whitespace))
+}
+
+/// The paragraphs of `text`: its lines outside code fences, headings, table
+/// rows and list items with their continuation lines.
+fn paragraphs(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    let mut current = String::new();
+    let (mut fenced, mut in_item) = (false, false);
+    for line in text.lines() {
+        let line = line.trim();
+        let fence = line.starts_with("```");
+        if fenced && !fence {
+            continue;
+        }
+        if fence || line.is_empty() || is_item(line) || line.starts_with(['#', '|']) {
+            if !current.is_empty() {
+                found.push(std::mem::take(&mut current));
+            }
+            if fence {
+                fenced = !fenced;
+            }
+            in_item = is_item(line);
+            continue;
+        }
+        if in_item {
+            continue;
+        }
+        current.push_str(line);
+        current.push('\n');
+    }
+    if !current.is_empty() {
+        found.push(current);
+    }
+    found
+}
+
+/// `paragraph` without a strong label at its very start.
+fn without_label(paragraph: &str) -> &str {
+    paragraph
+        .strip_prefix("**")
+        .and_then(|rest| rest.split_once("**"))
+        .map_or(paragraph, |(_, rest)| rest)
+}
+
+/// The sentences of the paragraphs of `text`, in order, as written.
+pub(crate) fn comparable(text: &str) -> Vec<String> {
+    let mut found = Vec::new();
+    for paragraph in paragraphs(text) {
+        let prose = without_label(&paragraph);
+        found.extend(
+            sentences(prose)
+                .into_iter()
+                .filter_map(|(from, to)| prose.get(from..to))
+                .map(|sentence| sentence.trim().to_owned())
+                .filter(|sentence| sentence.chars().any(char::is_alphabetic)),
+        );
+    }
+    found
+}
+
+/// The compared sentences of `text`, in order.
 pub(crate) fn keys(text: &str) -> Vec<String> {
-    teaching_sentences(text)
+    comparable(text)
         .iter()
         .map(|sentence| key(sentence))
         .collect()
