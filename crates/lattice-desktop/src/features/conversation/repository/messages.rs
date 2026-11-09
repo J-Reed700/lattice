@@ -10,6 +10,7 @@ use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::ConversationId;
+use sqlx::SqliteConnection;
 use std::str::FromStr;
 
 impl ConversationRepository {
@@ -322,12 +323,17 @@ impl ConversationRepository {
     }
 
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<ConversationMessage>> {
-        messages_of(&self.pool, conversation_id).await
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
+        messages_of(&mut connection, conversation_id).await
     }
 }
 
 pub(super) async fn messages_of(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    connection: &mut SqliteConnection,
     conversation_id: &str,
 ) -> Result<Vec<ConversationMessage>> {
     let db_models = sqlx::query_as::<_, ConversationMessageModel>(
@@ -340,7 +346,7 @@ pub(super) async fn messages_of(
             "#,
     )
     .bind(conversation_id)
-    .fetch_all(executor)
+    .fetch_all(connection)
     .await
     .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
 

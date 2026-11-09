@@ -13,7 +13,7 @@ use chrono::Utc;
 use lattice_core::application::contracts::images::{ChatImageDto, ImageOrigin};
 use lattice_core::application::ports::chat_images::DRAFT_REQUEST_PREFIX;
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{QueryBuilder, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id};
 use crate::infrastructure::storage::{FileIntents, FileStore};
@@ -242,7 +242,8 @@ impl ImageRepository {
         conversation_id: &str,
         ids: &[String],
     ) -> Result<Vec<ImageRow>> {
-        rows_in_conversation(&self.pool, conversation_id, ids).await
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        rows_in_conversation(&mut connection, conversation_id, ids).await
     }
 
     /// Gives the conversation's rows among `ids` that no other message holds
@@ -474,7 +475,7 @@ impl ImageRepository {
 
 /// The conversation's rows among `ids`, in the order `ids` names them.
 async fn rows_in_conversation(
-    executor: impl sqlx::Executor<'_, Database = Sqlite>,
+    connection: &mut SqliteConnection,
     conversation_id: &str,
     ids: &[String],
 ) -> Result<Vec<ImageRow>> {
@@ -492,7 +493,7 @@ async fn rows_in_conversation(
     list.push_unseparated(")");
     let rows: Vec<ImageRow> = select
         .build_query_as()
-        .fetch_all(executor)
+        .fetch_all(connection)
         .await
         .map_err(db)?;
     Ok(in_order(rows, ids))

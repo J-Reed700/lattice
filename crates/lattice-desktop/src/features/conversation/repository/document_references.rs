@@ -8,6 +8,7 @@ use chrono::Utc;
 use lattice_core::domain::conversation::DocumentReference;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
+use sqlx::SqliteConnection;
 
 impl ConversationRepository {
     pub async fn add_document_reference(
@@ -79,12 +80,16 @@ impl ConversationRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Vec<DocumentReference>> {
-        document_references_of(&self.pool, conversation_id).await
+        let mut connection =
+            self.pool.acquire().await.map_err(|e| {
+                AppError::Database(format!("Failed to get document references: {}", e))
+            })?;
+        document_references_of(&mut connection, conversation_id).await
     }
 }
 
 pub(super) async fn document_references_of(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    connection: &mut SqliteConnection,
     conversation_id: &str,
 ) -> Result<Vec<DocumentReference>> {
     let db_models = sqlx::query_as::<_, DocumentReferenceModel>(
@@ -96,7 +101,7 @@ pub(super) async fn document_references_of(
             "#,
     )
     .bind(conversation_id)
-    .fetch_all(executor)
+    .fetch_all(connection)
     .await
     .map_err(|e| AppError::Database(format!("Failed to get document references: {}", e)))?;
 

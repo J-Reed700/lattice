@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use chrono::Utc;
-use sqlx::{Executor, Sqlite, SqliteConnection, SqlitePool};
+use sqlx::{SqliteConnection, SqlitePool};
 
 use super::dto::WebPageSnapshotStatus;
 use lattice_core::shared::error::{AppError, Result};
@@ -68,7 +68,7 @@ pub struct ReadyCapture {
 }
 
 async fn snapshot_for_url(
-    executor: impl Executor<'_, Database = Sqlite>,
+    connection: &mut SqliteConnection,
     conversation_id: &str,
     normalized_url: &str,
 ) -> Result<Option<SnapshotRow>> {
@@ -78,7 +78,7 @@ async fn snapshot_for_url(
     ))
     .bind(conversation_id)
     .bind(normalized_url)
-    .fetch_optional(executor)
+    .fetch_optional(connection)
     .await
     .map_err(db)
 }
@@ -223,7 +223,8 @@ impl SnapshotRepository {
         conversation_id: &str,
         normalized_url: &str,
     ) -> Result<Option<SnapshotRow>> {
-        snapshot_for_url(&self.pool, conversation_id, normalized_url).await
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        snapshot_for_url(&mut connection, conversation_id, normalized_url).await
     }
 
     pub async fn find_for_viewer(

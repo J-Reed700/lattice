@@ -177,12 +177,17 @@ impl BackupAdapter {
         let _temporary_snapshot = TemporarySnapshot(temp_path.clone());
         let temp_str = temp_path.to_string_lossy().to_string();
         validate_sql_safe_path(&temp_str)?;
-        if let Err(error) = database_repository::vacuum_into(&self.pool, &temp_str).await {
+        let mut connection = self.pool.acquire().await.map_err(|error| {
+            error!("Failed to create safety backup: {}", error);
+            AppError::Database(format!("Failed to create safety backup: {error}"))
+        })?;
+        if let Err(error) = database_repository::vacuum_into(&mut connection, &temp_str).await {
             error!("Failed to create safety backup: {}", error);
             return Err(AppError::Database(format!(
                 "Failed to create safety backup: {error}"
             )));
         }
+        drop(connection);
 
         self.validate_backup(&temp_path).await?;
 
@@ -253,7 +258,11 @@ impl BackupAdapter {
             .await
             .ok()?;
 
-        let count = database_repository::document_count(&pool).await.ok()?;
+        let mut connection = pool.acquire().await.ok()?;
+        let count = database_repository::document_count(&mut connection)
+            .await
+            .ok()?;
+        drop(connection);
 
         pool.close().await;
 
@@ -274,8 +283,8 @@ impl BackupAdapter {
             }
         };
 
-        let has_table = match database_repository::has_schema_version_table(&pool).await {
-            Ok(has_table) => has_table,
+        let mut connection = match pool.acquire().await {
+            Ok(connection) => connection,
             Err(error) => {
                 warn!(
                     "Failed to check schema_version table in backup ({}): {}",
@@ -287,23 +296,42 @@ impl BackupAdapter {
             }
         };
 
-        if !has_table {
-            pool.close().await;
-            return None;
-        }
-
-        let version: Option<i64> = match database_repository::latest_schema_version(&pool).await {
-            Ok(value) => value,
+        let has_table = match database_repository::has_schema_version_table(&mut connection).await {
+            Ok(has_table) => has_table,
             Err(error) => {
                 warn!(
-                    "Failed to read backup schema version ({}): {}",
+                    "Failed to check schema_version table in backup ({}): {}",
                     path.display(),
                     error
                 );
+                drop(connection);
                 pool.close().await;
                 return None;
             }
         };
+
+        if !has_table {
+            drop(connection);
+            pool.close().await;
+            return None;
+        }
+
+        let version: Option<i64> =
+            match database_repository::latest_schema_version(&mut connection).await {
+                Ok(value) => value,
+                Err(error) => {
+                    warn!(
+                        "Failed to read backup schema version ({}): {}",
+                        path.display(),
+                        error
+                    );
+                    drop(connection);
+                    pool.close().await;
+                    return None;
+                }
+            };
+
+        drop(connection);
 
         if version.is_none() {
             warn!(
@@ -331,9 +359,14 @@ impl BackupAdapter {
             .await
             .map_err(|e| AppError::Database(format!("Invalid backup file: {}", e)))?;
 
-        let result = database_repository::integrity_check(&pool)
+        let mut connection = pool
+            .acquire()
             .await
             .map_err(|e| AppError::Database(format!("Backup integrity check failed: {}", e)))?;
+        let result = database_repository::integrity_check(&mut connection)
+            .await
+            .map_err(|e| AppError::Database(format!("Backup integrity check failed: {}", e)))?;
+        drop(connection);
 
         pool.close().await;
 
@@ -445,7 +478,11 @@ impl BackupPort for BackupAdapter {
         validate_sql_safe_path(&backup_path_str)?;
 
         // Defense in depth: the repository escapes single quotes as well.
-        database_repository::vacuum_into(&self.pool, &backup_path_str)
+        let mut connection = self.pool.acquire().await.map_err(|e| {
+            error!("Backup failed: {}", e);
+            AppError::Database(format!("Failed to create backup: {}", e))
+        })?;
+        database_repository::vacuum_into(&mut connection, &backup_path_str)
             .await
             .map_err(|e| {
                 error!("Backup failed: {}", e);

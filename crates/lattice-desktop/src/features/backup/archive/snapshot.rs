@@ -134,7 +134,8 @@ fn remove_db_sidecars(db: &Path) {
 
 /// Does `table` exist in the connected database?
 async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool, ArchiveError> {
-    database_repository::table_exists(pool, table)
+    let mut connection = pool.acquire().await.map_err(db_err)?;
+    database_repository::table_exists(&mut connection, table)
         .await
         .map_err(db_err)
 }
@@ -221,11 +222,13 @@ pub async fn snapshot_database(
         }
     }
 
-    database_repository::vacuum_into(pool, &dest_str)
+    let mut connection = pool.acquire().await.map_err(db_err)?;
+    database_repository::vacuum_into(&mut connection, &dest_str)
         .await
         .map_err(|error| {
             ArchiveError::Database(format!("VACUUM INTO {} failed: {error}", dest.display()))
         })?;
+    drop(connection);
 
     // Scratch pool over the copy. One connection, rollback journal (so no
     // `-wal`/`-shm` appear), foreign keys off: every excluded table is
@@ -302,12 +305,15 @@ async fn clear_snapshot(pool: &SqlitePool) -> Result<(Vec<String>, Option<i64>),
 
     // Reclaim the pages the deletes freed. SQLite refuses VACUUM inside a
     // transaction, so it runs after the commit.
-    database_repository::vacuum(pool)
+    let mut connection = pool.acquire().await.map_err(db_err)?;
+    database_repository::vacuum(&mut connection)
         .await
         .map_err(|error| ArchiveError::Database(format!("VACUUM of snapshot failed: {error}")))?;
+    drop(connection);
 
     let migration_version = if table_exists(pool, "_sqlx_migrations").await? {
-        database_repository::newest_migration(pool)
+        let mut connection = pool.acquire().await.map_err(db_err)?;
+        database_repository::newest_migration(&mut connection)
             .await
             .map_err(db_err)?
     } else {
@@ -319,7 +325,8 @@ async fn clear_snapshot(pool: &SqlitePool) -> Result<(Vec<String>, Option<i64>),
 
 /// Does `table` have a column called `column`?
 async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> Result<bool, ArchiveError> {
-    database_repository::column_exists(pool, table, column)
+    let mut connection = pool.acquire().await.map_err(db_err)?;
+    database_repository::column_exists(&mut connection, table, column)
         .await
         .map_err(db_err)
 }
@@ -372,7 +379,8 @@ async fn read_referenced_blob_hashes(
         return Ok(None);
     }
 
-    let checksums = database_repository::distinct_checksums(pool)
+    let mut connection = pool.acquire().await.map_err(db_err)?;
+    let checksums = database_repository::distinct_checksums(&mut connection)
         .await
         .map_err(db_err)?;
 
@@ -417,7 +425,8 @@ async fn count_rows(pool: &SqlitePool, table: &str) -> Result<u64, ArchiveError>
     if !table_exists(pool, table).await? {
         return Ok(0);
     }
-    let count = database_repository::count_rows(pool, table)
+    let mut connection = pool.acquire().await.map_err(db_err)?;
+    let count = database_repository::count_rows(&mut connection, table)
         .await
         .map_err(db_err)?;
     Ok(u64::try_from(count).unwrap_or(0))
@@ -454,7 +463,8 @@ pub async fn validate_snapshot(db: &Path) -> Result<SnapshotInfo, ArchiveError> 
 }
 
 async fn inspect_snapshot(pool: &SqlitePool) -> Result<SnapshotInfo, ArchiveError> {
-    let integrity = database_repository::integrity_check(pool)
+    let mut connection = pool.acquire().await.map_err(db_err)?;
+    let integrity = database_repository::integrity_check(&mut connection)
         .await
         .map_err(|error| ArchiveError::Corrupt(format!("integrity check failed: {error}")))?;
     if integrity != "ok" {
@@ -463,23 +473,29 @@ async fn inspect_snapshot(pool: &SqlitePool) -> Result<SnapshotInfo, ArchiveErro
         )));
     }
 
+    drop(connection);
+
     let migration_version = if table_exists(pool, "_sqlx_migrations").await? {
-        database_repository::newest_migration(pool)
+        let mut connection = pool.acquire().await.map_err(db_err)?;
+        database_repository::newest_migration(&mut connection)
             .await
             .map_err(db_err)?
     } else {
         None
     };
 
-    let tables = database_repository::table_count(pool)
+    let mut connection = pool.acquire().await.map_err(db_err)?;
+    let tables = database_repository::table_count(&mut connection)
         .await
         .map_err(db_err)?;
+    drop(connection);
 
     let memory_tables_present = table_exists(pool, "conversation_memory_state").await?
         && table_exists(pool, "conversation_memory_items").await?
         && table_exists(pool, "conversation_memory_evidence").await?;
     let memory_schema_version = if memory_tables_present {
-        database_repository::newest_memory_schema_version(pool)
+        let mut connection = pool.acquire().await.map_err(db_err)?;
+        database_repository::newest_memory_schema_version(&mut connection)
             .await
             .map_err(db_err)?
     } else {

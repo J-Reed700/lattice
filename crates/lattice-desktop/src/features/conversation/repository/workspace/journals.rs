@@ -1,13 +1,14 @@
 use super::*;
 use lattice_core::shared::persistence::Transactions;
+use sqlx::SqliteConnection;
 
 pub(super) async fn ensure_journal_space(
-    executor: impl sqlx::Executor<'_, Database = Sqlite>,
+    connection: &mut SqliteConnection,
     journal_space_id: &str,
 ) -> Result<(), AppError> {
     let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM journals WHERE id = ?")
         .bind(journal_space_id)
-        .fetch_one(executor)
+        .fetch_one(connection)
         .await
         .map_err(|e| AppError::Database(format!("Failed to verify journal: {}", e)))?;
 

@@ -6,7 +6,7 @@ use chrono::Utc;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{Executor, Row, Sqlite, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::path::PathBuf;
 use tracing::{debug, error, info};
 
@@ -246,7 +246,11 @@ impl DownloadedModelRepository {
 
     /// Find a downloaded model by its model_id
     pub async fn find_by_model_id(&self, model_id: &str) -> Result<Option<DownloadedModel>> {
-        model_by_model_id(&self.pool, model_id).await
+        let mut connection =
+            self.pool.acquire().await.map_err(|e| {
+                AppError::Database(format!("Failed to find downloaded model: {}", e))
+            })?;
+        model_by_model_id(&mut connection, model_id).await
     }
 
     /// List all downloaded models
@@ -420,13 +424,13 @@ impl DownloadedModelRepository {
 }
 
 async fn model_by_model_id(
-    executor: impl Executor<'_, Database = Sqlite>,
+    connection: &mut SqliteConnection,
     model_id: &str,
 ) -> Result<Option<DownloadedModel>> {
     let query = build_model_select_query("WHERE m.model_id = ?1");
     let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
         .bind(model_id)
-        .fetch_optional(executor)
+        .fetch_optional(connection)
         .await
         .map_err(|e| {
             error!(error = %e, model_id = %model_id, "Failed to find downloaded model by model_id");
@@ -440,10 +444,10 @@ async fn model_by_model_id(
 }
 
 /// Check if model exists by id (primary key) (helper for error handling)
-async fn exists_by_id(executor: impl Executor<'_, Database = Sqlite>, id: &str) -> Result<bool> {
+async fn exists_by_id(connection: &mut SqliteConnection, id: &str) -> Result<bool> {
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE id = ?")
         .bind(id)
-        .fetch_one(executor)
+        .fetch_one(connection)
         .await
         .map_err(|e| {
             error!(error = %e, id = %id, "Failed to check model existence by id");

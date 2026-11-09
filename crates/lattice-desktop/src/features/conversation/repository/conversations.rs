@@ -15,7 +15,7 @@ use lattice_core::domain::conversation::{
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::ConversationId;
-use sqlx::Row;
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
 impl ConversationRepository {
@@ -102,7 +102,12 @@ impl ConversationRepository {
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Conversation>> {
-        find_conversation(&self.pool, id).await
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to find conversation: {}", e)))?;
+        find_conversation(&mut connection, id).await
     }
 
     pub async fn find_aggregate_by_id(&self, id: &str) -> Result<Option<ConversationAggregate>> {
@@ -134,7 +139,10 @@ impl ConversationRepository {
     /// UNIQUE and the memory commit conflicts on it, so a re-compaction updates
     /// the row in place and a read never has to choose between two.
     pub async fn get_summary(&self, id: &str) -> Result<Option<CompactionRecord>> {
-        load_summary(&self.pool, id).await
+        let mut connection = self.pool.acquire().await.map_err(|e| {
+            AppError::Database(format!("Failed to load conversation summary: {}", e))
+        })?;
+        load_summary(&mut connection, id).await
     }
 
     pub async fn find_all(
@@ -165,11 +173,20 @@ impl ConversationRepository {
     }
 
     pub async fn update_title(&self, id: &str, new_title: &str) -> Result<()> {
-        set_title(&self.pool, id, new_title).await
+        let mut connection = self.pool.acquire().await.map_err(|e| {
+            AppError::Database(format!("Failed to update conversation title: {}", e))
+        })?;
+        set_title(&mut connection, id, new_title).await
     }
 
     pub async fn update_system_prompt(&self, id: &str, system_prompt: Option<&str>) -> Result<()> {
-        set_system_prompt(&self.pool, id, system_prompt).await
+        let mut connection = self.pool.acquire().await.map_err(|e| {
+            AppError::Database(format!(
+                "Failed to update conversation system prompt: {}",
+                e
+            ))
+        })?;
+        set_system_prompt(&mut connection, id, system_prompt).await
     }
 
     /// The model this chat asked for.
@@ -354,7 +371,7 @@ impl ConversationRepository {
 }
 
 async fn find_conversation(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    connection: &mut SqliteConnection,
     id: &str,
 ) -> Result<Option<Conversation>> {
     let db_model = sqlx::query_as::<_, ConversationModel>(
@@ -366,7 +383,7 @@ async fn find_conversation(
             "#,
     )
     .bind(id)
-    .fetch_optional(executor)
+    .fetch_optional(connection)
     .await
     .map_err(|e| AppError::Database(format!("Failed to find conversation: {}", e)))?;
 
@@ -377,7 +394,7 @@ async fn find_conversation(
 }
 
 async fn load_summary(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    connection: &mut SqliteConnection,
     id: &str,
 ) -> Result<Option<CompactionRecord>> {
     let model = sqlx::query_as::<_, ConversationSummaryModel>(
@@ -390,7 +407,7 @@ async fn load_summary(
             "#,
     )
     .bind(id)
-    .fetch_optional(executor)
+    .fetch_optional(connection)
     .await
     .map_err(|e| AppError::Database(format!("Failed to load conversation summary: {}", e)))?;
 
@@ -400,11 +417,7 @@ async fn load_summary(
     }
 }
 
-async fn set_title(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
-    id: &str,
-    new_title: &str,
-) -> Result<()> {
+async fn set_title(connection: &mut SqliteConnection, id: &str, new_title: &str) -> Result<()> {
     let now = Utc::now().to_rfc3339();
 
     let result = sqlx::query!(
@@ -417,7 +430,7 @@ async fn set_title(
         now,
         id
     )
-    .execute(executor)
+    .execute(connection)
     .await
     .map_err(|e| AppError::Database(format!("Failed to update conversation title: {}", e)))?;
 
@@ -432,7 +445,7 @@ async fn set_title(
 }
 
 async fn set_system_prompt(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    connection: &mut SqliteConnection,
     id: &str,
     system_prompt: Option<&str>,
 ) -> Result<()> {
@@ -448,7 +461,7 @@ async fn set_system_prompt(
         now,
         id
     )
-    .execute(executor)
+    .execute(connection)
     .await
     .map_err(|e| {
         AppError::Database(format!(

@@ -15,7 +15,7 @@ use lattice_core::application::ports::mention_repository_port::{
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lazy_regex::regex;
-use sqlx::{Executor, Row, Sqlite, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -87,7 +87,7 @@ impl MentionRepository {
     }
 
     async fn upsert_mention(
-        executor: impl Executor<'_, Database = Sqlite>,
+        connection: &mut SqliteConnection,
         name: &str,
         mention_type: &str,
         metadata: Option<&str>,
@@ -110,7 +110,7 @@ impl MentionRepository {
             metadata,
             created_at
         )
-        .fetch_one(executor)
+        .fetch_one(connection)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create mention: {}", e)))?;
 
@@ -129,7 +129,7 @@ impl MentionRepository {
 
     /// Link mention to document with context
     async fn link_mention_to_document(
-        executor: impl Executor<'_, Database = Sqlite>,
+        connection: &mut SqliteConnection,
         document_id: &str,
         mention_id: &str,
         context: Option<&str>,
@@ -150,7 +150,7 @@ impl MentionRepository {
             position,
             created_at
         )
-        .execute(executor)
+        .execute(connection)
         .await
         .map_err(|e| AppError::Database(format!("Failed to link mention: {}", e)))?;
 
@@ -159,14 +159,14 @@ impl MentionRepository {
 
     /// Clear all mentions for a document (for reindexing)
     async fn clear_document_mentions(
-        executor: impl Executor<'_, Database = Sqlite>,
+        connection: &mut SqliteConnection,
         document_id: &str,
     ) -> Result<()> {
         sqlx::query!(
             "DELETE FROM document_mentions WHERE document_id = ?",
             document_id
         )
-        .execute(executor)
+        .execute(connection)
         .await
         .map_err(|e| AppError::Database(format!("Failed to clear mentions: {}", e)))?;
         Ok(())
@@ -197,7 +197,12 @@ impl MentionRepositoryPort for MentionRepository {
         mention_type: &str,
         metadata: Option<&str>,
     ) -> Result<MentionData, AppError> {
-        Self::upsert_mention(&self.pool, name, mention_type, metadata).await
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to create mention: {}", e)))?;
+        Self::upsert_mention(&mut connection, name, mention_type, metadata).await
     }
 
     async fn find_mention_by_name(&self, name: &str) -> Result<Option<MentionData>, AppError> {

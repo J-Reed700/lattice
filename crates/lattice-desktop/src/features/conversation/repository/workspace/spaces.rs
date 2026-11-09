@@ -1,5 +1,6 @@
 use super::*;
 use lattice_core::shared::persistence::Transactions;
+use sqlx::SqliteConnection;
 
 fn preferences_declares_journal(raw: Option<&str>) -> bool {
     let Some(raw_json) = raw else {
@@ -38,13 +39,13 @@ fn validate_space_preferences_not_journal(
 }
 
 pub(super) async fn ensure_standard_space(
-    executor: impl sqlx::Executor<'_, Database = Sqlite>,
+    connection: &mut SqliteConnection,
     space_id: &str,
 ) -> Result<(), AppError> {
     let exists =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
             .bind(space_id)
-            .fetch_one(executor)
+            .fetch_one(connection)
             .await
             .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
 

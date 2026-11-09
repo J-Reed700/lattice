@@ -1,7 +1,7 @@
 //! `RepositoryPort<TagEntity>` and `TagRepositoryTrait` over the SQLite repository.
 
 use async_trait::async_trait;
-use sqlx::{Executor, Row, Sqlite};
+use sqlx::{Row, SqliteConnection};
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::{Filter, RepositoryPort};
@@ -12,7 +12,7 @@ use lattice_core::shared::persistence::Transactions;
 use super::{TagFilter, TagRepository};
 
 impl TagRepository {
-    async fn all_in(executor: impl Executor<'_, Database = Sqlite>) -> Result<Vec<TagEntity>> {
+    async fn all_in(connection: &mut SqliteConnection) -> Result<Vec<TagEntity>> {
         let db_models = sqlx::query_as!(
             TagModel,
             r#"
@@ -21,7 +21,7 @@ impl TagRepository {
             ORDER BY name ASC
             "#
         )
-        .fetch_all(executor)
+        .fetch_all(connection)
         .await
         .map_err(|e| AppError::Database(format!("Failed to get all tags: {}", e)))?;
 
@@ -128,7 +128,12 @@ impl RepositoryPort<TagEntity> for TagRepository {
     }
 
     async fn find_all(&self) -> Result<Vec<TagEntity>> {
-        Self::all_in(&self.pool).await
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to get all tags: {}", e)))?;
+        Self::all_in(&mut connection).await
     }
 
     async fn save(&self, entity: &TagEntity) -> Result<()> {

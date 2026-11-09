@@ -349,11 +349,12 @@ impl ConversationRepository {
     /// attachment belongs to no space and is excluded here;
     /// `retrieval_document_scope` adds back the asking conversation's own.
     pub async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>, AppError> {
-        Self::space_document_scope_on(&self.pool, space_id).await
+        let mut connection = self.pool.acquire().await?;
+        Self::space_document_scope_on(&mut connection, space_id).await
     }
 
     async fn space_document_scope_on(
-        executor: impl sqlx::Executor<'_, Database = Sqlite>,
+        connection: &mut SqliteConnection,
         space_id: &str,
     ) -> Result<HashSet<String>, AppError> {
         let ids = sqlx::query_scalar::<_, String>(
@@ -373,7 +374,7 @@ impl ConversationRepository {
         )
         .bind(space_id)
         .bind(space_id)
-        .fetch_all(executor)
+        .fetch_all(connection)
         .await?;
         Ok(ids.into_iter().collect())
     }

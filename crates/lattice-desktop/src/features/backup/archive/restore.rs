@@ -301,7 +301,14 @@ impl ArchiveRestorer {
     /// Highest applied migration in the *live* database — what this build's
     /// schema actually is, rather than what the binary claims.
     async fn newest_local_migration(&self) -> Result<Option<i64>, ArchiveError> {
-        match database_repository::newest_migration(&self.pool).await {
+        let mut connection = match self.pool.acquire().await {
+            Ok(connection) => connection,
+            Err(e) => {
+                warn!(error = %e, "could not read local migration version; skipping the newer-backup check");
+                return Ok(None);
+            }
+        };
+        match database_repository::newest_migration(&mut connection).await {
             Ok(version) => Ok(version),
             Err(e) => {
                 // A database with no migration table is a test fixture or a

@@ -7,7 +7,7 @@ use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::TagName;
-use sqlx::{Executor, Row, Sqlite, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 
 mod document_tags;
 mod ports;
@@ -51,10 +51,7 @@ pub struct TagRepository {
     pool: SqlitePool,
 }
 
-async fn tag_by_name(
-    executor: impl Executor<'_, Database = Sqlite>,
-    name: &str,
-) -> Result<Option<TagEntity>> {
+async fn tag_by_name(connection: &mut SqliteConnection, name: &str) -> Result<Option<TagEntity>> {
     let db_model = sqlx::query_as!(
         TagModel,
         r#"
@@ -64,7 +61,7 @@ async fn tag_by_name(
             "#,
         name
     )
-    .fetch_optional(executor)
+    .fetch_optional(connection)
     .await
     .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
 
@@ -86,7 +83,12 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if query fails
     pub async fn find_by_name(&self, name: &str) -> Result<Option<TagEntity>> {
-        tag_by_name(&self.pool, name).await
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
+        tag_by_name(&mut connection, name).await
     }
 
     /// Get or create a tag by name (case-insensitive).
