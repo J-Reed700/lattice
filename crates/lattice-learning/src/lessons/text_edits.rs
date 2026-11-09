@@ -104,9 +104,15 @@ pub(super) fn schema_for(candidate: &Value, lesson: &Value) -> Value {
         "edits":edits_schema(candidate, 0),
         "citations":{"type":"array","maxItems":24,"items":{"type":"object","additionalProperties":false,
             "required":["path","sentence","sourceIndex","quote"],"properties":properties}}}});
-    if !cited.is_empty() {
-        schema["properties"]["uncite"] =
-            json!({"type":"array","uniqueItems":true,"items":{"type":"string","enum":cited}});
+    if let Some(offered) = schema
+        .get_mut("properties")
+        .and_then(Value::as_object_mut)
+        .filter(|_| !cited.is_empty())
+    {
+        offered.insert(
+            "uncite".into(),
+            json!({"type":"array","uniqueItems":true,"items":{"type":"string","enum":cited}}),
+        );
     }
     schema
 }
