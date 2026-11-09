@@ -9,6 +9,7 @@ use crate::{
     generation_jobs::overlap_tests::{quiz_jobs, run_lesson_job, Published, Recorder, BODY_MARK},
     quiz_bank_jobs::{LessonBank, QuizBankWorker, LESSON_BANK_CHECKPOINT},
 };
+use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{JobContext, JobHandler, JobOutcome, JobStore};
@@ -294,5 +295,66 @@ async fn a_lessons_quiz_is_preparing_while_its_quiz_job_is_unfinished() -> Resul
     let failed = quiz_of(repo.overview(&published.program_id).await?);
     assert_eq!(failed.bank_status, LearningQuizBankStatus::Failed);
     assert_eq!(failed.preparing_job_id, None);
+    Ok(())
+}
+
+/// Answers every quiz authoring request with one item that cites nothing, so
+/// the bank's checks refuse it, and every review with no issues.
+struct Unciting;
+
+#[async_trait::async_trait]
+impl LLMPort for Unciting {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (system, _) = crate::lessons::structured_call::task_messages(request);
+        Ok(CompletionResponse::from_text(
+            if system.starts_with("Write quiz questions") {
+                "{\"items\":[{}]}"
+            } else {
+                "{\"issues\":[]}"
+            },
+        ))
+    }
+    fn model_name(&self) -> &str {
+        "unciting-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_lesson_quiz_job_keeps_what_its_checks_left_out() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (_, job_id) = published(&pool).await?;
+    let context = claimed(&pool, &job_id).await?;
+    let llm: Arc<dyn LLMPort> = Arc::new(Unciting);
+    let quiz_worker = QuizBankWorker {
+        pool: pool.clone(),
+        load_llm: Arc::new(move || {
+            let llm = llm.clone();
+            Box::pin(async move { Ok(crate::generation_jobs::pinned_for_test(llm)) })
+        }),
+    };
+    let outcome = quiz_worker.run(&context).await?;
+
+    let saved = JobStore::new(pool.clone())
+        .checkpoint(&job_id, LESSON_BANK_CHECKPOINT)
+        .await?
+        .unwrap();
+    let dropped = saved["dropped"].as_array().map_or(0, Vec::len);
+    assert!(dropped > 0, "the stage kept no reason for its refusals: {saved}");
+    let JobOutcome::Completed { message, .. } = outcome else {
+        panic!("{outcome:?}");
+    };
+    assert_eq!(
+        message,
+        format!("0 questions written; {dropped} failed the checks and were left out.")
+    );
     Ok(())
 }
