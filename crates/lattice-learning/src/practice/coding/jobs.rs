@@ -41,7 +41,7 @@ pub const CODING_BUILD: &str = "learning.coding_build";
 pub const CODING_BUILD_STEPS: u32 = 3;
 
 /// How many patterns an easy problem calls for. An easy problem is one idea; a harder one combines two.
-const EASY_PATTERNS: usize = 1;
+pub const EASY_PATTERNS: usize = 1;
 
 /// How many patterns a harder problem calls for.
 const HARDER_PATTERNS: usize = 2;
@@ -127,7 +127,7 @@ impl CodingBuildWorker {
 }
 
 /// What a proven problem is saved as.
-pub(crate) struct ProblemSave<'a> {
+pub struct ProblemSave<'a> {
     pub job_id: &'a str,
     pub program_id: &'a str,
     pub lesson_id: &'a str,
@@ -138,7 +138,7 @@ pub(crate) struct ProblemSave<'a> {
 
 /// Saves a proven problem as a coding activity and returns the activity id. The ids come from the job's, so a build
 /// that runs again after the save committed finds its own activity and saves nothing twice.
-pub(crate) async fn save_problem(
+pub async fn save_problem(
     pool: &SqlitePool,
     save: &ProblemSave<'_>,
     problem: &Problem,
