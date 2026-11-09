@@ -86,7 +86,7 @@ pub(super) fn item_schema(
         }
         LearningItemFormat::Cloze => put(
             "blanks",
-            json!({"type":"array","minItems":1,"maxItems":engine::MAX_CLOZE_BLANKS,"items":{"type":"object","additionalProperties":false,"required":["acceptedAnswers"],"properties":{"acceptedAnswers":strings_from(1)}}}),
+            json!({"type":"array","minItems":1,"items":{"type":"object","additionalProperties":false,"required":["acceptedAnswers"],"properties":{"acceptedAnswers":strings_from(1)}}}),
         ),
         LearningItemFormat::Matching => {
             put(

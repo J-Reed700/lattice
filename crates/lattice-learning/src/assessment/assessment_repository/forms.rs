@@ -20,6 +20,7 @@ fn validate_response(
     format: engine::LearningItemFormat,
     options: usize,
     left: usize,
+    blanks: usize,
 ) -> Result<()> {
     use engine::LearningItemFormat as F;
     let total_text = response.text.as_deref().map_or(0, |t| t.chars().count())
@@ -29,10 +30,6 @@ fn validate_response(
             .map(|b| b.chars().count())
             .sum::<usize>();
     if total_text > MAX_CHAT_MESSAGE_CHARS
-        || response.ordered_values.len() > 32
-        || response.blank_responses.len() > engine::MAX_CLOZE_BLANKS
-        || response.matches.len() > 8
-        || response.selected_indices.len() > 12
         || response
             .artifact_json
             .as_ref()
@@ -57,7 +54,9 @@ fn validate_response(
         F::ShortAnswer | F::Explanation => {
             response.selected_indices.is_empty() && response.ordered_values.is_empty()
         }
-        F::Cloze => response.selected_indices.is_empty(),
+        F::Cloze => {
+            response.selected_indices.is_empty() && response.blank_responses.len() <= blanks
+        }
         F::Matching => {
             response.matches.len() <= left && response.matches.iter().flatten().all(in_range)
         }
@@ -505,15 +504,8 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        if req.assistance.len() > 24
-            || req
-                .assistance
-                .iter()
-                .any(|a| a.trim().is_empty() || a.chars().count() > 160)
-        {
-            return Err(invalid(
-                "Assistance notes are outside their allowed bounds.",
-            ));
+        if req.assistance.iter().any(|a| a.trim().is_empty()) {
+            return Err(invalid("Assistance notes cannot be blank."));
         }
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
@@ -546,7 +538,7 @@ impl LearningAssessmentRepository {
         if h.get::<i64, _>("revision") != req.expected_revision {
             return Err(invalid("This quiz changed; reload and retry."));
         }
-        let item = sqlx::query("SELECT ordinal,format,options_json,left_items_json FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?")
+        let item = sqlx::query("SELECT ordinal,format,options_json,left_items_json,prompt FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?")
             .bind(&req.form_id)
             .bind(&req.response.item_id)
             .fetch_optional(&mut *tx)
@@ -558,6 +550,7 @@ impl LearningAssessmentRepository {
             parse_format(item.get("format"))?,
             decode::<Vec<String>>(item.get("options_json"))?.len(),
             decode::<Vec<String>>(item.get("left_items_json"))?.len(),
+            engine::cloze_blanks(&item.get::<String, _>("prompt")).len(),
         )?;
         let ordinal: i64 = item.get("ordinal");
         let last: Option<i64> = sqlx::query_scalar("SELECT max(revision) FROM learning_assessment_response_revisions WHERE form_id=? AND item_ordinal=?")
@@ -650,11 +643,11 @@ mod tests {
             ("an essay", essay),
             ("the chat limit", "x".repeat(MAX_CHAT_MESSAGE_CHARS)),
         ] {
-            let checked = validate_response(&answer(text), Format::Explanation, 0, 0);
+            let checked = validate_response(&answer(text), Format::Explanation, 0, 0, 0);
             assert!(checked.is_ok(), "{what}: {:?}", checked.err());
         }
         let over = answer("x".repeat(MAX_CHAT_MESSAGE_CHARS + 1));
-        assert!(validate_response(&over, Format::Explanation, 0, 0).is_err());
+        assert!(validate_response(&over, Format::Explanation, 0, 0, 0).is_err());
     }
 
     #[test]
@@ -664,8 +657,8 @@ mod tests {
             response.blank_responses = vec!["x".repeat(MAX_CHAT_MESSAGE_CHARS / 4); count];
             response
         };
-        assert!(validate_response(&blanks(4), Format::Cloze, 0, 0).is_ok());
-        assert!(validate_response(&blanks(5), Format::Cloze, 0, 0).is_err());
+        assert!(validate_response(&blanks(4), Format::Cloze, 0, 0, 5).is_ok());
+        assert!(validate_response(&blanks(5), Format::Cloze, 0, 0, 5).is_err());
     }
 
     #[test]
@@ -676,18 +669,23 @@ mod tests {
             response
         };
         let half = MAX_CHAT_MESSAGE_CHARS / 2;
-        assert!(validate_response(&artifact(half), Format::Artifact, 0, 0).is_ok());
+        assert!(validate_response(&artifact(half), Format::Artifact, 0, 0, 0).is_ok());
         assert!(
-            validate_response(&artifact(MAX_CHAT_MESSAGE_CHARS), Format::Artifact, 0, 0).is_err()
+            validate_response(&artifact(MAX_CHAT_MESSAGE_CHARS), Format::Artifact, 0, 0, 0)
+                .is_err()
         );
     }
 
     #[test]
-    fn the_counts_a_quiz_answer_may_hold_are_unchanged() {
+    fn a_quiz_answer_holds_at_most_what_its_question_offers() {
         let mut response = engine::LearningAssessmentResponse::empty("item");
-        response.ordered_values = vec!["step".to_string(); 33];
-        assert!(validate_response(&response, Format::Ordering, 40, 0).is_err());
-        response.ordered_values = vec!["step".to_string(); 32];
-        assert!(validate_response(&response, Format::Ordering, 40, 0).is_ok());
+        response.ordered_values = vec!["step".to_string(); 41];
+        assert!(validate_response(&response, Format::Ordering, 40, 0, 0).is_err());
+        response.ordered_values = vec!["step".to_string(); 40];
+        assert!(validate_response(&response, Format::Ordering, 40, 0, 0).is_ok());
+        let mut cloze = engine::LearningAssessmentResponse::empty("item");
+        cloze.blank_responses = vec!["x".to_string(); 9];
+        assert!(validate_response(&cloze, Format::Cloze, 0, 0, 9).is_ok());
+        assert!(validate_response(&cloze, Format::Cloze, 0, 0, 8).is_err());
     }
 }

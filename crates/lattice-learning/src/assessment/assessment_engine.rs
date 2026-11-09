@@ -245,26 +245,24 @@ pub fn validate_blueprint(blueprint: &LearningAssessmentBlueprint) -> Result<()>
     if blueprint.expected_minutes == 0 {
         return Err(invalid("Assessment time must be at least one minute."));
     }
-    if blueprint.allowed_aids.len() > 24
-        || blueprint
-            .allowed_aids
-            .iter()
-            .any(|aid| aid.trim().is_empty() || aid.chars().count() > 160)
+    if blueprint
+        .allowed_aids
+        .iter()
+        .any(|aid| aid.trim().is_empty())
     {
-        return Err(invalid("Assessment aid descriptions must be bounded."));
+        return Err(invalid("Assessment aid descriptions cannot be blank."));
     }
-    if blueprint.requirements.is_empty() || blueprint.requirements.len() > 256 {
+    if blueprint.requirements.is_empty() {
         return Err(invalid(
-            "An assessment blueprint needs 1–256 coverage requirements.",
+            "An assessment blueprint needs coverage requirements.",
         ));
     }
-    let mut total = 0usize;
     let mut seen = HashSet::new();
     for requirement in &blueprint.requirements {
         id(&requirement.outcome_id, "outcome")?;
-        if requirement.count == 0 || requirement.count > 12 {
+        if requirement.count == 0 {
             return Err(invalid(
-                "Each assessment coverage requirement needs 1–12 items.",
+                "Each assessment coverage requirement needs at least one item.",
             ));
         }
         if requirement.difficulty_min > requirement.difficulty_max
@@ -280,19 +278,9 @@ pub fn validate_blueprint(blueprint: &LearningAssessmentBlueprint) -> Result<()>
                 "Assessment coverage requirements must be unique by outcome and format.",
             ));
         }
-        total += requirement.count;
-    }
-    if total > MAX_FORM_ITEMS {
-        return Err(invalid(
-            "An assessment form cannot require more than 200 items.",
-        ));
     }
     Ok(())
 }
-
-/// The most items one form may hold (a course exam covers every prepared
-/// lesson and module).
-pub const MAX_FORM_ITEMS: usize = 200;
 
 /// Whether a format shuffles its options per form.
 fn shuffles(format: LearningItemFormat) -> bool {
@@ -427,9 +415,6 @@ pub fn build_assessment_form(
             });
         }
     }
-    if selected.len() > MAX_FORM_ITEMS {
-        return Err(invalid("Assessment form exceeds the item limit."));
-    }
     Ok(LearningAssessmentForm {
         id: form_id,
         blueprint_id: blueprint.id.clone(),
@@ -479,7 +464,7 @@ mod tests;
 
 pub use answers::{normalize_answer, parse_number, show_number, text_matches};
 pub use checks::{
-    cloze_blanks, key_leaks, length_biased, near_duplicate, validate_candidate, MAX_CLOZE_BLANKS,
+    cloze_blanks, key_leaks, length_biased, near_duplicate, validate_candidate,
     SINGLE_CHOICE_OPTIONS, TRUE_FALSE,
 };
 pub use scoring::{

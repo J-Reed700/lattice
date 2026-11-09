@@ -91,17 +91,13 @@ fn text_key_valid(key: &LearningTextKey) -> bool {
 pub const TRUE_FALSE: [&str; 2] = ["True", "False"];
 
 /// How many options a single-choice item may have.
-/// The most blanks a cloze sentence may hold: the learner answers one input
-/// per blank, and a response is checked against this count.
-pub const MAX_CLOZE_BLANKS: usize = 8;
-
 pub const SINGLE_CHOICE_OPTIONS: std::ops::RangeInclusive<usize> = 2..=8;
 
 pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()> {
     id(&candidate.id, "assessment item")?;
     present(&candidate.prompt, "Assessment prompt")?;
-    if candidate.outcome_ids.is_empty() || candidate.outcome_ids.len() > 8 {
-        return Err(invalid("An assessment item must address 1–8 outcomes."));
+    if candidate.outcome_ids.is_empty() {
+        return Err(invalid("An assessment item must address an outcome."));
     }
     let mut outcomes = HashSet::new();
     for outcome in &candidate.outcome_ids {
@@ -194,7 +190,6 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             let found = cloze_blanks(&candidate.prompt);
             let expected: Vec<usize> = (1..=blanks.len()).collect();
             if blanks.is_empty()
-                || blanks.len() > MAX_CLOZE_BLANKS
                 || found != expected
                 || !blanks.iter().all(text_key_valid)
                 || !candidate.options.is_empty()
@@ -238,18 +233,16 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             LearningItemFormat::Explanation | LearningItemFormat::Artifact,
             LearningAssessmentKey::Rubric,
         ) => {
-            if candidate.rubric.is_empty() || candidate.rubric.len() > 12 || !no_left {
-                return Err(invalid("Written items need 1–12 visible rubric criteria."));
+            if candidate.rubric.is_empty() || !no_left {
+                return Err(invalid("Written items need visible rubric criteria."));
             }
             let mut criteria = HashSet::new();
             for criterion in &candidate.rubric {
                 id(&criterion.id, "rubric criterion")?;
                 present(&criterion.title, "Rubric criterion title")?;
                 present(&criterion.description, "Rubric criterion description")?;
-                if criterion.max_points == 0 || criterion.max_points > 100 {
-                    return Err(invalid(
-                        "Rubric criterion points must be between 1 and 100.",
-                    ));
+                if criterion.max_points == 0 {
+                    return Err(invalid("Rubric criterion points must be at least 1."));
                 }
                 if !criteria.insert(&criterion.id) {
                     return Err(invalid("Rubric criterion IDs must be unique."));
