@@ -10,9 +10,6 @@ use serde::Serialize;
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 
-/// The most a canvas scene may hold, saved or imported.
-pub(crate) const MAX_SCENE_BYTES: usize = 5 * 1024 * 1024;
-
 #[derive(Clone)]
 pub struct LearningCanvasRepository {
     pool: SqlitePool,
@@ -25,13 +22,6 @@ pub struct ValidatedCanvasScene {
 }
 
 pub fn validate_scene(scene: &serde_json::Value) -> Result<ValidatedCanvasScene> {
-    let encoded =
-        serde_json::to_vec(scene).map_err(|error| AppError::Serialization(error.to_string()))?;
-    if encoded.len() > MAX_SCENE_BYTES {
-        return Err(AppError::InvalidInput(
-            "Canvas scene exceeds the 5 MB limit.".into(),
-        ));
-    }
     let object = scene
         .as_object()
         .ok_or_else(|| invalid_scene("must be a JSON object"))?;
