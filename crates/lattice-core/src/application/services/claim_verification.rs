@@ -99,7 +99,6 @@ impl CheckPolicy {
 }
 pub const MIN_VERDICT_CONFIDENCE: f32 = 0.75;
 
-const MAX_QUOTE_CHARS: usize = 400;
 /// The tokens a durable check keeps for each claim's answer: the reason, the
 /// passage it cites and the verdict. Evidence fills what the window leaves
 /// past it, alone or in a batch.
@@ -689,8 +688,7 @@ pub fn parse_judge_explanation(
     let quote = labeled_value(text, &["Source quote", "Quote", "Evidence"])
         .map(|quote| strip_wrapping_quotes(&quote))
         .filter(|quote| !is_empty_quote(quote))
-        .filter(|quote| quote_in_evidence(quote, &evidence.text))
-        .map(|quote| truncate_chars(&quote, MAX_QUOTE_CHARS));
+        .filter(|quote| quote_in_evidence(quote, &evidence.text));
 
     let reason = reason.or_else(|| match verdict {
         ClaimVerdict::Unsupported => {
@@ -777,13 +775,4 @@ pub fn parse_verdict_word(text: &str) -> Option<ClaimVerdict> {
     } else {
         None
     }
-}
-
-fn truncate_chars(text: &str, limit: usize) -> String {
-    if text.chars().count() <= limit {
-        return text.to_string();
-    }
-    let mut out: String = text.chars().take(limit).collect();
-    out.push('…');
-    out
 }

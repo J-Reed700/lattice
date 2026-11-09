@@ -124,37 +124,6 @@ impl ClaimAssessment {
     }
 }
 
-/// The limits the UI's summary schema (`src/types/conversation.ts`) enforces.
-/// It discards the whole summary on any violation, so everything emitted is
-/// cut to fit here instead; the counts stay the true totals.
-const MAX_EMITTED_VERDICTS: usize = 60;
-const MAX_SUPPORTED_NOTES: usize = 40;
-const MAX_LISTED_CLAIMS: usize = 20;
-const MAX_SENTENCE_UNITS: usize = 2000;
-const MAX_QUOTE_UNITS: usize = 1000;
-const MAX_CLAIM_CITATIONS: usize = 24;
-const CITATION_ID_RANGE: std::ops::RangeInclusive<u32> = 1..=1000;
-
-/// Cut to at most `max` UTF-16 code units — the unit a JavaScript string's
-/// length counts — without splitting a character.
-fn fit_utf16(text: &str, max: usize) -> String {
-    let mut units = 0;
-    text.chars()
-        .take_while(|c| {
-            units += c.len_utf16();
-            units <= max
-        })
-        .collect()
-}
-
-fn fit_sentences(sentences: &[String], max: usize) -> Vec<String> {
-    sentences
-        .iter()
-        .take(max)
-        .map(|sentence| fit_utf16(sentence, MAX_SENTENCE_UNITS))
-        .collect()
-}
-
 #[derive(Debug, Clone, Default)]
 pub struct GroundingReport {
     pub(super) claims_evaluated: usize,
@@ -251,23 +220,18 @@ impl GroundingReport {
         let verdicts: Vec<serde_json::Value> = self
             .claims
             .iter()
-            .take(MAX_EMITTED_VERDICTS)
             .map(|claim| {
                 let citation_ids: Vec<u32> = claim
                     .citation_ids
                     .iter()
                     .copied()
-                    .filter(|id| CITATION_ID_RANGE.contains(id))
-                    .take(MAX_CLAIM_CITATIONS)
+                    .filter(|id| *id >= 1)
                     .collect();
                 serde_json::json!({
-                    "sentence": fit_utf16(&claim.sentence, MAX_SENTENCE_UNITS),
+                    "sentence": claim.sentence,
                     "citationIds": citation_ids,
                     "verdict": claim.verdict.as_str(),
-                    "evidenceQuote": claim
-                        .evidence_quote
-                        .as_deref()
-                        .map(|quote| fit_utf16(quote, MAX_QUOTE_UNITS)),
+                    "evidenceQuote": claim.evidence_quote.as_deref(),
                     "method": claim.method.as_str(),
                     "confidence": claim.confidence,
                     "reason": claim.reason.as_deref(),
@@ -280,10 +244,10 @@ impl GroundingReport {
             "enabled": true,
             "claimsEvaluated": self.claims_evaluated,
             "supportedClaims": self.supported_claims,
-            "supportedClaimNotes": fit_sentences(&self.supported_claim_notes, MAX_SUPPORTED_NOTES),
-            "unsupportedClaims": fit_sentences(&self.unsupported_claims, MAX_LISTED_CLAIMS),
+            "supportedClaimNotes": self.supported_claim_notes,
+            "unsupportedClaims": self.unsupported_claims,
             "groundedRatio": self.grounded_ratio(),
-            "contradictedClaims": fit_sentences(&self.contradicted_claims, MAX_LISTED_CLAIMS),
+            "contradictedClaims": self.contradicted_claims,
             "verdictCounts": {
                 "supported": self.supported_claims,
                 "contradicted": self.contradicted_claims.len(),

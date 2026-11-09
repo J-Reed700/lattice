@@ -496,10 +496,10 @@ async fn metadata_keeps_the_existing_keys_and_adds_the_new_ones() {
     assert!(verdicts[0]["confidence"].is_null());
 }
 
-/// The UI drops the whole summary on any schema violation, so the lists
-/// are cut to its limits while the counts keep the true totals.
+/// How many claims, notes or citations a reply has is not cut to fit a
+/// number: every one reaches the metadata whole.
 #[test]
-fn metadata_fits_the_ui_schema_and_keeps_true_counts() {
+fn metadata_keeps_every_claim_note_and_citation_whole() {
     let claim = |sentence: String, citation_ids: Vec<u32>| ClaimAssessment {
         sentence,
         citation_ids,
@@ -513,25 +513,24 @@ fn metadata_fits_the_ui_schema_and_keeps_true_counts() {
     let mut claims: Vec<ClaimAssessment> = (0..25)
         .map(|i| claim(format!("claim {i}"), vec![1]))
         .collect();
-    claims[0] = claim("🙂".repeat(1500), (0..40).collect());
+    let long = "🙂".repeat(1500);
+    claims[0] = claim(long.clone(), (0..40).collect());
 
     let metadata = GroundingReport::from_assessments(claims, false).metadata_json();
 
-    assert_eq!(metadata["unsupportedClaims"].as_array().unwrap().len(), 20);
+    assert_eq!(metadata["unsupportedClaims"].as_array().unwrap().len(), 25);
+    assert_eq!(metadata["claimVerdicts"].as_array().unwrap().len(), 25);
     assert_eq!(metadata["claimsEvaluated"], 25);
     assert_eq!(metadata["verdictCounts"]["unsupported"], 25);
     let first = &metadata["claimVerdicts"][0];
-    assert_eq!(
-        first["sentence"].as_str().unwrap().encode_utf16().count(),
-        2000
-    );
+    assert_eq!(first["sentence"], long.as_str());
     let ids: Vec<u64> = first["citationIds"]
         .as_array()
         .unwrap()
         .iter()
         .map(|id| id.as_u64().unwrap())
         .collect();
-    assert_eq!(ids, (1..=24).collect::<Vec<u64>>());
+    assert_eq!(ids, (1..=39).collect::<Vec<u64>>());
 }
 
 #[test]
