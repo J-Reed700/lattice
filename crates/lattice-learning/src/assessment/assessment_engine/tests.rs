@@ -162,7 +162,7 @@ fn choices_a_reader_cannot_tell_apart_or_blank_choices_are_still_rejected() {
 fn path_like_values_are_distinct_in_a_multi_select_item() {
     let item = LearningAssessmentCandidate {
         format: LearningItemFormat::MultiSelect,
-        key: LearningAssessmentKey::Choices(vec![0, 1]),
+        key: LearningAssessmentKey::Choices([0, 1].into_iter().collect()),
         ..choice_item(
             "Which of these are absolute paths?",
             &["/home/learner/notes", "/home/learner", "home", "/"],
