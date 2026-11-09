@@ -133,6 +133,7 @@ pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> R
     store.suspend(&job.id).await?;
     let llm: Arc<dyn LLMPort> = model;
     let worker = LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {

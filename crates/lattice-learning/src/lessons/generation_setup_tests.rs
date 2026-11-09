@@ -2,7 +2,7 @@
 //! every lesson of the course shares, so two lessons never set it up at once.
 #![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 use super::*;
-use crate::lessons::course_setup;
+use crate::lessons::course_setup::CourseSetups;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
 
@@ -16,6 +16,7 @@ struct Overlap {
 fn worker(pool: &SqlitePool, overlap: &Arc<Overlap>) -> LessonGenerationWorker {
     let overlap = overlap.clone();
     LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(|| Box::pin(async { Err(AppError::InvalidState("unused".into())) })),
@@ -68,31 +69,32 @@ async fn two_setups_of_one_course_run_one_after_the_other() {
 
 #[tokio::test]
 async fn setups_of_different_courses_do_not_wait_for_each_other() {
-    let held = course_setup::enter("setup-test-course-a").await;
-    tokio::time::timeout(
-        Duration::from_secs(5),
-        course_setup::enter("setup-test-course-b"),
-    )
-    .await
-    .expect("another course's setup waited");
+    let setups = CourseSetups::default();
+    let held = setups.enter("course-a").await;
+    tokio::time::timeout(Duration::from_secs(5), setups.enter("course-b"))
+        .await
+        .expect("another course's setup waited");
     drop(held);
 }
 
 #[tokio::test]
 async fn a_course_is_forgotten_once_no_setup_holds_or_awaits_it() {
-    let course = "setup-test-course-c";
-    let held = course_setup::enter(course).await;
-    let waiting = tokio::spawn(course_setup::enter(course));
+    let setups = CourseSetups::default();
+    let held = setups.enter("course").await;
+    let waiting = tokio::spawn({
+        let setups = setups.clone();
+        async move { setups.enter("course").await }
+    });
     tokio::task::yield_now().await;
     drop(held);
     drop(waiting.await.unwrap());
-    assert!(!course_setup::tracks(course));
+    assert!(!setups.tracks("course"));
 
     let cancelled = tokio::time::timeout(Duration::from_millis(20), async {
-        let _held = course_setup::enter(course).await;
-        course_setup::enter(course).await
+        let _held = setups.enter("course").await;
+        setups.enter("course").await
     })
     .await;
     assert!(cancelled.is_err());
-    assert!(!course_setup::tracks(course));
+    assert!(!setups.tracks("course"));
 }
