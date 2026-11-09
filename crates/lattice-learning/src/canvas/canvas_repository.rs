@@ -90,7 +90,7 @@ pub fn validate_scene(scene: &serde_json::Value) -> Result<ValidatedCanvasScene>
         ));
     }
     let json =
-        String::from_utf8(encoded).map_err(|error| AppError::Serialization(error.to_string()))?;
+        serde_json::to_string(scene).map_err(|error| AppError::Serialization(error.to_string()))?;
     Ok(ValidatedCanvasScene {
         json,
         element_count: live_elements,
