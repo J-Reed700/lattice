@@ -13,6 +13,7 @@ use chrono::Utc;
 use lattice_core::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
 use lattice_core::application::ports::RecentDocumentsRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
 
 /// SQLite implementation of recent documents repository.
@@ -43,7 +44,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
         let now = Utc::now().to_rfc3339();
 
         let tracked = query_with_timeout(|| async {
-            let mut tx = pool.begin().await?;
+            let mut tx = pool.begin_write().await?;
             let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
                 .bind(&document_id).fetch_one(&mut *tx).await?;
             if exists == 0 { return Ok(false); }

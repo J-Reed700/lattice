@@ -241,8 +241,8 @@ impl Judgements {
         }
         let mut units: Vec<_> = missing.into_iter().collect();
         units.sort_by_key(|(unit, _)| *unit);
-        let topic = &self.topic;
-        let known_classes = &self.known_classes;
+        let (topic, known_classes) = (&self.topic, &self.known_classes);
+        let (store, model) = (&self.store, &self.model);
         let tasks = units.into_iter().map(|(unit, statements)| async move {
             let to_profile: Vec<ClaimToProfile> = statements
                 .iter()
@@ -268,21 +268,28 @@ impl Judgements {
                     "The claim profile call answered for a different number of claims.".into(),
                 ));
             }
-            Ok::<_, AppError>((statements, judged))
-        });
-        let judged_units = futures::future::try_join_all(tasks).await?;
-        let mut rows = Vec::new();
-        for (statements, judged) in judged_units {
+            let mut profiles = Vec::new();
+            let mut rows = Vec::new();
             for (statement, judged) in statements.into_iter().zip(judged) {
-                known.insert(statement.clone(), judged.value.clone());
+                profiles.push((statement.clone(), judged.value.clone()));
                 rows.push(stored(
-                    claim_profile_key(&statement, &self.known_classes, &self.model),
+                    claim_profile_key(&statement, known_classes, model),
                     judged,
                 ));
             }
+            store.save_claim_profiles(&rows).await?;
+            Ok::<_, AppError>(profiles)
+        });
+        let mut first_error = None;
+        for outcome in futures::future::join_all(tasks).await {
+            match outcome {
+                Ok(profiles) => known.extend(profiles),
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
         }
-        if !rows.is_empty() {
-            self.store.save_claim_profiles(&rows).await?;
+        if let Some(error) = first_error {
+            return Err(error);
         }
         claims
             .iter()
@@ -292,6 +299,68 @@ impl Judgements {
                 })
             })
             .collect()
+    }
+
+    /// Judges at once the ownership of every distinct (origin, subject) pair
+    /// that weighing `wanted`, each a subject and the versions cited for it,
+    /// will ask for; the store then holds each answer. Waits for all and
+    /// returns the first error.
+    pub(in crate::lessons::content_verification) async fn owners(
+        &mut self,
+        llm: &dyn LLMPort,
+        wanted: &[(Option<ClaimSubject>, Vec<String>)],
+    ) -> Result<()> {
+        let read: Vec<String> = wanted
+            .iter()
+            .flat_map(|(_, versions)| versions)
+            .flat_map(|version| {
+                let originals = self.relations.iter().filter_map(move |relation| {
+                    match (&relation.to, relation.from == *version) {
+                        (RelationTarget::Version(to), true)
+                            if COPY_RELATIONS.contains(&relation.kind) =>
+                        {
+                            Some(to.clone())
+                        }
+                        _ => None,
+                    }
+                });
+                std::iter::once(version.clone()).chain(originals)
+            })
+            .collect();
+        self.load_versions(Some(llm), &read).await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut pairs = Vec::new();
+        for (subject, versions) in wanted {
+            let Some(subject) = subject else {
+                continue;
+            };
+            for version in versions {
+                let record = self.version(Some(llm), version).await?;
+                let Some((provenance, _)) = &record.judged else {
+                    continue;
+                };
+                if provenance.origin.host.is_some()
+                    && seen.insert((provenance.origin.key.0.clone(), subject.key.0.clone()))
+                {
+                    pairs.push((record.clone(), subject));
+                }
+            }
+        }
+        let this = &*self;
+        let tasks = pairs.iter().map(|(record, subject)| async move {
+            match &record.judged {
+                Some((provenance, _)) => this
+                    .authority(Some(llm), provenance, subject)
+                    .await
+                    .map(|_| ()),
+                None => Ok(()),
+            }
+        });
+        futures::future::join_all(tasks)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<()>>>()
+            .map(|_| ())
     }
 
     /// The facts of each of `versions` for `profile`'s subject: the version's
@@ -474,6 +543,49 @@ impl Judgements {
         if let Some(record) = self.versions.get(version) {
             return Ok(record.clone());
         }
+        let record = self.build_version(llm, version).await?;
+        self.versions.insert(version.to_owned(), record.clone());
+        Ok(record)
+    }
+
+    /// Reads at once every one of `versions` this pass has not read yet, so
+    /// the standings they lack are judged together; the first error is
+    /// returned once all have finished.
+    async fn load_versions(
+        &mut self,
+        llm: Option<&dyn LLMPort>,
+        versions: &[String],
+    ) -> Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        let missing: Vec<&String> = versions
+            .iter()
+            .filter(|version| !self.versions.contains_key(*version) && seen.insert(*version))
+            .collect();
+        let this = &*self;
+        let built = futures::future::join_all(missing.iter().map(|version| async move {
+            this.build_version(llm, version)
+                .await
+                .map(|record| ((*version).clone(), record))
+        }))
+        .await;
+        let mut first_error = None;
+        for outcome in built {
+            match outcome {
+                Ok((version, record)) => {
+                    self.versions.insert(version, record);
+                }
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    async fn build_version(
+        &self,
+        llm: Option<&dyn LLMPort>,
+        version: &str,
+    ) -> Result<Arc<VersionRecord>> {
         let row = sqlx::query(
             "SELECT v.source_id, v.full_text, v.acquired_at, l.added_by, l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id WHERE v.program_id = ? AND v.id = ?",
         )
@@ -505,15 +617,13 @@ impl Judgements {
             }
             None => None,
         };
-        let record = Arc::new(VersionRecord {
+        Ok(Arc::new(VersionRecord {
             source_id: row.try_get("source_id").map_err(db)?,
             added_by,
             acquired_at: acquired_at / MILLIS_PER_SECOND,
             saved: Arc::new(saved),
             judged,
-        });
-        self.versions.insert(version.to_owned(), record.clone());
-        Ok(record)
+        }))
     }
 
     /// A version's standing (`source-standing-v2`): judged from its signals

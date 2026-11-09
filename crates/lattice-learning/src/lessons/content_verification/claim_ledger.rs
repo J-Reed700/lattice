@@ -48,7 +48,7 @@ use lattice_core::domain::learning::claim_review::{
     Revision, StopReason, UserAction, MACHINE_ATTEMPTS,
 };
 
-pub(crate) use fields::{field_pointer, field_text, locate, unit_texts};
+pub(crate) use fields::{field_pointer, field_text, locate, unit_fields, unit_texts};
 pub(crate) use held::{held_for_review, held_lessons, needs_review, review_outcome, HeldForReview};
 pub(crate) use located::{claim_quote, clip, located, located_quote, narrow};
 

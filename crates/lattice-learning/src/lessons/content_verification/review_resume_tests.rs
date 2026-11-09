@@ -11,9 +11,9 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
         "prompt":"Choose the documented answer.","options":["First","Second"],"correctIndex":0,"quote":"The reference identifies the second option."
     }]});
     let answer = json!({"answers":[{"index":0,"correctIndices":[1],"reason":"The source identifies the second option as correct."}]}).to_string();
-    let review = json!({"issues":["The candidate's answer conflicts with the reference."],"blockChecks":{
-        "section-0":{"passageId":"section-0-passage-0","finding":"The complete teaching passage was inspected for conflicts.","hasDefect":false}
-    }}).to_string();
+    let review = json!({"issues":["The candidate's answer conflicts with the reference."],"blockChecks":[
+        {"sectionId":"section-0","passageId":"section-0-passage-0","finding":"The complete teaching passage was inspected for conflicts.","hasDefect":false}
+    ]}).to_string();
     let model = ScriptedModel {
         outputs: Mutex::new(
             vec![

@@ -50,14 +50,15 @@ impl Reader for Parts {
         };
         let handed = at.observed(&forward);
         let mut page = Batch::restore(&handed, &those, false).await?;
-        let asked = futures::future::try_join_all(asks.into_iter().map(
-            |(ordinal, statement, pending)| async move {
+        let mut asked: futures::stream::FuturesUnordered<_> = asks
+            .into_iter()
+            .map(|(ordinal, statement, pending)| async move {
                 let finding = ask_parts(at, statement.unit, pending).await?;
                 Ok::<_, AppError>((ordinal, statement, finding))
-            },
-        ))
-        .await?;
-        for (ordinal, statement, finding) in asked {
+            })
+            .collect();
+        while let Some(asked) = futures::StreamExt::next(&mut asked).await {
+            let (ordinal, statement, finding) = asked?;
             made.put(at, ordinal, read_of(&statement, finding, false));
         }
         page.ask(&handed).await?;

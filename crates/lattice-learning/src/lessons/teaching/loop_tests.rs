@@ -28,7 +28,7 @@ fn review(defect: Option<&str>) -> String {
 }
 
 fn actionable() -> String {
-    json!({"issue-0":{"verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The example's printed result contradicts the value the code returns."}}).to_string()
+    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The example's printed result contradicts the value the code returns."}]}).to_string()
 }
 
 fn retitle(after: &str) -> String {
@@ -133,7 +133,7 @@ async fn the_reviewer_is_told_to_name_a_part_by_its_label_or_title() -> Result<(
     run(&model, lesson(EXCERPT)).await?;
     let prompts = model.prompts.lock().unwrap();
     assert!(prompts[0].contains("by its label"));
-    assert!(prompts[0].contains("never by its section-N key or its index"));
+    assert!(prompts[0].contains("never by its section-N ID or its index"));
     Ok(())
 }
 
@@ -844,11 +844,18 @@ fn whole_lesson_and_fully_guarded_section_findings_wait_when_claims_are_protecte
     let sentence = "The function returns the number 4 for the sum of two and two.";
     let mut lesson = lesson(EXCERPT);
     lesson["blocks"][0]["body"] = json!(sentence);
-    let protected = vec![Protected {
-        unit: 0,
-        field: "body".into(),
-        quote: sentence.into(),
-    }];
+    let protected = vec![
+        Protected {
+            unit: 0,
+            field: "body".into(),
+            quote: sentence.into(),
+        },
+        Protected {
+            unit: 0,
+            field: "title".into(),
+            quote: "Example".into(),
+        },
+    ];
     let lesson_finding = ReviewFinding::new(
         FindingKind::Structure,
         Some(FindingSite::Lesson),
@@ -863,6 +870,124 @@ fn whole_lesson_and_fully_guarded_section_findings_wait_when_claims_are_protecte
     let held = protected::on_protected(&lesson, &findings, &protected);
     let expected = vec![lesson_finding.key(), section_finding.key()];
     assert_eq!(held, expected);
+}
+
+fn question_lesson() -> Value {
+    let mut lesson = lesson(EXCERPT);
+    lesson["questions"] = json!([{
+        "kind": "quiz",
+        "prompt": "What does the function return for two plus two?",
+        "options": ["Three is returned.", "Five is returned.", "Four is returned.", "Zero is returned."],
+        "correctIndex": 2,
+        "rationales": ["Three is wrong.", "Five is wrong.", "Four is right.", "Zero is wrong."],
+        "explanation": "The function adds its two arguments and returns four.",
+        "sourceIndex": 0,
+        "quote": EXCERPT,
+        "citations": []
+    }]);
+    lesson
+}
+
+fn protect(
+    unit: usize,
+    field: &str,
+    quote: &str,
+) -> crate::lessons::content_verification::Protected {
+    crate::lessons::content_verification::Protected {
+        unit,
+        field: field.into(),
+        quote: quote.into(),
+    }
+}
+
+#[test]
+fn a_finding_on_an_option_is_not_held_when_only_the_explanation_is_protected() {
+    let lesson = question_lesson();
+    let protected = vec![protect(
+        1,
+        "explanation",
+        "The function adds its two arguments and returns four.",
+    )];
+    let finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Question(0)),
+        "the option is ambiguous",
+    )
+    .with_passage("Four is returned.");
+    assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
+}
+
+#[test]
+fn a_quotation_finding_on_the_source_quote_is_not_held_by_a_protected_body() {
+    let mut lesson = lesson(EXCERPT);
+    let sentence = "The function returns the number 4 for the sum of two and two.";
+    lesson["blocks"][0]["body"] = json!(sentence);
+    let protected = vec![protect(0, "body", sentence)];
+    let finding = ReviewFinding::new(
+        FindingKind::Quotation,
+        Some(FindingSite::Section(0)),
+        "the quotation matches no reference",
+    )
+    .with_passage(EXCERPT);
+    assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
+}
+
+#[test]
+fn a_question_finding_with_no_passage_is_not_held_while_options_are_unprotected() {
+    let lesson = question_lesson();
+    let protected = vec![protect(
+        1,
+        "explanation",
+        "The function adds its two arguments and returns four.",
+    )];
+    let finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Question(0)),
+        "the distractors are weak",
+    );
+    assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
+}
+
+#[test]
+fn a_section_finding_with_no_passage_is_not_held_while_the_title_is_unprotected() {
+    let mut lesson = lesson(EXCERPT);
+    let sentence = "The function returns the number 4 for the sum of two and two.";
+    lesson["blocks"][0]["body"] = json!(sentence);
+    let protected = vec![protect(0, "body", sentence)];
+    let finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Section(0)),
+        "expand on the explanation",
+    );
+    assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
+}
+
+#[test]
+fn a_review_repair_with_no_passage_cannot_rewrite_the_kind_or_quote() -> Result<()> {
+    let mut previous = lesson(EXCERPT);
+    previous["blocks"][0]["body"] =
+        json!("The first sentence is protected here. The second sentence may change.");
+    let protected = vec![protect(0, "body", "The first sentence is protected here.")];
+    let mut repaired = previous.clone();
+    repaired["blocks"][0]["body"] =
+        json!("The first sentence is protected here. The second sentence now reads better.");
+    repaired["blocks"][0]["quote"] = json!("A different quotation that was never a target.");
+    repaired["blocks"][0]["kind"] = json!("example");
+    let finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Section(0)),
+        "improve the second sentence",
+    );
+    let (confined, _) =
+        protected::confine_review(&previous, &repaired.to_string(), &[finding], &protected)?;
+    let confined: Value = serde_json::from_str(&confined.unwrap())?;
+    assert_eq!(
+        confined["blocks"][0]["quote"],
+        previous["blocks"][0]["quote"]
+    );
+    assert_eq!(confined["blocks"][0]["kind"], previous["blocks"][0]["kind"]);
+    assert_eq!(confined["blocks"][0]["body"], repaired["blocks"][0]["body"]);
+    Ok(())
 }
 
 #[tokio::test]
@@ -921,8 +1046,9 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
     })
     .to_string();
 
-    let pass1_evidence = json!({
-        "issue-0": {
+    let pass1_evidence = json!({"decisions": [
+        {
+            "issueId": "issue-0",
             "verdict": "actionable",
             "basis": "internal_conflict",
             "evidenceIds": ["blocks-0"],
@@ -930,7 +1056,8 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
             "requirementId": null,
             "reason": "Section 0 defect."
         },
-        "issue-1": {
+        {
+            "issueId": "issue-1",
             "verdict": "actionable",
             "basis": "internal_conflict",
             "evidenceIds": ["blocks-1"],
@@ -938,7 +1065,7 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
             "requirementId": null,
             "reason": "Section 1 defect."
         }
-    })
+    ]})
     .to_string();
 
     let repair = json!({
@@ -976,8 +1103,9 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
     })
     .to_string();
 
-    let pass2_evidence = json!({
-        "issue-0": {
+    let pass2_evidence = json!({"decisions": [
+        {
+            "issueId": "issue-0",
             "verdict": "actionable",
             "basis": "internal_conflict",
             "evidenceIds": ["blocks-0"],
@@ -985,7 +1113,7 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
             "requirementId": null,
             "reason": "Section 0 defect."
         }
-    })
+    ]})
     .to_string();
 
     let model = model(vec![

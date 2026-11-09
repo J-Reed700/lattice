@@ -14,6 +14,7 @@ use crate::{
     source_selector::{create_quote_selector, match_quote_selector, LearningQuoteMatch},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashSet;
 
@@ -75,7 +76,7 @@ impl LearningRecallRepository {
     /// Give cards accepted into the program deck their recall profile and
     /// first content version.
     async fn bootstrap_deck_cards(&self, program_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let deck_id: Option<String> =
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(program_id)

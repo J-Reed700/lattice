@@ -1678,3 +1678,180 @@ async fn parts_tells_of_each_statement_of_its_batch_once_at_its_own_place_whoeve
     })
     .await
 }
+
+/// Answers every part-wise check, holding the one about `held` until `gate`
+/// is opened.
+struct HeldUntil {
+    held: &'static str,
+    gate: std::sync::Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for HeldUntil {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let prompt: String = request
+            .input
+            .iter()
+            .filter_map(|input| match input {
+                lattice_core::application::ports::llm_port::CompletionInput::Message {
+                    content,
+                    ..
+                } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        if prompt.contains(self.held) {
+            self.gate.notified().await;
+        }
+        Ok(CompletionResponse::from_text(half_stated()))
+    }
+    fn model_name(&self) -> &str {
+        "held-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn parts_tells_of_a_statement_while_another_comparison_is_still_in_flight() -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let world = world_of(&references, citing(&references)?);
+    let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+    let model = HeldUntil {
+        held: "skips blanks",
+        gate: gate.clone(),
+    };
+    let claims = [
+        (0, claim("Quillet is a lexer that reads characters.")),
+        (0, claim("Quillet is a lexer that skips blanks.")),
+    ];
+    let told = Mutex::new(Vec::new());
+    let record = |ordinal: usize, _: &Read| {
+        told.lock().unwrap().push(ordinal);
+        if ordinal == 0 {
+            gate.notify_one();
+        }
+    };
+
+    let reads = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        read_observed(Reading::Parts, &model, &world, &claims, &record),
+    )
+    .await
+    .expect("the first statement's reading was told while the second was still held")?;
+
+    assert_eq!(reads.len(), 2);
+    assert_eq!(*told.lock().unwrap(), vec![0, 1]);
+    Ok(())
+}
+
+/// Wraps a model and records the most of its calls that were in flight
+/// together; each call is held until `overlap` are in flight, at most 10 s.
+pub(super) struct Overlap<'m> {
+    inner: &'m dyn LLMPort,
+    overlap: usize,
+    peak: tokio::sync::watch::Sender<usize>,
+    now: std::sync::atomic::AtomicUsize,
+    most: std::sync::atomic::AtomicUsize,
+}
+
+impl<'m> Overlap<'m> {
+    pub(super) fn new(inner: &'m dyn LLMPort, overlap: usize) -> Self {
+        Self {
+            inner,
+            overlap,
+            peak: tokio::sync::watch::channel(0).0,
+            now: Default::default(),
+            most: Default::default(),
+        }
+    }
+
+    pub(super) fn most(&self) -> usize {
+        self.most.load(std::sync::atomic::Ordering::SeqCst)
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Overlap<'_> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        use std::sync::atomic::Ordering::SeqCst;
+        let now = self.now.fetch_add(1, SeqCst) + 1;
+        self.most.fetch_max(now, SeqCst);
+        self.peak.send_modify(|peak| *peak = (*peak).max(now));
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self.peak.subscribe().wait_for(|peak| *peak >= self.overlap),
+        )
+        .await;
+        let answer = self.inner.complete(request).await;
+        self.now.fetch_sub(1, SeqCst);
+        answer
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        self.inner.is_ready().await
+    }
+}
+
+#[tokio::test]
+async fn ground_asks_two_statements_that_both_need_a_call_at_once() -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let world = world_of(&references, citing(&references)?);
+    let scripted = ScriptedBridge::new(vec![half_stated(), half_stated()]);
+    let model = Overlap::new(&scripted, 2);
+    let claims = [
+        (0, claim("Quillet is a lexer that reads characters.")),
+        (0, claim("Quillet is a lexer that skips blanks.")),
+    ];
+
+    let reads = read_all(Reading::Ground, &model, &world, &claims).await?;
+
+    assert_eq!(reads.len(), 2);
+    assert_eq!(model.most(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn consistency_asks_two_statements_that_both_need_a_call_at_once() -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let world = world_of(&references, citing(&references)?);
+    let classes = Classes::new(&[]);
+    let model = Overlap::new(&classes, 2);
+    let claims = [(0, claim(CONSISTENT)), (0, claim(CONTRADICTED))];
+
+    let reads = read_all(Reading::Consistency, &model, &world, &claims).await?;
+
+    assert_eq!(reads.len(), 2);
+    assert_eq!(model.most(), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn knowledge_asks_two_statements_that_both_need_a_call_at_once() -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let world = world_of(&references, Citations::default());
+    let classes = closed_book();
+    let model = Overlap::new(&classes, 2);
+    let claims = [(0, claim(TRUE_COMMON)), (0, claim(WANTS_A_SOURCE))];
+
+    let reads = read_all(Reading::Knowledge, &model, &world, &claims).await?;
+
+    assert_eq!(reads.len(), 2);
+    assert_eq!(model.most(), 2);
+    Ok(())
+}

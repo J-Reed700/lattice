@@ -3,6 +3,8 @@
 //! the same transaction.
 use super::*;
 use crate::references::trust;
+use lattice_core::shared::http::url_identity::identity;
+use lattice_core::shared::persistence::Transactions;
 
 impl LearningSourceLibraryRepository {
     /// Captures a source research selected, with the planner's reason for
@@ -14,22 +16,36 @@ impl LearningSourceLibraryRepository {
         payload_hash: String,
         note: Option<&str>,
     ) -> Result<()> {
-        let (program_id, source_id) = (source.program_id.to_owned(), source.source_id.to_owned());
-        self.add_by(source, captured, payload_hash, SourceAddedBy::Research)
-            .await?;
-        let Some(note) = note.map(str::trim).filter(|note| !note.is_empty()) else {
-            return Ok(());
-        };
-        sqlx::query(
-            "UPDATE learning_source_library SET selection_note=? WHERE program_id=? AND id=?",
+        self.insert_source(
+            source,
+            captured,
+            payload_hash,
+            SourceAddedBy::Research,
+            Some(Selection { note, once: false }),
         )
-        .bind(note)
-        .bind(&program_id)
-        .bind(&source_id)
-        .execute(&self.pool)
         .await
-        .map_err(db)?;
-        Ok(())
+        .map(|_| ())
+    }
+
+    /// Captures a source research selected unless the course already holds
+    /// that page, which the same transaction decides: two lessons saving one
+    /// page at once leave one source, and the second is told which version
+    /// is held.
+    pub async fn add_selected_once(
+        &self,
+        source: NewLearningSource<'_>,
+        captured: CapturedLearningSource,
+        payload_hash: String,
+        note: Option<&str>,
+    ) -> Result<SelectedSaved> {
+        self.insert_source(
+            source,
+            captured,
+            payload_hash,
+            SourceAddedBy::Research,
+            Some(Selection { note, once: true }),
+        )
+        .await
     }
 
     /// Captures a new source and its first version, recording who added it
@@ -41,6 +57,19 @@ impl LearningSourceLibraryRepository {
         payload_hash: String,
         added_by: SourceAddedBy,
     ) -> Result<()> {
+        self.insert_source(source, captured, payload_hash, added_by, None)
+            .await
+            .map(|_| ())
+    }
+
+    async fn insert_source(
+        &self,
+        source: NewLearningSource<'_>,
+        captured: CapturedLearningSource,
+        payload_hash: String,
+        added_by: SourceAddedBy,
+        selection: Option<Selection<'_>>,
+    ) -> Result<SelectedSaved> {
         let NewLearningSource {
             operation_id,
             source_id,
@@ -103,7 +132,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, program_id).await?;
         if source_operation(
             operation_id,
@@ -115,7 +144,20 @@ impl LearningSourceLibraryRepository {
         .seen(&mut *tx)
         .await?
         {
-            return Ok(());
+            return Ok(SelectedSaved::Added);
+        }
+        let text_digest = hash_text(&full_text);
+        if selection.as_ref().is_some_and(|selection| selection.once) {
+            if let Some(version_id) = held_page(
+                &mut tx,
+                program_id,
+                [requested_url, captured.resolved_url.as_deref()],
+                &text_digest,
+            )
+            .await?
+            {
+                return Ok(SelectedSaved::Held { version_id });
+            }
         }
         let collision: Option<i64> = sqlx::query_scalar(
             "SELECT 1 FROM learning_source_library WHERE program_id=? AND id IN (?,?) UNION SELECT 1 FROM learning_source_versions WHERE program_id=? AND id IN (?,?) LIMIT 1",
@@ -135,7 +177,6 @@ impl LearningSourceLibraryRepository {
             ));
         }
         let (text, truncated) = (full_text, captured.truncated);
-        let text_digest = hash_text(&text);
         sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,?,?,?,?,?,NULL,0,?,?,?)")
             .bind(source_id).bind(program_id).bind(source_kind).bind(origin).bind(requested_url).bind(policy(&freshness)).bind(version_id).bind(acquired).bind(acquired).bind(added_by.as_str()).execute(&mut *tx).await.map_err(db)?;
         insert_version(
@@ -193,7 +234,23 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)
+        if let Some(note) = selection
+            .and_then(|selection| selection.note)
+            .map(str::trim)
+            .filter(|note| !note.is_empty())
+        {
+            sqlx::query(
+                "UPDATE learning_source_library SET selection_note=? WHERE program_id=? AND id=?",
+            )
+            .bind(note)
+            .bind(program_id)
+            .bind(source_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(SelectedSaved::Added)
     }
 
     pub async fn source_for_refresh(
@@ -264,7 +321,7 @@ impl LearningSourceLibraryRepository {
             ),
             None => None,
         };
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -434,4 +491,41 @@ impl LearningSourceLibraryRepository {
             .bind(&req.operation_id).bind(&req.program_id).bind(&req.source_id).bind(check_name(&status)).bind(checked).bind(active_digest).bind(&pending_id).bind(&message).execute(&mut *tx).await.map_err(db)?;
         tx.commit().await.map_err(db)
     }
+}
+
+/// How research saves a page it selected.
+struct Selection<'a> {
+    note: Option<&'a str>,
+    once: bool,
+}
+
+/// The version of the course's active, admitted source that is this page: the
+/// same address (without its fragment) as either of the capture's, or the
+/// same text.
+async fn held_page(
+    tx: &mut Transaction<'_, Sqlite>,
+    program_id: &str,
+    addresses: [Option<&str>; 2],
+    text_digest: &str,
+) -> Result<Option<String>> {
+    let wanted: Vec<String> = addresses
+        .into_iter()
+        .flatten()
+        .map(identity)
+        .filter(|address| !address.is_empty())
+        .collect();
+    let rows = sqlx::query("SELECT v.id,v.resolved_url,v.requested_url,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
+        .bind(program_id)
+        .fetch_all(&mut **tx)
+        .await
+        .map_err(db)?;
+    Ok(rows.into_iter().find_map(|row| {
+        let same_address = ["resolved_url", "requested_url"].into_iter().any(|column| {
+            row.get::<Option<String>, _>(column)
+                .is_some_and(|address| wanted.contains(&identity(&address)))
+        });
+        let same_text =
+            row.get::<Option<String>, _>("content_sha256").as_deref() == Some(text_digest);
+        (same_address || same_text).then(|| row.get("id"))
+    }))
 }

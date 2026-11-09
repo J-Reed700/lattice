@@ -7,6 +7,7 @@ use super::recall::{
 };
 use super::references::trust::capture;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
@@ -115,7 +116,7 @@ impl LearningRepository {
     ) -> Result<()> {
         let s = &program.summary;
         let comparisons = compare_sources(&self.pool, &s.id, &program.sources, references).await?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         sqlx::query("INSERT INTO learning_programs(id,title,goal,status,revision,prior_knowledge,minutes_per_session,model_name,current_lesson_id,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(&s.id).bind(&s.title).bind(&s.goal).bind(status(s.status.clone())).bind(s.revision).bind(&program.prior_knowledge).bind(program.minutes_per_session).bind(&program.model_name).bind(&s.current_lesson_id).bind(s.created_at).execute(&mut *tx).await.map_err(db)?;
         for (mi, m) in program.modules.iter().enumerate() {
@@ -172,7 +173,7 @@ impl LearningRepository {
     }
 
     pub async fn get(&self, id: &str) -> Result<LearningProgramDto> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let program = Self::get_on(&mut tx, id).await?;
         tx.commit().await.map_err(db)?;
         Ok(program)

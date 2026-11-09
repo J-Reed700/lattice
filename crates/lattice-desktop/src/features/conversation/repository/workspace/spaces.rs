@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 fn preferences_declares_journal(raw: Option<&str>) -> bool {
     let Some(raw_json) = raw else {
@@ -185,7 +186,7 @@ impl ConversationRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 

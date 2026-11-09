@@ -8,6 +8,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 
 /// Which files a row names, and what its `name` is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -143,7 +144,7 @@ impl FileIntents {
         if ids.is_empty() {
             return Ok(());
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         for id in ids {
             sqlx::query("DELETE FROM file_intents WHERE id = ?")
                 .bind(id)
@@ -159,7 +160,7 @@ impl FileIntents {
         if names.is_empty() {
             return Ok(());
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         for name in names {
             sqlx::query(
                 "DELETE FROM file_intents WHERE store = ? AND kind = 'release' AND name = ?",

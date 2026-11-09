@@ -53,10 +53,18 @@ pub struct SidecarConfig {
     pub n_gpu_layers: u32,
 
     /// Context window in tokens. Maps to `--ctx-size`. The one the user
-    /// saved for the model, else the one it was trained for: never sized to
-    /// the machine. [`memory_hint`] says whether it fits, and nothing acts on
-    /// that but the user.
+    /// saved for the model, else the largest that fits the machine, up to the
+    /// one it was trained for. A saved window is never changed to fit:
+    /// [`memory_hint`] only says whether it does.
     pub context_size: u32,
+
+    /// The window of the CPU attempt, fitted to system RAM, when it differs
+    /// from [`Self::context_size`]. `None` keeps the window.
+    pub cpu_context_size: Option<u32>,
+
+    /// Whether the windows were fitted to the machine because the user saved
+    /// none, rather than being the user's.
+    pub auto_window: bool,
 
     /// Whether the GGUF carries a multi-token-prediction head llama-server
     /// can draft with. Only an MTP build of a model has one.
@@ -305,7 +313,7 @@ fn largest_window_within(
 }
 
 /// What a server would ask of this machine's memory. A hint for the user: it
-/// never changes a window, and never stops a server from starting.
+/// never changes a saved window, and never stops a server from starting.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MemoryHint {
     /// What the server takes at the window it is launched with.
@@ -423,7 +431,7 @@ fn gigabytes(bytes: u64) -> String {
 }
 
 /// A token count with its thousands grouped: `60,416`.
-fn tokens(count: u32) -> String {
+pub(super) fn tokens(count: u32) -> String {
     let digits = count.to_string();
     let mut grouped = String::with_capacity(digits.len() + digits.len() / 3);
     for (i, digit) in digits.chars().enumerate() {
@@ -448,6 +456,8 @@ impl SidecarConfig {
             model_path,
             n_gpu_layers: 99,
             context_size,
+            cpu_context_size: None,
+            auto_window: false,
             mtp_capable: false,
             speculative_decoding: SpeculativeDecoding::Off,
             parallel_slots: None,
@@ -467,11 +477,13 @@ impl SidecarConfig {
         }
     }
 
-    /// The same model with GPU offload disabled, for fallback attempts. The
-    /// window is the user's, so it stays.
+    /// The same model with GPU offload disabled, for fallback attempts, at
+    /// the window fitted to system RAM when none was saved.
     pub fn without_gpu_offload(&self) -> Self {
         Self {
             n_gpu_layers: 0,
+            context_size: self.cpu_context_size.unwrap_or(self.context_size),
+            cpu_context_size: None,
             ..self.clone()
         }
     }
@@ -513,8 +525,7 @@ impl SidecarConfig {
 
     /// `model_path` at a window of `context_size` tokens, every layer
     /// offloaded when the machine has an accelerator and none when it does
-    /// not. The window is never Lattice's choice: it is the one the user
-    /// saved, else the one the model was trained for.
+    /// not. The caller resolves the window.
     pub fn from_capabilities(
         model_path: PathBuf,
         capabilities: &SystemCapabilities,
@@ -530,6 +541,8 @@ impl SidecarConfig {
             model_path,
             n_gpu_layers: if has_accelerator { 99 } else { 0 },
             context_size,
+            cpu_context_size: None,
+            auto_window: false,
             mtp_capable: false,
             speculative_decoding: SpeculativeDecoding::Off,
             parallel_slots: None,

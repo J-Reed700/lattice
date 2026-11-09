@@ -10,6 +10,7 @@ use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
@@ -84,7 +85,7 @@ impl LearningAssessmentRepository {
         uuid(&req.form_id, "form")?;
         uuid(&req.operation_id, "operation")?;
         quiz_blueprints::validate_scope(&req.scope)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -514,7 +515,7 @@ impl LearningAssessmentRepository {
                 "Assistance notes are outside their allowed bounds.",
             ));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,
@@ -601,7 +602,7 @@ impl LearningAssessmentRepository {
         uuid(&req.operation_id, "operation")?;
         uuid(&req.program_id, "program")?;
         uuid(&req.form_id, "form")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         let operation = assessment_operation(
             &req.operation_id,

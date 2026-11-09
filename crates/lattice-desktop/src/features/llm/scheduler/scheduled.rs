@@ -27,6 +27,7 @@ use lattice_core::application::ports::llm_port::{window_refusal, RequestSize};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::runtime::jobs::current_rank;
 
 /// A port whose every model call goes through one backend's scheduler.
 pub(crate) struct ScheduledLlm {
@@ -127,6 +128,7 @@ impl ScheduledLlm {
                     priority: request.priority,
                     tokens: prompt.saturating_add(output),
                     cache_key: request.cache_key.clone(),
+                    rank: current_rank(),
                 },
                 request.cancel.as_ref(),
             )

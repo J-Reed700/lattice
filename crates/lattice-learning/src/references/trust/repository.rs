@@ -16,6 +16,7 @@ use lattice_core::domain::provenance::{
     SubjectKey, TrackRecord, TrustLevel, TrustOverride,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 
@@ -240,7 +241,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
     }
 
     async fn save_claim_profiles(&self, profiles: &[StoredJudgement<ClaimProfile>]) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         for profile in profiles {
             sqlx::query("INSERT OR REPLACE INTO claim_profiles(input_sha256,policy,model,profile_json,input_tokens,output_tokens,assessed_at) VALUES(?,?,?,?,?,?,?)")
                 .bind(&profile.key.input_sha256)
@@ -272,7 +273,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
     }
 
     async fn save_relations(&self, program_id: &str, relations: &[SourceRelation]) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         write_relations(&mut tx, program_id, relations, unix_seconds()).await?;
         tx.commit().await.map_err(db)
     }
@@ -306,7 +307,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
     }
 
     async fn set_override(&self, trust_override: &TrustOverride) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         write_override(&mut tx, trust_override).await?;
         tx.commit().await.map_err(db)
     }

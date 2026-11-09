@@ -12,6 +12,7 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use lattice_core::application::contracts::images::{ChatImageDto, ImageOrigin};
 use lattice_core::application::ports::chat_images::DRAFT_REQUEST_PREFIX;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{QueryBuilder, Sqlite, SqlitePool};
 
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id};
@@ -286,7 +287,7 @@ impl ImageRepository {
         if claimable.is_empty() {
             return Ok(Vec::new());
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         for id in &claimable {
             sqlx::query(
                 "UPDATE chat_images SET message_id = ?, request_id = ?, ref = 'claim:' || id \
@@ -414,7 +415,7 @@ impl ImageRepository {
             return Ok(0);
         }
         let placeholders = vec!["?"; ids.len()].join(", ");
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let record_sql = record_releases_sql(
             FileStore::ChatImage,
             "id || '.' || ext",

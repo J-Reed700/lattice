@@ -4,6 +4,7 @@ use super::ConversationRepository;
 use chrono::Utc;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 impl ConversationRepository {
     /// Creates a sibling conversation in the same space and copies messages up to
@@ -36,7 +37,7 @@ impl ConversationRepository {
     ) -> Result<(String, u32)> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin fork: {}", e)))?;
 
@@ -263,7 +264,7 @@ impl ConversationRepository {
     ) -> Result<()> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin continuation: {}", e)))?;
 

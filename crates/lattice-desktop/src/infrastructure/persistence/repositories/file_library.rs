@@ -2,6 +2,7 @@
 use lattice_core::application::contracts::file_library::{IndexedFolder, IndexingActivity};
 use lattice_core::application::ports::file_library::FileLibraryPort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
 const FOLDER_COUNTS: &str = "SELECT json_extract(folder.value,'$[0]'), (
@@ -57,7 +58,7 @@ struct ActivityRow {
 #[async_trait::async_trait]
 impl FileLibraryPort for SqliteFileLibrary {
     async fn indexed_folders(&self) -> Result<Vec<IndexedFolder>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let rows = sqlx::query_as::<_, FolderRow>("SELECT path, recursive, enabled, last_scan, created_at FROM watch_folders ORDER BY created_at DESC")
             .fetch_all(&mut *tx).await?;
         if rows.is_empty() {

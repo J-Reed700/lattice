@@ -8,6 +8,7 @@ use super::file_job::FileImportRequest;
 use super::items::{BatchItem, BatchItems, ItemCounts};
 use crate::features::web::services::web::check_public_url;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRecord, JobRuntime, JobStore, NewJob},
@@ -237,7 +238,7 @@ impl BatchImports {
         let mut tx = self
             .items
             .pool()
-            .begin()
+            .begin_read()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
         let job = JobStore::find_in(&mut tx, job_id)
