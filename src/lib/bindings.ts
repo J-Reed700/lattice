@@ -7860,7 +7860,12 @@ export type LearningGenerationActivity = { phase: LearningGenerationPhase;
  * The furthest phase this lesson's preparation has reached. A repaired
  * draft goes back through earlier phases; its progress stays here.
  */
-reached?: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number; verificationPass: number;
+reached?: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number;
+/**
+ * Set while the lesson has model calls in flight and every one of them is
+ * queued behind others for the model's slots.
+ */
+waitingForModel?: boolean; verificationPass: number;
 /**
  * Claims of this pass with a finished first check. Each claim counts once.
  */

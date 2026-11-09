@@ -575,3 +575,6 @@ mod tests;
 
 #[cfg(test)]
 mod vision_tests;
+
+#[cfg(test)]
+mod waiting_tests;

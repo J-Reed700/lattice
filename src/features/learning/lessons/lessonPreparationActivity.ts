@@ -33,6 +33,13 @@ export function shownPhase(activity: LearningGenerationActivity): PreparationPha
   };
 }
 
+export const WAITING_FOR_THE_MODEL = 'Waiting for the model';
+
+/** The stage a preparing lesson shows. */
+export function stageText(_activity: LearningGenerationActivity | null | undefined, stage: string): string {
+  return stage;
+}
+
 /** "73 statements: 36 to check against their sources, 29 to check for consistency, 8 common knowledge". */
 export function statementsLine(plan: LearningStatementPlan): string {
   const total = plan.sourced + plan.reasoning + plan.common;

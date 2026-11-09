@@ -12,7 +12,7 @@ use crate::curriculum::{
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use lattice_core::domain::learning::claim_review::{ClaimId, Class};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::JobContext;
+use lattice_core::shared::runtime::jobs::{AdmissionObserver, JobContext, QueueExit};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -49,6 +49,17 @@ tokio::task_local! {
     static CURRENT: Progress;
     /// Whether the work running is the plan's checks.
     static CHECKS: bool;
+}
+
+impl AdmissionObserver for Progress {
+    fn queued(&self) {}
+
+    fn left_queue(&self, _exit: QueueExit) {}
+}
+
+/// Runs `future` as the current lesson job's work, with `progress` recording it.
+async fn scoped<F: std::future::Future>(progress: &Progress, future: F) -> F::Output {
+    CURRENT.scope(progress.clone(), future).await
 }
 
 pub(crate) fn active() -> bool {
@@ -615,50 +626,49 @@ pub(crate) async fn run<T>(
         state.activity = resumed(job.activity.clone());
         state.program_id = job.subject_id.clone();
     }
-    CURRENT
-        .scope(progress.clone(), async {
-            phase(Phase::References, "Checking saved references");
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
-            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-            let persist = async {
-                let mut previous = None;
-                loop {
-                    interval.tick().await;
-                    let snapshot = progress.snapshot();
-                    if previous.as_ref() != Some(&snapshot) {
-                        if !context
-                            .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
-                            .await?
-                        {
-                            return Err(AppError::InvalidState(
-                                "Lesson preparation is no longer running.".into(),
-                            ));
-                        }
-                        previous = Some(snapshot);
-                    }
-                }
-            };
-            // Keep polling preparation while progress waits for the database.
-            // Preparation may hold the only connection across an await; waiting
-            // inside a select branch would otherwise deadlock both operations.
-            let result = tokio::select! {
-                result = future => result,
-                result = persist => result,
-            };
-            if result.is_ok() {
+    scoped(&progress, async {
+        phase(Phase::References, "Checking saved references");
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+        let persist = async {
+            let mut previous = None;
+            loop {
+                interval.tick().await;
                 let snapshot = progress.snapshot();
-                if !context
-                    .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
-                    .await?
-                {
-                    return Err(AppError::InvalidState(
-                        "Lesson preparation is no longer running.".into(),
-                    ));
+                if previous.as_ref() != Some(&snapshot) {
+                    if !context
+                        .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
+                        .await?
+                    {
+                        return Err(AppError::InvalidState(
+                            "Lesson preparation is no longer running.".into(),
+                        ));
+                    }
+                    previous = Some(snapshot);
                 }
             }
-            result
-        })
-        .await
+        };
+        // Keep polling preparation while progress waits for the database.
+        // Preparation may hold the only connection across an await; waiting
+        // inside a select branch would otherwise deadlock both operations.
+        let result = tokio::select! {
+            result = future => result,
+            result = persist => result,
+        };
+        if result.is_ok() {
+            let snapshot = progress.snapshot();
+            if !context
+                .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
+                .await?
+            {
+                return Err(AppError::InvalidState(
+                    "Lesson preparation is no longer running.".into(),
+                ));
+            }
+        }
+        result
+    })
+    .await
 }
 
 #[cfg(test)]
