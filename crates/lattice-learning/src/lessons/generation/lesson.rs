@@ -8,11 +8,11 @@ use super::{
     validate_source_snapshot_ids, validate_text, CITATION_DRAFT_BRIEF, LESSON_OUTPUT_RESERVE,
 };
 use crate::dto::{
-    LearningBlockDto, LearningBlockKind, LearningLessonDto, LearningPreparation,
-    LearningProgramDto, LearningSourceDto, LessonAnswerKey, LessonQuestion, LessonQuestionKind,
-    PreparedLearningLesson,
+    LearningBlockDto, LearningBlockKind, LearningLessonDto, LearningProgramDto, LearningSourceDto,
+    LessonAnswerKey, LessonQuestion, LessonQuestionKind, PreparedLearningLesson,
 };
 use crate::embedded_runtime::BuiltinRuntimes;
+use crate::lessons::course_plan::CoursePlan;
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
@@ -84,18 +84,37 @@ struct GeneratedQuestion {
     citations: Vec<GeneratedCitation>,
 }
 
-pub(super) fn course_context(program: &LearningProgramDto, lesson_id: &str) -> serde_json::Value {
-    // Whole objectives and every earlier recap: the writer's window, measured
-    // with this context in its prompt, decides what fits.
+/// The writer's view of the course: every objective, and the course plan with
+/// each lesson's place relative to this one. Nothing here reads which lessons
+/// are published, so scheduling cannot change what a lesson is written from.
+pub(super) fn course_context(
+    program: &LearningProgramDto,
+    lesson_id: &str,
+    plan: &CoursePlan,
+) -> serde_json::Value {
     let sequence: Vec<_> = program.modules.iter().map(|m| json!({"title":m.title,"milestone":m.project,"prerequisites":m.prerequisite_module_ids,"outcomes":m.outcomes,"lessons":m.lessons.iter().map(|l|json!({"title":l.title,"objective":l.objective})).collect::<Vec<_>>()})).collect();
-    let previous: Vec<_> = program
+    let mut position = "earlier";
+    let planned: Vec<_> = program
         .modules
         .iter()
         .flat_map(|m| m.lessons.iter())
-        .take_while(|l| l.id != lesson_id)
+        .map(|l| {
+            if l.id == lesson_id {
+                position = "this";
+            } else if position == "this" {
+                position = "later";
+            }
+            let topics = plan.lesson(&l.id);
+            json!({
+                "title":l.title,"position":position,
+                "ideas":topics.map(|t| t.ideas.as_slice()).unwrap_or_default(),
+                "terms":topics.map(|t| t.terms.as_slice()).unwrap_or_default(),
+                "actions":topics.map(|t| t.actions.as_slice()).unwrap_or_default(),
+                "contrast":topics.map(|t| t.contrast.as_str()).unwrap_or_default()
+            })
+        })
         .collect();
-    let recaps: Vec<_> = previous.iter().rev().filter(|l|l.preparation == LearningPreparation::Ready).map(|l|json!({"title":l.title,"recap":l.blocks.iter().filter(|b|b.kind==LearningBlockKind::Recap).map(|b|b.body.as_str()).collect::<Vec<_>>()})).collect();
-    json!({"curriculum":sequence,"recentTeaching":recaps})
+    json!({"curriculum":sequence,"coursePlan":planned})
 }
 
 /// The lesson's output schema for `source_count` saved sources. It is the one
@@ -147,6 +166,7 @@ fn lesson_prompt(
     llm: &dyn LLMPort,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
+    plan: &CoursePlan,
     references: &ReferenceCollection<'_>,
     source_data: Vec<serde_json::Value>,
     topics: Vec<serde_json::Value>,
@@ -155,37 +175,39 @@ fn lesson_prompt(
     serde_json::to_string(&json!({
         "task":"Prepare one substantial course lesson with teaching, worked applications, and independent practice",
         "programGoal":program.summary.goal,"priorKnowledge":program.prior_knowledge,
-        "courseSequence":course_context(program, &lesson.id),
+        "courseSequence":course_context(program, &lesson.id, plan),
         "currentModule":program.modules.iter().find(|module| module.lessons.iter().any(|item| item.id == lesson.id)).map(|module| json!({"title":module.title,"outcomes":module.outcomes,"lessonSequence":module.lessons.iter().map(|item| json!({"title":item.title,"objective":item.objective,"current":item.id == lesson.id})).collect::<Vec<_>>()})),
         "lesson":{"title":lesson.title,"objective":lesson.objective,"estimatedMinutes":lesson.estimated_minutes},
         "sources":source_data,
         "evidenceByTopic":topics,
         "referenceCatalog":references.catalog(llm),
         "requirements":[
-            "Teach through the two or three core ideas the objective depends on: fewer ideas understood deeply, not a survey. For each idea write an explanation, then a worked_example, then a check. Where learners plausibly mistake an idea for something similar, put a contrast between its example and its check; the lesson has at least one. After the ideas come one guided_practice, one independent_practice, one reflection and one recap, in that order: 10 to 16 blocks.",
+            "Teach through the two or three core ideas the objective depends on, the ones coursePlan lists for this lesson: fewer ideas understood deeply, not a survey. For each idea write an explanation, then a worked_example, then a check. Where learners plausibly mistake an idea for something similar, put a contrast between its example and its check; the lesson has at least one. After the ideas come one guided_practice, one independent_practice, one reflection and one recap, in that order: 10 to 16 blocks.",
             "Where a newcomer would plausibly guess wrong about an idea, open its explanation with one short prediction question, asked before any of the teaching: a concrete situation and what the learner expects to happen, or which choice they would make. The explanation then answers it, says why, and names the tempting wrong guess and why it fails: a wrong guess corrected at once is remembered better than the idea read cold. An idea with no tempting wrong guess opens with its explanation.",
-            "An explanation establishes one mental model in plain language before any detail: what the idea is, why it works, and when it applies. Ground it in one concrete instance before generalizing, and let the worked example use a different case, so the learner meets the idea in at least two concrete cases. Connect it to what the learner already knows from the earlier recaps or their prior knowledge. When the idea has structure (parts and their relations, a flow, a sequence or states), include one small diagram the prose says what to notice in: a mermaid fence (flowchart, sequenceDiagram or stateDiagram-v2) or a Markdown table. No decorative diagrams.",
+            "An explanation establishes one mental model in plain language before any detail: what the idea is, why it works, and when it applies. Ground it in one concrete instance before generalizing, and let the worked example use a different case, so the learner meets the idea in at least two concrete cases. Connect it to what the learner already knows from the ideas coursePlan lists for earlier lessons, or from their prior knowledge. When the idea has structure (parts and their relations, a flow, a sequence or states), include one small diagram the prose says what to notice in: a mermaid fence (flowchart, sequenceDiagram or stateDiagram-v2) or a Markdown table. No decorative diagrams.",
             "Match the guidance to priorKnowledge, and fade it within the lesson. A worked example shows every step for a learner new to the area, but only the steps new to someone who already knows its basics, because spelling out what a learner already knows slows them down. Guidance then fades: the worked example shows the steps, guided_practice names the steps without their answers, and independent_practice gives none.",
             "A worked_example walks one concrete, realistic case step by step, saying at each step what is done and why, including the mistake a learner would likely make there. The two ideas' examples use different cases.",
             "A contrast puts a deceptively similar case beside the idea: one that looks the same on the surface and differs in the one feature that changes the outcome. Show both side by side, name that feature, and say how to tell the two apart next time. Choose the near-miss from mistakes learners actually make.",
-            format!("A check poses a fresh case the learner has not seen and asks them to predict, decide or explain, never to repeat a sentence from the lesson; at least one check per idea asks why or how, not only what. Write the case and its question first; nothing there may give the answer away. Then one line that is exactly `{}`, followed by the answer in one or two sentences, the reasoning that reaches it, and, for each plausible wrong answer, the misconception it reveals and why it fails. Pitch a check so that a learner who followed the lesson usually gets it right, about four times in five, while still having to think; harder transfer belongs in the test questions. When the lesson teaches two or more ideas, its last check mixes them: the learner first decides which of this lesson's ideas, or an earlier lesson's in recentTeaching, applies to the case, and why, then uses it.", super::CHECK_REVEAL),
+            format!("A check poses a fresh case the learner has not seen and asks them to predict, decide or explain, never to repeat a sentence from the lesson; at least one check per idea asks why or how, not only what. Write the case and its question first; nothing there may give the answer away. Then one line that is exactly `{}`, followed by the answer in one or two sentences, the reasoning that reaches it, and, for each plausible wrong answer, the misconception it reveals and why it fails. Pitch a check so that a learner who followed the lesson usually gets it right, about four times in five, while still having to think; harder transfer belongs in the test questions. When the lesson teaches two or more ideas, its last check mixes them: the learner first decides which of this lesson's ideas, or an earlier lesson's planned ideas in coursePlan, applies to the case, and why, then uses it.", super::CHECK_REVEAL),
             "The guided_practice block poses a new exercise with clear numbered steps to attempt, but no answers or written hints; the interactive tutor supplies hints only when requested. The independent_practice block sets a demanding assignment with deliverables and an explicit evaluation rubric; it becomes the learner's saved practice task.",
-            "The reflection asks the learner to explain the lesson from memory, in their own words, as if teaching someone new to the subject, without looking back: three to five prompts (what each idea is, why it works, when it does not apply, how the ideas connect) and no answers. The recap after it is what they compare their explanation with: one takeaway per idea, the distinction the contrast drew, and a bridge to the next lesson.",
+            "The reflection asks the learner to explain the lesson from memory, in their own words, as if teaching someone new to the subject, without looking back: three to five prompts (what each idea is, why it works, when it does not apply, how the ideas connect) and no answers. The recap after it is what they compare their explanation with: one takeaway per idea, the distinction the contrast drew, and a bridge to the next lesson's planned ideas in coursePlan.",
             "Make the lesson substantial enough for its estimated duration. Explanations, worked examples, guided practice and independent assignments each need at least 600 characters of substantive content; contrasts and checks at least 300; reflections and recaps at least 150. Use Markdown headings, lists, equations or code when useful.",
             // The chat's own line, so a lesson's formulas are drawn as an answer's are.
             lattice_core::shared::markdown_math::MATH_GUIDANCE,
             "For guided_practice and independent_practice supply two to four rubric entries, each with a specific title, dimension and observable description of a successful response. State what distinguishes incomplete, adequate and strong work without disclosing the answer. All other blocks use an empty rubric array.",
-            "Reuse the course vocabulary and build on the supplied earlier recaps. When this lesson builds on an earlier idea, open the first explanation with a short question asking the learner to recall it before reading on. Explicitly connect this lesson to the module project milestone; do not re-teach prior explanations.",
+            "Reuse the course vocabulary and build on the ideas coursePlan lists for earlier lessons. When this lesson builds on one of them, open the first explanation with a short question asking the learner to recall it before reading on. Explicitly connect this lesson to the module project milestone; do not re-teach an earlier lesson's planned ideas.",
             "Do not describe how practice is reviewed. Never promise automatic code execution, external peer review or expert certification. A learner may run code in a lab after starting a supported runtime.",
-            "Teach for the learner's own situation, systems and tools as programGoal and priorKnowledge describe them. When an excerpt describes another system, version or setting, say which one it describes instead of presenting it as the learner's.",
-            "Within this lesson, teach every action a practice or check asks the learner to perform, unless priorKnowledge or an earlier lesson (courseSequence, recentTeaching) already covers it.",
+            "Teach for the learner's own situation, systems and tools as programGoal and priorKnowledge describe them. When a source describes another system, version or setting, name that system instead of presenting what it says as the learner's.",
+            "The learner reads only this lesson, never the sources' excerpts, the course plan (coursePlan) or these requirements. Every sentence must make sense to that reader: say what a source states in the lesson's own words; never point at an excerpt, passage, tutorial, plan or requirement the learner cannot see.",
+            "Within this lesson, teach every action a practice or check asks the learner to perform, unless priorKnowledge or an earlier lesson's planned actions in coursePlan already cover it. When a planned action needs something to exist first, such as a file to copy or a folder to move into, the lesson has the learner make it with a command the lesson teaches, and teaches that command where it is first used. Count every step a deliverable needs, including how the learner records or saves their work: a deliverable kept in a file needs the way to write text into that file taught, here or in an earlier lesson's planned actions; otherwise ask for the record in the learner's own notes.",
             "Teach this lesson's objective. What another lesson's objective in currentModule.lessonSequence names belongs to that lesson: give it at most a one-line pointer.",
+            "coursePlan lists what every lesson of the course teaches; the lesson whose position is \"this\" is the one you are writing. Teach exactly that lesson's planned ideas, terms and actions: all of them, and nothing the plan gives to another lesson. Never teach a later lesson's planned ideas; they belong to that lesson, so give them at most a one-line pointer. Put the confusion planned as this lesson's contrast, when it names one, in the lesson's contrast block.",
             "Write a worked_example's steps as a numbered Markdown list, one step per item; where a step has the learner type or enter something, put it in a code span or fence and say what they should see after it.",
             "Spread the questions across the lesson's ideas; no two test the same fact.",
             "For Python or JavaScript code in a worked_example, contrast or check, put each complete independently runnable program in a labeled python or javascript Markdown fence, including imports, inputs and output-producing calls. Use Python's standard library or plain ECMAScript only; no network, host files, input prompts, packages, or browser/Node APIs. Use text, output, csv or json fences only for non-executable data. If demonstrating an exception, catch it and print its type. State the expected observation in the surrounding explanation. Do not silently change versions or language to evade verification.",
             "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.",
             "Use exactly four distinct choices and one correct index per question; rationales has one entry per choice, in the order of the choices. The four choices are close in length, so the right one never stands out as the longest, and the right choice is worded in its own words rather than repeating the prompt's.",
-            "Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler. Each wrong choice's entry in rationales names the misconception it reflects and why it fails, never referring to a choice by its letter or position; the right choice's entry is an empty string. The explanation says why the correct answer is right. An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them.",
+            "Every question, its choices, its rationales and its explanation rest only on what this lesson teaches or on an earlier lesson's planned ideas, terms and actions in coursePlan; a learner who studied only those can answer it. Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler. Each wrong choice's entry in rationales names the misconception it reflects and why it fails, never referring to a choice by its letter or position; the right choice's entry is an empty string. The explanation says why the correct answer is right. An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them.",
             "evidenceByTopic lists the lesson's topics in teaching order with the sourceIndexes whose excerpts cover each. Teach every topic; a topic with no covering sourceIndex has no evidence.",
             grounding_instructions(grounded),
             citation_instructions(grounded),
@@ -202,6 +224,7 @@ pub async fn prepare_lesson(
     runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
+    plan: &CoursePlan,
 ) -> Result<PreparedLearningLesson> {
     let references = ReferenceCollection::lexical(&program.sources)?;
     // On the heap, as the lesson job keeps it: in debug builds the whole
@@ -212,6 +235,7 @@ pub async fn prepare_lesson(
         runtimes,
         program,
         lesson,
+        plan,
         &references,
     ))
     .await
@@ -267,6 +291,7 @@ pub async fn prepare_lesson_with_references<'a>(
     runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
+    plan: &CoursePlan,
     references: &ReferenceCollection<'a>,
 ) -> Result<PreparedLearningLesson> {
     if references.sources.is_empty() {
@@ -283,6 +308,7 @@ pub async fn prepare_lesson_with_references<'a>(
         llm,
         program,
         lesson,
+        plan,
         references,
         Vec::new(),
         Vec::new(),
@@ -322,7 +348,16 @@ pub async fn prepare_lesson_with_references<'a>(
             .collect();
         let (room, reserve) = evidence_room(
             llm,
-            &lesson_prompt(llm, program, lesson, references, Vec::new(), unmapped, true)?,
+            &lesson_prompt(
+                llm,
+                program,
+                lesson,
+                plan,
+                references,
+                Vec::new(),
+                unmapped,
+                true,
+            )?,
             output_tokens,
         );
         let mut gathered = evidence::gather(llm, references, &topics, room).await?;
@@ -347,6 +382,7 @@ pub async fn prepare_lesson_with_references<'a>(
                 llm,
                 program,
                 lesson,
+                plan,
                 active,
                 source_data(&sources),
                 map,

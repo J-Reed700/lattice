@@ -4,9 +4,9 @@ use serde_json::json;
 
 fn block(kind: &str, title: &str) -> Value {
     let body = if kind == "check" {
-        format!("{CASE}\n\n{CHECK_REVEAL}\n\n{REVEAL}")
+        format!("Case for {title}: what happens to the lid?\n\n{CHECK_REVEAL}\n\nAnswer for {title}: it bulges.")
     } else {
-        "Body.".to_owned()
+        format!("Body of {title}.")
     };
     json!({"kind":kind,"title":title,"body":body})
 }
@@ -50,6 +50,19 @@ fn a_lesson_in_its_mix_breaks_no_rule() {
 }
 
 #[test]
+fn a_teaching_sentence_in_two_sections_is_a_finding_at_the_later_one() {
+    const SHARED: &str = "You change the location with cd and check it with pwd.";
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!(format!("Opening. {SHARED}"));
+    candidate["blocks"][4]["body"] = json!(format!("Closing.  {SHARED}"));
+    let findings = lesson_rules(&candidate);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].kind, FindingKind::Teaching);
+    assert_eq!(findings[0].passage.as_deref(), Some(SHARED));
+}
+
+#[test]
 fn each_broken_rule_is_a_finding_at_its_place() {
     let mut candidate = lesson();
     candidate["blocks"][4]["title"] = json!("first  IDEA");
@@ -86,7 +99,7 @@ fn a_check_holds_its_answer_back_under_one_reveal_line() {
         format!("{CASE} {REVEAL}"),
         format!("{CASE}\n{CHECK_REVEAL}\n  "),
         format!("  \n{CHECK_REVEAL}\n{REVEAL}"),
-        format!("{CASE}\n{CHECK_REVEAL}\n{REVEAL}\n{CHECK_REVEAL}\n{REVEAL}"),
+        format!("{CASE}\n{CHECK_REVEAL}\n{REVEAL}\n{CHECK_REVEAL}\nA second answer, worded apart."),
     ] {
         let mut candidate = lesson();
         candidate["blocks"][3]["body"] = json!(body);
@@ -562,8 +575,16 @@ fn an_answer_choice_longer_than_500_characters_or_of_two_letters_is_no_finding()
 #[test]
 fn a_section_longer_than_5000_characters_is_no_finding() {
     let mut candidate = lesson();
-    candidate["blocks"][0]["body"] =
-        json!("A long explanation of the idea, with no figures in it. ".repeat(120));
+    candidate["blocks"][0]["body"] = json!((0..120u8)
+        .map(|n| {
+            let (high, low) = (n / 26, n % 26);
+            format!(
+                "A long explanation of the idea {}{}, with no figures in it. ",
+                char::from(b'a' + high),
+                char::from(b'a' + low)
+            )
+        })
+        .collect::<String>());
     assert!(lesson_rules(&candidate).is_empty());
 }
 
@@ -684,6 +705,146 @@ fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
     candidate["blocks"][0]["body"] =
         json!("The second option is wrong. Two sources agree that the shell replies.");
     assert!(lesson_rules(&candidate).is_empty());
+}
+
+#[test]
+fn labels_that_open_paragraphs_are_no_repeated_sentences() {
+    let mut candidate = lesson();
+    for (index, name) in [(0, "first"), (4, "fifth")] {
+        candidate["blocks"][index]["body"] = json!(format!(
+            "**Predict first.** Opening of the {name} section.\n\n**The model.** Model of the {name} section."
+        ));
+    }
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn the_steps_of_two_methods_are_no_repeated_sentences() {
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!("Method A\n\n1. Type `pwd`.\n2. Expected output: `/home/learner/Music`.\n\nMethod B\n\n1. Type `pwd`.\n2. Expected output: `/home/learner/Music`.");
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn a_prose_sentence_after_a_label_is_still_compared() {
+    const SHARED: &str = "You change the location with cd and check it with pwd.";
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!(format!("**Case.** Opening. {SHARED}"));
+    candidate["blocks"][4]["body"] = json!(format!("**Case.** Fresh start here. {SHARED}"));
+    let findings = lesson_rules(&candidate);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].passage.as_deref(), Some(SHARED));
+}
+
+#[test]
+fn what_stands_under_a_step_after_its_fence_is_no_repeated_sentence() {
+    let method = |name: &str| {
+        format!(
+            "{name}\n\n1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`."
+        )
+    };
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] =
+        json!(format!("{}\n\n{}", method("Method A"), method("Method B")));
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn a_second_paragraph_indented_under_an_item_is_no_repeated_sentence() {
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!("Method A\n\n- Step one.\n\n  Check the result with care.\n\nMethod B\n\n- Step two.\n\n  Check the result with care.");
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn lines_inside_tilde_fences_are_no_repeated_sentences() {
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!("~~~\nRepeat this line of text.\n~~~\n\nUnrelated opening.\n\n~~~\nRepeat this line of text.\n~~~");
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn prose_after_a_list_has_ended_is_compared_again() {
+    const STEP: &str =
+        "1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`.";
+    const SAID: &str = "Say this once here.";
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!(format!("{SAID}\n\n{STEP}"));
+    candidate["blocks"][4]["body"] = json!(format!("{STEP}\n\n{SAID}"));
+    let findings = lesson_rules(&candidate);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].passage.as_deref(), Some(SAID));
+}
+
+#[test]
+fn an_apostrophe_is_no_quoted_wording_to_cite() {
+    for sentence in [
+        "Run pwd before ls so you see the shell's folder rather than the window's.",
+        "Don't run rm until you've checked the folder's contents with ls.",
+        "Run pwd before ls so you see the shell\u{2019}s folder rather than the window\u{2019}s.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        assert!(lesson_rules(&candidate).is_empty(), "{sentence}");
+    }
+}
+
+#[test]
+fn a_real_quotation_is_still_quoted_wording_to_cite() {
+    for sentence in [
+        "The manual says 'rm deletes files permanently'.",
+        "Remember \"the shell keeps a working directory\" always.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        let findings = lesson_rules(&candidate);
+        assert_eq!(findings.len(), 1, "{sentence}");
+        assert!(findings[0].note.contains("without citing it"), "{sentence}");
+    }
+}
+
+const MISCONCEPTION: &str =
+    "Tempting wrong guess: 'the projects folder is where notes.txt always lives'.";
+
+#[test]
+fn a_misconception_in_quotation_marks_is_told_to_drop_them() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] = json!(MISCONCEPTION);
+
+    let findings = lesson_rules(&candidate);
+
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].note.contains("without citing it"));
+    assert!(findings[0]
+        .note
+        .contains("remove the quotation marks and write it as the lesson's own sentence"));
+}
+
+#[test]
+fn a_misconception_without_quotation_marks_is_no_finding() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] =
+        json!("Tempting wrong guess: the projects folder is where notes.txt always lives.");
+    assert!(lesson_rules(&candidate).is_empty());
+}
+
+#[test]
+fn an_uncited_figure_keeps_the_note_without_the_quotation_mark_direction() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(format!("{TIMEOUT} It is set for each request."));
+
+    let findings = lesson_rules(&candidate);
+
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].note.contains("without citing it"));
+    assert!(!findings[0].note.contains("quotation marks"));
 }
 
 fn question_case(prompt: &str, options: [&str; 4], key: usize) -> Value {

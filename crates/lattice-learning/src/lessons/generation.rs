@@ -155,11 +155,12 @@ fn grounding_instructions(has_sources: bool) -> &'static str {
 /// What the writer is told of citing per sentence (claim classes design
 /// §3.4, §3.5): a specific stands only in a sentence it lists in its
 /// citations, with a quote that holds it.
-fn citation_instructions(has_sources: bool) -> &'static str {
+fn citation_instructions(has_sources: bool) -> String {
+    use super::text_edits::{NEVER_SAY_WHERE, QUOTED_WORDING, UNQUOTED_REMARKS};
     if has_sources {
-        "Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) and an attribution to a source may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim, the sourceIndex of the excerpt that states it and a verbatim quote from that excerpt that contains the specific. A sentence that would state a specific no excerpt contains is written in its general form instead. Never name a source or an excerpt in the lesson's text: no \"Source 2\", no \"as source 0 describes\" and no \"Citation:\" line. State what the excerpt says as the lesson's own sentence and cite that sentence in the citations list. A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps, question explanations and the reasons for wrong choices state what is so: a worked example, a practice or a check works a hypothetical case and cites nothing."
+        format!("Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim, the sourceIndex of the excerpt that states it and a verbatim quote from that excerpt that contains the specific. A sentence that would state a specific no excerpt contains is written in its general form instead. {NEVER_SAY_WHERE} State what the excerpt says as the lesson's own sentence and cite that sentence in the citations list. A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps, question explanations and the reasons for wrong choices state what is so: a worked example, a practice or a check works a hypothetical case and cites nothing. {QUOTED_WORDING} {UNQUOTED_REMARKS}")
     } else {
-        "Every citations list is empty: no sources are supplied, so nothing is cited."
+        format!("Every citations list is empty: no sources are supplied, so nothing is cited. Quotation marks mark wording quoted from a source, so none appears in the text. {UNQUOTED_REMARKS}")
     }
 }
 

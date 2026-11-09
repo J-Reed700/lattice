@@ -66,6 +66,24 @@ fn overlapping_quote(finding: &ReviewFinding, guarded: &[Protected]) -> bool {
     })
 }
 
+/// Whether `passage`, in the part at `site` of `candidate`, overlaps a
+/// protected sentence.
+pub(super) fn guards(
+    candidate: &Value,
+    site: FindingSite,
+    passage: &str,
+    protected: &[Protected],
+) -> bool {
+    let finding = ReviewFinding::new(
+        crate::review_findings::FindingKind::Teaching,
+        Some(site),
+        "",
+    )
+    .with_passage(passage);
+    unit_of(candidate, &finding)
+        .is_some_and(|unit| overlapping_quote(&finding, &in_unit(protected, unit)))
+}
+
 /// The findings about a protected sentence: their passage holds one, or
 /// lies inside one.
 pub(super) fn on_protected(

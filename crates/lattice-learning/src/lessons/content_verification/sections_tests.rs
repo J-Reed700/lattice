@@ -637,14 +637,52 @@ async fn mend(
     taken: &Taken,
     protected: &[Protected],
 ) -> Result<Option<Value>> {
+    mend_in(llm, taken, protected, &json!({})).await
+}
+
+async fn mend_in(
+    llm: &ScriptedModel,
+    taken: &Taken,
+    protected: &[Protected],
+    lesson: &Value,
+) -> Result<Option<Value>> {
     let (section, _, _) = mended_section();
     mend_section(
         llm,
         (&json!({"type":"object"}), 4_000),
         (0, true, &section),
         (taken, protected),
+        lesson,
     )
     .await
+}
+
+#[tokio::test]
+async fn a_flow_repair_that_inserts_a_sentence_the_lesson_already_has_gives_no_edit() -> Result<()>
+{
+    let (section, taken, protected) = mended_section();
+    let own = json!({"edits":[
+        {"path":"/blocks/0/body","before":"This follows from it.","after":"Intro."}
+    ]});
+    let llm = model(&[own]);
+    assert_eq!(
+        mend(&llm, &taken, &protected).await?,
+        None,
+        "the section already has Intro."
+    );
+
+    let elsewhere = "Another section says this.";
+    let lesson = json!({"blocks":[section, block("explanation","Other",elsewhere)],"questions":[]});
+    let other = json!({"edits":[
+        {"path":"/blocks/0/body","before":"This follows from it.","after":elsewhere}
+    ]});
+    let llm = model(&[other]);
+    assert_eq!(
+        mend_in(&llm, &taken, &protected, &lesson).await?,
+        None,
+        "another section already has the sentence"
+    );
+    Ok(())
 }
 
 #[tokio::test]

@@ -7,11 +7,14 @@
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text};
 use crate::assessment_engine::{distinct_options, key_fault, KeyFault};
-use crate::content_verification::{figures, names_a_source, needs_citation, Givens, CITED_KINDS};
+use crate::content_verification::{
+    figures, names_a_source, needs_citation, quoted_wording, Givens, CITED_KINDS,
+};
+use crate::lessons::repeats;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 /// The heading a check section's reveal starts under (learning science
 /// lessons §3.3): the learner commits to an answer to what is above it
@@ -164,10 +167,7 @@ fn specifics(sentence: &str, givens: &Givens) -> Vec<String> {
     let own = figures(sentence)
         .filter(|figure| !givens.holds(figure))
         .map(str::to_owned);
-    let quoted = lazy_regex::regex!(r#"['"‘’“”]([^'"‘’“”]{12,})['"‘’“”]"#)
-        .captures_iter(sentence)
-        .filter_map(|captures| captures.get(1))
-        .map(|found| found.as_str().to_owned());
+    let quoted = quoted_wording(sentence).map(str::to_owned);
     own.chain(quoted).collect()
 }
 
@@ -221,7 +221,12 @@ fn uncited_specifics(
         let (summary, note, quote) = if quotes.is_empty() {
             let summary =
                 format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
-            let note = format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.");
+            let unquoted = if quoted_wording(&sentence).next().is_some() {
+                " When the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence instead."
+            } else {
+                ""
+            };
+            let note = format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.{unquoted}");
             (summary, note, "")
         } else {
             let (missing, quote) = quotes
@@ -344,6 +349,24 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
             ));
         } else {
             titles.insert(normalize(title), index);
+        }
+    }
+    let mut seen = HashSet::new();
+    for (index, block) in blocks.iter().enumerate() {
+        let mut reported = HashSet::new();
+        for sentence in repeats::comparable(text(block, "body")) {
+            let key = repeats::key(&sentence);
+            if !seen.insert(key.clone()) && reported.insert(key) {
+                findings.push(
+                    ReviewFinding::new(
+                        FindingKind::Teaching,
+                        Some(FindingSite::Section(index)),
+                        format!("Section {} (candidate blocks-{index}) says \"{sentence}\" when the lesson has said it already; say it once, in the section it belongs to, and take it out or reword it here.", index + 1),
+                    )
+                    .with_summary(format!("Section {} repeats a sentence the lesson already has: \u{201c}{sentence}\u{201d}", index + 1))
+                    .with_passage(&sentence),
+                );
+            }
         }
     }
     let kinds = |items: &[Value], kind: &str| {
