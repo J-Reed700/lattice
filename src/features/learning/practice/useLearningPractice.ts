@@ -1,8 +1,8 @@
-import { unwrap } from '@/lib/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { learningPracticeWorkspaceKey } from '@/features/learning/api/learningQueryKeys';
+import { unwrap } from '@/lib/api';
 import type VaultAPI from '@/lib/api';
 import type {
   ChangeLearningPracticeModeRequestDto,

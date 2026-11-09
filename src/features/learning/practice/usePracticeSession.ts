@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 
-import { useRetry } from '@/features/learning/practice/shared/useRetry';
 import { useAutosave } from '@/features/learning/practice/shared/useAutosave';
+import { useRetry } from '@/features/learning/practice/shared/useRetry';
 import {
   useAcceptLearningPracticeProposal,
   useChangeLearningPracticeMode,
@@ -15,6 +15,7 @@ import {
   useStartLearningPracticeSession,
   useSubmitLearningPracticeAttempt,
 } from '@/features/learning/practice/useLearningPractice';
+import { newId } from '@/lib/api';
 import type {
   LearningLessonDto,
   LearningPracticeHintLevel,
@@ -24,7 +25,6 @@ import type {
   LearningSourceLibraryItemDto,
   SaveLearningPracticeArtifactRequestDto,
 } from '@/lib/bindings';
-import { newId } from '@/lib/api';
 import { registerPendingSave } from '@/lib/pendingSaves';
 
 export type PracticeBusyState =
@@ -136,7 +136,7 @@ export function usePracticeSession({
   }, [session, sessionId]);
 
   useEffect(() => {
-    if (!session || session.summary.id !== sessionId || hydratedFor === sessionId) return;
+    if (session?.summary.id !== sessionId || hydratedFor === sessionId) return;
     textRef.current = session.artifact.text;
     savedTextRef.current = session.artifact.text;
     saveRequestRef.current = null;

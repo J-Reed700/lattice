@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
+
 import { Clock, Timer } from 'lucide-react';
 
 /** "9:05" for 545 seconds; a part of a second counts as the whole of it. */

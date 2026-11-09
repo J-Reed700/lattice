@@ -12,10 +12,11 @@ import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
-import type { HistoryTarget } from './historyItems';
-import { PracticeHome } from './PracticeHome';
 import { CODING_LANGUAGE, MOCK_DIFFICULTY, type StartAction } from './practiceChoices';
+import { PracticeHome } from './PracticeHome';
 import { practiceHomeApi } from './practiceHomeApi';
+
+import type { HistoryTarget } from './historyItems';
 import type { PracticeViewState } from './usePracticeView';
 
 export interface PracticeAreaProps {

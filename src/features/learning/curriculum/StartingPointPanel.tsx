@@ -3,9 +3,9 @@ import { useEffect, useRef, useState } from 'react';
 import { useLearningPlan, useSkipLearningDiagnostic, useStartLearningDiagnostic, useSubmitLearningDiagnostic } from '@/features/learning/curriculum/useLearningPlan';
 import { useLearningProgram } from '@/features/learning/workspace/useLearningStudio';
 import { MarkdownViewer } from '@/features/reading/components/viewers/MarkdownViewer';
+import { isConflict } from '@/lib/api';
 import type { SubmitLearningDiagnosticRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
-import { isConflict } from '@/lib/api';
 
 
 export function StartingPointPanel({ programId, onStudy, onChallenge }: { programId: string; onStudy?: (lessonId: string) => void; onChallenge?: (lessonId: string) => void }) {

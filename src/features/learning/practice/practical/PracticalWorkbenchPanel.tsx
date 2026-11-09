@@ -19,7 +19,6 @@ import { SimulationPanel } from "@/features/learning/practice/practical/Simulati
 import { useLearningLabDraft } from "@/features/learning/practice/practical/useLearningLabDraft";
 import { usePracticalWorkspace } from "@/features/learning/practice/practical/usePracticalWorkspace";
 import { newId, unwrap } from "@/lib/api";
-import { getErrorMessage } from "@/lib/errorUtils";
 import type {
   GenerateLearningPracticalActivityRequestDto,
   LearningLabFile,
@@ -30,6 +29,7 @@ import type {
   LearningPracticalActivityKind,
   LearningProgramDto,
 } from "@/lib/bindings";
+import { getErrorMessage } from "@/lib/errorUtils";
 
 /** Asks the workbench to open the composer ready to go; a new `id` asks again. */
 export type ComposerRequest = {

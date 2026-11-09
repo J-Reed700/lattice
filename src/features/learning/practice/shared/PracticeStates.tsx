@@ -1,4 +1,5 @@
 import type React from 'react';
+
 import { Inbox, Loader2 } from 'lucide-react';
 
 export function PracticeLoadingState({ label }: { label: string }) {

@@ -90,7 +90,7 @@ describe('SimulationPanel', () => {
       ] as never,
     }));
     const turns = screen.getAllByRole('article');
-    expect(turns.map((turn) => turn.querySelector('div')?.textContent)).toEqual(['Museum guide', 'Visitor', 'Coach']);
+    expect(turns.map((turn) => turn.querySelector('p')?.textContent)).toEqual(['Museum guide', 'Visitor', 'Coach']);
     expect(screen.getByText('“Paint has worn away.”')).toBeInTheDocument();
     act(() => citationDisplayStore.getState().setVisible(false));
     expect(screen.queryByText('“Paint has worn away.”')).not.toBeInTheDocument();
@@ -233,7 +233,7 @@ describe('SimulationPanel', () => {
     fireEvent.keyDown(field, { key: 'Enter', metaKey: true });
     await waitFor(() => expect(api.sendLearningSimulationTurn).toHaveBeenCalledTimes(1));
     expect(screen.getByRole('button', { name: 'Finish simulation' })).toBeDisabled();
-    expect(field).toBeDisabled();
+    expect(field).toHaveAttribute('readonly');
     expect(screen.getByRole('status')).toHaveTextContent('responding');
     await act(async () => release({ ok: true, data: session({ revision: 4 }) }));
     await waitFor(() => expect(onSession).toHaveBeenCalledTimes(1));

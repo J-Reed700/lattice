@@ -1,5 +1,6 @@
-import { AlertCircle, CheckCircle2, FileCode2, HelpCircle, Lightbulb, MessageSquareQuote, Play, XCircle } from 'lucide-react';
 import type React from 'react';
+
+import { AlertCircle, CheckCircle2, FileCode2, HelpCircle, Lightbulb, MessageSquareQuote, Play, XCircle } from 'lucide-react';
 
 export type EvidenceView =
   | { kind: 'quote'; text: string }

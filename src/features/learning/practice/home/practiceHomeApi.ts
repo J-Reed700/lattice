@@ -1,8 +1,8 @@
-import type * as Wire from '@/lib/bindings';
 import { newId } from '@/lib/api';
+import type * as Wire from '@/lib/bindings';
 import { studyActivityCall } from '@/lib/studyActivity';
-import { unwrapApiResult } from '@/types/api/result';
 import type { CommandName } from '@/shared/ipc/transport';
+import { unwrapApiResult } from '@/types/api/result';
 
 async function call<T>(command: string, request: Record<string, unknown>): Promise<T> {
   return unwrapApiResult(await studyActivityCall<T>('learning', command as CommandName, { request }));

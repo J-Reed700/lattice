@@ -1,8 +1,8 @@
 import type { CodingBuildChoice } from '@/features/learning/practice/coding/CodingEntry';
+import type { ComposerRequest } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
 import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 
-import type { ComposerRequest } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
 
 import type { AttemptMode } from './usePracticeView';
 
