@@ -359,6 +359,11 @@ export function usePracticeSession({
                     : '';
 
   return {
+    text: '',
+    setText: (_value: string) => {},
+    autosave: { state: 'idle' as const, error: null as string | null, flush: async () => {} },
+    saveNow: async () => true,
+    busy: false,
     sessionId,
     setSessionId,
     sessionQuery,

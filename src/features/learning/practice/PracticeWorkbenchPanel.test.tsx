@@ -16,7 +16,7 @@ const mocks = vi.hoisted(() => ({
   sourceWorkspace: vi.fn(), sourceVersion: vi.fn(), saveDraft: vi.fn(),
 }));
 
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningPracticeWorkspace: mocks.getWorkspace,
   getLearningPracticeSession: mocks.getSession,
   startLearningPracticeSession: mocks.start,
@@ -32,6 +32,15 @@ vi.mock('@/lib/api', () => ({ default: {
   getLearningSourceVersion: mocks.sourceVersion,
   saveLearningCardDraft: mocks.saveDraft,
 } }));
+
+const reviewCard = vi.hoisted(() => vi.fn());
+vi.mock('@/features/learning/practice/shared/SaveAsReviewCard', () => ({
+  SaveAsReviewCard: (props: Record<string, unknown>) => {
+    reviewCard(props);
+    return <div data-testid="review-card" />;
+  },
+}));
+const conflictError = (message: string) => Object.assign(new Error(message), { details: { code: 'CONFLICT' } });
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
@@ -111,6 +120,13 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(screen.queryByRole('button', { name: 'Reveal solution' })).not.toBeInTheDocument();
   });
 
+  it('labels the lesson's guided exercise as a region with its start button', async () => {
+    currentSession = null; currentWorkspace.sessions = [];
+    renderWorkbench(lesson, true);
+    const guided = await screen.findByRole('region', { name: 'Guided exercise' });
+    expect(within(guided).getByRole('button', { name: 'Start guided exercise' })).toBeVisible();
+  });
+
   it('keeps the guided answer editable while an autosave is in flight', async () => {
     const user = userEvent.setup();
     currentSession!.summary.taskKind = 'guided';
@@ -184,9 +200,9 @@ describe('Learning Studio grounded practice workbench', () => {
     const editor = await screen.findByRole('textbox', { name: 'Your response' });
     await user.type(editor, 'Evidence supports the conclusion because…');
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(1), { timeout: 3_000 });
-    expect(await screen.findByRole('button', { name: 'Retry save' })).toBeVisible();
+    expect(await screen.findByRole('button', { name: 'Try again' })).toBeVisible();
     const first = mocks.save.mock.calls[0][0];
-    await user.click(screen.getByRole('button', { name: 'Retry save' }));
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
     expect(mocks.save.mock.calls[1][0]).toEqual(first);
     expect(screen.getByRole('textbox', { name: 'Your response' })).toHaveValue(first.text);
@@ -205,7 +221,9 @@ describe('Learning Studio grounded practice workbench', () => {
     renderWorkbench();
     expect(await screen.findByRole('textbox', { name: 'Your response' })).toBeVisible();
     expect(screen.getByRole('button', { name: /Field notes/ })).toBeDisabled();
-    expect(screen.getByRole('button', { name: 'Ask tutor' })).toBeDisabled();
+    const thread = screen.getByRole('region', { name: 'Tutor messages' });
+    expect(within(thread).getByRole('button', { name: 'Send' })).toBeDisabled();
+    expect(screen.getByText('Tutor assistance is closed in Demonstrate mode.')).toBeVisible();
     expect(screen.queryByRole('button', { name: /Review reveal choice/ })).not.toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Your response' }), 'My independent response.');
     await user.click(screen.getByRole('button', { name: 'Submit response' }));
@@ -225,8 +243,9 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(mocks.reveal).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Reveal solution' }));
     expect(await screen.findByText('A worked explanation of the inference.')).toBeVisible();
-    await user.type(screen.getByRole('textbox', { name: 'Ask a question or request critique' }), 'Can you explain this source?');
-    await user.click(screen.getByRole('button', { name: 'Ask tutor' }));
+    const thread = screen.getByRole('region', { name: 'Tutor messages' });
+    await user.type(within(thread).getByRole('textbox'), 'Can you explain this source?');
+    await user.click(within(thread).getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Start by separating the observation from your interpretation.')).toBeVisible();
     const citation = screen.getByRole('button', { name: /Saved source quote · exact version/ });
     await user.click(citation);
@@ -271,36 +290,38 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(screen.getByText('There is not enough evidence to judge the connection.')).toBeInTheDocument();
   });
 
-  it('turns an accepted misconception into a recall card the learner corrects in their own words', async () => {
+  it('turns an accepted misconception into a recall card through the shared review card', async () => {
     const user = userEvent.setup();
     currentSession!.proposals[0] = { ...currentSession!.proposals[0], kind: 'misconception', text: 'An observation already proves the inference.' };
-    mocks.saveDraft.mockResolvedValue(ok({ programId: 'program-1' }));
     renderWorkbench();
     await screen.findByRole('textbox', { name: 'Your response' });
-    expect(screen.queryByRole('textbox', { name: /What is actually right/ })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('review-card')).not.toBeInTheDocument();
     const proposals = screen.getByText('Tutor proposals').parentElement!;
     await user.click(within(proposals).getByRole('button', { name: 'Accept idea' }));
-    const correction = await screen.findByRole('textbox', { name: /What is actually right/ });
-    expect(screen.getByRole('button', { name: 'Make a recall card' })).toBeDisabled();
-    await user.type(correction, 'An observation supports an inference; other explanations must be ruled out.');
-    await user.click(screen.getByRole('button', { name: 'Make a recall card' }));
-    await waitFor(() => expect(mocks.saveDraft).toHaveBeenCalledWith({
-      draftId: null, programId: 'program-1', lessonId: 'lesson-1',
-      question: 'What is wrong with this idea, and what is right instead? “An observation already proves the inference.”',
-      answer: 'An observation supports an inference; other explanations must be ruled out.',
-      explanation: 'Drafted from a misconception found in practice', sourceIds: [],
+    expect(await screen.findByTestId('review-card')).toBeVisible();
+    expect(reviewCard).toHaveBeenCalledWith(expect.objectContaining({
+      programId: 'program-1',
+      front: 'What is wrong with this idea, and what is right instead? “An observation already proves the inference.”',
     }));
-    expect(await screen.findByText(/Saved as a recall card draft/)).toBeVisible();
+  });
+
+  it('names the help levels Full help, Hints only and No help when starting an attempt', async () => {
+    currentSession = null;
+    currentWorkspace.sessions = [];
+    renderWorkbench();
+    expect(await screen.findByRole('radio', { name: /Explore.*Full help/s })).toBeVisible();
+    expect(screen.getByRole('radio', { name: /Practice.*Hints only/s })).toBeVisible();
+    expect(screen.getByRole('radio', { name: /Demonstrate.*No help/s })).toBeVisible();
   });
 
   it('offers a conflict reload while retaining locally edited response text', async () => {
     const user = userEvent.setup();
-    mocks.save.mockImplementationOnce(async () => fail('Revision changed; reload and retry.'));
+    mocks.save.mockImplementationOnce(async () => ({ ok: false as const, error: conflictError('Revision changed; reload and retry.') }));
     renderWorkbench();
     const editor = await screen.findByRole('textbox', { name: 'Your response' });
     await user.type(editor, 'Keep this draft after reload.');
-    expect(await screen.findByRole('button', { name: 'Reload current revision · keep my text' })).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Reload current revision · keep my text' }));
+    expect(await screen.findByRole('button', { name: 'Reload the saved attempt · keep my text' })).toBeVisible();
+    await user.click(screen.getByRole('button', { name: 'Reload the saved attempt · keep my text' }));
     expect(screen.getByRole('textbox', { name: 'Your response' })).toHaveValue('Keep this draft after reload.');
   });
 });
