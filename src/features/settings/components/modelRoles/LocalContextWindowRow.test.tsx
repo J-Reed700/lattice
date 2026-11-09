@@ -28,7 +28,7 @@ function renderRow(localContextWindow: number | null = null, models: DownloadedM
 }
 
 const saved = () => mockUpdateSettings.mock.calls.map(([update]) => update.updates);
-const noDefault = () => screen.getByRole('checkbox', { name: 'Longest trained window' });
+const fitEach = () => screen.getByRole('checkbox', { name: 'Fit each model to this machine' });
 const windowField = () => screen.getByLabelText('Default context window');
 
 describe('LocalContextWindowRow', () => {
@@ -39,10 +39,10 @@ describe('LocalContextWindowRow', () => {
   it('unticking "Model\'s max" saves nothing and leaves the field empty for the user', async () => {
     renderRow();
 
-    await userEvent.setup().click(noDefault());
+    await userEvent.setup().click(fitEach());
 
     expect(mockUpdateSettings).not.toHaveBeenCalled();
-    expect(noDefault()).not.toBeChecked();
+    expect(fitEach()).not.toBeChecked();
     expect(windowField()).toBeEnabled();
     expect(windowField()).toHaveValue(null);
   });
@@ -50,21 +50,21 @@ describe('LocalContextWindowRow', () => {
   it('saves the window the user types, within the bounds', async () => {
     renderRow();
 
-    await userEvent.setup().click(noDefault());
+    await userEvent.setup().click(fitEach());
     fireEvent.change(windowField(), { target: { value: '60416' } });
     fireEvent.blur(windowField());
     fireEvent.change(windowField(), { target: { value: '100' } });
     fireEvent.blur(windowField());
 
     expect(saved()).toEqual([{ localContextWindow: 60_416 }, { localContextWindow: 512 }]);
-    expect(noDefault()).not.toBeChecked();
+    expect(fitEach()).not.toBeChecked();
     expect(windowField()).toHaveValue(512);
   });
 
   it('reaches the largest window a model here is trained for', async () => {
     renderRow(null, trainedFor([32_768, 1_048_576, null]));
 
-    await userEvent.setup().click(noDefault());
+    await userEvent.setup().click(fitEach());
     fireEvent.change(windowField(), { target: { value: '1048576' } });
     fireEvent.blur(windowField());
     fireEvent.change(windowField(), { target: { value: '9000000' } });
@@ -95,25 +95,25 @@ describe('LocalContextWindowRow', () => {
     expect(windowField()).toHaveValue(262_144);
   });
 
-  it('leaving the field empty keeps no default window', async () => {
+  it('leaving the field empty keeps no default window, so each model fits this machine', async () => {
     renderRow();
 
-    await userEvent.setup().click(noDefault());
+    await userEvent.setup().click(fitEach());
     fireEvent.blur(windowField());
 
     expect(mockUpdateSettings).not.toHaveBeenCalled();
-    expect(noDefault()).toBeChecked();
+    expect(fitEach()).toBeChecked();
     expect(windowField()).toBeDisabled();
   });
 
-  it('clearing a saved window goes back to no default window', () => {
+  it('clearing a saved window goes back to fitting each model to this machine', () => {
     renderRow(32_768);
 
     fireEvent.change(windowField(), { target: { value: '' } });
     fireEvent.blur(windowField());
 
     expect(saved()).toEqual([{ localContextWindow: null }]);
-    expect(noDefault()).toBeChecked();
+    expect(fitEach()).toBeChecked();
   });
 
   it('shows the saved window again when saving fails', async () => {

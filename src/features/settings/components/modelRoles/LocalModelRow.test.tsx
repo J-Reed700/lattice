@@ -239,7 +239,7 @@ describe('LocalModelRow load status', () => {
     );
   });
 
-  it('warns at the trained window when not even the weights fit and none is saved', () => {
+  it('says the model may not fit at any window when not even its weights fit', () => {
     renderRow({
       ...utilityModel(),
       trained_context_length: 262_144,
@@ -247,7 +247,7 @@ describe('LocalModelRow load status', () => {
     });
 
     expect(screen.getByRole('status')).toHaveTextContent(
-      "Loads at 262,144 tokens, which may not fit in this machine's memory — about 0 tokens fit."
+      "This model may not fit in this machine's memory at any context window."
     );
   });
 

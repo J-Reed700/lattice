@@ -277,6 +277,9 @@ describe('contextFitWarning', () => {
     );
     expect(contextFitWarning(model, 192_512, false)).toBeNull();
     expect(contextFitWarning(model, 262_144, true)).toBeNull();
+    expect(contextFitWarning({ ...model, fits_context_length: 0 }, 4_096, false)).toBe(
+      "This model may not fit in this machine's memory at any context window.",
+    );
     expect(tokensThatFit(model, 262_144, false)).toBe(192_512);
   });
 

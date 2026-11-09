@@ -164,7 +164,7 @@ describe('LocalModelConfigModal', () => {
     });
   });
 
-  it('warns at the trained window when not even the weights fit and none is saved', () => {
+  it('says the model may not fit at any window when not even its weights fit', () => {
     render(
       <TooltipProvider>
         <LocalModelConfigModal
@@ -177,7 +177,7 @@ describe('LocalModelConfigModal', () => {
 
     expect(screen.getByRole('spinbutton', { name: 'Context Length' })).toHaveValue(32768);
     expect(
-      screen.getByText("May not fit in this machine's memory — about 0 tokens fit"),
+      screen.getByText("This model may not fit in this machine's memory at any context window."),
     ).toBeInTheDocument();
     expect(screen.queryByText(/Loads at/)).not.toBeInTheDocument();
   });
