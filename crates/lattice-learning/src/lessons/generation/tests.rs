@@ -361,7 +361,7 @@ fn the_writers_context_has_whole_objectives_and_the_plan_by_position() {
         ["earlier", "earlier", "this", "later", "later", "later", "later", "later"]
     );
     for (entry, id) in planned.iter().zip(&ids) {
-        assert_eq!(entry["lessonId"], id.as_str());
+        assert!(entry.get("lessonId").is_none(), "{entry}");
         assert_eq!(entry["ideas"][0], format!("ideas of {id}"));
         assert_eq!(entry["terms"][0], format!("terms of {id}"));
         assert_eq!(entry["actions"][0], format!("actions of {id}"));

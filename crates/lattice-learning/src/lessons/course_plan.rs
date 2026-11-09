@@ -20,8 +20,6 @@ use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
-#[cfg(test)]
-use std::sync::Mutex;
 
 /// The `task` of the planning request.
 pub(crate) const PLAN_TASK: &str = "Plan what every lesson of this course teaches";
