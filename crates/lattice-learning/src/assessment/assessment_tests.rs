@@ -69,7 +69,7 @@ fn text_key(variants: &[&str], numeric: Option<(f64, f64, &[&str])>) -> Learning
 
 #[test]
 fn typed_answers_ignore_case_accents_punctuation_articles_and_separators() {
-    assert_eq!(engine::normalize_answer("  The CafÃ©, Noir! "), "cafe noir");
+    assert_eq!(engine::normalize_answer("  The Café, Noir! "), "cafe noir");
     assert_eq!(engine::normalize_answer("1,000,000"), "1000000");
     assert_eq!(engine::normalize_answer("3.14"), "3.14");
     assert_eq!(engine::normalize_answer("An"), "an");
@@ -112,7 +112,7 @@ fn numbers_are_graded_in_code_within_an_absolute_tolerance() {
     }
     answer.text = Some("8".into());
     let grade = graded(engine::grade_keyed(&item, &answer).unwrap());
-    assert_eq!(grade.detail, "You gave 8; the answer is 7 Â± 0.5 cm.");
+    assert_eq!(grade.detail, "You gave 8; the answer is 7 ± 0.5 cm.");
     // A number never goes to the model, even when the key has no number.
     let plain = candidate(
         LearningItemFormat::ShortAnswer,
@@ -140,7 +140,7 @@ fn an_empty_answer_scores_zero_with_a_reason_and_no_model() {
 
 #[test]
 fn partial_credit_follows_the_section_three_rules() {
-    // Multi-select: max(0, hits âˆ’ wrong picks) / |key|.
+    // Multi-select: max(0, hits − wrong picks) / |key|.
     let multi = candidate(
         LearningItemFormat::MultiSelect,
         &["Alpha", "Bravo", "Charlie", "Delta", "Echo"],
