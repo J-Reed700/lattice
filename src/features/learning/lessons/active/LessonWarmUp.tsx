@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import { useEffect, useRef, useState } from 'react';
 
 import { Brain, Check } from 'lucide-react';
@@ -18,7 +19,6 @@ const RATINGS: { rating: StudyRating; label: string }[] = [
   { rating: 'easy', label: 'Easy' },
 ];
 
-function newId() { return globalThis.crypto.randomUUID(); }
 
 /** The cards due now, longest overdue first: the warm-up's queue. */
 export function warmUpQueue(cards: LearningRecallCardDto[], now = Date.now()): string[] {

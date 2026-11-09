@@ -1,3 +1,4 @@
+import { unwrap } from '@/lib/api';
 import { useState } from 'react';
 
 import { useMutation, useQuery } from '@tanstack/react-query';
@@ -7,10 +8,6 @@ import { LEARNING_CHECKER_ACCURACY_KEY } from '@/features/learning/api/learningQ
 import type { CheckerAccuracyDto, ExportedLearningCheckerExamplesDto } from '@/lib/bindings';
 import type { ApiResult } from '@/types';
 
-function unwrap<T>(result: ApiResult<T>): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 const percent = (rate: number) => `${(rate * 100).toFixed(1)}%`;
 

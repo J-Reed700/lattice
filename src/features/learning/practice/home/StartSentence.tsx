@@ -64,7 +64,7 @@ export function StartSentence({
   sentenceSuffix,
   onChange,
   className,
-}: StartSentenceProps): JSX.Element {
+}: StartSentenceProps) {
   const [selections, setSelections] = useState<Record<string, string>>(() => {
     const stored = getStoredSelections(programId, cardId);
     const initial: Record<string, string> = {};

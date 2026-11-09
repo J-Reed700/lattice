@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useId, useState } from 'react';
 
 import { ArrowLeft, ArrowRight, CirclePause, Eye, RotateCcw, Send } from 'lucide-react';
@@ -12,9 +13,6 @@ import { useQuizAutosave } from '@/features/learning/quizzes/useQuizAutosave';
 import { useInterruptQuiz, useOperationIds, useSubmitQuiz } from '@/features/learning/quizzes/useQuizzes';
 import type { LearningAssessmentFormDto, LearningQuizCoverageDto, LearningSourceDto } from '@/lib/bindings';
 
-function errorText(error: unknown) {
-  return error instanceof Error ? error.message : 'Something went wrong. Your answers are still here.';
-}
 
 function RunnerItem({ item, index, draft, practice, disabled, sources, onChange, onCheck }: {
   item: FormItem; index: number; draft: ItemDraft; practice: boolean; disabled: boolean; sources: LearningSourceDto[];
@@ -77,7 +75,7 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
       operations.done(key);
       setConfirm(null);
       onExit();
-    } catch (error) { setActionError({ action: 'pause', message: errorText(error) }); setConfirm(null); }
+    } catch (error) { setActionError({ action: 'pause', message: getErrorMessage(error) }); setConfirm(null); }
   };
   const doSubmit = async () => {
     setActionError(null);
@@ -88,7 +86,7 @@ export function QuizRunner({ form, sources, coverage, onExit, onSubmitted, reloa
       operations.done(key);
       setConfirm(null);
       onSubmitted(submitted);
-    } catch (error) { setActionError({ action: 'submit', message: errorText(error) }); setConfirm(null); }
+    } catch (error) { setActionError({ action: 'submit', message: getErrorMessage(error) }); setConfirm(null); }
   };
   const go = (next: number) => setIndex(Math.max(0, Math.min(total - 1, next)));
 

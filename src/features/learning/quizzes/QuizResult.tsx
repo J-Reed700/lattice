@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useEffect, useRef, useState } from 'react';
 
 import { BookmarkPlus, CheckCircle2, LoaderCircle, RotateCcw, Square } from 'lucide-react';
@@ -14,7 +15,6 @@ import type { LearningAssessmentFormDto, LearningSourceDto } from '@/lib/binding
 
 export type LessonCompletion = { completed: boolean; pending: boolean; onComplete: () => void };
 
-const errorText = (error: unknown) => (error instanceof Error ? error.message : undefined);
 
 function GradingBanner({ form, grading, onStop, onResume, stopping, resuming, error }: {
   form: LearningAssessmentFormDto; grading: GradingState; onStop: () => void; onResume: () => void; stopping: boolean; resuming: boolean; error?: string;

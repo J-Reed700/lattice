@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { draftOf, fingerprintOf, responseOf, type ItemDraft } from '@/features/learning/quizzes/items/itemResponse';
@@ -10,11 +11,8 @@ export type SaveState = 'saved' | 'saving' | 'unsaved' | 'error';
 
 const DEBOUNCE_MS = 650;
 
-function message(error: unknown) {
-  return error instanceof Error ? error.message : 'Your answer could not be saved.';
-}
 
-const isConflict = (error: unknown) => isConflictError(error) || /changed|revision|conflict|reload and retry/i.test(message(error));
+const isConflict = (error: unknown) => isConflictError(error) || /changed|revision|conflict|reload and retry/i.test(getErrorMessage(error));
 
 function draftsOf(form: LearningAssessmentFormDto) {
   return Object.fromEntries(form.items.map((item) => [item.id, draftOf(item)]));
@@ -79,7 +77,7 @@ export function useQuizAutosave(form: LearningAssessmentFormDto, programId: stri
       setSavedTick((tick) => tick + 1);
       return true;
     } catch (error) {
-      setSaveError(message(error));
+      setSaveError(getErrorMessage(error));
       conflictRef.current = isConflict(error);
       setConflict(conflictRef.current);
       return false;

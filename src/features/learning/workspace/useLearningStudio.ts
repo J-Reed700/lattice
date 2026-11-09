@@ -1,3 +1,4 @@
+import { newId, unwrap } from '@/lib/api';
 import { skipToken, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
@@ -19,10 +20,6 @@ import type { ApiFailure } from '@/types/api/result';
 
 export { LEARNING_PROGRAMS_KEY, learningProgramKey } from '@/features/learning/api/learningQueryKeys';
 
-function unwrap<T>(result: { ok: true; data: T } | ApiFailure): T {
-  if (!result.ok) throw failureToError(result);
-  return result.data;
-}
 
 export function useLearningPrograms() {
   const api = useApi();
@@ -90,7 +87,7 @@ function useOutlineOperation<T>(key: readonly string[], run: (request: T, option
     retry: false,
     mutationFn: async (request: T) => {
       if (client.getQueryData<OutlineOperationState>(key)?.isPending) throw new Error('This outline operation is already running.');
-      const requestId = crypto.randomUUID();
+      const requestId = newId();
       let lastRefresh = 0;
       client.setQueryData<OutlineOperationState>(key, { ...idleOutlineOperation, requestId, isPending: true });
       try {

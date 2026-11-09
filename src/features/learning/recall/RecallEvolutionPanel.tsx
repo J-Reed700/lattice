@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import { useMemo, useRef, useState } from 'react';
 
 import { Clock3, Copy, History, Save, Sparkles } from 'lucide-react';
@@ -33,13 +34,6 @@ const emptyContent = (): LearningRecallContentDto => ({
   prompt: '', answer: '', explanation: '', options: [], correctOptionIndex: null, language: null, clozeDeletions: [],
 });
 
-function uuid() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
-    const random = Math.floor(Math.random() * 16);
-    return (char === 'x' ? random : (random & 3) | 8).toString(16);
-  });
-}
 
 function formatName(format: LearningRecallCardFormat) {
   return formats.find((item) => item.value === format)?.label ?? format.replace(/_/g, ' ');
@@ -139,7 +133,7 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
       language: format === 'code_prediction' ? content.language?.trim() || null : null,
       clozeDeletions: format === 'cloze' ? content.clozeDeletions.map((value) => value.trim()).filter(Boolean) : [],
     };
-    const cardId = selectedCard?.id ?? (retry.current.save?.request.cardId as string | undefined) ?? uuid();
+    const cardId = selectedCard?.id ?? (retry.current.save?.request.cardId as string | undefined) ?? newId();
     const payload = {
       programId, cardId, expectedContentRevision: selectedCard?.contentRevision ?? null,
       format, content: normalized, sourceVersionIds: sourceIds,
@@ -147,7 +141,7 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
     };
     const key = JSON.stringify(payload);
     let entry = retry.current.save;
-    if (entry?.key !== key) entry = { key, request: { ...payload, operationId: uuid() } };
+    if (entry?.key !== key) entry = { key, request: { ...payload, operationId: newId() } };
     retry.current.save = entry;
 
     setError(''); setResultMessage(''); clearRetry();
@@ -164,7 +158,7 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
     const payload = { programId, suggestionId, accept };
     const key = JSON.stringify(payload);
     let entry = retry.current[`duplicate:${suggestionId}`];
-    if (entry?.key !== key) entry = { key, request: { ...payload, operationId: uuid() } };
+    if (entry?.key !== key) entry = { key, request: { ...payload, operationId: newId() } };
     retry.current[`duplicate:${suggestionId}`] = entry;
 
     setError(''); clearRetry();
@@ -185,7 +179,7 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
     };
     const key = JSON.stringify(payload);
     let entry = retry.current[`review:${cardItem.id}`];
-    if (entry?.key !== key) entry = { key, request: { ...payload, reviewId: uuid() } };
+    if (entry?.key !== key) entry = { key, request: { ...payload, reviewId: newId() } };
     retry.current[`review:${cardItem.id}`] = entry;
 
     setError(''); setResultMessage(''); clearRetry();

@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useState } from 'react';
 
 import { useOperationIds, usePrepareQuizBank, useStartQuiz } from '@/features/learning/quizzes/useQuizzes';
@@ -5,7 +6,6 @@ import type { LearningQuizMode, LearningQuizScopeDto, LearningQuizStatusDto } fr
 
 export const scopeKey = (scope: LearningQuizScopeDto) => `${scope.kind}:${scope.id ?? 'course'}`;
 
-const message = (error: unknown) => (error instanceof Error ? error.message : 'That did not work. Try again.');
 
 /**
  * Starting, resuming, retaking and preparing a quiz, shared by the overview

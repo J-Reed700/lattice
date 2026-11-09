@@ -20,7 +20,7 @@ export function PreparingFor({
   profile,
   onProfileChange,
   className,
-}: PreparingForProps): JSX.Element {
+}: PreparingForProps) {
   const [isEditing, setIsEditing] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);

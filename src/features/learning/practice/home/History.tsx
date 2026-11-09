@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { ArrowRight, CheckCircle2, Clock } from 'lucide-react';
+import { ArrowRight, CheckCircle2 } from 'lucide-react';
 
 export type HistoryFilter =
   | 'all'
@@ -42,7 +42,7 @@ export function History({
   items = [],
   onOpenItem,
   className,
-}: HistoryProps): JSX.Element {
+}: HistoryProps) {
   const [filter, setFilter] = useState<HistoryFilter>('all');
 
   const filteredItems = items.filter((item) => {

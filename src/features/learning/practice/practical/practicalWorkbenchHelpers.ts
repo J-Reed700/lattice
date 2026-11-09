@@ -3,22 +3,9 @@ import type {
   LearningPracticalRunStatus,
 } from "@/lib/bindings";
 
-export function uuid() {
-  return (
-    globalThis.crypto?.randomUUID?.() ?? "00000000-0000-4000-8000-000000000003"
-  );
-}
-export function unwrap<T>(
-  result: { ok: true; data: T } | { ok: false; error: string },
-): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
-export function errorText(error: unknown) {
-  return error instanceof Error
-    ? error.message
-    : "The request could not be completed.";
-}
+export { newId as uuid } from "@/lib/api";
+export { unwrap } from "@/lib/api";
+export { getErrorMessage as errorText } from "@/lib/errorUtils";
 export function dateText(value?: number | null) {
   if (value == null) return "Time unavailable";
   const date = new Date(value);

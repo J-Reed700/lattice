@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { AlertCircle, ArrowDownToLine, Check, ChevronDown, CircleHelp, Clock3, FileJson2, ImageDown, LoaderCircle, Plus, RotateCcw, Save, Sparkles, Text } from 'lucide-react';
@@ -20,7 +21,6 @@ type Editable = { title: string; description: string; sceneJson: string; outline
 type StableSave = { request: import('@/lib/bindings').SaveLearningCanvasRequestDto; payload: Editable };
 
 function sceneString(value: JsonValue): string { return JSON.stringify(value); }
-function makeId() { return crypto.randomUUID(); }
 function initialEditable(canvas: LearningCanvasDto): Editable {
   const sceneJson = sceneString(canvas.sceneJson);
   try { const scene = parseCanvasScene(sceneJson); return { title: canvas.title, description: canvas.description, sceneJson, outline: canvasTextOutline(scene.elements), elementCount: canvas.elementCount }; }
@@ -143,7 +143,7 @@ export default function CanvasPanel({
         let operation = retrySave.current;
         if (!operation) {
           const request = {
-            operationId: makeId(), programId, canvasId, expectedRevision: revisionRef.current,
+            operationId: newId(), programId, canvasId, expectedRevision: revisionRef.current,
             title: current.title.trim(), description: current.description.trim(), sceneJson: JSON.parse(current.sceneJson) as JsonValue,
           };
           if (!request.title) { setError('Add a title before saving this canvas.'); setSaveState('error'); return false; }
@@ -222,7 +222,7 @@ export default function CanvasPanel({
     if (!title) { setError('Give this canvas a title before creating it.'); return; }
     const sceneJson = serializeCanvasScene([], {}, {});
     const request = createRetry.current ?? {
-      operationId: makeId(), canvasId: makeId(), programId, lessonId: lessonId ?? null,
+      operationId: newId(), canvasId: newId(), programId, lessonId: lessonId ?? null,
       title, description: createDescription.trim(), sceneJson: JSON.parse(sceneJson) as JsonValue,
     };
     createRetry.current = request;
@@ -252,7 +252,7 @@ export default function CanvasPanel({
     if (!selected || !draft || !await flush()) return;
     const name = checkpointName.trim();
     if (!name) { setError('Name this checkpoint first.'); return; }
-    const request = checkpointRetry.current ?? { operationId: makeId(), snapshotId: makeId(), programId, canvasId: selected.id, expectedRevision: revisionRef.current, name };
+    const request = checkpointRetry.current ?? { operationId: newId(), snapshotId: newId(), programId, canvasId: selected.id, expectedRevision: revisionRef.current, name };
     checkpointRetry.current = request;
     try { await checkpoint.mutateAsync(request); checkpointRetry.current = null; setCheckpointName(''); setError(null); }
     catch (failure) { setError(failure instanceof Error ? failure.message : 'Checkpoint could not be created.'); }
@@ -261,7 +261,7 @@ export default function CanvasPanel({
   const restoreSnapshot = async () => {
     const snapshot = confirmRestore;
     if (!selected || !snapshot || !await flush()) return;
-    const request = restoreRetry.current ?? { operationId: makeId(), preRestoreSnapshotId: makeId(), programId, canvasId: selected.id, snapshotId: snapshot.id, expectedRevision: revisionRef.current };
+    const request = restoreRetry.current ?? { operationId: newId(), preRestoreSnapshotId: newId(), programId, canvasId: selected.id, snapshotId: snapshot.id, expectedRevision: revisionRef.current };
     restoreRetry.current = request;
     try {
       const result = await restore.mutateAsync(request);

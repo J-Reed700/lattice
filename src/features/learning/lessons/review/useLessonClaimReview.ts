@@ -1,3 +1,4 @@
+import { newId, unwrap } from '@/lib/api';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
@@ -18,12 +19,7 @@ import type {
 import { failureToError } from '@/lib/errorHandling';
 import type { ApiResult } from '@/types';
 
-function unwrap<T>(result: ApiResult<T>): T {
-  if (!result.ok) throw failureToError(result);
-  return result.data;
-}
 
-const operationId = () => crypto.randomUUID();
 
 /** The lesson's claim review; null before its first verification pass. */
 export function useLessonClaimReview(programId: string, lessonId: string, enabled = true) {
@@ -57,7 +53,7 @@ export function useResolveLearningClaim(programId: string, lessonId: string) {
   return useMutation<ResolveLearningClaimResultDto, Error, ResolveClaimVariables>({
     retry: false,
     mutationFn: async ({ claimId, action, expectedRevision }) => unwrap(await api.resolveLearningClaim({
-      programId, lessonId, claimId, action, expectedRevision, operationId: operationId(),
+      programId, lessonId, claimId, action, expectedRevision, operationId: newId(),
     })),
     onSettled: () => refreshAfterAction(client, programId, lessonId),
   });
@@ -76,7 +72,7 @@ export function useResolveLearningClaims(programId: string, lessonId: string) {
   return useMutation<ResolveLearningClaimResultDto, Error, ResolveManyVariables>({
     retry: false,
     mutationFn: async ({ claimIds, action, expectedRevision }) => unwrap(await api.resolveLearningClaims({
-      programId, lessonId, claimIds, action, expectedRevision, operationId: operationId(),
+      programId, lessonId, claimIds, action, expectedRevision, operationId: newId(),
     })),
     onSettled: () => refreshAfterAction(client, programId, lessonId),
   });
@@ -179,7 +175,7 @@ export function useResumeLearningLessonReview(programId: string, lessonId: strin
   return useMutation<LearningGenerationJob, Error, { courseRevision: number }>({
     retry: false,
     mutationFn: async ({ courseRevision }) => unwrap(await api.resumeLearningLessonReview({
-      programId, lessonId, expectedRevision: courseRevision, operationId: operationId(),
+      programId, lessonId, expectedRevision: courseRevision, operationId: newId(),
     })),
     onSettled: async () => {
       await Promise.all([

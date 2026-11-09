@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 /**
  * Retrying portability requests safely. While a request's payload is
  * unchanged it keeps the ids made for it, so retrying after a lost response
@@ -5,13 +6,6 @@
  */
 export type RetryEntry<T> = { fingerprint: string; request: T };
 
-function newId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
-    const random = Math.floor(Math.random() * 16);
-    return (char === 'x' ? random : (random & 3) | 8).toString(16);
-  });
-}
 
 /**
  * The request kept under `key` when `payload` is unchanged; otherwise a new

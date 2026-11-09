@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
+import { unwrap } from '@/lib/api';
 import { learningCanvasKey } from '@/features/learning/api/learningQueryKeys';
 import type {
   CreateLearningCanvasRequestDto,
@@ -12,10 +13,6 @@ import type {
 
 export { learningCanvasKey } from '@/features/learning/api/learningQueryKeys';
 
-function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 export function useLearningCanvas(programId: string) {
   const api = useApi();

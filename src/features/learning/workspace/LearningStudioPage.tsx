@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -38,7 +39,6 @@ import './learningStudio.css';
 
 type Screen = 'programs' | 'builder' | 'import' | 'export-all';
 
-function message(error: unknown) { return error instanceof Error ? error.message : String(error); }
 
 export function LearningStudioPage() {
   const [destination, setDestination] = useState<StudyDestination>();

@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
@@ -15,13 +16,6 @@ import { courseIndexKeys, useCourseIndexStatus } from '@/features/learning/sourc
 import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import type { LearningSourceLibraryItemDto } from '@/lib/bindings';
 
-function uuid() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
-    const random = Math.floor(Math.random() * 16);
-    return (char === 'x' ? random : (random & 3) | 8).toString(16);
-  });
-}
 
 function sourceName(source: LearningSourceLibraryItemDto) {
   return source.activeVersion?.title ?? source.pendingVersion?.title ?? source.requestedUrl ?? source.versions[0]?.title ?? 'Saved source';
@@ -125,7 +119,7 @@ export function SourceMaintenancePanel({ programId }: { programId: string }) {
   const doDelete = async () => {
     if (!selected || !deleteReason.trim()) return;
     const payload = { programId, sourceId: selected.id, expectedRevision: selected.revision, reason: deleteReason.trim() };
-    const request = setRetry(`delete:${selected.id}`, payload, uuid());
+    const request = setRetry(`delete:${selected.id}`, payload, newId());
     setError('');
     setStatusMessage('');
     setReloadRequired(false);
@@ -148,7 +142,7 @@ export function SourceMaintenancePanel({ programId }: { programId: string }) {
   const doReimport = async () => {
     if (!selected || !versionId) return;
     const payload = { programId, sourceId: selected.id, versionId, expectedRevision: selected.revision, replacementText: null };
-    const request = setRetry(`reimport:${selected.id}`, payload, uuid());
+    const request = setRetry(`reimport:${selected.id}`, payload, newId());
     setError('');
     setStatusMessage('');
     setReloadRequired(false);
@@ -174,7 +168,7 @@ export function SourceMaintenancePanel({ programId }: { programId: string }) {
     const payload = { programId, sourceId: selected.id, sourceVersionId: versionId, startByte, endByte };
     const key = JSON.stringify(payload);
     let entry = retry.current.selector;
-    if (entry?.key !== key) entry = { key, request: { ...payload, selectorId: uuid(), operationId: uuid() } };
+    if (entry?.key !== key) entry = { key, request: { ...payload, selectorId: newId(), operationId: newId() } };
     retry.current.selector = entry;
     setError('');
     setStatusMessage('');

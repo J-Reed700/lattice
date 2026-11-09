@@ -43,7 +43,7 @@ export function ElapsedClock({
   countdown = false,
   prefix,
   render,
-}: ElapsedClockProps): JSX.Element {
+}: ElapsedClockProps) {
   const effectiveElapsedMs = elapsedMs ?? baseMs;
   const effectiveStartedAt = startedAt !== undefined ? startedAt : since;
   const effectiveRunning = since !== undefined ? since !== null : running;

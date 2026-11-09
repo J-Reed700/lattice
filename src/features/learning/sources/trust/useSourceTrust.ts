@@ -1,3 +1,4 @@
+import { unwrap } from '@/lib/api';
 import { useMutation, useQuery, useQueryClient, type QueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
@@ -25,10 +26,6 @@ import type {
 } from '@/lib/bindings';
 import type { ApiResult } from '@/types';
 
-function unwrap<T>(result: ApiResult<T>): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 /**
  * A trust change moves levels in every course a site appears in, and sends

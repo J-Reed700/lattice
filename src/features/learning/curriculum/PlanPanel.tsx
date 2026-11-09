@@ -1,3 +1,5 @@
+import { newId } from '@/lib/api';
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { ArrowUp, Check, Plus, RotateCcw, Sparkles, X } from 'lucide-react';
@@ -29,8 +31,6 @@ import type {
 import { jobErrorToError } from '@/lib/errorHandling';
 
 
-function uuid() { return globalThis.crypto?.randomUUID?.() ?? '00000000-0000-4000-8000-000000000002'; }
-function message(error: unknown) { return error instanceof Error ? error.message : 'The change could not be saved.'; }
 function dateLabel(value?: number | null) { if (value == null) return 'Time unavailable'; const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Time unavailable' : date.toLocaleString(); }
 function lessonState(state: LearningCurriculumLesson['state']) { return state.replace('_', ' '); }
 function operationName(operation: LearningCurriculumOperation) {
@@ -54,10 +54,10 @@ function DiagnosticCard({ plan, programId }: { plan: LearningPlanDto; programId:
   const skip = useSkipLearningDiagnostic();
   const busy = start.isPending || submit.isPending || skip.isPending;
   const expectedRevision = plan.programRevision;
-  if (!diagnostic) return <section className="rounded-2xl border border-border bg-surface p-5"><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Optional diagnostic</div><h3 className="mt-1 font-serif text-xl text-text-primary">Find source coverage gaps</h3><p className="mt-2 max-w-2xl text-xs leading-5 text-text-secondary">A short diagnostic can identify which outcomes lack source coverage. It does not award a mastery score or replace assessments.</p><button type="button" disabled={busy} onClick={() => start.mutate({ operationId: uuid(), programId, expectedRevision })} className="mt-4 inline-flex items-center gap-2 rounded-full border border-accent/35 px-4 py-2.5 text-xs font-semibold text-accent disabled:opacity-50"><Sparkles size={13} /> {start.isPending ? 'Starting…' : 'Start diagnostic'}</button>{start.error && <p role="alert" className="mt-3 text-xs text-rose-700">{message(start.error)} <button className="font-semibold underline" onClick={() => start.mutate({ operationId: uuid(), programId, expectedRevision })}>Try again</button></p>}</section>;
+  if (!diagnostic) return <section className="rounded-2xl border border-border bg-surface p-5"><div className="text-[10px] font-semibold uppercase tracking-[.15em] text-accent">Optional diagnostic</div><h3 className="mt-1 font-serif text-xl text-text-primary">Find source coverage gaps</h3><p className="mt-2 max-w-2xl text-xs leading-5 text-text-secondary">A short diagnostic can identify which outcomes lack source coverage. It does not award a mastery score or replace assessments.</p><button type="button" disabled={busy} onClick={() => start.mutate({ operationId: newId(), programId, expectedRevision })} className="mt-4 inline-flex items-center gap-2 rounded-full border border-accent/35 px-4 py-2.5 text-xs font-semibold text-accent disabled:opacity-50"><Sparkles size={13} /> {start.isPending ? 'Starting…' : 'Start diagnostic'}</button>{start.error && <p role="alert" className="mt-3 text-xs text-rose-700">{getErrorMessage(start.error)} <button className="font-semibold underline" onClick={() => start.mutate({ operationId: newId(), programId, expectedRevision })}>Try again</button></p>}</section>;
   const submitted = diagnostic.status !== 'active';
   const run = (kind: 'submit' | 'skip') => {
-    const requestBase = { operationId: uuid(), programId, expectedRevision };
+    const requestBase = { operationId: newId(), programId, expectedRevision };
     if (kind === 'skip') skip.mutate(requestBase);
     else submit.mutate({ ...requestBase, diagnosticId: diagnostic.id, expectedDiagnosticRevision: diagnostic.revision ?? 0, responses: diagnostic.prompts.map((prompt) => ({ promptId: prompt.id, response: responses[prompt.id] ?? diagnostic.responses.find((answer) => answer.promptId === prompt.id)?.response ?? '' })) });
   };
@@ -70,7 +70,7 @@ function OtherJobCard({ job, programId, revision }: { job: LearningGenerationJob
   const pending = cancel.isPending || retry.isPending;
   const active = ['pending', 'running', 'interrupted'].includes(job.status);
   const percent = job.progressTotal > 0 ? Math.min(100, Math.round(job.progressCompleted / job.progressTotal * 100)) : 0;
-  const request = () => ({ operationId: uuid(), programId, jobId: job.id, expectedRevision: revision });
+  const request = () => ({ operationId: newId(), programId, jobId: job.id, expectedRevision: revision });
   return <article className="rounded-xl border border-border bg-background/40 p-4"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex flex-wrap items-center gap-2"><h4 className="text-sm font-medium capitalize text-text-primary">{job.kind.replace('_', ' ')}</h4><span className="rounded-full bg-surface px-2.5 py-1 text-[10px] capitalize text-text-muted">{job.status}</span></div><p className="mt-1 text-[10px] text-text-muted">Created {dateLabel(job.createdAt)}</p></div><div className="flex gap-2">{active && <button type="button" disabled={pending} onClick={() => cancel.mutate(request())} className="rounded-full border border-border px-3 py-2 text-[10px] disabled:opacity-50">Cancel</button>}{['failed', 'interrupted', 'cancelled'].includes(job.status) && <button type="button" disabled={pending} onClick={() => retry.mutate(request())} className="inline-flex items-center gap-1 rounded-full border border-accent/30 px-3 py-2 text-[10px] font-semibold text-accent disabled:opacity-50"><RotateCcw size={12} /> Retry</button>}</div></div>{job.status === 'running' || job.status === 'pending' ? <><div className="mt-3 flex items-center justify-between text-[10px] text-text-muted"><span>{job.progressMessage || 'Working on this request…'}</span><span>{job.progressCompleted}/{job.progressTotal || '—'}</span></div><div className="mt-2 h-1.5 overflow-hidden rounded-full bg-border"><div className="h-full rounded-full bg-accent transition-all" style={{ width: `${percent}%` }} /></div></> : job.error && <PlainError error={jobErrorToError(job)} className="mt-3 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700" />}{(cancel.error || retry.error) && <p role="alert" className="mt-2 text-xs text-rose-700">{message(cancel.error ?? retry.error)}</p>}</article>;
 }
 
@@ -138,7 +138,7 @@ export function PlanPanel({ programId, onStartingPoint }: { programId: string; o
   const attempts = useMemo(() => jobAttempts(plan?.jobs ?? []), [plan?.jobs]);
   const allLessons = useMemo(() => current?.modules.flatMap((module) => module.lessons.map((lesson) => ({ module, lesson }))) ?? [], [current]);
   const draftActions = (next: LearningCurriculumOperation[]) => setOperations(next);
-  const previewRequest = () => preview.mutate({ operationId: uuid(), programId, expectedRevision, reason, operations });
+  const previewRequest = () => preview.mutate({ operationId: newId(), programId, expectedRevision, reason, operations });
   const queueLessonOperation = (kind: 'skip_lesson' | 'challenge_prerequisite', id: string) => draftActions([...operations, kind === 'skip_lesson' ? { kind, lesson_id: id } : { kind, lesson_id: id }]);
   const openEdit = (kind: 'edit' | 'replace' | 'move', id: string, trigger: HTMLButtonElement) => {
     const entry = findLesson(plan!, id);
@@ -154,20 +154,20 @@ export function PlanPanel({ programId, onStartingPoint }: { programId: string; o
   const saveLessonOperation = () => {
     const existing = findLesson(plan!, lessonId);
     if (editMode === 'add') {
-      const lesson: LearningCurriculumLesson = { id: uuid(), title: title.trim(), objective: objective.trim(), estimatedMinutes: Math.max(1, Math.min(600, minutes)), state: 'outline', assessmentStarted: false, replacementLessonId: null };
+      const lesson: LearningCurriculumLesson = { id: newId(), title: title.trim(), objective: objective.trim(), estimatedMinutes: Math.max(1, Math.min(600, minutes)), state: 'outline', assessmentStarted: false, replacementLessonId: null };
       draftActions([...operations, { kind: 'add_lesson', module_id: moduleId, after_lesson_id: null, lesson }]);
     } else if (editMode === 'edit' && existing) {
       draftActions([...operations, { kind: 'edit_lesson', lesson_id: lessonId, title: title.trim(), objective: objective.trim(), estimated_minutes: Math.max(1, Math.min(600, minutes)) }]);
     } else if (editMode === 'replace' && existing) {
-      const replacement: LearningCurriculumLesson = { id: uuid(), title: title.trim(), objective: objective.trim(), estimatedMinutes: Math.max(1, Math.min(600, minutes)), state: 'outline', assessmentStarted: false, replacementLessonId: null };
+      const replacement: LearningCurriculumLesson = { id: newId(), title: title.trim(), objective: objective.trim(), estimatedMinutes: Math.max(1, Math.min(600, minutes)), state: 'outline', assessmentStarted: false, replacementLessonId: null };
       draftActions([...operations, { kind: 'replace_lesson', lesson_id: lessonId, replacement }]);
     } else if (editMode === 'move') {
       draftActions([...operations, { kind: 'move_lesson', lesson_id: lessonId, target_module_id: moduleId, after_lesson_id: null }]);
     }
     setEditMode(null);
   };
-  const onAccept = () => { if (!draft) return; accept.mutate({ operationId: uuid(), programId, revisionId: draft.id, expectedRevision }); };
-  const onDiscard = () => { if (!draft) return; discard.mutate({ operationId: uuid(), programId, revisionId: draft.id, expectedRevision }); };
+  const onAccept = () => { if (!draft) return; accept.mutate({ operationId: newId(), programId, revisionId: draft.id, expectedRevision }); };
+  const onDiscard = () => { if (!draft) return; discard.mutate({ operationId: newId(), programId, revisionId: draft.id, expectedRevision }); };
 
   if (planQuery.isLoading) return <div role="status" className="rounded-2xl border border-border bg-surface p-8 text-sm text-text-muted">Loading curriculum plan…</div>;
   if (planQuery.isError || !plan) return <section className="rounded-2xl border border-rose-500/20 bg-surface p-6"><h3 className="font-serif text-xl text-text-primary">Plan unavailable</h3><p role="alert" className="mt-2 text-sm text-text-secondary">{message(planQuery.error)}</p><button type="button" onClick={() => void planQuery.refetch()} className="mt-4 rounded-full border px-4 py-2 text-sm">Retry</button></section>;

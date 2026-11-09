@@ -38,7 +38,7 @@ export function FileTabs({
   ariaLabel,
   label,
   children,
-}: FileTabsProps): JSX.Element {
+}: FileTabsProps) {
   const generatedId = useId();
   const baseId = idBase ?? generatedId;
   const effectiveActive = activePath ?? active ?? files[0]?.path ?? '';

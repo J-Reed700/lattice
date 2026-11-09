@@ -1,3 +1,4 @@
+import { unwrap } from '@/lib/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
@@ -14,10 +15,6 @@ import type {
 
 export { learningMemoryKey } from '@/features/learning/api/learningQueryKeys';
 
-function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 export function useLearningMemory(programId: string, enabled = true) {
   const api = useApi();

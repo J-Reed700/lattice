@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react';
 
 import { BookOpen, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight, Clock3, FileText, Globe2, Plus, RefreshCw, Search, ShieldAlert, Upload, X } from 'lucide-react';
@@ -58,13 +59,6 @@ function writePageSize(size: number) {
   try { localStorage.setItem(SOURCE_PAGE_SIZE_KEY, String(size)); } catch { /* kept in memory */ }
 }
 
-function newId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
-    const random = Math.floor(Math.random() * 16);
-    return (char === 'x' ? random : (random & 0x3) | 0x8).toString(16);
-  });
-}
 function safeHref(value?: string | null) {
   if (!value) return undefined;
   try { const url = new URL(value); return ['https:', 'http:'].includes(url.protocol) ? url.href : undefined; }

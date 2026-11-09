@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import { useState } from 'react';
 
 import { Trash2 } from 'lucide-react';
@@ -5,13 +6,6 @@ import { Trash2 } from 'lucide-react';
 import { useDeleteLearningSourceV2 } from '@/features/learning/portability/useLearningPortability';
 import type { LearningRemovableSourceDto } from '@/lib/bindings';
 
-function newId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
-    const random = Math.floor(Math.random() * 16);
-    return (char === 'x' ? random : (random & 0x3) | 0x8).toString(16);
-  });
-}
 
 const RESEARCH_HEADING = 'Added by research for a statement that no longer needs it';
 

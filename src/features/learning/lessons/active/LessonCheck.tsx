@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import { useEffect, useId, useRef, useState, type ReactNode } from 'react';
 
 import { CalendarClock, Eye, RotateCcw } from 'lucide-react';
@@ -22,7 +23,6 @@ const CLOSENESS: { rating: StudyRating; label: string }[] = [
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const DAY = 86_400_000;
 
-function newId() { return globalThis.crypto.randomUUID(); }
 
 /** When a scheduled card comes back, in words. */
 export function comesBack(dueAt: number, now = Date.now()): string {

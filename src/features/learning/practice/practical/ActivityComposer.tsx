@@ -1,3 +1,5 @@
+import { newId } from '@/lib/api';
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useRef, useState, type RefObject } from "react";
 
 import { LoaderCircle, Plus } from "lucide-react";
@@ -74,8 +76,6 @@ export const modeCopy: Record<LearningPracticeMode, string> = {
     "Try independently, without in-app hints or source assistance.",
 };
 
-function uuid() { return crypto.randomUUID(); }
-function errorText(error: unknown) { return error instanceof Error ? error.message : "The activity could not be prepared."; }
 
 export function ActivityComposer({
   program,
@@ -195,7 +195,7 @@ export function ActivityComposer({
         ? retryRef.current.request
         : null;
     if (!request) {
-      request = { operationId: uuid(), activityId: uuid(), ...payload };
+      request = { operationId: newId(), activityId: newId(), ...payload };
       retryRef.current = { fingerprint, request };
     }
     try {
@@ -203,7 +203,7 @@ export function ActivityComposer({
       retryRef.current = null;
       onClose();
     } catch (cause) {
-      setError(errorText(cause));
+      setError(getErrorMessage(cause));
     } finally {
       submittingRef.current = false;
       setSubmitting(false);

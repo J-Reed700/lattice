@@ -1,12 +1,12 @@
 import React, { useCallback, useEffect, useMemo, useRef } from 'react';
 import { ArrowUp } from 'lucide-react';
 
-import { VOICE_STATUS, VoiceButton, type VoicePhase } from '@/features/voice/components/VoiceButton';
+import { VOICE_STATUS, VoiceButton } from '@/features/voice/components/VoiceButton';
 import { useVoiceConversation } from '@/features/voice/hooks/useVoiceConversation';
 import { cn } from '@/lib/utils';
 import { useDraft } from '@/shared/drafts/drafts';
 
-import { StatusLine } from './StatusLine';
+import { StatusLine, type VoicePhase } from './StatusLine';
 
 export type ThreadSpeaker = 'learner' | 'counterpart' | 'coach';
 
@@ -55,6 +55,7 @@ export interface PracticeThreadProps {
   footerActions?: React.ReactNode;
   hint?: React.ReactNode;
   voice?: { phase: VoicePhase; onToggle: () => void };
+  onPhaseChange?: (phase: VoicePhase) => void;
   logRef?: React.Ref<HTMLDivElement>;
   logLabel?: string;
   label?: string;
@@ -107,7 +108,8 @@ export function PracticeThread({
   renderTurnExtra,
   composerTop,
   className,
-}: PracticeThreadProps): JSX.Element {
+  onPhaseChange,
+}: PracticeThreadProps) {
   const [draft, setDraft] = useDraft(draftKey);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const lastTurnRef = useRef<HTMLElement>(null);
@@ -147,6 +149,10 @@ export function PracticeThread({
 
   const voicePhase = externalVoice ? externalVoice.phase : internalVoice.phase;
   const onVoiceToggle = externalVoice ? externalVoice.onToggle : internalVoice.toggle;
+
+  useEffect(() => {
+    onPhaseChange?.(voicePhase);
+  }, [onPhaseChange, voicePhase]);
 
   // P2-9: Restore focus to textarea when a turn / reply completes
   const wasBusyRef = useRef(isBusy);

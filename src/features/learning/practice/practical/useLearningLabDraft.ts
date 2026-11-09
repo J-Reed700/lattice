@@ -1,3 +1,5 @@
+import { newId, unwrap } from '@/lib/api';
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useApi } from '@/contexts/ApiContext';
@@ -30,26 +32,9 @@ type DraftContext = {
   timer: number | null;
 };
 
-function makeId() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  const bytes = new Uint8Array(16);
-  if (globalThis.crypto?.getRandomValues) globalThis.crypto.getRandomValues(bytes);
-  else for (let index = 0; index < bytes.length; index += 1) bytes[index] = Math.floor(Math.random() * 256);
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = [...bytes].map((byte) => byte.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
-}
-function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
-function errorMessage(error: unknown) {
-  return error instanceof Error ? error.message : 'The lab draft could not be saved.';
-}
 function isConflict(error: unknown) {
   if (isConflictError(error)) return true;
-  return /revision|conflict|changed|stale/i.test(errorMessage(error));
+  return /revision|conflict|changed|stale/i.test(getErrorMessage(error));
 }
 function sameFiles(a: LearningLabFile[] | null, b: LearningLabFile[]) {
   return Boolean(a?.length === b.length && a?.every((file, index) => file.path === b[index]?.path && file.content === b[index]?.content));
@@ -123,7 +108,7 @@ export function useLearningLabDraft({
           context.error = null;
         }
       } catch (error) {
-        if (context.loadToken === token) { context.loadState = 'error'; context.saveState = 'error'; context.error = errorMessage(error); }
+        if (context.loadToken === token) { context.loadState = 'error'; context.saveState = 'error'; context.error = getErrorMessage(error); }
       } finally {
         if (context.loadToken === token) context.loadPromise = null;
         refresh();
@@ -148,7 +133,7 @@ export function useLearningLabDraft({
           context.operation = {
             files,
             request: {
-              operationId: makeId(), programId: context.programId, activityId: context.activityId,
+              operationId: newId(), programId: context.programId, activityId: context.activityId,
               activityRevision: context.activityRevision, expectedDraftRevision: context.revision, files,
             },
           };
@@ -178,7 +163,7 @@ export function useLearningLabDraft({
           context.saveState = 'saved'; context.error = null; refresh(); return true;
         } catch (error) {
           context.saveState = isConflict(error) ? 'conflict' : 'error';
-          context.error = errorMessage(error); refresh(); return false;
+          context.error = getErrorMessage(error); refresh(); return false;
         }
       }
     })();
@@ -280,7 +265,7 @@ export function useLearningLabDraft({
       current.error = null; refresh();
       return true;
     } catch (error) {
-      current.saveState = 'conflict'; current.error = errorMessage(error); refresh();
+      current.saveState = 'conflict'; current.error = getErrorMessage(error); refresh();
       return false;
     }
   }, [current, fetchLatest, refresh]);
@@ -302,7 +287,7 @@ export function useLearningLabDraft({
       current.error = null; refresh();
       return true;
     } catch (error) {
-      current.saveState = 'conflict'; current.error = errorMessage(error); refresh();
+      current.saveState = 'conflict'; current.error = getErrorMessage(error); refresh();
       return false;
     }
   }, [current, fetchLatest, refresh]);

@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import type { ExcalidrawElement } from '@excalidraw/excalidraw/element/types';
 
 export type DualCodingTemplateId = 'concept_map' | 'compare_contrast' | 'process_flow' | 'visual_analogy';
@@ -60,13 +61,9 @@ interface TextOptions {
   strokeColor?: string;
 }
 
-function makeId(prefix = 'elem'): string {
-  return `${prefix}_${Math.random().toString(36).slice(2, 10)}`;
-}
-
 function createShape(options: ShapeOptions): ExcalidrawElement {
   return {
-    id: options.id ?? makeId(options.type),
+    id: options.id ?? newId(options.type),
     type: options.type,
     x: options.x,
     y: options.y,
@@ -97,7 +94,7 @@ function createShape(options: ShapeOptions): ExcalidrawElement {
 function createText(options: TextOptions): ExcalidrawElement {
   const fontSize = options.fontSize ?? 16;
   return {
-    id: options.id ?? makeId('text'),
+    id: options.id ?? newId('text'),
     type: 'text',
     x: options.x,
     y: options.y,
@@ -138,7 +135,7 @@ function createArrow(startX: number, startY: number, endX: number, endY: number,
   const dx = endX - startX;
   const dy = endY - startY;
   return {
-    id: makeId('arrow'),
+    id: newId('arrow'),
     type: 'arrow',
     x: startX,
     y: startY,

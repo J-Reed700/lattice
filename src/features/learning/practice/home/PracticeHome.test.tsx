@@ -244,4 +244,32 @@ describe('PracticeHome', () => {
     const codeCard = screen.getByTestId('card-code');
     expect(within(codeCard).getByText(/coached/i)).toBeInTheDocument();
   });
+
+  it('adapts default practice modes to non-coding courses (e.g. a biology course on mitochondria)', () => {
+    const biologyProgram: LearningProgramDto = {
+      ...mockProgram,
+      summary: {
+        ...mockProgram.summary,
+        id: 'program-bio-1',
+        title: 'Cellular Biology',
+        goal: 'Understand organelle structure and how mitochondria generate ATP',
+      },
+    };
+    const mitochondriaLesson: LearningLessonDto = {
+      id: 'lesson-mito',
+      title: 'Mitochondria and cellular respiration',
+      preparation: 'ready',
+      objective: 'Explain the electron transport chain and ATP synthesis',
+    } as LearningLessonDto;
+
+    renderWithClient(
+      <PracticeHome program={biologyProgram} currentLesson={mitochondriaLesson} />,
+    );
+
+    const spotCard = screen.getByTestId('card-spot');
+    expect(within(spotCard).getByText('explanation')).toBeInTheDocument();
+
+    const mockCard = screen.getByTestId('card-mock');
+    expect(within(mockCard).getByText('technical questions')).toBeInTheDocument();
+  });
 });

@@ -13,8 +13,8 @@ export function DueStrip({
   items = [],
   onStartMostOverdue,
   className,
-}: DueStripProps): JSX.Element {
-  const overdueCount = items.filter((item) => item.isOverdue).length;
+}: DueStripProps) {
+
 
   return (
     <section

@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import { useEffect, useRef, useState } from 'react';
 
 import {
@@ -59,13 +60,6 @@ const HINTS: { id: LearningPracticeHintLevel; title: string; prompt: string }[] 
   { id: 'worked_explanation', title: 'Worked explanation', prompt: 'Give a worked explanation. Clearly label it as substantial assistance.' },
 ];
 
-function newId() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
 
 function dateLabel(value: number) {
   const date = new Date(value);

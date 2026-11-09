@@ -1,3 +1,4 @@
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { isJobFinished, useJobStatus, type JobDto } from '@/features/jobs/api';
@@ -24,7 +25,6 @@ const BUILD_POLL_MS = 30_000;
 /** How often an attempt that waits for its grade is read again, in case the report that ended its job was missed. */
 const GRADING_POLL_MS = 10_000;
 
-const messageOf = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 function buildFailure(job: JobDto): string {
   if (job.error) return job.error;
@@ -115,7 +115,7 @@ export function useCodeReviewDrill(programId: string) {
         if (started.status === 'started') open(started);
         else dispatch({ type: 'building', jobId: started.jobId });
       } catch (error) {
-        if (live(run)) dispatch({ type: 'failed', failure: { message: messageOf(error), retry: 'start' } });
+        if (live(run)) dispatch({ type: 'failed', failure: { message: getErrorMessage(error), retry: 'start' } });
       }
     },
     [dispatch, live, open, programId],
@@ -174,7 +174,7 @@ export function useCodeReviewDrill(programId: string) {
         if (!live(run)) return;
         dispatch({ type: 'result', result, draft: result.status === 'open' ? readReviewDraft(id) : EMPTY_DRAFT });
       } catch (error) {
-        if (live(run)) dispatch({ type: 'failed', failure: { message: messageOf(error), retry: 'restore' } });
+        if (live(run)) dispatch({ type: 'failed', failure: { message: getErrorMessage(error), retry: 'restore' } });
       }
     },
     [dispatch, live],
@@ -199,7 +199,7 @@ export function useCodeReviewDrill(programId: string) {
       clearReviewDraft(attemptId);
       dispatch({ type: 'result', result, draft: EMPTY_DRAFT });
     } catch (error) {
-      if (live(run)) dispatch({ type: 'failed', stage: 'reviewing', failure: { message: messageOf(error), retry: 'submit' } });
+      if (live(run)) dispatch({ type: 'failed', stage: 'reviewing', failure: { message: getErrorMessage(error), retry: 'submit' } });
     }
   }, [dispatch, live]);
 
@@ -214,7 +214,7 @@ export function useCodeReviewDrill(programId: string) {
       if (!live(run)) return;
       dispatch({ type: 'result', result, draft: EMPTY_DRAFT });
     } catch (error) {
-      if (live(run)) dispatch({ type: 'failed', failure: { message: messageOf(error), retry: 'regrade' } });
+      if (live(run)) dispatch({ type: 'failed', failure: { message: getErrorMessage(error), retry: 'regrade' } });
     }
   }, [dispatch, live]);
 
@@ -228,7 +228,7 @@ export function useCodeReviewDrill(programId: string) {
       if (!live(run) || attemptRef.current !== id) return;
       dispatch({ type: 'result', result, draft: EMPTY_DRAFT });
     } catch (error) {
-      if (live(run)) dispatch({ type: 'failed', failure: { message: messageOf(error), retry: 'follow' } });
+      if (live(run)) dispatch({ type: 'failed', failure: { message: getErrorMessage(error), retry: 'follow' } });
     }
   }, [dispatch, live]);
 

@@ -1,3 +1,4 @@
+import { unwrap } from '@/lib/api';
 import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { open } from '@tauri-apps/plugin-dialog';
 
@@ -33,10 +34,6 @@ export { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 export const semanticSourcesKey = (request: SearchLearningSourcesSemanticallyRequestDto | null) =>
   ['learning-semantic-sources', request?.programId, request?.query, request?.limit] as const;
 
-function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 export function useLearningPortability(programId: string) {
   const api = useApi();

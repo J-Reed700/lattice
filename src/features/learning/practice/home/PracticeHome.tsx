@@ -1,6 +1,6 @@
 import { useState } from 'react';
 import {
-  AlertCircle,
+
   ArrowRight,
   Bot,
   Code2,
@@ -52,7 +52,7 @@ export function PracticeHome({
   onContinue,
   onStartCard,
   className,
-}: PracticeHomeProps): JSX.Element {
+}: PracticeHomeProps) {
   const [profile, setProfile] = useState<LearningPracticeProfileDto | null>(
     initialProfile ?? null,
   );
@@ -67,6 +67,21 @@ export function PracticeHome({
   );
 
   const lessonName = currentLesson?.title ?? 'lesson';
+
+  const courseContext = [
+    program.summary.title,
+    program.summary.goal,
+    currentLesson?.title ?? '',
+    currentLesson?.objective ?? '',
+    activeProfile?.details ?? '',
+  ].join(' ');
+  const isCodingCourse =
+    Boolean(activeProfile?.language) ||
+    /\b(code|coding|python|rust|javascript|typescript|java|c\+\+|sql|algorithm|algorithmic|software|programming|data structure|strings|arrays)\b/i.test(
+      courseContext,
+    );
+  const defaultSpotMaterial = isCodingCourse ? 'Python code' : 'explanation';
+  const defaultMockRound = isCodingCourse ? 'live coding' : 'technical questions';
 
   return (
     <div className={`space-y-8 ${className ?? ''}`}>
@@ -241,9 +256,9 @@ export function PracticeHome({
                     {
                       id: 'material',
                       label: 'Material',
-                      value: 'Python code',
+                      value: defaultSpotMaterial,
                       options: [
-                        { value: 'Python code', label: 'Python code' },
+                        { value: defaultSpotMaterial, label: 'Python code' },
                         { value: 'explanation', label: 'explanation' },
                       ],
                     },
@@ -391,9 +406,9 @@ export function PracticeHome({
                     {
                       id: 'round',
                       label: 'Round',
-                      value: 'live coding',
+                      value: defaultMockRound,
                       options: [
-                        { value: 'live coding', label: 'live coding' },
+                        { value: defaultMockRound, label: 'live coding' },
                         { value: 'debugging', label: 'debugging' },
                         {
                           value: 'technical questions',

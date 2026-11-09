@@ -1,3 +1,4 @@
+import { newId, unwrap } from '@/lib/api';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
@@ -5,10 +6,6 @@ import { learningClaimReviewKey, learningLessonAuditKey, learningPlanKey, learni
 import type { LearningLessonAuditDto, LearningLessonAuditResultDto, LearningVerifierAuditDto } from '@/lib/bindings';
 import type { ApiResult } from '@/types';
 
-function unwrap<T>(result: ApiResult<T>): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 /** The course's opt-in to the Verifier audit, with what consent it needs (§14.2). */
 export function useProgramVerifierAudit(programId: string, enabled = true) {
@@ -49,7 +46,7 @@ export function useAuditLessonNow(programId: string, lessonId: string) {
   const client = useQueryClient();
   return useMutation<LearningLessonAuditResultDto, Error, void>({
     retry: false,
-    mutationFn: async () => unwrap(await api.auditLearningLessonNow(programId, lessonId, crypto.randomUUID())),
+    mutationFn: async () => unwrap(await api.auditLearningLessonNow(programId, lessonId, newId())),
     onSettled: async () => {
       await Promise.all([
         client.invalidateQueries({ queryKey: learningLessonAuditKey(programId, lessonId) }),

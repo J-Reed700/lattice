@@ -29,7 +29,7 @@ export function SaveAsReviewCard({
   explanation = 'Drafted from a misconception found in practice',
   initialAnswer,
   answer: defaultAnswer,
-}: SaveAsReviewCardProps): JSX.Element {
+}: SaveAsReviewCardProps) {
   const saveDraft = useSaveLearningCardDraft();
   const frontText = question ?? promptText ?? '';
   const labelText = answerLabel ?? promptLabel ?? 'What is actually right, in your own words?';

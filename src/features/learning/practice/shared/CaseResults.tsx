@@ -66,7 +66,7 @@ export function rowsFromChecks(
               .join(', ')
           : undefined;
       return {
-        id: detail.caseId || check.id,
+        id: detail.caseId || (check as { id?: string; checkId?: string }).id || (check as { checkId?: string }).checkId || check.name,
         label: detail.category ?? check.name,
         outcome: detail.status,
         input,
@@ -91,7 +91,7 @@ export function rowsFromChecks(
                 ? 'ran'
                 : 'not_run';
     return {
-      id: check.id,
+      id: (check as { id?: string; checkId?: string }).id || (check as { checkId?: string }).checkId || check.name,
       label: check.name,
       outcome,
       error: check.message || undefined,
@@ -167,7 +167,7 @@ export function CaseResults({
   stderr,
   summary,
   className = '',
-}: CaseResultsProps): JSX.Element {
+}: CaseResultsProps) {
   const normalizedCases: CaseRowItem[] =
     cases ??
     (rows ?? []).map((row) => ({

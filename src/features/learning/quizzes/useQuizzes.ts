@@ -1,3 +1,4 @@
+import { newId, unwrap } from '@/lib/api';
 import { useMemo, useRef } from 'react';
 
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -27,13 +28,9 @@ type Result<T> = { ok: true; data: T } | { ok: false; error: string };
 
 const POLL_MS = 2_000;
 
-function unwrap<T>(result: Result<T>): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
-export function newOperationId(): string {
-  return globalThis.crypto?.randomUUID?.() ?? `op-${Date.now()}-${Math.random().toString(16).slice(2)}`;
+export { newId as newOperationId } from "@/lib/api";
+-${Math.random().toString(16).slice(2)}`;
 }
 
 /** One operation id per action until it succeeds, so retrying after a lost
