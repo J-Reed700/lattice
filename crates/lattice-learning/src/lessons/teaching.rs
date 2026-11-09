@@ -556,24 +556,25 @@ async fn review_material(
                 )
             };
             review_step(is_lesson, lesson_words, other_words);
+            let review_instructions = format!(
+                "{}\n{}\n{}",
+                if attempt > 0 {
+                    final_review_system
+                } else if is_outline {
+                    outline_review_system
+                } else {
+                    review_system
+                },
+                if is_outline { "" } else { shared_checks },
+                if is_outline {
+                    ""
+                } else {
+                    LESSON_REVIEW_EVIDENCE_SCOPE
+                }
+            );
             let review = crate::teaching_review::review(
                 llm,
-                &format!(
-                    "{}\n{}\n{}",
-                    if attempt > 0 {
-                        final_review_system
-                    } else if is_outline {
-                        outline_review_system
-                    } else {
-                        review_system
-                    },
-                    if is_outline { "" } else { shared_checks },
-                    if is_outline {
-                        ""
-                    } else {
-                        LESSON_REVIEW_EVIDENCE_SCOPE
-                    }
-                ),
+                &review_instructions,
                 review_prompt,
                 &candidate_value,
                 progress,
