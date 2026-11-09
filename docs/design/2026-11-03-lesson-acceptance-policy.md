@@ -273,6 +273,7 @@ All ten go in one step. A half-switched loop strands statements: one the policy 
     - A target whose quote is still in its field → `NotApplied`.
     - A sentence the cut took out, or that was out already → `Cut`.
     - A refused cut → `CannotCut`, ending the statement `Unverified`; only a failed example's refused cut takes its section out.
+    - A refused cut of a statement in a question (its prompt, choices, rationales or explanation) takes the question out instead, the way a failed example's takes its section out: the statement is recorded `Cut` and ends `Removed` with its question, which the saved lesson lacks. When the lesson cannot lose the question (it is the last, or the last of its kind), the guard holds the cut back and the statement ends `Unverified` as above.
 
 **A user's hint.** A claim the user holds may carry a hint, what to search for (`ResearchWithHint`). The claim is the user's, so the policy does not walk it. The hint is the user's request for one research round and one reading of what that round found:
 - The hint goes to `research::expand` with the round's other targets and records `Researched`. The claim it names is looked for whatever its latest check found, since a reopened claim's last check may have passed, and what the round saves is in its scope. The claim takes no `Stepped` for it: a step is the machine's decision, and the claim is not the machine's.

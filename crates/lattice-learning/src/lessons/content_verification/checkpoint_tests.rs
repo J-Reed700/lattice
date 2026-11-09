@@ -57,7 +57,7 @@ async fn section_repairs_and_restart_retain_only_completed_unchanged_inventories
         })
         .collect::<Vec<_>>());
     let model = Model {
-        fail_coverage_at: Some(1),
+        fail_coverage_at: Some(4),
         ..Model::new()
     };
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
@@ -265,7 +265,7 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
     };
     let model = Model {
         coverage_gap_in: Some(1),
-        fail_coverage_at: Some(1),
+        fail_coverage_at: Some(4),
         ..Model::new()
     };
     lesson_drafts::run(&repo, &job.id, lesson_id, async {
@@ -328,10 +328,9 @@ async fn interrupted_coverage_retains_omissions_without_reusing_them_after_corre
             ..Model::new()
         };
         coverage::audit(&model, &changed, &corrected, None).await?;
-        assert_eq!(
-            *model.audited_sections.lock().unwrap(),
-            vec![vec![0, 1, 2, 3], vec![4]]
-        );
+        let mut batches = model.audited_sections.lock().unwrap().clone();
+        batches.sort();
+        assert_eq!(batches, vec![vec![0, 1, 2, 3], vec![4]]);
         Ok(())
     })
     .await?;

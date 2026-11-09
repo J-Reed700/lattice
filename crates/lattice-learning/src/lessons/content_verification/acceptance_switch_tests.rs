@@ -1335,6 +1335,319 @@ async fn a_refused_cut_keeps_its_section_and_publishes_the_statement_not_verifie
 
 const MORE: &str = "A comma separates each value from the next.";
 
+const WINDOW: &str = "The desktop and prompt are different roles, not the shell and window.";
+const CORRECT: Step = Step::Rewrite(Goal::CorrectWhatWasFound);
+/// Steps that leave a Reasoning statement at `r.cut`: the veto and the ground
+/// reading refuted it and both corrections were rejected.
+const CORRECTIONS_REJECTED: [(Step, Outcome); 5] = [
+    (CONSISTENCY, Outcome::Stands),
+    (VETO, Outcome::Refuted),
+    (Step::Read(Reading::Ground), Outcome::Refuted),
+    (CORRECT, Outcome::NotApplied),
+    (CORRECT, Outcome::NotApplied),
+];
+
+fn question_of(kind: &str, prompt: &str, rationale: &str) -> Value {
+    json!({
+        "kind": kind, "prompt": prompt, "options": ["One", "Two", "Three", "Four"],
+        "correctIndex": 0, "explanation": "The first option names the shell.",
+        "rationales": ["Right.", "Wrong.", rationale, "Wrong as well."],
+    })
+}
+
+/// Three sections (units 0 to 2) with `body` in the second, then `questions`
+/// (units 3 and on).
+fn lesson_asking(body: &str, questions: &[Value]) -> Value {
+    let mut lesson = around(body);
+    lesson["questions"] = json!(questions);
+    lesson
+}
+
+/// A Reasoning statement at `r.cut` on its last attempt, whose sentence is
+/// the whole of `field` of `unit` in `lesson`.
+async fn refuted_at(
+    lesson: &Value,
+    (unit, kind, field): (usize, UnitKind, &str),
+    text: &str,
+) -> Result<(claim_ledger::ClaimLedger, ClaimId, Value)> {
+    let mut ledger = open().await?;
+    claim(&mut ledger, "other", (HEADER, HEADER), HEADER, SOURCED).await?;
+    let mut context = json!({
+        "candidate": lesson, "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [], "failedClaims": [],
+    });
+    let id = add_refuted(
+        (&mut ledger, &mut context),
+        "refuted",
+        (unit, kind, field),
+        text,
+    )
+    .await?;
+    Ok((ledger, id, context))
+}
+
+/// Another Reasoning statement at `r.cut` on its last attempt, sent in
+/// `context`, whose sentence is `text` of `field` of `unit`.
+async fn add_refuted(
+    (ledger, context): (&mut claim_ledger::ClaimLedger, &mut Value),
+    name: &str,
+    (unit, kind, field): (usize, UnitKind, &str),
+    text: &str,
+) -> Result<ClaimId> {
+    let id = ClaimId(name.into());
+    let lesson = context["candidate"].clone();
+    let body = claim_ledger::field_text(&lesson, unit, field).unwrap_or_default();
+    let extracted = ClaimEvent::Extracted {
+        location: ClaimLocation::locate(unit, kind, field, text, &body),
+        statement: text.into(),
+    };
+    ledger.append(&id, extracted).await?;
+    let (class, by) = REASONED;
+    ledger
+        .append(&id, ClaimEvent::Classified { class, by })
+        .await?;
+    walk(ledger, &id, Class::Reasoning, &CORRECTIONS_REJECTED).await?;
+    assert_eq!(node_of(ledger, &id), Some("r.cut"));
+    ledger
+        .begin_repairs(&StandardPolicy::new(), &lesson, std::slice::from_ref(&id))
+        .await?;
+    if let Some(sent) = context["failedClaims"].as_array_mut() {
+        sent.push(
+            json!({"unit":unit,"claimId":name,"sentence":text,"evidence":[],"lastAttempt":true}),
+        );
+    }
+    Ok(id)
+}
+
+#[tokio::test]
+async fn a_refuted_rationale_whose_corrections_were_rejected_takes_its_question_out_of_the_lesson(
+) -> Result<()> {
+    let lesson = lesson_asking(
+        "The middle section stands. It says two things.",
+        &[
+            question_of("practice", "Practise?", "Fine."),
+            question_of("quiz", "Which?", WINDOW),
+            question_of("quiz", "Another?", "Fine."),
+            question_of("test", "Tested?", "Fine."),
+        ],
+    );
+    let (mut ledger, id, mut context) =
+        refuted_at(&lesson, (4, UnitKind::AnswerKey, "rationales/2"), WINDOW).await?;
+    // A claim of the last question, which is unit 6 now and 5 once the
+    // question before it is out.
+    let later = ClaimId("later".into());
+    let extracted = ClaimEvent::Extracted {
+        location: ClaimLocation::locate(
+            6,
+            UnitKind::AnswerKey,
+            "explanation",
+            "The first option names the shell.",
+            "The first option names the shell.",
+        ),
+        statement: "The first option names the shell.".into(),
+    };
+    ledger.append(&later, extracted).await?;
+
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    assert_eq!(
+        ledger.cuts.going.get(&4).map(String::as_str),
+        Some("Which?"),
+        "{:?}",
+        ledger.cuts.going
+    );
+    let entry = ledger.entry(&id).unwrap();
+    assert!(
+        matches!(
+            entry.state(),
+            ClaimState::Removed {
+                by: Actor::Machine,
+                ..
+            }
+        ),
+        "{:?}",
+        entry.state()
+    );
+    let candidate = context["candidate"].clone();
+    let report = pass_report(Vec::new());
+    let (raw, saved, _) = super::super::sections::excise(
+        &Model::new(),
+        &mut ledger,
+        candidate.to_string(),
+        candidate,
+        report,
+    )
+    .await?;
+    let prompts: Vec<&str> = saved["questions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(|question| question["prompt"].as_str())
+        .collect();
+    assert_eq!(prompts, ["Practise?", "Another?", "Tested?"]);
+    assert!(!raw.contains(WINDOW), "{raw}");
+    assert_eq!(ledger.entry(&later).unwrap().location().unit_index, 5);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refuted_rationale_in_the_last_question_of_its_kind_stays_and_is_published_not_verified(
+) -> Result<()> {
+    let lesson = lesson_asking(
+        "The middle section stands. It says two things.",
+        &[
+            question_of("practice", "Practise?", "Fine."),
+            question_of("quiz", "Which?", WINDOW),
+            question_of("test", "Tested?", "Fine."),
+        ],
+    );
+    let (mut ledger, id, mut context) =
+        refuted_at(&lesson, (4, UnitKind::AnswerKey, "rationales/2"), WINDOW).await?;
+
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert_eq!(context["candidate"], lesson);
+    let entry = ledger.entry(&id).unwrap();
+    assert_eq!(entry.decided(), Some(&Then::End(End::Unverified)));
+    assert!(
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
+    );
+    Ok(())
+}
+
+/// The second section holds two sentences a refuted statement can be cut
+/// out of, beside the one the guard of the questions is about.
+fn cuttable() -> String {
+    format!("{SENTENCE} {HEADER} {MORE}")
+}
+
+#[tokio::test]
+async fn a_refused_statement_in_the_last_question_of_its_kind_does_not_hold_back_the_cuts_beside_it(
+) -> Result<()> {
+    let body = cuttable();
+    let lesson = lesson_asking(
+        &body,
+        &[
+            question_of("practice", "Practise?", "Fine."),
+            question_of("quiz", "Which?", WINDOW),
+            question_of("test", "Tested?", "Fine."),
+        ],
+    );
+    let (mut ledger, rationale, mut context) =
+        refuted_at(&lesson, (4, UnitKind::AnswerKey, "rationales/2"), WINDOW).await?;
+    let sentence = add_refuted(
+        (&mut ledger, &mut context),
+        "sentence",
+        (1, UnitKind::Block, "body"),
+        SENTENCE,
+    )
+    .await?;
+
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    assert_eq!(
+        context["candidate"]["blocks"][1]["body"],
+        format!("{HEADER} {MORE}")
+    );
+    assert!(matches!(
+        ledger.entry(&sentence).unwrap().state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert_eq!(context["candidate"]["questions"], lesson["questions"]);
+    let state = ledger.entry(&rationale).unwrap().state();
+    assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn questions_that_together_would_leave_no_question_of_a_kind_all_stay_and_the_cuts_beside_them_are_made(
+) -> Result<()> {
+    let body = cuttable();
+    let lesson = lesson_asking(
+        &body,
+        &[
+            question_of("practice", "Practise?", "Fine."),
+            question_of("quiz", "Which?", WINDOW),
+            question_of("quiz", "Another?", "The window is not the shell."),
+            question_of("test", "Tested?", "Fine."),
+        ],
+    );
+    let (mut ledger, first, mut context) =
+        refuted_at(&lesson, (4, UnitKind::AnswerKey, "rationales/2"), WINDOW).await?;
+    let second = add_refuted(
+        (&mut ledger, &mut context),
+        "second",
+        (5, UnitKind::AnswerKey, "rationales/2"),
+        "The window is not the shell.",
+    )
+    .await?;
+    let sentence = add_refuted(
+        (&mut ledger, &mut context),
+        "sentence",
+        (1, UnitKind::Block, "body"),
+        SENTENCE,
+    )
+    .await?;
+
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    assert_eq!(
+        context["candidate"]["blocks"][1]["body"],
+        format!("{HEADER} {MORE}")
+    );
+    assert!(matches!(
+        ledger.entry(&sentence).unwrap().state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert_eq!(context["candidate"]["questions"], lesson["questions"]);
+    for id in [first, second] {
+        let state = ledger.entry(&id).unwrap().state();
+        assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refuted_sentence_that_is_the_whole_of_a_section_body_is_still_published_not_verified(
+) -> Result<()> {
+    let body = "The middle section stands.";
+    let lesson = lesson_asking(
+        body,
+        &[
+            question_of("practice", "Practise?", "Fine."),
+            question_of("quiz", "Which?", "Fine."),
+            question_of("quiz", "Another?", "Fine."),
+            question_of("test", "Tested?", "Fine."),
+        ],
+    );
+    let (mut ledger, id, mut context) =
+        refuted_at(&lesson, (1, UnitKind::Block, "body"), body).await?;
+
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert_eq!(context["candidate"], lesson);
+    let entry = ledger.entry(&id).unwrap();
+    assert_eq!(entry.decided(), Some(&Then::End(End::Unverified)));
+    assert!(
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn a_statement_whose_narrowing_was_not_applied_keeps_the_sentence_it_shares_with_a_resolved_one(
 ) -> Result<()> {

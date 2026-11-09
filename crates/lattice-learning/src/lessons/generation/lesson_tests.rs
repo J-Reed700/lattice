@@ -232,6 +232,83 @@ fn a_quotation_with_different_words_is_still_a_finding_beside_a_curly_source() {
     assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
 }
 
+const MARKED: &str =
+    "Start by using the **F**ile **R**eader (FR) tool, then open the `config` file to check it.";
+const PLAIN: &str = "using the File Reader (FR) tool, then open the config file to check it.";
+const DASHED: &str = "The reader \u{2013} unlike the writer \u{2014} never changes a file on disk.";
+
+fn source_b(excerpt: &str) -> LearningSourceDto {
+    LearningSourceDto {
+        id: "source-b".into(),
+        title: "Reader notes".into(),
+        url: None,
+        excerpt: excerpt.into(),
+        acquired_at: 2,
+    }
+}
+
+fn confirmed_as_part_quote(excerpt: &str, quote: &str) {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].source_index = Some(1);
+    lesson.blocks[2].quote = quote.into();
+    let owned = HashSet::from(["source-a", "source-b"]);
+    let (_, findings) = assemble(lesson, &[source(), source_b(excerpt)], &owned).unwrap();
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+fn confirmed_as_sentence_citation(excerpt: &str, quote: &str) {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].citations = vec![GeneratedCitation {
+        sentence: "The file reader behaves as described.".into(),
+        source_index: Some(1),
+        quote: quote.into(),
+    }];
+    let owned = HashSet::from(["source-a", "source-b"]);
+    let (prepared, findings) = assemble(lesson, &[source(), source_b(excerpt)], &owned).unwrap();
+    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
+}
+
+#[test]
+fn a_part_quotation_omitting_markdown_markers_of_its_source_is_confirmed() {
+    confirmed_as_part_quote(MARKED, PLAIN);
+}
+
+#[test]
+fn a_sentence_citation_omitting_markdown_markers_of_its_source_is_confirmed() {
+    confirmed_as_sentence_citation(MARKED, PLAIN);
+}
+
+#[test]
+fn a_quotation_writing_a_hyphen_for_a_source_dash_is_confirmed() {
+    let hyphens = "The reader - unlike the writer - never changes a file on disk.";
+    confirmed_as_part_quote(DASHED, hyphens);
+    confirmed_as_sentence_citation(DASHED, hyphens);
+}
+
+#[test]
+fn a_quotation_with_a_different_word_is_still_a_finding_beside_a_marked_source() {
+    for (excerpt, quote) in [
+        (MARKED, PLAIN.replace("open", "close")),
+        (
+            DASHED,
+            "The reader - unlike the writer - always changes a file on disk.".to_owned(),
+        ),
+    ] {
+        let mut lesson = off_shape(true);
+        lesson.blocks[2].citations = vec![GeneratedCitation {
+            sentence: "The file reader behaves as described.".into(),
+            source_index: Some(1),
+            quote,
+        }];
+        let owned = HashSet::from(["source-a", "source-b"]);
+        let (prepared, findings) =
+            assemble(lesson, &[source(), source_b(excerpt)], &owned).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
+    }
+}
+
 #[test]
 fn a_long_cited_sentence_that_cannot_be_confirmed_is_shown_whole() {
     const LONG: &str = "Water boils at 50 degrees Celsius in every kitchen on every day of the year, whatever the pressure of the air around the pan.";
@@ -464,6 +541,20 @@ fn the_writer_teaches_exactly_its_lessons_planned_ideas_and_never_a_later_lesson
     );
 }
 
+#[test]
+fn the_writer_makes_what_an_action_needs_with_a_command_it_teaches() {
+    let requirements = writer_requirements();
+
+    assert!(
+        requirements.contains("needs something to exist first"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("teaches that command where it is first used"),
+        "{requirements}"
+    );
+}
+
 fn writer_requirements() -> String {
     let program = crate::tests::fixture();
     let lesson = program.modules[0].lessons[0].clone();
@@ -676,4 +767,19 @@ fn the_writer_teaches_how_a_deliverable_is_recorded() {
     ] {
         assert!(text.contains(expected), "missing {expected:?} in {text}");
     }
+}
+
+#[test]
+fn the_writer_keeps_the_four_choices_close_in_length_and_in_their_own_words() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("The four choices are close in length, so the right one never stands out as the longest"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "the right choice is worded in its own words rather than repeating the prompt's"
+        ),
+        "{text}"
+    );
 }

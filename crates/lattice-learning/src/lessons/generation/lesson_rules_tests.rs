@@ -782,3 +782,136 @@ fn prose_after_a_list_has_ended_is_compared_again() {
     assert_eq!(findings[0].key().site, FindingSite::Section(4));
     assert_eq!(findings[0].passage.as_deref(), Some(SAID));
 }
+
+#[test]
+fn an_apostrophe_is_no_quoted_wording_to_cite() {
+    for sentence in [
+        "Run pwd before ls so you see the shell's folder rather than the window's.",
+        "Don't run rm until you've checked the folder's contents with ls.",
+        "Run pwd before ls so you see the shell\u{2019}s folder rather than the window\u{2019}s.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        assert!(lesson_rules(&candidate).is_empty(), "{sentence}");
+    }
+}
+
+#[test]
+fn a_real_quotation_is_still_quoted_wording_to_cite() {
+    for sentence in [
+        "The manual says 'rm deletes files permanently'.",
+        "Remember \"the shell keeps a working directory\" always.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        let findings = lesson_rules(&candidate);
+        assert_eq!(findings.len(), 1, "{sentence}");
+        assert!(findings[0].note.contains("without citing it"), "{sentence}");
+    }
+}
+
+const MISCONCEPTION: &str =
+    "Tempting wrong guess: 'the projects folder is where notes.txt always lives'.";
+
+#[test]
+fn a_misconception_in_quotation_marks_is_told_to_drop_them() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] = json!(MISCONCEPTION);
+
+    let findings = lesson_rules(&candidate);
+
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].note.contains("without citing it"));
+    assert!(findings[0]
+        .note
+        .contains("remove the quotation marks and write it as the lesson's own sentence"));
+}
+
+#[test]
+fn a_misconception_without_quotation_marks_is_no_finding() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] =
+        json!("Tempting wrong guess: the projects folder is where notes.txt always lives.");
+    assert!(lesson_rules(&candidate).is_empty());
+}
+
+#[test]
+fn an_uncited_figure_keeps_the_note_without_the_quotation_mark_direction() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(format!("{TIMEOUT} It is set for each request."));
+
+    let findings = lesson_rules(&candidate);
+
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].note.contains("without citing it"));
+    assert!(!findings[0].note.contains("quotation marks"));
+}
+
+fn question_case(prompt: &str, options: [&str; 4], key: usize) -> Value {
+    let rationales: Vec<&str> = (0..4)
+        .map(|at| {
+            if at == key {
+                ""
+            } else {
+                "This reflects a plausible misconception and fails."
+            }
+        })
+        .collect();
+    let mut candidate = lesson();
+    candidate["questions"][0] = json!({"kind":"practice","prompt":prompt,
+        "options":options,"correctIndex":key,
+        "rationales":rationales,"explanation":"Because."});
+    candidate
+}
+
+fn first_question_notes(candidate: &Value) -> Vec<String> {
+    lesson_rules(candidate)
+        .into_iter()
+        .filter(|finding| finding.key().site == FindingSite::Question(0))
+        .map(|finding| finding.note)
+        .collect()
+}
+
+#[test]
+fn a_right_choice_much_longer_than_the_others_is_a_finding_at_its_question() {
+    let candidate = question_case(
+        "Which command shows hidden files?",
+        [
+            "ls",
+            "ls -a, which lists every entry in the directory, including the ones whose names begin with a dot",
+            "pwd",
+            "cd",
+        ],
+        1,
+    );
+    let notes = first_question_notes(&candidate);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("close in length"), "{notes:?}");
+}
+
+#[test]
+fn a_right_choice_repeating_the_prompts_words_is_a_finding_at_its_question() {
+    let candidate = question_case(
+        "Which command opens the notes folder inside the learner home?",
+        [
+            "opens the notes folder",
+            "Lists the files there",
+            "Deletes it for good",
+            "Prints the current location",
+        ],
+        0,
+    );
+    let notes = first_question_notes(&candidate);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("gives the answer away"), "{notes:?}");
+}
+
+#[test]
+fn path_like_choices_break_no_question_rule() {
+    let candidate = question_case(
+        "Which command enters the folder one level up?",
+        ["cd notes", "cd ../../notes", "cd /notes", "cd ../notes"],
+        3,
+    );
+    assert!(first_question_notes(&candidate).is_empty());
+}

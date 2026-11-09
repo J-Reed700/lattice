@@ -866,6 +866,11 @@ struct Judges {
     ownership_calls: AtomicUsize,
     now: AtomicUsize,
     most: AtomicUsize,
+    standing_overlap: usize,
+    standing_peak: tokio::sync::watch::Sender<usize>,
+    standing_calls: AtomicUsize,
+    standing_now: AtomicUsize,
+    standing_most: AtomicUsize,
 }
 
 impl Judges {
@@ -877,7 +882,17 @@ impl Judges {
             ownership_calls: AtomicUsize::new(0),
             now: AtomicUsize::new(0),
             most: AtomicUsize::new(0),
+            standing_overlap: 1,
+            standing_peak: tokio::sync::watch::channel(0).0,
+            standing_calls: AtomicUsize::new(0),
+            standing_now: AtomicUsize::new(0),
+            standing_most: AtomicUsize::new(0),
         }
+    }
+
+    fn holding_standings(mut self, overlap: usize) -> Self {
+        self.standing_overlap = overlap;
+        self
     }
 }
 
@@ -917,6 +932,19 @@ impl LLMPort for Judges {
                 r#"{{"claims":[{{"id":"claim-0","kind":"general","subject":{{"name":"{subject}","kind":"product","aliases":[],"classes":[]}},"temporal":{{"scope":"timeless","version":null,"date":null}},"measurement_origin":null,"attributed_to":null}}]}}"#
             )
         } else {
+            self.standing_calls.fetch_add(1, Ordering::SeqCst);
+            let now = self.standing_now.fetch_add(1, Ordering::SeqCst) + 1;
+            self.standing_most.fetch_max(now, Ordering::SeqCst);
+            self.standing_peak
+                .send_modify(|peak| *peak = (*peak).max(now));
+            let _ = tokio::time::timeout(
+                std::time::Duration::from_secs(10),
+                self.standing_peak
+                    .subscribe()
+                    .wait_for(|peak| *peak >= self.standing_overlap),
+            )
+            .await;
+            self.standing_now.fetch_sub(1, Ordering::SeqCst);
             r#"{"standing":"institutional","publisher":{"name":"Acme","kind":"vendor"},"editorial":"editorial","nature":"documentation","flags":[],"reasons":[{"code":"publisher_metadata","text":"Acme publishes it."}]}"#.to_owned()
         };
         Ok(CompletionResponse::from_text(text))
@@ -987,6 +1015,14 @@ async fn weighed_claims(
     second_subject: &'static str,
     overlap: usize,
 ) -> Result<Judges> {
+    weighed_by(Judges::new(second_subject, overlap), versions, claims).await
+}
+
+async fn weighed_by(
+    model: Judges,
+    versions: &[(&str, &str)],
+    claims: &[(usize, &str)],
+) -> Result<Judges> {
     let pool = crate::test_support::pool().await?;
     let mut program = crate::test_support::fixture();
     program.summary.status = crate::dto::LearningProgramStatus::Active;
@@ -997,7 +1033,6 @@ async fn weighed_claims(
     for (id, url) in versions {
         seed_version(&pool, &program_id, id, url).await?;
     }
-    let model = Judges::new(second_subject, overlap);
     let mut results: Vec<CheckedClaim> = claims
         .iter()
         .enumerate()
@@ -1046,5 +1081,35 @@ async fn targets_sharing_an_origin_and_subject_make_one_ownership_call() -> Resu
     .await?;
 
     assert_eq!(model.ownership_calls.load(Ordering::SeqCst), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_standings_of_distinct_cited_versions_are_judged_at_once() -> Result<()> {
+    let model = weighed_by(
+        Judges::new("Alpha", 1).holding_standings(2),
+        &[
+            ("va", "https://alpha.example.com/docs"),
+            ("vb", "https://gamma.example.org/docs"),
+        ],
+        &[(0, "va"), (1, "vb")],
+    )
+    .await?;
+
+    assert_eq!(model.standing_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(model.standing_most.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_version_cited_by_two_claims_has_its_standing_judged_once() -> Result<()> {
+    let model = weighed_by(
+        Judges::new("Alpha", 1),
+        &[("va", "https://alpha.example.com/docs")],
+        &[(0, "va"), (1, "va")],
+    )
+    .await?;
+
+    assert_eq!(model.standing_calls.load(Ordering::SeqCst), 1);
     Ok(())
 }
