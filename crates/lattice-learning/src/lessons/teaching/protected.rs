@@ -99,8 +99,11 @@ pub(super) fn on_protected(
             .filter(|item| !item.released)
             .cloned()
             .collect();
-        let editable = targets_of(section, (unit, block), &[finding], &fixed);
-        if overlapping_quote(finding, &fixed) || editable.is_empty() {
+        let text_fields = unit_fields(section, block);
+        let editable = targets_of(section, (unit, block), &[finding], &fixed)
+            .into_iter()
+            .any(|target| text_fields.contains(&target.field));
+        if overlapping_quote(finding, &fixed) || !editable {
             held.push(finding.key());
         }
     }
