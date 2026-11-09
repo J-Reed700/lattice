@@ -586,7 +586,6 @@ mod tests {
 
     #[tokio::test]
     async fn the_note_chunk_size_follows_the_index_file_command_policy() {
-        // An out-of-range setting is clamped exactly as the command clamps it.
         let f = fixture(
             RecordingIndexUseCase::default(),
             unindexed(),
@@ -594,7 +593,9 @@ mod tests {
             Arc::new(FixedChunkSize(1_000_000)),
         );
         f.sink.index(&vault_note()).await.unwrap();
-        assert_eq!(f.index.last_max_tokens(), Some(chunk_tokens_for(1_000_000)));
+        assert_eq!(f.index.last_max_tokens(), Some(1_000_000));
+        assert_eq!(chunk_tokens_for(1_000_000), 1_000_000);
+        assert_eq!(chunk_tokens_for(0), 1);
 
         // Unreadable settings fall back to the command's default.
         let f = fixture(
