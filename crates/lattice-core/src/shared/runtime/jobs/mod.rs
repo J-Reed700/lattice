@@ -6,12 +6,16 @@
 //! cancellation always wins over a late worker result. Handlers own their
 //! cancellation points: terminal writes run to completion rather than being
 //! dropped mid-transaction.
+mod admission;
 mod arrivals;
 mod attempt;
 mod rank;
 mod repository;
 mod runtime;
 
+pub use admission::{
+    current_observer, observing, AdmissionObserver, HeldSlot, QueueExit, QueuedRequest,
+};
 pub use rank::{current_rank, RankScope, RankTicket, RankWatcher};
 pub use repository::JobStore;
 pub use runtime::{

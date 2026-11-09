@@ -218,6 +218,9 @@ pub struct LearningGenerationActivity {
     pub model_running: bool,
     pub response_characters: u32,
     pub model_attempt: u32,
+    /// Set while the lesson has model requests queued for a slot and none holding one.
+    #[serde(default)]
+    pub waiting_for_model: bool,
     pub verification_pass: u32,
     /// Claims of this pass with a finished first check. Each claim counts once.
     pub checks_completed: u32,

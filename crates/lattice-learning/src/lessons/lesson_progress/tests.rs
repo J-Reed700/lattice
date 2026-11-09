@@ -2,6 +2,7 @@
 use super::*;
 use crate::lessons::call_plan::PlannedAt;
 use lattice_core::domain::learning::acceptance::StandardPolicy;
+use lattice_core::shared::runtime::jobs::{current_observer, QueueExit};
 
 #[tokio::test]
 async fn structured_progress_tracks_repeated_phases_and_concurrent_model_requests() {
@@ -427,4 +428,114 @@ fn a_restarted_job_reaches_its_phases_again() {
     let activity = resumed(Some(serde_json::to_value(&saved).unwrap()));
 
     assert_eq!(activity.reached, Phase::References);
+}
+
+fn waiting(progress: &Progress) -> bool {
+    progress.snapshot().2.waiting_for_model
+}
+
+#[tokio::test]
+async fn a_lesson_waits_for_the_model_only_while_none_of_its_requests_holds_a_slot() {
+    let progress = Progress::default();
+    scoped(&progress, async {
+        let observer = current_observer().expect("a lesson job's scope has an observer");
+        observer.queued();
+        assert!(
+            waiting(&progress),
+            "a request is queued and none holds a slot, so the lesson is waiting for the model"
+        );
+        observer.holding();
+        assert!(
+            !waiting(&progress),
+            "a request holds a slot, so the lesson is working and not waiting"
+        );
+        observer.released();
+        assert!(
+            waiting(&progress),
+            "the slot was given back and the queued request remains, so the lesson waits again"
+        );
+        observer.left_queue(QueueExit::Granted);
+        observer.holding();
+        assert!(
+            !waiting(&progress),
+            "the queued request was granted and holds a slot"
+        );
+        observer.released();
+        assert!(
+            !waiting(&progress),
+            "nothing is queued, so a lesson that gave its last slot back is not waiting"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_queued_request_that_is_abandoned_stops_the_lesson_waiting() {
+    let progress = Progress::default();
+    scoped(&progress, async {
+        let observer = current_observer().expect("a lesson job's scope has an observer");
+        observer.queued();
+        assert!(waiting(&progress), "its only request is queued");
+        observer.left_queue(QueueExit::Abandoned);
+        assert!(
+            !waiting(&progress),
+            "a request cancelled while queued is no longer queued"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_lesson_with_nothing_queued_is_not_waiting() {
+    let progress = Progress::default();
+    scoped(&progress, async {
+        let observer = current_observer().expect("a lesson job's scope has an observer");
+        assert!(
+            !waiting(&progress),
+            "a lesson that has made no request is not waiting"
+        );
+        observer.holding();
+        assert!(
+            !waiting(&progress),
+            "a request that holds a slot and nothing queued is not a lesson waiting for the model"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_call_counted_twice_still_shows_the_lesson_waiting() {
+    let progress = Progress::default();
+    scoped(&progress, async {
+        let observer = current_observer().expect("a lesson job's scope has an observer");
+        let _sort = model_call(Term::Sort);
+        let _send = request();
+        observer.queued();
+        assert!(
+            waiting(&progress),
+            "one request registered by two layers and queued at the scheduler holds no slot, so the lesson is waiting"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_request_made_inside_the_lesson_scope_reaches_its_own_progress_and_no_other() {
+    let ours = Progress::default();
+    let other = Progress::default();
+    scoped(&ours, async {
+        current_observer()
+            .expect("the lesson scope has an observer")
+            .queued();
+        assert!(
+            waiting(&ours),
+            "the request reached its own lesson's progress"
+        );
+        assert!(!waiting(&other), "another lesson's progress is untouched");
+    })
+    .await;
+    assert!(
+        current_observer().is_none(),
+        "outside a lesson job's scope there is no observer"
+    );
 }
