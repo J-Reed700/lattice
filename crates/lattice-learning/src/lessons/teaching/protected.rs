@@ -6,7 +6,7 @@
 //! one reverted and every protected one byte-identical.
 
 use crate::lessons::content_verification::{confine, unit_fields, Protected};
-use crate::review_findings::{FindingKey, FindingSite, ReviewFinding};
+use crate::review_findings::{FindingKey, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::error::Result;
 use serde_json::Value;
 
@@ -189,16 +189,14 @@ fn whole_value(value: &Value, path: String, unit: usize, targets: &mut Vec<Prote
     }
 }
 
-/// Whether `finding` is about all of a question or a check: its site is the
-/// unit, or it has none and its passage lies in the unit.
-fn about_whole_unit(
-    section: &Value,
-    block: bool,
-    finding: &ReviewFinding,
-    fields: &[(String, &str)],
-) -> bool {
-    let whole = !block || section.get("kind").and_then(Value::as_str) == Some("check");
-    let named = match finding.site {
+/// Whether `finding` is about the unit's teaching (a quotation finding is
+/// about its source quote only): its site is the unit, or it has none
+/// and its passage lies in the unit.
+fn about_whole_unit(finding: &ReviewFinding, fields: &[(String, &str)]) -> bool {
+    if finding.kind == FindingKind::Quotation {
+        return false;
+    }
+    match finding.site {
         Some(FindingSite::Section(_) | FindingSite::Question(_)) => true,
         Some(FindingSite::Lesson) | None => finding
             .passage
@@ -206,16 +204,15 @@ fn about_whole_unit(
             .map(str::trim)
             .filter(|passage| !passage.is_empty())
             .is_some_and(|passage| fields.iter().any(|(_, text)| text.contains(passage))),
-    };
-    whole && named
+    }
 }
 
 /// The sentences `sent` names in `section` (`unit`, and whether it is a
 /// block): each finding's passage where any field holds it; for a finding
 /// with no passage, every sentence of the unit's teaching text that no
 /// protected sentence overlaps (`protected` holds the sentences that are not
-/// released). A finding about a question or a check names all of it: its
-/// sentences, and for a question its key, and its citations.
+/// released). A finding about the unit names all of it: its sentences, its
+/// citations, and for a question its key.
 fn targets_of(
     section: &Value,
     (unit, block): (usize, bool),
@@ -226,7 +223,7 @@ fn targets_of(
     leaves(section, String::new(), &mut fields);
     let mut targets = Vec::new();
     for finding in sent {
-        if about_whole_unit(section, block, finding, &fields) {
+        if about_whole_unit(finding, &fields) {
             unprotected_sentences(section, (unit, block), protected, &mut targets);
             if let (false, Some(key)) = (block, section.get("correctIndex")) {
                 whole_value(key, "correctIndex".into(), unit, &mut targets);
