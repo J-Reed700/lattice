@@ -1,5 +1,4 @@
 use super::*;
-use futures::FutureExt;
 
 /// The library row of a new source.
 pub(in super::super) struct SourceInsert<'a> {
@@ -54,7 +53,6 @@ pub(in super::super) async fn active_pages(
     let rows = sqlx::query("SELECT v.id,v.resolved_url,v.requested_url,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id)
         .fetch_all(connection)
-        .boxed()
         .await
         .map_err(db)?;
     Ok(rows

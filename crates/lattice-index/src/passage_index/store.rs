@@ -269,8 +269,8 @@ async fn install_schema(pool: &SqlitePool) -> Result<()> {
         .begin_write()
         .await
         .map_err(db_error("create the schema"))?;
-    sqlx::raw_sql(SCHEMA)
-        .execute(&mut *tx)
+    // Not raw_sql(..).execute(&mut *tx): that future is not Send on a connection.
+    sqlx::Executor::execute(&mut *tx, sqlx::raw_sql(SCHEMA))
         .await
         .map_err(db_error("create the schema"))?;
     put_meta(&mut tx, META_VERSION, SCHEMA_VERSION)
