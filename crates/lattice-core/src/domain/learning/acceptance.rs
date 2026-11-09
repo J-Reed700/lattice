@@ -166,6 +166,9 @@ pub enum End {
     Consistent,
     GeneralKnowledge,
     NotAClaim,
+    /// The sources are silent, or the sentence cannot be cut: it stays in the
+    /// lesson as written, published not verified.
+    Unverified,
     Removed {
         /// The sentence could not be cut, so its section goes.
         section_goes: bool,
@@ -195,6 +198,26 @@ impl Target {
     }
 }
 
+/// What a statement that has changed class already does where a first change
+/// would move it again.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Otherwise {
+    Node(NodeId),
+    End(End),
+}
+
+impl From<&'static str> for Otherwise {
+    fn from(name: &'static str) -> Self {
+        Self::Node(NodeId(name))
+    }
+}
+
+impl From<End> for Otherwise {
+    fn from(end: End) -> Self {
+        Self::End(end)
+    }
+}
+
 /// What follows an outcome.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Next {
@@ -203,7 +226,7 @@ pub enum Next {
     /// once it has changed class (no class changes twice).
     FirstChange {
         change: Target,
-        otherwise: NodeId,
+        otherwise: Otherwise,
     },
     End(End),
 }
@@ -224,11 +247,12 @@ impl Next {
         Self::Go(Target::EnterAfterRewrite(class))
     }
 
-    /// `change` the first time, then the node named `otherwise`.
-    pub fn first_change(change: Target, otherwise: &'static str) -> Self {
+    /// `change` the first time, then the node named `otherwise` or the end
+    /// given.
+    pub fn first_change(change: Target, otherwise: impl Into<Otherwise>) -> Self {
         Self::FirstChange {
             change,
-            otherwise: NodeId(otherwise),
+            otherwise: otherwise.into(),
         }
     }
 }

@@ -64,12 +64,14 @@ fn a_sourced_statement_stated_on_a_passage_it_does_not_cite_is_recited_and_read_
         walked(Sourced, &then(&recited, &[parts(Stands)])),
         Walked::Ended(End::Resolved)
     );
-    for read in [Unproven, Refuted] {
-        assert_eq!(
-            walked(Sourced, &then(&recited, &[parts(read)])),
-            placed(Sourced, false, false, "s.rewrite")
-        );
-    }
+    assert_eq!(
+        walked(Sourced, &then(&recited, &[parts(Refuted)])),
+        placed(Sourced, false, false, "s.rewrite")
+    );
+    assert_eq!(
+        walked(Sourced, &then(&recited, &[parts(Unproven)])),
+        placed(Sourced, false, false, "s.uncite")
+    );
 }
 
 #[test]
@@ -91,11 +93,11 @@ fn a_cited_statement_whose_parts_are_all_common_loses_its_citation_and_meets_the
 }
 
 #[test]
-fn a_statement_that_lost_its_citation_and_needs_a_source_is_rewritten_not_sent_back() {
+fn a_statement_that_lost_its_citation_and_needs_a_source_ends_unverified_not_sent_back() {
     let uncited = [parts(AllCommon), uncite()];
     assert_eq!(
         walked(Sourced, &then(&uncited, &[knowledge(NeedsSource)])),
-        placed(Common, true, false, "c.rewrite")
+        Walked::Ended(End::Unverified)
     );
 }
 
@@ -147,28 +149,26 @@ fn a_page_that_stands_elsewhere_after_research_is_recited() {
 }
 
 #[test]
-fn a_statement_the_research_does_not_rescue_is_rewritten_then_read_again() {
-    for failed in [Unproven, Refuted] {
-        let failed = [parts(Unproven), research(Saved), page(failed)];
-        assert_eq!(
-            walked(Sourced, &failed),
-            placed(Sourced, false, false, "s.rewrite")
-        );
-        let rewritten = then(&failed, &[sourced_rewrite(Rewritten)]);
-        assert_eq!(
-            walked(Sourced, &rewritten),
-            placed(Sourced, false, false, "s.final")
-        );
-        assert_eq!(
-            walked(Sourced, &then(&rewritten, &[parts(Stands)])),
-            Walked::Ended(End::Resolved)
-        );
-    }
+fn a_statement_the_research_shows_false_is_rewritten_then_read_again() {
+    let failed = [parts(Unproven), research(Saved), page(Refuted)];
+    assert_eq!(
+        walked(Sourced, &failed),
+        placed(Sourced, false, false, "s.rewrite")
+    );
+    let rewritten = then(&failed, &[sourced_rewrite(Rewritten)]);
+    assert_eq!(
+        walked(Sourced, &rewritten),
+        placed(Sourced, false, false, "s.final")
+    );
+    assert_eq!(
+        walked(Sourced, &then(&rewritten, &[parts(Stands)])),
+        Walked::Ended(End::Resolved)
+    );
 }
 
 #[test]
 fn a_rewrite_that_could_not_be_applied_is_tried_once_more() {
-    let failed = [parts(Unproven), research(Saved), page(Unproven)];
+    let failed = [parts(Unproven), research(Saved), page(Refuted)];
     let refused = then(&failed, &[sourced_rewrite(NotApplied)]);
     assert_eq!(
         walked(Sourced, &refused),
@@ -198,9 +198,9 @@ fn a_sourced_statement_that_fails_every_rung_is_removed() {
         &[
             parts(Refuted),
             research(Saved),
-            page(Unproven),
+            page(Refuted),
             sourced_rewrite(Rewritten),
-            parts(Unproven),
+            parts(Refuted),
             cut(Outcome::Cut),
         ],
         &[
@@ -210,7 +210,7 @@ fn a_sourced_statement_that_fails_every_rung_is_removed() {
             recite(),
             parts(Refuted),
             sourced_rewrite(Rewritten),
-            parts(Unproven),
+            parts(Refuted),
             cut(Outcome::Cut),
         ],
     ];
@@ -220,16 +220,16 @@ fn a_sourced_statement_that_fails_every_rung_is_removed() {
 }
 
 #[test]
-fn a_sentence_that_cannot_be_cut_takes_its_section_with_it() {
+fn a_sentence_that_cannot_be_cut_stays_and_ends_unverified() {
     let path = [
         parts(Unproven),
         research(Saved),
-        page(Unproven),
+        page(Refuted),
         sourced_rewrite(NotApplied),
         sourced_rewrite(NotApplied),
         cut(CannotCut),
     ];
-    assert_eq!(walked(Sourced, &path), REMOVED_WITH_SECTION);
+    assert_eq!(walked(Sourced, &path), Walked::Ended(End::Unverified));
 }
 
 #[test]
@@ -252,7 +252,7 @@ fn a_re_cited_statement_whose_parts_are_all_common_loses_the_new_citation_the_fi
 }
 
 #[test]
-fn a_re_cited_statement_that_has_changed_class_is_rewritten_when_its_parts_are_all_common() {
+fn a_re_cited_statement_that_has_changed_class_ends_unverified_when_its_parts_are_all_common() {
     let path = [
         knowledge(NeedsSource),
         parts(Unproven),
@@ -261,10 +261,7 @@ fn a_re_cited_statement_that_has_changed_class_is_rewritten_when_its_parts_are_a
         recite(),
         parts(AllCommon),
     ];
-    assert_eq!(
-        walked(Common, &path),
-        placed(Sourced, true, false, "s.rewrite")
-    );
+    assert_eq!(walked(Common, &path), Walked::Ended(End::Unverified));
 }
 
 #[test]
@@ -272,7 +269,7 @@ fn a_rewrite_whose_parts_read_all_common_meets_commons_check_from_its_post_rewri
     let rewritten = [
         parts(Unproven),
         research(Saved),
-        page(Unproven),
+        page(Refuted),
         sourced_rewrite(Rewritten),
     ];
     let all_common = then(&rewritten, &[parts(AllCommon)]);
@@ -298,24 +295,29 @@ fn a_rewrite_whose_parts_read_all_common_meets_commons_check_from_its_post_rewri
         walked(Sourced, &then(&refuted, &[ground(Stands)])),
         Walked::Ended(End::GeneralKnowledge)
     );
-    let needs_a_source = then(&uncited, &[knowledge(NeedsSource), cut(Outcome::Cut)]);
-    assert_eq!(walked(Sourced, &needs_a_source), REMOVED);
+    let needs_a_source = then(&uncited, &[knowledge(NeedsSource)]);
+    assert_eq!(
+        walked(Sourced, &needs_a_source),
+        Walked::Ended(End::Unverified)
+    );
 }
 
 #[test]
-fn a_rewrite_that_still_fails_its_citation_is_cut_unless_its_parts_read_all_common() {
+fn a_rewrite_that_is_still_refuted_is_cut_unless_its_parts_read_all_common() {
     let rewritten = [
         parts(Unproven),
         research(Saved),
-        page(Unproven),
+        page(Refuted),
         sourced_rewrite(Rewritten),
     ];
-    for read in [Unproven, Refuted] {
-        assert_eq!(
-            walked(Sourced, &then(&rewritten, &[parts(read)])),
-            placed(Sourced, false, false, "s.cut")
-        );
-    }
+    assert_eq!(
+        walked(Sourced, &then(&rewritten, &[parts(Refuted)])),
+        placed(Sourced, false, false, "s.cut")
+    );
+    assert_eq!(
+        walked(Sourced, &then(&rewritten, &[parts(Unproven)])),
+        Walked::Ended(End::Unverified)
+    );
 }
 
 #[test]
@@ -324,7 +326,7 @@ fn a_statement_that_changed_class_may_still_enter_a_class_after_its_rewrite() {
         knowledge(NeedsSource),
         parts(Unproven),
         research(Saved),
-        page(Unproven),
+        page(Refuted),
         sourced_rewrite(Rewritten),
     ];
     assert_eq!(
@@ -429,7 +431,7 @@ fn an_explanation_asserting_a_specific_the_passages_lack_becomes_sourced() {
 }
 
 #[test]
-fn a_reasoning_statement_that_has_changed_class_is_rewritten_not_sent_back() {
+fn a_reasoning_statement_that_has_changed_class_ends_unverified_not_sent_back() {
     let policy = StandardPolicy::new();
     let next = policy
         .graph(Reasoning)
@@ -442,7 +444,7 @@ fn a_reasoning_statement_that_has_changed_class_is_rewritten_not_sent_back() {
     );
     assert_eq!(
         follow(&policy, position(Reasoning, true, false, "r.read"), next),
-        Moved::To(position(Reasoning, true, false, "r.rewrite"))
+        Moved::Ended(End::Unverified)
     );
 }
 
@@ -475,17 +477,11 @@ fn a_rewritten_explanation_is_read_again_and_vetoed_again() {
 
 #[test]
 fn an_explanation_that_fails_every_rung_is_removed() {
-    let paths: [&[Taken]; 4] = [
+    let paths: [&[Taken]; 3] = [
         &[
             consistency(Refuted),
             reasoning_rewrite(NotApplied),
             reasoning_rewrite(NotApplied),
-            cut(Outcome::Cut),
-        ],
-        &[
-            consistency(Refuted),
-            reasoning_rewrite(Rewritten),
-            consistency(NeedsSource),
             cut(Outcome::Cut),
         ],
         &[
@@ -518,7 +514,18 @@ fn an_explanation_that_fails_every_rung_is_removed() {
                 cut(CannotCut)
             ]
         ),
-        REMOVED_WITH_SECTION
+        UNVERIFIED
+    );
+    assert_eq!(
+        walked(
+            Reasoning,
+            &[
+                consistency(Refuted),
+                reasoning_rewrite(Rewritten),
+                consistency(NeedsSource)
+            ]
+        ),
+        UNVERIFIED
     );
 }
 
@@ -593,7 +600,8 @@ fn a_rewritten_common_statement_is_read_again_and_passes_or_is_cut() {
             &[
                 parts(AllCommon),
                 uncite(),
-                knowledge(NeedsSource),
+                knowledge(Refuted),
+                ground(Refuted),
                 field_rewrite(Rewritten)
             ]
         ),
@@ -603,7 +611,7 @@ fn a_rewritten_common_statement_is_read_again_and_passes_or_is_cut() {
 
 #[test]
 fn a_common_statement_that_fails_every_rung_is_removed() {
-    let paths: [&[Taken]; 3] = [
+    let paths: [&[Taken]; 2] = [
         &[
             knowledge(Refuted),
             ground(Refuted),
@@ -617,13 +625,6 @@ fn a_common_statement_that_fails_every_rung_is_removed() {
             field_rewrite(Rewritten),
             knowledge(Refuted),
             ground(Refuted),
-            cut(Outcome::Cut),
-        ],
-        &[
-            knowledge(Refuted),
-            ground(Refuted),
-            field_rewrite(Rewritten),
-            knowledge(NeedsSource),
             cut(Outcome::Cut),
         ],
     ];
@@ -637,11 +638,12 @@ fn a_common_statement_that_fails_every_rung_is_removed() {
                 knowledge(Refuted),
                 ground(Refuted),
                 field_rewrite(Rewritten),
-                knowledge(NeedsSource),
+                knowledge(Refuted),
+                ground(Refuted),
                 cut(CannotCut)
             ]
         ),
-        REMOVED_WITH_SECTION
+        UNVERIFIED
     );
 }
 
@@ -713,7 +715,7 @@ fn an_internal_statement_that_fails_every_rung_is_removed() {
                 cut(CannotCut)
             ]
         ),
-        REMOVED_WITH_SECTION
+        UNVERIFIED
     );
 }
 
@@ -814,7 +816,7 @@ fn a_step_the_node_does_not_take_diverges() {
     assert_eq!(
         walked(
             Sourced,
-            &[parts(Unproven), research(Saved), page(Unproven), wrong_goal]
+            &[parts(Unproven), research(Saved), page(Refuted), wrong_goal]
         ),
         Walked::Diverged {
             at: position(Sourced, false, false, "s.rewrite"),
@@ -875,4 +877,141 @@ fn a_second_change_of_class_diverges() {
             taken: knowledge(NeedsSource)
         }
     );
+}
+
+#[test]
+fn a_statement_nothing_states_after_research_loses_its_citation_and_meets_commons_bar_never_a_rewrite(
+) {
+    let unproven = [parts(Unproven), research(FoundNothing), page(Unproven)];
+    assert_eq!(
+        walked(Sourced, &unproven),
+        placed(Sourced, false, false, "s.uncite")
+    );
+    assert_eq!(
+        walked(Sourced, &then(&unproven, &[uncite()])),
+        placed(Common, true, false, "c.read")
+    );
+    assert_eq!(
+        walked(Sourced, &then(&unproven, &[uncite(), knowledge(Stands)])),
+        Walked::Ended(End::GeneralKnowledge)
+    );
+}
+
+#[test]
+fn a_recited_statement_nothing_states_loses_its_citation_instead_of_being_rewritten() {
+    let recited = [
+        parts(Unproven),
+        research(Saved),
+        page(StandsElsewhere),
+        recite(),
+    ];
+    assert_eq!(
+        walked(Sourced, &then(&recited, &[parts(Unproven)])),
+        placed(Sourced, false, false, "s.uncite")
+    );
+}
+
+#[test]
+fn a_statement_that_changed_class_and_is_still_unproven_ends_unverified() {
+    let unproven = [parts(Unproven), research(FoundNothing), page(Unproven)];
+    assert_eq!(
+        walked(Common, &then(&[knowledge(NeedsSource)], &unproven)),
+        UNVERIFIED
+    );
+    assert_eq!(
+        walked(
+            Reasoning,
+            &then(
+                &[consistency(NeedsSource)],
+                &[parts(Unproven), research(Saved), page(Unproven)]
+            )
+        ),
+        UNVERIFIED
+    );
+}
+
+#[test]
+fn a_rewrite_whose_parts_are_unproven_ends_unverified_and_one_that_is_refuted_is_cut() {
+    let rewritten = [
+        parts(Unproven),
+        research(Saved),
+        page(Refuted),
+        sourced_rewrite(Rewritten),
+    ];
+    assert_eq!(
+        walked(Sourced, &then(&rewritten, &[parts(Unproven)])),
+        UNVERIFIED
+    );
+    assert_eq!(
+        walked(Sourced, &then(&rewritten, &[parts(Refuted)])),
+        placed(Sourced, false, false, "s.cut")
+    );
+}
+
+#[test]
+fn a_common_statement_that_already_changed_class_and_needs_a_source_ends_unverified() {
+    assert_eq!(
+        walked(
+            Sourced,
+            &[parts(AllCommon), uncite(), knowledge(NeedsSource)]
+        ),
+        UNVERIFIED
+    );
+}
+
+#[test]
+fn a_rewritten_common_statement_that_needs_a_source_ends_unverified() {
+    let policy = StandardPolicy::new();
+    assert_eq!(
+        walk_from(
+            &policy,
+            position(Common, false, false, "c.final"),
+            &[knowledge(NeedsSource)]
+        ),
+        UNVERIFIED
+    );
+}
+
+#[test]
+fn a_rewritten_explanation_that_needs_a_source_ends_unverified_and_one_that_is_refuted_is_cut() {
+    let policy = StandardPolicy::new();
+    let at = position(Reasoning, false, false, "r.final");
+    assert_eq!(
+        walk_from(&policy, at, &[consistency(NeedsSource)]),
+        UNVERIFIED
+    );
+    assert_eq!(
+        walk_from(&policy, at, &[consistency(Refuted)]),
+        placed(Reasoning, false, false, "r.cut")
+    );
+}
+
+#[test]
+fn a_cut_that_cannot_be_made_ends_unverified_in_every_class() {
+    let policy = StandardPolicy::new();
+    for (class, node) in [
+        (Sourced, "s.cut"),
+        (Reasoning, "r.cut"),
+        (Common, "c.cut"),
+        (Internal, "i.cut"),
+    ] {
+        assert_eq!(
+            walk_from(
+                &policy,
+                position(class, false, false, node),
+                &[cut(CannotCut)]
+            ),
+            UNVERIFIED,
+            "{node}"
+        );
+        assert_eq!(
+            walk_from(
+                &policy,
+                position(class, false, false, node),
+                &[cut(Outcome::Cut)]
+            ),
+            REMOVED,
+            "{node}"
+        );
+    }
 }

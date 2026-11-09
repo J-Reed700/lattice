@@ -18,7 +18,7 @@ use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What the flow repair is told besides the edit protocol.
-const FLOW: &str = "Sentences were taken out of this lesson section because the course's sources do not support them. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. If the section reads well as it is, give no edits.";
+const FLOW: &str = "Sentences were taken out of this lesson section because they were shown to be wrong. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. If the section reads well as it is, give no edits.";
 
 /// What a lesson is told when the cuts leave it no statement: the part of it
 /// that would have to be taken out.
@@ -247,6 +247,32 @@ pub(super) fn unit_label(lesson: &Value, unit: usize) -> Option<String> {
         .get(field)?
         .as_str()
         .map(str::to_owned)
+}
+
+/// The sections `cuts` leaves with too little to teach in `lesson`, whatever
+/// else of it could be published.
+pub(super) fn left_with_too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
+    let mut cuts = cuts.clone();
+    cuts.keep_current(lesson);
+    too_little(lesson, &cuts)
+}
+
+/// Puts `units` of `lesson` back as they are in `from`, and what `cuts` took
+/// from them back as it is in `earlier`.
+pub(super) fn restore_units(
+    (lesson, cuts): (&mut Value, &mut Cuts),
+    (from, earlier): (&Value, &Cuts),
+    units: &[usize],
+) {
+    for unit in units {
+        if let Some(section) = unit_at(from, *unit).cloned() {
+            set_unit(lesson, *unit, section);
+        }
+        match earlier.taken.get(unit) {
+            Some(taken) => cuts.taken.insert(*unit, taken.clone()),
+            None => cuts.taken.remove(unit),
+        };
+    }
 }
 
 /// The sections that took cuts and are left with too little to teach: fewer

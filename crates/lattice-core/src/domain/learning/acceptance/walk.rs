@@ -3,7 +3,9 @@
 
 use std::collections::HashSet;
 
-use super::{AcceptancePolicy, End, Next, Outcome, Position, Step, Taken, Target, Then, Walked};
+use super::{
+    AcceptancePolicy, End, Next, Otherwise, Outcome, Position, Step, Taken, Target, Then, Walked,
+};
 use crate::domain::learning::claim_review::Class;
 
 /// Where an edge leads from a position.
@@ -32,10 +34,10 @@ pub(super) fn follow(policy: &dyn AcceptancePolicy, at: Position, next: Next) ->
         Next::Go(target) => go(policy, at, target),
         Next::FirstChange { change, otherwise } => {
             if at.changed_class {
-                Moved::To(Position {
-                    node: otherwise,
-                    ..at
-                })
+                match otherwise {
+                    Otherwise::Node(node) => Moved::To(Position { node, ..at }),
+                    Otherwise::End(end) => Moved::Ended(end),
+                }
             } else {
                 go(policy, at, change)
             }
