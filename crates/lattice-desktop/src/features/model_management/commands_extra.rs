@@ -76,13 +76,14 @@ pub struct DownloadedModelResponse {
     #[serde(default)]
     pub supports_tool_calling: Option<bool>,
     /// The context window saved for this model in Settings; `None` loads it
-    /// at its trained length.
+    /// at the largest window that fits, up to its trained length.
     #[serde(default)]
     pub configured_context_length: Option<u32>,
     /// The largest window, up to its trained length, this model fits this
     /// machine's memory at now, beside the other models loaded. Shown as a
-    /// warning beside a larger setting, never applied. `None` when the
-    /// machine does not report its memory or the header cannot say.
+    /// warning beside a larger saved window, which it never changes; the
+    /// window a model with none saved loads with. `None` when the machine
+    /// does not report its memory or the header cannot say.
     #[serde(default)]
     pub fits_context_length: Option<u32>,
     /// The same, with the KV cache quantized to q8_0.

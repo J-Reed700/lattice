@@ -20,6 +20,7 @@ pub(crate) const ENDED_BY_UPDATE: &str = "ended_by_update";
 pub fn lesson_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
         .exclusive_per_subject()
+        .ranked()
         .backoff(Backoff::default())
 }
 
