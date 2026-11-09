@@ -241,6 +241,13 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(await screen.findByText(/Work through it in your own words\./)).toBeVisible();
   });
 
+  it('has one response box and a tutor box with its own name during an attempt', async () => {
+    renderWorkbench();
+    await screen.findByRole('textbox', { name: 'Your response' });
+    expect(screen.getAllByRole('textbox', { name: 'Your response' })).toHaveLength(1);
+    expect(screen.getAllByRole('textbox', { name: 'Ask a question or request critique' })).toHaveLength(1);
+  });
+
   it('names the help in the learner words, not the mode names', async () => {
     renderWorkbench();
     await screen.findByRole('textbox', { name: 'Your response' });
