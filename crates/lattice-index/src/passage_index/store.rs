@@ -604,10 +604,12 @@ impl PassageStore {
     }
 
     pub async fn counts(&self, prefix: &str) -> Result<Counts> {
-        let mut connection = self.pool.acquire().await.map_err(db_error("count"))?;
-        read_counts(&mut connection, prefix)
+        let mut tx = self.pool.begin_read().await.map_err(db_error("count"))?;
+        let counts = read_counts(&mut tx, prefix)
             .await
-            .map_err(db_error("count documents and passages"))
+            .map_err(db_error("count documents and passages"))?;
+        tx.commit().await.map_err(db_error("count"))?;
+        Ok(counts)
     }
 
     /// Whether anything under `prefix` has passages.
