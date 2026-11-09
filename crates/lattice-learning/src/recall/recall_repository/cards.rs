@@ -16,17 +16,14 @@ impl LearningRecallRepository {
         validate_uuid(&req.operation_id, "operation")?;
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.card_id, "card")?;
-        if req.source_version_ids.len() > 20
-            || req.source_version_ids.iter().collect::<HashSet<_>>().len()
-                != req.source_version_ids.len()
+        if req.source_version_ids.iter().collect::<HashSet<_>>().len()
+            != req.source_version_ids.len()
         {
-            return Err(invalid(
-                "A recall card may cite up to 20 unique source versions.",
-            ));
+            return Err(invalid("A recall card may cite each source version once."));
         }
         validate_content(req.format, &req.content)?;
-        if req.change_reason.trim().is_empty() || req.change_reason.chars().count() > 500 {
-            return Err(invalid("Card change reason must contain 1–500 characters."));
+        if req.change_reason.trim().is_empty() {
+            return Err(invalid("Card change reason must not be empty."));
         }
         let hash = payload_hash(req)?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;

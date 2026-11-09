@@ -25,7 +25,6 @@ mod selectors;
 mod workspace;
 
 const MAX_CARDS: i64 = 2_000;
-const MAX_QUERY_CHARS: usize = 240;
 const SCHEDULER_DISCLOSURE: &str = "Cards are scheduled with FSRS 6 and its default parameters. A review interval is not a promise or measurement of retention.";
 
 fn invalid(message: impl Into<String>) -> AppError {

@@ -138,10 +138,8 @@ impl LearningRecallRepository {
     ) -> Result<Vec<LearningSourceSemanticSearchResultDto>> {
         validate_uuid(&req.program_id, "program")?;
         let query = req.query.trim();
-        if query.is_empty() || query.chars().count() > MAX_QUERY_CHARS {
-            return Err(invalid(
-                "Source search query must contain 1–240 characters.",
-            ));
+        if query.is_empty() {
+            return Err(invalid("Source search query must not be empty."));
         }
         let snapshots = LearningSourceLibraryRepository::new(self.pool.clone());
         let sources = snapshots.verification_sources(&req.program_id).await?;

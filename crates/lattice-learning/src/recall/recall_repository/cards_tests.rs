@@ -163,9 +163,6 @@ async fn malformed_or_foreign_card_saves_are_rejected_without_writing() -> Resul
     let recall = LearningRecallRepository::new(pool.clone());
     let qa = LearningRecallCardFormat::QuestionAnswer;
 
-    let mut too_many = save(&pid, qa, free_answer());
-    too_many.source_version_ids = (0..21).map(|_| id()).collect();
-    assert_invalid(recall.save_card(&too_many).await);
     let mut repeated = save(&pid, qa, free_answer());
     let version = id();
     repeated.source_version_ids = vec![version.clone(), version];
@@ -173,9 +170,6 @@ async fn malformed_or_foreign_card_saves_are_rejected_without_writing() -> Resul
     let mut blank_reason = save(&pid, qa, free_answer());
     blank_reason.change_reason = "   ".into();
     assert_invalid(recall.save_card(&blank_reason).await);
-    let mut long_reason = save(&pid, qa, free_answer());
-    long_reason.change_reason = "r".repeat(501);
-    assert_invalid(recall.save_card(&long_reason).await);
     let mut bad_card = save(&pid, qa, free_answer());
     bad_card.card_id = "not-a-uuid".into();
     assert_invalid(recall.save_card(&bad_card).await);
