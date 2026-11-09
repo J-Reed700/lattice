@@ -2,8 +2,12 @@
 //! is admitted here, by a scheduler that knows the backend's concurrency and,
 //! for a llama-server, the window its slots share.
 //!
-//! Highest [`InferencePriority`] first, arrival order within one; with several
-//! slots one is kept for interactive work. On a shared window a request
+//! Interactive requests go first, then unranked ones by [`InferencePriority`],
+//! then the ranked backlog by rank, lowest first, and by priority within a
+//! rank; arrival order breaks every tie. With several slots one is kept for
+//! interactive work, and while the lowest rank seen here has a live job one is
+//! kept for that rank too, so a course's first lesson
+//! never waits behind its later ones. On a shared window a request
 //! reserves its estimated prompt plus output and waits while reservations
 //! would overflow, though a request alone is always admitted. Admission is
 //! strictly in order, so a large interactive prompt is never starved, and a
@@ -33,6 +37,8 @@ use tokio_util::sync::CancellationToken;
 
 use lattice_core::application::ports::llm_port::{InferencePriority, RequestLoad};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{RankTicket, RankWatcher};
+use std::sync::Weak;
 use tokio::sync::watch;
 
 /// A wait longer than this is worth a line in the log: it is the contention
@@ -79,7 +85,30 @@ pub(crate) struct AdmissionRequest {
     /// Estimated prompt tokens plus the output allowance.
     pub tokens: usize,
     pub cache_key: Option<String>,
+    /// The rank of the job this call is made for, if it has one.
+    pub rank: Option<RankTicket>,
 }
+
+/// Where a waiting request queues: interactive requests first, then unranked
+/// ones, then the ranked backlog, which rank orders before priority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Lane {
+    Interactive,
+    Unranked(Reverse<InferencePriority>),
+    Ranked(i64, Reverse<InferencePriority>),
+}
+
+impl Lane {
+    fn of(priority: InferencePriority, rank: Option<&RankTicket>) -> Self {
+        match rank {
+            _ if priority == InferencePriority::Interactive => Self::Interactive,
+            Some(ticket) => Self::Ranked(ticket.rank(), Reverse(priority)),
+            None => Self::Unranked(Reverse(priority)),
+        }
+    }
+}
+
+type QueueKey = (Lane, u64);
 
 /// Queues and admits requests for one backend. See the module docs.
 pub(crate) struct InferenceScheduler {
@@ -96,8 +125,8 @@ struct State {
     next_ticket: u64,
     /// Monotonic counter stamped onto a slot each time it is assigned.
     clock: u64,
-    /// Waiting requests, highest priority first, then oldest first.
-    queue: BTreeMap<(Reverse<InferencePriority>, u64), Waiter>,
+    /// Waiting requests in admission order.
+    queue: BTreeMap<QueueKey, Waiter>,
     /// Admitted requests whose callers have not yet collected the grant.
     granted: HashMap<u64, Grant>,
     slots: Vec<Slot>,
@@ -105,12 +134,16 @@ struct State {
     reserved: usize,
     /// Cache keys held, by how many holds each.
     held: HashMap<String, usize>,
+    /// The ranks requests here have carried whose scopes may still be alive.
+    ranks: Vec<RankTicket>,
 }
 
 #[derive(Default)]
 struct Slot {
     /// Tokens the request running here reserved; `None` when the slot is free.
     running: Option<usize>,
+    /// The rank of the request running here, if it has one.
+    rank: Option<i64>,
     /// The cache key of the last request this slot served. Its prefix is what
     /// the slot's KV cache still holds.
     last_key: Option<String>,
@@ -122,6 +155,7 @@ struct Waiter {
     priority: InferencePriority,
     tokens: usize,
     cache_key: Option<String>,
+    rank: Option<i64>,
     wake: oneshot::Sender<()>,
 }
 
@@ -178,6 +212,15 @@ impl Drop for SlotHold {
     }
 }
 
+impl RankWatcher for InferenceScheduler {
+    fn rank_ended(&self) {
+        let mut state = self.state.lock();
+        self.dispatch(&mut state);
+        drop(state);
+        self.moved();
+    }
+}
+
 /// The error a cancelled request ends with, queued or in flight.
 pub(crate) fn cancelled_error() -> AppError {
     AppError::InvalidState("The model request was cancelled.".into())
@@ -199,6 +242,7 @@ impl InferenceScheduler {
                 slots,
                 reserved: 0,
                 held: HashMap::new(),
+                ranks: Vec::new(),
             }),
             changes: None,
         }
@@ -259,28 +303,40 @@ impl InferenceScheduler {
             None => request.tokens,
         };
         let queued_at = std::time::Instant::now();
-        let (ticket, woken) = {
+        // Outside the lock: if the scope has just ended, this is where that is
+        // announced, and the announcement takes the lock.
+        if let Some(rank) = &request.rank {
+            let watcher: Weak<Self> = Arc::downgrade(self);
+            rank.watch(watcher);
+        }
+        let lane = Lane::of(request.priority, request.rank.as_ref());
+        let (key, woken) = {
             let mut state = self.state.lock();
-            let ticket = state.next_ticket;
+            let key = (lane, state.next_ticket);
             state.next_ticket += 1;
             let (wake, woken) = oneshot::channel();
+            if let Some(rank) = &request.rank {
+                if rank.is_alive() && !state.ranks.iter().any(|known| known.is_scope_of(rank)) {
+                    state.ranks.push(rank.clone());
+                }
+            }
             state.queue.insert(
-                (Reverse(request.priority), ticket),
+                key,
                 Waiter {
                     priority: request.priority,
                     tokens,
                     cache_key: request.cache_key,
+                    rank: request.rank.as_ref().map(RankTicket::rank),
                     wake,
                 },
             );
             self.dispatch(&mut state);
-            (ticket, woken)
+            (key, woken)
         };
         self.moved();
         let mut waiting = Waiting {
             scheduler: self,
-            ticket,
-            priority: request.priority,
+            key,
             settled: false,
         };
         let admitted = match cancel {
@@ -332,6 +388,8 @@ impl InferenceScheduler {
 
     /// Admit from the head of the queue for as long as the head can run.
     fn dispatch(&self, state: &mut State) {
+        state.ranks.retain(RankTicket::is_alive);
+        let head_rank = state.ranks.iter().map(RankTicket::rank).min();
         loop {
             let Some((&key, head)) = state.queue.iter().next() else {
                 return;
@@ -347,8 +405,18 @@ impl InferenceScheduler {
                 return;
             }
             let interactive = head.priority == InferencePriority::Interactive;
-            if !interactive && state.slots.len() > 1 && free.len() < 2 {
-                return;
+            if !interactive {
+                let for_interactive = usize::from(state.slots.len() > 1);
+                let behind_the_head = head_rank
+                    .zip(head.rank)
+                    .is_some_and(|(lowest, rank)| rank > lowest);
+                let head_has_a_slot = state.slots.iter().any(|slot| {
+                    slot.running.is_some() && slot.rank.is_some() && slot.rank == head_rank
+                });
+                let for_the_head = usize::from(behind_the_head && !head_has_a_slot);
+                if free.len() < for_interactive + 1 + for_the_head {
+                    return;
+                }
             }
             let open: Vec<usize> = free
                 .iter()
@@ -387,6 +455,7 @@ impl InferenceScheduler {
             let now = state.clock;
             if let Some(chosen) = state.slots.get_mut(slot) {
                 chosen.running = Some(waiter.tokens);
+                chosen.rank = waiter.rank;
                 chosen.last_key = waiter.cache_key;
                 chosen.last_used = now;
             }
@@ -468,8 +537,7 @@ fn choose_slot(slots: &[Slot], free: &[usize], key: Option<&str>) -> usize {
 /// cancelled, or the future dropped — the scheduler is left consistent.
 struct Waiting<'a> {
     scheduler: &'a Arc<InferenceScheduler>,
-    ticket: u64,
-    priority: InferencePriority,
+    key: QueueKey,
     settled: bool,
 }
 
@@ -479,14 +547,14 @@ impl Waiting<'_> {
     fn settle(&mut self, admitted: bool) -> Option<Grant> {
         self.settled = true;
         let mut state = self.scheduler.state.lock();
-        match state.granted.remove(&self.ticket) {
+        match state.granted.remove(&self.key.1) {
             Some(grant) if admitted => Some(grant),
             Some(grant) => {
                 self.scheduler.release(&mut state, grant);
                 None
             }
             None => {
-                state.queue.remove(&(Reverse(self.priority), self.ticket));
+                state.queue.remove(&self.key);
                 self.scheduler.moved();
                 None
             }
