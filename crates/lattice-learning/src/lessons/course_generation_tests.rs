@@ -570,9 +570,6 @@ impl LLMPort for ScriptedModel {
 }
 impl ScriptedModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
-        if prompt.starts_with(crate::lessons::teaching::contract::SYSTEM) {
-            return Ok(CONTRACT_NOTHING.into());
-        }
         self.prompts
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?
@@ -623,11 +620,6 @@ impl LLMPort for Windowed<'_> {
         Ok(true)
     }
 }
-
-/// What the scripted model answers a lesson's check against its course plan
-/// with, unless a test routes that call itself (`teaching::contract_tests`).
-pub(crate) const CONTRACT_NOTHING: &str =
-    "{\"planned\":[],\"usedBeforeTaught\":[],\"contradictions\":[],\"unseen\":[]}";
 
 /// Prefix of a scripted evidence-linking reply. How many batches a run makes
 /// and which items each holds depend on retrieval, so the reply is built from

@@ -3,9 +3,9 @@
 //! itself nor points at what the learner cannot see.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::content_verification::tests::fixture_completion;
+use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
 use crate::lessons::content_verification::Protected;
-use crate::lessons::course_generation_tests::{ScriptedModel, CONTRACT_NOTHING};
+use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::reference_collection::ReferenceCollection;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use std::sync::Mutex;
