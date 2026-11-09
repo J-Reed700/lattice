@@ -577,13 +577,24 @@ impl LearningPracticalRepository {
         uuid(session_id, "coding session")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let taken: Option<String> = sqlx::query_scalar(
-            "UPDATE learning_coding_sessions SET pending_cue_json=NULL WHERE id=? AND program_id=? AND pending_cue_json IS NOT NULL RETURNING pending_cue_json",
+            "SELECT pending_cue_json FROM learning_coding_sessions WHERE id=? AND program_id=?",
         )
         .bind(session_id)
         .bind(program_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(db)?
+        .flatten();
+        if taken.is_some() {
+            sqlx::query(
+                "UPDATE learning_coding_sessions SET pending_cue_json=NULL WHERE id=? AND program_id=?",
+            )
+            .bind(session_id)
+            .bind(program_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        }
         tx.commit().await.map_err(db)?;
         taken.as_deref().map(decode).transpose()
     }

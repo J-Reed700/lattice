@@ -854,6 +854,7 @@ async fn the_worked_solution_is_never_available_in_mock_and_only_after_a_submit_
 #[tokio::test]
 async fn the_clock_counts_open_time_only_and_a_stale_span_ends_at_the_last_event() {
     let ctx = Ctx::new().await;
+    ctx.clock.set(1_000);
     let session = ctx.start(CodingSetting::Mock).await;
     let ctx = &ctx;
     let clock = |open: bool| {
