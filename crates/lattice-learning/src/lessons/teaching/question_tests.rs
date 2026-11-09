@@ -209,3 +209,55 @@ fn a_question_finding_keeps_an_edited_citation() {
         repaired["questions"][0]["citations"]
     );
 }
+
+fn cited_lesson() -> Value {
+    let mut lesson = worked_lesson();
+    lesson["blocks"][0]["kind"] = json!("explanation");
+    lesson["blocks"][0]["citations"] = json!([]);
+    lesson
+}
+
+fn uncited(site: FindingSite) -> ReviewFinding {
+    ReviewFinding::new(
+        FindingKind::Quotation,
+        Some(site),
+        "states a detail without citing it",
+    )
+}
+
+#[test]
+fn a_quotation_finding_with_no_passage_keeps_an_appended_citation() {
+    let previous = cited_lesson();
+    let mut repaired = previous.clone();
+    repaired["blocks"][0]["citations"] =
+        json!([{"sentence":CASE,"sourceIndex":0,"quote":"ls shows the files."}]);
+    let out = kept(&previous, &repaired, uncited(FindingSite::Section(0)), &[]);
+    assert_eq!(
+        out["blocks"][0]["citations"],
+        repaired["blocks"][0]["citations"]
+    );
+}
+
+#[test]
+fn a_quotation_finding_keeps_a_citation_and_a_sentence_written_in_its_general_form() {
+    let previous = cited_lesson();
+    let mut repaired = previous.clone();
+    repaired["blocks"][0]["citations"] =
+        json!([{"sentence":CASE,"sourceIndex":0,"quote":"ls shows the files."}]);
+    repaired["blocks"][0]["body"] = json!(format!(
+        "Run ls on a file in the projects folder. {STEP_ONE} {STEP_TWO} {PROTECTED}"
+    ));
+    let protected = vec![Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: PROTECTED.into(),
+        released: false,
+    }];
+    let out = kept(
+        &previous,
+        &repaired,
+        uncited(FindingSite::Section(0)),
+        &protected,
+    );
+    assert_eq!(out["blocks"][0], repaired["blocks"][0]);
+}
