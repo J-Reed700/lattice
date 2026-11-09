@@ -148,13 +148,6 @@ pub async fn save_learning_card_draft(
             ));
         }
     }
-    if request.source_ids.len() > 24 {
-        return Err(ApiError::from(
-            lattice_core::shared::error::AppError::InvalidInput(
-                "A card may cite no more than 24 sources.".into(),
-            ),
-        ));
-    }
     let repo = LearningRepository::new(container.db_pool().clone());
     repo.save_manual_draft(&request)
         .await

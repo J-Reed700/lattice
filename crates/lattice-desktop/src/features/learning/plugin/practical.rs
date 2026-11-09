@@ -180,15 +180,10 @@ pub async fn generate_learning_practical_activity(
             ));
         }
     }
-    if request.allowed_aids.len() > 24
-        || request
-            .allowed_aids
-            .iter()
-            .any(|aid| aid.trim().is_empty() || aid.chars().count() > 160)
-    {
+    if request.allowed_aids.iter().any(|aid| aid.trim().is_empty()) {
         return Err(ApiError::from(
             lattice_core::shared::error::AppError::InvalidInput(
-                "Practical aid descriptions must be bounded.".into(),
+                "Practical aid descriptions must not be empty.".into(),
             ),
         ));
     }
