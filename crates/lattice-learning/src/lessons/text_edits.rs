@@ -250,7 +250,10 @@ fn field_value(
             }
             let mut alone = text.to_owned();
             alone.replace_range(start..start + before.len(), after);
-            if let Some(sentence) = repeats::gained_repeat(text, &alone, lesson) {
+            let repeated = repeats::teaches_path(path)
+                .then(|| repeats::gained_repeat(text, &alone, lesson))
+                .flatten();
+            if let Some(sentence) = repeated {
                 return Err((
                     index,
                     format!("edit {index} to {path} adds a sentence the lesson already has: \"{sentence}\". Reword it or leave it out."),
