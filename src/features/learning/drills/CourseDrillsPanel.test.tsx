@@ -589,7 +589,7 @@ describe('the recent drills', () => {
     expect(api.courseDrills).toHaveBeenCalledTimes(1);
 
     serve({ recent: [recentAttempt()] });
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
+    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
     expect(await screen.findByRole('heading', { name: 'Recent drills' })).toBeVisible();
     expect(api.courseDrills).toHaveBeenCalledTimes(2);
   });
@@ -1306,7 +1306,7 @@ describe('naming the lesson and leaving a drill', () => {
     const { user } = show();
     await clickStart(user);
     await screen.findByText('Writing a drill for you, usually a minute or two');
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
+    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
     expect(screen.queryByText('Writing a drill for you, usually a minute or two')).not.toBeInTheDocument();
   });
@@ -1327,7 +1327,7 @@ describe('naming the lesson and leaving a drill', () => {
     const { user } = show();
     await openRecent(user);
     await screen.findByText('Opening your review…');
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
+    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
   });
 
@@ -1339,7 +1339,7 @@ describe('naming the lesson and leaving a drill', () => {
     await comment(user, 'Something.');
     await user.click(screen.getByRole('button', { name: 'Submit review' }));
     await screen.findByText('Grading your review…');
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
+    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
     expect(screen.queryByText('Grading your review…')).not.toBeInTheDocument();
   });
@@ -1350,7 +1350,7 @@ describe('naming the lesson and leaving a drill', () => {
     const { user } = show();
     await openRecent(user);
     await screen.findByText('Revealed attempt-1');
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
+    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
     expect(screen.queryByTestId('reveal')).not.toBeInTheDocument();
   });
@@ -1361,7 +1361,7 @@ describe('naming the lesson and leaving a drill', () => {
     await startDrill(user);
     await comment(user, 'Not atomic.');
     serve({ recent: [recentAttempt()] });
-    await user.click(screen.getByRole('button', { name: 'Review drills' }));
+    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
 
     const item = await screen.findByRole('button', { name: /A rate limiter/ });
     expect(within(item).getByText('Continue')).toBeVisible();

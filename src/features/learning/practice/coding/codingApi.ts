@@ -1,4 +1,3 @@
-import { invoke } from '@tauri-apps/api/core';
 import type {
   LearningLabFile,
   LearningPracticalFileDto,
@@ -6,6 +5,7 @@ import type {
   LearningSimulationTurnDto,
   StudyRating,
 } from '@/lib/bindings';
+import { apiCall, type CommandName } from '@/shared/ipc/transport';
 
 export type CodingTask = 'problem' | 'bug_fix' | 'project';
 export type Setting = 'coached' | 'mock' | 'watched';
@@ -254,55 +254,51 @@ export interface FinishCodingSessionRequestDto {
   expectedRevision: number;
 }
 
-async function invokeLearning<T>(command: string, args?: Record<string, unknown>): Promise<T> {
-  return await invoke<T>(`plugin:learning|${command}`, args ?? {});
+async function invokeLearning<T>(
+  command: string,
+  args?: Record<string, unknown>,
+): Promise<T> {
+  const result = await apiCall<T>(command as CommandName, args);
+  if (!result.ok) {
+    throw new Error(result.error);
+  }
+  return result.data;
 }
 
 export const codingApi = {
-  startCodingBuild: async (request: StartCodingBuildRequestDto): Promise<StartedCodingBuildDto> => {
-    return invokeLearning<StartedCodingBuildDto>('start_coding_build', { request });
-  },
+  startCodingBuild: (request: StartCodingBuildRequestDto): Promise<StartedCodingBuildDto> =>
+    invokeLearning<StartedCodingBuildDto>('start_coding_build', { request }),
 
-  startCodingSession: async (request: StartCodingSessionRequestDto): Promise<CodingSessionDto> => {
-    return invokeLearning<CodingSessionDto>('start_coding_session', { request });
-  },
+  startCodingSession: (request: StartCodingSessionRequestDto): Promise<CodingSessionDto> =>
+    invokeLearning<CodingSessionDto>('start_coding_session', { request }),
 
-  getCodingSession: async (sessionId: string): Promise<CodingSessionDto> => {
-    return invokeLearning<CodingSessionDto>('get_coding_session', {
+  getCodingSession: (sessionId: string): Promise<CodingSessionDto> =>
+    invokeLearning<CodingSessionDto>('get_coding_session', {
       sessionId,
       session_id: sessionId,
-    });
-  },
+    }),
 
-  moveCodingStage: async (request: MoveCodingStageRequestDto): Promise<CodingSessionDto> => {
-    return invokeLearning<CodingSessionDto>('move_coding_stage', { request });
-  },
+  moveCodingStage: (request: MoveCodingStageRequestDto): Promise<CodingSessionDto> =>
+    invokeLearning<CodingSessionDto>('move_coding_stage', { request }),
 
-  checkCodingExample: async (request: CheckCodingExampleRequestDto): Promise<CodingExampleDto> => {
-    return invokeLearning<CodingExampleDto>('check_coding_example', { request });
-  },
+  checkCodingExample: (request: CheckCodingExampleRequestDto): Promise<CodingExampleDto> =>
+    invokeLearning<CodingExampleDto>('check_coding_example', { request }),
 
-  runCodingSession: async (request: RunCodingSessionRequestDto): Promise<CodingSessionDto> => {
-    return invokeLearning<CodingSessionDto>('run_coding_session', { request });
-  },
+  runCodingSession: (request: RunCodingSessionRequestDto): Promise<CodingSessionDto> =>
+    invokeLearning<CodingSessionDto>('run_coding_session', { request }),
 
-  askCodingHint: async (request: AskCodingHintRequestDto): Promise<CodingSessionDto> => {
-    return invokeLearning<CodingSessionDto>('ask_coding_hint', { request });
-  },
+  askCodingHint: (request: AskCodingHintRequestDto): Promise<CodingSessionDto> =>
+    invokeLearning<CodingSessionDto>('ask_coding_hint', { request }),
 
-  sendCodingTurn: async (request: SendCodingTurnRequestDto): Promise<CodingSessionDto> => {
-    return invokeLearning<CodingSessionDto>('send_coding_turn', { request });
-  },
+  sendCodingTurn: (request: SendCodingTurnRequestDto): Promise<CodingSessionDto> =>
+    invokeLearning<CodingSessionDto>('send_coding_turn', { request }),
 
-  observeCodingDraft: async (request: ObserveCodingDraftRequestDto): Promise<CodingSessionDto> => {
-    return invokeLearning<CodingSessionDto>('observe_coding_draft', { request });
-  },
+  observeCodingDraft: (request: ObserveCodingDraftRequestDto): Promise<CodingSessionDto> =>
+    invokeLearning<CodingSessionDto>('observe_coding_draft', { request }),
 
-  setCodingClock: async (request: SetCodingClockRequestDto): Promise<CodingSessionDto> => {
-    return invokeLearning<CodingSessionDto>('set_coding_clock', { request });
-  },
+  setCodingClock: (request: SetCodingClockRequestDto): Promise<CodingSessionDto> =>
+    invokeLearning<CodingSessionDto>('set_coding_clock', { request }),
 
-  finishCodingSession: async (request: FinishCodingSessionRequestDto): Promise<CodingSessionDto> => {
-    return invokeLearning<CodingSessionDto>('finish_coding_session', { request });
-  },
+  finishCodingSession: (request: FinishCodingSessionRequestDto): Promise<CodingSessionDto> =>
+    invokeLearning<CodingSessionDto>('finish_coding_session', { request }),
 };

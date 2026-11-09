@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState, useEffect } from "react";
+import { useMemo, useRef, useState, useEffect } from "react";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
 import { Play, Users } from "lucide-react";
@@ -42,7 +42,7 @@ export function SimulationPanel({
   session: LearningSimulationSessionDto | null;
   onSession: (session: LearningSimulationSessionDto) => void;
   onRestart?: () => void;
-}): JSX.Element {
+}) {
   const api = useApi();
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const client = useQueryClient();

@@ -4,7 +4,6 @@ import { draftOf, fingerprintOf, responseOf, type ItemDraft } from '@/features/l
 import { newOperationId, useSaveQuizResponse } from '@/features/learning/quizzes/useQuizzes';
 import type { LearningAssessmentFormDto, SaveLearningAssessmentResponseRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
-import { isConflictError } from '@/features/learning/practice/shared/useAutosave';
 
 export type SaveState = 'saved' | 'saving' | 'unsaved' | 'error';
 
@@ -14,7 +13,7 @@ function message(error: unknown) {
   return error instanceof Error ? error.message : 'Your answer could not be saved.';
 }
 
-const isConflict = (error: unknown) => isConflictError(error) || /changed|revision|conflict|reload and retry/i.test(message(error));
+const isConflict = (error: unknown) => /changed|revision|conflict|reload and retry/i.test(message(error));
 
 function draftsOf(form: LearningAssessmentFormDto) {
   return Object.fromEntries(form.items.map((item) => [item.id, draftOf(item)]));

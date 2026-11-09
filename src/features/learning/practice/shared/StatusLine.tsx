@@ -4,6 +4,7 @@ import { AlertCircle, CheckCircle2, Inbox, Info, Loader2, RotateCcw } from 'luci
 import { cn } from '@/lib/utils';
 
 export type StatusTone = 'busy' | 'info' | 'success' | 'error';
+export type VoicePhase = 'off' | 'starting' | 'listening' | 'hearing' | 'transcribing' | 'thinking' | 'speaking';
 
 export interface StatusLineProps {
   tone?: StatusTone;
@@ -28,7 +29,7 @@ export function StatusLine({
   className,
   retryLabel,
   retryAriaLabel,
-}: StatusLineProps): JSX.Element | null {
+}: StatusLineProps) {
   const effectiveTone: StatusTone | null = tone ?? (error ? 'error' : busy ? 'busy' : children ? 'info' : null);
   const content = children ?? error ?? busy;
 
@@ -109,7 +110,7 @@ export function StatusLine({
 /**
  * Centered accessible loading placeholder for practice panels and attempts.
  */
-export function PracticeLoadingState({ label }: { label: string }): JSX.Element {
+export function PracticeLoadingState({ label }: { label: string }) {
   return (
     <div
       role="status"
@@ -137,7 +138,7 @@ export function PracticeEmptyState({
   description?: string;
   children?: React.ReactNode;
   action?: React.ReactNode;
-}): JSX.Element {
+}) {
   const body = children ?? description;
   return (
     <div className="flex min-h-[160px] flex-col items-center justify-center gap-2 rounded-xl border border-border-subtle bg-surface p-6 text-center">

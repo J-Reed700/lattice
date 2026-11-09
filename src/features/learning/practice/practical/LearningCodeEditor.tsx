@@ -8,7 +8,7 @@ import { EditorView, keymap } from '@codemirror/view';
 import { basicSetup } from 'codemirror';
 import { Search } from 'lucide-react';
 
-import { isMacOS } from '@/config/shortcuts';
+
 import { codeHighlighting } from '@/lib/code/highlight';
 import { PLAIN_TEXT_LABEL, resolveLanguage, type CodeLanguage } from '@/lib/code/languages';
 import { fillLanguageSlot, languageSlot } from '@/lib/code/languageSlot';
@@ -32,6 +32,8 @@ export interface LearningCodeEditorProps {
   showPath?: boolean;
   /** Runs when the learner presses Mod-Enter (Cmd-Enter on macOS). */
   onRunShortcut?: () => void;
+  /** Alias for onRunShortcut. */
+  onRun?: () => void;
 }
 
 const externalDocumentSync = Annotation.define<boolean>();
@@ -101,6 +103,16 @@ function buildExtensions(language: CodeLanguage | null, readOnly: boolean, onCha
   ];
 }
 
+
+
+function isMacPlatform(): boolean {
+  if (typeof navigator === 'undefined') return false;
+  const platform = (navigator.platform || '').toUpperCase();
+  if (platform.includes('MAC')) return true;
+  const userAgent = (navigator.userAgent || '').toUpperCase();
+  return userAgent.includes('MACINTOSH') || userAgent.includes('MAC OS X');
+}
+
 /** A small, fully local CodeMirror editor for Learning Studio files. */
 export function LearningCodeEditor({
   path,
@@ -111,10 +123,12 @@ export function LearningCodeEditor({
   minHeight = 300,
   showPath = true,
   onRunShortcut,
+  onRun,
 }: LearningCodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const latestPropsRef = useRef({ onChange, onRunShortcut, ariaLabel });
+  const effectiveRun = onRun ?? onRunShortcut;
+  const latestPropsRef = useRef({ onChange, onRunShortcut: effectiveRun, ariaLabel });
   const activePathRef = useRef(path);
   const activeAriaLabelRef = useRef(ariaLabel);
   const pathGenerationRef = useRef(0);
@@ -122,7 +136,7 @@ export function LearningCodeEditor({
   const languageRef = useRef(activeLanguage);
   const readOnlyRef = useRef(readOnly);
 
-  latestPropsRef.current = { onChange, onRunShortcut, ariaLabel };
+  latestPropsRef.current = { onChange, onRunShortcut: effectiveRun, ariaLabel };
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -215,7 +229,9 @@ export function LearningCodeEditor({
     }
   }, [activeLanguage, ariaLabel, path, readOnly, value]);
 
-  const isMac = typeof window !== 'undefined' && isMacOS();
+
+
+  const isMac = typeof window !== 'undefined' && isMacPlatform();
   const modLabel = isMac ? '⌘' : 'Ctrl+';
 
   return (

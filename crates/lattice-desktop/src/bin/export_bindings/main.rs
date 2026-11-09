@@ -234,9 +234,6 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::regrade_code_review,
             lattice::features::learning::plugin::code_review_languages,
             lattice::features::learning::plugin::course_drills,
-            lattice::features::learning::plugin::get_learning_practice_profile,
-            lattice::features::learning::plugin::save_learning_practice_profile,
-            lattice::features::learning::plugin::start_coding_build,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,

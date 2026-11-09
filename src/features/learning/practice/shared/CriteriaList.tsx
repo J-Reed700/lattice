@@ -54,7 +54,7 @@ export interface CriteriaListProps {
   className?: string;
 }
 
-export function OutcomeBadge({ outcome }: { outcome: Outcome }): JSX.Element {
+export function OutcomeBadge({ outcome }: { outcome: Outcome }) {
   switch (outcome.kind) {
     case 'points': {
       const full = outcome.points >= outcome.maxPoints;
@@ -168,7 +168,7 @@ export function CriteriaList({
   note,
   footer,
   className = '',
-}: CriteriaListProps): JSX.Element {
+}: CriteriaListProps) {
   const effectiveTitle = title ?? heading;
   const effectiveFooter = footer ?? note;
   const HeadingTag = `h${headingLevel}` as const;

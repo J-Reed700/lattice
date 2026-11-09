@@ -1,3 +1,4 @@
+import { newId } from '@/lib/api';
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { isConflictError } from '@/features/learning/practice/shared/useAutosave';
@@ -42,13 +43,6 @@ export interface UsePracticeSessionOptions {
   embedded?: boolean;
 }
 
-function newId() {
-  if (typeof crypto !== 'undefined' && 'randomUUID' in crypto) return crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-    const r = (Math.random() * 16) | 0;
-    return (c === 'x' ? r : (r & 0x3) | 0x8).toString(16);
-  });
-}
 
 export function isConflict(error: unknown): boolean {
   if (isConflictError(error)) return true;

@@ -1,24 +1,13 @@
 import { useMemo, useRef, useState } from 'react';
 
-import { Clock3, Copy, History, Save, Sparkles } from 'lucide-react';
+import { Clock3, Copy, History, RotateCcw, Save, Sparkles } from 'lucide-react';
 
-import {
-  useDecideLearningRecallDuplicate,
-  useLearningRecallV2,
-  useReviewLearningRecallCard,
-  useSaveLearningRecallCard,
-} from '@/features/learning/portability/useLearningPortability';
-import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
-import { useRetryAction } from '@/features/learning/practice/shared/useRetryAction';
+
+import { useDecideLearningRecallDuplicate, useLearningRecallV2, useReviewLearningRecallCard, useSaveLearningRecallCard } from '@/features/learning/portability/useLearningPortability';
 import { CardText, cardPreview } from '@/features/learning/recall/CardText';
 import { SpacedRepetitionCurve } from '@/features/learning/recall/SpacedRepetitionCurve';
 import { useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
-import type {
-  LearningRecallCardDto,
-  LearningRecallCardFormat,
-  LearningRecallContentDto,
-  StudyRating,
-} from '@/lib/bindings';
+import type { LearningRecallCardDto, LearningRecallCardFormat, LearningRecallContentDto, StudyRating } from '@/lib/bindings';
 
 const formats: { value: LearningRecallCardFormat; label: string; help: string }[] = [
   { value: 'multiple_choice', label: 'Multiple choice', help: 'Choose one answer from two to eight distinct options.' },
@@ -28,11 +17,7 @@ const formats: { value: LearningRecallCardFormat; label: string; help: string }[
   { value: 'code_prediction', label: 'Code prediction', help: 'Predict the output or state change of a code fragment.' },
   { value: 'reconstruction', label: 'Reconstruction', help: 'Rebuild a sequence, process, or artifact from its parts.' },
 ];
-
-const emptyContent = (): LearningRecallContentDto => ({
-  prompt: '', answer: '', explanation: '', options: [], correctOptionIndex: null, language: null, clozeDeletions: [],
-});
-
+const emptyContent = (): LearningRecallContentDto => ({ prompt: '', answer: '', explanation: '', options: [], correctOptionIndex: null, language: null, clozeDeletions: [] });
 function uuid() {
   if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
   return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
@@ -40,11 +25,7 @@ function uuid() {
     return (char === 'x' ? random : (random & 3) | 8).toString(16);
   });
 }
-
-function formatName(format: LearningRecallCardFormat) {
-  return formats.find((item) => item.value === format)?.label ?? format.replace(/_/g, ' ');
-}
-
+function formatName(format: LearningRecallCardFormat) { return formats.find((item) => item.value === format)?.label ?? format.replace(/_/g, ' '); }
 function maskCloze(prompt: string, deletions: string[]) {
   return deletions.filter(Boolean).reduce((text, deletion) => text.split(deletion).join('＿＿＿＿'), prompt);
 }
@@ -55,7 +36,6 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
   const saveCard = useSaveLearningRecallCard(programId);
   const decideDuplicate = useDecideLearningRecallDuplicate(programId);
   const reviewCard = useReviewLearningRecallCard(programId);
-
   const [selectedId, setSelectedId] = useState('');
   const [editorOpen, setEditorOpen] = useState(false);
   const [format, setFormat] = useState<LearningRecallCardFormat>('question_answer');
@@ -63,51 +43,24 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
   const [sourceIds, setSourceIds] = useState<string[]>([]);
   const [changeReason, setChangeReason] = useState('');
   const [revealedId, setRevealedId] = useState('');
+  // What the learner wrote from memory before revealing each due card.
   const [attempts, setAttempts] = useState<Record<string, string>>({});
   const [selectedReviewOptions, setSelectedReviewOptions] = useState<Record<string, number>>({});
   const [resultMessage, setResultMessage] = useState('');
   const [error, setError] = useState('');
-
-  const { retryAction, setRetryAction, clearRetry, runRetry } = useRetryAction();
+  const [retryAction, setRetryAction] = useState<{ label: string; run: () => void } | null>(null);
   const retry = useRef<Record<string, { key: string; request: Record<string, unknown> }>>({});
-
   const data = query.data;
   const cards = data?.cards ?? [];
   const selectedCard = cards.find((card) => card.id === selectedId) ?? null;
-  const sourceOptions = useMemo(
-    () =>
-      (sourceQuery.data?.sources ?? []).flatMap((source) =>
-        source.versions.map((version) => ({
-          id: version.id, title: version.title, number: version.versionNumber, sourceId: source.id,
-          removed: Boolean((source as { deletedAt?: number | null }).deletedAt),
-        })),
-      ),
-    [sourceQuery.data?.sources],
-  );
-
+  const sourceOptions = useMemo(() => (sourceQuery.data?.sources ?? []).flatMap((source) => source.versions.map((version) => ({ id: version.id, title: version.title, number: version.versionNumber, sourceId: source.id, removed: Boolean((source as { deletedAt?: number | null }).deletedAt) }))), [sourceQuery.data?.sources]);
   const dueCards = cards.filter((card) => card.scheduler.dueAt <= Date.now());
   const authoredOptions = content.options.map((option) => option.trim()).filter(Boolean);
-  const multipleChoiceReady =
-    authoredOptions.length >= 2 &&
-    authoredOptions.length <= 8 &&
-    new Set(authoredOptions.map((option) => option.toLocaleLowerCase())).size === authoredOptions.length &&
-    content.correctOptionIndex != null &&
-    Boolean(content.options[content.correctOptionIndex]?.trim());
+  const multipleChoiceReady = authoredOptions.length >= 2 && authoredOptions.length <= 8 && new Set(authoredOptions.map((option) => option.toLocaleLowerCase())).size === authoredOptions.length && content.correctOptionIndex != null && Boolean(content.options[content.correctOptionIndex]?.trim());
 
-  const startNew = () => {
-    setSelectedId(''); setFormat('question_answer'); setContent(emptyContent());
-    setSourceIds([]); setChangeReason(''); setEditorOpen(true); setError(''); clearRetry();
-  };
-
-  const editCard = (card: LearningRecallCardDto) => {
-    setSelectedId(card.id); setFormat(card.format);
-    setContent({ ...card.content, options: [...card.content.options], clozeDeletions: [...card.content.clozeDeletions] });
-    setSourceIds([...card.sourceVersionIds]); setChangeReason(''); setEditorOpen(true); setError(''); clearRetry();
-  };
-
-  const updateContent = (key: keyof LearningRecallContentDto, value: string) =>
-    setContent((current) => ({ ...current, [key]: value }));
-
+  const startNew = () => { setSelectedId(''); setFormat('question_answer'); setContent(emptyContent()); setSourceIds([]); setChangeReason(''); setEditorOpen(true); setError(''); };
+  const editCard = (card: LearningRecallCardDto) => { setSelectedId(card.id); setFormat(card.format); setContent({ ...card.content, options: [...card.content.options], clozeDeletions: [...card.content.clozeDeletions] }); setSourceIds([...card.sourceVersionIds]); setChangeReason(''); setEditorOpen(true); setError(''); };
+  const updateContent = (key: keyof LearningRecallContentDto, value: string) => setContent((current) => ({ ...current, [key]: value }));
   const changeFormat = (nextFormat: LearningRecallCardFormat) => {
     setFormat(nextFormat);
     setContent((current) => ({
@@ -118,46 +71,22 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
       clozeDeletions: nextFormat === 'cloze' ? current.clozeDeletions : [],
     }));
   };
-
-  const toggleSource = (versionId: string) =>
-    setSourceIds((current) =>
-      current.includes(versionId) ? current.filter((id) => id !== versionId) : [...current, versionId],
-    );
+  const toggleSource = (versionId: string) => setSourceIds((current) => current.includes(versionId) ? current.filter((id) => id !== versionId) : [...current, versionId]);
 
   const save = async () => {
-    const optionEntries =
-      format === 'multiple_choice'
-        ? content.options.map((value, originalIndex) => ({ value: value.trim(), originalIndex })).filter((entry) => entry.value)
-        : [];
+    const optionEntries = format === 'multiple_choice' ? content.options.map((value, originalIndex) => ({ value: value.trim(), originalIndex })).filter((entry) => entry.value) : [];
     const options = optionEntries.map((entry) => entry.value);
-    const correctOptionIndex =
-      format === 'multiple_choice' && content.correctOptionIndex != null
-        ? optionEntries.findIndex((entry) => entry.originalIndex === content.correctOptionIndex) : -1;
-    const normalized: LearningRecallContentDto = {
-      ...content, prompt: content.prompt.trim(), answer: content.answer.trim(), explanation: content.explanation.trim(),
-      options, correctOptionIndex: correctOptionIndex >= 0 ? correctOptionIndex : null,
-      language: format === 'code_prediction' ? content.language?.trim() || null : null,
-      clozeDeletions: format === 'cloze' ? content.clozeDeletions.map((value) => value.trim()).filter(Boolean) : [],
-    };
-    const cardId = selectedCard?.id ?? (retry.current.save?.request.cardId as string | undefined) ?? uuid();
-    const payload = {
-      programId, cardId, expectedContentRevision: selectedCard?.contentRevision ?? null,
-      format, content: normalized, sourceVersionIds: sourceIds,
-      changeReason: changeReason.trim() || (selectedCard ? 'Learner revision' : 'Learner-authored card'),
-    };
+    const correctOptionIndex = format === 'multiple_choice' && content.correctOptionIndex != null ? optionEntries.findIndex((entry) => entry.originalIndex === content.correctOptionIndex) : -1;
+    const normalized: LearningRecallContentDto = { ...content, prompt: content.prompt.trim(), answer: content.answer.trim(), explanation: content.explanation.trim(), options, correctOptionIndex: correctOptionIndex >= 0 ? correctOptionIndex : null, language: format === 'code_prediction' ? content.language?.trim() || null : null, clozeDeletions: format === 'cloze' ? content.clozeDeletions.map((value) => value.trim()).filter(Boolean) : [] };
+    const cardId = selectedCard?.id ?? retry.current.save?.request.cardId as string | undefined ?? uuid();
+    const payload = { programId, cardId, expectedContentRevision: selectedCard?.contentRevision ?? null, format, content: normalized, sourceVersionIds: sourceIds, changeReason: changeReason.trim() || (selectedCard ? 'Learner revision' : 'Learner-authored card') };
     const key = JSON.stringify(payload);
     let entry = retry.current.save;
     if (entry?.key !== key) entry = { key, request: { ...payload, operationId: uuid() } };
     retry.current.save = entry;
-
-    setError(''); setResultMessage(''); clearRetry();
-    try {
-      await saveCard.mutateAsync(entry.request as never);
-      delete retry.current.save; setEditorOpen(false); setResultMessage('Card version saved.');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The card could not be saved.');
-      setRetryAction({ label: 'Retry card save', run: () => { void save(); } });
-    }
+    setError(''); setResultMessage(''); setRetryAction(null);
+    try { await saveCard.mutateAsync(entry.request as never); delete retry.current.save; setEditorOpen(false); setResultMessage('Card version saved.'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'The card could not be saved.'); setRetryAction({ label: 'Retry card save', run: () => { void save(); } }); }
   };
 
   const decide = async (suggestionId: string, accept: boolean) => {
@@ -166,340 +95,56 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
     let entry = retry.current[`duplicate:${suggestionId}`];
     if (entry?.key !== key) entry = { key, request: { ...payload, operationId: uuid() } };
     retry.current[`duplicate:${suggestionId}`] = entry;
-
-    setError(''); clearRetry();
-    try {
-      await decideDuplicate.mutateAsync(entry.request as never);
-      delete retry.current[`duplicate:${suggestionId}`];
-      setResultMessage(accept ? 'Duplicate suggestion confirmed.' : 'Duplicate suggestion dismissed.');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The duplicate decision could not be saved.');
-      setRetryAction({ label: 'Retry duplicate decision', run: () => { void decide(suggestionId, accept); } });
-    }
+    setError(''); setRetryAction(null);
+    try { await decideDuplicate.mutateAsync(entry.request as never); delete retry.current[`duplicate:${suggestionId}`]; setResultMessage(accept ? 'Duplicate suggestion confirmed.' : 'Duplicate suggestion dismissed.'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'The duplicate decision could not be saved.'); setRetryAction({ label: 'Retry duplicate decision', run: () => { void decide(suggestionId, accept); } }); }
   };
 
-  const review = async (cardItem: LearningRecallCardDto, rating: StudyRating) => {
-    const payload = {
-      programId, cardId: cardItem.id, expectedReviewCount: cardItem.scheduler.reviewCount,
-      rating, selectedOption: selectedReviewOptions[cardItem.id] ?? null,
-    };
+  const review = async (card: LearningRecallCardDto, rating: StudyRating) => {
+    const payload = { programId, cardId: card.id, expectedReviewCount: card.scheduler.reviewCount, rating, selectedOption: selectedReviewOptions[card.id] ?? null };
     const key = JSON.stringify(payload);
-    let entry = retry.current[`review:${cardItem.id}`];
+    let entry = retry.current[`review:${card.id}`];
     if (entry?.key !== key) entry = { key, request: { ...payload, reviewId: uuid() } };
-    retry.current[`review:${cardItem.id}`] = entry;
-
-    setError(''); setResultMessage(''); clearRetry();
-    try {
-      await reviewCard.mutateAsync(entry.request as never);
-      delete retry.current[`review:${cardItem.id}`];
-      setRevealedId('');
-      setAttempts((current) => { const next = { ...current }; delete next[cardItem.id]; return next; });
-      setSelectedReviewOptions((current) => { const next = { ...current }; delete next[cardItem.id]; return next; });
-      setResultMessage('Review saved to this card’s schedule.');
-    } catch (cause) {
-      setError(cause instanceof Error ? cause.message : 'The review could not be recorded.');
-      setRetryAction({ label: 'Retry review', run: () => { void review(cardItem, rating); } });
-    }
+    retry.current[`review:${card.id}`] = entry;
+    setError(''); setResultMessage(''); setRetryAction(null);
+    try { await reviewCard.mutateAsync(entry.request as never); delete retry.current[`review:${card.id}`]; setRevealedId(''); setAttempts((current) => { const next = { ...current }; delete next[card.id]; return next; }); setSelectedReviewOptions((current) => { const next = { ...current }; delete next[card.id]; return next; }); setResultMessage('Review saved to this card’s schedule.'); }
+    catch (cause) { setError(cause instanceof Error ? cause.message : 'The review could not be recorded.'); setRetryAction({ label: 'Retry review', run: () => { void review(card, rating); } }); }
   };
 
   if (!active) return null;
-  if (query.isLoading) {
-    return <div role="status" className="rounded-2xl border border-border-default bg-surface p-6 text-xs text-text-muted">Loading versioned recall…</div>;
-  }
-  if (query.error) {
-    return (
-      <section className="rounded-2xl border border-border-default bg-surface p-6">
-        <h3 className="font-serif text-xl text-text-primary">Versioned recall is unavailable</h3>
-        <div className="mt-3">
-          <StatusLine error={query.error.message} onRetry={() => void query.refetch()} retryLabel="Retry" retryAriaLabel="Retry" />
-        </div>
-      </section>
-    );
-  }
+  if (query.isLoading) return <div role="status" className="rounded-2xl border border-border bg-surface p-6 text-sm text-text-muted">Loading versioned recall…</div>;
+  if (query.error) return <section className="rounded-2xl border border-border bg-surface p-6"><h3 className="font-serif text-xl text-text-primary">Versioned recall is unavailable</h3><p role="alert" className="mt-2 text-sm text-rose-700">{query.error.message}</p><button type="button" onClick={() => void query.refetch()} className="mt-3 rounded-full border border-border px-4 py-2 text-xs">Retry</button></section>;
 
-  return (
-    <div className="mt-5 space-y-4" data-testid="learning-recall-evolution">
-      <section className="rounded-2xl border border-border-default bg-surface p-4 sm:p-6">
-        <header className="flex flex-wrap items-start justify-between gap-3">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[.14em] text-accent">Versioned recall library</p>
-            <h3 className="mt-1 font-serif text-2xl text-text-primary">Cards that can evolve</h3>
-            <p className="mt-2 max-w-2xl text-xs leading-5 text-text-secondary">Cards keep immutable content versions, source-version links, and a replayable schedule history.</p>
-          </div>
-          <div className="flex gap-2">
-            <span className="rounded-full bg-surface-sunken px-3 py-2 text-xs text-text-muted">{cards.length} cards</span>
-            <span className="rounded-full bg-accent-muted px-3 py-2 text-xs font-medium text-accent">{dueCards.length} due</span>
-          </div>
-        </header>
+  return <div className="mt-5 space-y-4" data-testid="learning-recall-evolution"><section className="rounded-2xl border border-border bg-surface p-4 sm:p-6"><header className="flex flex-wrap items-start justify-between gap-3"><div><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-accent">Versioned recall library</p><h3 className="mt-1 font-serif text-2xl text-text-primary">Cards that can evolve</h3><p className="mt-2 max-w-2xl text-xs leading-5 text-text-secondary">Cards keep immutable content versions, source-version links, and a replayable schedule history.</p></div><div className="flex gap-2"><span className="rounded-full bg-background px-3 py-2 text-[10px] text-text-muted">{cards.length} cards</span><span className="rounded-full bg-accent/10 px-3 py-2 text-[10px] font-medium text-accent">{dueCards.length} due</span></div></header>
+    <div className="mt-4 rounded-xl border border-[#d7c9b8] bg-[#f2ebe2] p-3 text-xs leading-5 text-text-secondary dark:border-white/10 dark:bg-white/5"><strong className="text-text-primary">Scheduler disclosure.</strong> {data?.schedulerDisclosure || 'Cards are scheduled with FSRS 6 and its default parameters. A review interval is not a promise or measurement of retention.'} Personal parameters are not optimized here.</div>
+    {error && <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700"><span>{error}</span>{retryAction && <button type="button" disabled={saveCard.isPending || decideDuplicate.isPending || reviewCard.isPending} onClick={retryAction.run} className="inline-flex items-center gap-1 underline"><RotateCcw size={12} />{retryAction.label}</button>}</div>}{resultMessage && <p role="status" className="mt-3 rounded-lg bg-emerald-500/10 p-3 text-xs text-emerald-800">{resultMessage}</p>}
+    <div className="mt-5 flex flex-wrap items-center justify-between gap-3"><p className="text-xs text-text-muted">Choose a format that matches how you want to practice recall.</p><button type="button" onClick={startNew} className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg"><Sparkles size={13} />Create a typed card</button></div>
+    {editorOpen && <section aria-labelledby="recall-card-editor-title" className="mt-4 rounded-xl border border-accent/25 bg-background p-3 sm:p-5"><div className="flex flex-wrap items-start justify-between gap-2"><div><p className="text-[10px] font-semibold uppercase tracking-[.13em] text-accent">{selectedCard ? `Revision ${selectedCard.contentRevision + 1}` : 'New card'}</p><h4 id="recall-card-editor-title" className="font-serif text-lg text-text-primary">Write from a source version</h4></div><span className="rounded-full bg-surface px-2.5 py-1 text-[9px] text-text-muted">Learner-authored</span></div>
+      <label className="mt-3 block text-xs font-medium text-text-secondary">Card format<select value={format} onChange={(event) => changeFormat(event.target.value as LearningRecallCardFormat)} className="mt-1.5 block w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-xs">{formats.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}</select></label><p className="mt-1 text-[10px] leading-4 text-text-muted">{formats.find((item) => item.value === format)?.help}</p>
+      <label className="mt-3 block text-xs font-medium text-text-secondary">Prompt<textarea aria-label="Card prompt" value={content.prompt} onChange={(event) => updateContent('prompt', event.target.value)} rows={3} className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5" /></label>{format !== 'multiple_choice' && <label className="mt-3 block text-xs font-medium text-text-secondary">Answer<textarea aria-label="Card answer" value={content.answer} onChange={(event) => updateContent('answer', event.target.value)} rows={2} className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5" /></label>}<label className="mt-3 block text-xs font-medium text-text-secondary">Explanation<textarea aria-label="Card explanation" value={content.explanation} onChange={(event) => updateContent('explanation', event.target.value)} rows={2} className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5" /></label>{format === 'multiple_choice' && <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,0.45fr)]"><label className="block text-xs font-medium text-text-secondary">Options · one per line<textarea aria-label="Card options" value={content.options.join('\n')} onChange={(event) => setContent((current) => ({ ...current, options: event.target.value.split('\n'), correctOptionIndex: null, answer: '' }))} rows={4} className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-xs" /></label><label className="block text-xs font-medium text-text-secondary">Correct option<select aria-label="Correct option" value={content.correctOptionIndex ?? ''} onChange={(event) => setContent((current) => { const correctOptionIndex = event.target.value === '' ? null : Number(event.target.value); return { ...current, correctOptionIndex, answer: correctOptionIndex == null ? '' : current.options[correctOptionIndex]?.trim() ?? '' }; })} className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-xs"><option value="">Choose…</option>{content.options.map((option, index) => option.trim() && <option key={`${index}:${option}`} value={index}>{index + 1}. {option.trim()}</option>)}</select></label></div>}{format === 'code_prediction' && <label className="mt-3 block text-xs font-medium text-text-secondary">Code language<input value={content.language ?? ''} onChange={(event) => updateContent('language', event.target.value)} maxLength={50} className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-xs" /></label>}{format === 'cloze' && <label className="mt-3 block text-xs font-medium text-text-secondary">Cloze deletions · one per line<textarea aria-label="Cloze deletions" value={content.clozeDeletions.join('\n')} onChange={(event) => setContent((current) => ({ ...current, clozeDeletions: event.target.value.split('\n') }))} rows={3} className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-xs" /></label>}
+      <fieldset className="mt-4 rounded-lg border border-border p-3"><legend className="px-1 text-xs font-medium text-text-primary">Saved source versions</legend>{sourceOptions.length ? <div className="max-h-36 space-y-1 overflow-auto">{sourceOptions.map((option) => <label key={option.id} className="flex min-w-0 items-start gap-2 rounded px-2 py-2 text-[10px] hover:bg-surface"><input type="checkbox" checked={sourceIds.includes(option.id)} onChange={() => toggleSource(option.id)} className="mt-0.5 accent-accent" /><span className="min-w-0 wrap-break-word text-text-secondary">{option.title} · v{option.number}{option.removed ? ' · historical' : ''}</span></label>)}</div> : <p className="text-[10px] text-text-muted">Add saved source versions before linking evidence to this card.</p>}</fieldset>
+      <label className="mt-3 block text-xs font-medium text-text-secondary">Why was this card changed?<input value={changeReason} onChange={(event) => setChangeReason(event.target.value)} maxLength={300} placeholder="Optional reason for the version history" className="mt-1 block w-full min-w-0 rounded-lg border border-border bg-surface px-3 py-2 text-xs" /></label>
+      <div className="mt-4 flex flex-wrap gap-2"><button type="button" disabled={saveCard.isPending || !content.prompt.trim() || !content.answer.trim() || (format === 'multiple_choice' && !multipleChoiceReady)} onClick={() => void save()} className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50"><Save size={13} />{saveCard.isPending ? 'Saving version…' : 'Save card version'}</button><button type="button" onClick={() => setEditorOpen(false)} className="rounded-full border border-border px-4 py-2 text-xs text-text-secondary">Cancel</button></div>{saveCard.error && <p role="alert" className="mt-2 text-xs text-rose-700">{saveCard.error.message} · Your text remains here; retrying will reuse the same operation ID.</p>}
+    </section>}
+    </section>
 
-        <div className="mt-4 rounded-xl border border-border-subtle bg-surface-sunken p-3 text-xs leading-5 text-text-secondary">
-          <strong className="text-text-primary">Scheduler disclosure.</strong> {data?.schedulerDisclosure || 'Cards are scheduled with FSRS 6 and its default parameters. A review interval is not a promise or measurement of retention.'} Personal parameters are not optimized here.
-        </div>
+    {data?.duplicates.some((item) => item.status === 'pending') && <section className="rounded-2xl border border-amber-500/20 bg-surface p-4 sm:p-5"><div className="flex items-center gap-2"><Copy size={15} className="text-amber-700" /><h4 className="font-serif text-lg text-text-primary">Possible duplicate cards</h4></div><p className="mt-1 text-xs text-text-muted">Suggestions are a prompt to review wording, not a decision about learning value.</p><div className="mt-3 space-y-2">{data.duplicates.filter((item) => item.status === 'pending').map((duplicate) => { const card = cards.find((item) => item.id === duplicate.cardId); const possible = cards.find((item) => item.id === duplicate.possibleDuplicateCardId); return <article key={duplicate.id} className="rounded-xl border border-border bg-background p-3"><div className="grid gap-2 sm:grid-cols-2"><div className="rounded-lg bg-surface p-3"><span className="text-[9px] uppercase tracking-wide text-text-muted">This card</span><p className="mt-1 text-xs text-text-primary">{card ? cardPreview(card.content.prompt) : duplicate.cardId}</p></div><div className="rounded-lg bg-surface p-3"><span className="text-[9px] uppercase tracking-wide text-text-muted">Possible match</span><p className="mt-1 text-xs text-text-primary">{possible ? cardPreview(possible.content.prompt) : duplicate.possibleDuplicateCardId}</p></div></div><p className="mt-2 text-[10px] leading-4 text-text-muted">{duplicate.reason}{duplicate.similarity != null ? ` · similarity ${duplicate.similarity.toFixed(2)}` : ''}</p><div className="mt-3 flex gap-2"><button type="button" disabled={decideDuplicate.isPending} onClick={() => void decide(duplicate.id, true)} className="rounded-full bg-accent px-3 py-2 text-[10px] font-semibold text-accent-fg">Mark as duplicate</button><button type="button" disabled={decideDuplicate.isPending} onClick={() => void decide(duplicate.id, false)} className="rounded-full border border-border px-3 py-2 text-[10px] text-text-secondary">Keep both</button></div></article>; })}</div></section>}
 
-        {error && (
-          <div className="mt-4">
-            <StatusLine error={error} onRetry={retryAction ? () => void runRetry() : undefined} retryAriaLabel={retryAction?.label} retryLabel="Try again" />
-          </div>
-        )}
-
-        {resultMessage && (
-          <p role="status" className="mt-3 rounded-lg bg-success-muted p-3 text-xs text-success-fg">{resultMessage}</p>
-        )}
-
-        <div className="mt-5 flex flex-wrap items-center justify-between gap-3">
-          <p className="text-xs text-text-muted">Choose a format that matches how you want to practice recall.</p>
-          <button type="button" onClick={startNew} className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">
-            <Sparkles size={13} />Create a typed card
-          </button>
-        </div>
-
-        {editorOpen && (
-          <section aria-labelledby="recall-card-editor-title" className="mt-4 rounded-xl border border-border-subtle bg-surface-sunken p-3 sm:p-5">
-            <div className="flex flex-wrap items-start justify-between gap-2">
-              <div>
-                <p className="text-xs font-semibold uppercase tracking-[.13em] text-accent">{selectedCard ? `Revision ${selectedCard.contentRevision + 1}` : 'New card'}</p>
-                <h4 id="recall-card-editor-title" className="font-serif text-lg text-text-primary">Write from a source version</h4>
-              </div>
-              <span className="rounded-full bg-surface px-2.5 py-1 text-xs text-text-muted">Learner-authored</span>
-            </div>
-
-            <label className="mt-3 block text-xs font-medium text-text-secondary">Card format
-              <select value={format} onChange={(event) => changeFormat(event.target.value as LearningRecallCardFormat)} className="mt-1.5 block w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs text-text-primary">
-                {formats.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
-              </select>
-            </label>
-            <p className="mt-1 text-xs leading-4 text-text-muted">{formats.find((item) => item.value === format)?.help}</p>
-
-            <label className="mt-3 block text-xs font-medium text-text-secondary">Prompt
-              <textarea aria-label="Card prompt" value={content.prompt} onChange={(event) => updateContent('prompt', event.target.value)} rows={3} className="mt-1 block w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs leading-5 text-text-primary" />
-            </label>
-
-            {format !== 'multiple_choice' && (
-              <label className="mt-3 block text-xs font-medium text-text-secondary">Answer
-                <textarea aria-label="Card answer" value={content.answer} onChange={(event) => updateContent('answer', event.target.value)} rows={2} className="mt-1 block w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs leading-5 text-text-primary" />
-              </label>
-            )}
-
-            <label className="mt-3 block text-xs font-medium text-text-secondary">Explanation
-              <textarea aria-label="Card explanation" value={content.explanation} onChange={(event) => updateContent('explanation', event.target.value)} rows={2} className="mt-1 block w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs leading-5 text-text-primary" />
-            </label>
-
-            {format === 'multiple_choice' && (
-              <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_minmax(10rem,0.45fr)]">
-                <label className="block text-xs font-medium text-text-secondary">Options · one per line
-                  <textarea aria-label="Card options" value={content.options.join('\n')} onChange={(event) => setContent((current) => ({ ...current, options: event.target.value.split('\n'), correctOptionIndex: null, answer: '' }))} rows={4} className="mt-1 block w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs text-text-primary" />
-                </label>
-                <label className="block text-xs font-medium text-text-secondary">Correct option
-                  <select aria-label="Correct option" value={content.correctOptionIndex ?? ''} onChange={(event) => setContent((current) => { const correctOptionIndex = event.target.value === '' ? null : Number(event.target.value); return { ...current, correctOptionIndex, answer: correctOptionIndex == null ? '' : current.options[correctOptionIndex]?.trim() ?? '' }; })} className="mt-1 block w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs text-text-primary">
-                    <option value="">Choose…</option>
-                    {content.options.map((option, index) => option.trim() && <option key={`${index}:${option}`} value={index}>{index + 1}. {option.trim()}</option>)}
-                  </select>
-                </label>
-              </div>
-            )}
-
-            {format === 'code_prediction' && (
-              <label className="mt-3 block text-xs font-medium text-text-secondary">Code language
-                <input value={content.language ?? ''} onChange={(event) => updateContent('language', event.target.value)} maxLength={50} className="mt-1 block w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs text-text-primary" />
-              </label>
-            )}
-
-            {format === 'cloze' && (
-              <label className="mt-3 block text-xs font-medium text-text-secondary">Cloze deletions · one per line
-                <textarea aria-label="Cloze deletions" value={content.clozeDeletions.join('\n')} onChange={(event) => setContent((current) => ({ ...current, clozeDeletions: event.target.value.split('\n') }))} rows={3} className="mt-1 block w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs text-text-primary" />
-              </label>
-            )}
-
-            <fieldset className="mt-4 rounded-lg border border-border-default p-3">
-              <legend className="px-1 text-xs font-medium text-text-primary">Saved source versions</legend>
-              {sourceOptions.length ? (
-                <div className="max-h-36 space-y-1 overflow-auto">
-                  {sourceOptions.map((option) => (
-                    <label key={option.id} className="flex min-w-0 items-start gap-2 rounded px-2 py-2 text-xs hover:bg-surface">
-                      <input type="checkbox" checked={sourceIds.includes(option.id)} onChange={() => toggleSource(option.id)} className="mt-0.5 accent-accent" />
-                      <span className="min-w-0 wrap-break-word text-text-secondary">{option.title} · v{option.number}{option.removed ? ' · historical' : ''}</span>
-                    </label>
-                  ))}
-                </div>
-              ) : (
-                <p className="text-xs text-text-muted">Add saved source versions before linking evidence to this card.</p>
-              )}
-            </fieldset>
-
-            <label className="mt-3 block text-xs font-medium text-text-secondary">Why was this card changed?
-              <input value={changeReason} onChange={(event) => setChangeReason(event.target.value)} maxLength={300} placeholder="Optional reason for the version history" className="mt-1 block w-full min-w-0 rounded-lg border border-border-default bg-surface px-3 py-2 text-xs text-text-primary" />
-            </label>
-
-            <div className="mt-4 flex flex-wrap gap-2">
-              <button type="button" disabled={saveCard.isPending || !content.prompt.trim() || !content.answer.trim() || (format === 'multiple_choice' && !multipleChoiceReady)} onClick={() => void save()} className="inline-flex items-center gap-1.5 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg disabled:opacity-50">
-                <Save size={13} />{saveCard.isPending ? 'Saving version…' : 'Save card version'}
-              </button>
-              <button type="button" onClick={() => setEditorOpen(false)} className="rounded-full border border-border-default px-4 py-2 text-xs text-text-secondary">Cancel</button>
-            </div>
-            {saveCard.error && (
-              <p role="alert" className="mt-2 text-xs text-danger-fg">{saveCard.error.message} · Your text remains here; retrying will reuse the same operation ID.</p>
-            )}
-          </section>
-        )}
-      </section>
-
-      {data?.duplicates.some((item) => item.status === 'pending') && (
-        <section className="rounded-2xl border border-warning-muted bg-surface p-4 sm:p-5">
-          <div className="flex items-center gap-2">
-            <Copy size={15} className="text-warning-fg" /><h4 className="font-serif text-lg text-text-primary">Possible duplicate cards</h4>
-          </div>
-          <p className="mt-1 text-xs text-text-muted">Suggestions are a prompt to review wording, not a decision about learning value.</p>
-          <div className="mt-3 space-y-2">
-            {data.duplicates.filter((item) => item.status === 'pending').map((duplicate) => {
-              const cardItem = cards.find((item) => item.id === duplicate.cardId);
-              const possible = cards.find((item) => item.id === duplicate.possibleDuplicateCardId);
-              return (
-                <article key={duplicate.id} className="rounded-xl border border-border-default bg-surface-sunken p-3">
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    <div className="rounded-lg bg-surface p-3">
-                      <span className="text-xs uppercase tracking-wide text-text-muted">This card</span>
-                      <p className="mt-1 text-xs text-text-primary">{cardItem ? cardPreview(cardItem.content.prompt) : duplicate.cardId}</p>
-                    </div>
-                    <div className="rounded-lg bg-surface p-3">
-                      <span className="text-xs uppercase tracking-wide text-text-muted">Possible match</span>
-                      <p className="mt-1 text-xs text-text-primary">{possible ? cardPreview(possible.content.prompt) : duplicate.possibleDuplicateCardId}</p>
-                    </div>
-                  </div>
-                  <p className="mt-2 text-xs leading-4 text-text-muted">{duplicate.reason}{duplicate.similarity != null ? ` · similarity ${duplicate.similarity.toFixed(2)}` : ''}</p>
-                  <div className="mt-3 flex gap-2">
-                    <button type="button" disabled={decideDuplicate.isPending} onClick={() => void decide(duplicate.id, true)} className="rounded-full bg-accent px-3 py-2 text-xs font-semibold text-accent-fg">Mark as duplicate</button>
-                    <button type="button" disabled={decideDuplicate.isPending} onClick={() => void decide(duplicate.id, false)} className="rounded-full border border-border-default px-3 py-2 text-xs text-text-secondary">Keep both</button>
-                  </div>
-                </article>
-              );
-            })}
-          </div>
-        </section>
-      )}
-
-      <section className="rounded-2xl border border-border-default bg-surface p-4 sm:p-5">
-        <div>
-          <p className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">Schedules</p>
-          <h4 className="font-serif text-lg text-text-primary">Where each card stands</h4>
-          <p className="mt-1 text-xs leading-5 text-text-secondary">Every card is scheduled with FSRS 6. Its reviews stay in the review history.</p>
-        </div>
-        <div className="mt-4">
-          <SpacedRepetitionCurve
-            cards={cards.map((cardItem) => ({
-              id: cardItem.id, dueAt: cardItem.scheduler.dueAt, intervalDays: cardItem.scheduler.intervalDays,
-              reviewCount: cardItem.scheduler.reviewCount, stability: cardItem.scheduler.stability,
-            }))}
-          />
-        </div>
-        <div className="mt-4 space-y-2">
-          {cards.map((cardItem) => (
-            <div key={cardItem.id} className="min-w-0 rounded-xl border border-border-default bg-surface-sunken p-3">
-              <p className="truncate text-xs font-medium text-text-primary">{cardPreview(cardItem.content.prompt)}</p>
-              <p className="mt-1 text-xs text-text-muted">
-                {formatName(cardItem.format)} · rev {cardItem.contentRevision} · {cardItem.scheduler.reviewCount} reviews · due {new Date(cardItem.scheduler.dueAt).toLocaleDateString()}
-              </p>
-              {cardItem.scheduler.stability != null && <p className="mt-1 text-xs text-accent">FSRS 6 · stability {cardItem.scheduler.stability.toFixed(1)} days</p>}
-            </div>
-          ))}
-        </div>
-        {cards.length === 0 && <p className="mt-3 rounded-lg border border-dashed border-border-default p-4 text-xs text-text-muted">Typed card versions will appear here as you author them.</p>}
-      </section>
-
-      <section className="rounded-2xl border border-border-default bg-surface p-4 sm:p-5">
-        <div className="flex items-center gap-2">
-          <Clock3 size={15} className="text-accent" /><h4 className="font-serif text-lg text-text-primary">Review and card history</h4>
-          <span className="ml-auto rounded-full bg-surface-sunken px-2.5 py-1 text-xs text-text-muted">{dueCards.length} due</span>
-        </div>
-        {dueCards.length ? (
-          <div className="mt-3 space-y-3">
-            {dueCards.map((cardItem) => (
-              <article key={cardItem.id} className="min-w-0 rounded-xl border border-border-default bg-surface-sunken p-3">
-                <div className="text-xs font-semibold uppercase tracking-[.14em] text-text-muted">{formatName(cardItem.format)} · due card</div>
-                {cardItem.format === 'code_prediction' ? (
-                  <div className="mt-2 overflow-hidden rounded-lg border border-border-default bg-surface text-text-primary">
-                    <div className="border-b border-border-subtle px-3 py-1.5 text-xs text-text-muted">{cardItem.content.language || 'Code'}</div>
-                    <pre className="overflow-x-auto whitespace-pre-wrap wrap-break-word p-3 font-mono text-xs leading-5">{cardItem.content.prompt}</pre>
-                  </div>
-                ) : (
-                  <div className="mt-2">
-                    <div className="text-xs text-text-muted">
-                      {cardItem.format === 'reverse' ? 'Recall the concept from its description' : cardItem.format === 'reconstruction' ? 'Reconstruct the sequence or artifact' : cardItem.format === 'cloze' ? `${cardItem.content.clozeDeletions.length} omission${cardItem.content.clozeDeletions.length === 1 ? '' : 's'}` : 'Recall prompt'}
-                    </div>
-                    <CardText className="mt-1 font-serif text-base leading-6 text-text-primary" text={cardItem.format === 'cloze' ? maskCloze(cardItem.content.prompt, cardItem.content.clozeDeletions) : cardItem.content.prompt} />
-                  </div>
-                )}
-                {cardItem.format === 'multiple_choice' && revealedId !== cardItem.id && (
-                  <fieldset className="mt-3 space-y-2">
-                    <legend className="sr-only">Choose a recall answer</legend>
-                    {cardItem.content.options.map((option, index) => (
-                      <label key={`${cardItem.id}:${index}`} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-xs ${selectedReviewOptions[cardItem.id] === index ? 'border-accent bg-accent-muted' : 'border-border-default bg-surface'}`}>
-                        <input type="radio" name={`recall-${cardItem.id}`} checked={selectedReviewOptions[cardItem.id] === index} onChange={() => setSelectedReviewOptions((current) => ({ ...current, [cardItem.id]: index }))} className="mt-0.5 accent-accent" />
-                        <span>{option}</span>
-                      </label>
-                    ))}
-                  </fieldset>
-                )}
-                {revealedId !== cardItem.id ? (
-                  <>
-                    {cardItem.format !== 'multiple_choice' && (
-                      <label className="mt-3 block text-xs text-text-muted">Your answer · commit to one before you look
-                        <textarea value={attempts[cardItem.id] ?? ''} onChange={(event) => setAttempts((current) => ({ ...current, [cardItem.id]: event.target.value }))} rows={2} maxLength={4000} placeholder="Type what you remember…" className="mt-1 w-full resize-y rounded-lg border border-border-default bg-surface px-3 py-2 text-xs leading-5 text-text-primary outline-hidden focus:border-accent" />
-                      </label>
-                    )}
-                    <button type="button" onClick={() => setRevealedId(cardItem.id)} className="mt-3 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">
-                      {(cardItem.format === 'multiple_choice' ? selectedReviewOptions[cardItem.id] != null : Boolean(attempts[cardItem.id]?.trim())) ? 'Check my answer' : "I don't know yet: show me"}
-                    </button>
-                  </>
-                ) : (
-                  <div className="mt-3 border-t border-border-default pt-3">
-                    {attempts[cardItem.id]?.trim() && (
-                      <div className="mb-2 rounded-lg bg-surface p-2">
-                        <div className="text-xs font-semibold uppercase tracking-[.12em] text-text-muted">Your answer</div>
-                        <p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-text-secondary">{attempts[cardItem.id].trim()}</p>
-                      </div>
-                    )}
-                    {cardItem.format === 'multiple_choice' && cardItem.content.correctOptionIndex != null && (
-                      <p className={`mb-2 rounded-lg p-2 text-xs ${selectedReviewOptions[cardItem.id] === cardItem.content.correctOptionIndex ? 'bg-success-muted text-success-fg' : 'bg-warning-muted text-warning-fg'}`}>
-                        {selectedReviewOptions[cardItem.id] === cardItem.content.correctOptionIndex ? 'Your choice matches the saved answer.' : `Saved answer: ${cardItem.content.options[cardItem.content.correctOptionIndex]}`}
-                      </p>
-                    )}
-                    <CardText className="text-sm font-medium text-text-primary" text={cardItem.content.answer} />
-                    {cardItem.format === 'cloze' && cardItem.content.clozeDeletions.length > 0 && <p className="mt-2 text-xs text-accent">Omissions: {cardItem.content.clozeDeletions.join(' · ')}</p>}
-                    {cardItem.content.explanation && <CardText className="mt-2 text-xs leading-5 text-text-secondary" text={cardItem.content.explanation} />}
-                    <div className="mt-3 flex flex-wrap gap-2">
-                      {(['again', 'hard', 'good', 'easy'] as StudyRating[]).map((rating) => (
-                        <button key={rating} type="button" disabled={reviewCard.isPending} onClick={() => void review(cardItem, rating)} className="rounded-full border border-border-default px-3.5 py-2 text-xs font-medium capitalize text-text-secondary disabled:opacity-50">
-                          {reviewCard.isPending ? 'Saving…' : rating}
-                        </button>
-                      ))}
-                    </div>
-                  </div>
-                )}
-                <details className="mt-3 border-t border-border-default pt-3">
-                  <summary className="flex cursor-pointer items-center gap-1.5 text-xs font-medium text-text-muted">
-                    <History size={12} />Content history · {cardItem.versions.length} version{cardItem.versions.length === 1 ? '' : 's'}
-                  </summary>
-                  <ol className="mt-2 space-y-2">
-                    {cardItem.versions.slice().reverse().map((version) => (
-                      <li key={`${cardItem.id}:${version.revision}`} className="rounded-lg border border-border-default p-2.5">
-                        <div className="flex flex-wrap justify-between gap-1 text-xs text-text-muted">
-                          <span>Revision {version.revision} · {formatName(version.format)}</span>
-                          <time>{Number.isFinite(version.createdAt) ? new Date(version.createdAt).toLocaleString() : 'Time unavailable'}</time>
-                        </div>
-                        <p className="mt-1 text-xs text-text-secondary">{cardPreview(version.content.prompt)}</p>
-                        <p className="mt-1 text-xs text-text-muted">{version.changeReason} · {version.sourceVersionIds.length} source versions</p>
-                      </li>
-                    ))}
-                  </ol>
-                </details>
-                <button type="button" onClick={() => editCard(cardItem)} className="mt-3 inline-flex items-center gap-1 text-xs font-semibold text-accent underline">Edit card content</button>
-              </article>
-            ))}
-          </div>
-        ) : (
-          <p className="mt-3 rounded-lg border border-dashed border-border-default p-4 text-xs text-text-muted">No cards are currently due according to their stored schedules.</p>
-        )}
-      </section>
+    <section className="rounded-2xl border border-border bg-surface p-4 sm:p-5"><div><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-text-muted">Schedules</p><h4 className="font-serif text-lg text-text-primary">Where each card stands</h4><p className="mt-1 text-xs leading-5 text-text-secondary">Every card is scheduled with FSRS 6. Its reviews stay in the review history.</p></div>
+    <div className="mt-4">
+      <SpacedRepetitionCurve
+        cards={cards.map((card) => ({
+          id: card.id,
+          dueAt: card.scheduler.dueAt,
+          intervalDays: card.scheduler.intervalDays,
+          reviewCount: card.scheduler.reviewCount,
+          stability: card.scheduler.stability,
+        }))}
+      />
     </div>
-  );
+    <div className="mt-4 space-y-2">{cards.map((card) => <div key={card.id} className="min-w-0 rounded-xl border border-border bg-background p-3"><p className="truncate text-xs font-medium text-text-primary">{cardPreview(card.content.prompt)}</p><p className="mt-1 text-[10px] text-text-muted">{formatName(card.format)} · rev {card.contentRevision} · {card.scheduler.reviewCount} reviews · due {new Date(card.scheduler.dueAt).toLocaleDateString()}</p>{card.scheduler.stability != null && <p className="mt-1 text-[9px] text-accent">FSRS 6 · stability {card.scheduler.stability.toFixed(1)} days</p>}</div>)}</div>{cards.length === 0 && <p className="mt-3 rounded-lg border border-dashed border-border p-4 text-xs text-text-muted">Typed card versions will appear here as you author them.</p>}</section>
+
+    <section className="rounded-2xl border border-border bg-surface p-4 sm:p-5"><div className="flex items-center gap-2"><Clock3 size={15} className="text-accent" /><h4 className="font-serif text-lg text-text-primary">Review and card history</h4><span className="ml-auto rounded-full bg-background px-2.5 py-1 text-[9px] text-text-muted">{dueCards.length} due</span></div>{dueCards.length ? <div className="mt-3 space-y-3">{dueCards.map((card) => <article key={card.id} className="min-w-0 rounded-xl border border-border bg-background p-3"><div className="text-[9px] font-semibold uppercase tracking-[.14em] text-text-muted">{formatName(card.format)} · due card</div>{card.format === 'code_prediction' ? <div className="mt-2 overflow-hidden rounded-lg border border-border bg-[#25221e] text-[#f0e9df]"><div className="border-b border-white/10 px-3 py-1.5 text-[9px] text-[#bcb3a8]">{card.content.language || 'Code'}</div><pre className="overflow-x-auto whitespace-pre-wrap wrap-break-word p-3 font-mono text-xs leading-5">{card.content.prompt}</pre></div> : <div className="mt-2"><div className="text-[9px] text-text-muted">{card.format === 'reverse' ? 'Recall the concept from its description' : card.format === 'reconstruction' ? 'Reconstruct the sequence or artifact' : card.format === 'cloze' ? `${card.content.clozeDeletions.length} omission${card.content.clozeDeletions.length === 1 ? '' : 's'}` : 'Recall prompt'}</div><CardText className="mt-1 font-serif text-base leading-6 text-text-primary" text={card.format === 'cloze' ? maskCloze(card.content.prompt, card.content.clozeDeletions) : card.content.prompt} /></div>}{card.format === 'multiple_choice' && revealedId !== card.id && <fieldset className="mt-3 space-y-2"><legend className="sr-only">Choose a recall answer</legend>{card.content.options.map((option, index) => <label key={`${card.id}:${index}`} className={`flex cursor-pointer items-start gap-2 rounded-lg border px-3 py-2 text-xs ${selectedReviewOptions[card.id] === index ? 'border-accent bg-accent/5' : 'border-border bg-surface'}`}><input type="radio" name={`recall-${card.id}`} checked={selectedReviewOptions[card.id] === index} onChange={() => setSelectedReviewOptions((current) => ({ ...current, [card.id]: index }))} className="mt-0.5 accent-accent" /><span>{option}</span></label>)}</fieldset>}{revealedId !== card.id ? <>{card.format !== 'multiple_choice' && <label className="mt-3 block text-[10px] text-text-muted">Your answer · commit to one before you look<textarea value={attempts[card.id] ?? ''} onChange={(event) => setAttempts((current) => ({ ...current, [card.id]: event.target.value }))} rows={2} maxLength={4000} placeholder="Type what you remember…" className="mt-1 w-full resize-y rounded-lg border border-border bg-surface px-3 py-2 text-xs leading-5 text-text-primary outline-hidden focus:border-accent" /></label>}<button type="button" onClick={() => setRevealedId(card.id)} className="mt-3 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg">{(card.format === 'multiple_choice' ? selectedReviewOptions[card.id] != null : Boolean(attempts[card.id]?.trim())) ? 'Check my answer' : "I don't know yet: show me"}</button></> : <div className="mt-3 border-t border-border pt-3">{attempts[card.id]?.trim() && <div className="mb-2 rounded-lg bg-surface p-2"><div className="text-[9px] font-semibold uppercase tracking-[.12em] text-text-muted">Your answer</div><p className="mt-1 whitespace-pre-wrap text-xs leading-5 text-text-secondary">{attempts[card.id].trim()}</p></div>}{card.format === 'multiple_choice' && card.content.correctOptionIndex != null && <p className={`mb-2 rounded-lg p-2 text-xs ${selectedReviewOptions[card.id] === card.content.correctOptionIndex ? 'bg-emerald-500/10 text-emerald-800' : 'bg-amber-500/10 text-amber-900'}`}>{selectedReviewOptions[card.id] === card.content.correctOptionIndex ? 'Your choice matches the saved answer.' : `Saved answer: ${card.content.options[card.content.correctOptionIndex]}`}</p>}<CardText className="text-sm font-medium text-text-primary" text={card.content.answer} />{card.format === 'cloze' && card.content.clozeDeletions.length > 0 && <p className="mt-2 text-[10px] text-accent">Omissions: {card.content.clozeDeletions.join(' · ')}</p>}{card.content.explanation && <CardText className="mt-2 text-xs leading-5 text-text-secondary" text={card.content.explanation} />}<div className="mt-3 flex flex-wrap gap-2">{(['again', 'hard', 'good', 'easy'] as StudyRating[]).map((rating) => <button key={rating} type="button" disabled={reviewCard.isPending} onClick={() => void review(card, rating)} className="rounded-full border border-border px-3.5 py-2 text-[10px] font-medium capitalize text-text-secondary disabled:opacity-50">{reviewCard.isPending ? 'Saving…' : rating}</button>)}</div></div>}
+        <details className="mt-3 border-t border-border pt-3"><summary className="flex cursor-pointer items-center gap-1.5 text-[10px] font-medium text-text-muted"><History size={12} />Content history · {card.versions.length} version{card.versions.length === 1 ? '' : 's'}</summary><ol className="mt-2 space-y-2">{card.versions.slice().reverse().map((version) => <li key={`${card.id}:${version.revision}`} className="rounded-lg border border-border p-2.5"><div className="flex flex-wrap justify-between gap-1 text-[9px] text-text-muted"><span>Revision {version.revision} · {formatName(version.format)}</span><time>{Number.isFinite(version.createdAt) ? new Date(version.createdAt).toLocaleString() : 'Time unavailable'}</time></div><p className="mt-1 text-[10px] text-text-secondary">{cardPreview(version.content.prompt)}</p><p className="mt-1 text-[9px] text-text-muted">{version.changeReason} · {version.sourceVersionIds.length} source versions</p></li>)}</ol></details><button type="button" onClick={() => editCard(card)} className="mt-3 inline-flex items-center gap-1 text-[10px] font-semibold text-accent underline">Edit card content</button></article>)}</div> : <p className="mt-3 rounded-lg border border-dashed border-border p-4 text-xs text-text-muted">No cards are currently due according to their stored schedules.</p>}</section>
+  </div>;
 }

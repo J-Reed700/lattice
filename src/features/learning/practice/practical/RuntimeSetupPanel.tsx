@@ -1,3 +1,5 @@
+import { newId, unwrap } from '@/lib/api';
+import { getErrorMessage } from '@/lib/errorUtils';
 import { useEffect, useRef, useState } from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -30,24 +32,8 @@ const presetActionNames: Record<(typeof presetOrder)[number], string> = {
 };
 const dockerDocsUrl = "https://docs.docker.com/desktop/";
 
-function uuid() {
-  return (
-    globalThis.crypto?.randomUUID?.() ?? "00000000-0000-4000-8000-000000000004"
-  );
-}
 
-function unwrap<T>(
-  result: { ok: true; data: T } | { ok: false; error: string },
-): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
-function errorText(error: unknown) {
-  return error instanceof Error
-    ? error.message
-    : "The request could not be completed.";
-}
 
 function presetLabel(preset: LearningRuntimePresetDto) {
   return presetActionNames[preset.id] ?? preset.name;
@@ -125,7 +111,7 @@ export function RuntimeSetupPanel({
       onWorkspace?.(nextWorkspace);
       await client.invalidateQueries({ queryKey: workspaceKey(programId) });
     },
-    onError: (error) => setSetupError(errorText(error)),
+    onError: (error) => setSetupError(getErrorMessage(error)),
   });
 
   const refreshAvailability = useMutation({
@@ -161,7 +147,7 @@ export function RuntimeSetupPanel({
     const key = `${programId}:${preset.id}:${selectedEngine}`;
     let ids = requestIds.current.get(key);
     if (!ids) {
-      ids = { operationId: uuid(), profileId: uuid() };
+      ids = { operationId: newId(), profileId: newId() };
       requestIds.current.set(key, ids);
     }
     setSetupError(null);
@@ -395,7 +381,7 @@ export function RuntimeSetupPanel({
           {catalog.isError && (
             <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3">
               <p role="alert" className="text-xs leading-5 text-rose-700 dark:text-rose-300">
-                {errorText(catalog.error)}
+                {getErrorMessage(catalog.error)}
               </p>
               <button
                 type="button"
@@ -501,7 +487,7 @@ export function RuntimeSetupPanel({
           )}
           {refreshAvailability.error && (
             <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">
-              {errorText(refreshAvailability.error)}
+              {getErrorMessage(refreshAvailability.error)}
             </p>
           )}
           {!availableEngines.length && catalog.isSuccess && (

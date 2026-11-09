@@ -25,7 +25,7 @@ interface Picked {
  * The review: the drill's files on the left, to read and pick lines from, and on the right the comment being written,
  * the comments so far, the optional fix and the hand-in.
  */
-export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back?: ReactNode }) {
+export function DrillReview({ drill }: { drill: CodeReviewDrill; back?: ReactNode }) {
   const { session, review, failure, retry } = drill;
   const [activePath, setActivePath] = useState(session?.drill.files[0]?.path ?? '');
   const [picked, setPicked] = useState<Picked | null>(null);
@@ -107,7 +107,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back?: Re
           variant="ghost"
           className="-ml-3 gap-2 text-text-secondary hover:text-text-primary"
           onClick={drill.toChoices}
-          aria-label="Review drills"
+          aria-label="Back to drill setup"
         >
           <ArrowLeft className="h-4 w-4" aria-hidden="true" />
           Back to drill setup
@@ -127,8 +127,8 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back?: Re
       <div className="border-b border-border-subtle bg-surface-sunken px-4 py-2 sm:px-6">
         <p className="text-xs font-medium text-text-secondary">
           {passage
-            ? 'Find the issues in the explanation below'
-            : 'Find the issues in the code below'}
+            ? 'Find the issues in this explanation and explain the fix for each'
+            : 'Find the issues in this snippet and explain the fix for each'}
         </p>
       </div>
 

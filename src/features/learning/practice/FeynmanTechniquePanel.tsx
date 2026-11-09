@@ -52,11 +52,11 @@ function readStored(key: string): { explanation?: string; analogy?: string; read
  * Each lesson keeps its own explanation. Choosing another lesson while the
  * panel is open starts that lesson's, rather than carrying this one over.
  */
-export function FeynmanTechniquePanel(props: FeynmanTechniquePanelProps): JSX.Element {
+export function FeynmanTechniquePanel(props: FeynmanTechniquePanelProps) {
   return <FeynmanWorkbench key={`${props.program.summary.id}:${props.lesson?.id ?? 'general'}`} {...props} />;
 }
 
-function FeynmanWorkbench({ program, lesson, module, onDraftMissedConcept }: FeynmanTechniquePanelProps): JSX.Element {
+function FeynmanWorkbench({ program, lesson, module, onDraftMissedConcept }: FeynmanTechniquePanelProps) {
   const defaultConcept = lesson?.title ?? module?.title ?? program.summary.title;
   const storageKey = `feynman_workbench_${program.summary.id}_${lesson?.id ?? 'general'}`;
   const draftKey = `feynman:${program.summary.id}:${lesson?.id ?? 'general'}`;

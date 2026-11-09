@@ -43,7 +43,7 @@ export function EmbeddedPracticeView({
   saveNow,
   onContinue,
   hints,
-}: EmbeddedPracticeViewProps): JSX.Element {
+}: EmbeddedPracticeViewProps) {
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const programId = program.summary.id;
   const lessonId = lesson?.id ?? '';
