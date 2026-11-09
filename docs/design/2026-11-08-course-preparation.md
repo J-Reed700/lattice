@@ -33,12 +33,17 @@ The writer's context is `{"curriculum": <all objectives>, "recentTeaching": <rec
 
 Five pieces. Each owns one concern, and no concern lives in two places.
 
-### 1. Intent → admission: one path
+### 1. Intent → admission: start with module 1, stay one module ahead
 
-`start_lesson_jobs(program, scope, expected_revision)` with `scope ∈ {Lesson, Module, Course}`. It generalises `start_module_jobs` (one write transaction, course order, stable per-lesson operation ids, the same `admit_job` dedupe).
+One admission core, `admit_lessons`: one write transaction, course order, a stable operation id per lesson, the same `admit_job` dedupe. Three requests use it.
 
-- **Accept** composes two intents in the UI: accept, then prepare the course with the revision accept returned. The commands stay single-purpose.
-- **"Prepare every lesson"** appears in the course header whenever an active course has unqueued, unfinished outline lessons, for example after a cancel or a failure.
+- **A lesson or a module** (`start_lesson_jobs`, #415): the learner's Prepare and "Prepare all lessons". A module request retries a stopped job of the same operation.
+- **Start this course** (was "Accept program") composes two intents in the UI: accept, then prepare module 1 at the revision accept returned. The commands stay single-purpose.
+- **One module ahead.** Opening a ready lesson of an active course calls `prepare_learning_ahead(program, lesson)`. In one BEGIN IMMEDIATE transaction it admits the untried outline lessons of that lesson's module and of the next module by ordinal.
+  - *Untried* means no lesson_preparation job of any status at the current content revision. A failed or cancelled lesson waits for the learner's own Prepare, so this path never retries.
+  - The operation id is `stable_job_operation_id(program, "ahead:{lesson}", revision)`, so reopening a lesson admits nothing new.
+
+The next module prepares while the learner studies this one, and cost follows the lessons the learner actually reaches. That is about $0.6–1 per lesson on Haiku, never beyond the current module and the next. A course of many long modules is never prepared wholesale.
 
 ### 2. The course plan: lessons compile against a header, not each other's object code
 
@@ -61,7 +66,7 @@ Cross-lesson coordination moves from outputs (recaps) to an input made before an
   - `ensure` reads the rows. Only when some are missing does it make one call. It saves every entry in one write transaction (`ON CONFLICT DO NOTHING`), then reads again.
   - It is idempotent and holds no lock: two overlapping calls both return what the first to commit saved.
   - An unreadable row is an error, never a missing one.
-- **When it is made.** A `course_plan` job runs as soon as the outline is made or repaired, so the learner sees each lesson's topics with the outline. Accepting keeps the plan, because Accept doesn't change the outline revision. A lesson job also ensures the plan before it writes, which covers courses made before this change and a plan whose job failed.
+- **When it is made.** A `course_plan` job runs as soon as the outline is made or repaired, so the learner sees each lesson's topics with the outline. Starting the course keeps the plan, because accepting doesn't change the outline revision. A lesson job also ensures the plan before it writes, which covers courses made before this change and a plan whose job failed.
 - **Single-flight.** Callers serialize on the per-course lock from piece 3. The composition root builds that lock once and gives it to both the lesson worker and the plan worker. Cost: one call per outline revision.
 - **The learner can change the topics.** Until a lesson's writer starts, the learner can:
   - edit its entry by hand;
@@ -72,6 +77,10 @@ Cross-lesson coordination moves from outputs (recaps) to an input made before an
   - the edit's write transaction checks that no running job covers the lesson;
   - the job's claim commits before the job reads the plan;
   - so an edit and a writer start serialize.
+
+  A written lesson's entry is fixed too ("This lesson is already written; its topics are fixed."). A lesson stopped mid-way and edited before its retry is written from the edited entry. Its checkpoints cannot carry the old plan through, for two reasons:
+  - A draft is reused only when its scope hash matches, and that hash covers the whole plan.
+  - A verified lesson is saved as `prepared-v2` = {plan digest, lesson}, in one write, and is reused only when the digest equals the stored plan's.
 
 Research mapping: Skeleton-of-Thought (Ning et al., 2023) expands a shared skeleton in parallel. DOC (Yang et al., ACL 2023) keeps long-form generation coherent through a detailed outline that every part conditions on. Here the course plan is the detailed outline and the lessons are its parallel expansions.
 
@@ -114,18 +123,18 @@ Consequences, with no lane count to tune:
 - **Course progress line** in the header, derived from job rows: "4 of 18 lessons ready · 2 preparing · 11 waiting · 1 needs attention" (zero parts omitted).
 - **Pace from measured history only.** "About one lesson every N min so far" is the median gap between consecutive finishes, counting only gaps where the later lesson was already queued when the earlier one finished. Idle time, such as a day between sessions or lessons prepared one at a time, never counts. The line is hidden until such a gap exists.
 - **Waiting state.** A running lesson whose current call is queued at the scheduler shows "Waiting for the model", not a frozen stage. Comes with piece 3's flip.
-- **Errors.** A failed "Prepare all/every lesson" shows its error. Today `prepareError` passes only `prepare.error`. The error shown is the one from the latest preparation action, and only on the course it was for.
+- **Errors.** A failed lesson, module, start or ahead request shows its error. Today `prepareError` passes only `prepare.error`. The error shown is the one from the latest preparation action, and only on the course it was for.
 - **Keep awake** (Josh's call, separate PR). While lesson or quiz jobs run, hold a system-required power request (Windows) or an idle-sleep-disabling activity (macOS). The display may sleep. Released when the queue is idle.
 
 ## Invariants (each one is a test)
 
-1. Preparing a course admits one job per unfinished outline lesson, in course order. Repeating the request admits nothing new.
+1. Starting a course admits module 1's unfinished outline lessons, in course order. Opening a ready lesson admits the untried outline lessons of its module and the next, in course order, and never a failed or cancelled one. Repeating either admits nothing new.
 2. A lesson's writer context is identical whether or not earlier lessons are Ready.
 3. A course plan is written once per (program, outline revision). However many callers ask, every lesson's entry comes from one answer.
 4. Two lesson jobs of one course can set up, research, save sources and publish concurrently: no duplicate source, no revision conflict, no failed refresh.
 5. Scheduler order is: Interactive > unranked > ranked by rank. A higher-rank request never takes the last free non-interactive slot while a lower rank is alive at that backend. A rank scope's drop re-dispatches waiters.
 6. Every model call made inside a ranked job carries that job's rank.
-7. A lesson's topics change only while its writer hasn't started, and the writer uses the entry as it stood when it started.
+7. A lesson's topics change only while it is an outline lesson that no running job covers. A writer uses the entry as it stood when it started. A retry after an edit writes from the edited entry, never from a draft or verified lesson made from the old one.
 
 ## Rejected
 
@@ -138,20 +147,22 @@ Consequences, with no lane count to tune:
 
 | PR | Piece | Merge |
 |---|---|---|
-| A #441 (reds #439) | Intent → admission + course progress UI + error surfacing (pieces 1, 5 minus waiting/keep-awake) | any time |
+| A #441 (reds #439) | Start this course (module 1), one module ahead, course progress UI, error surfacing (pieces 1, 5 minus waiting/keep-awake) | any time |
 | B #442 (reds #438) | Ranked admission + head reservation (piece 4) | any time |
-| C #444 (reds #443) | Course plan (piece 2) | after a Haiku course-eval A/B: plan vs recaps; adjacent lessons read by hand |
+| C #444 (reds #443) | Course plan (piece 2) | after a Haiku A/B in #450's two test apps: one outline, lessons 1–3 of module 1 prepared one after another in each arm, read by hand |
 | D #440 (reds #437) | Shared course state safety (piece 3 minus the flip) | any time; no behaviour change |
 | E #436 (reds #435) | Keep awake | any time (Josh: yes, if not intrusive; system-required only, the display may sleep) |
-| G | Topics planned with the outline, and the learner's review of them (piece 2's last two parts): a backend PR and a frontend PR, stacked on C | after C |
+| G1 #446 (reds #445, follow-up reds #449) | Topics planned with the outline: the course_plan job, get/plan/edit/change/undo, per-entry history, the edit lock, the plan digest on a verified lesson | after C |
+| G2 #447 (reds #448) | Topics under each lesson and the "Review topics" screen | after G1 |
 | F | Flip: lessons of a course side by side, the plan worker and lesson worker share the course lock, "Waiting for the model" | after B, C, D, G |
+| #450 | The A/B's two test apps (never merges) | never |
 
 ## Calls for Josh
 
-- **Accept prepares the whole course.** It costs about $0.6–1 per lesson on Haiku. The alternative is to prepare ahead of the learner by a set number of lessons, which limits cost to the lessons actually taken.
-- **Rename "Accept program" to "Start this course"**, because the button now starts preparing every lesson.
 - **A fresh install's Learning model is the first local model downloaded** (`default_learning_model`, download saga). Parallel lessons only help on a cloud model, so a tester should set Haiku as the Learning model.
 - Decided:
+  - "Start this course" prepares module 1, and opening a ready lesson keeps the course one module ahead. It never prepares the whole course: every module can be a lot of lessons.
+  - "Accept program" becomes "Start this course".
   - keep the PC awake while lessons prepare;
   - show each lesson's planned topics before it is prepared;
   - let the learner change them in the review screen's style.
