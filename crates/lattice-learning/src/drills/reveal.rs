@@ -48,6 +48,7 @@ pub fn learner_drill(stored: &StoredDrill) -> CodeReviewDrillDto {
             .map(CodeReviewFileDto::from)
             .collect(),
         lesson: lesson_of(stored),
+        issues: 0,
     }
 }
 

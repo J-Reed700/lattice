@@ -4,12 +4,13 @@ import type { CodeReviewDrillDto, DrillLessonRefDto } from '@/lib/bindings';
 
 import { drillMeta, kindOf, languageOf, materialLabel } from './drillMaterial';
 
-const code: CodeReviewDrillDto = { title: 'A limiter', material: { kind: 'code', language: 'csharp' }, files: [], lesson: null };
+const code: CodeReviewDrillDto = { title: 'A limiter', material: { kind: 'code', language: 'csharp' }, files: [], lesson: null, issues: 4 };
 const passage: CodeReviewDrillDto = {
   title: 'Why spacing helps',
   material: { kind: 'passage', sourceTitle: 'Spacing and memory' },
   files: [],
   lesson: null,
+  issues: 2,
 };
 const lesson: DrillLessonRefDto = { programId: 'course-1', lessonId: 'lesson-2', title: 'Spacing' };
 

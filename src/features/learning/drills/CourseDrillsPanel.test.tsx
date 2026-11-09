@@ -82,7 +82,7 @@ const FILES = [
   { path: 'src/limiter.py', text: 'import time\n\nclass Limiter:\n    def allow(self, key):\n        return True\n' },
   { path: 'src/store.py', text: 'DATA = {}\n' },
 ];
-const DRILL = { title: 'A rate limiter', material: { kind: 'code', language: 'python' } as const, files: FILES, lesson: null };
+const DRILL = { title: 'A rate limiter', material: { kind: 'code', language: 'python' } as const, files: FILES, lesson: null, issues: 4 };
 const LESSON = { programId: 'course-1', lessonId: 'lesson-2', title: 'Spacing' };
 const LESSON_DRILL = { ...DRILL, lesson: LESSON };
 
@@ -623,21 +623,22 @@ describe('starting a drill', () => {
     expect(localStorage.getItem('lattice.drills.language.course-1')).toBe('csharp');
   });
 
-  it('names the task above the panes with the number of issues the drill was started for', async () => {
-    api.startCourseDrill.mockResolvedValue(started());
+  it('names the task with the number of issues the drill has, not the number asked for', async () => {
+    api.startCourseDrill.mockResolvedValue(started({ drill: { ...DRILL, issues: 4 } }));
     const { user } = show();
     await screen.findByRole('option', { name: 'C#' });
     await user.click(screen.getByRole('radio', { name: /Short/ }));
     await clickStart(user);
-    expect(await screen.findByText('Find the 3 issues in this code, and say what is wrong and how to fix each.')).toBeVisible();
+    expect(await screen.findByText('Find the 4 issues in this code, and say what is wrong and how to fix each.')).toBeVisible();
+    expect(screen.queryByText(/Find the 3 issues/)).not.toBeInTheDocument();
   });
 
-  it('names the task without a number for an attempt opened from the recent drills', async () => {
-    api.codeReviewResult.mockResolvedValue(attempt());
+  it('names the task with the number of issues of an attempt opened from the recent drills', async () => {
+    api.codeReviewResult.mockResolvedValue(attempt({ drill: { ...DRILL, issues: 2 } }));
     serve({ recent: [recentAttempt()] });
     const { user } = show();
     await openRecent(user);
-    expect(await screen.findByText('Find the issues in this code, and say what is wrong and how to fix each.')).toBeVisible();
+    expect(await screen.findByText('Find the 2 issues in this code, and say what is wrong and how to fix each.')).toBeVisible();
   });
 
   it('leaves a review through "Back to drill setup", not "Review drills"', async () => {
@@ -1476,6 +1477,7 @@ describe('an explanation of the lesson’s sources', () => {
     material: { kind: 'passage', sourceTitle: 'Spacing and memory' } as const,
     files: [{ path: 'explanation.md', text: EXPLANATION }],
     lesson: null,
+    issues: 3,
   };
 
   async function choosePassage(user: User) {

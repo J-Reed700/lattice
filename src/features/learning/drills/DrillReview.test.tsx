@@ -24,6 +24,7 @@ const CODE_DRILL: CodeReviewDrillDto = {
   material: { kind: 'code', language: 'python' },
   files: [{ path: 'limiter.py', text: 'class RateLimiter:\n    def allow(self):\n        return True\n' }],
   lesson: null,
+  issues: 4,
 };
 
 const PASSAGE_DRILL: CodeReviewDrillDto = {
@@ -31,6 +32,7 @@ const PASSAGE_DRILL: CodeReviewDrillDto = {
   material: { kind: 'passage', sourceTitle: 'Spacing effect' },
   files: [{ path: 'explanation.md', text: 'Spaced practice improves recall.' }],
   lesson: null,
+  issues: 3,
 };
 
 function sessionOf(patch: Partial<Session> = {}): Session {
@@ -85,23 +87,23 @@ describe('DrillReview', () => {
   });
 
   it('names how many issues to find and what to do about each, above the panes', () => {
-    render(<DrillReview drill={drillOf(sessionOf({ issues: 4 }))} back={back} />);
+    render(<DrillReview drill={drillOf(sessionOf({ drill: { ...CODE_DRILL, issues: 4 } }))} back={back} />);
     expect(screen.getByText('Find the 4 issues in this code, and say what is wrong and how to fix each.')).toBeVisible();
   });
 
-  it('says issues, not errors, of one issue', () => {
-    render(<DrillReview drill={drillOf(sessionOf({ issues: 1 }))} back={back} />);
-    expect(screen.getByText('Find the 1 issue in this code, and say what is wrong and how to fix it.')).toBeVisible();
+  it('says the issue, with no number, when there is one', () => {
+    render(<DrillReview drill={drillOf(sessionOf({ drill: { ...CODE_DRILL, issues: 1 } }))} back={back} />);
+    expect(screen.getByText('Find the issue in this code, and say what is wrong and how to fix it.')).toBeVisible();
   });
 
   it('asks for errors in an explanation', () => {
-    render(<DrillReview drill={drillOf(sessionOf({ drill: PASSAGE_DRILL, issues: 3 }))} back={back} />);
+    render(<DrillReview drill={drillOf(sessionOf({ drill: PASSAGE_DRILL }))} back={back} />);
     expect(screen.getByText('Find the 3 errors in this explanation, and say what is wrong and how to fix each.')).toBeVisible();
   });
 
-  it('gives the task without a number for an attempt reopened later, when the count is not known', () => {
-    render(<DrillReview drill={drillOf(sessionOf())} back={back} />);
-    expect(screen.getByText('Find the issues in this code, and say what is wrong and how to fix each.')).toBeVisible();
+  it('says the error, with no number, of an explanation with one', () => {
+    render(<DrillReview drill={drillOf(sessionOf({ drill: { ...PASSAGE_DRILL, issues: 1 } }))} back={back} />);
+    expect(screen.getByText('Find the error in this explanation, and say what is wrong and how to fix it.')).toBeVisible();
   });
 
   it('shows the clock with its time limit as the soft limit when timed, and none when practising', () => {

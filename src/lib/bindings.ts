@@ -5340,7 +5340,11 @@ export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDt
  * The lesson the drill was built from, while it exists; none for a drill from before drills were built from
  * lessons.
  */
-lesson: DrillLessonRefDto | null }
+lesson: DrillLessonRefDto | null;
+/**
+ * How many issues were planted: the number the learner is asked to find, and the one the score counts against.
+ */
+issues: number }
 /**
  * One file of a drill, as the learner reads it or leaves it.
  */
