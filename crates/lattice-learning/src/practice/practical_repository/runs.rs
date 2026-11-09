@@ -156,7 +156,9 @@ impl LearningPracticalRepository {
         let activity =
             Self::internal_activity(&mut tx, &request.program_id, &request.activity_id).await?;
         if activity.revision != request.expected_activity_revision {
-            return Err(invalid("Practical activity changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "Practical activity changed; reload and retry.".into(),
+            ));
         }
         if activity.runtime_profile_id.is_some() && !activity.runtime_enabled {
             return Err(AppError::ServiceNotAvailable(

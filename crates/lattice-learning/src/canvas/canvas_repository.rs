@@ -290,7 +290,7 @@ impl LearningCanvasRepository {
             .bind(request.title.trim()).bind(request.description.trim()).bind(&scene.json).bind(scene.element_count as i64).bind(next).bind(now()).bind(&request.program_id).bind(&request.canvas_id).bind(request.expected_revision)
             .execute(&mut *tx).await.map_err(db)?;
         if result.rows_affected() != 1 {
-            return Err(AppError::InvalidInput(
+            return Err(AppError::Conflict(
                 "Canvas changed; reload and retry.".into(),
             ));
         }
@@ -346,7 +346,7 @@ impl LearningCanvasRepository {
         let row = canvas_for_update(&mut tx, &request.program_id, &request.canvas_id).await?;
         let revision: i64 = row.get("revision");
         if revision != request.expected_revision {
-            return Err(AppError::InvalidInput(
+            return Err(AppError::Conflict(
                 "Canvas changed; reload and retry.".into(),
             ));
         }
@@ -424,7 +424,7 @@ impl LearningCanvasRepository {
         let canvas = canvas_for_update(&mut tx, &request.program_id, &request.canvas_id).await?;
         let revision: i64 = canvas.get("revision");
         if revision != request.expected_revision {
-            return Err(AppError::InvalidInput(
+            return Err(AppError::Conflict(
                 "Canvas changed; reload and retry.".into(),
             ));
         }
@@ -466,7 +466,7 @@ impl LearningCanvasRepository {
             .bind(snapshot.get::<String,_>("title")).bind(snapshot.get::<String,_>("description")).bind(snapshot.get::<String,_>("scene_json")).bind(snapshot.get::<i64,_>("element_count")).bind(next).bind(now()).bind(&request.program_id).bind(&request.canvas_id).bind(revision)
             .execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() != 1 {
-            return Err(AppError::InvalidInput(
+            return Err(AppError::Conflict(
                 "Canvas changed; reload and retry.".into(),
             ));
         }

@@ -110,7 +110,9 @@ impl LearningPracticalRepository {
                 .bind(json(&request.command)?).bind(json(&request.limits)?).bind(timestamp)
                 .bind(&request.profile_id).bind(expected).execute(&mut *tx).await.map_err(db)?;
             if updated.rows_affected() != 1 {
-                return Err(invalid("Runtime profile changed; reload and retry."));
+                return Err(AppError::Conflict(
+                    "Runtime profile changed; reload and retry.".into(),
+                ));
             }
             expected + 1
         } else {

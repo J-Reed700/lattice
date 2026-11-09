@@ -145,10 +145,60 @@ async fn artifact_replay_is_idempotent_payload_checked_and_cas_protected() -> Re
         .await
         .is_err());
     let stale = save_request(&p.summary.id, &start.session_id, &id(), 0, "stale answer");
-    assert!(repo.save_artifact(&stale, "stale").await.is_err());
+    crate::tests::assert_conflict(repo.save_artifact(&stale, "stale").await);
     assert_eq!(
         repo.get_session(&start.session_id).await?.artifact.text,
         "durable answer"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn stale_session_writes_are_reported_as_conflicts() -> Result<()> {
+    let pool = active_memory_pool().await?;
+    let (p, lesson) = setup(&pool).await?;
+    let repo = LearningPracticeRepository::new(pool);
+    let start = start_request(&p, &lesson);
+    repo.start(&start, "start").await?;
+    let first = save_request(&p.summary.id, &start.session_id, &id(), 0, "first");
+    repo.save_artifact(&first, "first").await?;
+    crate::tests::assert_conflict(
+        repo.validate_live_session(&p.summary.id, &start.session_id, 0, false)
+            .await,
+    );
+    crate::tests::assert_conflict(
+        repo.change_mode(
+            &ChangeLearningPracticeModeRequestDto {
+                operation_id: id(),
+                program_id: p.summary.id.clone(),
+                session_id: start.session_id.clone(),
+                expected_revision: 0,
+                mode: LearningPracticeMode::Explore,
+            },
+            "stale-mode",
+        )
+        .await,
+    );
+    let submit = SubmitLearningPracticeAttemptRequestDto {
+        operation_id: id(),
+        program_id: p.summary.id.clone(),
+        session_id: start.session_id.clone(),
+        expected_revision: 0,
+    };
+    crate::tests::assert_conflict(
+        repo.submit(
+            &submit,
+            SubmissionWrite {
+                payload_hash: "stale-submit".into(),
+                operation_id: submit.operation_id.clone(),
+                grade_status: LearningPracticeGradeStatus::Uncertain,
+                criteria: vec![],
+                evidence: vec![],
+                grader_model: "fixture-model".into(),
+            },
+            &[],
+        )
+        .await,
     );
     Ok(())
 }

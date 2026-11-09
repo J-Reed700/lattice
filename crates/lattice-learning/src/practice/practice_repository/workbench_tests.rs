@@ -221,7 +221,7 @@ async fn starting_needs_an_active_program_a_ready_lesson_and_owned_sources() -> 
 
     let mut stale = start_request(&program, &lesson, LearningPracticeMode::Practice);
     stale.expected_program_revision += 1;
-    assert_invalid(repo.start(&stale, "stale").await);
+    tests::assert_conflict(repo.start(&stale, "stale").await);
 
     assert_not_found(
         repo.start(
@@ -502,7 +502,7 @@ async fn tutor_turns_and_their_proposals_are_ledgered_and_decided_once() -> Resu
     let mut conflicting = hint.clone();
     conflicting.payload_hash = id();
     assert_invalid(repo.commit_tutor_turn(&pid, &sid, 1, conflicting).await);
-    assert_invalid(
+    tests::assert_conflict(
         repo.commit_tutor_turn(
             &pid,
             &sid,
@@ -559,7 +559,7 @@ async fn tutor_turns_and_their_proposals_are_ledgered_and_decided_once() -> Resu
         repo.decide_proposal(&decide(&misconception.id, 3), false, "again")
             .await,
     );
-    assert_invalid(
+    tests::assert_conflict(
         repo.decide_proposal(&decide(&follow_up.id, 2), false, "stale")
             .await,
     );
@@ -644,7 +644,7 @@ async fn sources_and_solutions_are_aids_for_live_assisted_attempts_only() -> Res
         repo.open_source(&open("another-source", &version_id, 0), "mismatch")
             .await,
     );
-    assert_invalid(
+    tests::assert_conflict(
         repo.open_source(&open(&source_id, &version_id, 3), "stale")
             .await,
     );
@@ -671,7 +671,7 @@ async fn sources_and_solutions_are_aids_for_live_assisted_attempts_only() -> Res
         .await?;
     let mut stale_reveal = reveal.clone();
     stale_reveal.operation_id = id();
-    assert_invalid(
+    tests::assert_conflict(
         repo.commit_solution(&stale_reveal, "again", solution, &[])
             .await,
     );

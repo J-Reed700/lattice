@@ -845,7 +845,7 @@ export async function installLearningStudioBackend(page: Page) {
       if (session.summary.status !== "active")
         throw new Error("Submitted practice attempts are immutable.");
       if (request.expectedRevision !== session.summary.revision)
-        throw new Error("Practice session changed; reload and retry.");
+        throw { code: "CONFLICT", message: "Practice session changed; reload and retry." };
     };
     const syncPracticeSummary = (session: PracticeSession) => {
       const index = practiceWorkspace.sessions.findIndex(
@@ -1071,7 +1071,7 @@ export async function installLearningStudioBackend(page: Page) {
           state.labDraftFailuresBeforeSave -= 1;
           throw new Error("The draft could not be saved to this device.");
         }
-        if (request.expectedDraftRevision !== current.draftRevision) throw new Error("Draft changed; reload before saving.");
+        if (request.expectedDraftRevision !== current.draftRevision) throw { code: "CONFLICT", message: "Draft changed; reload before saving." };
         if (!Array.isArray(request.files) || request.files.some((file) => !initial.files.some((starter) => starter.path === file.path)))
           throw new Error("Only editable starter files can be saved.");
         const next = { ...current, draftRevision: current.draftRevision + 1, files: structuredClone(request.files), updatedAt: Date.now() };
@@ -1288,7 +1288,7 @@ export async function installLearningStudioBackend(page: Page) {
           if (lesson.preparation !== "ready")
             throw new Error("Prepare this lesson before starting practice.");
           if (request.expectedProgramRevision !== program.summary.revision)
-            throw new Error("Program changed; reload and retry.");
+            throw { code: "CONFLICT", message: "Program changed; reload and retry." };
           if (practiceSessions.has(String(request.sessionId)))
             throw new Error("Practice session ID is already in use.");
           const timestamp = Date.now();
@@ -1623,7 +1623,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (!operation.replayed) {
           const canvas = canvasById(String(request.canvasId));
           if (request.expectedRevision !== canvas.revision)
-            throw new Error("Canvas changed; reload and retry.");
+            throw { code: "CONFLICT", message: "Canvas changed; reload and retry." };
           if (program.summary.status !== "active")
             throw new Error(
               "Accept the learning program before editing canvases.",
@@ -1657,7 +1657,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (!operation.replayed) {
           const canvas = canvasById(String(request.canvasId));
           if (request.expectedRevision !== canvas.revision)
-            throw new Error("Canvas changed; reload and retry.");
+            throw { code: "CONFLICT", message: "Canvas changed; reload and retry." };
           if (canvas.snapshots.some((item) => item.id === request.snapshotId))
             throw new Error("Snapshot ID is already in use.");
           canvas.snapshots.push(
@@ -1684,7 +1684,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (!operation.replayed) {
           const canvas = canvasById(String(request.canvasId));
           if (request.expectedRevision !== canvas.revision)
-            throw new Error("Canvas changed; reload and retry.");
+            throw { code: "CONFLICT", message: "Canvas changed; reload and retry." };
           const target = canvas.snapshots.find(
             (item) => item.id === request.snapshotId,
           );
@@ -1953,9 +1953,10 @@ export async function installLearningStudioBackend(page: Page) {
             throw new Error("Learning program not found");
           const item = sourceById(String(request.sourceId));
           if (request.expectedRevision !== item.revision)
-            throw new Error(
-              "Source revision changed elsewhere; reload and retry.",
-            );
+            throw {
+              code: "CONFLICT",
+              message: "Source revision changed elsewhere; reload and retry.",
+            };
           if (item.kind !== "web")
             throw new Error("Only web sources can be refreshed.");
           const checkedAt = Date.now();
@@ -2044,9 +2045,10 @@ export async function installLearningStudioBackend(page: Page) {
             throw new Error("Learning program not found");
           const item = sourceById(String(request.sourceId));
           if (request.expectedRevision !== item.revision)
-            throw new Error(
-              "Source revision changed elsewhere; reload and retry.",
-            );
+            throw {
+              code: "CONFLICT",
+              message: "Source revision changed elsewhere; reload and retry.",
+            };
           const version = sourceVersionById(item, String(request.versionId));
           item.activeVersionId = version.id;
           item.activeVersion = version;
@@ -2070,9 +2072,10 @@ export async function installLearningStudioBackend(page: Page) {
             throw new Error("Learning program not found");
           const item = sourceById(String(request.sourceId));
           if (request.expectedRevision !== item.revision)
-            throw new Error(
-              "Source revision changed elsewhere; reload and retry.",
-            );
+            throw {
+              code: "CONFLICT",
+              message: "Source revision changed elsewhere; reload and retry.",
+            };
           const policy = String(request.freshnessPolicy) as SourcePolicy;
           if (policy !== item.freshnessPolicy) {
             item.freshnessPolicy = policy;
@@ -2290,7 +2293,7 @@ export async function installLearningStudioBackend(page: Page) {
       submit_learning_diagnostic: (args) => {
         const request = getRequest<{ diagnosticId: string; expectedDiagnosticRevision: number; responses: LearningDiagnosticAttemptDto["responses"]; saveOnly?: boolean }>(args);
         const diagnostic = state.planWorkspace.latestDiagnostic;
-        if (!diagnostic || diagnostic.id !== request.diagnosticId || diagnostic.revision !== request.expectedDiagnosticRevision) throw new Error("The starting-point answers changed elsewhere. Reload before saving.");
+        if (!diagnostic || diagnostic.id !== request.diagnosticId || diagnostic.revision !== request.expectedDiagnosticRevision) throw { code: "CONFLICT", message: "The starting-point answers changed elsewhere. Reload before saving." };
         diagnostic.responses = request.responses;
         diagnostic.revision = Number(diagnostic.revision) + 1;
         if (!request.saveOnly) {
@@ -2510,7 +2513,7 @@ export async function installLearningStudioBackend(page: Page) {
       delete_learning_source: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const item = sourceById(String(request.sourceId));
-        if (item.revision !== request.expectedRevision) throw new Error("Source changed; reload and retry.");
+        if (item.revision !== request.expectedRevision) throw { code: "CONFLICT", message: "Source changed; reload and retry." };
         item.deletedAt = Date.now();
         item.deletionReason = String(request.reason);
         item.activeVersionId = null;
@@ -2523,7 +2526,7 @@ export async function installLearningStudioBackend(page: Page) {
       reimport_learning_source: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const item = sourceById(String(request.sourceId));
-        if (item.revision !== request.expectedRevision) throw new Error("Source changed; reload and retry.");
+        if (item.revision !== request.expectedRevision) throw { code: "CONFLICT", message: "Source changed; reload and retry." };
         const selected = sourceVersionById(item, String(request.versionId));
         item.activeVersionId = selected.id;
         item.activeVersion = selected;

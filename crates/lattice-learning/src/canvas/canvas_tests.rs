@@ -246,7 +246,7 @@ async fn canvas_revisions_operations_snapshots_and_restore_are_transactional() -
         operation_id: uuid(),
         ..save.clone()
     };
-    assert!(repo.save(&stale, &expanded).await.is_err());
+    crate::tests::assert_conflict(repo.save(&stale, &expanded).await);
 
     let snapshot = CreateLearningCanvasSnapshotRequestDto {
         operation_id: uuid(),
@@ -291,6 +291,24 @@ async fn canvas_revisions_operations_snapshots_and_restore_are_transactional() -
     let mut changed_restore = restore.clone();
     changed_restore.expected_revision = 3;
     assert!(repo.restore(&changed_restore).await.is_err());
+    crate::tests::assert_conflict(
+        repo.restore(&RestoreLearningCanvasSnapshotRequestDto {
+            operation_id: uuid(),
+            pre_restore_snapshot_id: uuid(),
+            expected_revision: 0,
+            ..restore.clone()
+        })
+        .await,
+    );
+    crate::tests::assert_conflict(
+        repo.create_snapshot(&CreateLearningCanvasSnapshotRequestDto {
+            operation_id: uuid(),
+            snapshot_id: uuid(),
+            expected_revision: 0,
+            ..snapshot.clone()
+        })
+        .await,
+    );
     let restored = repo.workspace(&program.summary.id).await?;
     let canvas = restored
         .canvases
