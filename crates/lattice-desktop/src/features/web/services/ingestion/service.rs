@@ -10,7 +10,6 @@ use lattice_core::application::ports::{SearchResultCachePort, VectorSearchPort};
 use lattice_core::application::services::live_index::{
     publish_chunks_to_live_index, PublishedChunk,
 };
-use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
