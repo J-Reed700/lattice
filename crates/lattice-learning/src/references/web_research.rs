@@ -589,10 +589,7 @@ pub(crate) async fn capture(
         .output
         .title
         .clone()
-        .unwrap_or_else(|| result.title.clone())
-        .chars()
-        .take(180)
-        .collect();
+        .unwrap_or_else(|| result.title.clone());
     let captured = web_capture(page, &result.url, title);
     if crate::sources::validate_capture(&captured).is_err() {
         return Ok(None);

@@ -297,10 +297,7 @@ pub async fn research_interview_target(
             .or(target.target_role.as_deref())
             .unwrap_or("Interview");
         let captured = CapturedLearningSource {
-            title: format!("{company} — Interview Brief & Context")
-                .chars()
-                .take(180)
-                .collect(),
+            title: format!("{company} — Interview Brief & Context"),
             publisher: None, // Learner notes are not verified company publications.
             requested_url: None,
             resolved_url: None,

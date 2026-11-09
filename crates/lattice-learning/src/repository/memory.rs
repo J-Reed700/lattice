@@ -438,10 +438,7 @@ pub(crate) async fn ensure_memory_resources(
         Some(id) => id,
         None => {
             let id = format!("journal_learning_{program_id}");
-            let name = format!(
-                "Studio · {} · {safe_id}",
-                base_title.chars().take(70).collect::<String>()
-            );
+            let name = format!("Studio · {base_title} · {safe_id}");
             let now = chrono::Utc::now().to_rfc3339();
             sqlx::query("INSERT OR IGNORE INTO journals(id,name,description,icon,is_archived,sort_order,created_at,updated_at) VALUES(?,?,?,?,0,0,?,?)")
                 .bind(&id).bind(&name).bind("Learning Studio notebook").bind("📖").bind(&now).bind(&now)
