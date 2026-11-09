@@ -325,7 +325,7 @@ async fn a_count_past_the_declared_maximum_is_clamped_to_it() {
 }
 
 #[test]
-fn a_custom_endpoint_count_past_the_declared_maximum_is_not_refused() {
+fn a_custom_endpoint_count_over_a_hundred_is_not_refused() {
     assert!(FunctionExecutor::validate_custom_query_arguments(
         &serde_json::json!({"query": "tokio", "max_results": 500})
     )
