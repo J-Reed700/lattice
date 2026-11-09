@@ -9,7 +9,7 @@ import { flushPendingSaves } from '@/lib/pendingSaves';
 
 
 const mocks = vi.hoisted(() => ({ plan: vi.fn(), program: vi.fn(), start: vi.fn(), submit: vi.fn(), skip: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: { getLearningPlan: mocks.plan, getLearningProgram: mocks.program, startLearningDiagnostic: mocks.start, submitLearningDiagnostic: mocks.submit, skipLearningDiagnostic: mocks.skip } }));
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: { getLearningPlan: mocks.plan, getLearningProgram: mocks.program, startLearningDiagnostic: mocks.start, submitLearningDiagnostic: mocks.submit, skipLearningDiagnostic: mocks.skip } }));
 let attempt: LearningDiagnosticAttemptDto;
 const responses = new Map<string, LearningDiagnosticAttemptDto>();
 const ok = <T,>(data: T) => ({ ok: true as const, data: structuredClone(data) });
@@ -26,7 +26,7 @@ describe('starting-point performance tasks', () => {
     mocks.plan.mockImplementation(async () => ok({ latestDiagnostic: attempt, acceptedRevision: { modules: [{ outcomeIds: ['outcome'], lessons: [{ id: 'lesson' }] }] } }));
     mocks.submit.mockImplementation(async (request: SubmitLearningDiagnosticRequestDto) => {
       if (responses.has(request.operationId)) return ok(responses.get(request.operationId)!);
-      if (request.expectedDiagnosticRevision !== attempt.revision) return { ok: false, error: 'The starting-point answers changed elsewhere. Reload before saving.' };
+      if (request.expectedDiagnosticRevision !== attempt.revision) return { ok: false, error: Object.assign(new Error('The starting-point answers changed elsewhere. Reload before saving.'), { details: { code: 'CONFLICT' } }) };
       attempt.responses = request.responses; attempt.revision = (attempt.revision ?? 0) + 1;
       if (!request.saveOnly) { attempt.status = 'submitted'; attempt.findings = [{ promptId: 'prompt', outcomeId: 'outcome', signal: 'needs_practice', feedback: 'Track the accumulator after each iteration and check the empty list.', evidenceQuote: 'The result' }]; }
       responses.set(request.operationId, structuredClone(attempt));
