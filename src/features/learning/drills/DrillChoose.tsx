@@ -82,7 +82,7 @@ function lessonText(lesson: DrillLessonDto, fits: boolean, misfit: string): stri
   return `${lesson.title} — ${standingText(lesson)}${lesson.current ? ', current lesson' : ''}${fits ? '' : ` (${misfit})`}`;
 }
 
-function outcomeText(attempt: CourseDrillAttemptDto): string {
+export function outcomeText(attempt: CourseDrillAttemptDto): string {
   switch (attempt.status) {
     case 'open':
       return 'Continue';
