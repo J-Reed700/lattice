@@ -71,6 +71,8 @@ pub struct LessonGenerationWorker {
     /// The Verifier, for courses that opted into its audit (§14.3); `None`
     /// publishes every lesson without the audit gate.
     pub verifier: Option<Arc<dyn crate::lessons::verifier_audit::lesson::VerifierAccess>>,
+    /// Shared by every lesson job this worker runs.
+    pub course_setups: crate::lessons::course_setup::CourseSetups,
 }
 
 #[async_trait::async_trait]
@@ -148,6 +150,36 @@ struct Prepared {
 }
 
 impl LessonGenerationWorker {
+    /// What a lesson does to the course's shared state before it reads it,
+    /// one lesson of the course at a time.
+    pub(crate) async fn set_up_course(
+        &self,
+        repo: &LearningCurriculumRepository,
+        program_id: &str,
+    ) -> Result<()> {
+        let _setup = self.course_setups.enter(program_id).await;
+        // Publication needs an accepted snapshot even when the renderer never
+        // opened the plan view (including recovered background-only work).
+        // This snapshots the already accepted outline; it approves no content.
+        repo.seed_accepted(program_id).await?;
+        (self.refresh_sources)(program_id.to_owned()).await?;
+        // Pages the admission gate refuses leave retrieval and citation before
+        // anything is compared with them (claim classes design §3.6).
+        crate::lesson_progress::stage("Checking that the course's saved pages are sources");
+        let refused =
+            crate::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
+                .sweep_admission(program_id)
+                .await?;
+        if !refused.is_empty() {
+            tracing::info!(
+                program_id,
+                pages = refused.len(),
+                "Saved pages that are not sources are left out of retrieval"
+            );
+        }
+        Ok(())
+    }
+
     async fn prepare(
         &self,
         repo: &LearningCurriculumRepository,
@@ -189,25 +221,7 @@ impl LessonGenerationWorker {
         }
         let outline_revision =
             crate::lessons::course_plan::outline_revision(&self.pool, &job.program_id).await?;
-        // Publication needs an accepted snapshot even when the renderer never
-        // opened the plan view (including recovered background-only work).
-        // This snapshots the already accepted outline; it approves no content.
-        repo.seed_accepted(&job.program_id).await?;
-        (self.refresh_sources)(job.program_id.clone()).await?;
-        // Pages the admission gate refuses leave retrieval and citation before
-        // anything is compared with them (claim classes design §3.6).
-        crate::lesson_progress::stage("Checking that the course's saved pages are sources");
-        let refused =
-            crate::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
-                .sweep_admission(&job.program_id)
-                .await?;
-        if !refused.is_empty() {
-            tracing::info!(
-                program_id = %job.program_id,
-                pages = refused.len(),
-                "Saved pages that are not sources are left out of retrieval"
-            );
-        }
+        self.set_up_course(repo, &job.program_id).await?;
         let had_sources = program_repo.has_source_history(&job.program_id).await?;
         program.sources = program_repo.verification_sources(&job.program_id).await?;
         if had_sources && program.sources.is_empty() {
@@ -592,6 +606,7 @@ mod repository_tests {
             let entered = Arc::new(tokio::sync::Notify::new());
             let notification = entered.clone();
             let worker = LessonGenerationWorker {
+                course_setups: Default::default(),
                 runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
                 research_web: None,
                 verifier: None,
@@ -709,3 +724,7 @@ mod plan_tests;
 #[cfg(test)]
 #[path = "generation_overlap_tests.rs"]
 pub(crate) mod overlap_tests;
+
+#[cfg(test)]
+#[path = "generation_setup_tests.rs"]
+mod setup_tests;

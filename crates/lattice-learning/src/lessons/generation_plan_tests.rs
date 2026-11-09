@@ -50,6 +50,7 @@ async fn a_lesson_job_makes_the_course_plan_before_the_lesson_is_written() {
     });
     let llm: Arc<dyn LLMPort> = model.clone();
     let worker = LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
