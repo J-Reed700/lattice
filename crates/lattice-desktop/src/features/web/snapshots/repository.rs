@@ -86,6 +86,7 @@ impl SnapshotRepository {
         normalized_url: &str,
         requested_url: &str,
     ) -> Result<(SnapshotRow, bool)> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let inserted = sqlx::query(
             "INSERT INTO web_page_snapshots \
                  (id, conversation_id, normalized_url, requested_url, status, created_at) \
@@ -97,11 +98,12 @@ impl SnapshotRepository {
         .bind(normalized_url)
         .bind(requested_url)
         .bind(Utc::now().to_rfc3339())
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(db)?
         .rows_affected()
             == 1;
+        tx.commit().await.map_err(db)?;
         let row = self
             .find(conversation_id, normalized_url)
             .await?

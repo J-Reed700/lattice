@@ -5,6 +5,7 @@ use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::{Filter, RepositoryPort};
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::TagName;
 use sqlx::{Row, SqlitePool};
 
@@ -219,6 +220,11 @@ impl TagRepository {
         let id_str = id.as_str();
         let name_str = name.as_str();
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         sqlx::query!(
             r#"
             INSERT INTO tags (id, name, color, created_at, updated_at)
@@ -232,9 +238,12 @@ impl TagRepository {
             now,
             now
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create tag: {}", e)))?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         self.find_by_name(name.as_ref())
             .await?
