@@ -24,25 +24,9 @@ pub struct SourceGroup {
 
 impl SourceGroup {
     pub fn validate(&self) -> Result<()> {
-        if uuid::Uuid::parse_str(&self.id).is_err()
-            || self.title.trim().is_empty()
-            || self.title.chars().count() > 160
-        {
+        if uuid::Uuid::parse_str(&self.id).is_err() || self.title.trim().is_empty() {
             return Err(AppError::InvalidInput(
-                "A related source needs a title (up to 160 characters) and a valid ID".into(),
-            ));
-        }
-        if self
-            .edition
-            .as_ref()
-            .is_some_and(|s| s.chars().count() > 80)
-            || self
-                .description
-                .as_ref()
-                .is_some_and(|s| s.chars().count() > 500)
-        {
-            return Err(AppError::InvalidInput(
-                "Edition must be at most 80 characters; description at most 500".into(),
+                "A related source needs a title and a valid ID".into(),
             ));
         }
         Ok(())
