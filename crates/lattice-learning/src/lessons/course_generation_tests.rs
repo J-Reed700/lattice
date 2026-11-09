@@ -1,5 +1,6 @@
 //! Exercise the real authoring, validation and persistence boundaries without a live model.
 use crate::content_verification::tests::{fixture_completion, fixture_prompts};
+use crate::lessons::course_plan::CoursePlan;
 use crate::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
     repository::LearningRepository, service,
@@ -137,9 +138,11 @@ const LESSON_SHAPE: [&str; 11] = [
 ];
 
 fn lesson_response() -> serde_json::Value {
-    let teaching = "Start with a measurable question, identify the comparison, and define the outcome before collecting data. Explain the assumptions behind the design. Work through the decisions in order and examine how a confounding variable could change the conclusion. A concrete example should show both the result and the limitations of that result. ";
+    let teaching = |step: usize, pass: usize| {
+        format!("Start with a measurable question, identify the comparison, and define the outcome before collecting data in design step {step}, pass {pass}. Explain the assumptions behind the design in design step {step}, pass {pass}. Work through the decisions in order and examine how a confounding variable could change the conclusion of design step {step}, pass {pass}. A concrete example should show both the result and the limitations of that result in design step {step}, pass {pass}. ")
+    };
     json!({
-        "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{teaching}\n\n{}\n\n{teaching}", crate::generation::CHECK_REVEAL) } else { format!("{teaching}{teaching} Assignment step {}: produce a design, state your assumptions, and justify your decisions.", char::from(b'a' + u8::try_from(i).unwrap_or(0))) },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":"","citations":[]})).collect::<Vec<_>>()),
+        "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{}\n\n{}\n\n{}", teaching(i, 0), crate::generation::CHECK_REVEAL, teaching(i, 1)) } else { format!("{}{} Assignment step {}: produce a design, state your assumptions, and justify your decisions.", teaching(i, 0), teaching(i, 1), char::from(b'a' + u8::try_from(i).unwrap_or(0))) },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":"","citations":[]})).collect::<Vec<_>>()),
         "questions":(["practice","quiz","test"].iter().flat_map(|kind| (0..2).map(move |i|json!({"kind":kind,"prompt":format!("Which experimental design decision is appropriate in {kind} scenario {i}?"),"options":["Compare randomized groups","Change several variables together","Select only positive results","Omit the comparison group"],"correctIndex":0,"rationales":["","Several changed variables confound the result.","Selecting only positive results biases the sample.","Without a comparison group nothing separates the effect."],"explanation":"A randomized comparison helps separate the intervention from confounding factors.","sourceIndex":null,"quote":"","citations":[]}))).collect::<Vec<_>>())
     })
 }
@@ -195,6 +198,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         &repo,
         &Model(lesson_candidate.to_string()),
         &crate::embedded_runtime::BuiltinRuntimes::for_tests(),
+        &Default::default(),
         PrepareLearningLessonRequestDto {
             program_id: draft.summary.id.clone(),
             lesson_id: lesson_id.clone(),
@@ -474,7 +478,13 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             &jobs,
             &job.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+            generation::prepare_lesson(
+                &llm,
+                &runtimes,
+                &program,
+                lesson,
+                &CoursePlan::blank(&program),
+            ),
         ),
     )
     .await;
@@ -504,7 +514,13 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             &jobs,
             &retry.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+            generation::prepare_lesson(
+                &llm,
+                &runtimes,
+                &program,
+                lesson,
+                &CoursePlan::blank(&program),
+            ),
         ),
     )
     .await?;
@@ -750,7 +766,13 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
         accepted.summary.id.clone(),
         accepted.summary.goal.clone(),
         Some(research_tests::web(false)),
-        generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+        generation::prepare_lesson(
+            &llm,
+            &runtimes,
+            &program,
+            lesson,
+            &CoursePlan::blank(&program),
+        ),
     ))
     .await?;
 
@@ -1879,7 +1901,13 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
             &jobs,
             &job.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+            generation::prepare_lesson(
+                &llm,
+                &runtimes,
+                &program,
+                lesson,
+                &CoursePlan::blank(&program),
+            ),
         ),
     )
     .await?;

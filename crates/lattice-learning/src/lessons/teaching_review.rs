@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
-pub(super) const POLICY: &str = "section-review-v3";
+pub(super) const POLICY: &str = "section-review-v4";
 
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
