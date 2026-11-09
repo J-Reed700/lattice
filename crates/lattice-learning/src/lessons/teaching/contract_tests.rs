@@ -101,7 +101,8 @@ fn context(ideas: &[&str], actions: &[&str]) -> String {
     json!({
         "sources":[{"sourceIndex":0,"excerpt":EXCERPT}],
         "priorKnowledge":"The learner has used a graphical file manager.",
-        "courseSequence":{"curriculum":[],"coursePlan":[
+        "currentModule":{"title":"Shell basics","lessonSequence":[{"title":"Looking around","current":false},{"title":"Working in the terminal","current":true},{"title":"Making files","current":false}]},
+        "courseSequence":{"curriculum":[{"title":"Shell basics","milestone":"A logbook of daily shell habits"}],"coursePlan":[
             {"title":"Looking around","position":"earlier","ideas":["A folder holds files"],"terms":["folder"],"actions":["Listing the files in a folder"],"contrast":""},
             {"title":"Working in the terminal","position":"this","ideas":ideas,"terms":[],"actions":actions,"contrast":""},
             {"title":"Making files","position":"later","ideas":[],"terms":[],"actions":["Creating a file"],"contrast":""}
@@ -126,7 +127,8 @@ fn reviewed(blocks: usize) -> String {
     let checks = (0..blocks)
         .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"No defect was found in this section.","hasDefect":false}))
         .collect();
-    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)}).to_string()
+    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
+        .to_string()
 }
 
 fn edits(edits: Value) -> String {
@@ -559,7 +561,8 @@ fn defect_in_first_section() -> String {
     let checks = (0..3)
         .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The first section states a wrong result.","hasDefect":index == 0}))
         .collect();
-    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)}).to_string()
+    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
+        .to_string()
 }
 
 fn actionable() -> String {
@@ -640,4 +643,32 @@ async fn the_check_covers_the_steps_a_deliverable_needs_including_saving_the_wor
         drafting[0]
     );
     Ok(())
+}
+
+#[tokio::test]
+async fn the_request_carries_the_modules_title_and_milestone() -> Result<()> {
+    let scripted = scripted(vec![reviewed(3)]);
+    let model = Routed::new(&scripted, vec![]);
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let asked = model.asked();
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].contains("Shell basics"), "{}", asked[0]);
+    assert!(
+        asked[0].contains("A logbook of daily shell habits"),
+        "{}",
+        asked[0]
+    );
+    assert!(asked[0].contains("Making files"), "{}", asked[0]);
+    Ok(())
+}
+
+#[test]
+fn pointing_at_the_outline_or_an_earlier_lesson_is_not_unseen() {
+    assert!(contract::SYSTEM
+        .contains("Pointing at the course outline or at an earlier lesson is not unseen"));
 }
