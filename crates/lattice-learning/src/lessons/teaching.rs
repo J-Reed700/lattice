@@ -783,6 +783,8 @@ async fn review_material(
 mod citation_tests;
 #[cfg(test)]
 mod loop_tests;
+#[cfg(test)]
+mod question_tests;
 
 #[cfg(test)]
 mod tests;
