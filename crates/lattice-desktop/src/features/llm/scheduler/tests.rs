@@ -4,6 +4,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, InferencePriority, ServedTiming,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::runtime::jobs::{RankScope, RankTicket};
 use parking_lot::Mutex as SyncMutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::time::Duration;
@@ -13,6 +14,7 @@ fn ask(priority: InferencePriority, tokens: usize) -> AdmissionRequest {
         priority,
         tokens,
         cache_key: None,
+        rank: None,
     }
 }
 
@@ -21,6 +23,7 @@ fn keyed(key: &str) -> AdmissionRequest {
         priority: InferencePriority::Interactive,
         tokens: 10,
         cache_key: Some(key.to_string()),
+        rank: None,
     }
 }
 
@@ -906,4 +909,320 @@ async fn an_exact_count_decides_before_a_request_is_refused() {
         .await
         .unwrap();
     assert_eq!(model.seen.lock().len(), 1);
+}
+
+fn ranked(priority: InferencePriority, scope: &Arc<RankScope>) -> AdmissionRequest {
+    AdmissionRequest {
+        rank: Some(RankTicket::new(scope)),
+        ..ask(priority, 1)
+    }
+}
+
+/// A rank this scheduler has seen, whose scope stays alive: the scheduler
+/// learns a rank from its first request.
+async fn seen(scheduler: &Arc<InferenceScheduler>, rank: i64) -> Arc<RankScope> {
+    let scope = RankScope::new(rank);
+    let permit = scheduler
+        .admit(ranked(InferencePriority::Background, &scope), None)
+        .await
+        .unwrap();
+    drop(permit);
+    scope
+}
+
+fn admit_in_background(
+    scheduler: &Arc<InferenceScheduler>,
+    request: AdmissionRequest,
+) -> tokio::task::JoinHandle<Result<Permit>> {
+    let scheduler = Arc::clone(scheduler);
+    tokio::spawn(async move { scheduler.admit(request, None).await })
+}
+
+async fn admitted(handle: tokio::task::JoinHandle<Result<Permit>>) -> Permit {
+    tokio::time::timeout(Duration::from_secs(1), handle)
+        .await
+        .expect("the request was not admitted")
+        .unwrap()
+        .unwrap()
+}
+
+/// Like `admission_order`, but a request with a rank holds a scope of that
+/// rank from the moment it queues until it has run.
+async fn ranked_order(
+    scheduler: &Arc<InferenceScheduler>,
+    requests: Vec<(&'static str, InferencePriority, Option<i64>)>,
+) -> Vec<&'static str> {
+    let blocker = scheduler
+        .admit(ask(InferencePriority::Interactive, 1), None)
+        .await
+        .unwrap();
+    let order = Arc::new(SyncMutex::new(Vec::new()));
+    let mut waiters = Vec::new();
+    for (name, priority, rank) in requests {
+        let scheduler = Arc::clone(scheduler);
+        let order = Arc::clone(&order);
+        waiters.push(tokio::spawn(async move {
+            let scope = rank.map(RankScope::new);
+            let request = AdmissionRequest {
+                rank: scope.as_ref().map(RankTicket::new),
+                ..ask(priority, 1)
+            };
+            let permit = scheduler.admit(request, None).await.unwrap();
+            order.lock().push(name);
+            drop(permit);
+            drop(scope);
+        }));
+        settle().await;
+    }
+    drop(blocker);
+    for waiter in waiters {
+        tokio::time::timeout(Duration::from_secs(5), waiter)
+            .await
+            .expect("a request was never admitted")
+            .unwrap();
+    }
+    let order = order.lock().clone();
+    order
+}
+
+#[tokio::test]
+async fn interactive_then_unranked_then_ranked_by_rank() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let order = ranked_order(
+        &scheduler,
+        vec![
+            ("rank-2", InferencePriority::Verification, Some(2)),
+            ("summary", InferencePriority::Background, None),
+            ("rank-1", InferencePriority::Background, Some(1)),
+            ("chat", InferencePriority::Interactive, None),
+            ("judge", InferencePriority::Verification, None),
+        ],
+    )
+    .await;
+    assert_eq!(order, ["chat", "judge", "summary", "rank-1", "rank-2"]);
+}
+
+#[tokio::test]
+async fn rank_comes_before_class_in_the_backlog() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let order = ranked_order(
+        &scheduler,
+        vec![
+            ("rank-3-judge-1", InferencePriority::Verification, Some(3)),
+            ("rank-3-judge-2", InferencePriority::Verification, Some(3)),
+            ("rank-1-writer", InferencePriority::Background, Some(1)),
+            ("rank-1-summary", InferencePriority::Maintenance, Some(1)),
+        ],
+    )
+    .await;
+    assert_eq!(
+        order,
+        [
+            "rank-1-summary",
+            "rank-1-writer",
+            "rank-3-judge-1",
+            "rank-3-judge-2"
+        ]
+    );
+}
+
+#[tokio::test]
+async fn an_interactive_request_with_a_rank_is_still_interactive() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let order = ranked_order(
+        &scheduler,
+        vec![
+            ("summary", InferencePriority::Background, None),
+            ("rank-0-chat", InferencePriority::Interactive, Some(0)),
+        ],
+    )
+    .await;
+    assert_eq!(order, ["rank-0-chat", "summary"]);
+}
+
+#[tokio::test]
+async fn a_single_slot_waits_for_the_head_rank_and_runs_the_moment_it_ends() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let head = seen(&scheduler, 1).await;
+    let later = RankScope::new(2);
+    let waiting = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+    settle().await;
+    assert!(
+        !waiting.is_finished(),
+        "rank 2 must wait while rank 1 is alive, though the slot is free"
+    );
+    assert_eq!(scheduler.queued(), 1);
+
+    // Nothing else happens: no request, no release.
+    drop(head);
+    let _permit = admitted(waiting).await;
+}
+
+#[tokio::test]
+async fn the_head_rank_and_unranked_work_take_a_single_slot() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let head = seen(&scheduler, 1).await;
+    let first = scheduler
+        .admit(ranked(InferencePriority::Background, &head), None)
+        .await
+        .unwrap();
+    drop(first);
+    let second = scheduler
+        .admit(ask(InferencePriority::Background, 1), None)
+        .await
+        .unwrap();
+    drop(second);
+}
+
+#[tokio::test]
+async fn eight_slots_keep_one_for_interactive_work_and_one_for_the_head() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(8),
+    ));
+    let head = seen(&scheduler, 1).await;
+    let later = RankScope::new(2);
+    let mut shared = Vec::new();
+    for _ in 0..6 {
+        let handle = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+        shared.push(admitted(handle).await);
+    }
+    let seventh = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+    settle().await;
+    assert!(
+        !seventh.is_finished(),
+        "two slots are kept: one interactive, one for the head"
+    );
+
+    let head_call = admit_in_background(&scheduler, ranked(InferencePriority::Background, &head));
+    let _head_call = admitted(head_call).await;
+    let turn = admit_in_background(&scheduler, ask(InferencePriority::Interactive, 1));
+    let _turn = admitted(turn).await;
+    settle().await;
+    assert!(!seventh.is_finished());
+    assert_eq!(scheduler.queued(), 1);
+}
+
+#[tokio::test]
+async fn a_head_already_running_is_the_slot_kept_for_it() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(8),
+    ));
+    let head = RankScope::new(1);
+    let _running = scheduler
+        .admit(ranked(InferencePriority::Background, &head), None)
+        .await
+        .unwrap();
+    let later = RankScope::new(2);
+    let mut shared = Vec::new();
+    for _ in 0..6 {
+        let handle = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+        shared.push(admitted(handle).await);
+    }
+    let seventh = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+    settle().await;
+    assert!(
+        !seventh.is_finished(),
+        "one head, one interactive, six shared"
+    );
+}
+
+#[tokio::test]
+async fn unranked_work_may_use_the_slot_kept_for_the_head() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(8),
+    ));
+    let _head = seen(&scheduler, 1).await;
+    let later = RankScope::new(2);
+    let mut shared = Vec::new();
+    for _ in 0..6 {
+        let handle = admit_in_background(&scheduler, ranked(InferencePriority::Background, &later));
+        shared.push(admitted(handle).await);
+    }
+    let unranked = admit_in_background(&scheduler, ask(InferencePriority::Background, 1));
+    let _permit = admitted(unranked).await;
+}
+
+#[tokio::test]
+async fn a_dead_scope_stops_reserving_and_the_next_rank_becomes_the_head() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let first = seen(&scheduler, 1).await;
+    let second = RankScope::new(2);
+    let third = RankScope::new(3);
+    let second_call = admit_in_background(&scheduler, ranked(InferencePriority::Background, &second));
+    let third_call = admit_in_background(&scheduler, ranked(InferencePriority::Background, &third));
+    settle().await;
+    assert!(!second_call.is_finished() && !third_call.is_finished());
+
+    drop(first);
+    drop(admitted(second_call).await);
+    settle().await;
+    assert!(!third_call.is_finished(), "rank 2 is the head now");
+
+    drop(second);
+    let _permit = admitted(third_call).await;
+}
+
+#[tokio::test]
+async fn a_rank_that_ended_before_the_request_arrived_reserves_nothing() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    drop(seen(&scheduler, 1).await);
+    let later = RankScope::new(2);
+    let permit = scheduler
+        .admit(ranked(InferencePriority::Background, &later), None)
+        .await
+        .unwrap();
+    drop(permit);
+}
+
+#[tokio::test]
+async fn a_cancelled_waiting_ranked_request_leaves_with_an_error() {
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::concurrent(1),
+    ));
+    let _head = seen(&scheduler, 1).await;
+    let later = RankScope::new(2);
+    let cancel = CancellationToken::new();
+    let waiting = {
+        let scheduler = Arc::clone(&scheduler);
+        let cancel = cancel.clone();
+        let request = ranked(InferencePriority::Background, &later);
+        tokio::spawn(async move { scheduler.admit(request, Some(&cancel)).await.map(|_| ()) })
+    };
+    settle().await;
+    assert_eq!(scheduler.queued(), 1);
+    cancel.cancel();
+    let result = tokio::time::timeout(Duration::from_secs(1), waiting)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        result.unwrap_err().to_string(),
+        cancelled_error().to_string()
+    );
+    assert_eq!(scheduler.queued(), 0);
 }

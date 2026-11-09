@@ -26,7 +26,7 @@ vi.mock('@/features/learning/portability/ImportCourseFlow', () => ({ ImportCours
 vi.mock('@/features/learning/drills/CourseDrillsPanel', () => ({ CourseDrillsPanel: ({ programId }: { programId: string }) => <p>{`Review drills of ${programId}`}</p> }));
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), prepareModule: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
+  list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), prepareModule: vi.fn(), prepareCourse: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
   documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(), decks: vi.fn(), deck: vi.fn(), outlineEvidence: vi.fn(), exportAll: vi.fn(),
 }));
 vi.mock('@/lib/pendingSaves', async (importOriginal) => ({
@@ -47,6 +47,7 @@ vi.mock('@/lib/api', () => ({ default: {
   acceptLearningProgram: mocks.accept,
   prepareLearningLesson: mocks.prepare,
   prepareLearningModule: mocks.prepareModule,
+  prepareLearningCourse: mocks.prepareCourse,
   completeLearningLesson: mocks.complete,
   getLearningPlan: mocks.plan,
   getLearningPracticeWorkspace: async (programId: string) => ({ ok: true, data: { programId, sessions: [] } }),
@@ -188,6 +189,8 @@ describe('Learning Studio program workflow', () => {
     mocks.generate.mockResolvedValue(ok(draft));
     mocks.accept.mockResolvedValue(ok(active));
     mocks.prepare.mockResolvedValue(ok(prepared));
+    mocks.prepareCourse.mockResolvedValue(ok(active));
+    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
     mocks.get.mockImplementation(async () => ok(draft));
 
     show('/studio?new=1');
@@ -209,8 +212,11 @@ describe('Learning Studio program workflow', () => {
     expect(mocks.memory).not.toHaveBeenCalled();
     await user.clear(screen.getByRole('textbox', { name: 'Program title' }));
     await user.type(screen.getByRole('textbox', { name: 'Program title' }), 'My considered plan');
+    expect(screen.getByText("Accepting prepares every lesson in order. Start each one as soon as it's ready.")).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Accept program' }));
     await waitFor(() => expect(mocks.accept).toHaveBeenCalledWith({ programId: 'program-1', expectedRevision: 0, title: 'My considered plan' }));
+    await waitFor(() => expect(mocks.prepareCourse).toHaveBeenCalledWith({ programId: 'program-1', expectedRevision: 1 }));
+    expect(mocks.prepareCourse).toHaveBeenCalledTimes(1);
     await user.click(screen.getByRole('combobox', { name: 'Module' }));
     await user.type(screen.getByRole('combobox', { name: 'Search module' }), 'Putting it');
     await user.click(screen.getByRole('option', { name: /Putting it together/ }));
@@ -338,6 +344,47 @@ describe('Learning Studio program workflow', () => {
     await user.click(await screen.findByRole('button', { name: 'Prepare all lessons' }));
     await waitFor(() => expect(mocks.prepareModule).toHaveBeenCalledWith({ programId: 'program-1', moduleId: 'module-1', expectedRevision: 1 }));
     expect(mocks.prepare).not.toHaveBeenCalled();
+  });
+
+  it('prepares every lesson of the course from the course header', async () => {
+    const user = userEvent.setup();
+    const active = program('active');
+    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    mocks.prepareCourse.mockResolvedValue(ok(active));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(await screen.findByRole('button', { name: 'Prepare every lesson' }));
+    await waitFor(() => expect(mocks.prepareCourse).toHaveBeenCalledWith({ programId: 'program-1', expectedRevision: 1 }));
+    expect(mocks.prepare).not.toHaveBeenCalled();
+    expect(mocks.prepareModule).not.toHaveBeenCalled();
+  });
+
+  it('shows why preparing a module failed', async () => {
+    const user = userEvent.setup();
+    const active = program('active');
+    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    mocks.prepareModule.mockResolvedValue(fail('The module could not be queued.'));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(await screen.findByRole('button', { name: 'Prepare all lessons' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The module could not be queued.');
+  });
+
+  it('shows why preparing the course failed', async () => {
+    const user = userEvent.setup();
+    const active = program('active');
+    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    mocks.prepareCourse.mockResolvedValue(fail('The course could not be queued.'));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(await screen.findByRole('button', { name: 'Prepare every lesson' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('The course could not be queued.');
   });
 
   it('lets the learner prepare another lesson while one is being prepared', async () => {
