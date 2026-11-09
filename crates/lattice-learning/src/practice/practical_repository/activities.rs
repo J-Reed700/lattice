@@ -11,7 +11,7 @@ use crate::practical_dto::*;
 use crate::practical_generation::{
     GeneratedPracticalActivity, PracticalFileRole, INTERVIEW_PLAN_FILE_PATH,
 };
-use crate::practice::coding::problem::Problem;
+use crate::practice::coding::problem::{Problem, PROBLEM_FILE_PATH};
 use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -162,6 +162,25 @@ impl LearningPracticalRepository {
                     "Interview answer evidence must be frozen with the activity.",
                 ));
             }
+        }
+        let problem_file = generated
+            .files
+            .iter()
+            .find(|file| file.path == PROBLEM_FILE_PATH);
+        match (request.kind, problem_file) {
+            (LearningPracticalActivityKind::CodingProblem, Some(file)) => {
+                if file.role != PracticalFileRole::Check || file.editable {
+                    return Err(invalid("A coding problem must remain private and read-only."));
+                }
+                decode::<Problem>(&file.content)?;
+            }
+            (LearningPracticalActivityKind::CodingProblem, None) => {
+                return Err(invalid("A coding problem needs its saved problem file."));
+            }
+            (_, Some(_)) => {
+                return Err(invalid("Only a coding problem may carry a problem file."));
+            }
+            (_, None) => {}
         }
         if request.builtin_runtime.is_some() && request.runtime_profile_id.is_some() {
             return Err(invalid("Choose one execution environment for an activity."));
@@ -330,6 +349,86 @@ impl LearningPracticalRepository {
         self.workspace(&request.program_id).await
     }
 
+    /// The lesson a coding build is for: the one asked for, else the program's current lesson, else its first.
+    pub async fn build_lesson(
+        &self,
+        program_id: &str,
+        lesson_id: Option<&str>,
+    ) -> Result<BuildLesson> {
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let wanted = match lesson_id {
+            Some(id) => Some(id.to_owned()),
+            None => sqlx::query_scalar::<_, Option<String>>(
+                "SELECT current_lesson_id FROM learning_programs WHERE id=?",
+            )
+            .bind(program_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?
+            .flatten(),
+        };
+        let row = match wanted {
+            Some(id) => {
+                sqlx::query("SELECT id,title,objective FROM learning_lessons WHERE id=? AND program_id=?")
+                    .bind(id)
+                    .bind(program_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db)?
+            }
+            None => {
+                sqlx::query("SELECT l.id,l.title,l.objective FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal LIMIT 1")
+                    .bind(program_id)
+                    .fetch_optional(&mut *tx)
+                    .await
+                    .map_err(db)?
+            }
+        };
+        tx.commit().await.map_err(db)?;
+        let row = row.ok_or_else(|| AppError::NotFound("Learning lesson not found".into()))?;
+        Ok(BuildLesson {
+            id: row.get("id"),
+            title: row.get("title"),
+            objective: row.get("objective"),
+        })
+    }
+
+    /// The revision an activity saved for this program must name.
+    pub async fn program_revision(&self, program_id: &str) -> Result<i64> {
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let revision = Self::active_program(&mut tx, program_id).await;
+        tx.commit().await.map_err(db)?;
+        revision
+    }
+
+    /// The problem a coding activity was saved with, read from its private problem file.
+    pub async fn stored_problem(
+        &self,
+        program_id: &str,
+        activity_id: &str,
+    ) -> Result<StoredProblem> {
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let activity = Self::internal_activity(&mut tx, program_id, activity_id).await;
+        tx.commit().await.map_err(db)?;
+        let activity = activity?;
+        if activity.kind != LearningPracticalActivityKind::CodingProblem {
+            return Err(invalid("This activity is not a coding problem."));
+        }
+        let file = activity
+            .files
+            .iter()
+            .find(|file| file.path == PROBLEM_FILE_PATH)
+            .filter(|file| file.role == "check" && !file.editable)
+            .ok_or_else(|| AppError::Database("The coding problem has no saved problem file.".into()))?;
+        Ok(StoredProblem {
+            problem: decode(&file.content)?,
+            lesson_id: activity.lesson_id,
+            outcome_ids: activity.outcome_ids,
+            builtin_runtime: activity.builtin_runtime,
+            builtin_runtime_version: activity.builtin_runtime_version,
+        })
+    }
+
     pub(super) async fn internal_activity(
         tx: &mut Transaction<'_, Sqlite>,
         program_id: &str,
@@ -431,31 +530,6 @@ impl LearningPracticalRepository {
             revision: row.get("revision"),
             generator_model: row.get("generator_model"),
         })
-    }
-}
-
-impl LearningPracticalRepository {
-    /// The lesson a coding build is for: the one asked for, else the program's current lesson, else its first.
-    pub async fn build_lesson(
-        &self,
-        _program_id: &str,
-        _lesson_id: Option<&str>,
-    ) -> Result<BuildLesson> {
-        Err(invalid("Build lessons are not read yet."))
-    }
-
-    /// The revision an activity saved for this program must name.
-    pub async fn program_revision(&self, _program_id: &str) -> Result<i64> {
-        Err(invalid("Program revisions are not read yet."))
-    }
-
-    /// The problem a coding activity was saved with, read from its private problem file.
-    pub async fn stored_problem(
-        &self,
-        _program_id: &str,
-        _activity_id: &str,
-    ) -> Result<StoredProblem> {
-        Err(invalid("Stored problems are not read yet."))
     }
 }
 
