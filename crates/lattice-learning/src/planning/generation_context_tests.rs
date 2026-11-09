@@ -370,7 +370,8 @@ const BLOCK_KIND: &str = "UPDATE learning_blocks SET kind='explanation' WHERE le
 const BLOCK_ORDINAL: &str = "UPDATE learning_blocks SET ordinal=ordinal+5 WHERE lesson_id=?";
 const BLOCK_BODY: &str =
     "UPDATE learning_blocks SET body='A sentence the learner wrote.' WHERE lesson_id=?";
-const QUESTION: &str = "INSERT INTO learning_questions(id,lesson_id,module_id,kind,prompt,options_json,source_ids_json,ordinal) VALUES(lower(hex(randomblob(16))),?,(SELECT module_id FROM learning_lessons WHERE id=?1),'quiz','A question','[\"a\",\"b\"]','[]',0)";
+const BLOCK_INSERTED: &str = "INSERT INTO learning_blocks(lesson_id,ordinal,kind,title,body,source_ids_json) VALUES(?,99,'recap','Added block','More teaching','[]')";
+const BLOCK_DELETED: &str = "DELETE FROM learning_blocks WHERE lesson_id=?";
 
 #[derive(Clone, Copy, Debug)]
 enum Meanwhile {
@@ -390,7 +391,8 @@ async fn a_lesson_in_progress_publishes_after_learner_work_and_other_lessons_pub
         EarlierLesson(BLOCK_KIND),
         EarlierLesson(BLOCK_ORDINAL),
         EarlierLesson(BLOCK_BODY),
-        EarlierLesson(QUESTION),
+        EarlierLesson(BLOCK_INSERTED),
+        EarlierLesson(BLOCK_DELETED),
         LessonCompleted,
         HeldLessonJobCompleted,
     ] {
