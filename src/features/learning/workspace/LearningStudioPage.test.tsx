@@ -51,7 +51,7 @@ vi.mock('@/lib/pendingSaves', async (importOriginal) => ({
   ...await importOriginal<typeof import('@/lib/pendingSaves')>(),
   flushPendingSaves: mocks.flush,
 }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   listConversationSpaces: async () => ({ ok: true, data: [] }),
   listSpaceDocuments: async () => ({ ok: true, data: mocks.documents().map((doc: { id: string; fileName: string }) => ({ documentId: doc.id, fileName: doc.fileName, category: null, modifiedAt: null })) }),
   listLearningPrograms: mocks.list,

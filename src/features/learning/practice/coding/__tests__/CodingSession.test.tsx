@@ -382,10 +382,10 @@ describe('CodingSession', () => {
   it('sends Idle in Coached after three minutes with no activity', async () => {
     api.observeDraft.mockResolvedValue(codingSession());
     renderSession(codingSession({ stage: 'code' }));
-    await editor();
+    const box = await editor();
 
     vi.useFakeTimers();
-    fireEvent.change(await screen.findByRole('textbox', { name: /code/i }), { target: { value: 'x = 1\n' } });
+    fireEvent.change(box, { target: { value: 'x = 1\n' } });
     await act(async () => {
       vi.advanceTimersByTime(179_000);
     });

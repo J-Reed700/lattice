@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { PlanPanel } from '@/features/learning/curriculum/PlanPanel';
 
 const mocks = vi.hoisted(() => ({ getPlan: vi.fn(), preview: vi.fn(), accept: vi.fn(), discard: vi.fn(), startDiagnostic: vi.fn(), submitDiagnostic: vi.fn(), skipDiagnostic: vi.fn(), cancelJob: vi.fn(), retryJob: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningPlan: mocks.getPlan,
   // The Verifier audit switch sits on the Plan tab; off, with no Verifier set.
   getLearningProgramVerifierAudit: async (programId: string) => ({ ok: true, data: {

@@ -1,7 +1,7 @@
 name: Acceptance build
 
-# Never merges. Builds a Lattice Test installer of this pull request's head for the
-# scripted three-course run. Lattice Test has the e2e build's WebDriver plugin.
+# Never merges. Builds a Lattice Coding Test installer of this pull request's head: its own
+# identifier, exe and home, so installing it never touches a running Lattice Test.
 on:
   pull_request:
 
@@ -21,10 +21,10 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - product: Lattice Test
-            identifier: tech.lattice.compatibility.test
-            exe: lattice-test
-            home: .lattice-test
+          - product: Lattice Coding Test
+            identifier: tech.lattice.compatibility.coding
+            exe: lattice-coding-test
+            home: .lattice-coding-test
             features: desktop-e2e
     steps:
       - uses: actions/checkout@v4
@@ -141,7 +141,7 @@ jobs:
           npx tauri build --ci "${features[@]}" --config "$RUNNER_TEMP/build.json" --bundles nsis
       - uses: actions/upload-artifact@v4
         with:
-          name: lattice-test-${{ github.event.pull_request.head.sha }}
+          name: lattice-coding-test-${{ github.event.pull_request.head.sha }}
           path: target/desktop-e2e/release/bundle/nsis/*.exe
           if-no-files-found: error
           retention-days: 14

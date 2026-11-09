@@ -2,18 +2,6 @@ import { dateText, statusStyle } from '@/features/learning/practice/practical/pr
 import { CaseResults, type CaseResultView } from '@/features/learning/practice/shared/CaseResults';
 import type { LearningPracticalRunDto } from '@/lib/bindings';
 
-interface CheckDetail {
-  caseId?: string;
-  category?: string;
-  visibility?: 'visible' | 'hidden';
-  mine?: boolean;
-  args?: string[] | null;
-  expected?: string | null;
-  actual?: string | null;
-  printed?: string | null;
-  error?: string | null;
-}
-
 function viewStatus(status: string): CaseResultView['status'] {
   if (status === 'passed' || status === 'failed' || status === 'error' || status === 'timed_out') return status;
   if (status === 'not_run') return 'not_run';
@@ -30,7 +18,7 @@ export function RunOutput({
   onCancel: () => void;
 }) {
   const cases: CaseResultView[] = output.checks.map((check, index) => {
-    const detail = (check as { detail?: CheckDetail | null }).detail ?? undefined;
+    const detail = check.detail ?? undefined;
     return {
       id: detail?.caseId ?? `check-${index}`,
       category: detail?.category ?? (check.name === 'Contained evaluator' ? 'Checks' : check.name),

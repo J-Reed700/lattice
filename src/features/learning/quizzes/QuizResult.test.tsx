@@ -12,7 +12,7 @@ import type { LearningAssessmentFormDto, LearningGradeContestDto } from '@/lib/b
 vi.mock('@/components/TiptapEditor', () => ({ TiptapViewer: ({ content }: { content: string }) => <div>{content}</div> }));
 
 const api = vi.hoisted(() => ({ resume: vi.fn(), cancel: vi.fn(), contest: vi.fn(), override: vi.fn(), report: vi.fn(), misses: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   resumeLearningQuizGrading: api.resume, cancelLearningGenerationJob: api.cancel, contestLearningQuizGrade: api.contest,
   overrideLearningQuizGrade: api.override, reportLearningQuizItem: api.report, addLearningQuizMissesToRecall: api.misses,
 } }));

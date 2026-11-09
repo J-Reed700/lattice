@@ -47,7 +47,7 @@ export function RecallEvolutionPanel({ programId, active }: { programId: string;
   const data = query.data;
   const cards = data?.cards ?? [];
   const selectedCard = cards.find((card) => card.id === selectedId) ?? null;
-  const sourceOptions = useMemo(() => (sourceQuery.data?.sources ?? []).flatMap((source) => source.versions.map((version) => ({ id: version.id, title: version.title, number: version.versionNumber, sourceId: source.id, removed: Boolean((source as { deletedAt?: number | null }).deletedAt) }))), [sourceQuery.data?.sources]);
+  const sourceOptions = useMemo(() => (sourceQuery.data?.sources ?? []).flatMap((source) => source.versions.map((version) => ({ id: version.id, title: version.title, number: version.versionNumber, sourceId: source.id, removed: Boolean(source.deletedAt) }))), [sourceQuery.data?.sources]);
   const dueCards = cards.filter((card) => card.scheduler.dueAt <= Date.now());
   const authoredOptions = content.options.map((option) => option.trim()).filter(Boolean);
   const multipleChoiceReady = authoredOptions.length >= 2 && authoredOptions.length <= 8 && new Set(authoredOptions.map((option) => option.toLocaleLowerCase())).size === authoredOptions.length && content.correctOptionIndex != null && Boolean(content.options[content.correctOptionIndex]?.trim());

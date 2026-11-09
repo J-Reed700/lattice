@@ -79,6 +79,7 @@ export function TutorConversation({
       <div className="mt-4">
         <PracticeThread
           label="Tutor messages"
+          inputLabel="Ask a question or request critique"
           messages={messages}
           draftKey={draftKey}
           placeholder={canTutor ? 'Ask about a step, assumption, or source…' : closedReason(active, mode)}

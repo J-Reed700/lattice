@@ -20,6 +20,7 @@ vi.mock('@/features/learning/tangents/StudyTangentSelection', () => ({
   StudyTangentSelection: ({ children }: { children: ReactNode }) => children,
   SectionTangentBar: () => null,
 }));
+vi.mock('@/features/voice/hooks/useVoiceConversation', () => ({ useVoiceConversation: () => ({ phase: 'off', toggle: vi.fn() }) }));
 vi.mock('@/features/learning/curriculum/CourseCoach', () => ({ CourseCoach: () => null }));
 // The drills are tested with their own panel; here it only shows which course it is for and counts its mounts.
 const drills = vi.hoisted(() => ({ mounts: 0 }));
@@ -72,7 +73,7 @@ vi.mock('@/features/learning/memory/MemoryPanels', async (importOriginal) => ({
 }));
 
 const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn(), cancel: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningPlan: api.plan,
   getLearningLessonClaimReview: api.review,
   cancelLearningGenerationJob: api.cancel,

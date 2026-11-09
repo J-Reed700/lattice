@@ -41,6 +41,11 @@ describe('TutorConversation', () => {
     expect(thread.props?.draftKey).toBe('practice-tutor:attempt-1');
   });
 
+  it('names the tutor box for the thread', () => {
+    setup();
+    expect(thread.props?.inputLabel).toBe('Ask a question or request critique');
+  });
+
   it('names the busy tutor to the thread', () => {
     setup({ busy: true, busyState: 'tutor' });
     expect(thread.props?.busy).toBe('The tutor is responding…');

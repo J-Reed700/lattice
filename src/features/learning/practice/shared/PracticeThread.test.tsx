@@ -58,6 +58,17 @@ describe('PracticeThread', () => {
     expect(document.activeElement).toBe(box);
   });
 
+  it('names the box by inputLabel, and Your response by default', () => {
+    renderThread({ inputLabel: 'Ask a question or request critique' });
+    expect(screen.getByRole('textbox', { name: 'Ask a question or request critique' })).toBeInTheDocument();
+    expect(screen.queryByRole('textbox', { name: 'Your response' })).not.toBeInTheDocument();
+  });
+
+  it('calls the box Your response when no inputLabel is given', () => {
+    renderThread();
+    expect(screen.getByRole('textbox', { name: 'Your response' })).toBeInTheDocument();
+  });
+
   it('shows Ctrl+Enter beside the box', () => {
     renderThread();
     expect(screen.getByText(/Ctrl\+Enter/)).toBeInTheDocument();
