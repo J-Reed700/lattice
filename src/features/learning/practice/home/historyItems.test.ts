@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 
 import type * as Wire from '@/lib/bindings';
 
+import { outcomeText } from '@/features/learning/drills/DrillChoose';
+
 import { buildHistory, cardOfActivity, pickContinue, type HistorySources } from './historyItems';
 
 const empty: HistorySources = { coding: [], activities: [], simulations: [], attempts: [], drills: [] };
@@ -50,6 +52,28 @@ describe('history', () => {
     expect(cardOfActivity('incident')).toBe('role');
     expect(cardOfActivity('conversation')).toBe('role');
     expect(cardOfActivity('code_review')).toBe('spot');
+  });
+
+  it('names the stage a session stopped at, not its identifier', () => {
+    const [entry] = buildHistory({ ...empty, coding: [session({ stage: 'reproduce' })] });
+    expect(entry?.stoppedAt).toBe('At the Reproduce stage');
+  });
+
+  it('opens a written attempt on its own session and lesson', () => {
+    const attempt = { id: 'sess-9', lessonId: 'lesson-4', lessonTitle: 'Graphs', status: 'draft', mode: 'practice', updatedAt: 10, submittedAt: null } as Wire.LearningPracticeSessionSummaryDto;
+    const [entry] = buildHistory({ ...empty, attempts: [attempt] });
+    expect(entry?.target).toEqual({ kind: 'attempt', sessionId: 'sess-9', lessonId: 'lesson-4', mode: 'practice' });
+  });
+
+  it('opens a drill on its own attempt and words its result as the drill does', () => {
+    const graded = {
+      attemptId: 'att-3', title: 'Review a parser', mode: 'practice', status: 'graded', startedAt: 20,
+      score: { found: 2, halfFound: 1, missed: 1 },
+    } as Wire.CourseDrillAttemptDto;
+    const [entry] = buildHistory({ ...empty, drills: [graded] });
+    expect(entry?.target).toEqual({ kind: 'drill', attemptId: 'att-3' });
+    expect(entry?.result).toBe(outcomeText(graded));
+    expect(entry?.result).toBe('Found 2 of 4');
   });
 
   it('picks the most recent work left open to continue', () => {

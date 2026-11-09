@@ -1,3 +1,4 @@
+import { outcomeText } from '@/features/learning/drills/DrillChoose';
 import type * as Wire from '@/lib/bindings';
 
 import type { CardId } from './practiceChoices';
@@ -6,8 +7,8 @@ export type HistoryTarget =
   | { kind: 'coding'; sessionId: string }
   | { kind: 'coding-activity'; activityId: string }
   | { kind: 'activity'; activityId: string }
-  | { kind: 'attempt' }
-  | { kind: 'drill' };
+  | { kind: 'attempt'; sessionId: string; lessonId: string; mode: 'practice' }
+  | { kind: 'drill'; attemptId: string };
 
 export interface HistoryItem {
   id: string;
@@ -35,6 +36,19 @@ const SETTING_LABELS: Record<Wire.CodingSetting, string> = { coached: 'Coached',
 const TASK_LABELS: Record<Wire.CodingTask, string> = { problem: 'Problem', bug_fix: 'Bug to fix', project: 'Project' };
 const HELP_LABELS: Record<Wire.LearningPracticeMode, string> = { explore: 'Full help', practice: 'Hints only', demonstrate: 'No help' };
 const DRILL_MODE_LABELS: Record<Wire.AttemptMode, string> = { practice: 'Untimed', interview: 'Timed', rapid: 'Rapid' };
+
+const STAGE_NAMES: Record<Wire.CodingStage, string> = {
+  understand: 'Understand',
+  examples: 'Examples',
+  plan: 'Plan',
+  code: 'Code',
+  test: 'Test',
+  review: 'Review',
+  reproduce: 'Reproduce',
+  locate: 'Locate',
+  fix: 'Fix',
+  verify: 'Verify',
+};
 
 const capitalize = (text: string) => text.charAt(0).toUpperCase() + text.slice(1);
 
@@ -69,19 +83,7 @@ function latestSimulation(sims: Wire.LearningSimulationSessionDto[], activityId:
 }
 
 function drillResult(attempt: Wire.CourseDrillAttemptDto): { result: string; resumable: boolean } {
-  switch (attempt.status) {
-    case 'open':
-      return { result: 'In progress', resumable: true };
-    case 'submitted':
-      return { result: 'Being graded', resumable: false };
-    case 'couldnt_grade':
-      return { result: 'Could not be graded', resumable: false };
-    case 'graded': {
-      const score = attempt.score;
-      if (!score) return { result: 'Graded', resumable: false };
-      return { result: `Found ${score.found} of ${score.found + score.halfFound + score.missed}`, resumable: false };
-    }
-  }
+  return attempt.status === 'open' ? { result: 'In progress', resumable: true } : { result: outcomeText(attempt), resumable: false };
 }
 
 /** Every past session, attempt and drill of a course as one list, newest first. */
@@ -102,7 +104,7 @@ export function buildHistory(sources: HistorySources): HistoryItem[] {
           : 'Finished'
         : 'In progress',
       resumable: !entry.finished,
-      stoppedAt: entry.finished ? null : `At the ${entry.stage} stage`,
+      stoppedAt: entry.finished ? null : `At the ${STAGE_NAMES[entry.stage]} stage`,
       target: { kind: 'coding', sessionId: entry.sessionId },
     });
   }
@@ -148,7 +150,7 @@ export function buildHistory(sources: HistorySources): HistoryItem[] {
       result: submitted ? 'Submitted' : 'In progress',
       resumable: !submitted,
       stoppedAt: submitted ? null : 'Your answer is saved',
-      target: { kind: 'attempt' },
+      target: { kind: 'attempt', sessionId: attempt.id, lessonId: attempt.lessonId, mode: 'practice' },
     });
   }
 
@@ -163,7 +165,7 @@ export function buildHistory(sources: HistorySources): HistoryItem[] {
       result,
       resumable,
       stoppedAt: resumable ? 'Your review is saved' : null,
-      target: { kind: 'drill' },
+      target: { kind: 'drill', attemptId: attempt.attemptId },
     });
   }
 

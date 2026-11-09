@@ -1,9 +1,8 @@
-import { useCallback, useState } from 'react';
+import { useCallback, useId, useRef, useState, type KeyboardEvent } from 'react';
 
 import { ArrowLeft } from 'lucide-react';
 
 import { CourseDrillsPanel } from '@/features/learning/drills/CourseDrillsPanel';
-import { useSaveLearningCardDraft } from '@/features/learning/memory/useLearningMemory';
 import { CodingEntry } from '@/features/learning/practice/coding/CodingEntry';
 import { CodingSession } from '@/features/learning/practice/coding/CodingSession';
 import { FeynmanTechniquePanel } from '@/features/learning/practice/FeynmanTechniquePanel';
@@ -15,7 +14,7 @@ import { getErrorMessage } from '@/lib/errorUtils';
 
 import type { HistoryTarget } from './historyItems';
 import { PracticeHome } from './PracticeHome';
-import type { StartAction } from './practiceChoices';
+import { MOCK_DIFFICULTY, type StartAction } from './practiceChoices';
 import { practiceHomeApi } from './practiceHomeApi';
 import { lastChosen } from './StartSentence';
 import type { PracticeViewState } from './usePracticeView';
@@ -33,10 +32,13 @@ const SUB_TABS = [
   { id: 'drill', label: 'Review drills' },
 ] as const;
 
+type SubTabId = (typeof SUB_TABS)[number]['id'];
+
 /** The one Practice page and the screens it opens, with the work in each kept when the learner returns to the page. */
 export function PracticeArea({ program, currentLesson, currentModule, view }: PracticeAreaProps) {
   const programId = program.summary.id;
-  const saveRecallDraft = useSaveLearningCardDraft();
+  const uid = useId();
+  const tabRefs = useRef<Partial<Record<SubTabId, HTMLButtonElement | null>>>({});
   const [startError, setStartError] = useState<string | null>(null);
   const kind = view.view.kind;
   const subView = kind === 'attempt' || kind === 'activity' || kind === 'drill';
@@ -69,10 +71,10 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
           view.openActivity(target.activityId);
           break;
         case 'attempt':
-          view.openAttempt();
+          view.openAttempt(target.mode, { sessionId: target.sessionId, lessonId: target.lessonId });
           break;
         case 'drill':
-          view.openDrill();
+          view.openDrill(target.attemptId);
           break;
       }
     },
@@ -103,17 +105,39 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
         task: 'problem',
         setting,
         language: lastChosen(programId, 'code', 'language') ?? 'python',
-        difficulty: 'medium',
+        difficulty: MOCK_DIFFICULTY,
       });
     },
     [currentLesson?.id, programId, view],
   );
 
-  const openSubTab = (id: (typeof SUB_TABS)[number]['id']) => {
-    if (id === 'attempt') view.openAttempt(view.attemptMode);
-    else if (id === 'drill') view.openDrill();
+  const openSubTab = (id: SubTabId) => {
+    if (id === 'attempt') view.openAttempt(view.attemptMode, view.attempt);
+    else if (id === 'drill') view.openDrill(view.drillAttemptId);
     else view.openActivity(view.activity.activityId, null);
   };
+
+  const onTabKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
+    const index = SUB_TABS.findIndex((tab) => tab.id === kind);
+    const last = SUB_TABS.length - 1;
+    const next =
+      event.key === 'ArrowRight' ? (index + 1) % SUB_TABS.length
+      : event.key === 'ArrowLeft' ? (index + last) % SUB_TABS.length
+      : event.key === 'Home' ? 0
+      : event.key === 'End' ? last
+      : null;
+    if (next === null) return;
+    event.preventDefault();
+    const target = SUB_TABS[next]!.id;
+    openSubTab(target);
+    tabRefs.current[target]?.focus();
+  };
+
+  const tabId = (id: SubTabId) => `${uid}-tab-${id}`;
+  const panelId = (id: SubTabId) => `${uid}-panel-${id}`;
+  const attemptLesson = view.attempt
+    ? (program.modules.flatMap((module) => module.lessons).find((lesson) => lesson.id === view.attempt?.lessonId) ?? currentLesson)
+    : currentLesson;
 
   return (
     <div className="space-y-4">
@@ -128,13 +152,19 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
             <span>Back to Practice</span>
           </button>
           {subView && (
-            <div role="tablist" aria-label="Practice activities" className="flex flex-wrap gap-1 rounded-lg border border-border-default bg-surface-sunken p-1">
+            <div role="tablist" aria-label="Practice activities" onKeyDown={onTabKeyDown} className="flex flex-wrap gap-1 rounded-lg border border-border-default bg-surface-sunken p-1">
               {SUB_TABS.map((tab) => (
                 <button
                   key={tab.id}
+                  ref={(node) => {
+                    tabRefs.current[tab.id] = node;
+                  }}
+                  id={tabId(tab.id)}
                   type="button"
                   role="tab"
                   aria-selected={kind === tab.id}
+                  aria-controls={panelId(tab.id)}
+                  tabIndex={kind === tab.id ? 0 : -1}
                   onClick={() => openSubTab(tab.id)}
                   className={`min-h-11 rounded-md px-3 text-sm font-medium focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
                     kind === tab.id ? 'bg-surface text-text-primary shadow-xs' : 'text-text-secondary hover:text-text-primary'
@@ -169,57 +199,44 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
         <CodingSession key={view.view.sessionId} programId={programId} sessionId={view.view.sessionId} onExit={view.openHome} onTryInterview={tryInterview} />
       )}
 
-      {view.visited.has('attempt') && (
-        <div hidden={kind !== 'attempt'} className="space-y-4">
-          <div role="group" aria-label="Written practice mode" className="flex flex-wrap gap-1 rounded-lg border border-border-default bg-surface-sunken p-1">
-            {(['practice', 'feynman'] as const).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                aria-pressed={view.attemptMode === mode}
-                onClick={() => view.openAttempt(mode)}
-                className={`min-h-11 rounded-md px-3 text-sm font-medium focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
-                  view.attemptMode === mode ? 'bg-surface text-text-primary shadow-xs' : 'text-text-secondary hover:text-text-primary'
-                }`}
-              >
-                {mode === 'practice' ? 'Grounded practice' : 'Feynman technique (Teach a beginner)'}
-              </button>
-            ))}
-          </div>
-          <div hidden={view.attemptMode !== 'practice'}>
-            <PracticeWorkbenchPanel key={currentLesson?.id} program={program} lesson={currentLesson} />
-          </div>
-          {view.attemptMode === 'feynman' && (
-            <FeynmanTechniquePanel
-              program={program}
-              lesson={currentLesson}
-              module={currentModule}
-              onDraftMissedConcept={(question, answer) => {
-                if (!currentLesson?.id) return;
-                saveRecallDraft.mutate({
-                  draftId: null,
-                  programId,
-                  lessonId: currentLesson.id,
-                  question,
-                  answer,
-                  explanation: 'Drafted from a gap in a Feynman explanation',
-                  sourceIds: [],
-                });
-              }}
-            />
-          )}
-        </div>
-      )}
-      {view.visited.has('activity') && (
-        <div hidden={kind !== 'activity'}>
+      <div role="tabpanel" id={panelId('attempt')} aria-labelledby={tabId('attempt')} hidden={kind !== 'attempt'} className="space-y-4">
+        {view.visited.has('attempt') && (
+          <>
+            <div role="group" aria-label="Written practice mode" className="flex flex-wrap gap-1 rounded-lg border border-border-default bg-surface-sunken p-1">
+              {(['practice', 'feynman'] as const).map((mode) => (
+                <button
+                  key={mode}
+                  type="button"
+                  aria-pressed={view.attemptMode === mode}
+                  onClick={() => view.openAttempt(mode, view.attempt)}
+                  className={`min-h-11 rounded-md px-3 text-sm font-medium focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring ${
+                    view.attemptMode === mode ? 'bg-surface text-text-primary shadow-xs' : 'text-text-secondary hover:text-text-primary'
+                  }`}
+                >
+                  {mode === 'practice' ? 'Grounded practice' : 'Feynman technique (Teach a beginner)'}
+                </button>
+              ))}
+            </div>
+            <div hidden={view.attemptMode !== 'practice'}>
+              <PracticeWorkbenchPanel
+                key={`${attemptLesson?.id ?? ''}:${view.attempt?.sessionId ?? ''}`}
+                program={program}
+                lesson={attemptLesson}
+                attemptId={view.attempt?.sessionId ?? null}
+              />
+            </div>
+            {view.attemptMode === 'feynman' && <FeynmanTechniquePanel program={program} lesson={currentLesson} module={currentModule} />}
+          </>
+        )}
+      </div>
+      <div role="tabpanel" id={panelId('activity')} aria-labelledby={tabId('activity')} hidden={kind !== 'activity'}>
+        {view.visited.has('activity') && (
           <PracticalWorkbenchPanel program={program} lesson={currentLesson ?? null} activityId={view.activity.activityId} composer={view.activity.composer} />
-        </div>
-      )}
-      {view.visited.has('drill') && (
-        <div hidden={kind !== 'drill'}>
-          <CourseDrillsPanel programId={programId} />
-        </div>
-      )}
+        )}
+      </div>
+      <div role="tabpanel" id={panelId('drill')} aria-labelledby={tabId('drill')} hidden={kind !== 'drill'}>
+        {view.visited.has('drill') && <CourseDrillsPanel programId={programId} attemptId={view.drillAttemptId} />}
+      </div>
     </div>
   );
 }

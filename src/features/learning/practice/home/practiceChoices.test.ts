@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type * as Wire from '@/lib/bindings';
 
-import { fitState, isCodingRound, mockRoundOptions, startAction, suggestsInterview, visibleCards } from './practiceChoices';
+import { defaultLanguage, fitState, isCodingRound, languageOptions, MOCK_DIFFICULTY, mockRoundOptions, startAction, suggestsInterview, visibleCards } from './practiceChoices';
 
 const profile = (patch: Partial<Wire.LearningPracticeProfileDto> = {}): Wire.LearningPracticeProfileDto => ({
   programId: 'course',
@@ -40,6 +40,18 @@ describe('the Mock interview badge', () => {
   });
 });
 
+describe('languages', () => {
+  it('keeps the learner's own words as the label and normalizes only the value', () => {
+    expect(languageOptions('JavaScript')).toEqual([{ value: 'javascript', label: 'JavaScript' }, { value: 'python', label: 'Python' }]);
+    expect(defaultLanguage(' JavaScript ')).toBe('javascript');
+  });
+
+  it('offers Python once', () => {
+    expect(languageOptions('python')).toEqual([{ value: 'python', label: 'Python' }]);
+    expect(languageOptions(null)).toEqual([{ value: 'python', label: 'Python' }]);
+  });
+});
+
 describe('what Start does', () => {
   const context = { lessonId: 'lesson-1', profile: profile({ language: 'Go', company: 'Acme', role: 'Engineer' }) };
 
@@ -58,6 +70,12 @@ describe('what Start does', () => {
   it('turns a coding round of the Mock card into a timed build in the chosen setting', () => {
     const action = startAction('mock', { round: 'debugging', setting: 'watched', minutes: '30' }, context);
     expect(action).toMatchObject({ kind: 'coding-build', choice: { task: 'bug_fix', setting: 'watched', budgetSeconds: 1800 } });
+  });
+
+  it('uses one difficulty for coding rounds of the Mock card', () => {
+    const action = startAction('mock', { round: 'live_coding' }, context);
+    expect(MOCK_DIFFICULTY).toBe('medium');
+    expect(action).toMatchObject({ kind: 'coding-build', choice: { difficulty: MOCK_DIFFICULTY } });
   });
 
   it('turns a spoken round into an interview composer preset with the company and role', () => {
