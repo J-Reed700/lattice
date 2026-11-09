@@ -125,6 +125,7 @@ jobs:
           INSTALLER: ${{ steps.bundle.outputs.file }}
         run: |
           mount="$RUNNER_TEMP/lattice-dmg"
+          mkdir -p "$mount"
           hdiutil attach "$INSTALLER" -mountpoint "$mount" -nobrowse -readonly
           status=0
           codesign --verify --deep --strict --verbose=2 "$mount/Lattice.app" || status=$?

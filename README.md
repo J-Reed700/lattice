@@ -57,7 +57,7 @@ Optional chat providers (Ollama, a remote llama.cpp server, OpenAI,
 Anthropic, Google) are available if you want them; `crates/lattice-sync/` holds an
 experimental sync service the app does not use yet.
 
-For a cloud provider, open **Settings → Chat**, save its API key, and choose
+For a cloud provider, open **Settings → AI → Chat**, save its API key, and choose
 from the available models. Use **Refresh** to reload the provider's list.
 Models from providers with saved keys also appear in each chat's model picker;
 choosing one there changes that conversation's model, keeping the app default.
@@ -96,9 +96,9 @@ full walkthrough.
 ### First launch
 
 On first launch the app shows "Set up AI" with a chat model and an embedding
-model sized to the machine's memory. Click Install. The downloads run in the
+model sized to the machine's memory. The dialog shows each model's size and the total before anything downloads. Click Install. The downloads run in the
 background and both models are switched on when they finish. To use a cloud
-provider instead, open **Settings > Chat** and save its API key.
+provider instead, open **Settings > AI > Chat** and save its API key.
 
 ### Build from source
 
@@ -247,12 +247,13 @@ python3 scripts/check-tauri-command-inventory.py
 See [CONTRIBUTING.md](CONTRIBUTING.md) for project conventions and the full
 change checklist.
 
-## License
-
-Lattice is available under the [MIT License](LICENSE).
-
-### Publishing a release (maintainers)
+## Publishing a release
 
 In GitHub, open Actions, then Release, then Run workflow on `main`. It builds
 the installers and makes a draft release. Check the files, then Publish it
 with "Set as the latest release" ticked.
+
+## License
+
+Lattice is available under the [MIT License](LICENSE).
+
