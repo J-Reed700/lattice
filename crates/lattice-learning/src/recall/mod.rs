@@ -16,3 +16,5 @@ mod study_repository_tests;
 pub mod study_service;
 #[cfg(test)]
 mod study_tests;
+#[cfg(test)]
+mod study_lock_tests;
