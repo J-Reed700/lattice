@@ -7,7 +7,7 @@ use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::TagName;
-use sqlx::{Row, SqlitePool};
+use sqlx::{Executor, Row, Sqlite, SqlitePool};
 
 mod document_tags;
 mod ports;
@@ -51,6 +51,29 @@ pub struct TagRepository {
     pool: SqlitePool,
 }
 
+async fn tag_by_name(
+    executor: impl Executor<'_, Database = Sqlite>,
+    name: &str,
+) -> Result<Option<TagEntity>> {
+    let db_model = sqlx::query_as!(
+        TagModel,
+        r#"
+            SELECT id as "id!", name as "name!", color as "color!", created_at as "created_at!", updated_at as "updated_at!"
+            FROM tags
+            WHERE LOWER(name) = LOWER(?)
+            "#,
+        name
+    )
+    .fetch_optional(executor)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
+
+    match db_model {
+        Some(model) => Ok(Some(TagMapper::to_entity(&model)?)),
+        None => Ok(None),
+    }
+}
+
 impl TagRepository {
     /// Create a new tag repository.
     pub fn new(pool: SqlitePool) -> Self {
@@ -63,23 +86,7 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if query fails
     pub async fn find_by_name(&self, name: &str) -> Result<Option<TagEntity>> {
-        let db_model = sqlx::query_as!(
-            TagModel,
-            r#"
-            SELECT id as "id!", name as "name!", color as "color!", created_at as "created_at!", updated_at as "updated_at!"
-            FROM tags
-            WHERE LOWER(name) = LOWER(?)
-            "#,
-            name
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
-
-        match db_model {
-            Some(model) => Ok(Some(TagMapper::to_entity(&model)?)),
-            None => Ok(None),
-        }
+        tag_by_name(&self.pool, name).await
     }
 
     /// Get or create a tag by name (case-insensitive).
@@ -241,13 +248,13 @@ impl TagRepository {
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create tag: {}", e)))?;
+        let tag = tag_by_name(&mut *tx, name.as_ref())
+            .await?
+            .ok_or_else(|| AppError::Database("Tag creation failed".into()))?;
         tx.commit()
             .await
             .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
-
-        self.find_by_name(name.as_ref())
-            .await?
-            .ok_or_else(|| AppError::Database("Tag creation failed".into()))
+        Ok(tag)
     }
 
     /// Get all tags ordered by name (alias for find_all).

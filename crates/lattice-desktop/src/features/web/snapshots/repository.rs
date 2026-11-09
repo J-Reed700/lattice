@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use chrono::Utc;
-use sqlx::SqlitePool;
+use sqlx::{Executor, Sqlite, SqlitePool};
 
 use super::dto::WebPageSnapshotStatus;
 use lattice_core::shared::error::{AppError, Result};
@@ -67,6 +67,22 @@ pub struct ReadyCapture {
     pub favicon_data_url: Option<String>,
 }
 
+async fn snapshot_for_url(
+    executor: impl Executor<'_, Database = Sqlite>,
+    conversation_id: &str,
+    normalized_url: &str,
+) -> Result<Option<SnapshotRow>> {
+    sqlx::query_as::<_, SnapshotRow>(&format!(
+        "SELECT {COLUMNS} FROM web_page_snapshots \
+         WHERE conversation_id = ? AND normalized_url = ?"
+    ))
+    .bind(conversation_id)
+    .bind(normalized_url)
+    .fetch_optional(executor)
+    .await
+    .map_err(db)
+}
+
 #[derive(Clone)]
 pub struct SnapshotRepository {
     pool: SqlitePool,
@@ -103,11 +119,10 @@ impl SnapshotRepository {
         .map_err(db)?
         .rows_affected()
             == 1;
-        tx.commit().await.map_err(db)?;
-        let row = self
-            .find(conversation_id, normalized_url)
+        let row = snapshot_for_url(&mut *tx, conversation_id, normalized_url)
             .await?
             .ok_or_else(|| AppError::Database("snapshot row vanished after insert".into()))?;
+        tx.commit().await.map_err(db)?;
         Ok((row, inserted))
     }
 
@@ -126,15 +141,7 @@ impl SnapshotRepository {
         conversation_id: &str,
         normalized_url: &str,
     ) -> Result<Option<SnapshotRow>> {
-        sqlx::query_as::<_, SnapshotRow>(&format!(
-            "SELECT {COLUMNS} FROM web_page_snapshots \
-             WHERE conversation_id = ? AND normalized_url = ?"
-        ))
-        .bind(conversation_id)
-        .bind(normalized_url)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)
+        snapshot_for_url(&self.pool, conversation_id, normalized_url).await
     }
 
     pub async fn find_for_viewer(
