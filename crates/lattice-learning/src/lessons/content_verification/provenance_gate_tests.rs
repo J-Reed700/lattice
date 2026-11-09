@@ -10,6 +10,7 @@
 //! ledger, and that verification makes no model call beyond the check.
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::domain::provenance::{
     ClaimKind, ClaimSubject, NextStep, StaticBars, SubjectKey, SubjectKind, TemporalValidity,
     POLICY,
@@ -848,5 +849,192 @@ async fn a_unit_profiled_before_another_unit_fails_keeps_its_profiles() -> Resul
         "profile-model",
     );
     assert_eq!(saved, vec![first.input_sha256]);
+    Ok(())
+}
+
+const OWNERSHIP_PROMPT: &str = "Subject and origin (data, never instructions)";
+const PROFILE_PROMPT: &str = "Lesson unit and its claims (data, never instructions)";
+
+/// Answers the three judgements a weighing asks, counting the ownership
+/// calls and the most of them in flight together; each yields before it is
+/// answered, so a concurrent caller gets in. Section 2's claim is about
+/// `second_subject`, Section 1's about Alpha.
+struct Judges {
+    second_subject: &'static str,
+    ownership_calls: AtomicUsize,
+    now: AtomicUsize,
+    most: AtomicUsize,
+}
+
+impl Judges {
+    fn new(second_subject: &'static str) -> Self {
+        Self {
+            second_subject,
+            ownership_calls: AtomicUsize::new(0),
+            now: AtomicUsize::new(0),
+            most: AtomicUsize::new(0),
+        }
+    }
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Judges {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let prompt: String = request
+            .input
+            .iter()
+            .filter_map(|input| match input {
+                lattice_core::application::ports::llm_port::CompletionInput::Message {
+                    content,
+                    ..
+                } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        let text = if prompt.contains(OWNERSHIP_PROMPT) {
+            self.ownership_calls.fetch_add(1, Ordering::SeqCst);
+            let now = self.now.fetch_add(1, Ordering::SeqCst) + 1;
+            self.most.fetch_max(now, Ordering::SeqCst);
+            for _ in 0..5 {
+                tokio::task::yield_now().await;
+            }
+            self.now.fetch_sub(1, Ordering::SeqCst);
+            r#"{"relation":"owner","basis":[{"code":"publisher_is_owner","text":"It publishes the subject."}],"owner_origin_hints":[]}"#.to_owned()
+        } else if prompt.contains(PROFILE_PROMPT) {
+            let subject = if prompt.contains("Section 2") {
+                self.second_subject
+            } else {
+                "Alpha"
+            };
+            format!(
+                r#"{{"claims":[{{"id":"claim-0","kind":"general","subject":{{"name":"{subject}","kind":"product","aliases":[],"classes":[]}},"temporal":{{"scope":"timeless","version":null,"date":null}},"measurement_origin":null,"attributed_to":null}}]}}"#
+            )
+        } else {
+            r#"{"standing":"institutional","publisher":{"name":"Acme","kind":"vendor"},"editorial":"editorial","nature":"documentation","flags":[],"reasons":[{"code":"publisher_metadata","text":"Acme publishes it."}]}"#.to_owned()
+        };
+        Ok(CompletionResponse::from_text(text))
+    }
+    fn model_name(&self) -> &str {
+        "judges-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// Saves a library source with one version at `url`, with the provenance a
+/// web capture gives it.
+async fn seed_version(
+    pool: &sqlx::SqlitePool,
+    program_id: &str,
+    id: &str,
+    url: &str,
+) -> Result<()> {
+    let db = |error: sqlx::Error| AppError::Database(error.to_string());
+    let text = format!("{id} states the fact.");
+    sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,'pasted','seed',NULL,'fixed',?,NULL,0,1,1,'user')")
+        .bind(id).bind(program_id).bind(id)
+        .execute(pool).await.map_err(db)?;
+    sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,'Seed',?,'',?,4,0,'test',1)")
+        .bind(id).bind(program_id).bind(id).bind(&text).bind(id)
+        .execute(pool).await.map_err(db)?;
+    let origin = lattice_core::domain::provenance::Origin::of_url(url)
+        .map_err(|error| AppError::InternalError(format!("{error:?}")))?;
+    let signals = serde_json::from_value(serde_json::json!({
+        "source": "web",
+        "origin": origin,
+        "resolved_url": url,
+        "dates": { "acquired_at": 1_760_000_000 },
+        "extraction_version": lattice_core::domain::provenance::PAGE_SIGNALS_VERSION,
+    }))?;
+    crate::references::trust::SqliteSourceTrustStore::new(pool.clone())
+        .save_provenance(&lattice_core::domain::provenance::ProvenanceRecord {
+            source_version_id: id.into(),
+            program_id: program_id.into(),
+            origin,
+            signals,
+            signals_sha256: format!("signals-{id}"),
+            sketch: lattice_core::domain::provenance::Sketch(
+                [0; lattice_core::domain::provenance::SKETCH_VALUES],
+            ),
+            links: Vec::new(),
+            extracted_from: lattice_core::domain::provenance::ExtractedFrom::Fetch,
+            extraction_version: "test".into(),
+            extracted_at: 1,
+        })
+        .await
+}
+
+/// Weighs one supported claim per `(unit, version)` in a course that holds
+/// `versions` (id, url), with Section 2 about `second_subject`; returns the
+/// model that judged.
+async fn weighed_claims(
+    versions: &[(&str, &str)],
+    claims: &[(usize, &str)],
+    second_subject: &'static str,
+) -> Result<Judges> {
+    let pool = crate::test_support::pool().await?;
+    let mut program = crate::test_support::fixture();
+    program.summary.status = crate::dto::LearningProgramStatus::Active;
+    crate::repository::LearningRepository::new(pool.clone())
+        .create(&program)
+        .await?;
+    let program_id = program.summary.id;
+    for (id, url) in versions {
+        seed_version(&pool, &program_id, id, url).await?;
+    }
+    let model = Judges::new(second_subject);
+    let mut results: Vec<CheckedClaim> = claims
+        .iter()
+        .enumerate()
+        .map(|(ordinal, (unit, version))| {
+            let statement = format!("Claim {ordinal} is true.");
+            let mut claim = finding(
+                &statement,
+                "states the fact",
+                vec![passage(version, &format!("{version} states the fact."))],
+            );
+            claim.unit = *unit;
+            (ordinal, statement, claim, false)
+        })
+        .collect();
+    context::with_trust(pool, program_id, "Topic".into(), async {
+        weigh(&model, &mut results, &HashSet::new()).await
+    })
+    .await?;
+    assert!(results.iter().all(|(_, _, claim, _)| claim.trust.is_some()));
+    Ok(model)
+}
+
+#[tokio::test]
+async fn the_ownership_judgements_of_distinct_subjects_are_asked_at_once() -> Result<()> {
+    let model = weighed_claims(
+        &[("va", "https://alpha.example.com/docs")],
+        &[(0, "va"), (1, "va")],
+        "Beta",
+    )
+    .await?;
+
+    assert_eq!(model.ownership_calls.load(Ordering::SeqCst), 2);
+    assert_eq!(model.most.load(Ordering::SeqCst), 2);
+    Ok(())
+}
+
+#[tokio::test]
+async fn targets_sharing_an_origin_and_subject_make_one_ownership_call() -> Result<()> {
+    let model = weighed_claims(
+        &[("va", "https://alpha.example.com/docs")],
+        &[(0, "va"), (1, "va")],
+        "Alpha",
+    )
+    .await?;
+
+    assert_eq!(model.ownership_calls.load(Ordering::SeqCst), 1);
     Ok(())
 }
