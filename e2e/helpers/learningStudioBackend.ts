@@ -2298,6 +2298,11 @@ export async function installLearningStudioBackend(page: Page) {
         state.planWorkspace.latestDiagnostic = { id: "diagnostic-skipped", programId: program.summary.id, status: "skipped", revision: 0, prompts: [], responses: [], findings: [], sourceCoverageGaps: [], interpretation: "Skipped", createdAt: Date.now(), submittedAt: null };
         return state.planWorkspace.latestDiagnostic;
       },
+      get_learning_course_plan: (args) => {
+        const { programId } = args as { programId: string };
+        if (programId !== program.summary.id) throw new Error("Learning program not found");
+        return { programId, outlineRevision: program.summary.revision, state: "none", error: null, entries: [] };
+      },
       get_learning_plan: () => {
         state.planWorkspace.programRevision = program.summary.revision;
         // IPC returns a snapshot, not shared references into the backend's state.

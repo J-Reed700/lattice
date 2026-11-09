@@ -10,10 +10,10 @@ import { useLearningOutlineEvidence } from '@/features/learning/api/evidenceQuer
 import { learningQuizOverviewKey } from '@/features/learning/api/learningQueryKeys';
 import { CourseCoach } from '@/features/learning/curriculum/CourseCoach';
 import { CourseNavigator } from '@/features/learning/curriculum/CourseNavigator';
-import { type CourseStep } from '@/features/learning/curriculum/courseProgress';
 import { CoursePlanStatus, LessonTopics } from '@/features/learning/curriculum/coursePlan/PlannedTopics';
 import { TopicsReviewScreen } from '@/features/learning/curriculum/coursePlan/TopicsReviewScreen';
 import { useCoursePlan } from '@/features/learning/curriculum/coursePlan/useCoursePlan';
+import { type CourseStep } from '@/features/learning/curriculum/courseProgress';
 import { CourseSyllabus } from '@/features/learning/curriculum/CourseSyllabus';
 import { OutlineCitation, OutlineEvidenceStatus } from '@/features/learning/curriculum/OutlineEvidence';
 import { OutlineReviewPanel, type OutlineOperation } from '@/features/learning/curriculum/OutlineReviewPanel';

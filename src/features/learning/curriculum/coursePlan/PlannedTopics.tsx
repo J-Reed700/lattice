@@ -1,7 +1,7 @@
 import { Button } from '@/components/ui/button';
 import { TopicLists } from '@/features/learning/curriculum/coursePlan/TopicLists';
-import type { CoursePlanEntryDto } from '@/lib/bindings';
 import { useCoursePlan, usePlanCourse } from '@/features/learning/curriculum/coursePlan/useCoursePlan';
+import type { CoursePlanEntryDto } from '@/lib/bindings';
 
 export const IDEAS_SEPARATOR = ' · ';
 

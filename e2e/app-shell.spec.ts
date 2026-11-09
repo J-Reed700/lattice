@@ -1901,6 +1901,11 @@ test('Learning Studio integrates with the app shell and opens its Quizzes tab', 
       list_learning_programs: () => [program.summary],
       get_learning_program: () => program,
       get_learning_outline_evidence: () => null,
+      get_learning_course_plan: (args) => {
+        const { programId } = args as { programId: string };
+        if (programId !== program.summary.id) throw new Error('Learning program not found');
+        return { programId, outlineRevision: program.summary.revision, state: 'none', error: null, entries: [] };
+      },
       get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }),
       get_learning_practice_workspace: () => ({ programId: program.summary.id, sessions: [] }),
       // The open lesson's warm-up asks for due review cards; none are due.
