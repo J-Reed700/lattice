@@ -347,7 +347,7 @@
     "learning:allow-accept-learning-program",
     "learning:allow-prepare-learning-lesson",
     "learning:allow-prepare-learning-module",
-    "learning:allow-prepare-learning-course",
+    "learning:allow-prepare-learning-ahead",
     "learning:allow-complete-learning-lesson",
     "learning:allow-delete-learning-program",
     "learning:allow-get-learning-memory",

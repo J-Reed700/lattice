@@ -9,8 +9,8 @@ use crate::curriculum::{
 };
 use crate::persistence::{db, decode, hash};
 use crate::plan_dto::{
-    LearningGenerationJobActionRequestDto, StartLearningCourseJobsRequestDto,
-    StartLearningGenerationJobRequestDto, StartLearningModuleJobsRequestDto,
+    LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto,
+    StartLearningModuleJobsRequestDto,
 };
 use crate::quiz_bank_jobs::{QUIZ_BANK, QUIZ_GRADING};
 use lattice_core::shared::error::{AppError, Result};
@@ -111,41 +111,101 @@ impl LearningCurriculumRepository {
         self.start_lesson_jobs(
             &request.operation_id,
             &request.program_id,
-            Some(&request.module_id),
+            &request.module_id,
             request.expected_revision,
         )
         .await
     }
 
-    /// Saves a job for each unprepared lesson of the course, in course order.
-    /// The caller dispatches them.
-    pub async fn start_course_jobs(
+    /// Saves a job for each untried lesson of the lesson's module and the next,
+    /// in course order; the caller dispatches them.
+    pub async fn start_jobs_ahead(
         &self,
-        request: &StartLearningCourseJobsRequestDto,
+        program_id: &str,
+        lesson_id: &str,
     ) -> Result<Vec<LearningGenerationJob>> {
-        self.start_lesson_jobs(
-            &request.operation_id,
-            &request.program_id,
-            None,
-            request.expected_revision,
+        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let revision: i64 = sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
+            .bind(program_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
+        let content_revision = check_program_open(&mut tx, program_id, revision).await?;
+        let module_ordinal: i64 = sqlx::query_scalar(
+            "SELECT m.ordinal FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.id=? AND l.program_id=?",
         )
+        .bind(lesson_id)
+        .bind(program_id)
+        .fetch_optional(&mut *tx)
         .await
+        .map_err(db)?
+        .ok_or_else(|| AppError::InvalidInput("That lesson is not in this course.".into()))?;
+        let next_ordinal: Option<i64> = sqlx::query_scalar(
+            "SELECT MIN(m.ordinal) FROM learning_modules m WHERE m.program_id=? AND m.ordinal>?",
+        )
+        .bind(program_id)
+        .bind(module_ordinal)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        let candidates: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND m.ordinal IN (?,?) AND {UNPREPARED_OUTLINE_LESSON} ORDER BY m.ordinal,l.ordinal"
+        ))
+        .bind(program_id)
+        .bind(module_ordinal)
+        .bind(next_ordinal)
+        .fetch_all(&mut *tx)
+        .await
+        .map_err(db)?;
+        let scopes = job_scopes(&mut tx, program_id).await?;
+        let covered = JobStore::list_for_subject_in(&mut tx, LESSON_PREPARATION, program_id)
+            .await?
+            .into_iter()
+            .filter(|job| {
+                scopes
+                    .get(&job.id)
+                    .is_some_and(|scope| scope.content_revision == Some(content_revision))
+            })
+            .flat_map(|job| {
+                job.requested
+                    .get("lessonIds")
+                    .and_then(serde_json::Value::as_array)
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|id| id.as_str().map(str::to_string))
+                    .collect::<Vec<_>>()
+            })
+            .collect::<std::collections::HashSet<_>>();
+        let untried: Vec<String> = candidates
+            .into_iter()
+            .filter(|lesson| !covered.contains(lesson))
+            .collect();
+        let ids = Self::admit_lessons(&mut tx, program_id, &untried, revision, |lesson| {
+            format!("ahead:{lesson}")
+        })
+        .await?;
+        tx.commit().await.map_err(db)?;
+        let mut jobs = Vec::new();
+        for id in &ids {
+            jobs.push(self.job(id).await?);
+        }
+        Ok(jobs)
     }
 
     async fn start_lesson_jobs(
         &self,
         operation_id: &str,
         program_id: &str,
-        module_id: Option<&str>,
+        module_id: &str,
         expected_revision: i64,
     ) -> Result<Vec<LearningGenerationJob>> {
         validate_operation_id(operation_id)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        let lessons: Vec<String> = sqlx::query_scalar(
-            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND (? IS NULL OR l.module_id=?) AND l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' AND NOT EXISTS (SELECT 1 FROM learning_lesson_reviews r WHERE r.lesson_id=l.id AND r.state IN ('needs_review','stopped')) ORDER BY m.ordinal,l.ordinal",
-        )
+        let lessons: Vec<String> = sqlx::query_scalar(&format!(
+            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.module_id=? AND {UNPREPARED_OUTLINE_LESSON} ORDER BY m.ordinal,l.ordinal"
+        ))
         .bind(program_id)
-        .bind(module_id)
         .bind(module_id)
         .fetch_all(&mut *tx)
         .await
@@ -153,22 +213,10 @@ impl LearningCurriculumRepository {
         if lessons.is_empty() {
             check_program_open(&mut tx, program_id, expected_revision).await?;
         }
-        let mut ids = Vec::new();
-        for lesson in &lessons {
-            let single = StartLearningGenerationJobRequestDto {
-                operation_id: stable_job_operation_id(
-                    program_id,
-                    &format!("{operation_id}:{lesson}"),
-                    expected_revision,
-                ),
-                program_id: program_id.to_string(),
-                expected_revision,
-                kind: LearningGenerationJobKind::LessonPreparation,
-                request_json: serde_json::json!({ "lessonIds": [lesson] }).to_string(),
-                progress_total: 1,
-            };
-            ids.push(Self::admit_job(&mut tx, &single).await?);
-        }
+        let ids = Self::admit_lessons(&mut tx, program_id, &lessons, expected_revision, |lesson| {
+            format!("{operation_id}:{lesson}")
+        })
+        .await?;
         tx.commit().await.map_err(db)?;
         let mut jobs = Vec::new();
         for id in &ids {
@@ -179,6 +227,34 @@ impl LearningCurriculumRepository {
             jobs.push(job);
         }
         Ok(jobs)
+    }
+
+    /// Admits one single-lesson job per lesson, in the order given, inside the
+    /// caller's transaction. `operation_of` names each lesson's operation.
+    async fn admit_lessons(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        program_id: &str,
+        lessons: &[String],
+        expected_revision: i64,
+        operation_of: impl Fn(&str) -> String,
+    ) -> Result<Vec<String>> {
+        let mut ids = Vec::new();
+        for lesson in lessons {
+            let single = StartLearningGenerationJobRequestDto {
+                operation_id: stable_job_operation_id(
+                    program_id,
+                    &operation_of(lesson),
+                    expected_revision,
+                ),
+                program_id: program_id.to_string(),
+                expected_revision,
+                kind: LearningGenerationJobKind::LessonPreparation,
+                request_json: serde_json::json!({ "lessonIds": [lesson] }).to_string(),
+                progress_total: 1,
+            };
+            ids.push(Self::admit_job(tx, &single).await?);
+        }
+        Ok(ids)
     }
 
     /// Saves a lesson job for the runtime to run. The caller dispatches it.
@@ -480,6 +556,10 @@ impl LearningCurriculumRepository {
         JobStore::new(self.pool.clone())
     }
 }
+
+/// The lessons a job may still prepare: in outline, unfinished and not held
+/// for the user's review.
+const UNPREPARED_OUTLINE_LESSON: &str = "l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' AND NOT EXISTS (SELECT 1 FROM learning_lesson_reviews r WHERE r.lesson_id=l.id AND r.state IN ('needs_review','stopped'))";
 
 /// The outline revision of a program that is active at `expected_revision`.
 async fn check_program_open(
