@@ -8,7 +8,7 @@ import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings
 import type { JsonValue, LocalModelConfigDto } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
-import { contextFitWarning } from '@/utils/chatModelSelection';
+import { contextFitWarning, fittedLaunchWindow } from '@/utils/chatModelSelection';
 
 import { RoleButton } from './RoleButton';
 import { ROLES } from './roleConfig';
@@ -50,7 +50,8 @@ export function LocalModelConfigModal({
     settings?.llm?.localModelConfigs?.[model.model_id];
 
   // Shows the window in force: saved for this model, else for every local
-  // model, else the model's maximum, which it loads with when none is saved.
+  // model, else the model's maximum, which the window fitted to this machine
+  // stands in for until the user edits it.
   const [contextLength, setContextLength] = useState<number>(maxSupportedTokens);
   const [contextEdited, setContextEdited] = useState<boolean>(false);
   const [maxConcurrentPredictions, setMaxConcurrentPredictions] = useState<number>(
@@ -87,14 +88,20 @@ export function LocalModelConfigModal({
   }, [isOpen, savedConfig, settings?.llm?.localContextWindow, maxSupportedTokens]);
 
   const quantTag = extractQuantizationTag(model);
-  const fitWarning = contextFitWarning(model, contextLength, kvCacheQuantization);
+  const savedWindow = savedConfig?.contextLength ?? settings?.llm?.localContextWindow ?? null;
+  const fittedWindow =
+    !contextEdited && savedWindow === null
+      ? fittedLaunchWindow(model, kvCacheQuantization)
+      : null;
+  const fitWarning =
+    fittedWindow === null ? contextFitWarning(model, contextLength, kvCacheQuantization) : null;
 
   const handleSaveAndLoad = async () => {
     if (!settings?.llm) return;
     setIsSaving(true);
     try {
       // A window the user did not touch stays as it was saved: none saved
-      // keeps loading the model at its maximum.
+      // keeps the window fitted to this machine.
       const editedContext = contextEdited
         ? Math.round(clamp(contextLength, MIN_CONTEXT_LENGTH, maxSupportedTokens))
         : null;
@@ -199,15 +206,20 @@ export function LocalModelConfigModal({
             <>
               <TokenLimitField
                 label="Context Length"
-                help="Tokens the model keeps in its active context window. The model loads with the window you set here, or with its maximum until you set one. A larger window needs more memory; if it does not fit, the model fails to load and says how much it needed."
+                help="Tokens the model keeps in its active context window. The model loads with the window you set here. Until you set one, it loads with the largest window that fits this machine's memory now, up to its maximum. A window you set that is larger than fits fails to load and says how much it needed."
                 min={MIN_CONTEXT_LENGTH}
                 max={maxSupportedTokens}
-                value={contextLength}
+                value={fittedWindow ?? contextLength}
                 onChange={(value) => {
                   setContextEdited(true);
                   setContextLength(value);
                 }}
               >
+                {fittedWindow !== null ? (
+                  <p role="status" className="mt-1.5 text-[11px] text-text-muted">
+                    {`Loads at ${fittedWindow.toLocaleString('en-US')} tokens, the largest window that fits this machine's memory now. The model was trained for up to ${maxSupportedTokens.toLocaleString('en-US')}.`}
+                  </p>
+                ) : null}
                 {fitWarning ? (
                   <p role="status" className="mt-1.5 text-[11px] text-warning-fg">
                     {fitWarning}

@@ -67,6 +67,8 @@ pub(super) fn sidecar_config(launch: &EmbeddingLaunch) -> SidecarConfig {
         model_path: launch.gguf.clone(),
         n_gpu_layers: if launch.gpu { 99 } else { 0 },
         context_size: launch.context_tokens(),
+        cpu_context_size: None,
+        auto_window: false,
         mtp_capable: false,
         speculative_decoding: SpeculativeDecoding::Off,
         parallel_slots: Some(launch.slots),
