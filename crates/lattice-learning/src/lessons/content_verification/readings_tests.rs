@@ -1754,7 +1754,7 @@ async fn parts_tells_of_a_statement_while_another_comparison_is_still_in_flight(
 
 /// Wraps a model and records the most of its calls that were in flight
 /// together; each call is held until `overlap` are in flight, at most 10 s.
-struct Overlap<'m> {
+pub(super) struct Overlap<'m> {
     inner: &'m dyn LLMPort,
     overlap: usize,
     peak: tokio::sync::watch::Sender<usize>,
@@ -1763,7 +1763,7 @@ struct Overlap<'m> {
 }
 
 impl<'m> Overlap<'m> {
-    fn new(inner: &'m dyn LLMPort, overlap: usize) -> Self {
+    pub(super) fn new(inner: &'m dyn LLMPort, overlap: usize) -> Self {
         Self {
             inner,
             overlap,
@@ -1773,7 +1773,7 @@ impl<'m> Overlap<'m> {
         }
     }
 
-    fn most(&self) -> usize {
+    pub(super) fn most(&self) -> usize {
         self.most.load(std::sync::atomic::Ordering::SeqCst)
     }
 }

@@ -36,6 +36,7 @@ struct Model {
     batch_unavailable: bool,
     extracted_sections: Mutex<Vec<Vec<usize>>>,
     audited_sections: Mutex<Vec<Vec<usize>>>,
+    /// Fail the coverage batch that starts at this section.
     fail_coverage_at: Option<usize>,
     coverage_gap_in: Option<usize>,
 }
@@ -411,18 +412,16 @@ impl Model {
                 )?);
         }
         if prompt.starts_with("Audit claim coverage independently.") {
-            let mut audits = self.audited_sections.lock().unwrap();
-            if self.fail_coverage_at == Some(audits.len()) {
+            let batch: Vec<usize> = context(prompt)["units"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|unit| unit["index"].as_u64().unwrap() as usize)
+                .collect();
+            if self.fail_coverage_at.is_some() && self.fail_coverage_at == batch.first().copied() {
                 return Err(invalid("fixture interrupted during coverage"));
             }
-            audits.push(
-                context(prompt)["units"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|unit| unit["index"].as_u64().unwrap() as usize)
-                    .collect(),
-            );
+            self.audited_sections.lock().unwrap().push(batch);
         }
         if prompt.starts_with("Audit claim coverage independently.") && self.incomplete_coverage {
             return Ok(json!({"units":[]}).to_string());
@@ -586,6 +585,8 @@ async fn verify(
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
 
+#[path = "batch_overlap_tests.rs"]
+mod batch_overlap_tests;
 #[path = "coverage_resume_tests.rs"]
 mod coverage_resume_tests;
 
