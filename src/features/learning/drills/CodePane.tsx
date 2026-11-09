@@ -42,34 +42,20 @@ export function CodePane({
   return (
     <div className="flex h-full min-h-0 flex-col overflow-hidden rounded-2xl border border-border-default bg-surface">
       <FileTabs
-        ariaLabel="Files of the drill"
-        files={files.map((file) => ({
-          path: file.path,
-          badge:
-            fixEdits[file.path] !== undefined ? (
-              <>
-                <span className="sr-only"> (changed in your fix)</span>
-                <span aria-hidden="true"> •</span>
-              </>
-            ) : null,
-        }))}
-        activePath={active.path}
+        label="Files of the drill"
+        files={files.map((file) => ({ path: file.path, modified: fixEdits[file.path] !== undefined }))}
+        active={active.path}
         onSelect={onActivePath}
-        idBase="drill-file-tab"
-        panelId="drill-file-panel"
-        actions={
-          writingFix ? (
-            <span className="shrink-0 text-xs font-medium text-text-secondary">
-              Your fix: an editable copy
-            </span>
-          ) : undefined
-        }
       />
+      {writingFix && (
+        <p className="border-b border-border-default px-3 py-1.5 text-xs font-medium text-text-secondary">
+          Your fix: an editable copy
+        </p>
+      )}
 
       <div
-        id="drill-file-panel"
         role="tabpanel"
-        aria-labelledby={`drill-file-tab-${files.indexOf(active)}`}
+        aria-label={active.path}
         className="min-h-0 flex-1 overflow-auto"
       >
         {writingFix ? (

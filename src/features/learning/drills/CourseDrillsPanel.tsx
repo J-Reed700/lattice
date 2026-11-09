@@ -19,7 +19,7 @@ export function CourseDrillsPanel({ programId }: { programId: string }) {
   const back = (
     <Button type="button" variant="ghost" className="-ml-3 gap-2" onClick={drill.toChoices}>
       <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-      Review drills
+      Back to drill setup
     </Button>
   );
 

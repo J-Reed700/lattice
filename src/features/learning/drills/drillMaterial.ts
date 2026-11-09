@@ -19,7 +19,7 @@ export function materialLabel(drill: CodeReviewDrillDto): string {
     : `Explanation of ${drill.material.sourceTitle}`;
 }
 
-/** What a drill is, for the line under its title: the lesson, what it is made of and the mode, as "Spacing · C# · Interview". */
+/** What a drill is, for the line under its title: the lesson, what it is made of and the mode, as "Spacing · C# · Timed". */
 export function drillMeta(drill: CodeReviewDrillDto, mode: AttemptMode): string {
   return [...(drill.lesson ? [drill.lesson.title] : []), materialLabel(drill), MODE_LABEL[mode]].join(' · ');
 }
