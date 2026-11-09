@@ -1711,3 +1711,68 @@ fn a_form_draw_of_a_lesson_question_shuffles_and_each_reason_moves_with_its_choi
     assert_eq!(reveal.correct_indices, vec![right]);
     assert_eq!(reveal.distractor_rationales[right], "");
 }
+
+fn reasoned_lesson_question() -> (Vec<LessonQuestion>, Vec<LessonAnswerKey>) {
+    let question_id = id();
+    let questions = vec![LessonQuestion {
+        id: question_id.clone(),
+        kind: LessonQuestionKind::Practice,
+        prompt: "Which layer of the atmosphere holds most of its weather?".into(),
+        options: ["Stratosphere", "Troposphere", "Mesosphere", "Thermosphere"]
+            .map(String::from)
+            .to_vec(),
+        source_ids: vec![],
+    }];
+    let keys = vec![LessonAnswerKey {
+        question_id,
+        correct_index: 1,
+        explanation: "Weather happens in the lowest layer.".into(),
+        rationales: [
+            "The stratosphere sits above the clouds.",
+            "",
+            "The mesosphere burns up meteors, not storms.",
+            "The thermosphere is far above any weather.",
+        ]
+        .map(String::from)
+        .to_vec(),
+    }];
+    (questions, keys)
+}
+
+#[test]
+fn a_lesson_question_is_seeded_with_its_reasons_in_the_writers_order() {
+    let (questions, keys) = reasoned_lesson_question();
+    for _ in 0..30 {
+        let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
+        assert_eq!(seeded.len(), 1);
+        assert_eq!(seeded[0].review_status, "agreed");
+        let candidate = LearningAssessmentCandidate::from(seeded[0].item.clone());
+        assert_eq!(candidate.options, questions[0].options);
+        assert_eq!(candidate.distractor_rationales, keys[0].rationales);
+        assert!(matches!(candidate.key, LearningAssessmentKey::Choice(1)));
+    }
+}
+
+#[test]
+fn a_form_draw_of_a_lesson_question_shuffles_and_each_reason_moves_with_its_choice() {
+    let (questions, keys) = reasoned_lesson_question();
+    let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
+    let candidate = LearningAssessmentCandidate::from(seeded[0].item.clone());
+    let order = (0..50)
+        .map(|n| engine::option_order(LearningItemFormat::SingleChoice, 4, &format!("form-{n}:q")))
+        .find(|order| *order != vec![0, 1, 2, 3])
+        .unwrap();
+
+    let reveal = engine::key_reveal(&candidate, &order);
+
+    assert_eq!(reveal.distractor_rationales.len(), 4);
+    for (shown, authored) in order.iter().enumerate() {
+        assert_eq!(
+            reveal.distractor_rationales[shown], keys[0].rationales[*authored],
+            "shown {shown} is authored {authored}"
+        );
+    }
+    let right = order.iter().position(|authored| *authored == 1).unwrap();
+    assert_eq!(reveal.correct_indices, vec![right]);
+    assert_eq!(reveal.distractor_rationales[right], "");
+}
