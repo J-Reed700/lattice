@@ -266,7 +266,7 @@ describe('Course page', () => {
 
       await user.click(screen.getByRole('button', { name: 'Back to Practice' }));
       expect(await screen.findByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
-      expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
+      expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
     });
 
     it('is mounted once, and stays so while the learner is on Lessons and back', async () => {

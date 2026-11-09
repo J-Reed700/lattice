@@ -73,7 +73,7 @@ function definitions(fit: ReturnType<typeof fitState>): Record<CardId, CardDefin
     },
     spot: {
       slots: [],
-      parts: () => ["Find the planted mistakes in a lesson's code or explanation."],
+      parts: () => [`Find the planted mistakes in a lesson's ${fit === 'fits' ? 'code or explanation' : 'explanation'}.`],
     },
     code: {
       slots: [
@@ -150,10 +150,11 @@ function Card({ id, programId, definition, promise, badge, onStart }: CardProps)
       </div>
       <button
         type="button"
+        aria-label={`Start ${title}`}
         onClick={() => onStart(values)}
         className="inline-flex min-h-11 w-full items-center justify-center rounded-lg bg-accent px-4 text-sm font-semibold text-accent-fg hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
       >
-        Start<span className="sr-only"> {title}</span>
+        Start
       </button>
     </article>
   );
