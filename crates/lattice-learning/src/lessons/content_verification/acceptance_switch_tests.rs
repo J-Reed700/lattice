@@ -1402,6 +1402,76 @@ async fn a_cut_that_would_leave_a_section_fewer_than_two_teaching_sentences_is_n
     Ok(())
 }
 
+const WIDE_A: &str = "A table lists its rows in order.";
+const WIDE_B: &str = "A table names each column once.";
+const WIDE_C: &str = "A table keeps one value in each cell.";
+const WIDE_D: &str = "A table may hold many rows.";
+
+#[tokio::test]
+async fn a_cut_that_thins_one_section_is_held_back_while_a_cut_in_another_is_made() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let thin = format!("{WIDE_A} {WIDE_B}");
+    let wide = format!("{WIDE_C} {WIDE_D} {MORE}");
+    let lesson = json!({"blocks":[
+        {"kind":"explanation","title":"First","body":"The first section stands. It says two things.","rubric":[]},
+        {"kind":"explanation","title":"Thin","body":thin,"rubric":[]},
+        {"kind":"explanation","title":"Wide","body":wide,"rubric":[]}
+    ],"questions":[]});
+    let mut ledger = open().await?;
+    let held = claim_in(
+        &mut ledger,
+        "held",
+        1,
+        (WIDE_A, WIDE_A),
+        &thin,
+        Some(SOURCED),
+    )
+    .await?;
+    let made = claim_in(
+        &mut ledger,
+        "made",
+        2,
+        (WIDE_C, WIDE_C),
+        &wide,
+        Some(SOURCED),
+    )
+    .await?;
+    claim(&mut ledger, "other", (HEADER, HEADER), HEADER, SOURCED).await?;
+    for id in [&held, &made] {
+        walk(&mut ledger, id, Class::Sourced, &CUTTING).await?;
+        assert_eq!(node_of(&ledger, id), Some("s.cut"));
+    }
+    ledger
+        .begin_repairs(&policy, &lesson, &[held.clone(), made.clone()])
+        .await?;
+    let mut context = json!({
+        "candidate": lesson, "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [
+            {"unit":1,"claimId":"held","sentence":WIDE_A,"evidence":[],"lastAttempt":true},
+            {"unit":2,"claimId":"made","sentence":WIDE_C,"evidence":[],"lastAttempt":true},
+        ],
+    });
+
+    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+
+    assert_eq!(context["candidate"]["blocks"][1]["body"], thin);
+    let state = ledger.entry(&held).unwrap().state();
+    assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
+    assert_eq!(
+        context["candidate"]["blocks"][2]["body"],
+        format!("{WIDE_D} {MORE}")
+    );
+    assert!(matches!(
+        ledger.entry(&made).unwrap().state(),
+        ClaimState::Removed {
+            section_goes: false,
+            ..
+        }
+    ));
+    Ok(())
+}
+
 /// A claim of section `unit` the ledger holds, standing on `quote` of
 /// `body`; sorted into `class` unless it is a code example's, which has none.
 async fn claim_in(
