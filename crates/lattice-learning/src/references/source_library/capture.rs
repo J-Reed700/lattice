@@ -33,6 +33,19 @@ impl LearningSourceLibraryRepository {
         Ok(())
     }
 
+    /// Stub with main's behaviour: always adds.
+    pub async fn add_selected_once(
+        &self,
+        source: NewLearningSource<'_>,
+        captured: CapturedLearningSource,
+        payload_hash: String,
+        note: Option<&str>,
+    ) -> Result<SelectedSaved> {
+        self.add_selected(source, captured, payload_hash, note)
+            .await
+            .map(|()| SelectedSaved::Added)
+    }
+
     /// Captures a new source and its first version, recording who added it
     /// (`added_by`, claim review §5.4).
     pub async fn add_by(
