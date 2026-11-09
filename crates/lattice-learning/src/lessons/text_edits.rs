@@ -9,7 +9,7 @@ pub(super) const INSTRUCTIONS: &str = "Give edits, never a replacement lesson or
 
 /// What the teaching repair is told besides [`INSTRUCTIONS`] when a lesson's
 /// parts list the sentences they cite (claim classes design §3.5).
-const CITING: &str = "A sentence that states a figure, a date, a version, a product's behaviour, quoted wording or an attribution to a source needs a citation. Prefer citing it: when a supplied excerpt states it, append a citation and leave the sentence exactly as it is. A citation names the block or question by path, the sentence copied exactly from its body, explanation or a choice's reason, the sourceIndex of the excerpt that states it, and a quote, an exact span of that excerpt of at least 25 characters and five words, that contains the figure or wording. Write the general form of the sentence instead only when no supplied excerpt states it; generalizing a figure an excerpt states throws away a correct statement. Never cite an excerpt that does not contain what the sentence states.";
+const CITING: &str = "A sentence that states a figure, a date, a version, a product's behaviour, quoted wording or an attribution to a source needs a citation. Prefer citing it: when a supplied excerpt states it, append a citation and leave the sentence exactly as it is. A citation names the block or question by path, the sentence copied exactly from its body, explanation or a choice's reason, the sourceIndex of the excerpt that states it, and a quote, an exact span of that excerpt of at least 25 characters and five words, that contains the figure or wording. Write the general form of the sentence instead only when no supplied excerpt states it; generalizing a figure an excerpt states throws away a correct statement. Never cite an excerpt that does not contain what the sentence states. When a citation's quote does not state its sentence, take the citation back by listing its path in uncite; the sentence then either cites a supplied excerpt that states it or is written in its general form.";
 
 /// What the claim repair is told besides [`INSTRUCTIONS`] when a lesson's
 /// parts list the sentences they cite: its corrected sentence cites the
@@ -89,6 +89,7 @@ pub(super) fn schema_for(candidate: &Value, lesson: &Value) -> Value {
             (0..count).map(move |index| format!("/{list}/{index}"))
         })
         .collect();
+    let cited = cited_paths(candidate);
     let Some(mut properties) = lesson
         .pointer(CITATION)
         .and_then(|item| item.get("properties"))
@@ -99,10 +100,67 @@ pub(super) fn schema_for(candidate: &Value, lesson: &Value) -> Value {
         return schema(candidate);
     };
     properties.insert("path".into(), json!({"type":"string","enum":parts}));
-    json!({"type":"object","additionalProperties":false,"required":["edits","citations"],"properties":{
+    let mut schema = json!({"type":"object","additionalProperties":false,"required":["edits","citations"],"properties":{
         "edits":edits_schema(candidate, 0),
         "citations":{"type":"array","maxItems":24,"items":{"type":"object","additionalProperties":false,
-            "required":["path","sentence","sourceIndex","quote"],"properties":properties}}}})
+            "required":["path","sentence","sourceIndex","quote"],"properties":properties}}}});
+    if !cited.is_empty() {
+        schema["properties"]["uncite"] =
+            json!({"type":"array","uniqueItems":true,"items":{"type":"string","enum":cited}});
+    }
+    schema
+}
+
+/// The path of every citation `candidate` lists, `/blocks/{i}/citations/{j}`
+/// or `/questions/{i}/citations/{j}`.
+fn cited_paths(candidate: &Value) -> Vec<String> {
+    let mut found = Vec::new();
+    for list in ["blocks", "questions"] {
+        let parts = candidate.get(list).and_then(Value::as_array);
+        for (index, part) in parts.into_iter().flatten().enumerate() {
+            let count = part
+                .get("citations")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            found.extend((0..count).map(|at| format!("/{list}/{index}/citations/{at}")));
+        }
+    }
+    found
+}
+
+/// The part and position a path from [`cited_paths`] names, if `candidate`
+/// lists that citation.
+fn cited_at(candidate: &Value, path: &str) -> Option<(String, usize)> {
+    let (part, at) = path.rsplit_once("/citations/")?;
+    let at = Some(at)
+        .filter(|at| !at.is_empty() && at.bytes().all(|byte| byte.is_ascii_digit()))?
+        .parse()
+        .ok()?;
+    let (list, index) = part.strip_prefix('/')?.split_once('/')?;
+    let counted = ["blocks", "questions"].contains(&list)
+        && !index.is_empty()
+        && index.bytes().all(|byte| byte.is_ascii_digit());
+    candidate
+        .pointer(&format!("{part}/citations/{at}"))
+        .filter(|_| counted)
+        .map(|_| (part.to_owned(), at))
+}
+
+/// Takes back the citations at `uncite` from `result`, the later ones of a
+/// part first so that no index shifts under another.
+fn take_back(result: &mut Value, mut uncite: Vec<(String, usize)>) {
+    uncite.sort();
+    uncite.dedup();
+    for (part, at) in uncite.into_iter().rev() {
+        if let Some(listed) = result
+            .pointer_mut(&format!("{part}/citations"))
+            .and_then(Value::as_array_mut)
+        {
+            if at < listed.len() {
+                listed.remove(at);
+            }
+        }
+    }
 }
 
 #[derive(Deserialize)]
@@ -112,6 +170,8 @@ struct Patch {
     edits: Vec<Edit>,
     #[serde(default)]
     citations: Vec<Cite>,
+    #[serde(default)]
+    uncite: Vec<String>,
 }
 
 /// A citation to append to a block's or question's `citations`: the sentence
@@ -351,7 +411,7 @@ pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result
         ))
     };
     let patch: Patch = crate::generation::parse_json(patch)?;
-    if patch.edits.is_empty() && patch.citations.is_empty() {
+    if patch.edits.is_empty() && patch.citations.is_empty() && patch.uncite.is_empty() {
         return Err(fail("it gave no edits.".into()));
     }
     let mut allowed = Vec::new();
@@ -384,6 +444,18 @@ pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result
     }
     problems.sort_by_key(|(index, _)| *index);
     let problems: Vec<String> = problems.into_iter().map(|(_, reason)| reason).collect();
+    let mut gone = Vec::new();
+    let mut unnamed = Vec::new();
+    for (index, path) in patch.uncite.iter().enumerate() {
+        match cited_at(candidate, path) {
+            Some(slot) => gone.push(slot),
+            None => unnamed.push(format!(
+                "uncite {index} names {path}, which is not a citation of the draft."
+            )),
+        }
+    }
+    let removed = !gone.is_empty();
+    take_back(&mut result, gone);
     // A citation comes on top of the edits: one the draft cannot hold is left
     // out, not charged to the edits and citations that apply.
     let refused: Vec<String> = patch
@@ -396,18 +468,19 @@ pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result
                 .map(|reason| format!("citation {index} {reason}"))
         })
         .collect();
-    if !applied && refused.len() == patch.citations.len() {
+    if !applied && !removed && refused.len() == patch.citations.len() {
         let mut reasons = problems;
+        reasons.extend(unnamed);
         reasons.extend(refused);
         if reasons.is_empty() {
             reasons.push("it changed nothing.".into());
         }
         return Err(fail(reasons.join(" ")));
     }
-    if !problems.is_empty() || !refused.is_empty() {
+    if !problems.is_empty() || !refused.is_empty() || !unnamed.is_empty() {
         tracing::warn!(
             left_out = %problems.join(" "),
-            refused = %refused.join(" "),
+            refused = %[unnamed, refused].concat().join(" "),
             "Left out the edits and citations of a repair that the draft cannot hold"
         );
     }
