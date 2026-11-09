@@ -1298,25 +1298,107 @@ async fn a_cut_that_takes_the_sentence_out_ends_the_statement_removed() -> Resul
 }
 
 #[tokio::test]
-async fn a_refused_cut_ends_removed_and_its_section_goes() -> Result<()> {
+async fn a_refused_cut_keeps_its_section_and_publishes_the_statement_not_verified() -> Result<()> {
     // The sentence is the whole of its field: it cannot be taken out.
     let (mut ledger, id, mut context) = cut_sent(SENTENCE, SENTENCE).await?;
 
     repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
     let entry = ledger.entry(&id).unwrap();
-    assert_eq!(
-        entry.decided(),
-        Some(&Then::End(End::Removed { section_goes: true }))
+    assert_eq!(entry.decided(), Some(&Then::End(End::Unverified)));
+    assert!(
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
     );
-    assert!(matches!(
-        entry.state(),
-        ClaimState::Removed {
-            by: Actor::Machine,
-            ..
-        }
-    ));
-    assert!(ledger.cuts.going.contains_key(&1));
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert_eq!(context["candidate"]["blocks"][1]["body"], SENTENCE);
+    Ok(())
+}
+
+const MORE: &str = "A comma separates each value from the next.";
+
+#[tokio::test]
+async fn a_statement_whose_narrowing_was_not_applied_keeps_the_sentence_it_shares_with_a_resolved_one(
+) -> Result<()> {
+    let policy = StandardPolicy::new();
+    let body = format!("{SENTENCE} {HEADER} {MORE}");
+    let mut ledger = open().await?;
+    let target = claim_in(
+        &mut ledger,
+        "target",
+        1,
+        (SENTENCE, SENTENCE),
+        &body,
+        Some(SOURCED),
+    )
+    .await?;
+    claim(&mut ledger, "other", (HEADER, HEADER), HEADER, SOURCED).await?;
+    walk(&mut ledger, &target, Class::Sourced, &CUTTING).await?;
+    let mate = claim_in(
+        &mut ledger,
+        "mate",
+        1,
+        (SENTENCE, MORE),
+        &body,
+        Some(REASONED),
+    )
+    .await?;
+    walk(&mut ledger, &mate, Class::Reasoning, &CONSISTENT).await?;
+    ledger
+        .begin_repairs(&policy, &around(&body), std::slice::from_ref(&target))
+        .await?;
+    ledger
+        .reject(
+            &policy,
+            std::slice::from_ref(&target),
+            "The edit was unusable.",
+        )
+        .await?;
+    ledger
+        .begin_repairs(&policy, &around(&body), std::slice::from_ref(&target))
+        .await?;
+    let mut context = json!({
+        "candidate": around(&body), "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [],
+        "failedClaims": [{"unit":1,"claimId":"target","sentence":SENTENCE,"evidence":[],"lastAttempt":true}],
+    });
+
+    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+
+    assert_eq!(context["candidate"]["blocks"][1]["body"], body);
+    let entry = ledger.entry(&target).unwrap();
+    assert_eq!(entry.decided(), Some(&Then::End(End::Unverified)));
+    assert!(
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
+    );
+    assert!(
+        matches!(
+            ledger.entry(&mate).unwrap().state(),
+            ClaimState::Consistent { .. }
+        ),
+        "{:?}",
+        ledger.entry(&mate).unwrap().state()
+    );
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_that_would_leave_a_section_fewer_than_two_teaching_sentences_is_not_made(
+) -> Result<()> {
+    let body = format!("{SENTENCE} {HEADER}");
+    let (mut ledger, id, mut context) = cut_sent(SENTENCE, &body).await?;
+
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    assert_eq!(context["candidate"]["blocks"][1]["body"], body);
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert!(ledger.cuts.taken.is_empty(), "{:?}", ledger.cuts.taken);
+    let state = ledger.entry(&id).unwrap().state();
+    assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
     Ok(())
 }
 

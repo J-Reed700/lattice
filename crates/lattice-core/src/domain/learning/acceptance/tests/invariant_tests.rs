@@ -299,3 +299,76 @@ fn a_policy_that_loops_is_not_also_held_to_a_ceiling() {
         .iter()
         .all(|violation| !matches!(violation, Violation::CeilingRises { .. })));
 }
+
+/// The rewrites and cuts reachable from an entry without crossing an edge on
+/// `Refuted`, found without the invariant's own code.
+fn reached_unrefuted(policy: &dyn AcceptancePolicy) -> Vec<(Class, &'static str)> {
+    let mut found = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+    let mut stack: Vec<Position> = CLASSES.iter().map(|&class| start(policy, class)).collect();
+    while let Some(at) = stack.pop() {
+        if !seen.insert(at) {
+            continue;
+        }
+        let Some(node) = policy.graph(at.class).node(at.node) else {
+            continue;
+        };
+        if matches!(node.step, Step::Rewrite(_) | Step::Cut) {
+            found.push((at.class, node.name));
+        }
+        for &(outcome, next) in node.edges() {
+            if outcome == Refuted {
+                continue;
+            }
+            if let Moved::To(to) = follow(policy, at, next) {
+                stack.push(to);
+            }
+        }
+    }
+    found
+}
+
+#[test]
+fn no_rewrite_or_cut_of_the_standard_policy_is_reached_without_a_refuted_edge() {
+    assert_eq!(
+        reached_unrefuted(&StandardPolicy::new()),
+        Vec::<(Class, &str)>::new()
+    );
+}
+
+#[test]
+fn a_rewrite_reached_without_a_refuted_edge_breaks_the_ninth_invariant() {
+    let found = broken(Sourced, "s.reread", |node| {
+        node.on(&[Unproven], Next::to("s.rewrite"))
+    });
+    let rewrite = Violation::RewriteWithoutRefutation {
+        class: Sourced,
+        node: id("s.rewrite"),
+    };
+    assert!(found.contains(&rewrite), "{found:?}");
+
+    // A first change's `otherwise` counts too.
+    let found = broken(Common, "c.read", |node| {
+        node.on(
+            &[Outcome::NeedsSource],
+            Next::first_change(Target::Enter(Sourced), "c.rewrite"),
+        )
+    });
+    let rewrite = Violation::RewriteWithoutRefutation {
+        class: Common,
+        node: id("c.rewrite"),
+    };
+    assert!(found.contains(&rewrite), "{found:?}");
+}
+
+#[test]
+fn a_cut_reached_without_a_refuted_edge_breaks_the_ninth_invariant() {
+    let found = broken(Class::Reasoning, "r.final", |node| {
+        node.on(&[Outcome::NeedsSource], Next::to("r.cut"))
+    });
+    let cut = Violation::RewriteWithoutRefutation {
+        class: Class::Reasoning,
+        node: id("r.cut"),
+    };
+    assert!(found.contains(&cut), "{found:?}");
+}

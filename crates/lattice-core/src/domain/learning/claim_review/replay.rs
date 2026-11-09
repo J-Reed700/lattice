@@ -365,6 +365,9 @@ pub(super) fn stepped(
         // machine's pass, as a Reasoning statement's is.
         Then::End(End::Consistent | End::NotAClaim) => Some(ClaimState::Consistent { at }),
         Then::End(End::GeneralKnowledge) => Some(ClaimState::GeneralKnowledge { at }),
+        // The ledger publishes it not verified with the reason of its last
+        // reading, which this decision does not carry.
+        Then::End(End::Unverified) => None,
         Then::End(End::Removed { .. }) => Some(ClaimState::Removed {
             at,
             by: Actor::Machine,
