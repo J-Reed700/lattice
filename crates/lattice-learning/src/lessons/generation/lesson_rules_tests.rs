@@ -685,3 +685,30 @@ fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
         json!("The second option is wrong. Two sources agree that the shell replies.");
     assert!(lesson_rules(&candidate).is_empty());
 }
+
+#[test]
+fn an_apostrophe_is_no_quoted_wording_to_cite() {
+    for sentence in [
+        "Run pwd before ls so you see the shell's folder rather than the window's.",
+        "Don't run rm until you've checked the folder's contents with ls.",
+        "Run pwd before ls so you see the shell\u{2019}s folder rather than the window\u{2019}s.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        assert!(lesson_rules(&candidate).is_empty(), "{sentence}");
+    }
+}
+
+#[test]
+fn a_real_quotation_is_still_quoted_wording_to_cite() {
+    for sentence in [
+        "The manual says 'rm deletes files permanently'.",
+        "Remember \"the shell keeps a working directory\" always.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        let findings = lesson_rules(&candidate);
+        assert_eq!(findings.len(), 1, "{sentence}");
+        assert!(findings[0].note.contains("without citing it"), "{sentence}");
+    }
+}
