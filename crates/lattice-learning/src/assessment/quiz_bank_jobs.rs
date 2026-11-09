@@ -258,6 +258,8 @@ pub struct QuizBankWorker {
 #[async_trait::async_trait]
 impl JobHandler for QuizBankWorker {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+        let _activity =
+            lattice_core::shared::runtime::user_activity::UserActivity::begin("Preparing a quiz");
         let job = context.job();
         let program_id = requested_str(job, "programId")?.to_string();
         let scope: LearningQuizScopeDto =

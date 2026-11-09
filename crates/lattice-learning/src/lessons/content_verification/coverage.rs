@@ -294,20 +294,11 @@ async fn check_fidelity(
             });
         }
     }
-    let total = checks.len();
-    let mut stream = futures::stream::iter(checks).buffer_unordered(3);
-    let mut completed = 0;
+    let mut stream: futures::stream::FuturesUnordered<_> = checks.into_iter().collect();
     let mut judged = BTreeMap::<usize, Vec<MissingAssertion>>::new();
-    crate::lesson_progress::stage(format!(
-        "Comparing extracted statements with original wording · 0 of {total} passages"
-    ));
     while let Some(result) = stream.next().await {
         let (index, missing) = result?;
         judged.entry(index).or_default().extend(missing);
-        completed += 1;
-        crate::lesson_progress::stage(format!(
-            "Comparing extracted statements with original wording · {completed} of {total} passages"
-        ));
     }
     for unit in coverage {
         let mut missing = judged.remove(&unit.index).unwrap_or_default();
@@ -347,33 +338,52 @@ pub(crate) async fn audit(
             pending.push(unit.clone());
         }
     }
-    for batch in pending.chunks(4) {
+    let total = units.len();
+    let reviewed = |count: usize| {
         crate::lesson_progress::stage(format!(
-            "Checking statement coverage · {} of {} sections reviewed",
-            audited.len(),
-            units.len()
+            "Checking statement coverage · {count} of {total} sections reviewed"
         ));
-        let mapping_key = checkpoints::mapping_key(llm, batch);
-        let saved = crate::lesson_drafts::checkpoint(&mapping_key)
-            .await?
-            .and_then(|value| value.as_str().map(str::to_owned))
-            .filter(|raw| resolve(raw, batch).is_ok());
-        let raw = if let Some(saved) = saved {
-            saved
-        } else {
-            mapping::review(llm, batch, progress).await?
-        };
-        let mut checked = resolve(&raw, batch)?;
-        // This mapping is unfinished representation work, never factual
-        // approval. Save it before fidelity so a disconnect cannot change its
-        // inputs and force completed passage comparisons to run again.
-        crate::lesson_drafts::record_checkpoint(&mapping_key, json!(raw)).await?;
-        check_fidelity(llm, &raw, batch, &mut checked).await?;
-        checkpoints::save(llm, batch, &checked).await?;
-        // Persist a finished batch before the next model request. A later
-        // interruption must not discard these independently audited sections.
-        section_checkpoints::save(llm, content, &inventory.units, &checked).await?;
-        audited.extend(checked);
+    };
+    reviewed(audited.len());
+    let mut batches: futures::stream::FuturesUnordered<_> = pending
+        .chunks(4)
+        .map(|batch| async move {
+            let mapping_key = checkpoints::mapping_key(llm, batch);
+            let saved = crate::lesson_drafts::checkpoint(&mapping_key)
+                .await?
+                .and_then(|value| value.as_str().map(str::to_owned))
+                .filter(|raw| resolve(raw, batch).is_ok());
+            let raw = if let Some(saved) = saved {
+                saved
+            } else {
+                mapping::review(llm, batch, progress).await?
+            };
+            let mut checked = resolve(&raw, batch)?;
+            // This mapping is unfinished representation work, never factual
+            // approval. Save it before fidelity so a disconnect cannot change its
+            // inputs and force completed passage comparisons to run again.
+            crate::lesson_drafts::record_checkpoint(&mapping_key, json!(raw)).await?;
+            check_fidelity(llm, &raw, batch, &mut checked).await?;
+            checkpoints::save(llm, batch, &checked).await?;
+            // Persist a finished batch as it lands. A later interruption must
+            // not discard these independently audited sections.
+            section_checkpoints::save(llm, content, &inventory.units, &checked).await?;
+            Ok::<_, AppError>(checked)
+        })
+        .collect();
+    let mut first_error = None;
+    while let Some(landed) = batches.next().await {
+        match landed {
+            Ok(checked) => {
+                audited.extend(checked);
+                reviewed(audited.len());
+            }
+            Err(error) if first_error.is_none() => first_error = Some(error),
+            Err(_) => {}
+        }
+    }
+    if let Some(error) = first_error {
+        return Err(error);
     }
     audited.sort_by_key(|unit| unit.index);
     Ok(Coverage { units: audited })

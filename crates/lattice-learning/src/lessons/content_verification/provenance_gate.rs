@@ -13,8 +13,8 @@ use lattice_core::domain::learning::claim_review::{SupportedBy, TrustAssessment}
 use lattice_core::domain::provenance::TRUST_POLICY_VERSION;
 use lattice_core::domain::provenance::{
     citation_candidates, clusters, decide, effective_date, label_below_primary, passage_merges,
-    AddedBy, Available, ClaimProfile, ClusterId, Contrary, Decision, EffectiveBars, Label,
-    LinkStanding, Missing, OriginKey, OutboundLink, Overturn, PassageKind, Policy, Reason,
+    AddedBy, Available, ClaimProfile, ClaimSubject, ClusterId, Contrary, Decision, EffectiveBars,
+    Label, LinkStanding, Missing, OriginKey, OutboundLink, Overturn, PassageKind, Policy, Reason,
     SourceDates, SourceRelation, Support, TemporalScope, Trust, TrustLevel,
 };
 use std::sync::Arc;
@@ -479,6 +479,15 @@ pub(super) async fn weigh(
         .map(|(_, _, finding, _)| (finding.unit, finding.statement.as_str()))
         .collect();
     let profiles = judgements.profiles(llm, &claims).await?;
+    let wanted: Vec<(Option<ClaimSubject>, Vec<String>)> = targets
+        .iter()
+        .zip(&profiles)
+        .filter_map(|(index, profile)| {
+            let (_, _, finding, _) = results.get(*index)?;
+            Some((profile.authority_subject(), cited_versions(finding)))
+        })
+        .collect();
+    judgements.owners(llm, &wanted).await?;
     for (index, profile) in targets.into_iter().zip(profiles) {
         let Some((_, _, finding, _)) = results.get_mut(index) else {
             continue;
@@ -494,14 +503,8 @@ pub(super) async fn weigh(
     Ok(())
 }
 
-/// One supported finding weighed for its profile: each supporting version
-/// levelled for the claim's subject, then `assess`.
-async fn weighed(
-    judgements: &mut context::Judgements,
-    llm: &dyn LLMPort,
-    profile: &ClaimProfile,
-    finding: &Finding,
-) -> Result<FindingTrust> {
+/// The source versions a finding cites, supporting or contrary, sorted.
+fn cited_versions(finding: &Finding) -> Vec<String> {
     let mut versions: Vec<String> = supporting_passages(finding)
         .into_iter()
         .map(|passage| passage.source_id.clone())
@@ -515,6 +518,18 @@ async fn weighed(
         .collect();
     versions.sort();
     versions.dedup();
+    versions
+}
+
+/// One supported finding weighed for its profile: each supporting version
+/// levelled for the claim's subject, then `assess`.
+async fn weighed(
+    judgements: &mut context::Judgements,
+    llm: &dyn LLMPort,
+    profile: &ClaimProfile,
+    finding: &Finding,
+) -> Result<FindingTrust> {
+    let versions = cited_versions(finding);
     let facts = judgements.facts(Some(llm), &versions, profile).await?;
     Ok(assess(
         profile,
