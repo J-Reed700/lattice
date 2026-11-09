@@ -7,6 +7,7 @@
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text};
 use crate::content_verification::{figures, names_a_source, needs_citation, Givens, CITED_KINDS};
+use crate::lessons::repeats;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -343,6 +344,24 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
             ));
         } else {
             titles.insert(normalize(title), index);
+        }
+    }
+    let mut seen = HashSet::new();
+    for (index, block) in blocks.iter().enumerate() {
+        let mut reported = HashSet::new();
+        for sentence in repeats::comparable(text(block, "body")) {
+            let key = repeats::key(&sentence);
+            if !seen.insert(key.clone()) && reported.insert(key) {
+                findings.push(
+                    ReviewFinding::new(
+                        FindingKind::Teaching,
+                        Some(FindingSite::Section(index)),
+                        format!("Section {} (candidate blocks-{index}) says \"{sentence}\" when the lesson has said it already; say it once, in the section it belongs to, and take it out or reword it here.", index + 1),
+                    )
+                    .with_summary(format!("Section {} repeats a sentence the lesson already has: \u{201c}{sentence}\u{201d}", index + 1))
+                    .with_passage(&sentence),
+                );
+            }
         }
     }
     let kinds = |items: &[Value], kind: &str| {
