@@ -26,7 +26,7 @@ impl LearningCurriculumRepository {
         let payload = hash(request)?;
         let mut read = self.pool.begin_read().await.map_err(db)?;
         let attempt = match diagnostic_operation(operation_id, program_id, kind, &payload)
-            .replay::<String, _>(&mut *read)
+            .replay::<String>(&mut *read)
             .await?
         {
             Some(id) => Some(Self::diagnostic_on(&mut read, &id).await?),
@@ -107,7 +107,7 @@ impl LearningCurriculumRepository {
             "start",
             &payload,
         );
-        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+        if let Some(id) = operation.replay::<String>(&mut *tx).await? {
             let attempt = Self::diagnostic_on(&mut tx, &id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(attempt);
@@ -216,7 +216,7 @@ impl LearningCurriculumRepository {
             "submit",
             &payload,
         );
-        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+        if let Some(id) = operation.replay::<String>(&mut *tx).await? {
             let attempt = Self::diagnostic_on(&mut tx, &id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(attempt);
@@ -324,7 +324,7 @@ impl LearningCurriculumRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation =
             diagnostic_operation(&request.operation_id, &request.program_id, "skip", &payload);
-        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+        if let Some(id) = operation.replay::<String>(&mut *tx).await? {
             let attempt = Self::diagnostic_on(&mut tx, &id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(attempt);

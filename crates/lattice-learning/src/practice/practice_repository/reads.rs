@@ -338,8 +338,9 @@ impl LearningPracticeRepository {
         payload_hash: &str,
     ) -> Result<bool> {
         uuid(operation_id, "operation")?;
+        let mut connection = self.pool.acquire().await.map_err(db)?;
         practice_operation(operation_id, program_id, session_id, kind, payload_hash)
-            .seen(&self.pool)
+            .seen(&mut connection)
             .await
     }
 }

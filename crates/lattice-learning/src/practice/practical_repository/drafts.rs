@@ -126,7 +126,7 @@ impl LearningPracticalRepository {
             "Operation ID was reused with different practical draft data.",
         );
         if let Some(result) = operation
-            .replay::<PracticalDraftOperationResult, _>(&mut *tx)
+            .replay::<PracticalDraftOperationResult>(&mut *tx)
             .await?
         {
             let replay = LearningPracticalDraftDto {

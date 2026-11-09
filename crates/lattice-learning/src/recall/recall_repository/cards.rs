@@ -32,7 +32,7 @@ impl LearningRecallRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.operation_id, &req.program_id, "save_card", &hash);
-        if let Some(card_id) = operation.replay::<String, _>(&mut *tx).await? {
+        if let Some(card_id) = operation.replay::<String>(&mut *tx).await? {
             if card_id != req.card_id {
                 return Err(invalid("Operation replay does not match this card."));
             }

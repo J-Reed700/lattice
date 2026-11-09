@@ -234,7 +234,7 @@ impl LearningCurriculumRepository {
             &payload,
             "Operation ID was reused with different job data.",
         );
-        if let Some(id) = operation.replay::<String, _>(&mut **tx).await? {
+        if let Some(id) = operation.replay::<String>(&mut **tx).await? {
             return Ok(id);
         }
         let content_revision =
@@ -372,7 +372,7 @@ impl LearningCurriculumRepository {
             &payload,
             "Operation ID was reused with different job action data.",
         );
-        if let Some(id) = operation.replay::<String, _>(&mut **tx).await? {
+        if let Some(id) = operation.replay::<String>(&mut **tx).await? {
             return Ok(id);
         }
         let program =

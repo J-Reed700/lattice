@@ -9,7 +9,7 @@ use self::repository::RecordedOperation;
 use super::persistence::{decode, encode};
 use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::Sqlite;
+use sqlx::SqliteConnection;
 
 mod repository;
 
@@ -60,12 +60,11 @@ impl Operation<'_> {
 
     /// The stored result of an earlier identical request, or `None` when the
     /// ID is new.
-    pub(crate) async fn replay<'e, T, E>(&self, executor: E) -> Result<Option<T>>
+    pub(crate) async fn replay<T>(&self, connection: &mut SqliteConnection) -> Result<Option<T>>
     where
         T: DeserializeOwned,
-        E: sqlx::Executor<'e, Database = Sqlite>,
     {
-        let Some(recorded) = repository::find(executor, self.id).await? else {
+        let Some(recorded) = repository::find(connection, self.id).await? else {
             return Ok(None);
         };
         self.check(&recorded)?;
@@ -73,33 +72,30 @@ impl Operation<'_> {
     }
 
     /// Whether an identical request was already recorded, ignoring its result.
-    pub(crate) async fn seen<'e, E>(&self, executor: E) -> Result<bool>
-    where
-        E: sqlx::Executor<'e, Database = Sqlite>,
-    {
+    pub(crate) async fn seen(&self, connection: &mut SqliteConnection) -> Result<bool> {
         Ok(self
-            .replay::<serde::de::IgnoredAny, _>(executor)
+            .replay::<serde::de::IgnoredAny>(connection)
             .await?
             .is_some())
     }
 
     /// Record this request and what it produced.
-    pub(crate) async fn record<'e, T, E>(&self, executor: E, result: &T) -> Result<()>
+    pub(crate) async fn record<T>(
+        &self,
+        connection: &mut SqliteConnection,
+        result: &T,
+    ) -> Result<()>
     where
         T: Serialize + ?Sized,
-        E: sqlx::Executor<'e, Database = Sqlite>,
     {
-        repository::insert(executor, self, &encode(result)?).await
+        repository::insert(connection, self, &encode(result)?).await
     }
 
     /// Drop this identical request's row once what it produced is gone, so
     /// the same ID can do the work again inside the caller's transaction. A
     /// row recorded for any other request is left alone.
-    pub(crate) async fn forget<'e, E>(&self, executor: E) -> Result<()>
-    where
-        E: sqlx::Executor<'e, Database = Sqlite>,
-    {
-        repository::delete(executor, self).await
+    pub(crate) async fn forget(&self, connection: &mut SqliteConnection) -> Result<()> {
+        repository::delete(connection, self).await
     }
 }
 
@@ -153,14 +149,17 @@ mod tests {
     async fn the_ledger_returns_the_first_result_and_refuses_a_reused_id() -> Result<()> {
         let pool = pool().await?;
         let first = operation("save", "a");
-        assert_eq!(first.replay::<i64, _>(&pool).await?, None);
-        assert!(!first.seen(&pool).await?);
+        let mut connection = pool.acquire().await.map_err(db)?;
+        assert_eq!(first.replay::<i64>(&mut connection).await?, None);
+        assert!(!first.seen(&mut connection).await?);
+        drop(connection);
         let mut tx = pool.begin().await.map_err(db)?;
         first.record(&mut *tx, &7_i64).await?;
         tx.commit().await.map_err(db)?;
-        assert_eq!(first.replay::<i64, _>(&pool).await?, Some(7));
-        assert!(first.seen(&pool).await?);
-        let reused = operation("save", "b").replay::<i64, _>(&pool).await;
+        let mut connection = pool.acquire().await.map_err(db)?;
+        assert_eq!(first.replay::<i64>(&mut connection).await?, Some(7));
+        assert!(first.seen(&mut connection).await?);
+        let reused = operation("save", "b").replay::<i64>(&mut connection).await;
         assert!(matches!(reused, Err(AppError::InvalidInput(message)) if message == CONFLICT));
         Ok(())
     }
@@ -169,13 +168,14 @@ mod tests {
     async fn forgetting_frees_the_id_for_the_same_request_only() -> Result<()> {
         let pool = pool().await?;
         let first = operation("save", "a");
-        first.record(&pool, &1_i64).await?;
-        operation("save", "b").forget(&pool).await?;
-        assert_eq!(first.replay::<i64, _>(&pool).await?, Some(1));
-        first.forget(&pool).await?;
-        assert!(!first.seen(&pool).await?);
-        first.record(&pool, &2_i64).await?;
-        assert_eq!(first.replay::<i64, _>(&pool).await?, Some(2));
+        let mut connection = pool.acquire().await.map_err(db)?;
+        first.record(&mut connection, &1_i64).await?;
+        operation("save", "b").forget(&mut connection).await?;
+        assert_eq!(first.replay::<i64>(&mut connection).await?, Some(1));
+        first.forget(&mut connection).await?;
+        assert!(!first.seen(&mut connection).await?);
+        first.record(&mut connection, &2_i64).await?;
+        assert_eq!(first.replay::<i64>(&mut connection).await?, Some(2));
         Ok(())
     }
 
@@ -186,7 +186,8 @@ mod tests {
         let mut tx = pool.begin().await.map_err(db)?;
         op.record(&mut *tx, &()).await?;
         tx.rollback().await.map_err(db)?;
-        assert!(!op.seen(&pool).await?);
+        let mut connection = pool.acquire().await.map_err(db)?;
+        assert!(!op.seen(&mut connection).await?);
         Ok(())
     }
 }

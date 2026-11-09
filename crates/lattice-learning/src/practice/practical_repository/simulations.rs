@@ -27,7 +27,10 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different practical activity data.",
         );
-        if operation.seen(&self.pool).await? {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let seen = operation.seen(&mut connection).await?;
+        drop(connection);
+        if seen {
             return Ok(Some(self.workspace(program_id).await?));
         }
         Ok(None)
@@ -50,7 +53,10 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different simulation data.",
         );
-        if operation.seen(&self.pool).await? {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let seen = operation.seen(&mut connection).await?;
+        drop(connection);
+        if seen {
             return Ok(Some(self.simulation(session_id).await?));
         }
         Ok(None)

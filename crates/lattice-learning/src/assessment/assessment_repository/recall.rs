@@ -139,10 +139,12 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different questions.",
         );
-        if let Some(done) = operation
-            .replay::<LearningQuizMissesToRecallDto, _>(&self.pool)
-            .await?
-        {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let replayed = operation
+            .replay::<LearningQuizMissesToRecallDto>(&mut connection)
+            .await?;
+        drop(connection);
+        if let Some(done) = replayed {
             return Ok(done);
         }
         let mut read = self.pool.begin_read().await.map_err(db)?;
@@ -205,7 +207,8 @@ impl LearningAssessmentRepository {
             cards_created: created,
             deck_id,
         };
-        operation.record(&self.pool, &done).await?;
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        operation.record(&mut connection, &done).await?;
         Ok(done)
     }
 }

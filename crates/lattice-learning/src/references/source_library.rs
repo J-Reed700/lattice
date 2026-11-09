@@ -186,8 +186,9 @@ impl LearningSourceLibraryRepository {
         payload_hash: &str,
     ) -> Result<bool> {
         uuid(operation_id, "operation")?;
+        let mut connection = self.pool.acquire().await.map_err(db)?;
         source_operation(operation_id, program_id, source_id, kind, payload_hash)
-            .seen(&self.pool)
+            .seen(&mut connection)
             .await
     }
 

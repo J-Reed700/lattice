@@ -66,8 +66,9 @@ pub(super) async fn replay(
     kind: &str,
     payload: &str,
 ) -> Result<Option<String>> {
+    let mut connection = pool.acquire().await.map_err(db)?;
     pack_operation(id, kind, payload)
-        .replay::<String, _>(pool)
+        .replay::<String>(&mut connection)
         .await
 }
 

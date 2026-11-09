@@ -1,7 +1,7 @@
 use super::Operation;
 use crate::persistence::{db, now};
 use lattice_core::shared::error::Result;
-use sqlx::{Row, Sqlite};
+use sqlx::{Row, SqliteConnection};
 
 /// A ledger row as stored.
 #[derive(Debug, Clone)]
@@ -14,14 +14,11 @@ pub(crate) struct RecordedOperation {
     pub result_json: String,
 }
 
-pub(super) async fn insert<'e, E>(
-    executor: E,
+pub(super) async fn insert(
+    connection: &mut SqliteConnection,
     operation: &Operation<'_>,
     result_json: &str,
-) -> Result<()>
-where
-    E: sqlx::Executor<'e, Database = Sqlite>,
-{
+) -> Result<()> {
     sqlx::query("INSERT INTO learning_operations(operation_id,program_id,scope,kind,subject_id,payload_hash,result_json,created_at) VALUES(?,?,?,?,?,?,?,?)")
         .bind(operation.id)
         .bind(operation.program_id)
@@ -31,37 +28,34 @@ where
         .bind(operation.payload_hash)
         .bind(result_json)
         .bind(now())
-        .execute(executor)
+        .execute(connection)
         .await
         .map_err(db)?;
     Ok(())
 }
 
-pub(super) async fn delete<'e, E>(executor: E, operation: &Operation<'_>) -> Result<()>
-where
-    E: sqlx::Executor<'e, Database = Sqlite>,
-{
+pub(super) async fn delete(
+    connection: &mut SqliteConnection,
+    operation: &Operation<'_>,
+) -> Result<()> {
     sqlx::query("DELETE FROM learning_operations WHERE operation_id=? AND scope=? AND kind=? AND payload_hash=?")
         .bind(operation.id)
         .bind(operation.scope)
         .bind(operation.kind)
         .bind(operation.payload_hash)
-        .execute(executor)
+        .execute(connection)
         .await
         .map_err(db)?;
     Ok(())
 }
 
-pub(super) async fn find<'e, E>(
-    executor: E,
+pub(super) async fn find(
+    connection: &mut SqliteConnection,
     operation_id: &str,
-) -> Result<Option<RecordedOperation>>
-where
-    E: sqlx::Executor<'e, Database = Sqlite>,
-{
+) -> Result<Option<RecordedOperation>> {
     let row = sqlx::query("SELECT scope,kind,program_id,subject_id,payload_hash,result_json FROM learning_operations WHERE operation_id=?")
         .bind(operation_id)
-        .fetch_optional(executor)
+        .fetch_optional(connection)
         .await
         .map_err(db)?;
     Ok(row.map(|row| RecordedOperation {
