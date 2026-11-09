@@ -282,11 +282,12 @@ mod tests {
     }
 
     #[test]
-    fn keep_count_bounds() {
+    fn keep_count_refuses_only_zero() {
         assert!(validate_keep_count(0).is_err());
         assert_eq!(validate_keep_count(1).unwrap(), 1);
         assert_eq!(validate_keep_count(50).unwrap(), 50);
-        assert!(validate_keep_count(51).is_err());
+        assert_eq!(validate_keep_count(51).unwrap(), 51);
+        assert_eq!(validate_keep_count(100_000).unwrap(), 100_000);
     }
 
     #[test]
