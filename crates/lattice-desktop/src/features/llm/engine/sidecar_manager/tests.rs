@@ -133,7 +133,25 @@ const TIMED_OUT: StartupEnd = StartupEnd::TimedOut(TimeoutKind::Silence(90));
 /// Classify using the signals the drain task would have recorded from the
 /// same output, so tests exercise the sticky path production uses.
 fn classify(binary: SidecarBinary, end: &StartupEnd, output: &[String]) -> AttemptError {
-    startup_failure(binary, end, output, StartupFacts::scan(output))
+    classify_at(binary, end, output, 262_144, true)
+}
+
+/// [`classify`] for a server started at `window` tokens, on the GPU or not.
+fn classify_at(
+    binary: SidecarBinary,
+    end: &StartupEnd,
+    output: &[String],
+    window: u32,
+    gpu_offload: bool,
+) -> AttemptError {
+    startup_failure(
+        binary,
+        end,
+        output,
+        StartupFacts::scan(output),
+        window,
+        gpu_offload,
+    )
 }
 
 const BROKEN: AttemptFailure = AttemptFailure::BinaryUnusable(UnusableReason::BrokenInstall);
@@ -431,7 +449,7 @@ fn gpu_backend_failures_are_classified_as_gpu_init() {
     let err = classify(
         SidecarBinary::Primary,
         &exited(Some(0xC000_0409_u32 as i32), None),
-        &lines("ggml_vulkan: Device memory allocation of size 1073741824 failed."),
+        &lines("ggml_vulkan: vkCreateInstance failed: ErrorIncompatibleDriver"),
     );
     assert_eq!(err.kind, AttemptFailure::GpuInit);
     assert!(
@@ -444,6 +462,69 @@ fn gpu_backend_failures_are_classified_as_gpu_init() {
     for end in [exited(None, Some(11)), TIMED_OUT] {
         let err = classify(SidecarBinary::Primary, &end, &lines(BUILD_BANNER));
         assert_eq!(err.kind, AttemptFailure::GpuInit, "{end:?}");
+    }
+}
+
+/// Captured on an 8 GB RTX 4070 laptop starting a 9B model at its trained
+/// 262,144 tokens: the backend came up, and the cache did not fit.
+const VULKAN_KV_CACHE_OUT_OF_MEMORY: &str = "ggml_vulkan: Found 1 Vulkan devices:
+load_tensors: loading model tensors, this can take a while...
+ggml_vulkan: Device memory allocation of size 1073741824 failed.
+ggml_vulkan: vk::Device::allocateMemory: ErrorOutOfDeviceMemory
+0.09.015.731 E ggml_backend_buft_alloc_buffer_n_default: failed to allocate Vulkan1 buffer of size 1073741824
+0.09.078.680 E llama_init_from_model: failed to initialize the context: failed to allocate buffer for kv cache";
+
+#[test]
+fn a_context_window_that_does_not_fit_is_out_of_memory_not_a_gpu_init_failure() {
+    let output = lines(VULKAN_KV_CACHE_OUT_OF_MEMORY);
+    for end in [exited(Some(1), None), exited(None, Some(6)), TIMED_OUT] {
+        let err = classify(SidecarBinary::Primary, &end, &output);
+        assert_eq!(err.kind, AttemptFailure::OutOfMemory, "{end:?}");
+        assert!(
+            err.message.starts_with(
+                "llama-server ran out of memory allocating its context window of 262,144                  tokens on the GPU."
+            ),
+            "{}",
+            err.message
+        );
+        assert!(!err.message.contains("GPU backend"), "{}", err.message);
+    }
+}
+
+#[test]
+fn an_out_of_memory_failure_on_the_cpu_names_the_cpu_and_its_window() {
+    let output = lines(
+        "ggml_backend_cpu_buffer_type_alloc_buffer: failed to allocate buffer of size 8589934592
+         llama_init_from_model: failed to initialize the context: failed to allocate buffer for kv cache",
+    );
+    let err = classify_at(
+        SidecarBinary::Primary,
+        &exited(Some(1), None),
+        &output,
+        65_536,
+        false,
+    );
+    assert_eq!(err.kind, AttemptFailure::OutOfMemory);
+    assert!(
+        err.message.starts_with(
+            "llama-server ran out of memory allocating its context window of 65,536              tokens on the CPU."
+        ),
+        "{}",
+        err.message
+    );
+}
+
+#[test]
+fn running_out_of_memory_is_retried_on_the_cpu_and_the_cpu_attempt_is_the_last() {
+    for bundled in [true, false] {
+        assert_eq!(
+            next_attempt(GPU, AttemptFailure::OutOfMemory, bundled),
+            Some(PRIMARY_CPU)
+        );
+        assert_eq!(
+            next_attempt(PRIMARY_CPU, AttemptFailure::OutOfMemory, bundled),
+            None
+        );
     }
 }
 
@@ -626,7 +707,7 @@ fn fallback_policy_without_cpu_build() {
 #[test]
 fn fallback_chain_always_terminates_without_repeating() {
     use AttemptFailure::*;
-    let failures = [BROKEN, GpuInit, Startup, Retry, Fatal];
+    let failures = [BROKEN, GpuInit, OutOfMemory, Startup, Retry, Fatal];
     for bundled in [true, false] {
         for start in [GPU, PRIMARY_CPU] {
             // Every sequence of failures, three deep (the longest chain).
@@ -1145,6 +1226,8 @@ async fn drain_reports_an_exit_before_readiness_and_keeps_the_bind_signal() {
         &end.expect_err("exited"),
         &tail.lock().snapshot(),
         signals.facts(),
+        262_144,
+        true,
     );
     assert_eq!(err.kind, AttemptFailure::Retry);
 }
@@ -2211,4 +2294,149 @@ fn a_finished_projector_download_changes_the_server() {
     let (finished, finished_args) = launch_args(&weights, None);
     assert!(flag_value(&finished_args, "--mmproj").is_some());
     assert_ne!(finished, partial);
+}
+
+use crate::features::llm::engine::factory::{starting_config, LocalServerOptions};
+
+const ORNITH_TRAINED_WINDOW: u32 = 262_144;
+
+/// An RTX 4070 laptop: 8 GB of VRAM, 7.4 GB of it free.
+fn rtx_4070_laptop() -> SystemCapabilities {
+    use crate::features::llm::engine::system::GPUVendor;
+    caps_with_gpu(GPUVendor::Nvidia, Some(8.0), Some(7.4))
+}
+
+fn ornith_on_disk() -> (tempfile::TempDir, PathBuf) {
+    let dir = tempfile::tempdir().unwrap();
+    let path = weights_file(&dir, "ornith-1.5-9b-q4_k_m.gguf", ORNITH_9B_BYTES);
+    (dir, path)
+}
+
+fn start_ornith(
+    path: &std::path::Path,
+    server: LocalServerOptions,
+    capabilities: &SystemCapabilities,
+    held: u64,
+) -> SidecarConfig {
+    let info = ornith_9b();
+    starting_config(path, -1, server, capabilities, Some(&info), held)
+        .expect("the header names a trained length")
+}
+
+fn saved_window(window: u32) -> LocalServerOptions {
+    LocalServerOptions {
+        context_window: Some(window),
+        ..LocalServerOptions::default()
+    }
+}
+
+/// The window the memory hint says Ornith fits in `room`.
+fn ornith_fit(room: MemoryRoom) -> Option<u32> {
+    hint_for(
+        ORNITH_9B_BYTES,
+        Some(&ornith_9b()),
+        ORNITH_TRAINED_WINDOW,
+        ServerBuffers::chat(false),
+        room,
+    )
+    .fits_window
+}
+
+#[test]
+fn with_no_window_saved_a_server_starts_at_the_largest_window_that_fits() {
+    let (_dir, path) = ornith_on_disk();
+    let caps = rtx_4070_laptop();
+    let fits = ornith_fit(memory_room(&caps, true, 0).unwrap()).unwrap();
+    assert!(0 < fits && fits < ORNITH_TRAINED_WINDOW, "{fits}");
+
+    let config = start_ornith(&path, LocalServerOptions::default(), &caps, 0);
+    assert_eq!(config.context_size, fits);
+
+    // What other models hold leaves a smaller window.
+    let held = 2 * GIB;
+    let beside = ornith_fit(memory_room(&caps, true, held).unwrap()).unwrap();
+    assert!(beside < fits);
+    let config = start_ornith(&path, LocalServerOptions::default(), &caps, held);
+    assert_eq!(config.context_size, beside);
+}
+
+#[test]
+fn with_no_window_saved_a_model_that_fits_at_its_trained_length_starts_there() {
+    use crate::features::llm::engine::system::GPUVendor;
+    let (_dir, path) = ornith_on_disk();
+    let caps = caps_with_gpu(GPUVendor::Nvidia, Some(24.0), Some(23.0));
+    let config = start_ornith(&path, LocalServerOptions::default(), &caps, 0);
+    assert_eq!(config.context_size, ORNITH_TRAINED_WINDOW);
+}
+
+#[test]
+fn with_no_window_saved_an_unknown_room_or_no_room_for_the_weights_starts_at_the_trained_length() {
+    use crate::features::llm::engine::system::GPUVendor;
+    let (_dir, path) = ornith_on_disk();
+    let unreported = caps_with_gpu(GPUVendor::Nvidia, Some(8.0), None);
+    assert!(memory_room(&unreported, true, 0).is_none());
+    let too_small = caps_with_gpu(GPUVendor::Nvidia, Some(4.0), Some(3.0));
+    assert_eq!(
+        ornith_fit(memory_room(&too_small, true, 0).unwrap()),
+        Some(0)
+    );
+
+    for caps in [unreported, too_small] {
+        let config = start_ornith(&path, LocalServerOptions::default(), &caps, 0);
+        assert_eq!(config.context_size, ORNITH_TRAINED_WINDOW);
+    }
+}
+
+#[test]
+fn a_saved_window_is_never_changed_to_fit() {
+    let (_dir, path) = ornith_on_disk();
+    let caps = rtx_4070_laptop();
+    let config = start_ornith(&path, saved_window(200_000), &caps, 0);
+    assert_eq!(config.context_size, 200_000);
+    assert_eq!(config.cpu_context_size, None);
+    let hint = memory_hint(&config, &caps, 0, Some(&ornith_9b())).unwrap();
+    assert!(!hint.fits(), "the saved window is more than fits");
+}
+
+#[test]
+fn a_fitted_server_differs_from_the_one_at_the_trained_length_only_in_its_window() {
+    let (_dir, path) = ornith_on_disk();
+    let caps = rtx_4070_laptop();
+    let fitted = start_ornith(&path, LocalServerOptions::default(), &caps, 0);
+    let at_trained = start_ornith(&path, saved_window(ORNITH_TRAINED_WINDOW), &caps, 0);
+    assert_ne!(fitted.context_size, ORNITH_TRAINED_WINDOW);
+    let refit = SidecarConfig {
+        context_size: ORNITH_TRAINED_WINDOW,
+        cpu_context_size: None,
+        ..fitted
+    };
+    assert_eq!(refit, at_trained);
+}
+
+#[test]
+fn the_cpu_attempt_takes_a_window_fitted_to_ram_unless_the_user_saved_one() {
+    let (_dir, path) = ornith_on_disk();
+    let mut caps = rtx_4070_laptop();
+    caps.available_memory_bytes = Some(8 * GIB);
+    let cpu_fit = ornith_fit(memory_room(&caps, false, 0).unwrap()).unwrap();
+    assert!(cpu_fit < ORNITH_TRAINED_WINDOW, "{cpu_fit}");
+
+    let config = start_ornith(&path, LocalServerOptions::default(), &caps, 0);
+    let cpu = config.without_gpu_offload();
+    assert_eq!(cpu.n_gpu_layers, 0);
+    assert_eq!(cpu.context_size, cpu_fit);
+    assert_ne!(cpu.context_size, config.context_size, "the GPU fits less");
+
+    let saved = start_ornith(&path, saved_window(100_000), &caps, 0);
+    assert_eq!(saved.without_gpu_offload().context_size, 100_000);
+}
+
+#[test]
+fn the_cpu_attempt_of_a_config_with_its_own_cpu_window_takes_it() {
+    let gpu = SidecarConfig {
+        context_size: 29_696,
+        cpu_context_size: Some(15_360),
+        ..SidecarConfig::for_model(PathBuf::from("/tmp/model.gguf"))
+    };
+    assert_eq!(gpu.without_gpu_offload().context_size, 15_360);
 }

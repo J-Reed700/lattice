@@ -8,6 +8,7 @@ import {
   type CloudModelCatalogs,
   cleanModelDisplayName,
   contextFitWarning,
+  fittedLaunchWindow,
   formatContextLabel,
   formatModelSize,
   formatServerEndpoint,
@@ -371,5 +372,24 @@ describe('resolveDefaultChatOption', () => {
     expect(defaultLlamaOption?.triggerLabel).toBe('llama.cpp · Qwen3.8-27B-Q5_K_S.gguf');
     expect(defaultLlamaOption?.isDefault).toBe(true);
     expect(defaultLlamaOption?.backend).toBe('llamacpp');
+  });
+});
+
+describe('fittedLaunchWindow', () => {
+  const model = {
+    trained_context_length: 262_144,
+    fits_context_length: 192_512,
+    fits_context_length_with_kv_quantization: 262_144,
+  };
+
+  it('is the window that fits, for the KV cache the model uses, when it is below the trained length', () => {
+    expect(fittedLaunchWindow(model, false)).toBe(192_512);
+    expect(fittedLaunchWindow(model, true)).toBeNull();
+  });
+
+  it('is null when the machine does not say, when not even the weights fit, or when the model does not say', () => {
+    expect(fittedLaunchWindow({ ...model, fits_context_length: null }, false)).toBeNull();
+    expect(fittedLaunchWindow({ ...model, fits_context_length: 0 }, false)).toBeNull();
+    expect(fittedLaunchWindow({ ...model, trained_context_length: null }, false)).toBeNull();
   });
 });

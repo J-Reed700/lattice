@@ -132,6 +132,18 @@ export function tokensThatFit(
 }
 
 /**
+ * The window a model with no saved window loads with when that is less than
+ * its trained length: the largest that fits this machine's memory now. Null
+ * when the trained length fits or the machine does not say.
+ */
+export function fittedLaunchWindow(
+  _model: FitHint & Pick<DownloadedModel, 'trained_context_length'>,
+  _kvCacheQuantization: boolean,
+): number | null {
+  return null;
+}
+
+/**
  * The full sentence behind an "on CPU" suffix, for its tooltip and its
  * accessible name: the suffix alone does not say why or what it costs.
  */

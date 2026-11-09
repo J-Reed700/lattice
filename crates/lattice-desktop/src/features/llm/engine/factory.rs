@@ -258,9 +258,17 @@ async fn create_local_llm_sidecar(
         .try_state::<SidecarRegistry>()
         .map_or(0, |registry| registry.other_models_gpu_bytes(model_path));
     let gguf_info = crate::features::llm::engine::gguf_metadata::read_model_info(model_path);
-    let Some(window) = launch_window(server, gguf_info.as_ref()) else {
+    let Some(config) = starting_config(
+        model_path,
+        n_gpu_layers,
+        server,
+        &capabilities,
+        gguf_info.as_ref(),
+        other_models_bytes,
+    ) else {
         return Err(no_trained_length(model_path));
     };
+    let window = config.context_size;
     if let Some(trained) = gguf_info
         .as_ref()
         .and_then(|info| info.trained_context_length)
@@ -273,14 +281,6 @@ async fn create_local_llm_sidecar(
              llama.cpp will extend it by rope scaling, which costs quality"
         );
     }
-    let config = sidecar_config(
-        model_path,
-        n_gpu_layers,
-        window,
-        server,
-        &capabilities,
-        gguf_info.as_ref(),
-    );
 
     // Said, never acted on: the window is the user's to change.
     let hint = memory_hint(
@@ -385,6 +385,28 @@ pub(crate) fn launch_window(
         .context_window
         .filter(|window| *window > 0)
         .or_else(|| gguf_info.and_then(|info| info.trained_context_length))
+}
+
+/// The server `model_path` is started as, window included: what
+/// [`sidecar_config`] builds at the window [`launch_window`] names. `None`
+/// when no window is known.
+pub(crate) fn starting_config(
+    model_path: &Path,
+    n_gpu_layers: i32,
+    server: LocalServerOptions,
+    capabilities: &SystemCapabilities,
+    gguf_info: Option<&GgufModelInfo>,
+    _other_models_bytes: u64,
+) -> Option<SidecarConfig> {
+    let window = launch_window(server, gguf_info)?;
+    Some(sidecar_config(
+        model_path,
+        n_gpu_layers,
+        window,
+        server,
+        capabilities,
+        gguf_info,
+    ))
 }
 
 /// The server `model_path` is started as: `window` tokens, offloaded as

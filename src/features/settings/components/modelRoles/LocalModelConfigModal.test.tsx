@@ -129,8 +129,68 @@ describe('LocalModelConfigModal', () => {
     });
   });
 
-  it('warns when the window may not fit, and never changes it', async () => {
+  it('with no window saved shows the largest window that fits, keeps the maximum visible, and saves nothing for it', async () => {
     const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <LocalModelConfigModal
+          isOpen
+          onClose={vi.fn()}
+          model={sampleModel({
+            fits_context_length: 20_480,
+            fits_context_length_with_kv_quantization: 40_960,
+          })}
+        />
+      </TooltipProvider>,
+    );
+
+    expect(screen.getByRole('spinbutton', { name: 'Context Length' })).toHaveValue(20480);
+    expect(
+      screen.getByText(
+        "Loads at 20,480 tokens, the largest window that fits this machine's memory now. The model was trained for up to 32,768.",
+      ),
+    ).toBeInTheDocument();
+    expect(screen.getByText((32768).toLocaleString())).toBeInTheDocument();
+    expect(screen.queryByText(/May not fit/)).not.toBeInTheDocument();
+
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(mockUpdateSettings).toHaveBeenCalledWith({
+      category: 'llm',
+      updates: expect.objectContaining({
+        localModelConfigs: expect.objectContaining({
+          'qwen2.5-coder-7b': expect.objectContaining({ contextLength: null }),
+        }),
+      }),
+    });
+  });
+
+  it('follows the KV cache setting while no window is saved', async () => {
+    const user = userEvent.setup();
+    render(
+      <TooltipProvider>
+        <LocalModelConfigModal
+          isOpen
+          onClose={vi.fn()}
+          model={sampleModel({
+            fits_context_length: 20_480,
+            fits_context_length_with_kv_quantization: 40_960,
+          })}
+        />
+      </TooltipProvider>,
+    );
+
+    // A q8_0 cache fits the whole trained window.
+    await user.click(screen.getByRole('switch', { name: 'KV Cache Quantization' }));
+    expect(screen.getByRole('spinbutton', { name: 'Context Length' })).toHaveValue(32768);
+    expect(screen.queryByText(/Loads at/)).not.toBeInTheDocument();
+  });
+
+  it('warns when a saved window may not fit, and never changes it', async () => {
+    const user = userEvent.setup();
+    mockSettings = makeAppSettings();
+    mockSettings.llm.localModelConfigs = {
+      'qwen2.5-coder-7b': { contextLength: 32768 },
+    };
     render(
       <TooltipProvider>
         <LocalModelConfigModal
@@ -148,6 +208,7 @@ describe('LocalModelConfigModal', () => {
       screen.getByText("May not fit in this machine's memory — about 20,480 tokens fit"),
     ).toBeInTheDocument();
     expect(screen.getByRole('spinbutton', { name: 'Context Length' })).toHaveValue(32768);
+    expect(screen.queryByText(/Loads at/)).not.toBeInTheDocument();
 
     // A q8_0 cache fits the whole window.
     await user.click(screen.getByRole('switch', { name: 'KV Cache Quantization' }));

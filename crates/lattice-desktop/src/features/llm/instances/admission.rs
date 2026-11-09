@@ -4,7 +4,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use crate::features::llm::engine::factory::{launch_window, sidecar_config, LocalServerOptions};
+use crate::features::llm::engine::factory::{starting_config, LocalServerOptions};
 use crate::features::llm::engine::gguf_metadata::{read_model_info, GgufModelInfo};
 use crate::features::llm::engine::sidecar_manager::{
     memory_hint, Admission, SidecarConfig, SidecarRegistry,
@@ -88,8 +88,8 @@ impl SidecarBudget {
         let registry = app.try_state::<SidecarRegistry>()?;
         let capabilities = detect_capabilities_with_app(app, self.devices()).await;
         let info = read_model_info(path);
-        let window = launch_window(launch, info.as_ref())?;
-        let config = sidecar_config(path, -1, window, launch, &capabilities, info.as_ref());
+        let held = registry.other_models_gpu_bytes(path);
+        let config = starting_config(path, -1, launch, &capabilities, info.as_ref(), held)?;
         Some(Plan {
             config,
             capabilities,
