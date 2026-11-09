@@ -32,6 +32,7 @@ const BLANK_CHOICE: &str = "Each choice needs some text.";
 const SAME_CHOICES: &str = "Each choice needs different text.";
 const NO_RIGHT: &str = "Choose the right answer.";
 const SAME_QUESTION: &str = "Another question in this course has the same prompt and choices.";
+const BAD_REASONS: &str = "The reasons must match the choices, one for each.";
 
 fn too_few() -> String {
     let least = *engine::SINGLE_CHOICE_OPTIONS.start();
@@ -47,7 +48,7 @@ fn too_many() -> String {
 }
 
 /// A question as the editor shows it: its prompt, its choices in order, the
-/// right choice and its explanation.
+/// right choice, its explanation and the reason each wrong choice fails.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct QuestionText {
     pub kind: LearningItemFormat,
@@ -57,6 +58,9 @@ pub struct QuestionText {
     /// The index of the right choice; none for a kind without one.
     pub right: Option<usize>,
     pub explanation: String,
+    /// One reason per choice, the right choice's empty; empty when the
+    /// question has none.
+    pub rationales: Vec<String>,
 }
 
 /// A question's new text, with the one the user opened.
@@ -87,6 +91,16 @@ struct Stored {
     text: QuestionText,
 }
 
+/// The reasons as stored: none at all when every one is blank, so a question
+/// written without them reads the same as one whose empty fields were saved.
+fn compact(reasons: Vec<String>) -> Vec<String> {
+    if reasons.iter().all(|reason| reason.trim().is_empty()) {
+        Vec::new()
+    } else {
+        reasons
+    }
+}
+
 /// Whether the kind's choices are the question's own and its key is one of them.
 fn has_choices(kind: LearningItemFormat) -> bool {
     matches!(
@@ -101,8 +115,9 @@ async fn stored_question(
     lesson_id: &str,
     index: usize,
 ) -> Result<Option<Stored>> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, String)>(
-        "SELECT c.id, c.format, c.prompt, c.options_json, k.key_json, k.explanation \
+    let row = sqlx::query_as::<_, (String, String, String, String, String, String, String)>(
+        "SELECT c.id, c.format, c.prompt, c.options_json, k.key_json, k.explanation, \
+                k.distractor_rationales_json \
          FROM learning_assessment_candidates c \
          JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id \
          WHERE c.program_id=? AND c.lesson_id=? AND c.origin IN ('lesson','migrated') \
@@ -114,7 +129,7 @@ async fn stored_question(
     .fetch_optional(&mut *connection)
     .await
     .map_err(db)?;
-    let Some((id, format, prompt, options, key, explanation)) = row else {
+    let Some((id, format, prompt, options, key, explanation, reasons)) = row else {
         return Ok(None);
     };
     let kind = parse_format(&format)?;
@@ -136,6 +151,7 @@ async fn stored_question(
             choices,
             right,
             explanation,
+            rationales: compact(serde_json::from_str(&reasons)?),
         },
     }))
 }
@@ -187,6 +203,9 @@ fn validate(kind: LearningItemFormat, after: &QuestionText) -> Result<()> {
             if distinct.len() != choices {
                 return refuse(SAME_CHOICES);
             }
+            if !after.rationales.is_empty() && after.rationales.len() != choices {
+                return refuse(BAD_REASONS);
+            }
             if !after.right.is_some_and(|right| right < choices) {
                 return refuse(NO_RIGHT);
             }
@@ -199,9 +218,27 @@ fn validate(kind: LearningItemFormat, after: &QuestionText) -> Result<()> {
     Ok(())
 }
 
-/// What the edit writes: the choices change only for a single-choice
-/// question, the right answer only where the kind has one.
+/// What the edit writes: the choices and their reasons change only for a
+/// single-choice question, the right answer only where the kind has one. The
+/// right choice has no reason; a kind whose reasons the editor does not show
+/// keeps them unless its right answer moved.
 fn effective(before: &QuestionText, after: QuestionText) -> QuestionText {
+    let right = if has_choices(before.kind) {
+        after.right
+    } else {
+        before.right
+    };
+    let rationales = if before.kind == LearningItemFormat::SingleChoice {
+        let mut reasons = after.rationales;
+        if let Some(reason) = right.and_then(|right| reasons.get_mut(right)) {
+            reason.clear();
+        }
+        compact(reasons)
+    } else if right == before.right {
+        before.rationales.clone()
+    } else {
+        Vec::new()
+    };
     QuestionText {
         kind: before.kind,
         prompt: after.prompt,
@@ -210,25 +247,15 @@ fn effective(before: &QuestionText, after: QuestionText) -> QuestionText {
         } else {
             before.choices.clone()
         },
-        right: if has_choices(before.kind) {
-            after.right
-        } else {
-            before.right
-        },
+        right,
         explanation: after.explanation,
+        rationales,
     }
-}
-
-/// Whether the choices or the right answer differ, which makes the stored
-/// per-choice rationales stale.
-fn answer_changed(old: &QuestionText, new: &QuestionText) -> bool {
-    new.choices != old.choices || new.right != old.right
 }
 
 /// The stored bank item with the edit applied, as the quiz engine will read it.
 fn edited_candidate(
     stored: engine::LearningAssessmentCandidate,
-    old: &QuestionText,
     new: &QuestionText,
 ) -> engine::LearningAssessmentCandidate {
     let mut candidate = stored;
@@ -240,20 +267,19 @@ fn edited_candidate(
     if let Some(right) = new.right.filter(|_| has_choices(new.kind)) {
         candidate.key = LearningAssessmentKey::Choice(right);
     }
-    if answer_changed(old, new) {
-        candidate.distractor_rationales.clear();
-    }
+    candidate.distractor_rationales.clone_from(&new.rationales);
     candidate
 }
 
-/// The unit's text as the report stores it: its choices and explanation
-/// joined by blank lines.
+/// The unit's text as the report stores it: its choices, explanation and
+/// reasons joined by blank lines, in the order of `unit_texts`.
 fn unit_text(question: &QuestionText) -> String {
     question
         .choices
         .iter()
         .map(String::as_str)
         .chain(std::iter::once(question.explanation.as_str()))
+        .chain(question.rationales.iter().map(String::as_str))
         .collect::<Vec<_>>()
         .join("\n\n")
 }
@@ -353,7 +379,7 @@ impl ClaimReviewService {
                 revision: None,
             });
         }
-        let edited = edited_candidate(bank_item.candidate, &stored.text, &new);
+        let edited = edited_candidate(bank_item.candidate, &new);
         engine::validate_candidate(&edited)?;
         let token = content_hash(&StoredItem::from(edited));
         let mut connection = self.pool().acquire().await.map_err(db)?;
@@ -401,6 +427,17 @@ impl ClaimReviewService {
             &new.explanation,
             false,
         ));
+        for slot in 0..old.rationales.len().max(new.rationales.len()) {
+            changes.push(field_change(
+                claims,
+                unit,
+                format!("rationales/{slot}"),
+                UnitKind::AnswerKey,
+                old.rationales.get(slot).map_or("", String::as_str),
+                new.rationales.get(slot).map_or("", String::as_str),
+                false,
+            ));
+        }
         let mut ending = Vec::new();
         for change in &changes {
             ending.extend(endings(claims, &change.plan, &change.old));
@@ -471,7 +508,7 @@ impl ClaimReviewService {
             )?),
             _ => None,
         };
-        let answer_changed = answer_changed(old, &new);
+        let reasons = serde_json::to_string(&new.rationales)?;
         sqlx::query(
             "UPDATE learning_assessment_candidates SET prompt=?, options_json=COALESCE(?, options_json), content_sha256=?, review_status=CASE WHEN review_status='dropped' THEN 'agreed' ELSE review_status END WHERE id=?",
         )
@@ -484,12 +521,11 @@ impl ClaimReviewService {
         .map_err(db)?;
         sqlx::query(
             "UPDATE learning_assessment_answer_keys SET explanation=?, key_json=COALESCE(?, key_json), \
-             distractor_rationales_json=CASE WHEN ? THEN '[]' ELSE distractor_rationales_json END \
-             WHERE candidate_id=?",
+             distractor_rationales_json=? WHERE candidate_id=?",
         )
         .bind(&new.explanation)
         .bind(key)
-        .bind(answer_changed)
+        .bind(reasons)
         .bind(&stored.id)
         .execute(&mut *tx)
         .await

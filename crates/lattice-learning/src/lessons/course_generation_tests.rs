@@ -77,6 +77,27 @@ pub(crate) fn request(depth: LearningCourseDepth) -> GenerateLearningProgramRequ
         course_depth: Some(depth),
     }
 }
+/// A repair answer whose lessons revise the existing lessons at `froms`
+/// (`None` for a new lesson), in answer order.
+pub(crate) fn repair_answer_with(
+    mut module: serde_json::Value,
+    froms: &[Option<usize>],
+) -> serde_json::Value {
+    if let Some(lessons) = module["lessons"].as_array_mut() {
+        for (lesson, from) in lessons.iter_mut().zip(froms) {
+            lesson["from"] = json!(from);
+        }
+    }
+    json!({"module":module})
+}
+
+/// A repair answer that keeps every lesson of `module` where it is.
+pub(crate) fn repair_answer(module: serde_json::Value) -> serde_json::Value {
+    let count = module["lessons"].as_array().map_or(0, Vec::len);
+    let froms: Vec<_> = (0..count).map(Some).collect();
+    repair_answer_with(module, &froms)
+}
+
 pub(crate) fn outline(modules: usize, lessons: usize) -> Model {
     Model(json!({"modules":(0..modules).map(|m| json!({
         "title":format!("Experimental design module {m}"),
@@ -119,7 +140,7 @@ fn lesson_response() -> serde_json::Value {
     let teaching = "Start with a measurable question, identify the comparison, and define the outcome before collecting data. Explain the assumptions behind the design. Work through the decisions in order and examine how a confounding variable could change the conclusion. A concrete example should show both the result and the limitations of that result. ";
     json!({
         "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{teaching}\n\n{}\n\n{teaching}", crate::generation::CHECK_REVEAL) } else { format!("{teaching}{teaching} Assignment step {}: produce a design, state your assumptions, and justify your decisions.", char::from(b'a' + u8::try_from(i).unwrap_or(0))) },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":"","citations":[]})).collect::<Vec<_>>()),
-        "questions":(["practice","quiz","test"].iter().flat_map(|kind| (0..2).map(move |i|json!({"kind":kind,"prompt":format!("Which experimental design decision is appropriate in {kind} scenario {i}?"),"options":["Compare randomized groups","Change several variables together","Select only positive results","Omit the comparison group"],"correctIndex":0,"explanation":"A randomized comparison helps separate the intervention from confounding factors.","sourceIndex":null,"quote":"","citations":[]}))).collect::<Vec<_>>())
+        "questions":(["practice","quiz","test"].iter().flat_map(|kind| (0..2).map(move |i|json!({"kind":kind,"prompt":format!("Which experimental design decision is appropriate in {kind} scenario {i}?"),"options":["Compare randomized groups","Change several variables together","Select only positive results","Omit the comparison group"],"correctIndex":0,"rationales":["","Several changed variables confound the result.","Selecting only positive results biases the sample.","Without a comparison group nothing separates the effect."],"explanation":"A randomized comparison helps separate the intervention from confounding factors.","sourceIndex":null,"quote":"","citations":[]}))).collect::<Vec<_>>())
     })
 }
 
@@ -1241,7 +1262,7 @@ async fn outline_final_review_and_save_survive_the_old_ten_minute_cutoff() -> Re
                 vec![
                     draft.clone(),
                     json!({"newFindings":[{"path":"/modules/0","kind":"plan","claim":"First module objective","reason":"Clarify the observable first module objective."}]}).to_string(),
-                    json!({"module":corrected["modules"][0]}).to_string(),
+                    repair_answer(corrected["modules"][0].clone()).to_string(),
                     json!({"verdicts":[{"id":"finding-1","status":"resolved","reason":"The objective now names an observable measurement."}],"newFindings":[]}).to_string(),
                 ]
                 .into(),
@@ -1431,7 +1452,7 @@ async fn outline_repair_preserves_completed_module_edits_when_later_call_fails()
             vec![
                 candidate.to_string(),
                 issues.to_string(),
-                json!({"module":module}).to_string(),
+                repair_answer(module.clone()).to_string(),
             ]
             .into(),
         ),
@@ -1606,10 +1627,10 @@ async fn outline_automatic_repair_is_bounded_by_attempts_and_repair_starts_them_
             vec![
                 candidate.to_string(),
                 raised.to_string(),
-                json!({"module":first}).to_string(),
+                repair_answer(first.clone()).to_string(),
                 unresolved("The objective still does not name an observable measurement.")
                     .to_string(),
-                json!({"module":second}).to_string(),
+                repair_answer(second.clone()).to_string(),
                 unresolved("The outcome is named but still not observable.").to_string(),
             ]
             .into(),
@@ -1664,7 +1685,7 @@ async fn outline_automatic_repair_is_bounded_by_attempts_and_repair_starts_them_
         outputs: std::sync::Mutex::new(
             vec![
                 unresolved("Still not observable.").to_string(),
-                json!({"module":third}).to_string(),
+                repair_answer(third.clone()).to_string(),
                 resolved.to_string(),
             ]
             .into(),

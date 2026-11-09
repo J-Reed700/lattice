@@ -45,8 +45,8 @@ impl LearningRepository {
                 "The draft changed during repair; reload to see the saved version.".into(),
             ));
         }
-        // Repairs keep the course's module/lesson identities and shape. Only
-        // editable outline fields change; ready lessons are never rewritten here.
+        // Repairs keep every module and saved lesson, and may add lessons to a
+        // module. Ready lessons are never rewritten here.
         for module in &program.modules {
             let changed = sqlx::query("UPDATE learning_modules SET title=?,summary=?,outcomes_json=?,prerequisite_ids_json=?,project_json=? WHERE id=? AND program_id=?")
                 .bind(&module.title).bind(&module.summary).bind(serde_json::to_string(&module.outcomes)?).bind(serde_json::to_string(&module.prerequisite_module_ids)?).bind(serde_json::to_string(&module.project)?).bind(&module.id).bind(&program.summary.id).execute(&mut *tx).await?;
@@ -55,13 +55,38 @@ impl LearningRepository {
                     "Repair cannot replace the course structure.".into(),
                 ));
             }
-            for lesson in &module.lessons {
-                let changed = sqlx::query("UPDATE learning_lessons SET title=?,objective=?,estimated_minutes=? WHERE id=? AND program_id=? AND preparation='outline'")
-                    .bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes).bind(&lesson.id).bind(&program.summary.id).execute(&mut *tx).await?;
-                if changed.rows_affected() != 1 {
-                    return Err(AppError::InvalidInput(
-                        "Repair cannot overwrite a prepared lesson.".into(),
-                    ));
+            let saved: Vec<String> = sqlx::query_scalar("SELECT id FROM learning_lessons WHERE module_id=? AND program_id=? ORDER BY ordinal")
+                .bind(&module.id).bind(&program.summary.id).fetch_all(&mut *tx).await?;
+            if saved
+                .iter()
+                .any(|id| !module.lessons.iter().any(|lesson| &lesson.id == id))
+            {
+                return Err(AppError::InvalidInput(
+                    "Repair cannot remove a saved lesson.".into(),
+                ));
+            }
+            let renumbered = saved.len() != module.lessons.len()
+                || saved
+                    .iter()
+                    .zip(&module.lessons)
+                    .any(|(id, lesson)| *id != lesson.id);
+            if renumbered {
+                // Stage ordinals out of the target range: SQLite checks the unique key per row.
+                sqlx::query("UPDATE learning_lessons SET ordinal=ordinal+1000000 WHERE module_id=? AND program_id=?")
+                    .bind(&module.id).bind(&program.summary.id).execute(&mut *tx).await?;
+            }
+            for (ordinal, lesson) in module.lessons.iter().enumerate() {
+                if saved.contains(&lesson.id) {
+                    let changed = sqlx::query("UPDATE learning_lessons SET title=?,objective=?,estimated_minutes=?,ordinal=COALESCE(?,ordinal) WHERE id=? AND program_id=? AND module_id=? AND preparation='outline'")
+                        .bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes).bind(renumbered.then_some(ordinal as i64)).bind(&lesson.id).bind(&program.summary.id).bind(&module.id).execute(&mut *tx).await?;
+                    if changed.rows_affected() != 1 {
+                        return Err(AppError::InvalidInput(
+                            "Repair cannot overwrite a prepared lesson.".into(),
+                        ));
+                    }
+                } else {
+                    sqlx::query("INSERT INTO learning_lessons(id,program_id,module_id,ordinal,title,objective,estimated_minutes,preparation,completed) VALUES(?,?,?,?,?,?,?,'outline',0)")
+                        .bind(&lesson.id).bind(&program.summary.id).bind(&module.id).bind(ordinal as i64).bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes).execute(&mut *tx).await?;
                 }
             }
         }
@@ -83,6 +108,11 @@ impl LearningRepository {
         sqlx::query("INSERT INTO learning_outline_checkpoints(program_id,revision,state_json,created_at) VALUES(?,?,?,?)").bind(&program.summary.id).bind(program.summary.revision+1).bind(&state).bind(draft.review.updated_at).execute(&mut *tx).await?;
         tx.commit().await?;
         program.summary.revision += 1;
+        program.summary.lesson_count = program
+            .modules
+            .iter()
+            .map(|module| module.lessons.len() as i64)
+            .sum();
         program.outline_review = Some(draft.review.clone());
         program.sources.extend_from_slice(sources);
         Ok(())

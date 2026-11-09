@@ -93,7 +93,7 @@ impl LearningCurriculumRepository {
         expected_revision: i64,
         lessons: &[(String, crate::dto::PreparedLearningLesson)],
     ) -> Result<()> {
-        self.publish_prepared(id, expected_revision, lessons, &[], &[])
+        self.publish_prepared(id, expected_revision, lessons, &[], None)
             .await
     }
 
@@ -106,7 +106,7 @@ impl LearningCurriculumRepository {
         expected_revision: i64,
         lessons: &[(String, crate::dto::PreparedLearningLesson)],
         held: &[crate::content_verification::HeldForReview],
-        banks: &[(String, crate::quiz_bank_jobs::LessonBank)],
+        author_model: Option<&str>,
     ) -> Result<()> {
         if lessons.is_empty() || lessons.len() + held.len() > 3 {
             return Err(AppError::InvalidInput(
@@ -161,17 +161,21 @@ impl LearningCurriculumRepository {
                     "A preparation job cannot repeat lesson IDs.".into(),
                 ));
             }
-            let row =
-                sqlx::query("SELECT preparation FROM learning_lessons WHERE id=? AND program_id=?")
-                    .bind(lesson_id)
-                    .bind(&program_id)
-                    .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(db)?
-                    .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
-            if row.get::<String, _>("preparation") != "outline" {
+            let row = sqlx::query(
+                "SELECT preparation,completed,curriculum_state FROM learning_lessons WHERE id=? AND program_id=?",
+            )
+            .bind(lesson_id)
+            .bind(&program_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
+            if row.get::<String, _>("preparation") != "outline"
+                || row.get::<bool, _>("completed")
+                || row.get::<String, _>("curriculum_state") != "outline"
+            {
                 return Err(AppError::InvalidState(
-                    "Only outline lessons can be published by this job.".into(),
+                    "Only unfinished outline lessons can be published by this job.".into(),
                 ));
             }
             crate::content_verification::persist_report(&mut tx, &program_id, lesson_id, prepared)
@@ -181,37 +185,25 @@ impl LearningCurriculumRepository {
             }
             sqlx::query("UPDATE learning_lessons SET preparation='ready',curriculum_state='ready' WHERE id=? AND program_id=?").bind(lesson_id).bind(&program_id).execute(&mut *tx).await.map_err(db)?;
             // The lesson's quiz (section 5.4): its outcome, its own reviewed
-            // questions and the bank its stage wrote, then its blueprint.
-            let bank = banks.iter().find(|(id, _)| id == lesson_id).map(|(_, b)| b);
+            // questions and its blueprint; a quiz job writes the rest.
             let outcome_id = crate::quiz_blueprints::ensure_lesson_outcome_in(
                 &mut tx,
                 &program_id,
                 lesson_id,
-                bank.map(|b| b.outcome_id.as_str()),
+                None,
             )
             .await?;
-            let mut items = crate::quiz_bank_jobs::lesson_seed_items(
+            let items = crate::quiz_bank_jobs::lesson_seed_items(
                 lesson_id,
                 &outcome_id,
                 &prepared.questions,
                 &prepared.keys,
             );
-            for authored in bank.map(|b| b.items.as_slice()).unwrap_or_default() {
-                let mut item = authored.candidate.clone();
-                item.outcome_ids = vec![outcome_id.clone()];
-                items.push(crate::assessment_repository::BankItem {
-                    item,
-                    source_quote: authored.source_quote.clone(),
-                    lesson_id: Some(lesson_id.clone()),
-                    origin: "bank",
-                    review_status: "agreed",
-                });
-            }
             crate::assessment_repository::insert_bank_items_in(
                 &mut tx,
                 &program_id,
                 &items,
-                bank.and_then(|b| b.author_model.as_deref()),
+                author_model,
             )
             .await?;
             crate::quiz_blueprints::ensure_blueprint_in(
@@ -223,6 +215,7 @@ impl LearningCurriculumRepository {
                 },
             )
             .await?;
+            crate::quiz_bank_jobs::queue_lesson_bank_in(&mut tx, &program_id, lesson_id).await?;
         }
         // Publish a new immutable accepted snapshot together with the prepared
         // lesson records and the program revision. The old accepted snapshot
@@ -290,15 +283,6 @@ impl LearningCurriculumRepository {
             };
             (program_id.clone(), message)
         } else {
-            // Publishing these lessons changed the course's content. The held
-            // lessons continue from this job (§6.2), and its own publication
-            // is no change made under it.
-            sqlx::query("UPDATE learning_jobs SET content_revision=(SELECT content_revision FROM learning_programs WHERE id=?) WHERE job_id=?")
-                .bind(&program_id)
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
             crate::content_verification::review_outcome(held)
         };
         JobStore::complete_in(&mut tx, id, &result_ref, &message).await?;

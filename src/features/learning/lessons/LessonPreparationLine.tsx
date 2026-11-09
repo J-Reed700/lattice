@@ -8,12 +8,12 @@ import type { LearningGenerationJob } from '@/lib/bindings';
  * The lesson preparation job in one line, for tabs other than Lessons, where
  * the full progress panel would push the tab's own content off screen.
  */
-export function LessonPreparationLine({ job, pending, programId, error, onView }: {
-  job?: LearningGenerationJob; pending: boolean; programId: string; error?: string; onView: () => void;
+export function LessonPreparationLine({ job, queuedMore = 0, pending, programId, error, onView }: {
+  job?: LearningGenerationJob; queuedMore?: number; pending: boolean; programId: string; error?: string; onView: () => void;
 }) {
   useReloadWhenPrepared(job, programId);
   const state = preparationState(job, pending);
-  const summary = preparationSummary(job, state, error);
+  const summary = preparationSummary(job, state, error, queuedMore);
   if (!summary) return null;
   const working = state.active && !state.reconnecting;
   return <section aria-label="Lesson preparation" className="my-3 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-2.5">

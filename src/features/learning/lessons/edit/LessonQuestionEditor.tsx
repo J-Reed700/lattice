@@ -23,9 +23,19 @@ function savingLine(checkedAffected: number): string {
   return `Saving changes ${statements} checked against the sources. ${NOT_CHECKED}.`;
 }
 
+const reasonAt = (question: LessonQuestionDto, index: number) => question.rationales[index] ?? '';
+
 const sameQuestion = (a: LessonQuestionDto, b: LessonQuestionDto) =>
   a.prompt === b.prompt && a.explanation === b.explanation && a.right === b.right
-  && a.choices.length === b.choices.length && a.choices.every((choice, index) => choice === b.choices[index]);
+  && a.choices.length === b.choices.length && a.choices.every((choice, index) => choice === b.choices[index] && reasonAt(a, index) === reasonAt(b, index));
+
+/** The reasons as one per choice once any is written; a question stored without them keeps none until one is. */
+const padded = (question: LessonQuestionDto) => question.choices.map((_, index) => reasonAt(question, index));
+
+/** The question as sent: the right choice's reason is empty, wherever the draft still holds one the user wrote. */
+const asSent = (question: LessonQuestionDto): LessonQuestionDto =>
+  question.rationales.length === 0 ? question
+    : { ...question, rationales: padded(question).map((reason, at) => (at === question.right ? '' : reason)) };
 
 type Props = {
   programId: string;
@@ -62,7 +72,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
     const timer = setTimeout(() => {
       void (async () => {
         const result = await api.editLearningLessonQuestion({
-          programId, lessonId, questionIndex, before: opened, after: draft, dryRun: true,
+          programId, lessonId, questionIndex, before: opened, after: asSent(draft), dryRun: true,
         });
         if (!current) return;
         if (result.ok) {
@@ -87,7 +97,7 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
 
   const submit = async () => {
     try {
-      await save.mutateAsync({ questionIndex, before: opened, after: draft });
+      await save.mutateAsync({ questionIndex, before: opened, after: asSent(draft) });
     } catch {
       return;
     }
@@ -97,10 +107,15 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
 
   const setChoice = (index: number, text: string) =>
     setDraft((value) => ({ ...value, choices: value.choices.map((choice, at) => (at === index ? text : choice)) }));
+  const setReason = (index: number, text: string) =>
+    setDraft((value) => ({ ...value, rationales: padded(value).map((reason, at) => (at === index ? text : reason)) }));
+  const chooseRight = (index: number) =>
+    setDraft((value) => ({ ...value, right: index }));
   const removeChoice = (index: number) =>
     setDraft((value) => ({
       ...value,
       choices: value.choices.filter((_, at) => at !== index),
+      rationales: value.rationales.filter((_, at) => at !== index),
       right: value.right === null || value.right === index ? null : value.right > index ? value.right - 1 : value.right,
     }));
 
@@ -125,18 +140,29 @@ function EditorBody({ programId, lessonId, questionIndex, opened, onClose, onSav
         {hasChoices && (
           <div className="space-y-2">
             {draft.choices.map((choice, index) => (
-              <div key={index} className="flex items-center gap-2">
-                <input type="radio" name={`${ids}-right`} aria-label={`Right answer: choice ${index + 1}`} checked={draft.right === index} disabled={saving}
-                  onChange={() => setDraft((value) => ({ ...value, right: index }))} />
-                <label htmlFor={`${ids}-choice-${index}`} className="sr-only">Choice {index + 1}</label>
-                <input id={`${ids}-choice-${index}`} value={choice} disabled={saving} onChange={(event) => setChoice(index, event.target.value)}
-                  className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary" />
-                <Button type="button" variant="ghost" size="sm" disabled={saving || draft.choices.length <= MIN_CHOICES}
-                  onClick={() => removeChoice(index)}>Remove</Button>
+              <div key={index} className="space-y-1">
+                <div className="flex items-center gap-2">
+                  <input type="radio" name={`${ids}-right`} aria-label={`Right answer: choice ${index + 1}`} checked={draft.right === index} disabled={saving}
+                    onChange={() => chooseRight(index)} />
+                  <label htmlFor={`${ids}-choice-${index}`} className="sr-only">Choice {index + 1}</label>
+                  <input id={`${ids}-choice-${index}`} value={choice} disabled={saving} onChange={(event) => setChoice(index, event.target.value)}
+                    className="w-full rounded-lg border border-border bg-background px-3 py-2 text-sm text-text-primary" />
+                  <Button type="button" variant="ghost" size="sm" disabled={saving || draft.choices.length <= MIN_CHOICES}
+                    onClick={() => removeChoice(index)}>Remove</Button>
+                </div>
+                {draft.right !== index && (
+                  <textarea aria-label={`Why choice ${index + 1} is wrong`} value={reasonAt(draft, index)} disabled={saving} rows={2}
+                    placeholder="Why this choice is wrong"
+                    onChange={(event) => setReason(index, event.target.value)} className={`${field} mt-0`} />
+                )}
               </div>
             ))}
             <Button type="button" variant="ghost" size="sm" disabled={saving || draft.choices.length >= MAX_CHOICES}
-              onClick={() => setDraft((value) => ({ ...value, choices: [...value.choices, ''] }))}>Add a choice</Button>
+              onClick={() => setDraft((value) => ({
+                ...value,
+                choices: [...value.choices, ''],
+                rationales: value.rationales.length === 0 ? [] : [...padded(value), ''],
+              }))}>Add a choice</Button>
           </div>
         )}
         {trueFalse && (
@@ -197,8 +223,8 @@ function QuestionEditorLoader(props: Props) {
 }
 
 /**
- * Edits one question of a published lesson: its prompt, choices, right answer
- * and explanation. It shows from a dry run what saving does to the statements
+ * Edits one question of a published lesson: its prompt, choices, right answer,
+ * the reason each wrong choice fails and its explanation. It shows from a dry run what saving does to the statements
  * the review holds, asks before throwing changes away, and says what the
  * server refused without losing the text.
  */

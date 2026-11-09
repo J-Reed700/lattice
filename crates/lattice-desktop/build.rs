@@ -522,6 +522,7 @@ fn main() {
                     "repair_learning_outline",
                     "accept_learning_program",
                     "prepare_learning_lesson",
+                    "prepare_learning_module",
                     "complete_learning_lesson",
                     "delete_learning_program",
                     "get_learning_memory",

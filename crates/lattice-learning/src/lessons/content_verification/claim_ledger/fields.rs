@@ -25,12 +25,12 @@ pub(crate) fn field_text(candidate: &Value, unit: usize, field: &str) -> Option<
 }
 
 /// The fields of a unit a claim can come from, in the order searched.
-fn unit_fields(item: &Value, block: bool) -> Vec<String> {
+pub(crate) fn unit_fields(item: &Value, block: bool) -> Vec<String> {
     let mut fields: Vec<String> = Vec::new();
     let names: &[&str] = if block {
         &["body", "title", "rubric"]
     } else {
-        &["prompt", "options", "explanation"]
+        &["prompt", "options", "explanation", "rationales"]
     };
     for name in names {
         match item.get(*name) {
@@ -118,7 +118,9 @@ pub(crate) fn locate(
     });
     let kind = match (block, field.as_str()) {
         (true, _) => UnitKind::Block,
-        (false, "explanation") => UnitKind::AnswerKey,
+        (false, field) if field == "explanation" || field.starts_with("rationales/") => {
+            UnitKind::AnswerKey
+        }
         (false, _) => UnitKind::Question,
     };
     let sentence = statement.and_then(|statement| {

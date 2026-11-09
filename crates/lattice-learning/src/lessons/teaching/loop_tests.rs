@@ -837,3 +837,305 @@ async fn a_review_cut_short_resumes_afresh_on_a_draft_changed_since_its_repair()
     assert_eq!(waiting.repairs, 1);
     Ok(())
 }
+
+#[test]
+fn whole_lesson_and_fully_guarded_section_findings_wait_when_claims_are_protected() {
+    use crate::lessons::content_verification::Protected;
+    let sentence = "The function returns the number 4 for the sum of two and two.";
+    let mut lesson = lesson(EXCERPT);
+    lesson["blocks"][0]["body"] = json!(sentence);
+    let protected = vec![
+        Protected {
+            unit: 0,
+            field: "body".into(),
+            quote: sentence.into(),
+        },
+        Protected {
+            unit: 0,
+            field: "title".into(),
+            quote: "Example".into(),
+        },
+    ];
+    let lesson_finding = ReviewFinding::new(
+        FindingKind::Structure,
+        Some(FindingSite::Lesson),
+        "no contrast block",
+    );
+    let section_finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Section(0)),
+        "expand on the explanation",
+    );
+    let findings = vec![lesson_finding.clone(), section_finding.clone()];
+    let held = protected::on_protected(&lesson, &findings, &protected);
+    let expected = vec![lesson_finding.key(), section_finding.key()];
+    assert_eq!(held, expected);
+}
+
+fn question_lesson() -> Value {
+    let mut lesson = lesson(EXCERPT);
+    lesson["questions"] = json!([{
+        "kind": "quiz",
+        "prompt": "What does the function return for two plus two?",
+        "options": ["Three is returned.", "Five is returned.", "Four is returned.", "Zero is returned."],
+        "correctIndex": 2,
+        "rationales": ["Three is wrong.", "Five is wrong.", "Four is right.", "Zero is wrong."],
+        "explanation": "The function adds its two arguments and returns four.",
+        "sourceIndex": 0,
+        "quote": EXCERPT,
+        "citations": []
+    }]);
+    lesson
+}
+
+fn protect(
+    unit: usize,
+    field: &str,
+    quote: &str,
+) -> crate::lessons::content_verification::Protected {
+    crate::lessons::content_verification::Protected {
+        unit,
+        field: field.into(),
+        quote: quote.into(),
+    }
+}
+
+#[test]
+fn a_finding_on_an_option_is_not_held_when_only_the_explanation_is_protected() {
+    let lesson = question_lesson();
+    let protected = vec![protect(
+        1,
+        "explanation",
+        "The function adds its two arguments and returns four.",
+    )];
+    let finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Question(0)),
+        "the option is ambiguous",
+    )
+    .with_passage("Four is returned.");
+    assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
+}
+
+#[test]
+fn a_quotation_finding_on_the_source_quote_is_not_held_by_a_protected_body() {
+    let mut lesson = lesson(EXCERPT);
+    let sentence = "The function returns the number 4 for the sum of two and two.";
+    lesson["blocks"][0]["body"] = json!(sentence);
+    let protected = vec![protect(0, "body", sentence)];
+    let finding = ReviewFinding::new(
+        FindingKind::Quotation,
+        Some(FindingSite::Section(0)),
+        "the quotation matches no reference",
+    )
+    .with_passage(EXCERPT);
+    assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
+}
+
+#[test]
+fn a_question_finding_with_no_passage_is_not_held_while_options_are_unprotected() {
+    let lesson = question_lesson();
+    let protected = vec![protect(
+        1,
+        "explanation",
+        "The function adds its two arguments and returns four.",
+    )];
+    let finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Question(0)),
+        "the distractors are weak",
+    );
+    assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
+}
+
+#[test]
+fn a_section_finding_with_no_passage_is_not_held_while_the_title_is_unprotected() {
+    let mut lesson = lesson(EXCERPT);
+    let sentence = "The function returns the number 4 for the sum of two and two.";
+    lesson["blocks"][0]["body"] = json!(sentence);
+    let protected = vec![protect(0, "body", sentence)];
+    let finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Section(0)),
+        "expand on the explanation",
+    );
+    assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
+}
+
+#[test]
+fn a_review_repair_with_no_passage_cannot_rewrite_the_kind_or_quote() -> Result<()> {
+    let mut previous = lesson(EXCERPT);
+    previous["blocks"][0]["body"] =
+        json!("The first sentence is protected here. The second sentence may change.");
+    let protected = vec![protect(0, "body", "The first sentence is protected here.")];
+    let mut repaired = previous.clone();
+    repaired["blocks"][0]["body"] =
+        json!("The first sentence is protected here. The second sentence now reads better.");
+    repaired["blocks"][0]["quote"] = json!("A different quotation that was never a target.");
+    repaired["blocks"][0]["kind"] = json!("example");
+    let finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Section(0)),
+        "improve the second sentence",
+    );
+    let (confined, _) =
+        protected::confine_review(&previous, &repaired.to_string(), &[finding], &protected)?;
+    let confined: Value = serde_json::from_str(&confined.unwrap())?;
+    assert_eq!(
+        confined["blocks"][0]["quote"],
+        previous["blocks"][0]["quote"]
+    );
+    assert_eq!(confined["blocks"][0]["kind"], previous["blocks"][0]["kind"]);
+    assert_eq!(confined["blocks"][0]["body"], repaired["blocks"][0]["body"]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_edit_was_reverted(
+) -> Result<()> {
+    use crate::lessons::content_verification::Protected;
+    const V1: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
+    const V2: &str = "Their inner membrane folds into cristae that enlarge its surface.";
+    let block0_body = format!(
+        "{V1} {V2} They carry their own circular DNA, passed down from the mother, and divide on their own whenever the cell needs more energy.\nFor example, a muscle cell that works harder grows fewer mitochondria over time.\nTry it yourself: find an electron micrograph of a muscle cell, count the mitochondria you can see in one part of it, then count them in a micrograph of a skin cell taken at the same scale, and write down which cell holds more of them and why you think it does."
+    );
+    let block1_body = "The ribosome is a complex molecular machine found within all living cells that serves as the site of biological protein synthesis. Ribosomes link amino acids together in the specified order.";
+    let candidate = json!({
+        "blocks": [
+            {
+                "kind": "explanation",
+                "title": "Block 0",
+                "body": block0_body,
+                "rubric": [],
+                "sourceIndex": 0,
+                "quote": EXCERPT,
+            },
+            {
+                "kind": "explanation",
+                "title": "Block 1",
+                "body": block1_body,
+                "rubric": [],
+                "sourceIndex": 0,
+                "quote": EXCERPT,
+            }
+        ],
+        "questions": []
+    });
+    let protected = vec![Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: V1.into(),
+    }];
+
+    let pass1_review = json!({
+        "issues": [],
+        "blockChecks": crate::teaching_review::fixture_checks(vec![
+            json!({
+                "index": 0,
+                "passageId": "section-0-passage-1",
+                "finding": "The example contradicts the rule on mitochondrial division.",
+                "hasDefect": true,
+            }),
+            json!({
+                "index": 1,
+                "passageId": "section-1-passage-0",
+                "finding": "Block 1 needs a clearer description.",
+                "hasDefect": true,
+            }),
+        ])
+    })
+    .to_string();
+
+    let pass1_evidence = json!({
+        "issue-0": {
+            "verdict": "actionable",
+            "basis": "internal_conflict",
+            "evidenceIds": ["blocks-0"],
+            "partId": "blocks-0",
+            "requirementId": null,
+            "reason": "Section 0 defect."
+        },
+        "issue-1": {
+            "verdict": "actionable",
+            "basis": "internal_conflict",
+            "evidenceIds": ["blocks-1"],
+            "partId": "blocks-1",
+            "requirementId": null,
+            "reason": "Section 1 defect."
+        }
+    })
+    .to_string();
+
+    let repair = json!({
+        "edits": [
+            {
+                "path": "/blocks/0/body",
+                "before": block0_body,
+                "after": block0_body.replace(V1, "Mitochondria make ATP directly."),
+            },
+            {
+                "path": "/blocks/1/body",
+                "before": "Ribosomes link amino acids together in the specified order.",
+                "after": "Ribosomes link amino acids together in the order messenger RNA specifies.",
+            }
+        ]
+    })
+    .to_string();
+
+    let pass2_review = json!({
+        "issues": [],
+        "blockChecks": crate::teaching_review::fixture_checks(vec![
+            json!({
+                "index": 0,
+                "passageId": "section-0-passage-1",
+                "finding": "The example contradicts the rule on mitochondrial division.",
+                "hasDefect": true,
+            }),
+            json!({
+                "index": 1,
+                "passageId": "section-1-passage-0",
+                "finding": "Block 1 is now fine.",
+                "hasDefect": false,
+            }),
+        ])
+    })
+    .to_string();
+
+    let pass2_evidence = json!({
+        "issue-0": {
+            "verdict": "actionable",
+            "basis": "internal_conflict",
+            "evidenceIds": ["blocks-0"],
+            "partId": "blocks-0",
+            "requirementId": null,
+            "reason": "Section 0 defect."
+        }
+    })
+    .to_string();
+
+    let model = model(vec![
+        pass1_review,
+        pass1_evidence,
+        repair,
+        pass2_review,
+        pass2_evidence,
+    ]);
+
+    let reviewed = review_protecting(&model, &candidate, &protected).await?;
+
+    assert_eq!(reviewed.set_aside.len(), 1);
+    assert_eq!(
+        reviewed.set_aside[0].finding.key().id(),
+        "teaching:section-0"
+    );
+
+    let after: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert_eq!(after["blocks"][0]["body"], block0_body);
+    assert_eq!(
+        after["blocks"][1]["body"],
+        "The ribosome is a complex molecular machine found within all living cells that serves as the site of biological protein synthesis. Ribosomes link amino acids together in the order messenger RNA specifies."
+    );
+
+    assert_eq!(model.prompts.lock().unwrap().len(), 5);
+    Ok(())
+}

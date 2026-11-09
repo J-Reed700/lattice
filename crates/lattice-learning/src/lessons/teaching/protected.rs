@@ -4,28 +4,10 @@
 //! repair changes only the sentences its findings name, every other one
 //! reverted and every protected one byte-identical.
 
-use crate::lessons::content_verification::{confine, Protected};
+use crate::lessons::content_verification::{confine, unit_fields, Protected};
 use crate::review_findings::{FindingKey, FindingSite, ReviewFinding};
 use lattice_core::shared::error::Result;
 use serde_json::Value;
-
-/// The findings about a protected sentence: their passage holds one, or
-/// lies inside one.
-pub(super) fn on_protected(findings: &[ReviewFinding], protected: &[Protected]) -> Vec<FindingKey> {
-    findings
-        .iter()
-        .filter(|finding| {
-            finding.passage.as_deref().is_some_and(|passage| {
-                let passage = passage.trim();
-                !passage.is_empty()
-                    && protected.iter().any(|item| {
-                        passage.contains(item.quote.as_str()) || item.quote.contains(passage)
-                    })
-            })
-        })
-        .map(ReviewFinding::key)
-        .collect()
-}
 
 /// The lesson's sections in unit order: blocks, then questions.
 fn sections(lesson: &Value) -> Vec<(&'static str, usize)> {
@@ -39,6 +21,84 @@ fn sections(lesson: &Value) -> Vec<(&'static str, usize)> {
         .map(|index| ("blocks", index))
         .chain((0..count("questions")).map(|index| ("questions", index)))
         .collect()
+}
+
+fn blocks_in(lesson: &Value) -> usize {
+    lesson
+        .get("blocks")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len)
+}
+
+/// The unit index of a finding in the lesson candidate.
+fn unit_of(candidate: &Value, finding: &ReviewFinding) -> Option<usize> {
+    let blocks = blocks_in(candidate);
+    match finding.key().site {
+        FindingSite::Section(section) => Some(section),
+        FindingSite::Question(question) => Some(blocks + question),
+        FindingSite::Lesson => None,
+    }
+}
+
+/// The section at unit `unit` in `candidate`.
+fn section_at(candidate: &Value, unit: usize) -> Option<&Value> {
+    let (field, index) = sections(candidate).get(unit).copied()?;
+    candidate.pointer(&format!("/{field}/{index}"))
+}
+
+/// The protected items for a specific unit.
+fn in_unit(protected: &[Protected], unit: usize) -> Vec<Protected> {
+    protected
+        .iter()
+        .filter(|item| item.unit == unit)
+        .cloned()
+        .collect()
+}
+
+/// Whether a finding's passage overlaps any protected quote in its unit.
+fn overlapping_quote(finding: &ReviewFinding, guarded: &[Protected]) -> bool {
+    finding.passage.as_deref().is_some_and(|passage| {
+        let passage = passage.trim();
+        !passage.is_empty()
+            && guarded
+                .iter()
+                .any(|item| passage.contains(item.quote.as_str()) || item.quote.contains(passage))
+    })
+}
+
+/// The findings about a protected sentence: their passage holds one, or
+/// lies inside one.
+pub(super) fn on_protected(
+    candidate: &Value,
+    findings: &[ReviewFinding],
+    protected: &[Protected],
+) -> Vec<FindingKey> {
+    if protected.is_empty() {
+        return Vec::new();
+    }
+    let mut held = Vec::new();
+    for finding in findings {
+        if finding.key().site == FindingSite::Lesson {
+            held.push(finding.key());
+            continue;
+        }
+        let Some(unit) = unit_of(candidate, finding) else {
+            continue;
+        };
+        let Some(section) = section_at(candidate, unit) else {
+            continue;
+        };
+        let guarded = in_unit(protected, unit);
+        if guarded.is_empty() {
+            continue;
+        }
+        let block = unit < blocks_in(candidate);
+        let editable = targets_of(section, (unit, block), &[finding], &guarded);
+        if overlapping_quote(finding, &guarded) || editable.is_empty() {
+            held.push(finding.key());
+        }
+    }
+    held
 }
 
 /// Every string field of `value` with its path, as claims name fields.
@@ -66,12 +126,13 @@ fn leaves<'v>(value: &'v Value, path: String, out: &mut Vec<(String, &'v str)>) 
     }
 }
 
-/// The sentences `sent` names in `section` (unit `unit`): each finding's
-/// passage where a field holds it; for a finding with no passage, every
-/// sentence of the section that no protected sentence overlaps.
+/// The sentences `sent` names in `section` (`unit`, and whether it is a
+/// block): each finding's passage where any field holds it; for a finding
+/// with no passage, every sentence of the unit's teaching text that no
+/// protected sentence overlaps.
 fn targets_of(
     section: &Value,
-    unit: usize,
+    (unit, block): (usize, bool),
     sent: &[&ReviewFinding],
     protected: &[Protected],
 ) -> Vec<Protected> {
@@ -92,11 +153,17 @@ fn targets_of(
                 }
             }
             _ => {
-                for (field, text) in &fields {
+                for field in unit_fields(section, block) {
+                    let Some(text) = section
+                        .pointer(&format!("/{field}"))
+                        .and_then(Value::as_str)
+                    else {
+                        continue;
+                    };
                     for (start, end) in lattice_core::shared::text::sentences(text) {
                         let sentence = &text[start..end];
                         let guarded = protected.iter().any(|item| {
-                            item.field == *field
+                            item.field == field
                                 && (sentence.contains(item.quote.as_str())
                                     || item.quote.contains(sentence))
                         });
@@ -117,19 +184,16 @@ fn targets_of(
 
 /// `repaired`, the review's repair of `previous`, confined section by
 /// section to the sentences `sent` names, `protected` kept byte-identical.
-/// `None` when the confined repair changes nothing: it fixed nothing the
+/// `(None, unchanged)` when the confined repair changes nothing: it fixed nothing the
 /// findings name, which waits for the user like an unusable answer.
 pub(super) fn confine_review(
     previous: &Value,
     repaired: &str,
     sent: &[ReviewFinding],
     protected: &[Protected],
-) -> Result<Option<String>> {
+) -> Result<(Option<String>, Vec<FindingKey>)> {
     let mut lesson: Value = crate::generation::parse_json(repaired)?;
-    let blocks = previous
-        .get("blocks")
-        .and_then(Value::as_array)
-        .map_or(0, Vec::len);
+    let blocks = blocks_in(previous);
     for (unit, (field, index)) in sections(previous).into_iter().enumerate() {
         let pointer = format!("/{field}/{index}");
         let (Some(before), Some(after)) =
@@ -143,13 +207,21 @@ pub(super) fn confine_review(
             Some(FindingSite::Lesson) | None => true,
         };
         let here: Vec<&ReviewFinding> = sent.iter().filter(names).collect();
-        let guarded: Vec<Protected> = protected
-            .iter()
-            .filter(|item| item.unit == unit)
-            .cloned()
-            .collect();
-        let targets = targets_of(before, unit, &here, &guarded);
+        let guarded = in_unit(protected, unit);
+        let targets = targets_of(before, (unit, unit < blocks), &here, &guarded);
         *after = confine(before, after, &targets, &guarded)?.section;
     }
-    Ok((lesson != *previous).then(|| lesson.to_string()))
+    let unchanged: Vec<FindingKey> = sent
+        .iter()
+        .filter(|finding| match unit_of(previous, finding) {
+            Some(unit) => section_at(previous, unit) == section_at(&lesson, unit),
+            None => true,
+        })
+        .map(ReviewFinding::key)
+        .collect();
+    if lesson == *previous {
+        Ok((None, sent.iter().map(ReviewFinding::key).collect()))
+    } else {
+        Ok((Some(lesson.to_string()), unchanged))
+    }
 }

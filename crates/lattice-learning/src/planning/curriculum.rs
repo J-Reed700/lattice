@@ -309,6 +309,9 @@ pub struct LearningGenerationJob {
     /// Ended by an update that replaced how lessons are prepared: history, not an attempt to resume.
     #[serde(default)]
     pub ended_by_update: bool,
+    /// The lessons the job prepares, in course order.
+    #[serde(default)]
+    pub lesson_ids: Vec<String>,
     pub retry_of_job_id: Option<String>,
     pub created_at: i64,
     pub started_at: Option<i64>,

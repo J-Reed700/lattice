@@ -429,6 +429,11 @@ pub(super) fn validate_prepared(
             ));
         }
         not_blank(&k.explanation, "Answer explanation")?;
+        if !k.rationales.is_empty() && k.rationales.len() != q.options.len() {
+            return Err(AppError::InvalidInput(
+                "Answer reasons must be one for each option.".into(),
+            ));
+        }
     }
     if keys.len() != question_ids.len() {
         return Err(AppError::InvalidInput(
@@ -472,6 +477,30 @@ mod tests {
         module.lessons[0].objective = "What the learner can do once it is taught. ".repeat(40);
         let checked = validate_outline(&program.modules, &program.sources);
         assert!(checked.is_ok(), "{checked:?}");
+    }
+
+    #[test]
+    fn a_key_carries_no_reasons_or_one_per_option_and_nothing_else() {
+        let mut program = fixture();
+        program.sources.clear();
+        let lesson_id = program.modules[0].lessons[0].id.clone();
+        let mut lesson = prepared(&lesson_id);
+        for reasons in [vec![], vec![String::new(), "Unsupported fails.".into()]] {
+            lesson.keys[0].rationales = reasons;
+            assert!(validate_prepared(&lesson, &program).is_ok());
+            assert!(validate_generated(&lesson, &program).is_ok());
+        }
+        for reasons in [
+            vec!["Only one.".to_owned()],
+            vec![String::new(), "Two.".into(), "Three.".into()],
+        ] {
+            lesson.keys[0].rationales = reasons;
+            assert!(validate_prepared(&lesson, &program).is_err());
+            assert!(matches!(
+                validate_generated(&lesson, &program),
+                Err(AppError::ModelAnswerUnusable(_))
+            ));
+        }
     }
 
     #[test]

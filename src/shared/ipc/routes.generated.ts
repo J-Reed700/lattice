@@ -302,6 +302,7 @@ export const COMMAND_PLUGINS = {
   plugin_set_archive_keep_count: 'backup',
   plugin_set_archive_passphrase: 'backup',
   prepare_learning_lesson: 'learning',
+  prepare_learning_module: 'learning',
   prepare_learning_quiz_bank: 'learning',
   prepare_learning_runtime_preset: 'learning',
   preview_learning_curriculum_revision: 'learning',

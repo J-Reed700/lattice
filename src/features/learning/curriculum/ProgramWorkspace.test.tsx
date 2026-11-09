@@ -54,11 +54,16 @@ vi.mock('@/features/learning/curriculum/CourseSyllabus', () => ({
   ),
 }));
 vi.mock('@/features/reading/components/CitationVisibilityToggle', () => ({ CitationVisibilityToggle: () => null }));
+vi.mock('@/features/learning/memory/MemoryPanels', async (importOriginal) => ({
+  ...await importOriginal<typeof import('@/features/learning/memory/MemoryPanels')>(),
+  NotebookPanel: () => null,
+}));
 
-const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn() }));
+const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn(), cancel: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: {
   getLearningPlan: api.plan,
   getLearningLessonClaimReview: api.review,
+  cancelLearningGenerationJob: api.cancel,
   getLearningLessonEvidence: async () => ({ ok: true, data: null }),
   getLearningOutlineEvidence: async () => ({ ok: true, data: null }),
   getLearningMemory: async () => ({ ok: true, data: { dueCount: 0 } }),
@@ -103,10 +108,10 @@ const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob =
   ...overrides,
 });
 
-function show(course: LearningProgramDto, onReview = vi.fn(), destination?: StudyDestination, client = new QueryClient({ defaultOptions: { queries: { retry: false } } })) {
+function show(course: LearningProgramDto, onReview = vi.fn(), destination?: StudyDestination, client = new QueryClient({ defaultOptions: { queries: { retry: false } } }), onPrepareModule = vi.fn()) {
   render(<QueryClientProvider client={client}>
     <ProgramWorkspace program={course} destination={destination} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
-      onPrepare={vi.fn()} preparePending={false} onComplete={vi.fn()} completePending={false}
+      onPrepare={vi.fn()} preparePending={false} onPrepareModule={onPrepareModule} onComplete={vi.fn()} completePending={false}
       onReview={onReview} />
   </QueryClientProvider>);
   return onReview;
@@ -153,6 +158,72 @@ describe('Course page', () => {
     expect(screen.queryByRole('region', { name: 'Lesson preparation' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Resume lesson preparation' })).not.toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Retry lesson preparation' })).not.toBeInTheDocument();
+  });
+
+  describe('preparing a module', () => {
+    const lessonAs = (id: string, title: string, preparation: 'outline' | 'ready'): LearningLessonDto => ({ ...held, id, title, preparation });
+    const courseOf = (first: LearningLessonDto[], second: LearningLessonDto[]): LearningProgramDto => {
+      const course = program('Circulation');
+      const respiration = { id: 'module-2', title: 'Respiration', summary: 'How air moves.', outcomes: ['Describe gas exchange'], lessons: second } as unknown as LearningModuleDto;
+      return { ...course, modules: [{ ...course.modules[0], lessons: first }, respiration] };
+    };
+    const queuedJob = (id: string, lessonId: string, age: number, status: 'running' | 'pending' = 'pending') =>
+      job({ id, status, lessonIds: [lessonId], createdAt: Date.now() - age, startedAt: status === 'running' ? Date.now() - age : null });
+    const three = () => courseOf([held, next, lessonAs('lesson-5', 'Capillaries', 'outline')], [lessonAs('lesson-6', 'Gas exchange', 'outline')]);
+    const queueOfThree = () => api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs: [
+      queuedJob('job-run', 'lesson-1', 3000, 'running'), queuedJob('job-two', 'lesson-2', 2000), queuedJob('job-three', 'lesson-5', 1000),
+    ] } });
+
+    it('says how many lessons are ahead of a queued lesson and cancels its job', async () => {
+      const user = userEvent.setup();
+      queueOfThree();
+      show(three());
+      const card = (await screen.findByRole('button', { name: /^Capillaries/ })).closest('article') as HTMLElement;
+      expect(await within(card).findByText('Queued · 2 ahead')).toBeVisible();
+      const second = screen.getByRole('button', { name: /^Blood vessels/ }).closest('article') as HTMLElement;
+      expect(within(second).getByText('Queued · 1 ahead')).toBeVisible();
+      api.cancel.mockResolvedValue({ ok: true, data: queuedJob('job-three', 'lesson-5', 1000) });
+      await user.click(within(card).getByRole('button', { name: 'Cancel' }));
+      await waitFor(() => expect(api.cancel).toHaveBeenCalledWith({ operationId: expect.any(String), programId: 'program-1', jobId: 'job-three', expectedRevision: 9 }));
+    });
+
+    it('adds how many lessons are queued to the status line of the running one', async () => {
+      queueOfThree();
+      show(three());
+      const region = await screen.findByRole('region', { name: 'Lesson preparation' });
+      await waitFor(() => expect(within(region).getByRole('status')).toHaveTextContent('Preparing your lesson · Starting · 2 more queued'));
+    });
+
+    it('offers to prepare every unprepared lesson of the module and hands it the module', async () => {
+      const user = userEvent.setup();
+      api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs: [] } });
+      const onPrepareModule = vi.fn();
+      show(three(), vi.fn(), undefined, undefined, onPrepareModule);
+      await user.click(await screen.findByRole('button', { name: 'Prepare all lessons' }));
+      expect(onPrepareModule).toHaveBeenCalledWith(expect.objectContaining({ id: 'module-1' }));
+    });
+
+    it('offers nothing in a module whose lessons are all ready, and does in one that has an unprepared lesson', async () => {
+      const user = userEvent.setup();
+      api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs: [] } });
+      show(courseOf([lessonAs('lesson-1', 'The heart as a pump', 'ready'), lessonAs('lesson-2', 'Blood vessels', 'ready')], [lessonAs('lesson-6', 'Gas exchange', 'outline')]));
+      await screen.findByRole('heading', { level: 2, name: 'Circulation' });
+      expect(screen.queryByRole('button', { name: 'Prepare all lessons' })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Journey: Respiration' }));
+      expect(await screen.findByRole('button', { name: 'Prepare all lessons' })).toBeVisible();
+    });
+
+    it('offers nothing in a module whose lessons are all queued, and does in one that has an unqueued lesson', async () => {
+      const user = userEvent.setup();
+      api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs: [
+        queuedJob('job-run', 'lesson-1', 2000, 'running'), queuedJob('job-two', 'lesson-2', 1000),
+      ] } });
+      show(courseOf([held, next], [lessonAs('lesson-6', 'Gas exchange', 'outline')]));
+      expect(await screen.findAllByText(/^Queued/)).not.toHaveLength(0);
+      expect(screen.queryByRole('button', { name: 'Prepare all lessons' })).not.toBeInTheDocument();
+      await user.click(screen.getByRole('button', { name: 'Journey: Respiration' }));
+      expect(await screen.findByRole('button', { name: 'Prepare all lessons' })).toBeVisible();
+    });
   });
 
   it('has Quizzes as a primary tab, and Practice renders the unified Practice area with five cards', async () => {

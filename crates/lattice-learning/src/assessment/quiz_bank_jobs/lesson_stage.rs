@@ -1,5 +1,5 @@
-//! The lesson job's quiz bank stage (section 5.4) and the lesson's own
-//! reviewed questions as bank items.
+//! A published lesson's quiz bank stage (section 5.4), run by its quiz job,
+//! and the lesson's own reviewed questions as bank items.
 use super::*;
 
 fn seed_difficulty(kind: &LessonQuestionKind) -> u8 {
@@ -11,10 +11,11 @@ fn seed_difficulty(kind: &LessonQuestionKind) -> u8 {
 }
 
 /// A prepared lesson's own reviewed questions as bank items (single choice;
-/// difficulty from their kind: practice 2, quiz 3, test 4). Options are
-/// reshuffled so the key's position is code's choice. A question that fails
-/// the bank's checks stays, marked `dropped`, so the lesson's questions keep
-/// their places.
+/// difficulty from their kind: practice 2, quiz 3, test 4). Options and their
+/// reasons keep the writer's order, which claims and the published editor
+/// address them by; every form draw shuffles them. A question that fails the
+/// bank's checks stays, marked `dropped`, so the lesson's questions keep their
+/// places.
 pub(crate) fn lesson_seed_items(
     lesson_id: &str,
     outcome_id: &str,
@@ -25,7 +26,7 @@ pub(crate) fn lesson_seed_items(
         .iter()
         .filter_map(|q| {
             let key = keys.iter().find(|k| k.question_id == q.id)?;
-            let mut candidate = engine::LearningAssessmentCandidate {
+            let candidate = engine::LearningAssessmentCandidate {
                 id: q.id.clone(),
                 outcome_ids: vec![outcome_id.to_string()],
                 format: LearningItemFormat::SingleChoice,
@@ -43,13 +44,10 @@ pub(crate) fn lesson_seed_items(
                 rubric: vec![],
                 key: engine::LearningAssessmentKey::Choice(key.correct_index),
                 explanation: key.explanation.clone(),
-                distractor_rationales: vec![],
+                distractor_rationales: key.rationales.clone(),
             };
             let review_status = match engine::validate_candidate(&candidate) {
-                Ok(()) => {
-                    engine::shuffle_authored(&mut candidate);
-                    "agreed"
-                }
+                Ok(()) => "agreed",
                 Err(error) => {
                     tracing::info!(question = %q.id, %error, "A lesson question was kept out of the quiz bank's draws");
                     "dropped"
@@ -66,20 +64,18 @@ pub(crate) fn lesson_seed_items(
         .collect()
 }
 
-/// What the lesson job's bank stage wrote for one lesson, published with it.
+/// What the bank stage wrote for one lesson; saved before it is inserted.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, Default)]
 #[serde(rename_all = "camelCase")]
 pub(crate) struct LessonBank {
-    /// The outcome the items address; the lesson's outcome is created with
-    /// this ID when it does not exist yet.
+    /// The outcome the items address.
     pub outcome_id: String,
     pub items: Vec<AuthoredItem>,
     pub author_model: Option<String>,
 }
 
-/// The lesson job's last stage, after claim verification and before the
-/// lesson is published (section 5.4): write the rest of the lesson's quiz
-/// bank from its verified blocks, around its own reviewed questions.
+/// Write the rest of a published lesson's quiz bank from its blocks
+/// (`material`), around its own reviewed questions (`seeds`).
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn lesson_bank_stage(
     llm: &dyn LLMPort,
@@ -88,9 +84,8 @@ pub(crate) async fn lesson_bank_stage(
     lesson_id: &str,
     title: &str,
     objective: &str,
-    blocks: &[LearningBlockDto],
-    questions: &[LessonQuestion],
-    keys: &[LessonAnswerKey],
+    material: Vec<MaterialPassage>,
+    seeds: Vec<StoredItem>,
 ) -> Result<LessonBank> {
     let (outcome_id, settings, quiz_formats) = {
         let mut connection = pool.acquire().await.map_err(db)?;
@@ -130,24 +125,8 @@ pub(crate) async fn lesson_bank_stage(
             ..LessonBank::default()
         });
     };
-    let material: Vec<MaterialPassage> = blocks
-        .iter()
-        .filter(|b| !b.body.trim().is_empty())
-        .map(|b| MaterialPassage {
-            lesson_title: title.into(),
-            title: b.title.clone(),
-            text: b.body.clone(),
-            source_version_ids: b.source_ids.clone(),
-        })
-        .collect();
-    let seeds: Vec<StoredItem> = lesson_seed_items(lesson_id, &outcome_id, questions, keys)
-        .into_iter()
-        .filter(|s| s.review_status == "agreed")
-        .map(|s| s.item)
-        .collect();
     let mut written: Vec<AuthoredItem> = Vec::new();
-    let total = blueprint.slots.len();
-    for (index, slot) in blueprint.slots.iter().enumerate() {
+    for slot in &blueprint.slots {
         let requirement = &slot.requirement;
         let have = seeds
             .iter()
@@ -159,10 +138,6 @@ pub(crate) async fn lesson_bank_stage(
         if count == 0 {
             continue;
         }
-        crate::lesson_progress::phase(
-            crate::lesson_progress::Phase::Questions,
-            format!("Writing quiz questions · set {} of {total}", index + 1),
-        );
         let need = AuthoringNeed {
             requirement: requirement.clone(),
             outcome_title: title.into(),

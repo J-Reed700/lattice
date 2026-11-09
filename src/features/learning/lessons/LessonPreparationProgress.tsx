@@ -16,7 +16,7 @@ import { LEARNING_PROGRAMS_KEY, learningProgramKey } from '@/features/learning/w
 import type { LearningGenerationJob } from '@/lib/bindings';
 import { jobErrorToError } from '@/lib/errorHandling';
 
-const workflow = ['References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Quiz questions', 'Publish'];
+const workflow = ['References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Publish'];
 
 /** "Re-checking 81 claims against 72 new references". */
 function recheckLine(references: number, claims: number): string {
@@ -62,8 +62,10 @@ function HeldLessonLine({ programId, lessonId, title, onReview }: { programId: s
  * line, the progress bar, Pause/Resume, and everything else behind Details.
  * A lesson held for review is a line that leads to the review screen.
  */
-export function LessonPreparationStatus({ job, pending, programId, revision, error, expanded: heldExpanded, onExpandedChange, lessonTitles, onReview }: {
+export function LessonPreparationStatus({ job, queuedMore = 0, pending, programId, revision, error, expanded: heldExpanded, onExpandedChange, lessonTitles, onReview }: {
   job?: LearningGenerationJob; pending: boolean; programId: string; revision: number; error?: string;
+  /** Lesson jobs waiting behind this one. */
+  queuedMore?: number;
   // A parent that unmounts the panel (the course tabs) holds this, so an opened Details survives a tab switch.
   expanded?: boolean; onExpandedChange?: (expanded: boolean) => void;
   /** Lesson titles by id, for lessons the job holds for review. */
@@ -115,7 +117,7 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
   const lesson = activity?.lessonTitle;
   const step = phase ? workflow[phase.group] : null;
   const statusLine = reconnecting ? `Preparation will resume automatically${lesson ? ` · ${lesson}` : ''}`
-    : active ? `Preparing ${lesson ?? 'your lesson'} · ${queued ? 'Queued' : step ?? 'Starting'}`
+    : active ? `Preparing ${lesson ?? 'your lesson'} · ${queued ? 'Queued' : step ?? 'Starting'}${queuedMore > 0 ? ` · ${queuedMore} more queued` : ''}`
     : paused ? `Lesson preparation paused${phase ? ` · at ${phase.title.toLowerCase()}` : ''}${lesson ? ` · ${lesson}` : ''}`
     : `Lesson preparation ${job?.status}${lesson ? ` · ${lesson}` : ''}`;
   return <section aria-label="Lesson preparation" className="my-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3">
@@ -149,7 +151,7 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
         {paused && <p className="mt-2 text-xs leading-5 text-text-secondary">Lesson writing and fact-checking use the main model in Settings. Changing only the utility model does not change these checks. Switching the main model currently starts drafting and verification again.</p>}
       </div>}
       {job && job.progressTotal > 1 && <p className="text-xs text-text-muted">{job.progressCompleted}/{job.progressTotal} lessons staged · Publication follows verification.</p>}
-      <ol aria-label="Preparation workflow" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">
+      <ol aria-label="Preparation workflow" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         {workflow.map((label, index) => <li key={label} aria-current={active && !queued && phase?.group === index ? 'step' : undefined} className={`rounded-lg border px-3 py-2 text-xs ${active && !queued && phase?.group === index ? 'border-accent/50 bg-accent/10 font-semibold text-text-primary' : 'border-border text-text-muted'}`}><span className="mr-1.5 tabular-nums opacity-60">{index + 1}</span>{label}</li>)}
       </ol>
       {activity && (activity.statements || calls || hasChecks) && <div aria-label="Statement checks" className="rounded-xl border border-border bg-background/70 p-4">

@@ -241,7 +241,9 @@ impl Judgements {
         }
         let mut units: Vec<_> = missing.into_iter().collect();
         units.sort_by_key(|(unit, _)| *unit);
-        for (unit, statements) in units {
+        let (topic, known_classes) = (&self.topic, &self.known_classes);
+        let (store, model) = (&self.store, &self.model);
+        let tasks = units.into_iter().map(|(unit, statements)| async move {
             let to_profile: Vec<ClaimToProfile> = statements
                 .iter()
                 .enumerate()
@@ -255,8 +257,8 @@ impl Judgements {
                 llm,
                 &ProfileRequest {
                     unit_title: &unit_title,
-                    course_topic: &self.topic,
-                    known_classes: &self.known_classes,
+                    course_topic: topic,
+                    known_classes,
                     claims: &to_profile,
                 },
             )
@@ -266,18 +268,28 @@ impl Judgements {
                     "The claim profile call answered for a different number of claims.".into(),
                 ));
             }
-            let rows: Vec<_> = statements
-                .iter()
-                .zip(judged)
-                .map(|(statement, judged)| {
-                    known.insert(statement.clone(), judged.value.clone());
-                    stored(
-                        claim_profile_key(statement, &self.known_classes, &self.model),
-                        judged,
-                    )
-                })
-                .collect();
-            self.store.save_claim_profiles(&rows).await?;
+            let mut profiles = Vec::new();
+            let mut rows = Vec::new();
+            for (statement, judged) in statements.into_iter().zip(judged) {
+                profiles.push((statement.clone(), judged.value.clone()));
+                rows.push(stored(
+                    claim_profile_key(&statement, known_classes, model),
+                    judged,
+                ));
+            }
+            store.save_claim_profiles(&rows).await?;
+            Ok::<_, AppError>(profiles)
+        });
+        let mut first_error = None;
+        for outcome in futures::future::join_all(tasks).await {
+            match outcome {
+                Ok(profiles) => known.extend(profiles),
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
         }
         claims
             .iter()
