@@ -4,15 +4,21 @@
 use crate::drills::runner::runner_for;
 use crate::embedded_runtime::{BuiltinRuntimes, LearningBuiltinRuntime};
 use crate::persistence::{hash, now};
-use crate::practical_generation::{GeneratedPracticalActivity, GeneratedPracticalFile, PracticalFileRole};
+use crate::practical_generation::{
+    GeneratedPracticalActivity, GeneratedPracticalFile, PracticalFileRole,
+};
 use crate::practice::coding::dto::StartCodingBuildRequestDto;
 use crate::practice::coding::harness::{harness_for, new_nonce, CaseHarness};
 use crate::practice::coding::patterns::targets_in;
-use crate::practice::coding::problem::{Problem, ProblemDifficulty, PROBLEM_FILE_PATH, SOLUTION_PATH};
+use crate::practice::coding::problem::{
+    Problem, ProblemDifficulty, PROBLEM_FILE_PATH, SOLUTION_PATH,
+};
 use crate::practice::coding::source::{
     BuildSteps, GeneratedProblems, LessonBrief, ProblemRequest, ProblemSource, STEP_SAVING,
 };
-use crate::practice::practical_dto::{GenerateLearningPracticalActivityRequestDto, LearningPracticalActivityKind};
+use crate::practice::practical_dto::{
+    GenerateLearningPracticalActivityRequestDto, LearningPracticalActivityKind,
+};
 use crate::practice::practical_repository::LearningPracticalRepository;
 use crate::practice_repository::profile_in;
 use crate::quiz_bank_jobs::ModelLoader;
@@ -220,7 +226,11 @@ impl JobHandler for CodingBuildWorker {
         let language = Some(request.language.trim())
             .filter(|language| !language.is_empty())
             .map(str::to_owned)
-            .or_else(|| profile.as_ref().and_then(|profile| profile.language.clone()))
+            .or_else(|| {
+                profile
+                    .as_ref()
+                    .and_then(|profile| profile.language.clone())
+            })
             .ok_or_else(|| {
                 AppError::InvalidInput(
                     "Choose a language for the problem; the practice profile names none.".into(),
@@ -246,7 +256,9 @@ impl JobHandler for CodingBuildWorker {
             AppError::ServiceNotAvailable(format!("No runtime is available to run {language}."))
         })?;
         let harness = harness_for(&language).ok_or_else(|| {
-            AppError::InvalidInput(format!("Coding problems are not written in {language} yet."))
+            AppError::InvalidInput(format!(
+                "Coding problems are not written in {language} yet."
+            ))
         })?;
         let Some(pin) = context.until_cancelled((self.load_llm)()).await else {
             return Ok(JobOutcome::Stopped);

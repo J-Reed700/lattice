@@ -172,7 +172,9 @@ impl LearningPracticalRepository {
         match (request.kind, problem_file) {
             (LearningPracticalActivityKind::CodingProblem, Some(file)) => {
                 if file.role != PracticalFileRole::Check || file.editable {
-                    return Err(invalid("A coding problem must remain private and read-only."));
+                    return Err(invalid(
+                        "A coding problem must remain private and read-only.",
+                    ));
                 }
                 decode::<Problem>(&file.content)?;
             }
@@ -421,7 +423,9 @@ impl LearningPracticalRepository {
             .iter()
             .find(|file| file.path == PROBLEM_FILE_PATH)
             .filter(|file| file.role == "check" && !file.editable)
-            .ok_or_else(|| AppError::Database("The coding problem has no saved problem file.".into()))?;
+            .ok_or_else(|| {
+                AppError::Database("The coding problem has no saved problem file.".into())
+            })?;
         Ok(StoredProblem {
             problem: decode(&file.content)?,
             lesson_id: activity.lesson_id,

@@ -11,14 +11,7 @@ pub const PROBLEM_FILE_PATH: &str = "problem/problem.json";
 
 /// What the learner is asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case
-    /// The comparison learner examples use: the first example case's.
-    pub fn default_compare(&self) -> CaseCompare {
-        self.examples()
-            .next()
-            .map_or(CaseCompare::Exact, |case| case.compare.clone())
-    }
-")]
+#[serde(rename_all = "snake_case")]
 pub enum CodingTask {
     Problem,
     BugFix,

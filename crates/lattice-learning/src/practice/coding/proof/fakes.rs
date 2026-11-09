@@ -95,7 +95,9 @@ pub(crate) struct CaseRun {
 /// What a fake solution does on a case.
 pub(crate) enum Behaviour {
     /// Passes, taking `ms`; a scale case without a digest only runs.
-    Passes { ms: u64 },
+    Passes {
+        ms: u64,
+    },
     Fails,
     Raises(&'static str),
 }
@@ -110,9 +112,7 @@ pub(crate) struct FakeRunner {
 }
 
 impl FakeRunner {
-    pub(crate) fn new(
-        judge: impl Fn(&str, &CaseRun) -> Behaviour + Send + Sync + 'static,
-    ) -> Self {
+    pub(crate) fn new(judge: impl Fn(&str, &CaseRun) -> Behaviour + Send + Sync + 'static) -> Self {
         Self {
             judge: Box::new(judge),
             codes: Mutex::new(Vec::new()),
@@ -294,7 +294,12 @@ impl CaseHarness for FakeHarness {
     }
 }
 
-pub(crate) fn case(id: &str, category: &str, visibility: CaseVisibility, scale: bool) -> ProblemCase {
+pub(crate) fn case(
+    id: &str,
+    category: &str,
+    visibility: CaseVisibility,
+    scale: bool,
+) -> ProblemCase {
     ProblemCase {
         id: id.to_owned(),
         category: category.to_owned(),
@@ -342,11 +347,36 @@ pub(crate) fn spec() -> ProblemSpec {
 /// The cases every fixture starts from: two examples, three hidden cases and one scale case.
 pub(crate) fn cases() -> Vec<ProblemCase> {
     vec![
-        case("example-1", "a pair at the start", CaseVisibility::Example, false),
-        case("example-2", "a pair in the middle", CaseVisibility::Example, false),
-        case("hidden-1", "duplicate numbers", CaseVisibility::Hidden, false),
-        case("hidden-2", "negative numbers", CaseVisibility::Hidden, false),
-        case("hidden-3", "the pair at the end", CaseVisibility::Hidden, false),
+        case(
+            "example-1",
+            "a pair at the start",
+            CaseVisibility::Example,
+            false,
+        ),
+        case(
+            "example-2",
+            "a pair in the middle",
+            CaseVisibility::Example,
+            false,
+        ),
+        case(
+            "hidden-1",
+            "duplicate numbers",
+            CaseVisibility::Hidden,
+            false,
+        ),
+        case(
+            "hidden-2",
+            "negative numbers",
+            CaseVisibility::Hidden,
+            false,
+        ),
+        case(
+            "hidden-3",
+            "the pair at the end",
+            CaseVisibility::Hidden,
+            false,
+        ),
         case("scale-1", "a long list", CaseVisibility::Hidden, true),
     ]
 }

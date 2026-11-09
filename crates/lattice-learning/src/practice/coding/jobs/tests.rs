@@ -29,7 +29,12 @@ fn save_of<'a>(job_id: &'a str, program_id: &'a str, lesson_id: &'a str) -> Prob
     }
 }
 
-fn file(path: &str, role: PracticalFileRole, editable: bool, content: &str) -> GeneratedPracticalFile {
+fn file(
+    path: &str,
+    role: PracticalFileRole,
+    editable: bool,
+    content: &str,
+) -> GeneratedPracticalFile {
     GeneratedPracticalFile {
         path: path.to_owned(),
         role,
@@ -102,9 +107,12 @@ async fn queueing_a_build_twice_with_one_operation_id_is_one_job() {
     assert_eq!(job.subject_id.as_deref(), Some(program_id.as_str()));
     assert_eq!(job.progress_total, CODING_BUILD_STEPS);
 
-    let other = queue_coding_build(&pool, &build_request(&Uuid::new_v4().to_string(), &program_id))
-        .await
-        .unwrap();
+    let other = queue_coding_build(
+        &pool,
+        &build_request(&Uuid::new_v4().to_string(), &program_id),
+    )
+    .await
+    .unwrap();
     assert_ne!(first, other);
 }
 
@@ -220,10 +228,30 @@ async fn a_problem_file_is_refused_unless_it_is_a_private_read_only_check_of_a_c
     let evaluator = file("checks.py", PracticalFileRole::Check, false, "# evaluator");
     let starter = file(SOLUTION_PATH, PracticalFileRole::Starter, true, "pass");
 
-    let as_starter = file(PROBLEM_FILE_PATH, PracticalFileRole::Starter, true, &problem_json());
-    let as_reference = file(PROBLEM_FILE_PATH, PracticalFileRole::Reference, false, &problem_json());
-    let editable = file(PROBLEM_FILE_PATH, PracticalFileRole::Check, true, &problem_json());
-    let garbled = file(PROBLEM_FILE_PATH, PracticalFileRole::Check, false, "{ not a problem");
+    let as_starter = file(
+        PROBLEM_FILE_PATH,
+        PracticalFileRole::Starter,
+        true,
+        &problem_json(),
+    );
+    let as_reference = file(
+        PROBLEM_FILE_PATH,
+        PracticalFileRole::Reference,
+        false,
+        &problem_json(),
+    );
+    let editable = file(
+        PROBLEM_FILE_PATH,
+        PracticalFileRole::Check,
+        true,
+        &problem_json(),
+    );
+    let garbled = file(
+        PROBLEM_FILE_PATH,
+        PracticalFileRole::Check,
+        false,
+        "{ not a problem",
+    );
     for bad in [as_starter, as_reference, editable, garbled] {
         let refused = generate(
             &repository,
@@ -236,7 +264,12 @@ async fn a_problem_file_is_refused_unless_it_is_a_private_read_only_check_of_a_c
         assert!(refused.is_err());
     }
 
-    let valid = file(PROBLEM_FILE_PATH, PracticalFileRole::Check, false, &problem_json());
+    let valid = file(
+        PROBLEM_FILE_PATH,
+        PracticalFileRole::Check,
+        false,
+        &problem_json(),
+    );
     let other_kind = generate(
         &repository,
         &program_id,

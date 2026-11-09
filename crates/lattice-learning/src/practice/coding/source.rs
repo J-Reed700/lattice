@@ -8,8 +8,8 @@ use crate::lessons::structured_call::reask;
 use crate::model_call;
 use crate::practice::coding::harness::CaseHarness;
 use crate::practice::coding::problem::{
-    CaseCompare, CaseVisibility, CodingTask, Misreading, Problem, ProblemCase, ProblemClarification,
-    ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
+    CaseCompare, CaseVisibility, CodingTask, Misreading, Problem, ProblemCase,
+    ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
 };
 use crate::practice::coding::proof::{prove, Proof};
 use async_trait::async_trait;
@@ -241,7 +241,11 @@ fn prompt(request: &ProblemRequest, runtime: &str) -> String {
             lesson.title, lesson.objective
         ));
     }
-    if let Some(focus) = request.focus.as_deref().filter(|focus| !focus.trim().is_empty()) {
+    if let Some(focus) = request
+        .focus
+        .as_deref()
+        .filter(|focus| !focus.trim().is_empty())
+    {
         parts.push(format!("The learner asked to focus on: {focus}"));
     }
     if let Some(details) = request
@@ -361,7 +365,9 @@ fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
         )));
     }
     if answer.params.is_empty() {
-        return Err(refuse("The function takes no parameters; give it at least one."));
+        return Err(refuse(
+            "The function takes no parameters; give it at least one.",
+        ));
     }
     let mut names = HashSet::new();
     for param in &answer.params {
@@ -417,7 +423,9 @@ fn read(raw: &str, request: &ProblemRequest) -> Result<Draft> {
         (answer.misreadings.len(), MIN_MISREADINGS, "misreadings"),
     ] {
         if count < least {
-            return Err(refuse(format!("Write at least {least} {what}; there are {count}.")));
+            return Err(refuse(format!(
+                "Write at least {least} {what}; there are {count}."
+            )));
         }
     }
     let arity = answer.params.len();
