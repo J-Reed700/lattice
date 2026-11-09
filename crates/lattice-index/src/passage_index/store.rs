@@ -14,6 +14,7 @@
 //! left beside it would put old vectors behind new passages.
 
 use super::chunking::NewPassage;
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::{AppError, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
@@ -411,7 +412,7 @@ impl PassageStore {
         content_hash: &str,
         passages: &[NewPassage],
     ) -> Result<Vec<i64>> {
-        let mut tx = self.pool.begin().await.map_err(db_error("begin"))?;
+        let mut tx = self.pool.begin_write().await.map_err(db_error("begin"))?;
         let old: Vec<i64> = sqlx::query_scalar("SELECT id FROM passages WHERE document = ?")
             .bind(key)
             .fetch_all(&mut *tx)
@@ -452,7 +453,7 @@ impl PassageStore {
 
     /// Forgets the documents at `keys`. Returns their passage ids.
     pub async fn remove(&self, keys: &[String]) -> Result<Vec<i64>> {
-        let mut tx = self.pool.begin().await.map_err(db_error("begin"))?;
+        let mut tx = self.pool.begin_write().await.map_err(db_error("begin"))?;
         let mut removed = Vec::new();
         for key in keys {
             let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM passages WHERE document = ?")
@@ -521,7 +522,7 @@ impl PassageStore {
 
     /// Their passages are in the saved vectors file.
     pub async fn mark_embedded(&self, keys: &[String]) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db_error("begin"))?;
+        let mut tx = self.pool.begin_write().await.map_err(db_error("begin"))?;
         for key in keys {
             sqlx::query("UPDATE index_documents SET embedded = 1 WHERE key = ?")
                 .bind(key)

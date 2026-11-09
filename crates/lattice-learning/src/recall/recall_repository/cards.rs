@@ -1,5 +1,6 @@
 //! Saving, deduplicating and reviewing versioned recall cards.
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 impl LearningRecallRepository {
     pub async fn save_card(
@@ -28,7 +29,7 @@ impl LearningRecallRepository {
             return Err(invalid("Card change reason must contain 1–500 characters."));
         }
         let hash = payload_hash(req)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.operation_id, &req.program_id, "save_card", &hash);
         if let Some(card_id) = operation.replay::<String, _>(&mut *tx).await? {
@@ -209,7 +210,7 @@ impl LearningRecallRepository {
         validate_uuid(&req.program_id, "program")?;
         validate_uuid(&req.suggestion_id, "duplicate suggestion")?;
         let hash = payload_hash(req)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(
             &req.operation_id,
@@ -267,7 +268,7 @@ impl LearningRecallRepository {
             req.selected_option,
             req.expected_review_count,
         ))?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = recall_operation(&req.review_id, &req.program_id, "review", &hash);
         if operation.seen(&mut *tx).await? {

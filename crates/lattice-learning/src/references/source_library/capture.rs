@@ -3,6 +3,7 @@
 //! the same transaction.
 use super::*;
 use crate::references::trust;
+use lattice_core::shared::persistence::Transactions;
 
 impl LearningSourceLibraryRepository {
     /// Captures a source research selected, with the planner's reason for
@@ -103,7 +104,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, program_id).await?;
         if source_operation(
             operation_id,
@@ -264,7 +265,7 @@ impl LearningSourceLibraryRepository {
             ),
             None => None,
         };
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,

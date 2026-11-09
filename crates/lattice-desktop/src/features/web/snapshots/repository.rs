@@ -7,6 +7,7 @@ use sqlx::SqlitePool;
 
 use super::dto::WebPageSnapshotStatus;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
@@ -393,7 +394,7 @@ impl SnapshotRepository {
         } else {
             Some(serde_json::to_string(&capture.partial_reasons)?)
         };
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let updated = sqlx::query(
             "UPDATE web_page_snapshots SET status = 'ready', final_url = ?, title = ?, \
                  method = ?, captured_at = ?, byte_size = ?, sha256 = ?, resource_count = ?, \

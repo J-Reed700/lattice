@@ -6,6 +6,7 @@ use chrono::Utc;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::fs::path::path_to_string;
+use lattice_core::shared::persistence::Transactions;
 use serde::Deserialize;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::path::Path;
@@ -250,7 +251,7 @@ pub async fn store_document_with_context(
         )));
     }
 
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_write().await?;
     let doc_id = Uuid::new_v4().to_string();
 
     let doc_id = insert_document_metadata(&mut tx, &doc_id, path, mime_type).await?;
@@ -278,7 +279,7 @@ pub async fn store_document_with_context_and_file(
         )));
     }
 
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_write().await?;
     let doc_id = Uuid::new_v4().to_string();
 
     let doc_id = insert_document_metadata(&mut tx, &doc_id, path, mime_type).await?;

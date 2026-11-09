@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
 use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -268,7 +269,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
@@ -300,7 +301,7 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 

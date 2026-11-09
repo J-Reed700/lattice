@@ -16,6 +16,7 @@ use tokio::io::AsyncWriteExt;
 
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::roots;
+use lattice_core::shared::persistence::Transactions;
 
 /// Where the files the startup sweeps delete live, and the file that names
 /// their owner.
@@ -157,7 +158,7 @@ async fn holds_files(directories: &[PathBuf]) -> Result<bool> {
 /// as it was and the next start tries again.
 async fn adopt(pool: &SqlitePool, owner_file: &Path) -> Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_write().await?;
     sqlx::query("INSERT INTO library_owner (id, owner_id) VALUES (1, ?)")
         .bind(&id)
         .execute(&mut *tx)

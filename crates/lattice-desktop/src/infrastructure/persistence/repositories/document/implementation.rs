@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
 use super::ops;
@@ -29,7 +30,7 @@ impl SqliteDocumentRepository {
         &self,
         file_path: &str,
     ) -> Result<Option<DocumentEntity>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let entity = ops::find_by_path(&mut tx, file_path).await?;
         let aggregate = match entity {
             Some(doc_entity) => {
@@ -68,7 +69,7 @@ impl SqliteDocumentRepository {
 #[async_trait]
 impl RepositoryPort<DocumentEntity> for SqliteDocumentRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<DocumentEntity>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let result = ops::find_by_id(&mut tx, id).await?;
         tx.commit().await?;
         Ok(result)
@@ -79,21 +80,21 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepository {
             .as_any()
             .downcast_ref::<lattice_core::application::ports::DocumentFilter>()
             .ok_or_else(|| AppError::InvalidInput("Expected DocumentFilter".into()))?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let documents = ops::find_by_filter(&mut tx, filter).await?;
         tx.commit().await?;
         Ok(documents)
     }
 
     async fn find_all(&self) -> Result<Vec<DocumentEntity>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let result = ops::find_all(&mut tx).await?;
         tx.commit().await?;
         Ok(result)
     }
 
     async fn save(&self, entity: &DocumentEntity) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         ops::save(&mut tx, entity).await?;
         tx.commit().await?;
         Ok(())
@@ -106,7 +107,7 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
@@ -131,7 +132,7 @@ impl RepositoryPort<DocumentEntity> for SqliteDocumentRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
@@ -199,7 +200,7 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
     }
 
     async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         ops::delete_and_release_blob(&mut tx, document_id).await?;
         tx.commit().await?;
         Ok(())
@@ -209,7 +210,7 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
         &self,
         checksum: &lattice_core::domain::value_objects::Checksum,
     ) -> Result<Option<lattice_core::domain::entities::Document>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let result = ops::find_aggregate_by_checksum_tx(&mut tx, checksum.as_str()).await?;
         tx.commit().await?;
         Ok(result)

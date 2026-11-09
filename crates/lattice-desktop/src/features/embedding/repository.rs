@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::EmbeddingRepositoryPort;
 use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
 /// Embedding entity from database
@@ -54,7 +55,7 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
         }
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 

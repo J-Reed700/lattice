@@ -10,6 +10,7 @@ use crate::{
     source_library::LearningSourceLibraryRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 use std::path::Path;
 
@@ -127,7 +128,7 @@ pub(super) async fn record_export(
 ) -> Result<LearningPackExportDto> {
     let id = uuid::Uuid::new_v4().to_string();
     let created = now();
-    let mut tx = pool.begin().await.map_err(db)?;
+    let mut tx = pool.begin_write().await.map_err(db)?;
     sqlx::query("DELETE FROM learning_pack_exports WHERE operation_id=?")
         .bind(&req.operation_id)
         .execute(&mut *tx)
@@ -321,7 +322,7 @@ pub(super) async fn record_preview(
     let id = req.preview_id.clone();
     let timestamp = now();
     let manifest_json = json_string(&decoded.manifest)?;
-    let mut tx = pool.begin().await.map_err(db)?;
+    let mut tx = pool.begin_write().await.map_err(db)?;
     sqlx::query("INSERT INTO learning_pack_import_previews(id,operation_id,payload_hash,source_path,root_sha256,program_id,program_title,conflict_policy,conflicts_json,changes_json,warnings_json,manifest_json,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)")
         .bind(&id).bind(&req.operation_id).bind(payload).bind(&req.source_path).bind(&decoded.manifest.root_sha256).bind(&result_program_id).bind(&preview.title).bind(policy_column(req.conflict_policy)?).bind(json_string(&preview.conflicts)?).bind(json_string(&preview.changes)?).bind(json_string(&preview.warnings)?).bind(&manifest_json).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
     pack_operation(&req.operation_id, "preview_import", payload)

@@ -7,6 +7,7 @@ use crate::features::conversation::persistence_mapper::{
 use chrono::Utc;
 use lattice_core::domain::conversation::DocumentReference;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 impl ConversationRepository {
     pub async fn add_document_reference(
@@ -20,7 +21,7 @@ impl ConversationRepository {
 
         // Both inserts commit together, so a document linked to the conversation
         // is always also a member of its space.
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
             AppError::Database(format!(
                 "Failed to open tx for add_document_reference: {}",
                 e

@@ -143,10 +143,19 @@ fn line_of(text: &str, offset: usize) -> usize {
 }
 
 fn deferred_begins(text: &str) -> Vec<usize> {
-    let production = text
-        .find("#[cfg(test)]")
-        .and_then(|end| text.get(..end))
-        .unwrap_or(text);
+    let mut end = text.len();
+    let mut offset = 0;
+    let mut lines = text.split_inclusive('\n').peekable();
+    while let Some(line) = lines.next() {
+        if line.trim_end() == "#[cfg(test)]"
+            && lines.peek().is_some_and(|next| next.starts_with("mod "))
+        {
+            end = offset;
+            break;
+        }
+        offset += line.len();
+    }
+    let production = text.get(..end).unwrap_or(text);
     let mut found = Vec::new();
     for (offset, _) in production.match_indices(".begin()") {
         let after = production.get(offset + ".begin()".len()..).unwrap_or("");

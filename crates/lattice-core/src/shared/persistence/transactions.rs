@@ -21,7 +21,7 @@ pub trait Transactions {
 #[async_trait]
 impl Transactions for SqlitePool {
     async fn begin_write(&self) -> Result<Transaction<'static, Sqlite>, sqlx::Error> {
-        self.begin().await
+        self.begin_with("BEGIN IMMEDIATE").await
     }
 
     async fn begin_read(&self) -> Result<Transaction<'static, Sqlite>, sqlx::Error> {

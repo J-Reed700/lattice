@@ -25,6 +25,7 @@ use crate::features::learning::assessment_repository::{
 };
 use crate::features::learning::grade_rationale::{self, Checked, Grader, GraderVerdict, Reference};
 use crate::features::learning::{quiz_bank_jobs, quiz_blueprints};
+use lattice_core::shared::persistence::Transactions;
 
 const BANK_SCHEMA: &str = "course-eval-quiz-bank/1";
 const GRADES_SCHEMA: &str = "quiz-grading-grades/1";
@@ -106,7 +107,7 @@ pub(super) async fn quiz_stage(
         }
     }
     drop(connection);
-    let mut tx = pool.begin().await.map_err(db)?;
+    let mut tx = pool.begin_write().await.map_err(db)?;
     let requirements =
         match quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, &scope).await? {
             Some((blueprint, _)) => quiz_blueprints::requirements_in(&mut tx, &blueprint).await?,

@@ -18,6 +18,7 @@ use crate::persistence::{db, now};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::domain::learning::drills::{language_of_code, Material, LANGUAGES};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
@@ -137,7 +138,7 @@ pub async fn course_drills(
     let with_sources = has_sources(pool, program_id).await?;
     let code = Material::code(language.clone());
     let at = now();
-    let mut transaction = pool.begin().await.map_err(db)?;
+    let mut transaction = pool.begin_read().await.map_err(db)?;
     let standings = schedules::lesson_states_in(&mut transaction, program_id, &code, None).await?;
     let mut fits = Vec::with_capacity(standings.len());
     for standing in &standings {

@@ -23,6 +23,7 @@ use crate::{
     source_library::LearningSourceLibraryRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use serde::Serialize;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection, SqlitePool};
@@ -35,7 +36,7 @@ pub(crate) async fn snapshot(
     program_id: &str,
     options: &LearningPackExportOptionsDto,
 ) -> Result<LearningPackInput> {
-    let mut tx = pool.begin().await.map_err(db)?;
+    let mut tx = pool.begin_read().await.map_err(db)?;
     guards::require_exportable(&mut tx, program_id).await?;
     let input = snapshot_on(&mut tx, program_id, options).await?;
     tx.commit().await.map_err(db)?;

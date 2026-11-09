@@ -1,4 +1,5 @@
 use lattice_core::shared::error::{AppError, Result, ResultExt};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::resilience::{retry_with_backoff, RetryConfig};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::future::Future;
@@ -212,8 +213,8 @@ impl DatabaseConnection {
         let result = retry_with_backoff(
             RetryConfig::default(),
             || async {
-                tracing::info!("→ begin_immediate: Calling pool.begin_with()...");
-                let tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+                tracing::info!("→ begin_immediate: Calling pool.begin_write()...");
+                let tx = pool.begin_write().await?;
                 tracing::info!("✓ begin_immediate: Transaction acquired successfully");
                 Ok(tx)
             },

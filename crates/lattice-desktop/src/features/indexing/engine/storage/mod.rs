@@ -28,6 +28,7 @@ use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;
 use lattice_core::application::ports::IngestedDocumentStorePort;
 use lattice_core::domain::value_objects::ContextualizedChunk;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use std::path::{Path, PathBuf};
 
@@ -238,7 +239,7 @@ impl IndexStorageTrait for IndexStorage {
         embeddings: Vec<Vec<f32>>,
         model_identity: &str,
     ) -> Result<String> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         let id = context::store_document_with_context_and_file_tx(
             &mut tx, path, "", mime_type, chunks, embeddings,
         )
