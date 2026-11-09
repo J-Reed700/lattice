@@ -42,7 +42,11 @@ const DEFERRED: &str = "begins a deferred transaction; use begin_write() or begi
 const BEGIN_WITH: &str = "begins with begin_with(); use begin_write() or begin_read()";
 
 /// `(file, function, reason)`: a function rule 3 would flag, with the reason it must not be one transaction.
-pub const EXCEPTIONS: &[(&str, &str, &str)] = &[];
+pub const EXCEPTIONS: &[(&str, &str, &str)] = &[(
+    "crates/lattice-desktop/src/infrastructure/persistence/database/migrate.rs",
+    "run_migrations",
+    "sqlx's migrator runs each migration in its own transaction, and PRAGMA optimize after it refreshes planner statistics only",
+)];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
