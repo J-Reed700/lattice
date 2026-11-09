@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
+pub(crate) mod contract;
 mod passes;
 mod protected;
 mod quotes;
@@ -555,24 +556,25 @@ async fn review_material(
                 )
             };
             review_step(is_lesson, lesson_words, other_words);
-            let mut issues = crate::teaching_review::review(
+            let review_instructions = format!(
+                "{}\n{}\n{}",
+                if attempt > 0 {
+                    final_review_system
+                } else if is_outline {
+                    outline_review_system
+                } else {
+                    review_system
+                },
+                if is_outline { "" } else { shared_checks },
+                if is_outline {
+                    ""
+                } else {
+                    LESSON_REVIEW_EVIDENCE_SCOPE
+                }
+            );
+            let review = crate::teaching_review::review(
                 llm,
-                &format!(
-                    "{}\n{}\n{}",
-                    if attempt > 0 {
-                        final_review_system
-                    } else if is_outline {
-                        outline_review_system
-                    } else {
-                        review_system
-                    },
-                    if is_outline { "" } else { shared_checks },
-                    if is_outline {
-                        ""
-                    } else {
-                        LESSON_REVIEW_EVIDENCE_SCOPE
-                    }
-                ),
+                &review_instructions,
                 review_prompt,
                 &candidate_value,
                 progress,
@@ -581,8 +583,16 @@ async fn review_material(
                 } else {
                     LengthRule::Fail
                 },
-            )
-            .await?;
+            );
+            let against_plan = async {
+                if is_lesson && !is_outline {
+                    contract::check(llm, &authoring_context, &candidate_value, context.protected)
+                        .await
+                } else {
+                    Ok(Vec::new())
+                }
+            };
+            let (mut issues, plan_findings) = futures::try_join!(review, against_plan)?;
             issues.splice(0..0, answer_issues);
             if let Some(references) = context.lesson_references {
                 issues = crate::review_evidence::check(
@@ -595,6 +605,7 @@ async fn review_material(
                 )
                 .await?;
             }
+            issues.extend(plan_findings);
             // Stopped structure stays among the findings, so it is still
             // set aside when the review ends.
             issues.extend(structure);
@@ -681,7 +692,7 @@ async fn review_material(
             "Correcting the quiz questions from review findings"
         });
         let repaired = if can_edit_spans {
-            let edit_system = format!("You are editing a rejected draft. Correct only the established teaching defects. {}", super::text_edits::instructions(schema));
+            let edit_system = format!("You are editing a rejected draft. Correct only the established teaching defects. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. {}", super::text_edits::instructions(schema));
             let prompt: Map<String, Value> = parts
                 .into_iter()
                 .map(|(key, value)| (key.to_owned(), value))
@@ -781,6 +792,8 @@ async fn review_material(
 
 #[cfg(test)]
 mod citation_tests;
+#[cfg(test)]
+mod contract_tests;
 #[cfg(test)]
 mod loop_tests;
 
