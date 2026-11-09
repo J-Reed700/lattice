@@ -293,6 +293,7 @@ pub async fn prepare(
     repo: &LearningRepository,
     llm: &dyn LLMPort,
     runtimes: &super::embedded_runtime::BuiltinRuntimes,
+    setups: &super::lessons::course_setup::CourseSetups,
     request: PrepareLearningLessonRequestDto,
 ) -> Result<LearningProgramDto> {
     uuid(&request.program_id, "program")?;
@@ -326,7 +327,13 @@ pub async fn prepare(
             "Ready lessons are immutable.".into(),
         ));
     }
-    let prepared = super::generation::prepare_lesson(llm, runtimes, &program, lesson).await?;
+    let outline_revision =
+        super::lessons::course_plan::outline_revision(&repo.pool, &request.program_id).await?;
+    let plan =
+        super::lessons::course_plan::ensure(&repo.pool, llm, &program, outline_revision, setups)
+            .await?;
+    let prepared =
+        super::generation::prepare_lesson(llm, runtimes, &program, lesson, &plan).await?;
     validate_generated(&prepared, &program)?;
     repo.prepare(
         &request.program_id,

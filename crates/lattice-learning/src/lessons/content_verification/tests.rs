@@ -73,6 +73,9 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
         assert_schema_request_holds_the_shape(request, schema);
     }
     let (system, user) = fixture_messages(request);
+    if system.starts_with(crate::lessons::teaching::contract::SYSTEM) {
+        return Vec::new();
+    }
     if let Some(batch) = fixture_batch(user) {
         return batch
             .into_iter()
@@ -93,6 +96,11 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     vec![format!("{system}\n\n{user}")]
 }
 
+/// What a fixture model answers a lesson's check against its course plan
+/// with, unless a test routes that call itself (`teaching::contract_tests`).
+pub(crate) const CONTRACT_NOTHING: &str =
+    "{\"planned\":[],\"usedBeforeTaught\":[],\"contradictions\":[],\"unseen\":[]}";
+
 /// The fixture's replies to [`fixture_prompts`], answered in the typed
 /// protocol: one batched reply, a check's verdict as its last line, or the
 /// reply text unchanged.
@@ -104,6 +112,14 @@ pub(crate) fn fixture_completion(
         return CompletionResponse::from_text(crate::lessons::structured_call::FIXTURE_DRAFT);
     }
     let (system, user) = fixture_messages(request);
+    if system.starts_with(crate::lessons::teaching::contract::SYSTEM) {
+        let text = replies.concat();
+        return CompletionResponse::from_text(if text.is_empty() {
+            CONTRACT_NOTHING
+        } else {
+            text.as_str()
+        });
+    }
     let text = if let Some(batch) = fixture_batch(user) {
         let checks: Vec<Value> = batch
             .iter()
@@ -305,6 +321,9 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 
 /// Shared with course fixtures so they exercise the additional protocol calls.
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
+    if let Some(plan) = crate::lessons::course_plan::fixture_response(prompt) {
+        return Some(plan);
+    }
     if prompt.starts_with("You sort statements extracted from a lesson") {
         // The fixtures' statements are the ones the strict check was written
         // for.
