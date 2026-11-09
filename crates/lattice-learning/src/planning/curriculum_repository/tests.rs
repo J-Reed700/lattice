@@ -774,7 +774,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
         .save_lesson_checkpoint(
             &retry.id,
             &target,
-            "prepared-v1",
+            "prepared-v2",
             serde_json::to_value(&good)?,
         )
         .await?;
@@ -790,7 +790,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     assert!(jobs(&pool).claim(&retry.id).await?.is_some());
     let good = serde_json::from_value(
         curriculum
-            .lesson_checkpoint(&retry.id, &target, "prepared-v1")
+            .lesson_checkpoint(&retry.id, &target, "prepared-v2")
             .await?
             .unwrap(),
     )?;

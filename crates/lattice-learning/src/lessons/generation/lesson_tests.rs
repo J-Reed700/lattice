@@ -31,7 +31,18 @@ fn question(kind: &str, prompt: &str, cited: bool) -> Value {
 /// Seven sections, two sharing a title, one with no body, no reflection; five
 /// questions, one of them practice.
 fn off_shape_value(cited: bool) -> Value {
-    let long = "A substantive explanation. ".repeat(30);
+    let long = |part: u8| -> String {
+        (0..30u8)
+            .map(|n| {
+                format!(
+                    "A substantive explanation {}{} of part {}. ",
+                    char::from(b'a' + n / 26),
+                    char::from(b'a' + n % 26),
+                    char::from(b'a' + part)
+                )
+            })
+            .collect()
+    };
     let mut blocks: Vec<_> = [
         "explanation",
         "explanation",
@@ -42,7 +53,14 @@ fn off_shape_value(cited: bool) -> Value {
     ]
     .iter()
     .enumerate()
-    .map(|(i, kind)| block(kind, &format!("Part {i}"), &long, cited))
+    .map(|(i, kind)| {
+        block(
+            kind,
+            &format!("Part {i}"),
+            &long(u8::try_from(i).unwrap()),
+            cited,
+        )
+    })
     .collect();
     blocks[1]["title"] = json!("Part 0");
     blocks.push(block("recap", "Recap", "", cited));
@@ -306,6 +324,7 @@ async fn a_lesson_with_no_reference_material_asks_for_it_in_plain_words() {
         &BuiltinRuntimes::for_tests(),
         &program,
         lesson,
+        &CoursePlan::blank(&program),
         &references,
     )
     .await
@@ -327,6 +346,7 @@ fn writer_prompt(program: &LearningProgramDto, lesson: &LearningLessonDto) -> Va
         &outline(1, 1),
         program,
         lesson,
+        &CoursePlan::blank(program),
         &references,
         Vec::new(),
         Vec::new(),
@@ -334,6 +354,63 @@ fn writer_prompt(program: &LearningProgramDto, lesson: &LearningLessonDto) -> Va
     )
     .unwrap();
     serde_json::from_str(&prompt).unwrap()
+}
+
+#[test]
+fn the_writer_is_given_the_course_plan_and_no_recaps() {
+    let program = crate::tests::fixture();
+    let lesson = program.modules[0].lessons[0].clone();
+    let prompt = writer_prompt(&program, &lesson);
+
+    assert!(prompt["courseSequence"]["coursePlan"].is_array());
+    assert!(prompt["courseSequence"].get("recentTeaching").is_none());
+    let whole = prompt.to_string();
+    assert!(!whole.contains("recentTeaching"), "{whole}");
+    assert!(!whole.contains("earlier recaps"), "{whole}");
+}
+
+#[test]
+fn the_writer_teaches_exactly_its_lessons_planned_ideas_and_never_a_later_lessons() {
+    let requirements = writer_requirements();
+
+    assert!(
+        requirements.contains("Teach exactly that lesson's planned ideas, terms and actions"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("Never teach a later lesson's planned ideas"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("an earlier lesson's planned ideas in coursePlan"),
+        "the last check mixes in an earlier lesson's planned ideas"
+    );
+    assert!(
+        requirements.contains("an earlier lesson's planned actions in coursePlan"),
+        "actions an earlier lesson plans are not taught again"
+    );
+    assert!(
+        requirements.contains("the ideas coursePlan lists for earlier lessons"),
+        "recall questions draw on earlier lessons' planned ideas"
+    );
+    assert!(
+        requirements.contains("the next lesson's planned ideas in coursePlan"),
+        "the recap bridges to the next lesson's plan"
+    );
+}
+
+#[test]
+fn the_writer_makes_what_an_action_needs_with_a_command_it_teaches() {
+    let requirements = writer_requirements();
+
+    assert!(
+        requirements.contains("needs something to exist first"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("teaches that command where it is first used"),
+        "{requirements}"
+    );
 }
 
 fn writer_requirements() -> String {
@@ -392,7 +469,7 @@ fn the_writer_teaches_the_learners_setup_and_every_step_it_asks_for() {
         "{text}"
     );
     assert!(
-        text.contains("say which one it describes instead of presenting it as the learner's"),
+        text.contains("name that system instead of presenting what it says as the learner's"),
         "{text}"
     );
     assert!(
@@ -514,4 +591,53 @@ fn a_questions_reasons_are_trimmed_and_kept_with_its_key_in_the_writers_order() 
         ]
     );
     assert!(prepared.keys[1].rationales.is_empty());
+}
+
+#[test]
+fn the_writer_writes_only_what_the_learner_sees() {
+    let text = writer_requirements();
+    for expected in [
+        "The learner reads only this lesson, never the sources' excerpts, the course plan (coursePlan) or these requirements.",
+        "say what a source states in the lesson's own words",
+        "never point at an excerpt, passage, tutorial, plan or requirement the learner cannot see",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in {text}");
+    }
+    assert!(!text.contains("When an excerpt describes"), "{text}");
+}
+
+#[test]
+fn the_writer_asks_questions_only_about_what_the_learner_was_taught() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("Every question, its choices, its rationales and its explanation rest only on what this lesson teaches or on an earlier lesson's planned ideas, terms and actions in coursePlan; a learner who studied only those can answer it."),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_writer_teaches_how_a_deliverable_is_recorded() {
+    let text = writer_requirements();
+    for expected in [
+        "every step a deliverable needs, including how the learner records or saves their work",
+        "a deliverable kept in a file needs the way to write text into that file taught, here or in an earlier lesson's planned actions",
+        "otherwise ask for the record in the learner's own notes",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in {text}");
+    }
+}
+
+#[test]
+fn the_writer_keeps_the_four_choices_close_in_length_and_in_their_own_words() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("The four choices are close in length, so the right one never stands out as the longest"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "the right choice is worded in its own words rather than repeating the prompt's"
+        ),
+        "{text}"
+    );
 }

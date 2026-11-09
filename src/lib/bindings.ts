@@ -456,6 +456,46 @@ async prepareLearningModule(request: PrepareLearningModuleRequestDto) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningCoursePlan(programId: string) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_course_plan", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async planLearningCourse(request: PlanLearningCourseRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|plan_learning_course", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async editLearningCoursePlanEntry(request: EditCoursePlanEntryRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|edit_learning_course_plan_entry", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async changeLearningCoursePlanEntries(request: ChangeCoursePlanEntriesRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|change_learning_course_plan_entries", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async undoLearningCoursePlanEntry(request: UndoCoursePlanEntryRequestDto) : Promise<Result<CoursePlanViewDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|undo_learning_course_plan_entry", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async prepareLearningAhead(request: PrepareLearningAheadRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_ahead", { request }) };
@@ -4865,6 +4905,7 @@ export type CapturedSourcesDto = { messageId: string;
  * could be read carrying its snapshot.
  */
 sources: SourceDto[] }
+export type ChangeCoursePlanEntriesRequestDto = { programId: string; outlineRevision: number; lessons: CoursePlanEntryRefDto[]; instruction: string }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
  * What the window needs to show a stored picture. Travels in the stream
@@ -5845,6 +5886,10 @@ export type CourseIndexStatusDto =
  * course is searched by its words meanwhile.
  */
 { state: "unavailable"; reason: string }
+export type CoursePlanEntryDto = { topics: PlannedLesson; entryRevision: number; editable: boolean; previous: PlannedLesson | null }
+export type CoursePlanEntryRefDto = { lessonId: string; expectedEntryRevision: number }
+export type CoursePlanStateDto = "none" | "planning" | "planned" | "failed"
+export type CoursePlanViewDto = { programId: string; outlineRevision: number; state: CoursePlanStateDto; error: string | null; entries: CoursePlanEntryDto[] }
 export type CreateBackupRequestDto = { backupPath: string | null }
 export type CreateBackupResultDto = { backupPath: string; size: number; createdAt: string }
 export type CreateConversationJournalRequestDto = { name: string; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null }
@@ -6201,6 +6246,7 @@ export type DrillStandingDto =
  * A drill of it is out and not yet graded, or ready to be taken.
  */
 "pending"
+export type EditCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; expectedEntryRevision: number; topics: PlannedLesson }
 /**
  * A published lesson's question as the user rewrote it, with the question
  * they opened.
@@ -7929,7 +7975,11 @@ export type LearningGenerationJobKind = "program_outline" | "lesson_preparation"
 /**
  * Grades a submitted quiz's written answers and near-miss short answers.
  */
-"quiz_grading"
+"quiz_grading" |
+/**
+ * Plans what each lesson of the outline teaches.
+ */
+"course_plan"
 export type LearningGenerationJobStatus = "pending" | "running" | "completed" | "failed" | "cancelled" | "interrupted"
 export type LearningGenerationPhase = "references" | "writing" | "review" | "inventory" | "coverage" | "examples" | "evidence" | "research" | "repair" | "questions" | "publishing"
 export type LearningGenerationStep = { phase: LearningGenerationPhase; startedAt: number }
@@ -9412,6 +9462,11 @@ export type PerformanceTierDto =
  * Accurate models (> 5s/response)
  */
 "Accurate"
+export type PlanLearningCourseRequestDto = { programId: string }
+/**
+ * What one lesson teaches, as topics.
+ */
+export type PlannedLesson = { lessonId: string; ideas: string[]; terms: string[]; actions: string[]; contrast: string }
 export type PrepareLearningAheadRequestDto = { programId: string; lessonId: string }
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type PrepareLearningModuleRequestDto = { programId: string; moduleId: string; expectedRevision: number }
@@ -11257,6 +11312,7 @@ resultsPerPage: number;
  */
 enableAnimations: boolean }
 export type UnbookmarkConversationMessageRequestDto = { conversationId: string; messageId: string }
+export type UndoCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; lessonId: string; expectedEntryRevision: number }
 export type UnitKindDto = "block" | "question" | "answer_key"
 export type UnverifiedReasonDto = "unchecked" | "unsupported" | "contradicted"
 export type UpdateConversationJournalRequestDto = { journalId: string; name: string | null; description: string | null; icon: string | null; accentColor: string | null; spacePrompt: string | null; toolPreferencesJson: string | null; isArchived: boolean | null; sortOrder: number | null }

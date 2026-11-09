@@ -365,3 +365,27 @@ fn a_source_label_alone_needs_no_citation() {
     ));
     assert!(needs_citation("The default port is 22.", &Givens::NONE));
 }
+
+#[test]
+fn an_apostrophe_is_not_a_quotation_mark() {
+    for sentence in [
+        "Run pwd before ls so you see the shell's folder rather than the window's.",
+        "Don't run rm until you've checked the folder's contents with ls.",
+        "Run pwd before ls so you see the shell\u{2019}s folder rather than the window\u{2019}s.",
+        "Don\u{2019}t run rm until you\u{2019}ve checked the folder\u{2019}s contents with ls.",
+    ] {
+        assert!(!needs_citation(sentence, &Givens::NONE), "{sentence}");
+    }
+}
+
+#[test]
+fn a_real_quotation_still_needs_a_citation() {
+    for sentence in [
+        "The manual says 'rm deletes files permanently'.",
+        "Remember \"the shell keeps a working directory\" always.",
+        "Remember \u{201c}the shell keeps a working directory\u{201d} always.",
+        "Remember \u{2018}the shell keeps a working directory\u{2019} always.",
+    ] {
+        assert!(needs_citation(sentence, &Givens::NONE), "{sentence}");
+    }
+}

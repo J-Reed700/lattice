@@ -269,3 +269,21 @@ fn a_failed_sentence_is_repaired_beside_verified_ones_in_the_same_passage() {
     assert_eq!(back.target, failed);
     assert_eq!(back.reason, put_back_for(PASSAGE));
 }
+
+#[test]
+fn a_new_sentence_equal_to_one_the_section_already_has_is_not_kept() {
+    let before = section(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    let repeated = section(&format!("{VERIFIED} {FAILED} {VERIFIED} {OTHER}"));
+    let confined = confine(&before, &repeated, &[sentence("body", FAILED)], &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined["body"], format!("{VERIFIED} {FAILED} {OTHER}"));
+
+    let with_note = |body: &str| json!({"kind":"explanation","body":body,"note":OTHER});
+    let before = with_note(&format!("{VERIFIED} {FAILED}"));
+    let repeated = with_note(&format!("{VERIFIED} {FAILED} {OTHER}"));
+    let confined = confine(&before, &repeated, &[sentence("body", FAILED)], &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined["body"], format!("{VERIFIED} {FAILED}"));
+}

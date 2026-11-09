@@ -4,6 +4,7 @@ use super::{
     curriculum_operation, stable_job_operation_id, validate_operation_id, JobScope,
     LearningCurriculumRepository,
 };
+use crate::course_plan::COURSE_PLAN;
 use crate::curriculum::{
     self, LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus,
 };
@@ -29,7 +30,7 @@ impl LearningCurriculumRepository {
     ) -> Result<Vec<LearningGenerationJob>> {
         let scopes = job_scopes(&mut *connection, program_id).await?;
         let mut jobs = Vec::new();
-        for kind in [LESSON_PREPARATION, QUIZ_BANK, QUIZ_GRADING] {
+        for kind in [LESSON_PREPARATION, QUIZ_BANK, QUIZ_GRADING, COURSE_PLAN] {
             let mut of_kind =
                 JobStore::list_for_subject_in(&mut *connection, kind, program_id).await?;
             of_kind.reverse();
@@ -703,6 +704,7 @@ fn learning_job(job: JobRecord, scope: JobScope) -> Result<LearningGenerationJob
         LESSON_PREPARATION => LearningGenerationJobKind::LessonPreparation,
         QUIZ_BANK => LearningGenerationJobKind::QuizBank,
         QUIZ_GRADING => LearningGenerationJobKind::QuizGrading,
+        COURSE_PLAN => LearningGenerationJobKind::CoursePlan,
         _ => return Err(AppError::Database("Invalid generation job kind".into())),
     };
     let ended_by_update = job.error_code.as_deref() == Some(ENDED_BY_UPDATE);
