@@ -1,6 +1,7 @@
 //! `RepositoryPort<TagEntity>` and `TagRepositoryTrait` over the SQLite repository.
 
 use async_trait::async_trait;
+use futures::FutureExt;
 use sqlx::{Row, SqliteConnection};
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
@@ -21,7 +22,7 @@ impl TagRepository {
             ORDER BY name ASC
             "#
         )
-        .fetch_all(connection)
+        .fetch_all(connection).boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to get all tags: {}", e)))?;
 
@@ -41,7 +42,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
             "#,
             id
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.pool).boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to find tag by id: {}", e)))?;
 
@@ -81,7 +82,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
                 )
                 .bind(search_pattern)
                 .bind(limit_i64)
-                .fetch_all(&mut *tx)
+                .fetch_all(&mut *tx).boxed()
                 .await
                 .and_then(|rows| {
                     rows.into_iter()
@@ -108,7 +109,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
                     "#,
                     limit_i64
                 )
-                .fetch_all(&mut *tx)
+                .fetch_all(&mut *tx).boxed()
                 .await
             }
             .map_err(|e| AppError::Database(format!("Failed to find tags by filter: {}", e)))?;
@@ -238,6 +239,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
     async fn count(&self) -> Result<usize> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tags")
             .fetch_one(&self.pool)
+            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to count tags: {}", e)))?;
         Ok(count as usize)
@@ -247,6 +249,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM tags WHERE id = ?)")
             .bind(id)
             .fetch_one(&self.pool)
+            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to check tag existence: {}", e)))
     }

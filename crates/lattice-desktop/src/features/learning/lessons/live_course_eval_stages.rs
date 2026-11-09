@@ -2,6 +2,7 @@
 //! outline as generated or continued, then each selected lesson's job.
 use super::*;
 use crate::features::learning::references::course_index::CourseIndexes;
+use futures::FutureExt;
 use lattice_core::domain::learning::claim_review::{Actor, ClaimLedgerEntry, ClaimState, Class};
 
 /// The §1.1 outline keys the program and its saved draft decide.
@@ -273,6 +274,7 @@ async fn outline_stage(
     let drafts = DraftRunRegistry::new();
     let ids: Vec<String> = sqlx::query_scalar("SELECT id FROM learning_programs")
         .fetch_all(pool)
+        .boxed()
         .await
         .map_err(db)?;
     if ids.len() > 1 {
@@ -627,6 +629,7 @@ async fn lesson_stage(
     .bind(program_id)
     .bind(&lesson.id)
     .fetch_optional(&reopened)
+    .boxed()
     .await
     .map_err(db)?;
     let report: Option<Value> = report.as_deref().map(serde_json::from_str).transpose()?;

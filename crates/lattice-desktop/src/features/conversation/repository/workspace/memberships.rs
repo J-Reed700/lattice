@@ -1,4 +1,5 @@
 use super::*;
+use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -49,6 +50,7 @@ impl ConversationRepository {
         )
         .bind(&space_id)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to list conversation space members: {}", e))
@@ -74,6 +76,7 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
                 .bind(&request.space_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(|e| {
                     AppError::Database(format!(
@@ -157,6 +160,7 @@ impl ConversationRepository {
         .bind(&request.space_id)
         .bind(&request.member_id)
         .fetch_one(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -195,6 +199,7 @@ impl ConversationRepository {
         .bind(&request.space_id)
         .bind(&request.member_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to verify conversation space member: {}", e))
@@ -211,7 +216,7 @@ impl ConversationRepository {
             "SELECT COUNT(*) FROM conversation_space_members WHERE space_id = ? AND role = 'owner'",
         )
         .bind(&request.space_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *tx).boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -269,6 +274,7 @@ impl ConversationRepository {
         )
         .bind(&document_id)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to list document space memberships: {}", e))
@@ -300,6 +306,7 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
                 .bind(&document_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify document: {}", e)))?;
 
@@ -315,6 +322,7 @@ impl ConversationRepository {
                 sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
                     .bind(&space_id)
                     .fetch_one(&mut *tx)
+                    .boxed()
                     .await
                     .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
 
@@ -393,6 +401,7 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
                 .bind(&space_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
 
@@ -414,6 +423,7 @@ impl ConversationRepository {
             let found = qb
                 .build_query_scalar::<String>()
                 .fetch_all(&mut *tx)
+                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify documents: {}", e)))?;
 

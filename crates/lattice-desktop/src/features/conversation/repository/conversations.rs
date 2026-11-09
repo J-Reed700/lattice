@@ -9,6 +9,7 @@ use crate::features::conversation::persistence_mapper::{
 };
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use chrono::Utc;
+use futures::FutureExt;
 use lattice_core::domain::conversation::{
     ChatModelChoice, CompactionRecord, Conversation, ConversationAggregate,
 };
@@ -166,6 +167,7 @@ impl ConversationRepository {
         .bind(limit)
         .bind(offset)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to list conversations: {}", e)))?;
 
@@ -195,6 +197,7 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT model_choice FROM conversations WHERE id = ?")
                 .bind(conversation_id)
                 .fetch_optional(&self.pool)
+                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to read model choice: {}", e)))?
                 .ok_or_else(|| {
@@ -338,6 +341,7 @@ impl ConversationRepository {
             "SELECT COUNT(*) FROM conversations WHERE tangent_parent_id IS NULL",
         )
         .fetch_one(&self.pool)
+        .boxed()
         .await
         .map(|c| c as usize)
         .map_err(|e| AppError::Database(format!("Failed to count conversations: {}", e)))
@@ -347,6 +351,7 @@ impl ConversationRepository {
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM conversations WHERE id = ?)")
             .bind(id)
             .fetch_one(&self.pool)
+            .boxed()
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to check conversation existence: {}", e))
@@ -361,6 +366,7 @@ impl ConversationRepository {
         )
         .bind(ids)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
         Ok(rows
@@ -384,6 +390,7 @@ async fn find_conversation(
     )
     .bind(id)
     .fetch_optional(connection)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to find conversation: {}", e)))?;
 
@@ -408,6 +415,7 @@ async fn load_summary(
     )
     .bind(id)
     .fetch_optional(connection)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to load conversation summary: {}", e)))?;
 

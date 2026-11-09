@@ -4,6 +4,7 @@
 //! repository: nothing else needs a grouped count, and the two queries here are
 //! the whole contract.
 
+use futures::FutureExt;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -58,6 +59,7 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
             "#,
         )
         .fetch_all(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("corpus shape counts: {}", e)))?;
 
@@ -81,6 +83,7 @@ impl CorpusShapeRepositoryPort for SqliteCorpusShapeRepository {
             sqlx::query("SELECT COUNT(*) AS n FROM documents WHERE indexed_at >= ?")
                 .bind(&cutoff)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("corpus shape growth: {}", e)))?
                 .try_get("n")

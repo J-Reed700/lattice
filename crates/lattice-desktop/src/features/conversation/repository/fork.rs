@@ -2,6 +2,7 @@
 
 use super::ConversationRepository;
 use chrono::Utc;
+use futures::FutureExt;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -62,6 +63,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to load conversation to fork: {}", e)))?
         .ok_or_else(|| AppError::NotFound(format!("Conversation {} not found", conversation_id)))?;
@@ -104,6 +106,7 @@ impl ConversationRepository {
                 .bind(&anchor.created_at)
                 .bind(anchor.rowid)
                 .fetch_all(&mut *tx)
+                .boxed()
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read messages to copy: {}", e))
@@ -121,6 +124,7 @@ impl ConversationRepository {
             )
             .bind(conversation_id)
             .fetch_all(&mut *tx)
+            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to read messages to copy: {}", e)))?,
         };
@@ -379,6 +383,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_all(&mut **tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read web sources to copy: {}", e)))?;
 

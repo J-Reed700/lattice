@@ -1,5 +1,6 @@
 //! Every read and write of `batch_import_items`.
 use super::items::{BatchItem, ItemCounts, ItemState};
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
@@ -69,6 +70,7 @@ impl BatchItems {
         sqlx::query("SELECT * FROM batch_import_items WHERE job_id=? ORDER BY position")
             .bind(job_id)
             .fetch_all(connection)
+            .boxed()
             .await
             .map_err(db)?
             .iter()
@@ -86,7 +88,7 @@ impl BatchItems {
         let ids = serde_json::to_string(job_ids)?;
         let rows = sqlx::query("SELECT job_id, count(*) AS total, sum(status='completed') AS completed, sum(status='failed') AS failed FROM batch_import_items WHERE job_id IN (SELECT value FROM json_each(?)) GROUP BY job_id")
             .bind(ids)
-            .fetch_all(&self.pool)
+            .fetch_all(&self.pool).boxed()
             .await
             .map_err(db)?;
         Ok(rows
@@ -131,7 +133,7 @@ impl BatchItems {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let next = sqlx::query("SELECT * FROM batch_import_items WHERE job_id=? AND status='pending' ORDER BY position LIMIT 1")
             .bind(job_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut *tx).boxed()
             .await
             .map_err(db)?
             .as_ref()

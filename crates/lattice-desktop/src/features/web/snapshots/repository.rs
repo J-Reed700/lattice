@@ -1,5 +1,6 @@
 //! The `web_page_snapshots` rows (§7).
 
+use futures::FutureExt;
 use std::collections::HashSet;
 
 use chrono::Utc;
@@ -79,6 +80,7 @@ async fn snapshot_for_url(
     .bind(conversation_id)
     .bind(normalized_url)
     .fetch_optional(connection)
+    .boxed()
     .await
     .map_err(db)
 }
@@ -111,6 +113,7 @@ async fn viewer_in(
     .bind(normalized_url)
     .bind(normalized_url)
     .fetch_optional(&mut *conn)
+    .boxed()
     .await
     .map_err(db)
 }
@@ -132,6 +135,7 @@ async fn reader_text_in(
     .bind(normalized_url)
     .bind(conversation_id)
     .fetch_optional(&mut *conn)
+    .boxed()
     .await
     .map_err(db)?;
 
@@ -158,6 +162,7 @@ async fn reader_text_in(
     .bind(requested_url)
     .bind(normalized_url)
     .fetch_optional(&mut *conn)
+    .boxed()
     .await
     .ok()
     .flatten();
@@ -214,6 +219,7 @@ impl SnapshotRepository {
         ))
         .bind(id)
         .fetch_optional(&self.pool)
+        .boxed()
         .await
         .map_err(db)
     }
@@ -250,6 +256,7 @@ impl SnapshotRepository {
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversations WHERE id = ?")
                     .bind(trimmed)
                     .fetch_one(&mut *tx)
+                    .boxed()
                     .await
                     .map_err(db)?;
             if count > 0 {
@@ -265,7 +272,7 @@ impl SnapshotRepository {
             "SELECT conversation_id FROM conversation_web_sources WHERE normalized_url = ? ORDER BY added_at DESC LIMIT 1"
         )
         .bind(normalized_url)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *tx).boxed()
         .await
         .map_err(db)? {
             return Ok(cid);
@@ -275,6 +282,7 @@ impl SnapshotRepository {
             "SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 1",
         )
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?
         {
@@ -292,7 +300,7 @@ impl SnapshotRepository {
         let space_id: Option<String> = sqlx::query_scalar(
             "SELECT id FROM conversation_spaces WHERE id = 'space_general' UNION ALL SELECT id FROM conversation_spaces LIMIT 1"
         )
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *tx).boxed()
         .await
         .map_err(db)?;
 
@@ -344,6 +352,7 @@ impl SnapshotRepository {
         )
         .bind(normalized_url)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .ok()
         .flatten();
@@ -364,7 +373,7 @@ impl SnapshotRepository {
             .bind(normalized_url)
             .bind(requested_url)
             .bind(normalized_url)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut *tx).boxed()
             .await
             .ok()
             .flatten()
@@ -381,6 +390,7 @@ impl SnapshotRepository {
         ))
         .bind(conversation_id)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db)
     }
@@ -482,6 +492,7 @@ impl SnapshotRepository {
         let ids: Vec<String> =
             sqlx::query_scalar("SELECT id FROM web_page_snapshots WHERE status = 'failed'")
                 .fetch_all(&self.pool)
+                .boxed()
                 .await
                 .map_err(db)?;
         Ok(ids.into_iter().collect())
@@ -493,6 +504,7 @@ impl SnapshotRepository {
             "SELECT id FROM web_page_snapshots WHERE status IN ('pending', 'ready')",
         )
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db)?;
         Ok(ids.into_iter().collect())

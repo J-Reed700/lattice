@@ -8,6 +8,7 @@
 //! rather than vouch for missing vectors; startup also compares source counts
 //! and key membership.
 
+use futures::FutureExt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -244,7 +245,7 @@ async fn hydrate_content(
                 .bind(identity)
                 .bind(dimension as i64)
                 .bind(HYDRATE_PAGE)
-                .fetch_all(pool)
+                .fetch_all(pool).boxed()
                 .await?;
         let Some(last) = rows.last() else {
             break;

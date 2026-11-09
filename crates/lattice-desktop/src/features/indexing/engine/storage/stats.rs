@@ -1,6 +1,7 @@
 //! Storage statistics queries.
 
 use crate::features::indexing::engine::error::Result;
+use futures::FutureExt;
 use sqlx::SqlitePool;
 
 /// Get count of indexed documents.
@@ -16,6 +17,7 @@ pub async fn get_indexed_count(pool: &SqlitePool) -> Result<i64> {
         "#,
     )
     .fetch_one(pool)
+    .boxed()
     .await?;
 
     Ok(count)
@@ -29,6 +31,7 @@ pub async fn get_total_chunks(pool: &SqlitePool) -> Result<i64> {
         "#,
     )
     .fetch_one(pool)
+    .boxed()
     .await?;
 
     Ok(count)

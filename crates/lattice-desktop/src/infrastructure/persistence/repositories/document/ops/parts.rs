@@ -1,6 +1,7 @@
 //! A document's chunks and tags: reading them, and replacing them in batches.
 
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
+use futures::FutureExt;
 use lattice_core::domain::entities::chunk::Chunk;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::types::TagId;
@@ -40,6 +41,7 @@ pub async fn fetch_chunks_for_document(
     )
     .bind(doc_id)
     .fetch_all(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to fetch chunks for document: {}", e)))?;
 
@@ -55,6 +57,7 @@ pub async fn fetch_tags_for_document(
         doc_id
     )
     .fetch_all(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to fetch tags for document: {}", e)))?;
 

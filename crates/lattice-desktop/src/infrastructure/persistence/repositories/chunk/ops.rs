@@ -4,6 +4,7 @@
 //! These functions can be used with both connection pools and transactions.
 
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
+use futures::FutureExt;
 use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::QueryBuilder;
@@ -71,6 +72,7 @@ pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<
     )
     .bind(id)
     .fetch_optional(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to find chunk by id: {}", e)))?;
 
@@ -93,6 +95,7 @@ pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<ChunkEntity>> {
         "#,
     )
     .fetch_all(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to list all chunks: {}", e)))?;
 
@@ -128,6 +131,7 @@ pub async fn find_by_ids(conn: &mut SqliteConnection, ids: &[String]) -> Result<
         let db_models: Vec<ChunkModel> = query_builder
             .build_query_as()
             .fetch_all(&mut *conn)
+            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to find chunks by ids: {}", e)))?;
 
@@ -170,6 +174,7 @@ pub async fn find_by_document_limit(
     .bind(document_id)
     .bind(limit)
     .fetch_all(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to find chunks by document: {}", e)))?;
 
@@ -197,6 +202,7 @@ pub async fn delete_by_document(conn: &mut SqliteConnection, document_id: &str) 
 pub async fn count_all(conn: &mut SqliteConnection) -> Result<i64> {
     let result = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM text_chunks")
         .fetch_one(conn)
+        .boxed()
         .await
         .map_err(|e| {
             tracing::error!(error = %e, "Failed to count all chunks");
@@ -211,6 +217,7 @@ pub async fn count_indexed_documents(conn: &mut SqliteConnection) -> Result<i64>
     let result =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE status = 'indexed'")
             .fetch_one(conn)
+            .boxed()
             .await
             .map_err(|e| {
                 tracing::error!(error = %e, "Failed to count indexed documents");
@@ -224,6 +231,7 @@ pub async fn count_indexed_documents(conn: &mut SqliteConnection) -> Result<i64>
 pub async fn count(conn: &mut SqliteConnection) -> Result<usize> {
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM text_chunks")
         .fetch_one(conn)
+        .boxed()
         .await
         .map(|c| c as usize)
         .map_err(|e| AppError::Database(format!("Failed to count chunks: {}", e)))
@@ -233,6 +241,7 @@ pub async fn count_by_document(conn: &mut SqliteConnection, document_id: &str) -
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM text_chunks WHERE document_id = ?")
         .bind(document_id)
         .fetch_one(conn)
+        .boxed()
         .await
         .map(|c| c as usize)
         .map_err(|e| AppError::Database(format!("Failed to count chunks: {}", e)))
@@ -242,6 +251,7 @@ pub async fn exists(conn: &mut SqliteConnection, id: &str) -> Result<bool> {
     sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM text_chunks WHERE id = ?)")
         .bind(id)
         .fetch_one(conn)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to check chunk existence: {}", e)))
 }

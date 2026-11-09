@@ -6,6 +6,7 @@
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures::FutureExt;
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -159,7 +160,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
             LIMIT 1
             "#,
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&self.pool).boxed()
         .await
         .map_err(|e| AppError::Database(format!("get_latest_run: {}", e)))?;
 
@@ -213,6 +214,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
         )
         .bind(run_id)
         .fetch_all(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("get_clusters_for_run: {}", e)))?;
         if rows.is_empty() {
@@ -227,6 +229,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
         )
         .bind(run_id)
         .fetch_all(&mut *tx)
+        .boxed()
         .await?;
         tx.commit().await?;
         let mut members: HashMap<String, Vec<String>> = HashMap::new();
@@ -294,6 +297,7 @@ impl ClusterRepositoryPort for SqliteClusterRepository {
         )
         .bind(cluster_id)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("get_members_for_cluster: {}", e)))?;
 

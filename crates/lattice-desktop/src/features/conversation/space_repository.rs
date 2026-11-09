@@ -5,6 +5,7 @@
 //! services should call this repository instead of inlining sqlx queries.
 
 use chrono::Utc;
+use futures::FutureExt;
 use sqlx::SqlitePool;
 
 use crate::features::conversation::space_dto::{
@@ -120,6 +121,7 @@ impl ConversationSpaceRepository {
         )
         .bind(&id)
         .fetch_one(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch created space: {}", e)))?;
 

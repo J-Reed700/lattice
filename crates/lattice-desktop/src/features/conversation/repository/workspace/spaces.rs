@@ -1,4 +1,5 @@
 use super::*;
+use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -46,6 +47,7 @@ pub(super) async fn ensure_standard_space(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
             .bind(space_id)
             .fetch_one(connection)
+            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
 
@@ -68,6 +70,7 @@ impl ConversationRepository {
         "#,
         )
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to list spaces: {}", e)))?;
 
@@ -139,6 +142,7 @@ impl ConversationRepository {
         )
         .bind(&request.space_id)
         .fetch_one(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch updated space: {}", e)))?;
 
@@ -204,6 +208,7 @@ impl ConversationRepository {
         )
         .bind(&request.conversation_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!(

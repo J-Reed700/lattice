@@ -1,5 +1,6 @@
 //! SQLite adapter for supplemental chat context.
 
+use futures::FutureExt;
 use lattice_core::application::ports::conversation_context::{
     ConversationContextPort, LinkedConversationSource,
 };
@@ -35,6 +36,7 @@ impl ConversationContextPort for SqliteConversationContext {
         )
         .bind(conversation_id)
         .fetch_optional(&self.pool)
+        .boxed()
         .await
         .map(Option::flatten)
         .map_err(|e| AppError::Database(format!("Failed to load space prompt: {}", e)))
@@ -54,6 +56,7 @@ impl ConversationContextPort for SqliteConversationContext {
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .bind(i64::try_from(offset).unwrap_or(i64::MAX))
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -77,6 +80,7 @@ impl ConversationContextPort for SqliteConversationContext {
         )
         .bind(conversation_id)
         .fetch_one(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to count linked web sources: {e}")))?;
         Ok(usize::try_from(count).unwrap_or(0))

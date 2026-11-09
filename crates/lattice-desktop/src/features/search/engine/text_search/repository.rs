@@ -1,4 +1,5 @@
 use crate::features::search::engine::fts_query::{FtsIndex, FtsQuery};
+use futures::FutureExt;
 use lattice_core::application::contracts::search::SearchResultRecord;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Transactions;
@@ -88,7 +89,7 @@ async fn scoped_rows(
         sql.push("))");
     }
     sql.push(order).push_bind(top_k as i64);
-    sql.build().fetch_all(pool).await
+    sql.build().fetch_all(pool).boxed().await
 }
 
 fn rows_to_results(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<SearchResultRecord> {
@@ -143,6 +144,7 @@ pub(super) async fn chunk_index_count(pool: &SqlitePool) -> Result<usize> {
     use sqlx::Row;
     let row = sqlx::query("SELECT COUNT(*) as count FROM chunks_fts")
         .fetch_one(pool)
+        .boxed()
         .await?;
     Ok(row.get::<i64, _>("count") as usize)
 }

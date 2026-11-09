@@ -1,5 +1,6 @@
 //! Database index inspection helpers.
 
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
@@ -14,6 +15,7 @@ pub async fn get_index_stats(pool: &SqlitePool) -> Result<Vec<IndexInfo>> {
         "#,
     )
     .fetch_all(pool)
+    .boxed()
     .await?;
 
     Ok(indexes)

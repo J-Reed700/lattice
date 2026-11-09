@@ -5,6 +5,7 @@
 
 use super::mapper::{EmbeddingDTO, EmbeddingMapper};
 use chrono::{DateTime, Utc};
+use futures::FutureExt;
 use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
@@ -189,6 +190,7 @@ pub async fn find_by_chunk_id(
     )
     .bind(chunk_id)
     .fetch_optional(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to find embedding: {}", e)))?;
 
@@ -235,6 +237,7 @@ pub async fn find_by_document_id(
     )
     .bind(document_id)
     .fetch_all(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to find embeddings: {}", e)))?;
 
@@ -326,6 +329,7 @@ pub async fn delete_by_document_id(conn: &mut SqliteConnection, document_id: &st
 pub async fn count(conn: &mut SqliteConnection) -> Result<i64> {
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM text_embeddings")
         .fetch_one(conn)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to count embeddings: {}", e)))
 }

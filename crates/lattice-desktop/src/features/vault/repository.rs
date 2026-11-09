@@ -2,6 +2,7 @@
 use crate::infrastructure::persistence::repositories::workspace_notes::{
     timestamp_from_row, DailyNotesRepository,
 };
+use futures::FutureExt;
 use lattice_core::application::contracts::notes::NoteTimestampRecord;
 use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::Result;
@@ -23,7 +24,7 @@ pub(super) struct PendingWrite {
 pub(super) async fn pending(pool: &SqlitePool) -> Result<Vec<PendingWrite>> {
     Ok(
         sqlx::query_as("SELECT note_id, revision, mirror_complete FROM vault_write_outbox WHERE retry_at <= unixepoch() ORDER BY rowid LIMIT 64")
-            .fetch_all(pool)
+            .fetch_all(pool).boxed()
             .await?,
     )
 }
@@ -66,6 +67,7 @@ pub(super) async fn has_pending(pool: &SqlitePool, id: &str) -> Result<bool> {
     )
     .bind(id)
     .fetch_one(pool)
+    .boxed()
     .await?)
 }
 
@@ -78,6 +80,7 @@ pub(super) async fn begin_rescan(pool: &SqlitePool) -> Result<(String, i64)> {
         .await?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_notes_workspace")
         .fetch_one(&mut *tx)
+        .boxed()
         .await?;
     tx.commit().await?;
     Ok((uuid::Uuid::new_v4().to_string(), total))
@@ -106,7 +109,7 @@ pub(super) async fn rescan_note_page(
     .bind(run_id)
     .bind(limit)
     .try_map(timestamp_from_row)
-    .fetch_all(pool)
+    .fetch_all(pool).boxed()
     .await?)
 }
 

@@ -1,4 +1,5 @@
 use super::*;
+use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -9,6 +10,7 @@ pub(super) async fn ensure_journal_space(
     let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM journals WHERE id = ?")
         .bind(journal_space_id)
         .fetch_one(connection)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to verify journal: {}", e)))?;
 
@@ -83,6 +85,7 @@ impl ConversationRepository {
         )
         .bind(&id)
         .fetch_one(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch created journal: {}", e)))?;
 
@@ -104,6 +107,7 @@ impl ConversationRepository {
         "#,
         )
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to list journals: {}", e)))?;
 
@@ -170,6 +174,7 @@ impl ConversationRepository {
         )
         .bind(&request.journal_id)
         .fetch_one(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch updated journal: {}", e)))?;
 
@@ -274,6 +279,7 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
                 .bind(conversation_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify conversation: {}", e)))?;
 
@@ -422,6 +428,7 @@ impl ConversationRepository {
         )
         .bind(journal_space_id)
         .fetch_all(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to list journal pins: {}", e)))?;
         tx.commit()
@@ -544,6 +551,7 @@ impl ConversationRepository {
         let rows = qb
             .build_query_as::<ConversationExplorerRow>()
             .fetch_all(&mut *tx)
+            .boxed()
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to list journal conversations: {}", e))

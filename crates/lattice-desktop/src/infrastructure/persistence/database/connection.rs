@@ -1,3 +1,4 @@
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result, ResultExt};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::future::Future;
@@ -72,6 +73,7 @@ impl DatabaseConnection {
 
         let fk_enabled: (i32,) = sqlx::query_as("PRAGMA foreign_keys")
             .fetch_one(&pool)
+            .boxed()
             .await
             .context("Failed to check foreign key status")?;
 

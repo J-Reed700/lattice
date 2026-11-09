@@ -2,6 +2,7 @@
 //! worked out here and nowhere else (design: `docs/design/2026-10-28-tutor.md`
 //! §3.4).
 use super::ConversationRepository;
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 use std::path::Path;
@@ -98,6 +99,7 @@ impl ConversationRepository {
         )
         .bind(conversation)
         .fetch_optional(&mut *connection)
+        .boxed()
         .await?
         .ok_or_else(|| AppError::NotFound("Conversation not found".into()))?;
         // In the order a turn reads them: a folder, then a course.
@@ -114,11 +116,13 @@ impl ConversationRepository {
         };
         let listed: Vec<String> = sqlx::query_scalar("SELECT root FROM explorer_folders")
             .fetch_all(&mut *connection)
+            .boxed()
             .await?;
         let chats: Vec<String> = sqlx::query_scalar(
             "SELECT DISTINCT explorer_root FROM conversations WHERE explorer_root IS NOT NULL",
         )
         .fetch_all(&mut *connection)
+        .boxed()
         .await?;
         let key = pool_root(&root, &listed).to_owned();
         let mut keys: Vec<String> = listed

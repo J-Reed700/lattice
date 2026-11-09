@@ -2,6 +2,7 @@ use crate::features::file::custom_collections::dto::{
     CreateCustomCollectionRequest, CustomCollectionDto, CustomCollectionKind,
 };
 use chrono::Utc;
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
@@ -20,9 +21,9 @@ impl CustomCollectionsRepository {
     pub async fn list(&self) -> Result<Vec<CustomCollectionDto>> {
         let mut tx = self.pool.begin_read().await?;
         let rows = sqlx::query("SELECT id, name, kind, parent_id, created_at, updated_at FROM custom_collections ORDER BY created_at DESC, rowid DESC")
-            .fetch_all(&mut *tx).await?;
+            .fetch_all(&mut *tx).boxed().await?;
         let memberships = sqlx::query("SELECT collection_id, document_id FROM custom_collection_documents ORDER BY collection_id, ordinal")
-            .fetch_all(&mut *tx).await?;
+            .fetch_all(&mut *tx).boxed().await?;
         let mut docs = std::collections::HashMap::<String, Vec<String>>::new();
         for row in memberships {
             docs.entry(row.try_get("collection_id")?)
@@ -83,7 +84,7 @@ impl CustomCollectionsRepository {
         let mut tx = self.pool.begin_write().await?;
         if let Some(parent) = parent_id {
             let cycle: bool = sqlx::query_scalar("WITH RECURSIVE descendants(id) AS (SELECT id FROM custom_collections WHERE parent_id = ? UNION ALL SELECT c.id FROM custom_collections c JOIN descendants d ON c.parent_id = d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id = ?)")
-                .bind(id).bind(parent).fetch_one(&mut *tx).await?;
+                .bind(id).bind(parent).fetch_one(&mut *tx).boxed().await?;
             if cycle {
                 return Err(AppError::InvalidInput(
                     "A collection cannot be moved inside its descendant".into(),
@@ -115,6 +116,7 @@ impl CustomCollectionsRepository {
             sqlx::query_scalar::<_, String>("SELECT kind FROM custom_collections WHERE id = ?")
                 .bind(id)
                 .fetch_optional(&mut *tx)
+                .boxed()
                 .await?
                 .ok_or_else(|| AppError::NotFound(format!("Collection '{id}' not found")))?;
         if kind == "snapshot" {
@@ -144,6 +146,7 @@ impl CustomCollectionsRepository {
             sqlx::query_scalar::<_, String>("SELECT kind FROM custom_collections WHERE id = ?")
                 .bind(id)
                 .fetch_optional(&mut *tx)
+                .boxed()
                 .await?
                 .ok_or_else(|| AppError::NotFound(format!("Collection '{id}' not found")))?;
         if kind == "snapshot" {

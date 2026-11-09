@@ -25,6 +25,7 @@ use crate::features::learning::assessment_repository::{
 };
 use crate::features::learning::grade_rationale::{self, Checked, Grader, GraderVerdict, Reference};
 use crate::features::learning::{quiz_bank_jobs, quiz_blueprints};
+use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 
 const BANK_SCHEMA: &str = "course-eval-quiz-bank/1";
@@ -92,7 +93,7 @@ pub(super) async fn quiz_stage(
     )
     .bind(program_id)
     .bind(&lesson_id)
-    .fetch_all(&mut *connection)
+    .fetch_all(&mut *connection).boxed()
     .await
     .map_err(db)?;
     let mut review = BTreeMap::<String, usize>::new();

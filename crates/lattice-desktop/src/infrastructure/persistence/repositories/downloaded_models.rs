@@ -3,6 +3,7 @@
 //! Manages persistence of downloaded model records in SQLite.
 
 use chrono::Utc;
+use futures::FutureExt;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -152,6 +153,7 @@ impl DownloadedModelRepository {
             sqlx::query_scalar("SELECT COUNT(*) FROM model_files WHERE model_id = ?1")
                 .bind(&model_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(|e| {
                     error!(error = %e, model_id = %model_id, "Failed to count model files");
@@ -232,6 +234,7 @@ impl DownloadedModelRepository {
         let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
             .bind(id)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|e| {
                 error!(error = %e, id = %id, "Failed to find downloaded model by id");
@@ -265,6 +268,7 @@ impl DownloadedModelRepository {
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let records = sqlx::query_as::<_, DownloadedModelRecord>(&query)
             .fetch_all(&mut *tx)
+            .boxed()
             .await
             .map_err(|e| {
                 error!(error = %e, "Failed to list downloaded models");
@@ -341,6 +345,7 @@ impl DownloadedModelRepository {
         )
         .bind(id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| {
             error!(error = %e, id = %id, "Failed to atomically delete model");
@@ -431,6 +436,7 @@ async fn model_by_model_id(
     let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
         .bind(model_id)
         .fetch_optional(connection)
+        .boxed()
         .await
         .map_err(|e| {
             error!(error = %e, model_id = %model_id, "Failed to find downloaded model by model_id");
@@ -448,6 +454,7 @@ async fn exists_by_id(connection: &mut SqliteConnection, id: &str) -> Result<boo
     let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE id = ?")
         .bind(id)
         .fetch_one(connection)
+        .boxed()
         .await
         .map_err(|e| {
             error!(error = %e, id = %id, "Failed to check model existence by id");
@@ -462,6 +469,7 @@ async fn is_downloaded_in(conn: &mut SqliteConnection, model_id: &str) -> Result
         sqlx::query_scalar::<_, String>("SELECT status FROM models WHERE model_id = ?1 LIMIT 1")
             .bind(model_id)
             .fetch_optional(&mut *conn)
+            .boxed()
             .await
             .map_err(|e| {
                 error!(error = %e, model_id = %model_id, "Failed to check model status");
@@ -492,6 +500,7 @@ async fn is_downloaded_in(conn: &mut SqliteConnection, model_id: &str) -> Result
     )
     .bind(model_id)
     .fetch_all(&mut *conn)
+    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to check model files");

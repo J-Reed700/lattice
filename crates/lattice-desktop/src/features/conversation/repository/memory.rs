@@ -9,6 +9,7 @@
 
 use super::ConversationRepository;
 use chrono::{DateTime, Utc};
+use futures::FutureExt;
 use lattice_core::domain::conversation::memory::{
     compute_digest, ConversationMemoryState, EvidencePurpose, EvidenceSpan, MemoryId, MemoryItem,
     MemoryKind, MemoryReview, MemorySnapshot, MemoryState, SourceMessage, SourceRole,
@@ -229,6 +230,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read transcript revision: {}", e)))?
         .ok_or_else(|| {
@@ -246,6 +248,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_one(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to count memory items: {}", e)))?;
         if active_count as usize > MAX_ACTIVE_ITEMS {
@@ -266,6 +269,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_all(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to load memory items: {}", e)))?;
 
@@ -279,6 +283,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_all(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to load memory evidence: {}", e)))?;
 
@@ -300,6 +305,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to load working summary: {}", e)))?;
 
@@ -307,7 +313,7 @@ impl ConversationRepository {
             "SELECT COALESCE(MAX(sequence), 0) FROM conversation_messages WHERE conversation_id = ?",
         )
         .bind(conversation_id)
-        .fetch_one(&mut *tx)
+        .fetch_one(&mut *tx).boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read latest sequence: {}", e)))?;
 
@@ -360,6 +366,7 @@ impl ConversationRepository {
         )
         .bind(&ids)
         .fetch_all(&mut *conn)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to load shared memory items: {}", e)))?;
         let evidence_rows = sqlx::query_as::<_, EvidenceRow>(
@@ -371,6 +378,7 @@ impl ConversationRepository {
         )
         .bind(&ids)
         .fetch_all(&mut *conn)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to load shared evidence: {}", e)))?;
         assemble_items(item_rows, evidence_rows)
@@ -406,6 +414,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_optional(&mut **tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to load memory state: {}", e)))?;
 
@@ -441,6 +450,7 @@ impl ConversationRepository {
         .bind(limit)
         .bind(offset.max(0))
         .fetch_all(&mut *tx)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to page inactive items: {}", e)))?;
 
@@ -459,6 +469,7 @@ impl ConversationRepository {
         }
         let evidence_rows = query
             .fetch_all(&mut *tx)
+            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to load item evidence: {}", e)))?;
 

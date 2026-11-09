@@ -2,6 +2,7 @@
 
 use super::super::ConversationRepository;
 use super::{SourceMessageRow, SOURCE_COLUMNS};
+use futures::FutureExt;
 use lattice_core::application::ports::conversation_memory::{
     ResolvedSpan, SourcePage, SourceReadLimits, SourceSpanRef,
 };
@@ -39,6 +40,7 @@ impl ConversationRepository {
         .bind(through_sequence)
         .bind(fetch)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to page source messages: {}", e)))?;
 
@@ -73,6 +75,7 @@ impl ConversationRepository {
         .bind(through_sequence)
         .bind(fetch)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to page recent source messages: {}", e)))?;
 
@@ -227,6 +230,7 @@ impl ConversationRepository {
         .bind(conversation_id)
         .bind(serde_json::to_string(message_ids)?)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read memory suppressions: {}", e)))?;
         Ok(rows
@@ -253,6 +257,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read forgotten memory: {}", e)))
     }
@@ -278,10 +283,10 @@ impl ConversationRepository {
         for id in wanted {
             query = query.bind(id);
         }
-        let rows = query
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to read source messages: {}", e)))?;
+        let rows =
+            query.fetch_all(&self.pool).boxed().await.map_err(|e| {
+                AppError::Database(format!("Failed to read source messages: {}", e))
+            })?;
 
         let mut messages = Vec::new();
         let mut bytes = 0usize;
@@ -339,6 +344,7 @@ impl ConversationRepository {
         .bind(to_sequence)
         .bind(fetch)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read sequence range: {}", e)))?;
 

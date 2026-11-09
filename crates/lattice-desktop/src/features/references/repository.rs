@@ -3,6 +3,7 @@
 //! Runtime-checked `sqlx` only — no `query!` macros, so the offline `.sqlx`
 //! cache stays valid.
 
+use futures::FutureExt;
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::sqlite::SqliteRow;
@@ -73,6 +74,7 @@ impl PassageReferenceRepository {
             .bind(id)
             .try_map(reference_from_row)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to fetch passage reference {id}: {error}"))
@@ -90,6 +92,7 @@ impl PassageReferenceRepository {
             .bind(limit)
             .try_map(reference_from_row)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to list passage references: {error}"))
@@ -108,6 +111,7 @@ impl PassageReferenceRepository {
             .bind(cutoff)
             .try_map(reference_from_row)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!(
@@ -156,6 +160,7 @@ impl PassageReferenceRepository {
     pub async fn count(&self) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM passage_references")
             .fetch_one(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to count passage references: {error}"))

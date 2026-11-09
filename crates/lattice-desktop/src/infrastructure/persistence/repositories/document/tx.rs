@@ -4,6 +4,7 @@
 //! This enables transactional operations within a broader unit of work.
 
 use async_trait::async_trait;
+use futures::FutureExt;
 use lattice_core::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
@@ -225,6 +226,7 @@ impl DocumentRepositoryPort for SqliteDocumentRepositoryTx {
         let mut tx = tx_arc.lock().await;
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&mut **tx)
+            .boxed()
             .await?;
         Ok(count.0)
     }
@@ -234,6 +236,7 @@ impl DocumentRepositoryPort for SqliteDocumentRepositoryTx {
         let mut tx = tx_arc.lock().await;
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM text_chunks")
             .fetch_one(&mut **tx)
+            .boxed()
             .await?;
         Ok(count.0)
     }

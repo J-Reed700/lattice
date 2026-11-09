@@ -4,6 +4,7 @@
 use super::hydrate::hydrate_many;
 use super::parts::{fetch_chunks_for_document, fetch_tags_for_document};
 use crate::infrastructure::persistence::mappers::{DocumentMapper, DocumentModel};
+use futures::FutureExt;
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
@@ -34,7 +35,7 @@ pub async fn find_by_id(conn: &mut SqliteConnection, id: &str) -> Result<Option<
         "#,
     )
     .bind(id)
-    .fetch_optional(&mut *conn)
+    .fetch_optional(&mut *conn).boxed()
     .await
     .map_err(|e| {
         AppError::Database(format!(
@@ -80,7 +81,7 @@ pub async fn find_by_path(
         "#,
     )
     .bind(file_path)
-    .fetch_optional(conn)
+    .fetch_optional(conn).boxed()
     .await
     .map_err(|e| {
         AppError::Database(format!(
@@ -126,6 +127,7 @@ pub async fn find_by_path_pattern(
     )
     .bind(pattern)
     .fetch_all(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to find documents by pattern: {}", e)))?;
 
@@ -162,6 +164,7 @@ pub async fn find_by_checksum(
     )
     .bind(checksum.as_str())
     .fetch_optional(conn)
+    .boxed()
     .await
     .map_err(|e| {
         AppError::Database(format!("Failed to find document by checksum. Error: {}", e))
@@ -199,6 +202,7 @@ pub async fn list_metadata(conn: &mut SqliteConnection) -> Result<Vec<DocumentEn
         "#,
     )
     .fetch_all(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to list documents: {}", e)))?;
 
@@ -239,6 +243,7 @@ pub async fn find_all_paginated(
     )
     .bind(limit as i64)
     .fetch_all(conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to list documents (paginated): {}", e)))?;
 
@@ -261,6 +266,7 @@ pub async fn find_aggregate_by_checksum_tx(
     )
     .bind(checksum)
     .fetch_optional(&mut *conn)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to find document by checksum: {}", e)))?;
 
@@ -306,6 +312,7 @@ pub async fn find_by_filter(
     let models = query
         .build_query_as::<DocumentModel>()
         .fetch_all(&mut *conn)
+        .boxed()
         .await?;
     let mut documents = Vec::with_capacity(models.len());
     for model in models {
@@ -329,6 +336,7 @@ pub async fn find_metadata_by_ids(
         let models = query
             .build_query_as::<DocumentModel>()
             .fetch_all(&mut *conn)
+            .boxed()
             .await?;
         for model in models {
             documents.push(DocumentMapper::to_entity(&model)?);

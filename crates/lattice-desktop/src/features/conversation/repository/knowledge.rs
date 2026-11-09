@@ -5,6 +5,7 @@ use crate::features::conversation::knowledge_dto::{
     KnowledgeItemDto, KnowledgeRequestDto, KnowledgeResponseDto,
 };
 use crate::features::conversation::memory_dto::MemoryEvidenceDto;
+use futures::FutureExt;
 use lattice_core::application::ports::conversation_memory::SHARED_RELEVANCE_FLOOR;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
@@ -76,6 +77,7 @@ impl ConversationRepository {
             .bind(page_size as i64 + 1)
             .bind(offset.max(0))
             .fetch_all(&mut *conn)
+            .boxed()
             .await?;
         let has_more = rows.len() > page_size;
         let item_ids: Vec<_> = rows.iter().take(page_size).map(|row| &row.id).collect();
@@ -101,7 +103,7 @@ impl ConversationRepository {
              WHERE e.item_id IN (SELECT value FROM json_each(?)) ORDER BY e.item_id,e.ordinal",
         )
         .bind(serde_json::to_string(&item_ids)?)
-        .fetch_all(&mut *conn)
+        .fetch_all(&mut *conn).boxed()
         .await?
         };
         // Read each source message once. Joining its full body onto every
@@ -115,7 +117,7 @@ impl ConversationRepository {
             "SELECT id,content FROM conversation_messages WHERE id IN (SELECT value FROM json_each(?))",
         )
         .bind(serde_json::to_string(&message_ids)?)
-        .fetch_all(&mut *conn).await?
+        .fetch_all(&mut *conn).boxed().await?
         };
         let messages: HashMap<_, _> = messages
             .into_iter()
@@ -176,7 +178,7 @@ impl ConversationRepository {
             });
         }
         let raw: Option<String> = sqlx::query_scalar("SELECT json_extract(metadata,'$.memory.items') FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' ORDER BY sequence DESC LIMIT 1")
-            .bind(conversation).fetch_optional(&mut *conn).await?.flatten();
+            .bind(conversation).fetch_optional(&mut *conn).boxed().await?.flatten();
         let last_answer_memory_ids = raw
             .and_then(|s| serde_json::from_str(&s).ok())
             .unwrap_or_default();
@@ -237,9 +239,13 @@ impl ConversationRepository {
             } else {
                 owner = owner.bind(&r.conversation_id);
             }
-            let owner = owner.fetch_optional(&mut *tx).await?.ok_or_else(|| {
-                AppError::NotFound("Open the source conversation to change this memory".into())
-            })?;
+            let owner = owner
+                .fetch_optional(&mut *tx)
+                .boxed()
+                .await?
+                .ok_or_else(|| {
+                    AppError::NotFound("Open the source conversation to change this memory".into())
+                })?;
             source = owner;
             Some(id.to_owned())
         };
@@ -270,6 +276,7 @@ impl ConversationRepository {
                 sqlx::query_scalar("SELECT kind FROM conversation_memory_items WHERE id=?")
                     .bind(target)
                     .fetch_one(&mut *tx)
+                    .boxed()
                     .await?
             } else {
                 let kind = r.kind.as_deref().unwrap_or("user_fact");
@@ -669,6 +676,7 @@ impl ConversationRepository {
                 .bind(page)
                 .bind(offset)
                 .fetch_all(&mut *conn)
+                .boxed()
                 .await;
             let Ok(rows) = rows else { break };
             let read = rows.len() as i64;
@@ -696,7 +704,7 @@ impl ConversationRepository {
 impl ConversationRepository {
     pub(super) async fn suppressed_memory_ids(&self, conversation: &str) -> Result<Vec<String>> {
         Ok(sqlx::query_scalar("SELECT a.item_id FROM conversation_memory_attributes a JOIN conversation_memory_items i ON i.id=a.item_id WHERE i.conversation_id=? AND (a.forgotten=1 OR julianday(a.valid_from)>julianday('now') OR julianday(a.valid_until)<=julianday('now'))")
-            .bind(conversation).fetch_all(&self.pool).await?)
+            .bind(conversation).fetch_all(&self.pool).boxed().await?)
     }
 }
 
@@ -706,6 +714,6 @@ impl ConversationRepository {
         conversation: &str,
     ) -> Result<(i64, i64)> {
         Ok(sqlx::query_as("SELECT COALESCE(s.memory_revision,0),c.transcript_revision FROM conversations c LEFT JOIN conversation_memory_state s ON s.conversation_id=c.id WHERE c.id=?")
-            .bind(conversation).fetch_one(&mut *conn).await?)
+            .bind(conversation).fetch_one(&mut *conn).boxed().await?)
     }
 }

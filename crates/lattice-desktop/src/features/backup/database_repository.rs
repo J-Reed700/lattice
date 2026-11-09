@@ -1,4 +1,5 @@
 //! Statements run on the live database and on backup snapshots.
+use futures::FutureExt;
 use sqlx::SqliteConnection;
 
 type Result<T> = std::result::Result<T, sqlx::Error>;
@@ -22,6 +23,7 @@ pub async fn vacuum(connection: &mut SqliteConnection) -> Result<()> {
 pub async fn integrity_check(connection: &mut SqliteConnection) -> Result<String> {
     sqlx::query_scalar("PRAGMA integrity_check")
         .fetch_one(connection)
+        .boxed()
         .await
 }
 
@@ -30,6 +32,7 @@ pub async fn table_exists(connection: &mut SqliteConnection, table: &str) -> Res
         sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
             .bind(table)
             .fetch_one(connection)
+            .boxed()
             .await?;
     Ok(count > 0)
 }
@@ -45,6 +48,7 @@ pub async fn column_exists(
     let names: Vec<String> =
         sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{escaped}')"))
             .fetch_all(connection)
+            .boxed()
             .await?;
     Ok(names.iter().any(|name| name == column))
 }
@@ -52,6 +56,7 @@ pub async fn column_exists(
 pub async fn table_count(connection: &mut SqliteConnection) -> Result<i64> {
     sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'")
         .fetch_one(connection)
+        .boxed()
         .await
 }
 
@@ -59,6 +64,7 @@ pub async fn count_rows(connection: &mut SqliteConnection, table: &str) -> Resul
     let escaped = table.replace('"', "\"\"");
     sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{escaped}\""))
         .fetch_one(connection)
+        .boxed()
         .await
 }
 
@@ -79,6 +85,7 @@ pub async fn fts5_tables(
          WHERE type = 'table' AND sql IS NOT NULL AND lower(sql) LIKE '%using fts5%'",
     )
     .fetch_all(connection)
+    .boxed()
     .await
 }
 
@@ -96,6 +103,7 @@ pub async fn rebuild_fts5_index(connection: &mut SqliteConnection, table: &str) 
 pub async fn newest_migration(connection: &mut SqliteConnection) -> Result<Option<i64>> {
     sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(version) FROM _sqlx_migrations")
         .fetch_one(connection)
+        .boxed()
         .await
 }
 
@@ -106,18 +114,21 @@ pub async fn newest_memory_schema_version(
         "SELECT MAX(schema_version) FROM conversation_memory_state",
     )
     .fetch_one(connection)
+    .boxed()
     .await
 }
 
 pub async fn distinct_checksums(connection: &mut SqliteConnection) -> Result<Vec<Option<String>>> {
     sqlx::query_scalar("SELECT DISTINCT checksum FROM documents")
         .fetch_all(connection)
+        .boxed()
         .await
 }
 
 pub async fn document_count(connection: &mut SqliteConnection) -> Result<i64> {
     let (count,): (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
         .fetch_one(connection)
+        .boxed()
         .await?;
     Ok(count)
 }
@@ -127,6 +138,7 @@ pub async fn has_schema_version_table(connection: &mut SqliteConnection) -> Resu
         "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'",
     )
     .fetch_one(connection)
+    .boxed()
     .await?;
     Ok(count != 0)
 }
@@ -134,5 +146,6 @@ pub async fn has_schema_version_table(connection: &mut SqliteConnection) -> Resu
 pub async fn latest_schema_version(connection: &mut SqliteConnection) -> Result<Option<i64>> {
     sqlx::query_scalar("SELECT version FROM schema_version ORDER BY version DESC LIMIT 1")
         .fetch_optional(connection)
+        .boxed()
         .await
 }

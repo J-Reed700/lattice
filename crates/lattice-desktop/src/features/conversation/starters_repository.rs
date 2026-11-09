@@ -2,6 +2,7 @@
 use super::chat::ports::ChatStarterCache;
 use crate::features::conversation::repository::ConversationRepository;
 use async_trait::async_trait;
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use std::collections::{HashMap, HashSet};
@@ -36,6 +37,7 @@ impl ChatStarterCacheRepository {
         )
         .bind(fingerprint)
         .fetch_optional(&self.pool)
+        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read chat starter cache: {}", e)))?;
 
@@ -118,6 +120,7 @@ impl ChatStarterCacheRepository {
             let rows: Vec<(String, i64)> = query
                 .build_query_as()
                 .fetch_all(&self.pool)
+                .boxed()
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read corpus type mix: {}", e))
@@ -151,6 +154,7 @@ impl ChatStarterCacheRepository {
             let batch_rows: Vec<(String, String, String)> = query
                 .build_query_as()
                 .fetch_all(&self.pool)
+                .boxed()
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read recent document titles: {}", e))
@@ -181,6 +185,7 @@ impl ChatStarterCacheRepository {
             let value: Option<String> = query
                 .build_query_scalar()
                 .fetch_one(&self.pool)
+                .boxed()
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read latest indexed_at: {}", e))

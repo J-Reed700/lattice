@@ -1,6 +1,6 @@
 //! Reconstruct document aggregates with two child queries per bounded batch.
 
-use futures::TryStreamExt;
+use futures::{FutureExt, TryStreamExt};
 use std::collections::HashMap;
 
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
@@ -44,6 +44,7 @@ pub(super) async fn hydrate_many(
         )
         .bind(&scope)
         .fetch_all(&mut *conn)
+        .boxed()
         .await?;
         let mut tags: HashMap<_, Vec<_>> = HashMap::new();
         for (document_id, tag_id) in rows {

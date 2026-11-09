@@ -2,6 +2,7 @@
 
 use crate::infrastructure::persistence::repositories::embedding::ops;
 use async_trait::async_trait;
+use futures::FutureExt;
 use lattice_core::application::ports::EmbeddingRepositoryPort;
 use lattice_core::domain::entities::Embedding as DomainEmbedding;
 use lattice_core::shared::error::{AppError, Result};
@@ -128,6 +129,7 @@ impl EmbeddingRepositoryPort for EmbeddingRepository {
     async fn count(&self) -> Result<i64> {
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM text_embeddings")
             .fetch_one(&self.pool)
+            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to count embeddings: {}", e)))
     }

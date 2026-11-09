@@ -3,6 +3,7 @@
 //! SQLite pool-based implementation of DocumentRepository that delegates to ops.rs.
 
 use async_trait::async_trait;
+use futures::FutureExt;
 use lattice_core::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
@@ -220,6 +221,7 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
         let mut conn = self.pool.acquire().await?;
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
             .fetch_one(&mut *conn)
+            .boxed()
             .await?;
         Ok(count.0)
     }
@@ -228,6 +230,7 @@ impl DocumentRepositoryPort for SqliteDocumentRepository {
         let mut conn = self.pool.acquire().await?;
         let count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM text_chunks")
             .fetch_one(&mut *conn)
+            .boxed()
             .await?;
         Ok(count.0)
     }

@@ -1,6 +1,7 @@
 use crate::infrastructure::persistence::database::connection::DatabaseConnection;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+use futures::FutureExt;
 use lattice_core::domain::download::{
     Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
 };
@@ -331,6 +332,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         )
         .bind(id)
         .fetch_optional(self.db_conn.pool())
+        .boxed()
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to get session: {}", e)))?;
 
@@ -463,6 +465,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             "#,
         )
         .fetch_all(self.db_conn.pool())
+        .boxed()
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list sessions: {}", e)))?;
 
@@ -482,6 +485,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         )
         .bind(state_str)
         .fetch_all(self.db_conn.pool())
+        .boxed()
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list sessions by state: {}", e)))?;
 
@@ -499,6 +503,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             .bind(after_id)
             .bind(limit)
             .fetch_all(self.db_conn.pool())
+            .boxed()
             .await
             .map_err(|e| {
                 DownloadError::IoError(format!(
@@ -519,6 +524,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             "#,
         )
         .fetch_all(self.db_conn.pool())
+        .boxed()
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list active sessions: {}", e)))?;
 

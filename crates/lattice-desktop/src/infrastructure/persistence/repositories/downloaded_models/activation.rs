@@ -1,5 +1,6 @@
 //! Reading and switching the active chat, embedding and utility models.
 
+use futures::FutureExt;
 use tracing::{error, info, warn};
 
 use lattice_core::domain::models::downloaded::DownloadedModel;
@@ -20,6 +21,7 @@ impl DownloadedModelRepository {
         let query = build_model_select_query("WHERE m.is_active_for_chat = 1 LIMIT 1");
         let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|e| {
                 error!(error = %e, "Failed to get active chat model");
@@ -55,6 +57,7 @@ impl DownloadedModelRepository {
         let query = build_model_select_query("WHERE m.is_active_for_embedding = 1 LIMIT 1");
         let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|e| {
                 error!(error = %e, "Failed to get active embedding model");
@@ -263,6 +266,7 @@ impl DownloadedModelRepository {
         let query = build_model_select_query("WHERE m.is_active_for_utility = 1 LIMIT 1");
         let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|e| {
                 error!(error = %e, "Failed to get active utility model");
@@ -301,6 +305,7 @@ impl DownloadedModelRepository {
             "#,
         )
         .fetch_one(&self.pool)
+        .boxed()
         .await
         .map_err(|e| {
             error!(error = %e, "Failed to check for any embedding model");

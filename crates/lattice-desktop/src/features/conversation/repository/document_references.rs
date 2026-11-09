@@ -5,6 +5,7 @@ use crate::features::conversation::persistence_mapper::{
     DocumentReferenceMapper, DocumentReferenceModel,
 };
 use chrono::Utc;
+use futures::FutureExt;
 use lattice_core::domain::conversation::DocumentReference;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -102,6 +103,7 @@ pub(super) async fn document_references_of(
     )
     .bind(conversation_id)
     .fetch_all(connection)
+    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to get document references: {}", e)))?;
 

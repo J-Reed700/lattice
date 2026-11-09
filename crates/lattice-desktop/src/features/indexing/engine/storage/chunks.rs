@@ -5,6 +5,7 @@ use crate::features::indexing::engine::chunker::TextChunk;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use crate::infrastructure::persistence::repositories::mentions::MentionRepository;
 use chrono::Utc;
+use futures::FutureExt;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::shared::fs::path::path_to_string;
 use lattice_core::shared::persistence::Transactions;
@@ -102,6 +103,7 @@ pub async fn store_document(
     .bind(&indexed_at)
     .bind(&checksum)
     .fetch_one(&mut *tx)
+    .boxed()
     .await?;
 
     sqlx::query("DELETE FROM text_chunks WHERE document_id = ?")

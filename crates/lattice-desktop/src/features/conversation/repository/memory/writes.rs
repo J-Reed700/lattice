@@ -3,6 +3,7 @@
 use super::super::ConversationRepository;
 use super::related_ids_to_json;
 use chrono::Utc;
+use futures::FutureExt;
 use lattice_core::application::ports::conversation_memory::{
     CommittedMemorySnapshot, MemoryCommitCandidate, MemoryCommitError, MemoryCommitPreconditions,
 };
@@ -118,6 +119,7 @@ impl ConversationRepository {
         .bind(conversation_id)
         .bind(&preconditions.operation_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?
         {
@@ -156,6 +158,7 @@ impl ConversationRepository {
         .bind(conversation_id)
         .bind(MEMORY_SCHEMA_VERSION)
         .fetch_one(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?;
         if schema_version != MEMORY_SCHEMA_VERSION {
@@ -192,6 +195,7 @@ impl ConversationRepository {
                 .bind(&span.message_id)
                 .bind(conversation_id)
                 .fetch_optional(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?
                 .ok_or_else(|| MemoryCommitError::UnresolvableEvidence(item.id.to_string()))?;
@@ -385,6 +389,7 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT transcript_revision FROM conversations WHERE id = ?")
                 .bind(conversation_id)
                 .fetch_optional(&mut **tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         let transcript_revision = transcript_revision
@@ -401,6 +406,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_optional(&mut **tx)
+        .boxed()
         .await
         .map_err(db)?;
 
@@ -431,6 +437,7 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_all(&mut **tx)
+        .boxed()
         .await
         .map_err(db)?;
 

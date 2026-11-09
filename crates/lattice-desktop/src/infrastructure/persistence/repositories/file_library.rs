@@ -1,4 +1,5 @@
 //! Document-repository schema persistence for the indexed-folder library.
+use futures::FutureExt;
 use lattice_core::application::contracts::file_library::{IndexedFolder, IndexingActivity};
 use lattice_core::application::ports::file_library::FileLibraryPort;
 use lattice_core::shared::error::Result;
@@ -34,6 +35,7 @@ pub async fn watch_folder_paths(pool: &SqlitePool) -> Result<Vec<String>> {
     Ok(
         sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
             .fetch_all(pool)
+            .boxed()
             .await?,
     )
 }
@@ -68,7 +70,7 @@ impl FileLibraryPort for SqliteFileLibrary {
     async fn indexed_folders(&self) -> Result<Vec<IndexedFolder>> {
         let mut tx = self.pool.begin_read().await?;
         let rows = sqlx::query_as::<_, FolderRow>("SELECT path, recursive, enabled, last_scan, created_at FROM watch_folders ORDER BY created_at DESC")
-            .fetch_all(&mut *tx).await?;
+            .fetch_all(&mut *tx).boxed().await?;
         if rows.is_empty() {
             tx.commit().await?;
             return Ok(Vec::new());
@@ -80,6 +82,7 @@ impl FileLibraryPort for SqliteFileLibrary {
         let counts: Vec<(String, i64)> = sqlx::query_as(FOLDER_COUNTS)
             .bind(serde_json::to_string(&paths)?)
             .fetch_all(&mut *tx)
+            .boxed()
             .await?;
         let mut counts: std::collections::HashMap<_, _> = counts.into_iter().collect();
         let mut folders = Vec::with_capacity(rows.len());
@@ -99,7 +102,7 @@ impl FileLibraryPort for SqliteFileLibrary {
     }
     async fn indexing_activities(&self, limit: usize) -> Result<Vec<IndexingActivity>> {
         let rows = sqlx::query_as::<_, ActivityRow>("SELECT d.id, d.file_path as file_path, d.status, d.indexed_at as timestamp FROM documents d ORDER BY d.indexed_at DESC LIMIT ?")
-            .bind(limit.min(10000) as i64).fetch_all(&self.pool).await?;
+            .bind(limit.min(10000) as i64).fetch_all(&self.pool).boxed().await?;
         Ok(rows
             .into_iter()
             .map(|row| IndexingActivity {
