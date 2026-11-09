@@ -18,7 +18,7 @@ use std::collections::HashSet;
 
 #[path = "interview_evidence.rs"]
 pub mod interview_evidence;
-use interview_evidence::{EvidenceBank, MAX_EVIDENCE_CHOICES};
+use interview_evidence::EvidenceBank;
 
 #[path = "interview_answer_review.rs"]
 pub mod interview_answer_review;
@@ -287,14 +287,12 @@ async fn standard_for_question(
         "sourceSnapshots":[],"sourceEvidence":[],"sourceCatalog":catalog,"reviewToAddress":null,
     });
     // Measure the actual instructions, question, catalog, output reservation
-    // and worst-case ID schema before selecting any captured evidence.
-    let possible_ids = (1..=MAX_EVIDENCE_CHOICES)
-        .map(|index| format!("e{index}"))
-        .collect::<Vec<_>>();
+    // and the schema without evidence IDs before selecting any captured evidence;
+    // each choice then pays for its own ID in the schema.
     let request = crate::model_call::structured(
         &author_system,
         skeleton.to_string(),
-        standard_schema(&possible_ids),
+        standard_schema(&[]),
         2_200,
         "low",
     );
