@@ -167,13 +167,13 @@ async fn custom_tool_probe_checks_its_inputs_before_any_request() {
 }
 
 #[tokio::test]
-async fn custom_tool_probe_appends_the_query_clamps_the_limit_and_previews_the_body() {
+async fn custom_tool_probe_appends_the_query_passes_the_limit_through_and_previews_the_body() {
     let server = MockServer::start().await;
     Mock::given(method("GET"))
         .and(path("/search"))
         .and(query_param("lang", "en"))
         .and(query_param("q", "sourdough starter"))
-        .and(query_param("limit", "100"))
+        .and(query_param("limit", "500"))
         .respond_with(ResponseTemplate::new(200).set_body_string("é".repeat(2_500)))
         .mount(&server)
         .await;
