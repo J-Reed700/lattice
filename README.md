@@ -64,16 +64,55 @@ choosing one there changes that conversation's model, keeping the app default.
 
 ## Getting started
 
-The desktop release targets are Windows 11 x64, macOS 13.3+ (Apple Silicon and
-Intel), and Ubuntu 24.04 LTS x64. Intel Mac support is being qualified and uses
-CPU inference. See [platform support](docs/development/platform-support.md)
-for its build instructions and remaining release gates.
+### Install
+
+Download the installer for your system from the
+[latest release](https://github.com/J-Reed700/lattice/releases/latest). The
+installers are not signed yet, so each system shows a warning the first time.
+
+| System | File |
+| --- | --- |
+| Windows 11 (x64) | `Lattice_<version>_x64-setup.exe` |
+| macOS on Apple Silicon | `Lattice_<version>_aarch64.dmg` |
+| Ubuntu 24.04 (x64) | `Lattice_<version>_amd64.deb` |
+
+- **Windows:** run the setup `.exe`. It installs for your user only and needs
+  no administrator rights. SmartScreen may say it protected your PC: choose
+  **More info**, then **Run anyway**. Start Lattice from the Start menu.
+- **macOS:** open the `.dmg` and drag Lattice to Applications. The first time
+  you open it, macOS blocks it. Open **System Settings**, then **Privacy &
+  Security**, and choose **Open Anyway**.
+- **Ubuntu:** install the package, then start Lattice from the applications
+  menu:
+
+  ```bash
+  sudo apt install ./Lattice_<version>_amd64.deb
+  ```
+
+Intel Macs have no download yet; build from source (below). The
+[getting started guide](docs/user/getting-started.md#installation) has the
+full walkthrough.
+
+### First launch
+
+On first launch the app shows "Set up AI" with a chat model and an embedding
+model sized to the machine's memory. Click Install. The downloads run in the
+background and both models are switched on when they finish. To use a cloud
+provider instead, open **Settings > Chat** and save its API key.
+
+### Build from source
+
+This section is for developers. The desktop release targets are Windows 11
+x64, macOS 13.3+ (Apple Silicon and Intel), and Ubuntu 24.04 LTS x64. Intel
+Mac support is being qualified and uses CPU inference. See
+[platform support](docs/development/platform-support.md) for its build
+instructions and remaining release gates.
 
 Native compatibility tests build and exercise isolated app packages on macOS
 (both architectures), Windows x64 and Ubuntu. See the
 [desktop test guide](e2e/desktop/README.md) for local commands and CI coverage.
 
-### Install on a new machine
+#### Install on a new machine
 
 One command installs everything the build needs, builds the app, installs it
 and opens it. Steps that are already done are skipped, so running it again
@@ -123,7 +162,7 @@ Windows script takes `-Check`, `-Deps`, `-Dev` and `-Yes`.
 `e2e/turnkey/` tests the Linux path on clean Ubuntu containers; see its
 [README](e2e/turnkey/README.md).
 
-### Set up by hand
+#### Set up by hand
 
 You'll need Node.js 20.19+ or 22.12+ (CI uses 24), Rust 1.95 or newer, and the
 [Tauri prerequisites](https://v2.tauri.app/start/prerequisites/) for your
@@ -211,3 +250,9 @@ change checklist.
 ## License
 
 Lattice is available under the [MIT License](LICENSE).
+
+### Publishing a release (maintainers)
+
+In GitHub, open Actions, then Release, then Run workflow on `main`. It builds
+the installers and makes a draft release. Check the files, then Publish it
+with "Set as the latest release" ticked.

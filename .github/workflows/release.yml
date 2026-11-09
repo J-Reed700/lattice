@@ -1,0 +1,194 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/release.yml']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Installer (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    # No timeout of our own: a cold Windows release build takes 45 to 55 minutes.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows-x64, os: windows-2025, bundles: nsis, pattern: '*-setup.exe' }
+          - { name: macOS-Apple-Silicon, os: macos-15, bundles: dmg, pattern: '*.dmg' }
+          - { name: Ubuntu-24.04-x64, os: ubuntu-24.04, bundles: deb, pattern: '*.deb' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Fetch verified published sidecars
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
+      - run: npm ci
+      - name: Cache Tauri's bundling tools
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: tauri-tools-${{ runner.os }}-
+      # The pinned values come from the tauri-cli version's nsis/mod.rs; update them with the CLI.
+      - name: Fetch Tauri's NSIS tools through the GitHub API
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tools = Join-Path $env:LOCALAPPDATA 'tauri'
+          $nsis = Join-Path $tools 'NSIS'
+          $dll = Join-Path $nsis 'Plugins\x86-unicode\additional\nsis_tauri_utils.dll'
+          if ((Test-Path (Join-Path $nsis 'makensis.exe')) -and (Test-Path $dll)) {
+            Write-Host 'NSIS tools already present'
+            return
+          }
+          function Get-Asset($tag, $repo, $pattern, $sha1) {
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              gh release download $tag --repo $repo --pattern $pattern --dir $env:RUNNER_TEMP --clobber | Out-Host
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 5) { throw "gh release download $tag failed after $attempt attempts" }
+              Start-Sleep -Seconds 15
+            }
+            $file = Join-Path $env:RUNNER_TEMP $pattern
+            $actual = (Get-FileHash -Algorithm SHA1 $file).Hash
+            if ($actual -ine $sha1) { throw "$pattern SHA1 $actual does not match $sha1" }
+            return $file
+          }
+          if (Test-Path $nsis) { Remove-Item -Recurse -Force $nsis }
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          $zip = Get-Asset 'nsis-3.11' 'tauri-apps/binary-releases' 'nsis-3.11.zip' 'EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D'
+          Expand-Archive -Path $zip -DestinationPath $tools -Force
+          Rename-Item (Join-Path $tools 'nsis-3.11') 'NSIS'
+          $utils = Get-Asset 'nsis_tauri_utils-v0.5.3' 'tauri-apps/nsis-tauri-utils' 'nsis_tauri_utils.dll' '75197FEE3C6A814FE035788D1C34EAD39349B860'
+          New-Item -ItemType Directory -Force (Split-Path $dll) | Out-Null
+          Copy-Item $utils $dll
+          foreach ($required in 'makensis.exe', 'Bin\makensis.exe', 'Include\MUI2.nsh') {
+            if (-not (Test-Path (Join-Path $nsis $required))) { throw "NSIS tools incomplete: $required is missing" }
+          }
+      - name: Build the installer
+        run: npm run tauri -- build --ci --bundles ${{ matrix.bundles }}
+      - name: Locate the installer
+        id: bundle
+        shell: bash
+        run: |
+          target="$(cd crates/lattice-desktop && cargo metadata --format-version 1 --no-deps \
+            | python -c 'import json, pathlib, sys; print(pathlib.Path(json.load(sys.stdin)["target_directory"]).as_posix())')"
+          dir="$target/release/bundle/${{ matrix.bundles }}"
+          file="$(ls -t "$dir"/${{ matrix.pattern }} 2>/dev/null | head -n1)"
+          [[ -n "$file" ]] || { echo "The build produced no ${{ matrix.pattern }} in $dir"; exit 1; }
+          echo "Built $file"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+      - name: Smoke check the installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          INSTALLER: ${{ steps.bundle.outputs.file }}
+        run: |
+          $process = Start-Process $env:INSTALLER -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "The installer exited with code $($process.ExitCode)." }
+          $installed = $null
+          foreach ($dir in @((Join-Path $env:LOCALAPPDATA 'Lattice'), (Join-Path $env:LOCALAPPDATA 'Programs\Lattice'), (Join-Path $env:ProgramFiles 'Lattice'))) {
+            if (-not (Test-Path $dir)) { continue }
+            $exe = Get-ChildItem $dir -Filter '*.exe' | Where-Object { $_.Name -notmatch '^(llama-server|uninstall)' } | Select-Object -First 1
+            if ($exe) { $installed = $dir; break }
+          }
+          if (-not $installed) { throw 'The installer finished but the Lattice executable was not found.' }
+          Write-Host "Installed $($exe.FullName)"
+          if (-not (Get-ChildItem $installed -Filter 'llama-server*.exe')) { throw "No llama-server*.exe in $installed" }
+      - name: Smoke check the installer (macOS)
+        if: runner.os == 'macOS'
+        env:
+          INSTALLER: ${{ steps.bundle.outputs.file }}
+        run: |
+          mount="$RUNNER_TEMP/lattice-dmg"
+          hdiutil attach "$INSTALLER" -mountpoint "$mount" -nobrowse -readonly
+          status=0
+          codesign --verify --deep --strict --verbose=2 "$mount/Lattice.app" || status=$?
+          hdiutil detach "$mount"
+          exit $status
+      - name: Smoke check the installer (Linux)
+        if: runner.os == 'Linux'
+        env:
+          INSTALLER: ${{ steps.bundle.outputs.file }}
+        run: |
+          dpkg-deb --info "$INSTALLER"
+          dpkg-deb --contents "$INSTALLER" | tee contents.txt
+          grep -E ' \./usr/bin/[^/]+$' contents.txt | grep -v llama-server
+          grep -E ' \./usr/bin/llama-server' contents.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.name }}
+          path: ${{ steps.bundle.outputs.file }}
+          if-no-files-found: error
+
+  publish:
+    name: Draft release
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: installers
+          merge-multiple: true
+      - name: Create the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          version="$(jq -r .version crates/lattice-desktop/tauri.conf.json)"
+          tag="app/v${version}-r${RUN_NUMBER}"
+          (cd installers && sha256sum * > ../SHA256SUMS.txt)
+          cat SHA256SUMS.txt
+          {
+            echo "Lattice $version, built from commit \`$GITHUB_SHA\`."
+            echo
+            echo "| File | For |"
+            echo "|---|---|"
+            echo "| \`*-setup.exe\` | Windows 11 (x64) |"
+            echo "| \`*.dmg\` | macOS on Apple Silicon |"
+            echo "| \`*.deb\` | Ubuntu 24.04 (x64) |"
+            echo
+            echo "Install steps: https://github.com/$GITHUB_REPOSITORY/blob/main/docs/user/getting-started.md#installation"
+            echo
+            echo "These installers are not signed or notarized. On Windows, SmartScreen shows a warning: choose More info, then Run anyway. On macOS, open System Settings, then Privacy & Security, and choose Open Anyway."
+            echo
+            echo "Intel Macs are not included yet."
+            echo
+            echo "\`SHA256SUMS.txt\` lists the checksum of each file."
+          } > notes.md
+          gh release create "$tag" installers/* SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "Lattice $version (r$RUN_NUMBER)" \
+            --notes-file notes.md

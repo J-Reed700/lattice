@@ -38,20 +38,20 @@ memory lets you run larger models.
 
 ## Installation
 
-Lattice is pre-release. Get the installer for your platform from whoever
-distributes your build.
+Lattice is pre-release. Download the installer for your platform from the
+[latest release](https://github.com/J-Reed700/lattice/releases/latest).
 
 ### Windows
 
-Run the installer (`.msi` or setup `.exe`) and follow the prompts, then start
+Run the setup `.exe` (`Lattice_<version>_x64-setup.exe`) and follow the prompts, then start
 Lattice from the Start menu. Pre-release builds are not code-signed, so Windows
 SmartScreen may warn you; choose **More info > Run anyway** if you trust the
 source.
 
 ### macOS
 
-1. Open the `.dmg` and drag **Lattice** to **Applications**. Apple Silicon and
-   Intel Macs use different builds; pick the one for your Mac.
+1. Open the Apple Silicon `.dmg` and drag **Lattice** to **Applications**.
+   There is no Intel Mac download yet.
 2. Open Lattice from Applications.
 3. Pre-release builds are not notarized. If macOS says it can't verify the app,
    open **System Settings > Privacy & Security** and choose **Open Anyway**.
@@ -62,13 +62,6 @@ Install the `.deb` package:
 
 ```bash
 sudo apt install ./Lattice_*_amd64.deb
-```
-
-Or use the AppImage:
-
-```bash
-chmod +x Lattice_*.AppImage
-./Lattice_*.AppImage
 ```
 
 ---
