@@ -149,6 +149,71 @@ fn a_cited_sentence_adds_its_source_and_one_that_cannot_be_confirmed_is_a_findin
     );
 }
 
+const CURLY: &str =
+    "If you\u{2019}re ever unsure, the file reader will show you exactly which file is open.";
+const STRAIGHT: &str =
+    "If you're ever unsure, the file reader will show you exactly which file is open.";
+
+fn curly_source() -> LearningSourceDto {
+    LearningSourceDto {
+        id: "source-b".into(),
+        title: "Reader notes".into(),
+        url: None,
+        excerpt: CURLY.into(),
+        acquired_at: 2,
+    }
+}
+
+#[test]
+fn a_sentence_citation_differing_from_its_source_only_in_typography_is_confirmed() {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].citations = vec![GeneratedCitation {
+        sentence: "The file reader shows which file is open.".into(),
+        source_index: Some(1),
+        quote: STRAIGHT.into(),
+    }];
+    let owned = HashSet::from(["source-a", "source-b"]);
+
+    let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
+
+    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
+}
+
+#[test]
+fn a_part_quotation_differing_from_its_source_only_in_typography_is_confirmed() {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].source_index = Some(1);
+    lesson.blocks[2].quote = STRAIGHT.into();
+    lesson.questions[1].source_index = Some(1);
+    lesson.questions[1].quote = STRAIGHT.into();
+    let owned = HashSet::from(["source-a", "source-b"]);
+
+    let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
+
+    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(prepared.blocks[2].source_ids, ["source-b"]);
+    assert_eq!(prepared.questions[1].source_ids, ["source-b"]);
+}
+
+#[test]
+fn a_quotation_with_different_words_is_still_a_finding_beside_a_curly_source() {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].citations = vec![GeneratedCitation {
+        sentence: "The file reader closes files.".into(),
+        source_index: Some(1),
+        quote: "If you're ever unsure, the file reader will close exactly which file is open."
+            .into(),
+    }];
+    let owned = HashSet::from(["source-a", "source-b"]);
+
+    let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].key().id(), "quotation:section-2");
+    assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
+}
+
 #[test]
 fn a_long_cited_sentence_that_cannot_be_confirmed_is_shown_whole() {
     const LONG: &str = "Water boils at 50 degrees Celsius in every kitchen on every day of the year, whatever the pressure of the air around the pan.";
