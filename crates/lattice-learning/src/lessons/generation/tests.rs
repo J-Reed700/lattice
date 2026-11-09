@@ -628,12 +628,10 @@ fn the_recall_schema_bounds_no_text_but_the_quotes_floor() {
 }
 
 #[test]
-fn the_writer_never_refers_to_a_source_by_number_and_attributes_by_title_in_a_cited_sentence() {
+fn the_writer_is_told_never_to_name_a_source_in_the_text() {
     let instructions = citation_instructions(true);
-    assert!(instructions
-        .contains("Never refer to a source by its number or as an excerpt, passage or tutorial"));
-    assert!(instructions
-        .contains("An attribution names the source by its title, and only in a cited sentence."));
+    assert!(instructions.contains("Never say in the lesson's text where a statement comes from"));
+    assert!(instructions.contains("never refer to an excerpt, passage or tutorial"));
     assert!(instructions.contains("cite that sentence in the citations list"));
 }
 
@@ -650,4 +648,27 @@ fn recall_cards_are_written_for_a_learner_who_sees_only_the_lesson() {
             "missing {expected:?} in {prompt}"
         );
     }
+}
+
+#[test]
+fn the_writer_is_told_quotation_marks_are_for_quoted_wording() {
+    for has_sources in [true, false] {
+        let instructions = citation_instructions(has_sources);
+        assert!(
+            instructions.contains("Quotation marks mark wording quoted from a source"),
+            "{has_sources}"
+        );
+        assert!(
+            instructions.contains("without quotation marks"),
+            "{has_sources}"
+        );
+    }
+}
+
+#[test]
+fn the_writer_is_told_to_name_no_source_by_name_either() {
+    let instructions = citation_instructions(true);
+    assert!(instructions.contains("In the project's tutorial"));
+    assert!(instructions.contains("According to the guide"));
+    assert!(!instructions.contains("an attribution to a source"));
 }
