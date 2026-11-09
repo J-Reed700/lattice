@@ -239,8 +239,10 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
         .get("blocks")
         .and_then(Value::as_array)
         .map_or(0, Vec::len);
-    // The statements whose refused cut takes their question out.
+    // The statements whose refused cut takes their question out, and the
+    // questions that go only for this pass.
     let mut with_question = Vec::new();
+    let mut asked_to_go = Vec::new();
     for (key, example) in [("exampleClaims", true), ("failedClaims", false)] {
         for id in last(context, key) {
             let Some(place) = ledger.entry(&id).map(|entry| entry.location().clone()) else {
@@ -264,6 +266,9 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
             }
             if matches!(decision, Some(CutOf::Whole)) && ledger.is_statement(&id) {
                 if let (true, Some(label)) = (in_question, label) {
+                    if !ledger.cuts.going.contains_key(&place.unit_index) {
+                        asked_to_go.push(place.unit_index);
+                    }
                     ledger.cuts.go(place.unit_index, label);
                     with_question.push(id.clone());
                 }
@@ -309,6 +314,9 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 Cut::Refused => {
                     let statement = ledger.is_statement(&id);
                     if let (true, Some(label)) = (!statement || in_question, label) {
+                        if statement && !ledger.cuts.going.contains_key(&place.unit_index) {
+                            asked_to_go.push(place.unit_index);
+                        }
                         ledger.cuts.go(place.unit_index, label);
                         if statement {
                             with_question.push(id.clone());
@@ -327,6 +335,23 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
     if !narrowed.is_empty() {
         ledger.mark_narrowing(&narrowed).await?;
         ask_narrowing(context, &narrowed);
+    }
+    // The questions marked to go keep their place when they would leave the
+    // lesson unpublishable: the lesson loses none of them, and the cuts beside
+    // them are made.
+    if !asked_to_go.is_empty() && unpublishable(&lesson, &ledger.cuts).is_some() {
+        let mut kept = ledger.cuts.clone();
+        for unit in &asked_to_go {
+            kept.going.remove(unit);
+        }
+        if unpublishable(&lesson, &kept).is_none() {
+            ledger.cuts = kept;
+            with_question.retain(|id| {
+                ledger
+                    .entry(id)
+                    .is_some_and(|entry| !asked_to_go.contains(&entry.location().unit_index))
+            });
+        }
     }
     // A claim whose text went with a cut sentence is no work any more: the
     // pass after the repair finds it gone.
