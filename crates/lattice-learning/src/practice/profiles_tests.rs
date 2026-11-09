@@ -459,3 +459,14 @@ fn a_changed_outline_changes_the_basis_and_the_same_outline_does_not() -> Result
     assert_ne!(first, basis_of(&more)?);
     Ok(())
 }
+
+#[test]
+fn the_fallback_task_speaks_to_the_learner_and_adds_their_details_as_a_last_line() {
+    use crate::practice_generation::fallback_task_prompt;
+    let plain = fallback_task_prompt("Explain hash maps", None);
+    assert!(plain.starts_with("Explain hash maps"));
+    assert_eq!(fallback_task_prompt("Explain hash maps", Some("  ")), plain);
+    assert_eq!(fallback_task_prompt("Explain hash maps", Some("")), plain);
+    let with = fallback_task_prompt("Explain hash maps", Some(" a backend interview "));
+    assert_eq!(with, format!("{plain}\n\nYou are preparing for: a backend interview"));
+}
