@@ -2200,9 +2200,9 @@ async function runPracticeWorkbenchJourney(
     .locator("article")
     .filter({ hasText: "Follow-up" });
   await misconception.getByRole("button", { name: "Accept idea" }).click();
-  await expect(misconception.getByText("accepted", { exact: true })).toBeVisible();
+  await expect(misconception.getByText("Accepted", { exact: true })).toBeVisible();
   await followUp.getByRole("button", { name: "Not useful" }).click();
-  await expect(followUp.getByText("rejected", { exact: true })).toBeVisible();
+  await expect(followUp.getByText("Not used", { exact: true })).toBeVisible();
 
   await workbench.getByRole("button", { name: "Review reveal choice" }).click();
   const revealDialog = page.getByRole("dialog", {
