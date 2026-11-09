@@ -1,91 +1,45 @@
-//! Scorecards and evidence for coding session and interview debriefs
-//! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 4.8).
+//! Scorecards of coding sessions: rows scored 0 to max or marked as lacking evidence, each backed by evidence the app
+//! checks against its own data (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 4.8).
 
+use crate::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
+/// Whether a row was scored.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum ScorecardCriterionId {
-    ProblemSolving,
-    Code,
-    Testing,
-    Communication,
-}
-
-impl ScorecardCriterionId {
-    pub const ALL: [Self; 4] = [
-        Self::ProblemSolving,
-        Self::Code,
-        Self::Testing,
-        Self::Communication,
-    ];
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::ProblemSolving => "problem_solving",
-            Self::Code => "code",
-            Self::Testing => "testing",
-            Self::Communication => "communication",
-        }
-    }
-
-    pub fn title(self) -> &'static str {
-        match self {
-            Self::ProblemSolving => "Problem solving",
-            Self::Code => "Code",
-            Self::Testing => "Testing",
-            Self::Communication => "Communication",
-        }
-    }
-
-    pub fn label(self) -> &'static str {
-        self.title()
-    }
-
-    pub fn description(self) -> &'static str {
-        match self {
-            Self::ProblemSolving => {
-                "Understood and clarified the problem, chose a sound approach, \
-                 and reached the target complexity or explained the trade-off."
-            }
-            Self::Code => "Correct on the cases, clear, idiomatic.",
-            Self::Testing => {
-                "Examples before code, edge cases, ran the code, read the failures and fixed them."
-            }
-            Self::Communication => {
-                "Explained the plan and the decisions, answered probes, and used hints well."
-            }
-        }
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum ScorecardStatus {
+pub enum ScoreStatus {
     Observed,
     InsufficientEvidence,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum EvidenceKind {
-    Quote,
-    Lines,
-    Run,
-    Example,
-    Hint,
-    Note,
-}
-
+/// One checked fact behind a row.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct EvidenceItem {
-    pub kind: EvidenceKind,
-    pub text: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub start_line: Option<u32>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub end_line: Option<u32>,
+#[serde(tag = "kind", rename_all = "snake_case")]
+pub enum ScorecardEvidence {
+    /// An exact substring of that learner turn.
+    Quote {
+        #[serde(rename = "turnId")]
+        turn_id: String,
+        text: String,
+    },
+    /// Lines `start` to `end`, 1-based and inclusive, of `path` in that run's files.
+    Lines {
+        #[serde(rename = "runId")]
+        run_id: String,
+        path: String,
+        start: u32,
+        end: u32,
+    },
+    Run {
+        #[serde(rename = "runId")]
+        run_id: String,
+    },
+    Example {
+        ordinal: u32,
+    },
+    Hint {
+        ordinal: u32,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -93,12 +47,10 @@ pub struct EvidenceItem {
 pub struct ScorecardRow {
     pub criterion_id: String,
     pub title: String,
-    pub description: String,
-    pub status: ScorecardStatus,
-    /// 0..=4 when `status == Observed`, `None` when `InsufficientEvidence`. Silence never scores 0.
-    pub points: Option<u32>,
-    pub max_points: u32,
-    pub evidence: Vec<EvidenceItem>,
+    pub status: ScoreStatus,
+    pub points: Option<u8>,
+    pub max_points: u8,
+    pub evidence: Vec<ScorecardEvidence>,
     pub feedback: String,
     pub next_step: String,
 }
@@ -106,142 +58,170 @@ pub struct ScorecardRow {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct Scorecard {
-    pub session_id: String,
     pub rows: Vec<ScorecardRow>,
-    pub grader_model: String,
+}
+
+impl Scorecard {
+    /// The invariants every scorecard keeps: points iff observed, points at most the maximum, an observed row has
+    /// evidence.
+    pub fn validate(&self) -> Result<()> {
+        for row in &self.rows {
+            let id = &row.criterion_id;
+            if row.max_points == 0 {
+                return Err(invalid(format!("{id} has no points to give.")));
+            }
+            match (row.status, row.points) {
+                (ScoreStatus::Observed, None) => {
+                    return Err(invalid(format!("{id} is observed and has no points.")))
+                }
+                (ScoreStatus::InsufficientEvidence, Some(_)) => {
+                    return Err(invalid(format!("{id} lacks evidence and has points.")))
+                }
+                (ScoreStatus::Observed, Some(points)) if points > row.max_points => {
+                    return Err(invalid(format!("{id} has more points than its maximum.")))
+                }
+                (ScoreStatus::Observed, Some(_)) if row.evidence.is_empty() => {
+                    return Err(invalid(format!("{id} is scored on no evidence.")))
+                }
+                _ => {}
+            }
+        }
+        Ok(())
+    }
+}
+
+fn invalid(message: String) -> AppError {
+    AppError::InvalidState(message)
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    #[test]
-    fn test_criterion_id_as_str_and_metadata() {
-        assert_eq!(ScorecardCriterionId::ProblemSolving.as_str(), "problem_solving");
-        assert_eq!(ScorecardCriterionId::ProblemSolving.title(), "Problem solving");
-        assert_eq!(ScorecardCriterionId::ProblemSolving.label(), "Problem solving");
-        assert!(ScorecardCriterionId::ProblemSolving.description().contains("clarified"));
-
-        assert_eq!(ScorecardCriterionId::Code.as_str(), "code");
-        assert_eq!(ScorecardCriterionId::Code.title(), "Code");
-        assert_eq!(ScorecardCriterionId::Code.label(), "Code");
-        assert!(ScorecardCriterionId::Code.description().contains("idiomatic"));
-
-        assert_eq!(ScorecardCriterionId::Testing.as_str(), "testing");
-        assert_eq!(ScorecardCriterionId::Testing.title(), "Testing");
-        assert_eq!(ScorecardCriterionId::Testing.label(), "Testing");
-        assert!(ScorecardCriterionId::Testing.description().contains("Examples before code"));
-
-        assert_eq!(ScorecardCriterionId::Communication.as_str(), "communication");
-        assert_eq!(ScorecardCriterionId::Communication.title(), "Communication");
-        assert_eq!(ScorecardCriterionId::Communication.label(), "Communication");
-        assert!(ScorecardCriterionId::Communication.description().contains("hints well"));
-    }
-
-    #[test]
-    fn test_serde_criterion_id() {
-        for criterion in ScorecardCriterionId::ALL {
-            let json = serde_json::to_string(&criterion).expect("serialization failed");
-            assert_eq!(json, format!("\"{}\"", criterion.as_str()));
-            let back: ScorecardCriterionId =
-                serde_json::from_str(&json).expect("deserialization failed");
-            assert_eq!(back, criterion);
+    fn row(status: ScoreStatus, points: Option<u8>, evidence: Vec<ScorecardEvidence>) -> ScorecardRow {
+        ScorecardRow {
+            criterion_id: "code".into(),
+            title: "Code".into(),
+            status,
+            points,
+            max_points: 4,
+            evidence,
+            feedback: "Clear.".into(),
+            next_step: "Name the helper.".into(),
         }
     }
 
+    fn card(row: ScorecardRow) -> Scorecard {
+        Scorecard { rows: vec![row] }
+    }
+
+    fn some_evidence() -> Vec<ScorecardEvidence> {
+        vec![ScorecardEvidence::Run {
+            run_id: "run-1".into(),
+        }]
+    }
+
     #[test]
-    fn test_serde_scorecard_status_and_evidence_kind() {
+    fn an_observed_row_with_points_and_evidence_is_valid() {
+        let scorecard = card(row(ScoreStatus::Observed, Some(3), some_evidence()));
+        assert!(scorecard.validate().is_ok());
+    }
+
+    #[test]
+    fn full_marks_are_valid() {
+        let scorecard = card(row(ScoreStatus::Observed, Some(4), some_evidence()));
+        assert!(scorecard.validate().is_ok());
+    }
+
+    #[test]
+    fn zero_points_on_evidence_are_valid() {
+        let scorecard = card(row(ScoreStatus::Observed, Some(0), some_evidence()));
+        assert!(scorecard.validate().is_ok());
+    }
+
+    #[test]
+    fn an_insufficient_row_with_no_points_is_valid() {
+        let scorecard = card(row(ScoreStatus::InsufficientEvidence, None, vec![]));
+        assert!(scorecard.validate().is_ok());
+    }
+
+    #[test]
+    fn an_observed_row_without_points_is_refused() {
+        let scorecard = card(row(ScoreStatus::Observed, None, some_evidence()));
+        assert!(scorecard.validate().is_err());
+    }
+
+    #[test]
+    fn an_insufficient_row_with_points_is_refused() {
+        let scorecard = card(row(ScoreStatus::InsufficientEvidence, Some(0), vec![]));
+        assert!(scorecard.validate().is_err());
+    }
+
+    #[test]
+    fn points_above_the_maximum_are_refused() {
+        let scorecard = card(row(ScoreStatus::Observed, Some(5), some_evidence()));
+        assert!(scorecard.validate().is_err());
+    }
+
+    #[test]
+    fn points_without_evidence_are_refused() {
+        let scorecard = card(row(ScoreStatus::Observed, Some(2), vec![]));
+        assert!(scorecard.validate().is_err());
+    }
+
+    #[test]
+    fn a_row_that_can_give_no_points_is_refused() {
+        let mut empty = row(ScoreStatus::InsufficientEvidence, None, vec![]);
+        empty.max_points = 0;
+        assert!(card(empty).validate().is_err());
+    }
+
+    #[test]
+    fn one_bad_row_refuses_the_scorecard() {
+        let scorecard = Scorecard {
+            rows: vec![
+                row(ScoreStatus::Observed, Some(3), some_evidence()),
+                row(ScoreStatus::Observed, Some(2), vec![]),
+            ],
+        };
+        assert!(scorecard.validate().is_err());
+    }
+
+    #[test]
+    fn evidence_serializes_with_its_kind_and_camel_case_fields() {
+        let quote = ScorecardEvidence::Quote {
+            turn_id: "t1".into(),
+            text: "a hash map".into(),
+        };
+        let json = serde_json::to_value(&quote).expect("serialize");
         assert_eq!(
-            serde_json::to_string(&ScorecardStatus::Observed).expect("serialize"),
-            "\"observed\""
+            json,
+            serde_json::json!({"kind": "quote", "turnId": "t1", "text": "a hash map"})
         );
+        let lines = ScorecardEvidence::Lines {
+            run_id: "r1".into(),
+            path: "solution.py".into(),
+            start: 2,
+            end: 4,
+        };
+        let json = serde_json::to_value(&lines).expect("serialize");
         assert_eq!(
-            serde_json::to_string(&ScorecardStatus::InsufficientEvidence).expect("serialize"),
+            json,
+            serde_json::json!({"kind": "lines", "runId": "r1", "path": "solution.py", "start": 2, "end": 4})
+        );
+        let back: ScorecardEvidence = serde_json::from_value(json).expect("deserialize");
+        assert_eq!(back, lines);
+    }
+
+    #[test]
+    fn statuses_serialize_in_snake_case() {
+        assert_eq!(
+            serde_json::to_string(&ScoreStatus::InsufficientEvidence).expect("serialize"),
             "\"insufficient_evidence\""
         );
-
         assert_eq!(
-            serde_json::to_string(&EvidenceKind::Quote).expect("serialize"),
-            "\"quote\""
+            serde_json::to_string(&ScoreStatus::Observed).expect("serialize"),
+            "\"observed\""
         );
-        assert_eq!(
-            serde_json::to_string(&EvidenceKind::Lines).expect("serialize"),
-            "\"lines\""
-        );
-        assert_eq!(
-            serde_json::to_string(&EvidenceKind::Run).expect("serialize"),
-            "\"run\""
-        );
-        assert_eq!(
-            serde_json::to_string(&EvidenceKind::Example).expect("serialize"),
-            "\"example\""
-        );
-        assert_eq!(
-            serde_json::to_string(&EvidenceKind::Hint).expect("serialize"),
-            "\"hint\""
-        );
-        assert_eq!(
-            serde_json::to_string(&EvidenceKind::Note).expect("serialize"),
-            "\"note\""
-        );
-    }
-
-    #[test]
-    fn test_serde_scorecard_and_row_camel_case() {
-        let scorecard = Scorecard {
-            session_id: "sess_123".to_string(),
-            grader_model: "test-model".to_string(),
-            rows: vec![ScorecardRow {
-                criterion_id: "code".to_string(),
-                title: "Code".to_string(),
-                description: "Correct and clean".to_string(),
-                status: ScorecardStatus::Observed,
-                points: Some(3),
-                max_points: 4,
-                evidence: vec![EvidenceItem {
-                    kind: EvidenceKind::Lines,
-                    text: "solution lines".to_string(),
-                    start_line: Some(5),
-                    end_line: Some(10),
-                }],
-                feedback: "Good concise code".to_string(),
-                next_step: "Try edge cases".to_string(),
-            }],
-        };
-
-        let json = serde_json::to_string(&scorecard).expect("serialize");
-        assert!(json.contains("\"sessionId\":\"sess_123\""));
-        assert!(json.contains("\"graderModel\":\"test-model\""));
-        assert!(json.contains("\"criterionId\":\"code\""));
-        assert!(json.contains("\"maxPoints\":4"));
-        assert!(json.contains("\"startLine\":5"));
-        assert!(json.contains("\"endLine\":10"));
-        assert!(json.contains("\"nextStep\":\"Try edge cases\""));
-
-        let deserialized: Scorecard = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(deserialized, scorecard);
-    }
-
-    #[test]
-    fn test_insufficient_evidence_invariants() {
-        let row = ScorecardRow {
-            criterion_id: "communication".to_string(),
-            title: "Communication".to_string(),
-            description: "No turns".to_string(),
-            status: ScorecardStatus::InsufficientEvidence,
-            points: None,
-            max_points: 4,
-            evidence: vec![],
-            feedback: "Learner did not speak".to_string(),
-            next_step: "Explain your reasoning aloud".to_string(),
-        };
-
-        let json = serde_json::to_string(&row).expect("serialize");
-        assert!(json.contains("\"points\":null"));
-        assert!(json.contains("\"status\":\"insufficient_evidence\""));
-
-        let deserialized: ScorecardRow = serde_json::from_str(&json).expect("deserialize");
-        assert_eq!(deserialized.status, ScorecardStatus::InsufficientEvidence);
-        assert_eq!(deserialized.points, None);
     }
 }

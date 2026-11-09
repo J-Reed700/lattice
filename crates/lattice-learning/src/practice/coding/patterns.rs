@@ -1,525 +1,260 @@
-//! Problem pattern ratings, schedules, and targets
-//! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md sections 4.9 and 7.3).
+//! What a problem teaches the learner's schedule: a rating for each of its patterns by rule, the schedules those
+//! ratings move, the patterns the next build should use, and what is due
+//! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md sections 4.9 and 6.2).
 
-use super::hints::CodeHintRung;
-use crate::recall::schedule::CardSchedule;
-use crate::recall::study_dto::StudyRating;
-use lattice_core::domain::learning::practice::problem_patterns::{
-    ProblemPattern, ProblemPatternFamily, PROBLEM_PATTERNS,
+use super::dto::{CodeHintRung, DueItemDto, DueKind, PatternRatingDto, PracticeDueDto};
+use crate::drills::schedules;
+use crate::persistence::db;
+use lattice_core::domain::learning::drills::{Material, PatternRating};
+use lattice_core::domain::learning::practice::{
+    problem_pattern, ProblemPattern, PROBLEM_PATTERNS,
 };
-use lattice_core::shared::error::{AppError, Result};
-use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::error::Result;
+use sqlx::SqliteConnection;
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PatternOutcomeInput {
-    pub all_cases_passed: bool,
-    pub highest_hint_rung: Option<CodeHintRung>,
-    pub solution_seen_before_pass: bool,
+/// The prefix of the material problem patterns are scheduled under, before the language.
+const PROBLEM_MATERIAL: &str = "problem:";
+
+/// How a problem went, as far as its patterns are concerned.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProblemOutcome {
+    pub all_passed: bool,
+    pub highest_rung: Option<CodeHintRung>,
+    pub solution_seen_before_passing: bool,
 }
 
-/// Pure rating rule (§4.9):
-/// - Every case passes, with no hint and no worked solution -> StudyRating::Easy
-/// - Every case passes, with at most a nudge -> StudyRating::Good
-/// - Every case passes after an idea or plan hint -> StudyRating::Hard
-/// - Not every case passes, a line hint was used, or the solution was seen
-///   before passing -> StudyRating::Again
-pub fn rate_problem_pattern(input: &PatternOutcomeInput) -> StudyRating {
-    if !input.all_cases_passed
-        || input.solution_seen_before_pass
-        || matches!(input.highest_hint_rung, Some(CodeHintRung::PointAtLine))
-    {
-        StudyRating::Again
-    } else if matches!(
-        input.highest_hint_rung,
-        Some(CodeHintRung::Idea | CodeHintRung::Plan)
-    ) {
-        StudyRating::Hard
-    } else if matches!(input.highest_hint_rung, Some(CodeHintRung::Nudge)) {
-        StudyRating::Good
-    } else {
-        StudyRating::Easy
+/// The rating every pattern of a problem gets: Easy with every case passed and no help, Good after at most a nudge,
+/// Hard after an idea or a plan, Again when a case still fails, a line was pointed at or the solution was seen first.
+pub fn rating(outcome: &ProblemOutcome) -> PatternRating {
+    if !outcome.all_passed || outcome.solution_seen_before_passing {
+        return PatternRating::Again;
+    }
+    match outcome.highest_rung {
+        None => PatternRating::Easy,
+        Some(CodeHintRung::Nudge) => PatternRating::Good,
+        Some(CodeHintRung::Idea | CodeHintRung::Plan) => PatternRating::Hard,
+        Some(CodeHintRung::Line) => PatternRating::Again,
     }
 }
 
-fn db_err(e: sqlx::Error) -> AppError {
-    AppError::Database(e.to_string())
+/// The material problem patterns of `language` are scheduled under.
+fn problem_material(language: &str) -> String {
+    format!("{PROBLEM_MATERIAL}{}", language.to_ascii_lowercase())
 }
 
-/// Moves the schedule for a problem pattern on by one review rated `rating` at `now`.
-/// Stored in `learning_drill_pattern_schedules` under material
-/// `format!("problem:{}", language.to_ascii_lowercase())`.
-/// Uses `interview_at` from `learning_practice_profiles` for `program_id` as target
-/// horizon when set.
-pub async fn record_problem_pattern_review(
-    pool: &SqlitePool,
-    program_id: &str,
+fn family_name(pattern: &ProblemPattern) -> String {
+    match serde_json::to_value(&pattern.family) {
+        Ok(serde_json::Value::String(name)) => name,
+        _ => String::new(),
+    }
+}
+
+/// Moves the schedule of each of `pattern_ids` on by one review rated `rating` at `now`, landing before `target`
+/// (the interview) while it is ahead. Ids the catalogue no longer holds are left out.
+pub async fn record_ratings_in(
+    connection: &mut SqliteConnection,
+    _program_id: &str,
     language: &str,
-    pattern_id: &str,
-    rating: StudyRating,
+    pattern_ids: &[String],
+    rating: PatternRating,
     now: i64,
-) -> Result<i64> {
-    let material = format!("problem:{}", language.to_ascii_lowercase());
-
-    let target_at: Option<i64> = sqlx::query_scalar(
-        "SELECT interview_at FROM learning_practice_profiles WHERE program_id = ?",
-    )
-    .bind(program_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(db_err)?
-    .flatten();
-
-    let row = sqlx::query(
-        "SELECT stability, difficulty, last_reviewed_at, due_at, interval_days, \
-         review_count, lapses FROM learning_drill_pattern_schedules \
-         WHERE material = ? AND pattern_id = ?",
-    )
-    .bind(&material)
-    .bind(pattern_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(db_err)?;
-
-    let before = match row {
-        Some(r) => CardSchedule {
-            stability: Some(r.get("stability")),
-            difficulty: Some(r.get("difficulty")),
-            last_reviewed_at: Some(r.get("last_reviewed_at")),
-            due_at: r.get("due_at"),
-            interval_days: r.get("interval_days"),
-            review_count: r.get("review_count"),
-            lapses: r.get("lapses"),
-        },
-        None => CardSchedule {
-            stability: None,
-            difficulty: None,
-            last_reviewed_at: None,
-            due_at: now,
-            interval_days: 0,
-            review_count: 0,
-            lapses: 0,
-        },
-    };
-
-    let after = before.review(rating, now, target_at)?;
-    let mut due_at = after.due_at;
-
-    if let Some(target) = target_at {
-        if target > now {
-            if due_at <= now {
-                due_at = (now + 60_000).min(target);
-            } else if due_at > target {
-                due_at = target;
-            }
-        }
+    target: Option<i64>,
+) -> Result<Vec<PatternRatingDto>> {
+    let material = problem_material(language);
+    let mut rated = Vec::with_capacity(pattern_ids.len());
+    for id in pattern_ids {
+        let Some(pattern) = problem_pattern(id) else {
+            continue;
+        };
+        let schedule =
+            schedules::review_pattern_in(connection, &material, pattern.id, rating, now, target)
+                .await?;
+        rated.push(PatternRatingDto {
+            pattern_id: pattern.id.to_owned(),
+            name: pattern.name.to_owned(),
+            family: family_name(pattern),
+            cue: pattern.cue.to_owned(),
+            rating,
+            due_at: schedule.due_at,
+        });
     }
-
-    let stability = match after.stability {
-        Some(s) => s,
-        None => 1.0,
-    };
-    let difficulty = match after.difficulty {
-        Some(d) => d,
-        None => 5.0,
-    };
-    let last_reviewed_at = match after.last_reviewed_at {
-        Some(r) => r,
-        None => now,
-    };
-
-    sqlx::query(
-        "INSERT INTO learning_drill_pattern_schedules (
-            material, pattern_id, stability, difficulty, last_reviewed_at, due_at,
-            interval_days, review_count, lapses
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-        ON CONFLICT(material, pattern_id) DO UPDATE SET
-            stability = excluded.stability,
-            difficulty = excluded.difficulty,
-            last_reviewed_at = excluded.last_reviewed_at,
-            due_at = excluded.due_at,
-            interval_days = excluded.interval_days,
-            review_count = excluded.review_count,
-            lapses = excluded.lapses",
-    )
-    .bind(&material)
-    .bind(pattern_id)
-    .bind(stability)
-    .bind(difficulty)
-    .bind(last_reviewed_at)
-    .bind(due_at)
-    .bind(after.interval_days)
-    .bind(after.review_count.max(1))
-    .bind(after.lapses)
-    .execute(pool)
-    .await
-    .map_err(db_err)?;
-
-    Ok(due_at)
+    Ok(rated)
 }
 
-/// Ranks patterns from `PROBLEM_PATTERNS`: due ones first, then ones never practised,
-/// then the rest, interleaved by `PatternFamily`.
-pub async fn targets(
-    pool: &SqlitePool,
+/// Where a pattern stands, in the order the next build prefers.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+enum Standing {
+    Due,
+    New,
+    Rested,
+}
+
+/// Pattern ids ranked for the next build: those due, most overdue first; then those never practised, in the
+/// catalogue's order; then the rest, soonest due first. Each pick is the first of what is left whose family has not
+/// been picked yet; when every family left has been picked, the families start over.
+pub async fn targets_in(
+    connection: &mut SqliteConnection,
     _program_id: &str,
     language: &str,
-    count: usize,
-) -> Result<Vec<&'static ProblemPattern>> {
-    if count == 0 {
-        return Ok(Vec::new());
-    }
-
-    let material = format!("problem:{}", language.to_ascii_lowercase());
-    let now = chrono::Utc::now().timestamp_millis();
-
-    let rows: Vec<(String, i64)> = sqlx::query_as(
-        "SELECT pattern_id, due_at FROM learning_drill_pattern_schedules WHERE material = ?",
+    now: i64,
+) -> Result<Vec<String>> {
+    let scheduled: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT pattern_id,due_at FROM learning_drill_pattern_schedules WHERE material=?",
     )
-    .bind(&material)
-    .fetch_all(pool)
+    .bind(problem_material(language))
+    .fetch_all(&mut *connection)
     .await
-    .map_err(db_err)?;
-
-    let mut schedule_map: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
-    for (pat, due) in rows {
-        schedule_map.insert(pat, due);
-    }
-
-    let mut due: Vec<(&'static ProblemPattern, i64)> = Vec::new();
-    let mut unpractised: Vec<&'static ProblemPattern> = Vec::new();
-    let mut future: Vec<(&'static ProblemPattern, i64)> = Vec::new();
-
-    for pattern in PROBLEM_PATTERNS {
-        match schedule_map.get(pattern.id) {
-            Some(&due_at) => {
-                if due_at <= now {
-                    due.push((pattern, due_at));
-                } else {
-                    future.push((pattern, due_at));
-                }
-            }
+    .map_err(db)?;
+    let mut ranked: Vec<(Standing, Option<i64>, usize, &'static ProblemPattern)> = PROBLEM_PATTERNS
+        .iter()
+        .enumerate()
+        .map(|(order, pattern)| {
+            let due_at = scheduled
+                .iter()
+                .find(|(id, _)| id == pattern.id)
+                .map(|(_, due_at)| *due_at);
+            let standing = match due_at {
+                None => Standing::New,
+                Some(at) if at <= now => Standing::Due,
+                Some(_) => Standing::Rested,
+            };
+            (standing, due_at, order, pattern)
+        })
+        .collect();
+    ranked.sort_by_key(|&(standing, due_at, order, _)| (standing, due_at, order));
+    let mut left: Vec<&'static ProblemPattern> =
+        ranked.into_iter().map(|(_, _, _, pattern)| pattern).collect();
+    let mut chosen: Vec<String> = Vec::with_capacity(left.len());
+    let mut picked_families: Vec<&'static ProblemPattern> = Vec::new();
+    while !left.is_empty() {
+        let next = left.iter().position(|candidate| {
+            picked_families
+                .iter()
+                .all(|picked| picked.family != candidate.family)
+        });
+        let at = match next {
+            Some(at) => at,
             None => {
-                unpractised.push(pattern);
+                picked_families.clear();
+                0
             }
-        }
-    }
-
-    due.sort_by_key(|(_, due_at)| *due_at);
-    future.sort_by_key(|(_, due_at)| *due_at);
-
-    let mut ordered: Vec<&'static ProblemPattern> = Vec::with_capacity(PROBLEM_PATTERNS.len());
-    for (p, _) in due {
-        ordered.push(p);
-    }
-    for p in unpractised {
-        ordered.push(p);
-    }
-    for (p, _) in future {
-        ordered.push(p);
-    }
-
-    let mut result: Vec<&'static ProblemPattern> = Vec::with_capacity(count.min(ordered.len()));
-    let mut last_family: Option<ProblemPatternFamily> = None;
-
-    while result.len() < count && !ordered.is_empty() {
-        let next_idx = match last_family {
-            Some(prev_fam) => match ordered.iter().position(|p| p.family != prev_fam) {
-                Some(idx) => idx,
-                None => 0,
-            },
-            None => 0,
         };
-
-        let picked = ordered.remove(next_idx);
-        last_family = Some(picked.family);
-        result.push(picked);
+        let picked = left.remove(at);
+        chosen.push(picked.id.to_owned());
+        picked_families.push(picked);
     }
-
-    Ok(result)
+    Ok(chosen)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct DueItemDto {
-    pub id: String,
-    pub kind: String, // "pattern" | "lesson"
-    pub title: String,
-    pub subtitle: Option<String>,
-    pub count: Option<u32>,
-    pub overdue_text: Option<String>,
-    pub is_overdue: Option<bool>,
+/// The material a schedule name stands for: `passage`, or `code:<language>`.
+fn material_of(name: &str) -> Option<Material> {
+    if name == "passage" {
+        return Some(Material::Passage);
+    }
+    name.strip_prefix("code:")
+        .filter(|language| !language.is_empty())
+        .map(Material::code)
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PracticeDueDto {
-    pub items: Vec<DueItemDto>,
-    pub total_due: u32,
+fn plural(count: u32, one: &str, many: &str) -> String {
+    if count == 1 {
+        format!("{count} {one}")
+    } else {
+        format!("{count} {many}")
+    }
 }
 
-/// Aggregates due items for practice home. Problem patterns that are due are grouped
-/// under `"Problem patterns"`, hiding individual pattern names until the debrief.
-pub async fn load_practice_due(
-    pool: &SqlitePool,
-    _program_id: &str,
+/// What is due at `now` for the course: problem patterns (one item, never naming a pattern), the lessons the
+/// drills have scheduled, and the drills' patterns, most overdue first.
+pub async fn practice_due_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    now: i64,
 ) -> Result<PracticeDueDto> {
-    let now = chrono::Utc::now().timestamp_millis();
-    let due_count: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM learning_drill_pattern_schedules \
-         WHERE material LIKE 'problem:%' AND due_at <= ?",
+    let mut items: Vec<DueItemDto> = Vec::new();
+
+    let (problem_due, problem_first): (i64, Option<i64>) = sqlx::query_as(
+        "SELECT COUNT(*),MIN(due_at) FROM learning_drill_pattern_schedules WHERE material LIKE 'problem:%' AND due_at<=?",
     )
     .bind(now)
-    .fetch_one(pool)
+    .fetch_one(&mut *connection)
     .await
-    .map_err(db_err)?;
-
-    if due_count <= 0 {
-        return Ok(PracticeDueDto {
-            items: Vec::new(),
-            total_due: 0,
+    .map_err(db)?;
+    if let (Ok(count @ 1..), Some(due_at)) = (u32::try_from(problem_due), problem_first) {
+        items.push(DueItemDto {
+            kind: DueKind::CodingPatterns,
+            label: plural(count, "problem pattern", "problem patterns"),
+            count,
+            due_at,
+            lesson_id: None,
+            material: None,
         });
     }
 
-    let count = due_count as u32;
-    let item = DueItemDto {
-        id: "problem_patterns".to_string(),
-        kind: "pattern".to_string(),
-        title: "Problem patterns".to_string(),
-        subtitle: Some(format!("{} problem patterns due", count)),
-        count: Some(count),
-        overdue_text: Some(format!("{} due", count)),
-        is_overdue: Some(true),
-    };
+    let standings =
+        schedules::lesson_states_in(connection, program_id, &Material::Passage, None).await?;
+    for standing in standings {
+        let Some(due_at) = standing.due_at.filter(|at| *at <= now) else {
+            continue;
+        };
+        if standing.pending {
+            continue;
+        }
+        let title: Option<String> =
+            sqlx::query_scalar("SELECT title FROM learning_lessons WHERE program_id=? AND id=?")
+                .bind(program_id)
+                .bind(&standing.lesson_id)
+                .fetch_optional(&mut *connection)
+                .await
+                .map_err(db)?;
+        let Some(title) = title else {
+            continue;
+        };
+        items.push(DueItemDto {
+            kind: DueKind::DrillLesson,
+            label: title,
+            count: 1,
+            due_at,
+            lesson_id: Some(standing.lesson_id),
+            material: None,
+        });
+    }
 
-    Ok(PracticeDueDto {
-        items: vec![item],
-        total_due: count,
-    })
+    let names: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT material FROM learning_drill_pattern_schedules WHERE material NOT LIKE 'problem:%' ORDER BY material",
+    )
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(db)?;
+    for name in names {
+        let Some(material) = material_of(&name) else {
+            continue;
+        };
+        let states = schedules::pattern_states_in(connection, &material, &[]).await?;
+        let due: Vec<i64> = states
+            .iter()
+            .filter(|state| !state.pending)
+            .filter_map(|state| state.due_at)
+            .filter(|at| *at <= now)
+            .collect();
+        let (Some(first), Ok(count @ 1..)) = (due.iter().copied().min(), u32::try_from(due.len()))
+        else {
+            continue;
+        };
+        let what = material.language().unwrap_or("passage");
+        items.push(DueItemDto {
+            kind: DueKind::DrillPatterns,
+            label: plural(count, &format!("{what} pattern"), &format!("{what} patterns")),
+            count,
+            due_at: first,
+            lesson_id: None,
+            material: Some(name),
+        });
+    }
+
+    items.sort_by_key(|item| item.due_at);
+    Ok(PracticeDueDto { items })
 }
 
 #[cfg(test)]
-mod tests {
-    use super::*;
-    use lattice_core::domain::learning::practice::problem_patterns::PROBLEM_PATTERNS;
-
-    #[test]
-    fn test_rate_problem_pattern_easy() {
-        let input = PatternOutcomeInput {
-            all_cases_passed: true,
-            highest_hint_rung: None,
-            solution_seen_before_pass: false,
-        };
-        assert_eq!(rate_problem_pattern(&input), StudyRating::Easy);
-    }
-
-    #[test]
-    fn test_rate_problem_pattern_good() {
-        let input = PatternOutcomeInput {
-            all_cases_passed: true,
-            highest_hint_rung: Some(CodeHintRung::Nudge),
-            solution_seen_before_pass: false,
-        };
-        assert_eq!(rate_problem_pattern(&input), StudyRating::Good);
-    }
-
-    #[test]
-    fn test_rate_problem_pattern_hard() {
-        let input_idea = PatternOutcomeInput {
-            all_cases_passed: true,
-            highest_hint_rung: Some(CodeHintRung::Idea),
-            solution_seen_before_pass: false,
-        };
-        assert_eq!(rate_problem_pattern(&input_idea), StudyRating::Hard);
-
-        let input_plan = PatternOutcomeInput {
-            all_cases_passed: true,
-            highest_hint_rung: Some(CodeHintRung::Plan),
-            solution_seen_before_pass: false,
-        };
-        assert_eq!(rate_problem_pattern(&input_plan), StudyRating::Hard);
-    }
-
-    #[test]
-    fn test_rate_problem_pattern_again() {
-        // 1. Not all cases pass
-        let input_not_passed = PatternOutcomeInput {
-            all_cases_passed: false,
-            highest_hint_rung: None,
-            solution_seen_before_pass: false,
-        };
-        assert_eq!(rate_problem_pattern(&input_not_passed), StudyRating::Again);
-
-        // 2. PointAtLine hint rung used
-        let input_line_hint = PatternOutcomeInput {
-            all_cases_passed: true,
-            highest_hint_rung: Some(CodeHintRung::PointAtLine),
-            solution_seen_before_pass: false,
-        };
-        assert_eq!(rate_problem_pattern(&input_line_hint), StudyRating::Again);
-
-        // 3. Solution seen before passing
-        let input_solution_seen = PatternOutcomeInput {
-            all_cases_passed: true,
-            highest_hint_rung: None,
-            solution_seen_before_pass: true,
-        };
-        assert_eq!(rate_problem_pattern(&input_solution_seen), StudyRating::Again);
-    }
-
-    #[tokio::test]
-    async fn test_record_problem_pattern_persistence_uses_interview_horizon() {
-        let pool = crate::test_support::pool().await.expect("test pool");
-        let prog = crate::test_support::fixture();
-        let program_id = prog.summary.id.clone();
-        let target_at = 1_800_000_000_000i64;
-        let now = 1_700_000_000_000i64;
-
-        crate::repository::LearningRepository::new(pool.clone())
-            .create(&prog)
-            .await
-            .expect("insert program");
-
-        sqlx::query(
-            "INSERT INTO learning_practice_profiles \
-             (program_id, details, language, interview_at, revision, updated_at) \
-             VALUES (?, 'Interview prep', 'python', ?, 1, ?)",
-        )
-        .bind(&program_id)
-        .bind(target_at)
-        .bind(now)
-        .execute(&pool)
-        .await
-        .expect("insert profile");
-
-        let pattern_id = "hash_map_lookup";
-        let due_at = record_problem_pattern_review(
-            &pool,
-            &program_id,
-            "python",
-            pattern_id,
-            StudyRating::Good,
-            now,
-        )
-        .await
-        .expect("record review");
-
-        assert!(due_at > now);
-        assert!(due_at <= target_at);
-
-        let stored_material: String = sqlx::query_scalar(
-            "SELECT material FROM learning_drill_pattern_schedules WHERE pattern_id = ?",
-        )
-        .bind(pattern_id)
-        .fetch_one(&pool)
-        .await
-        .expect("fetch stored schedule");
-
-        assert_eq!(stored_material, "problem:python");
-    }
-
-    #[tokio::test]
-    async fn test_targets_orders_due_first_then_unpractised_interleaved_by_family() {
-        let pool = crate::test_support::pool().await.expect("test pool");
-        let prog = crate::test_support::fixture();
-        let program_id = prog.summary.id.clone();
-
-        crate::repository::LearningRepository::new(pool.clone())
-            .create(&prog)
-            .await
-            .expect("insert program");
-
-        let ranked = targets(&pool, &program_id, "python", 6)
-            .await
-            .expect("rank targets");
-
-        assert!(!ranked.is_empty());
-        assert!(ranked.len() <= 6);
-
-        // Every target must exist in catalogue
-        for target in &ranked {
-            assert!(PROBLEM_PATTERNS.iter().any(|p| p.id == target.id));
-        }
-
-        // Distinct families should be interleaved if multiple are available
-        if ranked.len() >= 2 {
-            let fam0 = ranked[0].family;
-            let fam1 = ranked[1].family;
-            assert_ne!(
-                fam0, fam1,
-                "Consecutive targets should interleave families when possible"
-            );
-        }
-    }
-
-    #[tokio::test]
-    async fn test_load_practice_due_hides_pattern_names_behind_problem_patterns() {
-        let pool = crate::test_support::pool().await.expect("test pool");
-        let prog = crate::test_support::fixture();
-        let program_id = prog.summary.id.clone();
-        let now = 1_700_000_000_000i64;
-
-        crate::repository::LearningRepository::new(pool.clone())
-            .create(&prog)
-            .await
-            .expect("insert program");
-
-        sqlx::query(
-            "INSERT INTO learning_practice_profiles \
-             (program_id, details, language, revision, updated_at) \
-             VALUES (?, 'Interview prep', 'python', 1, ?)",
-        )
-        .bind(&program_id)
-        .bind(now)
-        .execute(&pool)
-        .await
-        .expect("insert profile");
-
-        // Insert two overdue problem pattern schedules
-        sqlx::query(
-            "INSERT INTO learning_drill_pattern_schedules (
-                material, pattern_id, stability, difficulty, last_reviewed_at, due_at,
-                interval_days, review_count, lapses
-             ) VALUES ('problem:python', 'hash_map_lookup', 1.0, 5.0, ?, ?, 1, 1, 0),
-                      ('problem:python', 'two_pointers', 1.0, 5.0, ?, ?, 1, 1, 0)",
-        )
-        .bind(now - 100_000)
-        .bind(now - 50_000)
-        .bind(now - 100_000)
-        .bind(now - 40_000)
-        .execute(&pool)
-        .await
-        .expect("insert schedules");
-
-        let due_dto = load_practice_due(&pool, &program_id)
-            .await
-            .expect("load due items");
-
-        assert_eq!(due_dto.total_due, 2);
-        assert_eq!(due_dto.items.len(), 1);
-
-        let item = &due_dto.items[0];
-        assert_eq!(item.title, "Problem patterns");
-        assert_eq!(item.kind, "pattern");
-        assert_eq!(item.count, Some(2));
-        assert_eq!(item.is_overdue, Some(true));
-
-        // CRITICAL CHECK: Individual secret pattern names must never leak!
-        for pattern in PROBLEM_PATTERNS {
-            assert!(
-                !item.title.contains(pattern.name),
-                "Due item title must not leak secret pattern name '{}'",
-                pattern.name
-            );
-            if let Some(subtitle) = &item.subtitle {
-                assert!(
-                    !subtitle.contains(pattern.name),
-                    "Due item subtitle must not leak secret pattern name '{}'",
-                    pattern.name
-                );
-            }
-        }
-    }
-}
+mod tests;
