@@ -321,3 +321,19 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
 #[cfg(test)]
 #[path = "course_plan_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "course_plan/topics_support.rs"]
+mod topics_support;
+
+#[cfg(test)]
+#[path = "course_plan/job_tests.rs"]
+mod job_tests;
+
+#[cfg(test)]
+#[path = "course_plan/view_tests.rs"]
+mod view_tests;
+
+#[cfg(test)]
+#[path = "course_plan/edit_tests.rs"]
+mod edit_tests;
