@@ -4,8 +4,34 @@
 
 use super::*;
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
+#[cfg(test)]
+use lattice_core::domain::learning::claim_review::{Actor, ClaimEvent};
 
 impl ClaimLedger {
+    /// Records `event` as the user's, which the machine's `append` cannot.
+    #[cfg(test)]
+    pub(in crate::lessons::content_verification) fn record_by_user(
+        &mut self,
+        claim_id: &ClaimId,
+        event: ClaimEvent,
+    ) -> Result<bool> {
+        let provenance = EventProvenance {
+            actor: Actor::User,
+            ..self.provenance()
+        };
+        let Some(entry) = self.probe(claim_id, &provenance, &event)? else {
+            return Ok(false);
+        };
+        if let Some(existing) = self
+            .entries
+            .iter_mut()
+            .find(|existing| existing.claim_id() == claim_id)
+        {
+            *existing = entry;
+        }
+        Ok(true)
+    }
+
     /// The claims, not among `targets`, whose sentences the teaching review
     /// may repair.
     #[allow(dead_code)]

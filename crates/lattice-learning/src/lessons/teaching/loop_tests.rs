@@ -560,6 +560,42 @@ async fn a_teaching_finding_on_the_sentence_of_a_machine_claim_with_attempts_lef
     Ok(())
 }
 
+#[test]
+fn a_finding_with_no_passage_about_a_released_sentence_changes_that_sentence_and_keeps_the_change()
+{
+    let sentence = "The function returns the number 4 for the sum of two and two.";
+    let mut previous = lesson(EXCERPT);
+    previous["blocks"][0]["body"] = json!(sentence);
+    let mut repaired = previous.clone();
+    repaired["blocks"][0]["body"] = json!("The function returns the number 4 for two plus two.");
+    let protected = vec![crate::lessons::content_verification::Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: sentence.into(),
+        released: true,
+    }];
+    let finding = ReviewFinding::new(
+        FindingKind::Teaching,
+        Some(FindingSite::Section(0)),
+        "the explanation is wordy",
+    );
+
+    assert!(
+        protected::on_protected(&previous, std::slice::from_ref(&finding), &protected).is_empty()
+    );
+    let (kept, unchanged) = protected::confine_review(
+        &previous,
+        &repaired.to_string(),
+        std::slice::from_ref(&finding),
+        &protected,
+    )
+    .unwrap();
+
+    let kept: Value = serde_json::from_str(&kept.expect("the repair is kept")).unwrap();
+    assert_eq!(kept["blocks"][0]["body"], repaired["blocks"][0]["body"]);
+    assert!(unchanged.is_empty());
+}
+
 #[tokio::test]
 async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragraph_with_verified_claims(
 ) -> Result<()> {
