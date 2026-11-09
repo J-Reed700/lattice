@@ -577,3 +577,11 @@ fn the_writer_is_told_quotation_marks_are_for_quoted_wording() {
         );
     }
 }
+
+#[test]
+fn the_writer_is_told_to_name_no_source_by_name_either() {
+    let instructions = citation_instructions(true);
+    assert!(instructions.contains("In the project's tutorial"));
+    assert!(instructions.contains("According to the guide"));
+    assert!(!instructions.contains("an attribution to a source"));
+}
