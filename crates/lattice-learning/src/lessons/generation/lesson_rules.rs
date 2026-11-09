@@ -6,11 +6,12 @@
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text};
+use crate::assessment_engine::{distinct_options, key_fault, KeyFault};
 use crate::content_verification::{figures, names_a_source, needs_citation, Givens, CITED_KINDS};
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 /// The heading a check section's reveal starts under (learning science
 /// lessons §3.3): the learner commits to an answer to what is above it
@@ -460,17 +461,34 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
                     .collect()
             })
             .unwrap_or_default();
-        let mut choices = HashSet::new();
+        let choice_texts: Vec<String> = options.iter().map(|o| (*o).to_owned()).collect();
+        let right = question
+            .get("correctIndex")
+            .and_then(Value::as_u64)
+            .and_then(|right| usize::try_from(right).ok());
         if options.len() != 4
-            || options
-                .iter()
-                .any(|option| !validate_text(option) || !choices.insert(normalize(option)))
+            || options.iter().any(|option| !validate_text(option))
+            || !distinct_options(&choice_texts)
         {
             findings.push(structure(
                 site,
                 format!("{label} needs four distinct answer choices."),
                 format!("{label} needs four distinct answer choices."),
             ));
+        } else if let Some(fault) = right.and_then(|right| key_fault(prompt, &choice_texts, right))
+        {
+            findings.push(match fault {
+                KeyFault::LengthBiased => structure(
+                    site,
+                    format!("{label}'s right choice stands out as the longest."),
+                    format!("{label}'s right choice is much longer than the others; the four choices must be close in length. Shorten the right choice, or make the wrong choices as specific."),
+                ),
+                KeyFault::GivesAway => structure(
+                    site,
+                    format!("{label}'s prompt gives away its answer."),
+                    format!("{label}'s right choice repeats the prompt's words, so the prompt gives the answer away; reword the prompt or the right choice."),
+                ),
+            });
         }
         let reasons = reasons(question);
         if reasons.len() != options.len() {
@@ -480,10 +498,6 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
                 format!("{label} needs one entry in rationales for each answer choice, in the order of the choices: empty for the right choice, and for each wrong choice the misconception it reflects and why it fails."),
             ));
         } else {
-            let right = question
-                .get("correctIndex")
-                .and_then(Value::as_u64)
-                .and_then(|right| usize::try_from(right).ok());
             let lacking: Vec<String> = reasons
                 .iter()
                 .enumerate()
