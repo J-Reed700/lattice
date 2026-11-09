@@ -61,6 +61,10 @@ pub struct SidecarConfig {
     /// The window of the CPU attempt, when it differs from [`Self::context_size`].
     pub cpu_context_size: Option<u32>,
 
+    /// Whether the windows were fitted to the machine because the user saved
+    /// none, rather than being the user's.
+    pub auto_window: bool,
+
     /// Whether the GGUF carries a multi-token-prediction head llama-server
     /// can draft with. Only an MTP build of a model has one.
     pub mtp_capable: bool,
@@ -452,6 +456,7 @@ impl SidecarConfig {
             n_gpu_layers: 99,
             context_size,
             cpu_context_size: None,
+            auto_window: false,
             mtp_capable: false,
             speculative_decoding: SpeculativeDecoding::Off,
             parallel_slots: None,
@@ -535,6 +540,7 @@ impl SidecarConfig {
             n_gpu_layers: if has_accelerator { 99 } else { 0 },
             context_size,
             cpu_context_size: None,
+            auto_window: false,
             mtp_capable: false,
             speculative_decoding: SpeculativeDecoding::Off,
             parallel_slots: None,

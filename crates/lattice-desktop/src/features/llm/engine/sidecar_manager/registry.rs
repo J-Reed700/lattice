@@ -276,6 +276,15 @@ pub(super) struct RunningServer {
     pub(super) context_size: u32,
 }
 
+/// The configuration among `servers` that is `config` but for its windows,
+/// when the user saved neither's.
+pub(super) fn running_alike(
+    _servers: &[RunningServer],
+    _config: &SidecarConfig,
+) -> Option<SidecarConfig> {
+    None
+}
+
 /// GPU memory held by the GPU-offloaded servers among `servers` whose
 /// configuration is `counted`.
 pub(super) fn gpu_bytes_where(
