@@ -96,8 +96,9 @@ impl LearningAssessmentRepository {
             "Operation ID was already used for a different quiz.",
         );
         if operation.seen(&mut *tx).await? {
+            let form = Self::form_in(&mut *tx, &req.form_id).await?;
             tx.commit().await.map_err(db)?;
-            return self.get_form(&req.form_id).await;
+            return Ok(form);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         if let Some(parent) = req.retake_of_form_id.as_deref() {
@@ -223,13 +224,16 @@ impl LearningAssessmentRepository {
             }
         }
         operation.record(&mut *tx, &req.form_id).await?;
+        let form = Self::form_in(&mut *tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
-        self.get_form(&req.form_id).await
+        Ok(form)
     }
 
     pub async fn get_form(&self, form_id: &str) -> Result<LearningAssessmentFormDto> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        Self::form_in(&mut connection, form_id).await
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let form = Self::form_in(&mut read, form_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(form)
     }
 
     pub(crate) async fn form_in(
@@ -526,8 +530,9 @@ impl LearningAssessmentRepository {
             "Operation ID was reused with a different answer.",
         );
         if operation.seen(&mut *tx).await? {
+            let form = Self::form_in(&mut *tx, &req.form_id).await?;
             tx.commit().await.map_err(db)?;
-            return self.get_form(&req.form_id).await;
+            return Ok(form);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         let h = sqlx::query(
@@ -590,8 +595,9 @@ impl LearningAssessmentRepository {
             .await
             .map_err(db)?;
         operation.record(&mut *tx, &req.response.item_id).await?;
+        let form = Self::form_in(&mut *tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
-        self.get_form(&req.form_id).await
+        Ok(form)
     }
 
     pub async fn interrupt(
@@ -613,8 +619,9 @@ impl LearningAssessmentRepository {
             "Operation ID was reused with different quiz data.",
         );
         if operation.seen(&mut *tx).await? {
+            let form = Self::form_in(&mut *tx, &req.form_id).await?;
             tx.commit().await.map_err(db)?;
-            return self.get_form(&req.form_id).await;
+            return Ok(form);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
         let t = now();
@@ -625,8 +632,9 @@ impl LearningAssessmentRepository {
             ));
         }
         operation.record(&mut *tx, &()).await?;
+        let form = Self::form_in(&mut *tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
-        self.get_form(&req.form_id).await
+        Ok(form)
     }
 }
 
