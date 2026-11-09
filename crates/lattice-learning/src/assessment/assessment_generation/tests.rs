@@ -517,6 +517,17 @@ async fn the_writer_is_told_what_the_learner_sees_and_never_to_cite_passages() -
 }
 
 #[tokio::test]
+async fn the_writer_is_told_an_explanation_is_about_its_own_question() -> Result<()> {
+    let system = writer_instructions().await?;
+    let sentence = "An explanation and its rationales are about the question's own case: they use the names, paths and values its prompt gives, never another example's.";
+    assert!(
+        system.contains(sentence),
+        "missing \"{sentence}\" in {system}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn the_writer_is_told_a_prompt_states_every_value_its_answer_depends_on() -> Result<()> {
     let system = writer_instructions().await?;
     let sentence = "A prompt states every value its answer depends on, such as a path or a name, so it can be answered from the prompt and the lesson alone.";
@@ -537,4 +548,50 @@ fn the_writer_is_told_options_are_shuffled_so_they_are_named_by_their_words() {
         SYSTEM.contains("never by its position, number or letter"),
         "SYSTEM must forbid naming an option by position, number or letter"
     );
+}
+
+#[test]
+fn the_instructions_say_what_do_not_repeat_requires() {
+    assert!(
+        SYSTEM.contains("doNotRepeat"),
+        "SYSTEM never names doNotRepeat"
+    );
+    assert!(
+        SYSTEM.contains("never asks one of them again"),
+        "SYSTEM never says a new item does not ask one of its questions again"
+    );
+}
+
+#[test]
+fn do_not_repeat_holds_every_existing_prompt_in_full() {
+    let mut need = need("Explain iron oxide reduction.".into(), 1);
+    need.existing_prompts = (0..45)
+        .map(|i| format!("Question {i}: {}", "which case decides it? ".repeat(12)))
+        .collect();
+    assert!(need
+        .existing_prompts
+        .iter()
+        .all(|p| p.chars().count() > 160));
+    let batch = Batch {
+        need: &need,
+        count: 1,
+        notes: vec![],
+        repair: None,
+    };
+
+    let skeleton = batch.skeleton();
+
+    let listed: Vec<&str> = skeleton["doNotRepeat"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .collect();
+    assert_eq!(listed.len(), need.existing_prompts.len());
+    for prompt in &need.existing_prompts {
+        assert!(
+            listed.contains(&prompt.as_str()),
+            "cut or missing: {prompt}"
+        );
+    }
 }

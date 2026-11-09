@@ -758,6 +758,13 @@ fn the_writer_asks_questions_only_about_what_the_learner_was_taught() {
 }
 
 #[test]
+fn the_writer_is_told_question_reasons_say_what_is_true() {
+    let text = writer_requirements();
+    let sentence = "Every rationale and the explanation say what is true about this question's own case, using the names, paths and values its prompt gives; never give what a source, an excerpt, a passage or a tutorial says or does not say as the reason.";
+    assert!(text.contains(sentence), "missing {sentence:?} in {text}");
+}
+
+#[test]
 fn the_writer_teaches_how_a_deliverable_is_recorded() {
     let text = writer_requirements();
     for expected in [

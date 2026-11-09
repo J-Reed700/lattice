@@ -7,13 +7,13 @@
 //! wording. It is bound to the text of that part (`unit_sha256`): while the
 //! text is unchanged the machine does not repair it again and a "keep as
 //! written" stands; once the text changes, both lapse.
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 
 use super::teaching_summary::{derive, passage_shown, sentence_of, Stored};
 use crate::persistence::{db, now};
@@ -421,6 +421,24 @@ impl TeachingFindingsRepository {
         }
         tx.commit().await.map_err(db)
     }
+}
+
+/// The (lesson, question index) pairs of a program whose question finding waits and whose part is unchanged.
+pub(crate) async fn waiting_questions_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<HashSet<(String, usize)>> {
+    let rows: Vec<(String, i64)> = sqlx::query_as(
+        "SELECT f.lesson_id, f.unit_index FROM learning_lesson_teaching_findings f          JOIN learning_lessons l ON l.id=f.lesson_id          WHERE l.program_id=? AND f.site='question' AND f.state='waiting'          AND f.part_changed_at IS NULL AND f.unit_index IS NOT NULL",
+    )
+    .bind(program_id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(db)?;
+    Ok(rows
+        .into_iter()
+        .filter_map(|(lesson, index)| Some((lesson, usize::try_from(index).ok()?)))
+        .collect())
 }
 
 #[cfg(test)]
