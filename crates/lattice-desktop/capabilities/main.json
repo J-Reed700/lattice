@@ -481,6 +481,13 @@
     "learning:allow-set-coding-clock",
     "learning:allow-finish-coding-session",
     "learning:allow-practice-due",
+    "learning:allow-list-coding-sessions",
+    "learning:allow-remove-coding-example",
+    "learning:allow-respond-coding-session",
+    "learning:allow-set-coding-setting",
+    "learning:allow-reveal-coding-solution",
+    "learning:allow-get-practice-fit",
+    "learning:allow-check-practice-fit",
     "compare:allow-compare-documents",
     "corpus-shape:allow-cluster-vault-run",
     "corpus-shape:allow-list-clusters"

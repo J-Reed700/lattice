@@ -1,85 +1,183 @@
-//! Tauri IPC commands for coding sessions
+//! Tauri IPC commands for coding sessions: thin wrappers over `lattice_learning::practice::coding::session`
 //! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 7.5).
 
 use async_trait::async_trait;
-use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tauri::State;
-use tokio_util::sync::CancellationToken;
 
+use crate::features::learning::practical_repository::LearningPracticalRepository;
+use crate::features::learning::practical_runs::start_coding_run;
 use crate::interfaces::di::Container;
-use lattice_core::shared::error::Result as CoreResult;
+use lattice_core::application::ports::llm_port::LLMPort;
+use lattice_core::shared::error::{AppError, Result as CoreResult};
 use lattice_core::shared::ipc::ApiError;
-use lattice_learning::drills::runner::{runner_for, CodeRunner, RunOutcome};
+use lattice_learning::drills::runner::{runner_for, CodeRunner};
 use lattice_learning::embedded_runtime::BuiltinRuntimes;
-use lattice_learning::lab_runtime::LearningLabFile;
-use lattice_learning::practice::coding::harness::python::PythonHarness;
+use lattice_learning::practical_dto::LearningPracticalRunDto;
+use lattice_learning::practical_runs::CodingRunStart;
+use lattice_learning::practice::coding::counterpart::CounterpartReply;
+use lattice_learning::practice::coding::debrief::{CodingDebriefer, Debrief, Debriefer, SessionEvidence};
+use lattice_learning::practice::coding::dto::*;
+use lattice_learning::practice::coding::examples::ExampleCheck;
+use lattice_learning::practice::coding::hints::CodeHint;
 use lattice_learning::practice::coding::jobs::{CODING_BUILD, CODING_BUILD_STEPS};
-use lattice_learning::practice::coding::problem::{CodingTask, Difficulty, Setting};
+use lattice_learning::practice::coding::observation::WorkspaceObservation;
+use lattice_learning::practice::coding::policy::{CodingCue, CodingPolicy};
+use lattice_learning::practice::coding::problem::{CaseResult, Problem};
 use lattice_learning::practice::coding::session::{
-    self, CodingExampleDto, CodingSessionDto, CodingStage, RunScope,
+    CodingAids, CodingRuns, CodingSessions, LiveAids, SystemClock,
 };
 
-/// Fallback runner when no built-in Python bundle is available.
-struct FallbackRunner;
+fn repo_of(container: &Container) -> LearningPracticalRepository {
+    LearningPracticalRepository::new(container.db_pool().clone())
+}
+
+fn unused<T>() -> CoreResult<T> {
+    Err(AppError::InvalidState(
+        "This command does not use the model or the runner.".into(),
+    ))
+}
+
+/// Aids for a command that never asks the model or the runner.
+struct NoAids;
 
 #[async_trait]
-impl CodeRunner for FallbackRunner {
-    fn name(&self) -> &str {
-        "fallback"
+impl CodingAids for NoAids {
+    fn model_name(&self) -> &str {
+        ""
     }
-    fn entrypoint(&self) -> &str {
-        "checks.py"
+    async fn check_example(&self, _: &Problem, _: &[String], _: &str) -> CoreResult<ExampleCheck> {
+        unused()
     }
-    fn contract(&self) -> &str {
-        "fallback"
+    async fn reference_answer(&self, _: &Problem, _: &[String]) -> CoreResult<CaseResult> {
+        unused()
     }
-    fn running(&self, _path: &str) -> String {
-        String::new()
-    }
-    async fn run(
+    async fn hint(
         &self,
-        _files: &[lattice_core::domain::learning::drills::DrillFile],
-        _test: &str,
-        _cancel: CancellationToken,
-    ) -> CoreResult<RunOutcome> {
-        Ok(RunOutcome::Failed {
-            output: String::new(),
-        })
+        _: &Problem,
+        _: &WorkspaceObservation,
+        _: CodeHintRung,
+        _: bool,
+    ) -> CoreResult<CodeHint> {
+        unused()
     }
-    async fn run_capturing(
+    async fn reply(
         &self,
-        _files: &[LearningLabFile],
-        _read_only_paths: &[String],
-        _cancel: CancellationToken,
-    ) -> CoreResult<(RunOutcome, String)> {
-        Ok((
-            RunOutcome::Failed {
-                output: String::new(),
-            },
-            String::new(),
-        ))
+        _: &Problem,
+        _: &CodingPolicy,
+        _: &CodingCue,
+        _: &WorkspaceObservation,
+    ) -> CoreResult<Option<CounterpartReply>> {
+        unused()
     }
 }
 
-/// Request payload to queue a coding problem build job.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct StartCodingBuildRequestDto {
-    pub program_id: String,
-    pub lesson_id: Option<String>,
-    pub task: CodingTask,
-    pub setting: Setting,
-    pub language: String,
-    pub difficulty: Difficulty,
-    pub focus: Option<String>,
+/// A debriefer for a command that never finishes a session.
+struct NoDebrief;
+
+#[async_trait]
+impl Debriefer for NoDebrief {
+    async fn debrief(&self, _: &SessionEvidence) -> CoreResult<Debrief> {
+        unused()
+    }
 }
 
-/// Response payload containing the queued job identifier.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct StartedCodingBuildDto {
-    pub job_id: String,
+/// Debriefs with the model a command pinned.
+struct PinnedDebriefer<'a>(&'a dyn LLMPort);
+
+#[async_trait]
+impl Debriefer for PinnedDebriefer<'_> {
+    async fn debrief(&self, evidence: &SessionEvidence) -> CoreResult<Debrief> {
+        CodingDebriefer { llm: self.0 }.debrief(evidence).await
+    }
+}
+
+/// Runs a coding run on the built-in runtime and waits for it.
+struct DesktopRuns<'a> {
+    container: &'a Container,
+    runtimes: &'a BuiltinRuntimes,
+}
+
+#[async_trait]
+impl CodingRuns for DesktopRuns<'_> {
+    async fn start(
+        &self,
+        start: &CodingRunStart,
+        payload_hash: &str,
+    ) -> CoreResult<LearningPracticalRunDto> {
+        start_coding_run(
+            &repo_of(self.container),
+            &self.container.practical_run_registry(),
+            self.container.core.background(),
+            self.runtimes,
+            start,
+            payload_hash,
+        )
+        .await
+    }
+}
+
+/// The runner for the language of the session's problem.
+async fn runner_of(
+    repo: &LearningPracticalRepository,
+    program_id: &str,
+    session_id: &str,
+    runtimes: &BuiltinRuntimes,
+) -> Result<Box<dyn CodeRunner>, ApiError> {
+    let language = repo
+        .coding_session(program_id, session_id)
+        .await
+        .map_err(ApiError::from)?
+        .problem
+        .spec
+        .language;
+    runner_for(&language, runtimes).ok_or_else(|| {
+        ApiError::from(AppError::ServiceNotAvailable(format!(
+            "No built-in runtime for {language}."
+        )))
+    })
+}
+
+/// Binds `$sessions` to the session services around `$aids` and `$debriefer`.
+macro_rules! sessions {
+    ($sessions:ident, $container:expr, $runtimes:expr, $repo:expr, $aids:expr, $debriefer:expr) => {
+        let runs = DesktopRuns {
+            container: &$container,
+            runtimes: &$runtimes,
+        };
+        let $sessions = CodingSessions {
+            repo: &$repo,
+            aids: $aids,
+            runs: &runs,
+            debriefer: $debriefer,
+            clock: &SystemClock,
+        };
+    };
+}
+
+/// Binds `$sessions` for a command that never reaches the model or the runner.
+macro_rules! plain_sessions {
+    ($sessions:ident, $container:expr, $runtimes:expr, $repo:expr) => {
+        sessions!($sessions, $container, $runtimes, $repo, &NoAids, &NoDebrief);
+    };
+}
+
+/// Binds `$sessions` and the aids for a command that asks the model and runs code.
+macro_rules! live_sessions {
+    ($sessions:ident, $request:expr, $container:expr, $runtimes:expr, $repo:expr, $debriefer:expr) => {
+        let runner =
+            runner_of(&$repo, &$request.program_id, &$request.session_id, &$runtimes).await?;
+        let pin = $container
+            .learning_llm(Default::default())
+            .await
+            .map_err(ApiError::from)?;
+        let aids = LiveAids {
+            llm: pin.llm.as_ref(),
+            runner: runner.as_ref(),
+            cancel: $container.core.background().token(),
+        };
+        sessions!($sessions, $container, $runtimes, $repo, &aids, $debriefer);
+    };
 }
 
 /// Queues a coding problem build job that generates and proves a problem before saving it.
@@ -88,149 +186,103 @@ pub struct StartedCodingBuildDto {
 pub async fn start_coding_build(
     request: StartCodingBuildRequestDto,
     container: State<'_, Container>,
-) -> Result<StartedCodingBuildDto, ApiError> {
-    let operation_id = uuid::Uuid::new_v4().to_string();
+) -> Result<StartCodingBuildResultDto, ApiError> {
     let requested = serde_json::to_value(&request)
         .map_err(|e| ApiError::internal(format!("Failed to serialize build request: {e}")))?;
     let payload_hash = format!(
         "{:x}",
         sha2::Sha256::digest(requested.to_string().as_bytes())
     );
-
     let new_job = lattice_core::shared::runtime::jobs::NewJob {
         kind: CODING_BUILD.into(),
         subject_id: Some(format!("{}:coding", request.program_id)),
-        operation_id,
+        operation_id: request.operation_id.clone(),
         payload_hash,
         requested,
         progress_total: CODING_BUILD_STEPS,
         message: "Waiting to build coding problem".into(),
     };
-
     let job = container
         .jobs()
         .submit(&new_job)
         .await
         .map_err(ApiError::from)?;
     container.jobs().submitted(&job.id).await;
-
-    Ok(StartedCodingBuildDto { job_id: job.id })
+    Ok(StartCodingBuildResultDto { job_id: job.id })
 }
 
-/// Request to create and start a new coding session.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct StartCodingSessionRequestDto {
-    pub operation_id: String,
-    pub session_id: String,
-    pub program_id: String,
-    pub activity_id: String,
-    pub setting: Setting,
-    pub budget_seconds: Option<u32>,
-}
-
-/// Creates a new coding session and returns the initial session state.
 #[tauri::command]
 #[specta::specta]
 pub async fn start_coding_session(
     request: StartCodingSessionRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
-    session::start_coding_session(
-        container.db_pool(),
-        &request.session_id,
-        &request.program_id,
-        &request.activity_id,
-        request.setting,
-        request.budget_seconds,
-    )
-    .await
-    .map_err(ApiError::from)
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.start(&request).await.map_err(ApiError::from)
 }
 
-/// Retrieves the current state of a coding session, redacted by setting and stage.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_coding_session(
-    session_id: String,
+    request: CodingSessionRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
-    session::get_coding_session(container.db_pool(), &session_id)
-        .await
-        .map_err(ApiError::from)
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.get(&request).await.map_err(ApiError::from)
 }
 
-/// Request to advance a coding session to a new stage.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct MoveCodingStageRequestDto {
-    pub operation_id: String,
-    pub session_id: String,
-    pub stage: CodingStage,
-    pub expected_revision: i64,
+#[tauri::command]
+#[specta::specta]
+pub async fn list_coding_sessions(
+    request: ListCodingSessionsRequestDto,
+    container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
+) -> Result<Vec<CodingSessionSummaryDto>, ApiError> {
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.list(&request).await.map_err(ApiError::from)
 }
 
-/// Transitions the session to a new stage and cues the counterpart if appropriate.
 #[tauri::command]
 #[specta::specta]
 pub async fn move_coding_stage(
     request: MoveCodingStageRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
-    session::move_coding_stage(
-        container.db_pool(),
-        &request.session_id,
-        request.stage,
-        request.expected_revision,
-    )
-    .await
-    .map_err(ApiError::from)
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.move_stage(&request).await.map_err(ApiError::from)
 }
 
-/// Request to verify a learner-provided example.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct CheckCodingExampleRequestDto {
-    pub operation_id: String,
-    pub session_id: String,
-    pub args_json: String,
-    pub expected_json: String,
-}
-
-/// Checks a learner example against the reference solution and misreadings.
 #[tauri::command]
 #[specta::specta]
 pub async fn check_coding_example(
     request: CheckCodingExampleRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
-) -> Result<CodingExampleDto, ApiError> {
-    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
-    let harness = PythonHarness::new();
-    session::check_coding_example(
-        container.db_pool(),
-        runner.as_ref(),
-        &harness,
-        &request.session_id,
-        &request.args_json,
-        &request.expected_json,
-    )
-    .await
-    .map_err(ApiError::from)
+) -> Result<CodingSessionDto, ApiError> {
+    let repo = repo_of(&container);
+    live_sessions!(sessions, request, container, runtimes, repo, &NoDebrief);
+    sessions.check_example(&request).await.map_err(ApiError::from)
 }
 
-/// Request to execute code under a specified test scope.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct RunCodingSessionRequestDto {
-    pub operation_id: String,
-    pub session_id: String,
-    pub scope: RunScope,
-    pub files: Vec<LearningLabFile>,
-    pub custom_input_json: Option<String>,
+#[tauri::command]
+#[specta::specta]
+pub async fn remove_coding_example(
+    request: RemoveCodingExampleRequestDto,
+    container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
+) -> Result<CodingSessionDto, ApiError> {
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.remove_example(&request).await.map_err(ApiError::from)
 }
 
-/// Runs draft code against examples, all cases (submit), or custom input.
 #[tauri::command]
 #[specta::specta]
 pub async fn run_coding_session(
@@ -238,31 +290,11 @@ pub async fn run_coding_session(
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
-    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
-    let harness = PythonHarness::new();
-    session::run_coding_session(
-        container.db_pool(),
-        runner.as_ref(),
-        &harness,
-        &request.session_id,
-        request.scope,
-        request.files,
-        request.custom_input_json,
-    )
-    .await
-    .map_err(ApiError::from)
+    let repo = repo_of(&container);
+    live_sessions!(sessions, request, container, runtimes, repo, &NoDebrief);
+    sessions.run(&request).await.map_err(ApiError::from)
 }
 
-/// Request to unlock the next rung of help on the hint ladder.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct AskCodingHintRequestDto {
-    pub operation_id: String,
-    pub session_id: String,
-    pub expected_revision: i64,
-}
-
-/// Unlocks and returns the next checked hint rung.
 #[tauri::command]
 #[specta::specta]
 pub async fn ask_coding_hint(
@@ -270,36 +302,11 @@ pub async fn ask_coding_hint(
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
-    let pin = container
-        .learning_llm(Default::default())
-        .await
-        .map_err(ApiError::from)?;
-    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
-    let harness = PythonHarness::new();
-    session::ask_coding_hint(
-        container.db_pool(),
-        pin.llm.as_ref(),
-        runner.as_ref(),
-        &harness,
-        &request.session_id,
-        request.expected_revision,
-    )
-    .await
-    .map_err(ApiError::from)
+    let repo = repo_of(&container);
+    live_sessions!(sessions, request, container, runtimes, repo, &NoDebrief);
+    sessions.ask_hint(&request).await.map_err(ApiError::from)
 }
 
-/// Request to send a learner message in the conversation thread.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct SendCodingTurnRequestDto {
-    pub operation_id: String,
-    pub session_id: String,
-    pub content: String,
-    pub spoken: bool,
-    pub expected_revision: i64,
-}
-
-/// Records a learner turn and generates a counterpart reply if cued.
 #[tauri::command]
 #[specta::specta]
 pub async fn send_coding_turn(
@@ -307,35 +314,23 @@ pub async fn send_coding_turn(
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
-    let pin = container
-        .learning_llm(Default::default())
-        .await
-        .map_err(ApiError::from)?;
-    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
-    let harness = PythonHarness::new();
-    session::send_coding_turn(
-        container.db_pool(),
-        pin.llm.as_ref(),
-        runner.as_ref(),
-        &harness,
-        &request.session_id,
-        &request.content,
-        request.spoken,
-        request.expected_revision,
-    )
-    .await
-    .map_err(ApiError::from)
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.send_turn(&request).await.map_err(ApiError::from)
 }
 
-/// Request to register a draft checkpoint after typing pauses in Watched setting.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct ObserveCodingDraftRequestDto {
-    pub session_id: String,
-    pub files: Vec<LearningLabFile>,
+#[tauri::command]
+#[specta::specta]
+pub async fn respond_coding_session(
+    request: CodingSessionRequestDto,
+    container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
+) -> Result<CodingSessionDto, ApiError> {
+    let repo = repo_of(&container);
+    live_sessions!(sessions, request, container, runtimes, repo, &NoDebrief);
+    sessions.respond(&request).await.map_err(ApiError::from)
 }
 
-/// Evaluates draft checkpoint in Watched setting; counterpart may speak or remain silent.
 #[tauri::command]
 #[specta::specta]
 pub async fn observe_coding_draft(
@@ -343,40 +338,78 @@ pub async fn observe_coding_draft(
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
-    let pin = container
-        .learning_llm(Default::default())
-        .await
-        .map_err(ApiError::from)?;
-    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
-    let harness = PythonHarness::new();
-    session::observe_coding_draft(
-        container.db_pool(),
-        pin.llm.as_ref(),
-        runner.as_ref(),
-        &harness,
-        &request.session_id,
-        request.files,
-    )
-    .await
-    .map_err(ApiError::from)
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.observe_draft(&request).await.map_err(ApiError::from)
 }
 
-/// Request to update active clock accounting.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct SetCodingClockRequestDto {
-    pub session_id: String,
-    pub open: bool,
-}
-
-/// Pauses or resumes the active elapsed clock for the session.
 #[tauri::command]
 #[specta::specta]
 pub async fn set_coding_clock(
     request: SetCodingClockRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
+) -> Result<ClockDto, ApiError> {
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.set_clock(&request).await.map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn set_coding_setting(
+    request: SetCodingSettingRequestDto,
+    container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
-    session::set_coding_clock(container.db_pool(), &request.session_id, request.open)
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.set_setting(&request).await.map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn reveal_coding_solution(
+    request: RevealCodingSolutionRequestDto,
+    container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
+) -> Result<CodingSessionDto, ApiError> {
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.reveal_solution(&request).await.map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn finish_coding_session(
+    request: FinishCodingSessionRequestDto,
+    container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
+) -> Result<CodingSessionDto, ApiError> {
+    let repo = repo_of(&container);
+    let runner = runner_of(&repo, &request.program_id, &request.session_id, &runtimes).await?;
+    let pin = container
+        .learning_llm(Default::default())
         .await
-        .map_err(ApiError::from)
+        .map_err(ApiError::from)?;
+    let aids = LiveAids {
+        llm: pin.llm.as_ref(),
+        runner: runner.as_ref(),
+        cancel: container.core.background().token(),
+    };
+    let debriefer = PinnedDebriefer(pin.llm.as_ref());
+    sessions!(sessions, container, runtimes, repo, &aids, &debriefer);
+    sessions.finish(&request).await.map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn practice_due(
+    request: PracticeDueRequestDto,
+    container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
+) -> Result<PracticeDueDto, ApiError> {
+    let repo = repo_of(&container);
+    plain_sessions!(sessions, container, runtimes, repo);
+    sessions.due(&request).await.map_err(ApiError::from)
 }

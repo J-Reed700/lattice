@@ -195,7 +195,32 @@ impl LearningPracticalRepository {
         program_id: &str,
         session_id: &str,
     ) -> Result<SessionBundle> {
-        Err(AppError::InvalidState("Not built yet.".into()))
+        uuid(session_id, "coding session")?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let row = row_on(&mut tx, program_id, session_id).await?;
+        let snapshot: String = sqlx::query_scalar(
+            "SELECT activity_snapshot_json FROM learning_simulation_sessions WHERE id=?",
+        )
+        .bind(session_id)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        let activity: InternalActivitySnapshot = decode(&snapshot)?;
+        let bundle = SessionBundle {
+            problem: problem_of(&activity)?,
+            lesson_id: activity.lesson_id.clone(),
+            title: activity.title.clone(),
+            activity_revision: activity.revision,
+            events: events_on(&mut tx, session_id).await?,
+            examples: examples_on(&mut tx, session_id).await?,
+            runs: runs_on(&mut tx, session_id, None).await?,
+            turns: turns_on(&mut tx, session_id).await?,
+            scorecard: scorecard_on(&mut tx, session_id).await?,
+            debrief: debrief_on(&mut tx, session_id).await?,
+            row,
+        };
+        tx.commit().await.map_err(db)?;
+        Ok(bundle)
     }
 
     /// A run of the session with the full result of each case.
@@ -205,7 +230,16 @@ impl LearningPracticalRepository {
         session_id: &str,
         run_id: &str,
     ) -> Result<StoredRun> {
-        Err(AppError::InvalidState("Not built yet.".into()))
+        uuid(session_id, "coding session")?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        row_on(&mut tx, program_id, session_id).await?;
+        let run = runs_on(&mut tx, session_id, Some(run_id))
+            .await?
+            .into_iter()
+            .next()
+            .ok_or_else(|| AppError::NotFound("Run not found".into()))?;
+        tx.commit().await.map_err(db)?;
+        Ok(run)
     }
 
     /// The program's coding sessions, newest first.
@@ -213,16 +247,74 @@ impl LearningPracticalRepository {
         &self,
         program_id: &str,
     ) -> Result<Vec<crate::practice::coding::dto::CodingSessionSummaryDto>> {
-        Err(AppError::InvalidState("Not built yet.".into()))
+        uuid(program_id, "program")?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let rows = sqlx::query("SELECT s.*,a.title AS title FROM learning_coding_sessions s JOIN learning_practical_activities a ON a.id=s.activity_id WHERE s.program_id=? ORDER BY s.created_at DESC,s.id DESC")
+            .bind(program_id)
+            .fetch_all(&mut *tx)
+            .await
+            .map_err(db)?;
+        let mut summaries = Vec::new();
+        for row in rows {
+            let session = parse_row(&row)?;
+            let last_submit: Option<String> = sqlx::query_scalar(
+                "SELECT payload_json FROM learning_coding_events WHERE session_id=? AND kind='run' AND json_extract(payload_json,'$.scope')='all' ORDER BY ordinal DESC LIMIT 1",
+            )
+            .bind(&session.id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?;
+            let counts = last_submit
+                .as_deref()
+                .map(decode::<serde_json::Value>)
+                .transpose()?;
+            let count = |key: &str| {
+                counts
+                    .as_ref()
+                    .and_then(|value| value.get(key))
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|number| u32::try_from(number).ok())
+            };
+            summaries.push(CodingSessionSummaryDto {
+                passed: count("passed"),
+                total: count("total"),
+                title: row.get("title"),
+                finished: session.finished_at.is_some(),
+                session_id: session.id,
+                activity_id: session.activity_id,
+                task: session.task,
+                setting: session.setting,
+                stage: session.stage,
+                created_at: session.created_at,
+                finished_at: session.finished_at,
+            });
+        }
+        tx.commit().await.map_err(db)?;
+        Ok(summaries)
     }
 
     /// Whether anything but the draft changed after `since`: a run, a stage move or a learner turn.
     pub async fn coding_worked_since(&self, session_id: &str, since: i64) -> Result<bool> {
-        Err(AppError::InvalidState("Not built yet.".into()))
+        uuid(session_id, "coding session")?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let worked: i64 = sqlx::query_scalar(
+            "SELECT EXISTS(SELECT 1 FROM learning_coding_events WHERE session_id=?1 AND kind IN ('run','stage') AND at>?2) OR EXISTS(SELECT 1 FROM learning_simulation_turns WHERE session_id=?1 AND speaker='learner' AND created_at>?2)",
+        )
+        .bind(session_id)
+        .bind(since)
+        .fetch_one(&mut *tx)
+        .await
+        .map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(worked == 1)
     }
 
     /// What the Practice page counts as due: coding patterns and the drills'.
     pub async fn practice_due(&self, program_id: &str, now: i64) -> Result<PracticeDueDto> {
-        Err(AppError::InvalidState("Not built yet.".into()))
+        uuid(program_id, "program")?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let due = patterns::practice_due_in(&mut tx, program_id, now).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(due)
     }
 }
