@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
-pub(super) const POLICY: &str = "section-review-v3";
+pub(super) const POLICY: &str = "section-review-v4";
 
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
@@ -75,21 +75,11 @@ fn review_candidate(candidate: &Value) -> (Value, Vec<Vec<String>>) {
                 .get("body")
                 .and_then(Value::as_str)
                 .unwrap_or_default();
-            let mut passages = Vec::new();
-            let mut start = 0;
-            let mut length = 0;
-            for (offset, character) in body.char_indices() {
-                length += 1;
-                if (length >= 240 && character == '\n') || length >= 480 {
-                    let end = offset + character.len_utf8();
-                    passages.push(json!({"id":format!("section-{index}-passage-{}", passages.len()),"text":body.get(start..end).unwrap_or_default()}));
-                    start = end;
-                    length = 0;
-                }
-            }
-            if start < body.len() {
-                passages.push(json!({"id":format!("section-{index}-passage-{}", passages.len()),"text":body.get(start..).unwrap_or_default()}));
-            }
+            let passages: Vec<Value> = passages::split(body)
+                .into_iter()
+                .enumerate()
+                .map(|(n, text)| json!({"id":format!("section-{index}-passage-{n}"),"text":text}))
+                .collect();
             ids.push(
                 passages
                     .iter()
@@ -375,6 +365,9 @@ async fn review_sections(
 pub mod test_support;
 
 #[cfg(test)]
+mod passage_tests;
+mod passages;
+#[cfg(test)]
 mod section_list_tests;
 
 #[cfg(test)]
@@ -471,7 +464,7 @@ mod tests {
 
     #[test]
     fn passages_preserve_every_byte_and_ids_are_scoped_to_the_section() {
-        let body = "🦀 Rust’s ‘book’\n```rust\n    println!(\"a  b\");\n```\r\n".repeat(40);
+        let body = "🦀 Rust’s ‘book’\n```rust\n    println!(\"a  b\");\n```\r\n\r\n".repeat(40);
         let original = json!({"blocks":[{"body":body,"title":"Unicode and code"}]});
         let (reviewed, ids) = review_candidate(&original);
         let rejoined: String = reviewed["blocks"][0]["bodyPassages"]

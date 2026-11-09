@@ -841,6 +841,50 @@ async fn a_cited_sentence_whose_every_part_is_common_stays_loses_its_own_citatio
 }
 
 #[tokio::test]
+async fn a_sourced_statement_the_passages_do_not_state_but_every_sample_confirms_is_general_knowledge_and_never_rewritten(
+) -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
+    let model = Reads::new(
+        Classes::new(&[COMMON, REWORDED, GOOD])
+            .knows(&[(COMMON, ["true_common"; 3])])
+            .rewrites(COMMON, REWORDED),
+        &["specific_missing"],
+    )
+    .finds_unstated(&[COMMON]);
+
+    let (raw, _) = prepare(
+        &repo,
+        &job,
+        &lesson_id,
+        &model,
+        Some(two_sections(COMMON, GOOD, true).to_string()),
+        &[source()],
+    )
+    .await?;
+
+    assert_eq!(model.inner.calls("repair"), 0);
+    let written: Value = serde_json::from_str(&raw)?;
+    assert_eq!(written["blocks"][0]["body"], section(COMMON));
+    let ledger = ClaimReviewRepository::new(pool.clone())
+        .load(&lesson_id)
+        .await?;
+    let claim = ledger
+        .claims
+        .iter()
+        .find(|claim| claim.statement() == COMMON);
+    assert!(
+        matches!(
+            claim.map(|claim| claim.state()),
+            Some(ClaimState::GeneralKnowledge { .. })
+        ),
+        "{:?}",
+        claim.map(|claim| claim.state())
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_common_statement_most_samples_call_false_stays_and_passes_when_its_sections_passages_state_it(
 ) -> Result<()> {
     // §1 #5 of the acceptance policy design

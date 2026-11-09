@@ -67,14 +67,22 @@ fn a_step_that_fits_is_sent_to_the_node_the_graph_names() {
         decide(&policy, first, parts(Stands)),
         Some((Then::End(End::Resolved), None))
     );
-    for (outcome, section_goes) in [(Outcome::Cut, false), (Outcome::CannotCut, true)] {
+    for (outcome, end) in [
+        (
+            Outcome::Cut,
+            End::Removed {
+                section_goes: false,
+            },
+        ),
+        (Outcome::CannotCut, End::Unverified),
+    ] {
         assert_eq!(
             decide(
                 &policy,
                 position(Sourced, false, false, "s.cut"),
                 cut(outcome)
             ),
-            Some((Then::End(End::Removed { section_goes }), None))
+            Some((Then::End(end), None))
         );
     }
 }

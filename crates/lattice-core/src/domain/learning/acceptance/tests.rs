@@ -13,7 +13,7 @@ use crate::domain::learning::claim_review::Class;
 const REMOVED: Walked = Walked::Ended(End::Removed {
     section_goes: false,
 });
-const REMOVED_WITH_SECTION: Walked = Walked::Ended(End::Removed { section_goes: true });
+const UNVERIFIED: Walked = Walked::Ended(End::Unverified);
 
 fn position(class: Class, changed_class: bool, reasked: bool, node: &'static str) -> Position {
     Position {

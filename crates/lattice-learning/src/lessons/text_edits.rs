@@ -1,5 +1,6 @@
 //! Apply explicit edits atomically. Unmentioned lesson bytes and items cannot
 //! change as a side effect of asking a model to correct one fact.
+use super::repeats::{self, Counts};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -221,6 +222,7 @@ fn field_value(
     path: &str,
     original: &Value,
     edits: Vec<(usize, Edit)>,
+    lesson: &Counts,
 ) -> std::result::Result<Value, (usize, String)> {
     let first = edits.first().map_or(0, |(index, _)| *index);
     if let Some(text) = original.as_str() {
@@ -245,6 +247,14 @@ fn field_value(
             };
             if matches.next().is_some() {
                 return Err((index, format!("the before text of edit {index} occurs more than once in {path}; include enough surrounding text to make it unique.")));
+            }
+            let mut alone = text.to_owned();
+            alone.replace_range(start..start + before.len(), after);
+            if let Some(sentence) = repeats::gained_repeat(text, &alone, lesson) {
+                return Err((
+                    index,
+                    format!("edit {index} to {path} adds a sentence the lesson already has: \"{sentence}\". Reword it or leave it out."),
+                ));
             }
             ranges.push((start, start + before.len(), after));
         }
@@ -285,6 +295,7 @@ fn part_values(
     candidate: &Value,
     allowed: &[String],
     edits: Vec<(usize, Edit)>,
+    lesson: &Counts,
 ) -> std::result::Result<FieldValues, Problems> {
     let mut problems = Vec::new();
     let mut fields = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
@@ -309,7 +320,7 @@ fn part_values(
         let first = edits.first().map_or(0, |(index, _)| *index);
         match candidate.pointer(&path) {
             None => problems.push((first, format!("{path} is not in the draft."))),
-            Some(original) => match field_value(&path, original, edits) {
+            Some(original) => match field_value(&path, original, edits, lesson) {
                 Ok(value) => values.push((path, value)),
                 Err(problem) => problems.push(problem),
             },
@@ -325,6 +336,12 @@ fn part_values(
 /// Applies a patch part by part: the edits of a block or question that has
 /// any problem are left out and the other parts' edits apply.
 pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
+    apply_in(candidate, patch, &Value::Null)
+}
+
+/// [`apply`] where `lesson`, the lesson `candidate` is a part of, also holds
+/// the sentences an edit may not add again.
+pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result<Value> {
     let fail = |reason: String| {
         AppError::InvalidInput(format!(
             "The repair's edits could not be applied: {reason} The draft was preserved."
@@ -345,11 +362,12 @@ pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
                 .push((index, edit));
         }
     }
+    let held = repeats::counts_of(&[candidate, lesson]);
     let mut result = candidate.clone();
     let mut problems = Vec::new();
     let mut applied = false;
     for edits in parts.into_values() {
-        match part_values(candidate, &allowed, edits) {
+        match part_values(candidate, &allowed, edits, &held) {
             Ok(values) => {
                 applied |= !values.is_empty();
                 for (path, value) in values {
@@ -418,6 +436,84 @@ mod tests {
             "Full rewrites are not edit responses"
         );
         Ok(())
+    }
+
+    fn two_sections() -> Value {
+        json!({"blocks":[
+            {"kind":"explanation","body":"Alpha is first. Beta is second."},
+            {"kind":"explanation","body":"Gamma stands here. Delta ends it."}
+        ],"questions":[]})
+    }
+
+    #[test]
+    fn an_edit_adding_a_sentence_another_section_has_is_rejected_and_the_field_is_unchanged() {
+        let original = two_sections();
+        let repeat = json!({"path":"/blocks/1/body","before":"Delta ends it.","after":"Delta ends it. Alpha is first."});
+        let alone = apply(&original, &json!({"edits":[repeat]}).to_string());
+        assert!(alone.is_err(), "the sentence is in section 1 already");
+        assert!(
+            alone.unwrap_err().to_string().contains("Alpha is first."),
+            "the reason names the sentence"
+        );
+        let good = json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."});
+        let mixed = apply(&original, &json!({"edits":[repeat, good]}).to_string()).unwrap();
+        assert_eq!(mixed["blocks"][1], original["blocks"][1]);
+        assert_eq!(
+            mixed["blocks"][0]["body"],
+            "Alpha is first. Beta comes second."
+        );
+    }
+
+    #[test]
+    fn a_list_item_step_another_item_has_may_be_added() {
+        let original = json!({"blocks":[
+            {"kind":"explanation","body":"Intro line.\n\n- Type `pwd`.\n- Read the output."},
+            {"kind":"explanation","body":"Other text.\n\n- Open a terminal."}
+        ],"questions":[]});
+        let edit = json!({"path":"/blocks/1/body","before":"- Open a terminal.","after":"- Open a terminal.\n- Type `pwd`."});
+        let repaired = apply(&original, &json!({"edits":[edit]}).to_string());
+        assert!(repaired.is_ok(), "a step is not a sentence of the prose");
+        assert_eq!(
+            repaired.unwrap()["blocks"][1]["body"],
+            "Other text.\n\n- Open a terminal.\n- Type `pwd`."
+        );
+    }
+
+    #[test]
+    fn a_line_under_a_step_after_its_fence_may_be_added_to_another_step() {
+        let original = json!({"blocks":[
+            {"kind":"explanation","body":"Method A\n\n1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/pi/Music`."},
+            {"kind":"explanation","body":"Method B\n\n1. Run:\n   ```\n   pwd\n   ```"}
+        ],"questions":[]});
+        let edit = json!({"path":"/blocks/1/body","before":"   ```\n   pwd\n   ```","after":"   ```\n   pwd\n   ```\n   Expected output: `/home/pi/Music`."});
+        let repaired = apply(&original, &json!({"edits":[edit]}).to_string());
+        assert!(repaired.is_ok(), "the line belongs to the step");
+    }
+
+    #[test]
+    fn an_edit_adding_a_sentence_its_own_field_has_is_rejected() {
+        let original = two_sections();
+        let repeat = json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta is second. Alpha is first."});
+        let outcome = apply(&original, &json!({"edits":[repeat]}).to_string());
+        assert!(outcome.is_err(), "the field has the sentence already");
+    }
+
+    #[test]
+    fn a_sentence_rewritten_in_place_is_accepted() {
+        let original = two_sections();
+        let edits = [
+            json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta is the second one."}),
+            json!({"path":"/blocks/1/body","before":"Gamma stands here. Delta ends it.","after":"Gamma stands here. Delta closes it."}),
+        ];
+        let repaired = apply(&original, &json!({"edits":edits}).to_string()).unwrap();
+        assert_eq!(
+            repaired["blocks"][0]["body"],
+            "Alpha is first. Beta is the second one."
+        );
+        assert_eq!(
+            repaired["blocks"][1]["body"],
+            "Gamma stands here. Delta closes it."
+        );
     }
 
     #[test]
