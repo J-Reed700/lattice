@@ -1,0 +1,121 @@
+name: Coding eval binary
+
+# Never merges. The lib tests find the learning-python bundle through a compile-time
+# CARGO_MANIFEST_DIR path, so the tree is built at the path where the owner's PC has its worktree.
+on:
+  push:
+    branches: [test/coding-eval-binary]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: coding-eval-binary-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_INCREMENTAL: 0
+  LATTICE_ALLOW_UNPINNED_SIDECAR: '0'
+  SOURCE_DIR: C:\Code\lattice-wt\cs-eval-run
+
+jobs:
+  build:
+    name: lattice-desktop lib tests (windows-latest)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Place the exact commit at the source path
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force (Split-Path $env:SOURCE_DIR) | Out-Null
+          git clone --no-local --quiet "$env:GITHUB_WORKSPACE" $env:SOURCE_DIR
+          if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
+          $head = git -C $env:SOURCE_DIR rev-parse HEAD
+          if ($head -ne $env:GITHUB_SHA) { throw "source tree is at $head, expected $env:GITHUB_SHA" }
+          "CARGO_TARGET_DIR=$env:RUNNER_TEMP\target" >> $env:GITHUB_ENV
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Page file for the test build
+        uses: al-cheb/configure-pagefile-action@v1.5
+        with:
+          minimum-size: 24GB
+          maximum-size: 24GB
+          disk-root: "C:"
+
+      - name: Create build placeholders for source checks
+        shell: bash
+        working-directory: C:\Code\lattice-wt\cs-eval-run
+        run: |
+          mkdir -p dist
+          touch crates/lattice-desktop/binaries/llama-server-x86_64-pc-windows-msvc.exe \
+                crates/lattice-desktop/binaries/llama-server-cpu-x86_64-pc-windows-msvc.exe
+
+      - name: Build the lib test executable
+        shell: pwsh
+        working-directory: C:\Code\lattice-wt\cs-eval-run
+        run: |
+          $json = Join-Path $env:RUNNER_TEMP 'testbuild.json'
+          cargo test -p lattice-desktop --lib --no-run --locked --message-format=json-render-diagnostics > $json
+          if ($LASTEXITCODE -ne 0) { throw "building the lib tests failed" }
+          $exes = @(Get-Content $json | ForEach-Object {
+              $m = $null; try { $m = $_ | ConvertFrom-Json } catch { }
+              if ($m -and $m.reason -eq 'compiler-artifact' -and $m.target.name -eq 'lattice_desktop' `
+                  -and $m.target.kind -contains 'lib' -and $m.profile.test -eq $true -and $m.executable) { $m.executable }
+            })
+          if ($exes.Count -ne 1) { throw "expected exactly one lattice_desktop lib test executable, found $($exes.Count): $($exes -join ', ')" }
+          "TEST_EXE=$($exes[0])" >> $env:GITHUB_ENV
+          Write-Host $exes[0]
+
+      - name: Windows manifest is embedded in the test executable
+        shell: pwsh
+        working-directory: C:\Code\lattice-wt\cs-eval-run\crates\lattice-desktop
+        run: |
+          $mt = Get-ChildItem 'C:\Program Files (x86)\Windows Kits\10\bin\*\x64\mt.exe' |
+                Sort-Object FullName | Select-Object -Last 1
+          if (-not $mt) { throw "mt.exe not found in the Windows SDK" }
+          $out = Join-Path $env:RUNNER_TEMP 'lib.manifest'
+          & $mt.FullName -nologo -inputresource:"$env:TEST_EXE;#1" -out:$out
+          if ($LASTEXITCODE -ne 0) { throw "no RT_MANIFEST #1 resource in $env:TEST_EXE" }
+          if (-not (Select-String -Path $out -Pattern 'Microsoft.Windows.Common-Controls' -Quiet)) {
+            throw "$env:TEST_EXE has a manifest but no Common-Controls v6 dependency"
+          }
+
+      - name: The live coding evals are in the binary
+        shell: pwsh
+        run: |
+          $listed = (& $env:TEST_EXE --list --ignored) -join "`n"
+          if ($LASTEXITCODE -ne 0) { throw "--list --ignored exited $LASTEXITCODE" }
+          foreach ($name in 'live_coding_eval::builds::live_coding_build_eval',
+                            'live_coding_eval::hints::live_coding_hint_eval',
+                            'live_coding_eval::sessions::live_coding_session_eval') {
+            if (-not $listed.Contains($name)) { throw "$name is not listed by --list --ignored" }
+          }
+
+      - name: Collect the executable and build info
+        shell: pwsh
+        run: |
+          $out = Join-Path $env:RUNNER_TEMP 'out'
+          New-Item -ItemType Directory -Force $out | Out-Null
+          $dest = Join-Path $out 'lattice_desktop-lib-tests.exe'
+          Copy-Item $env:TEST_EXE $dest
+          $sha = (Get-FileHash -Algorithm SHA256 $dest).Hash.ToLower()
+          @(
+            "commit: $env:GITHUB_SHA"
+            "source path: $env:SOURCE_DIR"
+            "rustc: $(rustc --version)"
+            "sha256: $sha"
+          ) | Set-Content -Encoding utf8 (Join-Path $out 'build-info.txt')
+          "OUT_DIR=$out" >> $env:GITHUB_ENV
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coding-eval-tests-${{ github.sha }}
+          path: ${{ env.OUT_DIR }}
+          if-no-files-found: error
+          retention-days: 7
