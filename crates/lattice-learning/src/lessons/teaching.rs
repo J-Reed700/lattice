@@ -90,7 +90,7 @@ pub fn validate_saved_rubric(criteria: &[LearningPracticeCriterionDto]) -> Resul
             || !ids.insert(&c.id)
             || c.title.trim().is_empty()
             || c.description.trim().is_empty()
-            || !(1..=100).contains(&c.max_points)
+            || c.max_points < 1
     }) {
         return Err(AppError::InvalidInput(
             "Saved teaching criteria are invalid or outside their bounds.".into(),
@@ -133,10 +133,7 @@ pub(crate) fn structural_findings(schema: &Value, candidate: &str) -> Result<Vec
                 format!(
                     "Fix the schema violation at {}: {}",
                     error.instance_path, error
-                )
-                .chars()
-                .take(650)
-                .collect::<String>(),
+                ),
             )
         }));
     }
@@ -194,10 +191,7 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
                 format!(
                     "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain at least 25 characters and five words.",
                     check["error"].as_str().unwrap_or("it was not found.")
-                )
-                .chars()
-                .take(700)
-                .collect::<String>(),
+                ),
             )
             .with_summary(format!(
                 "The quotation cited in {} could not be found in its source.",
