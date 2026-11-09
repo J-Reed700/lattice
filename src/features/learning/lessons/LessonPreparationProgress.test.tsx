@@ -132,9 +132,9 @@ describe('Durable lesson preparation progress', () => {
     await openDetails();
     const steps = within(screen.getByRole('list', { name: 'Preparation workflow' })).getAllByRole('listitem');
     expect(steps.map((step) => step.textContent?.replace(/^\d+/, ''))).toEqual([
-      'References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Quiz questions', 'Publish',
+      'References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Publish',
     ]);
-    expect(steps.filter((step) => step.getAttribute('aria-current') === 'step').map((step) => step.textContent)).toEqual(['7Publish']);
+    expect(steps.filter((step) => step.getAttribute('aria-current') === 'step').map((step) => step.textContent)).toEqual(['6Publish']);
     view.unmount(); view.client.clear();
   });
 

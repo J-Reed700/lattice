@@ -102,6 +102,27 @@ describe('lesson quiz callout', () => {
     expect(screen.getByRole('button', { name: 'Preparing…' })).toBeDisabled();
   });
 
+  // Guard: the status the backend derives from the quiz job already drives this.
+  it.each(['pending', 'running'])('says a lesson’s quiz questions are being written while its quiz job is %s', async (status) => {
+    api.overview.mockResolvedValue(ok(withLesson({ bankStatus: 'preparing', preparingJobId: 'job-1', bankMessage: 'Writing quiz questions.' })));
+    api.plan.mockResolvedValue(ok({ programId: 'program-1', jobs: [{ id: 'job-1', status, progressCompleted: 0, progressTotal: 1, progressMessage: "Writing this lesson's quiz questions" }] }));
+    wrap(<LessonQuizCallout program={program} lesson={enzyme} onOpenForm={vi.fn()} onViewResult={vi.fn()} />);
+    expect(await screen.findByText("Preparing questions… step 1 of 1 (Writing this lesson's quiz questions)")).toBeVisible();
+    expect(screen.queryByText('Questions not prepared yet')).not.toBeInTheDocument();
+  });
+
+  // Guard: with no quiz job and an empty bank the quiz says so as before; a failed job says it failed.
+  it('still says the questions are not prepared when no quiz job exists, and that they failed when it did', async () => {
+    api.overview.mockResolvedValue(ok(withLesson({ bankStatus: 'not_prepared', bankSize: 0, freshItems: 0 })));
+    const first = wrap(<LessonQuizCallout program={program} lesson={enzyme} onOpenForm={vi.fn()} onViewResult={vi.fn()} />);
+    expect(await screen.findByText('Questions not prepared yet')).toBeVisible();
+    first.unmount();
+    api.overview.mockResolvedValue(ok(withLesson({ bankStatus: 'failed', bankSize: 0, freshItems: 0 })));
+    wrap(<LessonQuizCallout program={program} lesson={enzyme} onOpenForm={vi.fn()} onViewResult={vi.fn()} />);
+    expect(await screen.findByText("Couldn't prepare questions yet")).toBeVisible();
+    expect(screen.queryByText('Questions not prepared yet')).not.toBeInTheDocument();
+  });
+
   it('resumes a paused quiz by its form', async () => {
     const user = userEvent.setup();
     const onOpenForm = vi.fn();

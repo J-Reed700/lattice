@@ -16,7 +16,7 @@ import { LEARNING_PROGRAMS_KEY, learningProgramKey } from '@/features/learning/w
 import type { LearningGenerationJob } from '@/lib/bindings';
 import { jobErrorToError } from '@/lib/errorHandling';
 
-const workflow = ['References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Quiz questions', 'Publish'];
+const workflow = ['References', 'Draft', 'Teaching review', 'Coverage & examples', 'Fact checks & repairs', 'Publish'];
 
 /** "Re-checking 81 claims against 72 new references". */
 function recheckLine(references: number, claims: number): string {
@@ -151,7 +151,7 @@ export function LessonPreparationStatus({ job, queuedMore = 0, pending, programI
         {paused && <p className="mt-2 text-xs leading-5 text-text-secondary">Lesson writing and fact-checking use the main model in Settings. Changing only the utility model does not change these checks. Switching the main model currently starts drafting and verification again.</p>}
       </div>}
       {job && job.progressTotal > 1 && <p className="text-xs text-text-muted">{job.progressCompleted}/{job.progressTotal} lessons staged · Publication follows verification.</p>}
-      <ol aria-label="Preparation workflow" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-7">
+      <ol aria-label="Preparation workflow" className="grid grid-cols-2 gap-2 sm:grid-cols-3 xl:grid-cols-6">
         {workflow.map((label, index) => <li key={label} aria-current={active && !queued && phase?.group === index ? 'step' : undefined} className={`rounded-lg border px-3 py-2 text-xs ${active && !queued && phase?.group === index ? 'border-accent/50 bg-accent/10 font-semibold text-text-primary' : 'border-border text-text-muted'}`}><span className="mr-1.5 tabular-nums opacity-60">{index + 1}</span>{label}</li>)}
       </ol>
       {activity && (activity.statements || calls || hasChecks) && <div aria-label="Statement checks" className="rounded-xl border border-border bg-background/70 p-4">
