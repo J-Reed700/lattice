@@ -439,6 +439,22 @@ impl Ctx {
             .unwrap();
     }
 
+    /// Inserts a bare run at the fixed clock, so its id is the only thing that differs.
+    async fn insert_run(&self, session: &CodingSessionDto, run_id: &str) {
+        let revision: i64 = sqlx::query_scalar(
+            "SELECT revision FROM learning_practical_activities WHERE program_id=? AND id=?",
+        )
+        .bind(&self.program_id)
+        .bind(&self.activity_id)
+        .fetch_one(&self.pool)
+        .await
+        .unwrap();
+        sqlx::query("INSERT INTO learning_practical_runs(id,program_id,activity_id,activity_revision,activity_snapshot_json,operation_id,payload_hash,status,learner_files_json,created_at,completed_at,coding_session_id,scope) VALUES(?,?,?,?,'{}',?,'hash','passed','[]',?,?,?,'all')")
+            .bind(run_id).bind(&self.program_id).bind(&self.activity_id).bind(revision)
+            .bind(id()).bind(START).bind(START).bind(&session.session_id)
+            .execute(&self.pool).await.unwrap();
+    }
+
     async fn run(
         &self,
         session: &CodingSessionDto,
@@ -770,6 +786,38 @@ async fn the_first_run_of_every_case_is_the_submit() {
     assert!(all.submitted);
     assert_eq!(all.runs.len(), 2);
     assert_eq!(all.runs[1].cases.len(), 3);
+}
+
+#[tokio::test]
+async fn runs_made_in_one_millisecond_keep_the_order_they_were_made_in() {
+    let ctx = Ctx::new().await;
+    let session = ctx.start(CodingSetting::Mock).await;
+    ctx.insert_run(&session, "run-b").await;
+    ctx.insert_run(&session, "run-a").await;
+    let read = ctx.get(&session).await;
+    let order: Vec<&str> = read.runs.iter().map(|run| run.run_id.as_str()).collect();
+    assert_eq!(order, ["run-b", "run-a"]);
+}
+
+#[tokio::test]
+async fn a_hint_points_at_the_last_run_made_even_when_two_share_a_millisecond() {
+    let ctx = Ctx::new().await;
+    let session = ctx.start(CodingSetting::Coached).await;
+    ctx.insert_run(&session, "run-b").await;
+    ctx.insert_run(&session, "run-a").await;
+    let session = ctx.get(&session).await;
+    let after = ctx
+        .sessions()
+        .ask_hint(&AskCodingHintRequestDto {
+            operation_id: id(),
+            program_id: ctx.program_id.clone(),
+            session_id: session.session_id.clone(),
+            files: starter_files("def double(n):\n    pass\n"),
+            expected_revision: session.revision,
+        })
+        .await
+        .unwrap();
+    assert_eq!(after.hints[0].run_id.as_deref(), Some("run-a"));
 }
 
 #[tokio::test]
