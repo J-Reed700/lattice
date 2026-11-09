@@ -1,5 +1,5 @@
 //! The teaching review after a claim repair or a user edit leaves the
-//! sentences claims stand on as they are (claim sources design §10.3): a
+//! sentences claims stand on as they are (claim sources design Â§10.3): a
 //! finding about a protected sentence waits for the user, and the review's
 //! repair changes only the sentences its findings name, every other one
 //! reverted and every protected one byte-identical.
@@ -88,9 +88,10 @@ pub(super) fn on_protected(
         if guarded.is_empty() {
             continue;
         }
-        if overlapping_quote(finding, &guarded)
-            || targets_of(section, unit, std::slice::from_ref(&finding), &guarded).is_empty()
-        {
+        let editable = targets_of(section, unit, std::slice::from_ref(&finding), &guarded)
+            .iter()
+            .any(|target| guarded.iter().any(|item| item.field == target.field));
+        if overlapping_quote(finding, &guarded) || !editable {
             held.push(finding.key());
         }
     }
