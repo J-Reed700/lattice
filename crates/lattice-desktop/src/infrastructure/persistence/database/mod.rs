@@ -3,7 +3,6 @@ pub mod init;
 pub mod migrate;
 pub mod performance_indexes;
 pub mod schema;
-pub mod utils;
 
 pub use connection::{query_with_quick_timeout, query_with_timeout, DatabaseConnection};
 pub use init::initialize_database;
