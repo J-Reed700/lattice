@@ -599,7 +599,7 @@ async fn a_grade_is_written_with_the_model_that_gave_it() -> Result<()> {
     let (pool, attempt, _) = submitted().await?;
     let (assessment, scored, rated) = grade_of_the_review();
     let mut connection = pool.acquire().await.map_err(db)?;
-    let recorded = attempts::record_graded_in(
+    let recorded = attempts::repository::record_graded_in(
         &mut connection,
         &attempt.id,
         &Graded {
@@ -628,7 +628,7 @@ async fn a_grade_is_written_with_the_model_that_gave_it() -> Result<()> {
     );
 
     let mut connection = pool.acquire().await.map_err(db)?;
-    let again = attempts::record_graded_in(
+    let again = attempts::repository::record_graded_in(
         &mut connection,
         &attempt.id,
         &Graded {
@@ -641,7 +641,9 @@ async fn a_grade_is_written_with_the_model_that_gave_it() -> Result<()> {
     )
     .await?;
     assert!(!again, "a graded attempt is not graded twice");
-    let kept = attempts::record_ungraded_in(&mut connection, &attempt.id, Some("m"), "No.").await?;
+    let kept =
+        attempts::repository::record_ungraded_in(&mut connection, &attempt.id, Some("m"), "No.")
+            .await?;
     assert!(!kept, "a graded attempt does not become ungraded");
     Ok(())
 }
@@ -661,7 +663,7 @@ async fn a_fix_is_written_beside_its_grade_when_the_attempt_has_one() -> Result<
     let (assessment, scored, rated) = grade_of_the_review();
     let fix: Vec<IssueFix> = Vec::new();
     let mut connection = pool.acquire().await.map_err(db)?;
-    attempts::record_graded_in(
+    attempts::repository::record_graded_in(
         &mut connection,
         &attempt.id,
         &Graded {
@@ -686,8 +688,13 @@ async fn an_attempt_that_could_not_be_graded_keeps_why_and_regrades() -> Result<
     let (pool, attempt, first) = submitted().await?;
     let mut connection = pool.acquire().await.map_err(db)?;
     assert!(
-        attempts::record_ungraded_in(&mut connection, &attempt.id, Some(MODEL), "No answer.")
-            .await?
+        attempts::repository::record_ungraded_in(
+            &mut connection,
+            &attempt.id,
+            Some(MODEL),
+            "No answer."
+        )
+        .await?
     );
     drop(connection);
     let failed = attempts::get(&pool, &attempt.id).await?.0;
@@ -737,7 +744,7 @@ async fn an_open_or_graded_attempt_is_not_regraded() -> Result<()> {
     attempts::submit(&pool, &attempt.id, submission(vec![operator_finding()])).await?;
     let (assessment, scored, rated) = grade_of_the_review();
     let mut connection = pool.acquire().await.map_err(db)?;
-    attempts::record_graded_in(
+    attempts::repository::record_graded_in(
         &mut connection,
         &attempt.id,
         &Graded {

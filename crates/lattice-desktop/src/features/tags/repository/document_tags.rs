@@ -5,6 +5,7 @@ use sqlx::Row;
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::TagName;
 
 use super::TagRepository;
@@ -142,7 +143,7 @@ impl TagRepository {
                     .map_err(|error| AppError::InvalidInput(format!("Invalid tag name: {error}")))
             })
             .collect::<Result<Vec<_>>>()?;
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         sqlx::query("DELETE FROM document_tags WHERE document_id = ?")
             .bind(document_id)
             .execute(&mut *tx)

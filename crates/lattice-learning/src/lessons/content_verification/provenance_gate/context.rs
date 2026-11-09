@@ -6,7 +6,7 @@
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §5, §12, §16;
 //! docs/design/2026-10-21-claim-official-sources.md §4.3.
 
-use super::{SavedText, VersionFacts};
+use super::{repository, SavedText, VersionFacts};
 use crate::references::trust::{calibration, SqliteSourceTrustStore};
 use lattice_core::application::ports::{LLMPort, SourceTrustStore, StoredJudgement};
 use lattice_core::application::services::source_trust::{
@@ -21,7 +21,7 @@ use lattice_core::domain::provenance::{
     StandingAssessment, TrustLevel, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -104,10 +104,6 @@ pub(crate) async fn outline_trust<T>(
 
 fn course() -> Option<Course> {
     COURSE.try_with(Clone::clone).ok()
-}
-
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
 }
 
 fn now() -> i64 {
@@ -586,21 +582,13 @@ impl Judgements {
         llm: Option<&dyn LLMPort>,
         version: &str,
     ) -> Result<Arc<VersionRecord>> {
-        let row = sqlx::query(
-            "SELECT v.source_id, v.full_text, v.acquired_at, l.added_by, l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id WHERE v.program_id = ? AND v.id = ?",
-        )
-        .bind(&self.program_id)
-        .bind(version)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db)?;
-        let added_by: String = row.try_get("added_by").map_err(db)?;
-        let added_by = AddedBy::from_column(&added_by).ok_or_else(|| {
-            AppError::InternalError(format!("Unknown source origin \"{added_by}\"."))
+        let row = repository::version_row(&self.pool, &self.program_id, version).await?;
+        let added_by = AddedBy::from_column(&row.added_by).ok_or_else(|| {
+            AppError::InternalError(format!("Unknown source origin \"{}\".", row.added_by))
         })?;
-        let selection_note: Option<String> = row.try_get("selection_note").map_err(db)?;
-        let text: String = row.try_get("full_text").map_err(db)?;
-        let acquired_at: i64 = row.try_get("acquired_at").map_err(db)?;
+        let selection_note = row.selection_note;
+        let text = row.full_text;
+        let acquired_at = row.acquired_at;
         let provenance = self.store.provenance(version).await?;
         let links = provenance
             .as_ref()
@@ -618,7 +606,7 @@ impl Judgements {
             None => None,
         };
         Ok(Arc::new(VersionRecord {
-            source_id: row.try_get("source_id").map_err(db)?,
+            source_id: row.source_id,
             added_by,
             acquired_at: acquired_at / MILLIS_PER_SECOND,
             saved: Arc::new(saved),

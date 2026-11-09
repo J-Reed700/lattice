@@ -153,6 +153,14 @@ pub(super) async fn read_meta(
         .collect())
 }
 
+pub(super) async fn read_document_keys(
+    connection: &mut SqliteConnection,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>("SELECT key FROM index_documents")
+        .fetch_all(connection)
+        .await
+}
+
 /// A short-lived connection to `dir`'s store; `None` when it has none or it
 /// will not open. Reading through one leaves a live store's pool untouched.
 pub(super) async fn connect(dir: &Path) -> Option<SqliteConnection> {
@@ -233,10 +241,14 @@ async fn connect_pool(dir: &Path) -> Result<SqlitePool> {
 
 /// Whether the store in `pool` holds tables of another shape than this one.
 async fn other_version(pool: &SqlitePool) -> Result<bool> {
+    let mut tx = pool
+        .begin_read()
+        .await
+        .map_err(db_error("read the schema"))?;
     let tables: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(db_error("read the schema"))?;
     if tables == 0 {
@@ -244,10 +256,43 @@ async fn other_version(pool: &SqlitePool) -> Result<bool> {
     }
     let version: Option<String> = sqlx::query_scalar("SELECT value FROM meta WHERE key = ?")
         .bind(META_VERSION)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await
         .unwrap_or(None);
     Ok(version.as_deref() != Some(SCHEMA_VERSION))
+}
+
+/// Creates the tables and records the version in one transaction, so a store
+/// never has tables without the version that vouches for them.
+async fn install_schema(pool: &SqlitePool) -> Result<()> {
+    let mut tx = pool
+        .begin_write()
+        .await
+        .map_err(db_error("create the schema"))?;
+    // Not raw_sql(..).execute(&mut *tx): that future is not Send on a connection.
+    sqlx::Executor::execute(&mut *tx, sqlx::raw_sql(SCHEMA))
+        .await
+        .map_err(db_error("create the schema"))?;
+    put_meta(&mut tx, META_VERSION, SCHEMA_VERSION)
+        .await
+        .map_err(db_error("write meta"))?;
+    tx.commit().await.map_err(db_error("create the schema"))
+}
+
+async fn put_meta(
+    connection: &mut SqliteConnection,
+    key: &str,
+    value: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(connection)
+    .await
+    .map(|_| ())
 }
 
 pub struct PassageStore {
@@ -275,16 +320,11 @@ impl PassageStore {
             cleared(dir).await?;
             pool = connect_pool(dir).await?;
         }
-        sqlx::raw_sql(SCHEMA)
-            .execute(&pool)
-            .await
-            .map_err(db_error("create the schema"))?;
-        let store = Self {
+        install_schema(&pool).await?;
+        Ok(Self {
             dir: dir.to_path_buf(),
             pool,
-        };
-        store.set_meta(META_VERSION, SCHEMA_VERSION).await?;
-        Ok(store)
+        })
     }
 
     /// A store that lives in memory for as long as it is open: no directory,
@@ -302,16 +342,11 @@ impl PassageStore {
             .connect_with(options)
             .await
             .map_err(db_error("open an in-memory store"))?;
-        sqlx::raw_sql(SCHEMA)
-            .execute(&pool)
-            .await
-            .map_err(db_error("create the schema"))?;
-        let store = Self {
+        install_schema(&pool).await?;
+        Ok(Self {
             dir: PathBuf::new(),
             pool,
-        };
-        store.set_meta(META_VERSION, SCHEMA_VERSION).await?;
-        Ok(store)
+        })
     }
 
     /// The index directory; empty for a [`Self::memory`] store.
@@ -332,16 +367,10 @@ impl PassageStore {
     }
 
     pub async fn set_meta(&self, key: &str, value: &str) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO meta (key, value) VALUES (?, ?)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        )
-        .bind(key)
-        .bind(value)
-        .execute(&self.pool)
-        .await
-        .map(|_| ())
-        .map_err(db_error("write meta"))
+        let mut connection = self.pool.acquire().await.map_err(db_error("write meta"))?;
+        put_meta(&mut connection, key, value)
+            .await
+            .map_err(db_error("write meta"))
     }
 
     pub async fn delete_meta(&self, key: &str) -> Result<()> {
@@ -576,10 +605,12 @@ impl PassageStore {
     }
 
     pub async fn counts(&self, prefix: &str) -> Result<Counts> {
-        let mut connection = self.pool.acquire().await.map_err(db_error("count"))?;
-        read_counts(&mut connection, prefix)
+        let mut tx = self.pool.begin_read().await.map_err(db_error("count"))?;
+        let counts = read_counts(&mut tx, prefix)
             .await
-            .map_err(db_error("count documents and passages"))
+            .map_err(db_error("count documents and passages"))?;
+        tx.commit().await.map_err(db_error("count"))?;
+        Ok(counts)
     }
 
     /// Whether anything under `prefix` has passages.

@@ -164,19 +164,18 @@ pub async fn build_with_compression(
         )
         .await?;
 
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE content != ''")
-            .fetch_one(&db_pool)
+        let total: i64 =
+            crate::infrastructure::persistence::repositories::embedding::generation::count_chunks_with_content(
+                &db_pool,
+            )
             .await?;
         if usearch_index.count() < total as usize {
             // `identity` is only set for a local model with a recorded
             // artifact identity, so the loader is always present here.
             if let Some(open_model) = backfill_model {
                 let model = open_model().await?;
-                crate::infrastructure::persistence::repositories::embedding::generation::prepare(
-                    &db_pool,
-                    model.as_ref(),
-                )
-                .await?;
+                crate::infrastructure::ml::embedding_generation::prepare(&db_pool, model.as_ref())
+                    .await?;
                 // The backfill moved SQLite, so this pass always rebuilds.
                 open_or_rebuild_streaming(
                     &usearch_index,

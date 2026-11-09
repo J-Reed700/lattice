@@ -10,9 +10,10 @@ use lattice_core::application::services::sourcing::cache_policy;
 use lattice_core::domain::sourcing::{
     Identifier, Origin, OwnerResolution, OwnerSource, SourcingPolicy, SubjectHint,
 };
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use url::Url;
 
+use super::owner_cache_repository;
 use super::runner::Clock;
 use crate::features::web::services::finders::wikidata::Wikidata;
 use crate::features::web::services::finders::wikipedia::Wikipedia;
@@ -105,19 +106,13 @@ impl OwnerResolver {
 
         // 3. SQLite persistent cache check
         if let Some(ref pool) = self.pool {
-            if let Ok(Some(row)) = sqlx::query(
-                "SELECT origins_json, resolved_by, updated_at FROM sourcing_owner_cache WHERE cache_key = ?"
-            )
-            .bind(&key)
-            .fetch_optional(pool)
-            .await
-            {
-                let origins_json: String = row.get("origins_json");
-                let resolved_by_str: Option<String> = row.get("resolved_by");
-                let updated_at_secs: i64 = row.get("updated_at");
-                if let Some(stored_at) = DateTime::from_timestamp(updated_at_secs, 0) {
+            if let Ok(Some(row)) = owner_cache_repository::find(pool, &key).await {
+                let origins_json = row.origins_json;
+                let resolved_by_str = row.resolved_by;
+                if let Some(stored_at) = DateTime::from_timestamp(row.updated_at, 0) {
                     if cache_policy::is_fresh(stored_at, now, self.policy.owner_ttl) {
-                        if let Ok(origin_strs) = serde_json::from_str::<Vec<String>>(&origins_json) {
+                        if let Ok(origin_strs) = serde_json::from_str::<Vec<String>>(&origins_json)
+                        {
                             let origins: Vec<Origin> = origin_strs
                                 .into_iter()
                                 .filter_map(|s| Origin::parse(&s))
@@ -128,10 +123,9 @@ impl OwnerResolver {
                                 Some("github") => Some(OwnerSource::GitHub),
                                 _ => None,
                             };
-                            self.cache.lock().insert(
-                                key.clone(),
-                                (stored_at, origins.clone(), source),
-                            );
+                            self.cache
+                                .lock()
+                                .insert(key.clone(), (stored_at, origins.clone(), source));
                             return OwnerResolution {
                                 origins,
                                 resolved_by: source,
@@ -159,22 +153,15 @@ impl OwnerResolver {
                 let origin_strs: Vec<String> = origins.iter().map(|o| o.to_string()).collect();
                 if let Ok(json) = serde_json::to_string(&origin_strs) {
                     let updated_at = now.timestamp();
-                    let _ = sqlx::query(
-                        r#"INSERT INTO sourcing_owner_cache
-                           (cache_key, subject_name, subject_kind, origins_json, resolved_by, updated_at)
-                           VALUES (?, ?, ?, ?, ?, ?)
-                           ON CONFLICT(cache_key) DO UPDATE SET
-                               origins_json = excluded.origins_json,
-                               resolved_by = excluded.resolved_by,
-                               updated_at = excluded.updated_at"#
+                    let _ = owner_cache_repository::upsert(
+                        pool,
+                        &key,
+                        &subject.name,
+                        subject.kind.as_str(),
+                        &json,
+                        source.as_str(),
+                        updated_at,
                     )
-                    .bind(&key)
-                    .bind(&subject.name)
-                    .bind(subject.kind.as_str())
-                    .bind(json)
-                    .bind(source.as_str())
-                    .bind(updated_at)
-                    .execute(pool)
                     .await;
                 }
             }

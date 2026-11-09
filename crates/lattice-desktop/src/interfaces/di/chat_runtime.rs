@@ -109,7 +109,7 @@ impl ChatStorage for Container {
     }
     fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache> {
         Arc::new(
-            crate::features::conversation::starters::ChatStarterCacheRepository::new(
+            crate::features::conversation::starters_repository::ChatStarterCacheRepository::new(
                 self.db_pool().clone(),
             ),
         )

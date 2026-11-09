@@ -2,14 +2,15 @@
 //! research turns named by their chat, and journal syntheses.
 
 use super::chat::DEEP_RESEARCH;
+use super::repository::ConversationRepository;
 use super::synthesis::JOURNAL_SYNTHESIS;
 use async_trait::async_trait;
 use lattice_core::application::ports::{
     ActivityItem, ActivityProgress, ActivitySource, ActivityTarget,
 };
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime};
-use lattice_core::shared::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::Result;
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -32,19 +33,9 @@ impl ConversationActivity {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        let ids =
-            serde_json::to_string(&ids).map_err(|e| AppError::Serialization(e.to_string()))?;
-        let rows = sqlx::query(
-            "SELECT id, title FROM conversations WHERE id IN (SELECT value FROM json_each(?))",
-        )
-        .bind(ids)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-        Ok(rows
-            .iter()
-            .map(|row| (row.get::<String, _>("id"), row.get::<String, _>("title")))
-            .collect())
+        ConversationRepository::new(self.pool.clone())
+            .titles_of(&ids)
+            .await
     }
 }
 

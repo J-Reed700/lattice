@@ -1,6 +1,7 @@
 //! Source selectors: creating, reading and re-matching them, and searching program sources.
 use super::*;
 use lattice_core::shared::persistence::Transactions;
+use sqlx::SqliteConnection;
 
 #[derive(Debug, Clone)]
 struct SourceSelectorRecord {
@@ -52,9 +53,10 @@ impl LearningRecallRepository {
             payload_hash: &hash,
             conflict: "Operation ID was reused with different recall data.",
         };
-        if let Some(selector_id) = operation.replay::<String, _>(&mut *tx).await? {
+        if let Some(selector_id) = operation.replay::<String>(&mut tx).await? {
+            let selector = Self::selector_on(&mut tx, &req.program_id, &selector_id).await?;
             tx.commit().await.map_err(db)?;
-            return self.get_selector(&req.program_id, &selector_id).await;
+            return Ok(selector);
         }
         let version = sqlx::query("SELECT full_text FROM learning_source_versions WHERE program_id=? AND source_id=? AND id=?")
             .bind(&req.program_id)
@@ -84,9 +86,10 @@ impl LearningRecallRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        operation.record(&mut *tx, &req.selector_id).await?;
+        operation.record(&mut tx, &req.selector_id).await?;
+        let created = Self::selector_on(&mut tx, &req.program_id, &req.selector_id).await?;
         tx.commit().await.map_err(db)?;
-        self.get_selector(&req.program_id, &req.selector_id).await
+        Ok(created)
     }
 
     pub async fn get_selector(
@@ -96,11 +99,20 @@ impl LearningRecallRepository {
     ) -> Result<LearningSourceSelectorDto> {
         validate_uuid(program_id, "program")?;
         validate_uuid(selector_id, "selector")?;
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        Self::selector_on(&mut connection, program_id, selector_id).await
+    }
+
+    async fn selector_on(
+        connection: &mut SqliteConnection,
+        program_id: &str,
+        selector_id: &str,
+    ) -> Result<LearningSourceSelectorDto> {
         let row =
             sqlx::query("SELECT * FROM learning_source_selectors WHERE program_id=? AND id=?")
                 .bind(program_id)
                 .bind(selector_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(connection)
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Source selector not found.".into()))?;

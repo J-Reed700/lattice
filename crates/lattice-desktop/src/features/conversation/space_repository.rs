@@ -109,11 +109,7 @@ impl ConversationSpaceRepository {
             ))
         })?;
 
-        tx.commit()
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to commit space create: {}", e)))?;
-
-        sqlx::query_as::<_, ConversationSpaceDto>(
+        let space = sqlx::query_as::<_, ConversationSpaceDto>(
             r#"
             SELECT
                 id, name, description, icon, accent_color, space_prompt,
@@ -123,8 +119,14 @@ impl ConversationSpaceRepository {
             "#,
         )
         .bind(&id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to fetch created space: {}", e)))
+        .map_err(|e| AppError::Database(format!("Failed to fetch created space: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit space create: {}", e)))?;
+
+        Ok(space)
     }
 }
