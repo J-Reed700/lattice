@@ -63,9 +63,9 @@ describe('CriteriaList', () => {
     render(
       <CriteriaList
         criteria={[
-          { id: 'o1', title: 'Names the cause', outcome: { label: 'Met', level: 'met' }, maxPoints: 2, evidence: [] },
-          { id: 'o2', title: 'Tests it', outcome: { label: 'Partly met', level: 'partly' }, maxPoints: 2, evidence: [] },
-          { id: 'o3', title: 'Explains why', outcome: { label: 'Not met', level: 'not_met' }, maxPoints: 2, evidence: [] },
+          { id: 'o1', title: 'Names the cause', outcome: { label: 'Met', level: 'met' }, evidence: [] },
+          { id: 'o2', title: 'Tests it', outcome: { label: 'Partly met', level: 'partly' }, evidence: [] },
+          { id: 'o3', title: 'Explains why', outcome: { label: 'Not met', level: 'not_met' }, evidence: [] },
         ]}
       />,
     );

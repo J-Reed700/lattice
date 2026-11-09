@@ -153,6 +153,35 @@ describe('PracticeThread', () => {
     expect(outcome).toBe('failed');
   });
 
+  it('keeps waiting when an error that was already showing is rebuilt during the send', async () => {
+    const shown = { message: 'Earlier failure.' };
+    const { onSend, rerender } = renderThread({ error: shown });
+    let outcome: unknown;
+    await act(async () => {
+      void voiceOptions.send?.('I said this.').then((value) => {
+        outcome = value;
+      });
+    });
+    await act(async () => {
+      rerender(
+        <PracticeThread label="Interview" messages={messages} onSend={onSend} draftKey="thread-test" error={{ message: 'Earlier failure.' }} />,
+      );
+    });
+    expect(outcome).toBeUndefined();
+    await act(async () => {
+      rerender(
+        <PracticeThread
+          label="Interview"
+          messages={[...messages, { id: 'm4', speaker: 'counterpart', content: 'And the cost?' }]}
+          onSend={onSend}
+          draftKey="thread-test"
+          error={{ message: 'Earlier failure.' }}
+        />,
+      );
+    });
+    expect(outcome).toBe('answered');
+  });
+
   it('puts the words back in the box and fails when a spoken send is rejected', async () => {
     const { onSend } = renderThread();
     onSend.mockRejectedValueOnce(new Error('offline'));

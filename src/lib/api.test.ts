@@ -25,6 +25,17 @@ describe('unwrap', () => {
     expect(unwrap({ status: 'ok', data: [1, 2] })).toEqual([1, 2]);
     expect(() => unwrap({ status: 'error', error: { message: 'Not found' } })).toThrow('Not found');
   });
+
+  it('keeps the code of a failed Wire.Result so a conflict is recognised', () => {
+    let thrown: unknown;
+    try {
+      unwrap({ status: 'error', error: { code: 'CONFLICT', message: 'Stale.' } });
+    } catch (cause) {
+      thrown = cause;
+    }
+    expect((thrown as Error).message).toBe('Stale.');
+    expect(isConflict(thrown)).toBe(true);
+  });
 });
 
 describe('newId', () => {
@@ -39,6 +50,11 @@ describe('isConflict', () => {
   it('is true only for the CONFLICT code in the error details', () => {
     expect(isConflict({ details: { code: 'CONFLICT' } })).toBe(true);
     expect(isConflict({ details: { code: 'NOT_FOUND' } })).toBe(false);
+  });
+
+  it('is true for an error that carries the code itself', () => {
+    expect(isConflict(Object.assign(new Error('Stale.'), { code: 'CONFLICT' }))).toBe(true);
+    expect(isConflict(Object.assign(new Error('Gone.'), { code: 'NOT_FOUND' }))).toBe(false);
   });
 
   it('does not read the message', () => {

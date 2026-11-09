@@ -73,6 +73,22 @@ describe('useRetry', () => {
     expect(action).toHaveBeenCalledTimes(1);
   });
 
+  it('clears the error, the conflict and the arguments to repeat', async () => {
+    const action = vi.fn<(value: string) => Promise<string>>().mockRejectedValue(new Error('Broke.'));
+    const { result } = renderHook(() => useRetry(action));
+    await act(async () => {
+      await result.current.run('x');
+    });
+    expect(result.current.error).toBe('Broke.');
+    act(() => result.current.clear());
+    expect(result.current.error).toBeNull();
+    expect(result.current.conflict).toBe(false);
+    await act(async () => {
+      result.current.retry();
+    });
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+
   it('treats a message that only says "changed elsewhere" as a plain error', async () => {
     const action = vi.fn<(value: string) => Promise<string>>().mockRejectedValue(new Error('Changed elsewhere.'));
     const { result } = renderHook(() => useRetry(action));
