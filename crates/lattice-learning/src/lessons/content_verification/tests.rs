@@ -424,7 +424,13 @@ impl Model {
                 for unit in context(prompt)["units"].as_array().unwrap() {
                     if unit["index"].as_u64() == Some(index as u64) {
                         let id = unit["passages"][0]["id"].as_str().unwrap();
-                        response[id]["missingClaims"] = json!(["An assertion is missing."]);
+                        let entry = response["passages"]
+                            .as_array_mut()
+                            .unwrap()
+                            .iter_mut()
+                            .find(|entry| entry["passageId"].as_str() == Some(id))
+                            .unwrap();
+                        entry["missingClaims"] = json!(["An assertion is missing."]);
                     }
                 }
                 return Ok(response.to_string());
