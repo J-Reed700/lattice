@@ -685,3 +685,64 @@ fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
         json!("The second option is wrong. Two sources agree that the shell replies.");
     assert!(lesson_rules(&candidate).is_empty());
 }
+
+fn question_case(prompt: &str, options: [&str; 4], key: usize) -> Value {
+    let mut candidate = lesson();
+    candidate["questions"][0] = json!({"kind":"practice","prompt":prompt,
+        "options":options,"correctIndex":key,
+        "rationales":["","Wrong one.","Wrong two.","Wrong three."],"explanation":"Because."});
+    candidate["questions"][0]["rationales"][key] = json!("");
+    candidate
+}
+
+fn first_question_notes(candidate: &Value) -> Vec<String> {
+    lesson_rules(candidate)
+        .into_iter()
+        .filter(|finding| finding.key().site == FindingSite::Question(0))
+        .map(|finding| finding.note)
+        .collect()
+}
+
+#[test]
+fn a_right_choice_much_longer_than_the_others_is_a_finding_at_its_question() {
+    let candidate = question_case(
+        "Which command shows hidden files?",
+        [
+            "ls",
+            "ls -a, which lists every entry in the directory, including the ones whose names begin with a dot",
+            "pwd",
+            "cd",
+        ],
+        1,
+    );
+    let notes = first_question_notes(&candidate);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("close in length"), "{notes:?}");
+}
+
+#[test]
+fn a_right_choice_repeating_the_prompts_words_is_a_finding_at_its_question() {
+    let candidate = question_case(
+        "Which command opens the notes folder inside the learner home?",
+        [
+            "opens the notes folder",
+            "Lists the files there",
+            "Deletes it for good",
+            "Prints the current location",
+        ],
+        0,
+    );
+    let notes = first_question_notes(&candidate);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    assert!(notes[0].contains("gives the answer away"), "{notes:?}");
+}
+
+#[test]
+fn path_like_choices_break_no_question_rule() {
+    let candidate = question_case(
+        "Which command enters the folder one level up?",
+        ["cd notes", "cd ../../notes", "cd /notes", "cd ../notes"],
+        3,
+    );
+    assert!(first_question_notes(&candidate).is_empty());
+}

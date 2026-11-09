@@ -102,3 +102,72 @@ fn a_number_against_a_key_only_in_words_goes_to_the_judge() {
     assert_eq!(text_matches("3.0", &numbers), Some(true));
     assert_eq!(text_matches("4", &numbers), Some(false));
 }
+
+fn choice_item(prompt: &str, options: &[&str], key: usize) -> LearningAssessmentCandidate {
+    LearningAssessmentCandidate {
+        prompt: prompt.into(),
+        options: options.iter().map(|o| (*o).to_owned()).collect(),
+        key: LearningAssessmentKey::Choice(key),
+        ..candidate(30, 3)
+    }
+}
+
+#[test]
+fn choices_that_differ_only_in_path_punctuation_are_different_choices() {
+    let sets: [(&str, [&str; 4], usize); 3] = [
+        (
+            "Which path is the learner's own folder?",
+            ["/home/learner/videos", "/home", "/home/learner", "/"],
+            2,
+        ),
+        (
+            "Which command enters the sibling folder from here?",
+            [
+                "cd music",
+                "cd /home/learner/music",
+                "cd /music",
+                "cd ../../music",
+            ],
+            3,
+        ),
+        (
+            "Which command enters the folder one level up?",
+            ["cd notes", "cd ../../notes", "cd /notes", "cd ../notes"],
+            3,
+        ),
+    ];
+    for (prompt, options, key) in sets {
+        let item = choice_item(prompt, &options, key);
+        assert!(validate_candidate(&item).is_ok(), "{options:?}");
+    }
+}
+
+#[test]
+fn choices_a_reader_cannot_tell_apart_or_blank_choices_are_still_rejected() {
+    let same = choice_item(
+        "Which program reads the typed commands?",
+        &["The shell", "the shell.", "The kernel", "The editor"],
+        2,
+    );
+    assert!(validate_candidate(&same).is_err());
+    let blank = choice_item(
+        "Which program reads the typed commands?",
+        &["The shell", "  ", "The kernel", "The editor"],
+        2,
+    );
+    assert!(validate_candidate(&blank).is_err());
+}
+
+#[test]
+fn path_like_values_are_distinct_in_a_multi_select_item() {
+    let item = LearningAssessmentCandidate {
+        format: LearningItemFormat::MultiSelect,
+        key: LearningAssessmentKey::Choices(vec![0, 1]),
+        ..choice_item(
+            "Which of these are absolute paths?",
+            &["/home/learner/notes", "/home/learner", "home", "/"],
+            0,
+        )
+    };
+    assert!(validate_candidate(&item).is_ok());
+}

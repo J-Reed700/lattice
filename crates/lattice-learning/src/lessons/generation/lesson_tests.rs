@@ -515,3 +515,18 @@ fn a_questions_reasons_are_trimmed_and_kept_with_its_key_in_the_writers_order() 
     );
     assert!(prepared.keys[1].rationales.is_empty());
 }
+
+#[test]
+fn the_writer_keeps_the_four_choices_close_in_length_and_in_their_own_words() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("The four choices are close in length, so the right one never stands out as the longest"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "the right choice is worded in its own words rather than repeating the prompt's"
+        ),
+        "{text}"
+    );
+}
