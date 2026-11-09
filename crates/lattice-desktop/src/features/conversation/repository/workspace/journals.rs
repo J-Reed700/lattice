@@ -408,16 +408,25 @@ impl ConversationRepository {
         journal_space_id: &str,
     ) -> Result<Vec<String>, AppError> {
         let journal_space_id = journal_space_id.trim();
-        ensure_journal_space(&self.pool, journal_space_id).await?;
-        sqlx::query_scalar(
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut *tx, journal_space_id).await?;
+        let pins = sqlx::query_scalar(
             "SELECT conversation_id FROM journal_conversation_entries
              WHERE journal_space_id = ? AND pinned_at IS NOT NULL
              ORDER BY pinned_at DESC, conversation_id",
         )
         .bind(journal_space_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to list journal pins: {}", e)))
+        .map_err(|e| AppError::Database(format!("Failed to list journal pins: {}", e)))?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
+        Ok(pins)
     }
 
     pub async fn list_journal_conversations(
@@ -430,8 +439,6 @@ impl ConversationRepository {
                 "journalSpaceId is required".to_string(),
             ));
         }
-
-        ensure_journal_space(&self.pool, journal_space_id).await?;
 
         let limit = query.limit.unwrap_or(120).clamp(1, 200);
         let offset = query.offset.unwrap_or(0).max(0);
@@ -527,13 +534,22 @@ impl ConversationRepository {
             .push(" OFFSET ")
             .push_bind(offset);
 
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut *tx, journal_space_id).await?;
         let rows = qb
             .build_query_as::<ConversationExplorerRow>()
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to list journal conversations: {}", e))
             })?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         let conversations = rows
             .into_iter()
