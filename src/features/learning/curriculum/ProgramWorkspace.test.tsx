@@ -72,7 +72,7 @@ vi.mock('@/features/learning/memory/MemoryPanels', async (importOriginal) => ({
 }));
 
 const api = vi.hoisted(() => ({ plan: vi.fn(), review: vi.fn(), cancel: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningPlan: api.plan,
   getLearningLessonClaimReview: api.review,
   cancelLearningGenerationJob: api.cancel,
