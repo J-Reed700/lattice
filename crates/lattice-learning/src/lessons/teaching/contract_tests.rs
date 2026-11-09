@@ -126,7 +126,8 @@ fn reviewed(blocks: usize) -> String {
     let checks = (0..blocks)
         .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"No defect was found in this section.","hasDefect":false}))
         .collect();
-    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)}).to_string()
+    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
+        .to_string()
 }
 
 fn edits(edits: Value) -> String {
@@ -559,7 +560,8 @@ fn defect_in_first_section() -> String {
     let checks = (0..3)
         .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The first section states a wrong result.","hasDefect":index == 0}))
         .collect();
-    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)}).to_string()
+    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
+        .to_string()
 }
 
 fn actionable() -> String {
