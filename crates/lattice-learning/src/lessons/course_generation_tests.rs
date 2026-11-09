@@ -361,6 +361,26 @@ pub(crate) fn length_bounds(schema: &serde_json::Value) -> Vec<String> {
     found
 }
 
+/// How many entries the `properties` of `schema` hold in all, at any depth.
+pub(crate) fn property_count(schema: &serde_json::Value) -> usize {
+    match schema {
+        serde_json::Value::Object(fields) => fields
+            .iter()
+            .map(|(key, inner)| {
+                let own = match inner {
+                    serde_json::Value::Object(properties) if key == "properties" => {
+                        properties.len()
+                    }
+                    _ => 0,
+                };
+                own + property_count(inner)
+            })
+            .sum(),
+        serde_json::Value::Array(items) => items.iter().map(property_count).sum(),
+        _ => 0,
+    }
+}
+
 #[tokio::test]
 async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishes() -> Result<()> {
     use crate::{

@@ -11,8 +11,9 @@ pub(super) struct Saving<'s> {
 impl Saving<'_> {
     /// Saves a capture as a research source unless the course already holds
     /// that page, with the planner's reason for selecting it (`note`); the
-    /// new version's id, or `None` for a page already held. `sources` and
-    /// `urls` (pages without fragments) are brought up to date.
+    /// new version's id, or `None` for a page already held, including one
+    /// another lesson of the course saved meanwhile. `sources` and `urls`
+    /// (pages without fragments) are brought up to date.
     pub(super) async fn save(
         &self,
         sources: &mut Vec<LearningSourceDto>,
@@ -30,8 +31,9 @@ impl Saving<'_> {
         }
         let version_id = uuid::Uuid::new_v4().to_string();
         let hash = digest(&captured.text);
-        self.library
-            .add_selected(
+        let saved = self
+            .library
+            .add_selected_once(
                 crate::source_library::NewLearningSource {
                     operation_id: &uuid::Uuid::new_v4().to_string(),
                     source_id: &uuid::Uuid::new_v4().to_string(),
@@ -56,6 +58,9 @@ impl Saving<'_> {
             .program_repo
             .verification_sources(&self.context.program_id)
             .await?;
-        Ok(Some(version_id))
+        Ok(match saved {
+            crate::source_library::SelectedSaved::Added => Some(version_id),
+            crate::source_library::SelectedSaved::Held { .. } => None,
+        })
     }
 }

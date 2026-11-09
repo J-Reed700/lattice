@@ -18,14 +18,15 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
     || CEILING_WHEN_UNREPORTED;
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
-  // What the user is typing, from when they untick "Model's max" until they
-  // leave the field. It starts empty: leaving it empty keeps every model at
-  // its maximum.
+  // What the user is typing, from when they untick "Fit each model to this
+  // machine" until they leave the field. It starts empty: leaving it empty
+  // saves no default, so each model loads at the largest window that fits
+  // this machine, up to its trained maximum.
   const [entry, setEntry] = useState<string | null>(null);
   const saved = settings?.llm?.localContextWindow ?? null;
   const [shown, setShown] = useState<number | null>(saved);
   useEffect(() => { setShown(saved); }, [saved]);
-  const usesModelMax = shown === null && entry === null;
+  const usesDefault = shown === null && entry === null;
 
   const save = async (localContextWindow: number | null) => {
     setShown(localContextWindow);
@@ -52,14 +53,14 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
   return (
     <SettingsRow
       label="Default context window"
-      hint="Each model loads with its own maximum, the window it was trained for, unless you set one here or in the model's settings. A larger window needs more memory; one too large for this machine fails to load and says how much it needed, and one larger than the model was trained for is stretched by rope scaling, which costs quality."
+      hint="Unless you set a window here or in the model's settings, each model loads with the largest window that fits this machine's memory now, up to its maximum, the window it was trained for. A window you set that is too large for this machine fails to load and says how much it needed, and one larger than the model was trained for is stretched by rope scaling, which costs quality."
       htmlFor="local-context-window"
     >
       <div className="flex items-center gap-3">
         <label className="flex items-center gap-1.5 whitespace-nowrap text-sm">
           <input
             type="checkbox"
-            checked={usesModelMax}
+            checked={usesDefault}
             onChange={(event) => {
               if (!event.target.checked) {
                 setEntry('');
@@ -69,7 +70,7 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
               if (shown !== null) void save(null);
             }}
           />
-          Model&apos;s max
+          Fit each model to this machine
         </label>
         <input
           id="local-context-window"
@@ -77,8 +78,8 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
           min={MIN_WINDOW}
           max={ceiling}
           step={1}
-          disabled={usesModelMax}
-          placeholder={usesModelMax ? undefined : 'Tokens'}
+          disabled={usesDefault}
+          placeholder={usesDefault ? undefined : 'Tokens'}
           value={entry ?? shown ?? ''}
           onChange={(event) => setEntry(event.target.value)}
           onBlur={commit}

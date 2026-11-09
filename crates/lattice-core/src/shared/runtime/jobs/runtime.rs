@@ -1,5 +1,6 @@
 //! Delivers saved jobs to their kind's handler, within the kind's limits.
 use super::arrivals::{poll_once, Arrival, Arrivals};
+use super::rank::{within, RankScope};
 use super::{
     repository::STOPPED_THE_APP, Backoff, Deferral, JobDto, JobFailure, JobKindConfig, JobOutcome,
     JobRecord, JobStatus, JobStore, NewJob, RecoveryPolicy,
@@ -546,7 +547,12 @@ impl JobRuntime {
             cancel: cancel.clone(),
         };
         let mut panicked = false;
-        let outcome = match std::panic::AssertUnwindSafe(kind.handler.run(&context))
+        let rank = context
+            .job()
+            .rank
+            .filter(|_| kind.config.ranked)
+            .map(RankScope::new);
+        let outcome = match std::panic::AssertUnwindSafe(within(rank, kind.handler.run(&context)))
             .catch_unwind()
             .await
         {
