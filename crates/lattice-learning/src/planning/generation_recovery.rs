@@ -11,15 +11,12 @@ pub const LESSON_PREPARATION: &str = "learning.lesson_preparation";
 /// The outcome code of a lesson preparation attempt an update ended: it has no saved work to resume.
 pub(crate) const ENDED_BY_UPDATE: &str = "ended_by_update";
 
-/// Jobs for a course share its source snapshots and accepted outline: each one
-/// refreshes and re-embeds the same sources and seeds the same snapshot, and
-/// two at once would do that work twice over the same rows. Different courses
-/// are independent, and how their model calls share the backend is the
-/// inference scheduler's decision. A running preparation resumes from its
-/// checkpoints after a restart.
+/// Lessons of one course prepare side by side: the state they share is set up
+/// under the course's setup lock, and how their model calls share the backend
+/// is the inference scheduler's decision. A running preparation resumes from
+/// its checkpoints after a restart.
 pub fn lesson_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
-        .exclusive_per_subject()
         .ranked()
         .backoff(Backoff::default())
 }
