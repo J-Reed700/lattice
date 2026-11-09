@@ -15,7 +15,7 @@ pub fn fallback_task_prompt(objective: &str, details: Option<&str>) -> String {
         objective.trim()
     );
     match details.map(str::trim).filter(|details| !details.is_empty()) {
-        Some(details) => format!("{task}\n\nThe learner is preparing for: {details}"),
+        Some(details) => format!("{task}\n\nYou are preparing for: {details}"),
         None => task,
     }
 }

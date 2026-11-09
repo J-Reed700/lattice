@@ -6,6 +6,7 @@ use crate::lessons::structured_call::complete_checked_request;
 use crate::model_call;
 use crate::persistence::{hash, now};
 use crate::practice_repository::LearningPracticeRepository;
+use crate::practice_repository::FitState;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
@@ -107,7 +108,11 @@ pub async fn practice_fit(
     repo: &LearningPracticeRepository,
     program_id: &str,
 ) -> Result<PracticeFitDto> {
-    let state = repo.fit_state(program_id).await?;
+    known(&repo.fit_state(program_id).await?)
+}
+
+/// What `state` already decides.
+fn known(state: &FitState) -> Result<PracticeFitDto> {
     if state.language.is_some() {
         return Ok(PracticeFitDto {
             code: CodeFit::Fits,
@@ -115,8 +120,10 @@ pub async fn practice_fit(
         });
     }
     let basis = basis_of(&state.outline)?;
-    Ok(match state.stored {
-        Some(stored) if stored.basis == basis => fit(stored.teaches_code, stored.reason),
+    Ok(match &state.stored {
+        Some(stored) if stored.basis == basis => {
+            fit(stored.teaches_code, stored.reason.clone())
+        }
         _ => PracticeFitDto {
             code: CodeFit::Checking,
             reason: None,
@@ -130,11 +137,11 @@ pub async fn check_practice_fit(
     llm: &dyn LLMPort,
     program_id: &str,
 ) -> Result<PracticeFitDto> {
-    let known = practice_fit(repo, program_id).await?;
-    if known.code != CodeFit::Checking {
-        return Ok(known);
-    }
     let state = repo.fit_state(program_id).await?;
+    let decided = known(&state)?;
+    if decided.code != CodeFit::Checking {
+        return Ok(decided);
+    }
     let basis = basis_of(&state.outline)?;
     let judgement = ask(llm, &state.outline).await?;
     repo.record_fit(

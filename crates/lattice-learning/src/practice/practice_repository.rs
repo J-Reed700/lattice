@@ -11,6 +11,7 @@ use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 
 mod assistance;
 mod fits;
+pub(crate) use fits::FitState;
 mod profiles;
 pub(crate) use profiles::profile_in;
 mod reads;
