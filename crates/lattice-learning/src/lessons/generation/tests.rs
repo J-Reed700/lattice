@@ -1,6 +1,8 @@
 use super::recall::{parse_recall_drafts, recall_draft_schema};
 use super::*;
+use crate::dto::LearningProgramDto;
 use crate::lessons::course_generation_tests::length_bounds;
+use crate::lessons::course_plan::CoursePlan;
 
 fn source() -> LearningSourceDto {
     LearningSourceDto {
@@ -298,12 +300,10 @@ fn recall_parser_rejects_unknown_fields_and_choice_payloads() {
     assert!(parse_recall_drafts(&recall_response(json!([with_choices])), 1, &allowed,).is_err());
 }
 
-#[test]
-fn course_context_carries_whole_objectives_and_every_earlier_recap() {
-    use crate::dto::{LearningBlockDto, LearningBlockKind, LearningPreparation};
+/// A course of eight lessons, the first module holding six, each planned with topics of its own.
+fn planned_course() -> (LearningProgramDto, CoursePlan) {
+    use crate::lessons::course_plan::PlannedLesson;
     let mut program = crate::tests::fixture();
-    let long = "A detailed objective sentence. ".repeat(40);
-    let recap = "Recap of what the lesson established. ".repeat(80);
     let lessons = &mut program.modules[0].lessons;
     let template = lessons[0].clone();
     for index in 0..4 {
@@ -311,32 +311,91 @@ fn course_context_carries_whole_objectives_and_every_earlier_recap() {
         extra.id = format!("extra-lesson-{index}");
         lessons.insert(0, extra);
     }
-    let current = lessons.last().unwrap().id.clone();
+    let long = "A detailed objective sentence. ".repeat(40);
     for lesson in lessons.iter_mut() {
         lesson.objective = long.clone();
-        if lesson.id != current {
-            lesson.preparation = LearningPreparation::Ready;
-            lesson.blocks = vec![LearningBlockDto {
-                kind: LearningBlockKind::Recap,
-                title: "Recap".into(),
-                body: recap.clone(),
-                source_ids: vec![],
-                rubric: vec![],
-            }];
-        }
     }
-    let earlier = program.modules[0].lessons.len() - 1;
-    assert!(earlier > 3, "more than the former three recaps");
-    let context = super::lesson::course_context(&program, &current);
+    let plan = CoursePlan {
+        lessons: program
+            .modules
+            .iter()
+            .flat_map(|module| module.lessons.iter())
+            .map(|lesson| PlannedLesson {
+                lesson_id: lesson.id.clone(),
+                ideas: vec![format!("ideas of {}", lesson.id)],
+                terms: vec![format!("terms of {}", lesson.id)],
+                actions: vec![format!("actions of {}", lesson.id)],
+                contrast: format!("contrast of {}", lesson.id),
+            })
+            .collect(),
+    };
+    (program, plan)
+}
+
+#[test]
+fn the_writers_context_has_whole_objectives_and_the_plan_by_position() {
+    let (program, plan) = planned_course();
+    let ids: Vec<String> = program
+        .modules
+        .iter()
+        .flat_map(|module| module.lessons.iter())
+        .map(|lesson| lesson.id.clone())
+        .collect();
+    let long = "A detailed objective sentence. ".repeat(40);
+
+    let context = super::lesson::course_context(&program, &ids[2], &plan);
+
     assert_eq!(
         context["curriculum"][0]["lessons"][0]["objective"],
         long.as_str()
     );
-    let recaps = context["recentTeaching"].as_array().unwrap();
-    assert_eq!(recaps.len(), earlier);
-    assert!(recaps
+    assert!(context.get("recentTeaching").is_none(), "{context}");
+    let planned = context["coursePlan"].as_array().unwrap();
+    assert_eq!(planned.len(), ids.len(), "every lesson, in course order");
+    let positions: Vec<_> = planned
         .iter()
-        .all(|entry| entry["recap"][0] == recap.as_str()));
+        .map(|entry| entry["position"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        positions,
+        ["earlier", "earlier", "this", "later", "later", "later", "later", "later"]
+    );
+    for (entry, id) in planned.iter().zip(&ids) {
+        assert!(entry.get("lessonId").is_none(), "{entry}");
+        assert_eq!(entry["ideas"][0], format!("ideas of {id}"));
+        assert_eq!(entry["terms"][0], format!("terms of {id}"));
+        assert_eq!(entry["actions"][0], format!("actions of {id}"));
+        assert_eq!(entry["contrast"], format!("contrast of {id}"));
+    }
+    assert_eq!(
+        planned[2]["title"],
+        program.modules[0].lessons[2].title.as_str()
+    );
+}
+
+#[test]
+fn the_writers_context_is_the_same_whether_or_not_earlier_lessons_are_ready() {
+    use crate::dto::{LearningBlockDto, LearningBlockKind, LearningPreparation};
+    let (mut program, plan) = planned_course();
+    let current = program.modules[0].lessons[4].id.clone();
+    let before = super::lesson::course_context(&program, &current, &plan);
+
+    for lesson in &mut program.modules[0].lessons[..4] {
+        lesson.preparation = LearningPreparation::Ready;
+        lesson.blocks = vec![LearningBlockDto {
+            kind: LearningBlockKind::Recap,
+            title: "Recap".into(),
+            body: "Recap of what the lesson established.".into(),
+            source_ids: vec![],
+            rubric: vec![],
+        }];
+    }
+    let after = super::lesson::course_context(&program, &current, &plan);
+
+    assert_eq!(before, after);
+    assert!(!after
+        .to_string()
+        .contains("Recap of what the lesson established."));
 }
 
 /// A model that is only a window: the refusal comes before any model call.
@@ -368,9 +427,15 @@ async fn a_lesson_whose_prompt_leaves_no_room_for_evidence_is_refused_up_front()
     let lesson = program.modules[0].lessons[0].clone();
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
 
-    let error = super::lesson::prepare_lesson(&Window(24_000), &runtimes, &program, &lesson)
-        .await
-        .unwrap_err();
+    let error = super::lesson::prepare_lesson(
+        &Window(24_000),
+        &runtimes,
+        &program,
+        &lesson,
+        &CoursePlan::blank(&program),
+    )
+    .await
+    .unwrap_err();
 
     assert!(
         matches!(&error, AppError::InvalidConfig(message)
@@ -389,9 +454,15 @@ async fn a_lesson_outline_of_any_length_is_not_called_incomplete() {
     let lesson = program.modules[0].lessons[0].clone();
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
 
-    let error = super::lesson::prepare_lesson(&Window(24_000), &runtimes, &program, &lesson)
-        .await
-        .unwrap_err();
+    let error = super::lesson::prepare_lesson(
+        &Window(24_000),
+        &runtimes,
+        &program,
+        &lesson,
+        &CoursePlan::blank(&program),
+    )
+    .await
+    .unwrap_err();
 
     assert!(
         matches!(&error, AppError::InvalidConfig(message)

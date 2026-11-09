@@ -1,5 +1,6 @@
 //! Exercise the real authoring, validation and persistence boundaries without a live model.
 use crate::content_verification::tests::{fixture_completion, fixture_prompts};
+use crate::lessons::course_plan::CoursePlan;
 use crate::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
     repository::LearningRepository, service,
@@ -474,7 +475,13 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             &jobs,
             &job.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+            generation::prepare_lesson(
+                &llm,
+                &runtimes,
+                &program,
+                lesson,
+                &CoursePlan::blank(&program),
+            ),
         ),
     )
     .await;
@@ -504,7 +511,13 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             &jobs,
             &retry.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+            generation::prepare_lesson(
+                &llm,
+                &runtimes,
+                &program,
+                lesson,
+                &CoursePlan::blank(&program),
+            ),
         ),
     )
     .await?;
@@ -750,7 +763,13 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
         accepted.summary.id.clone(),
         accepted.summary.goal.clone(),
         Some(research_tests::web(false)),
-        generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+        generation::prepare_lesson(
+            &llm,
+            &runtimes,
+            &program,
+            lesson,
+            &CoursePlan::blank(&program),
+        ),
     ))
     .await?;
 
@@ -1879,7 +1898,13 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
             &jobs,
             &job.id,
             &lesson.id,
-            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
+            generation::prepare_lesson(
+                &llm,
+                &runtimes,
+                &program,
+                lesson,
+                &CoursePlan::blank(&program),
+            ),
         ),
     )
     .await?;

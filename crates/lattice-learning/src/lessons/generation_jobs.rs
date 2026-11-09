@@ -204,6 +204,8 @@ impl LessonGenerationWorker {
                 "Only active programs can prepare lessons.".into(),
             ));
         }
+        let outline_revision =
+            crate::lessons::course_plan::outline_revision(&self.pool, &job.program_id).await?;
         self.set_up_course(repo, &job.program_id).await?;
         let had_sources = program_repo.has_source_history(&job.program_id).await?;
         program.sources = program_repo.verification_sources(&job.program_id).await?;
@@ -305,6 +307,15 @@ impl LessonGenerationWorker {
                     crate::lesson_progress::stage("Resuming from a verified lesson checkpoint");
                     saved
                 } else {
+                    // Made once for the outline revision and read by every
+                    // lesson after it: a lesson never waits on another's output.
+                    let plan = crate::lessons::course_plan::ensure(
+                        &self.pool,
+                        llm.as_ref(),
+                        &program,
+                        outline_revision,
+                    )
+                    .await?;
                     // Before every lesson it prepares, so references captured
                     // meanwhile (by the user or by research) are searched too.
                     crate::lesson_progress::stage(
@@ -323,6 +334,7 @@ impl LessonGenerationWorker {
                         &self.runtimes,
                         &program,
                         lesson,
+                        &plan,
                         &references,
                     ));
                     let topic = format!("{}: {}", program.summary.goal, lesson.title);
@@ -675,6 +687,10 @@ mod repository_tests {
 #[cfg(test)]
 #[path = "generation_recovery_tests.rs"]
 mod recovery_tests;
+
+#[cfg(test)]
+#[path = "generation_plan_tests.rs"]
+mod plan_tests;
 
 #[cfg(test)]
 #[path = "generation_overlap_tests.rs"]
