@@ -297,7 +297,7 @@ async fn due_holds_nothing_when_nothing_is_due() {
     schedule(&pool, "problem:python", id, NOW + DAY_MS).await;
     let mut connection = pool.acquire().await.expect("connection");
 
-    let due = practice_due_in(&mut connection, &program.summary.id, NOW)
+    let due = practice_due_in(&mut connection, &program.summary.id, NOW, true)
         .await
         .expect("due");
 
@@ -312,7 +312,7 @@ async fn due_problem_patterns_are_one_item_that_names_no_pattern() {
     schedule(&pool, "problem:python", families[1].id, NOW - DAY_MS).await;
     let mut connection = pool.acquire().await.expect("connection");
 
-    let due = practice_due_in(&mut connection, &program.summary.id, NOW)
+    let due = practice_due_in(&mut connection, &program.summary.id, NOW, true)
         .await
         .expect("due");
 
@@ -350,7 +350,7 @@ async fn due_adds_the_drills_lessons_and_patterns_most_overdue_first() {
     schedule(&pool, "code:python", pattern, NOW - 5 * DAY_MS).await;
     let mut connection = pool.acquire().await.expect("connection");
 
-    let due = practice_due_in(&mut connection, &program.summary.id, NOW)
+    let due = practice_due_in(&mut connection, &program.summary.id, NOW, true)
         .await
         .expect("due");
 
@@ -376,4 +376,35 @@ async fn due_adds_the_drills_lessons_and_patterns_most_overdue_first() {
                 .contains(&pattern.name.to_lowercase()));
         }
     }
+}
+
+#[tokio::test]
+async fn due_coding_items_are_left_out_of_a_course_where_code_does_not_fit() {
+    let (pool, program) = course().await;
+    let pattern = of_different_families(1)[0].id;
+    schedule(&pool, "problem:python", pattern, NOW - DAY_MS).await;
+    schedule(&pool, "code:python", pattern, NOW - 2 * DAY_MS).await;
+    schedule(&pool, "passage", "any_passage_pattern", NOW - 3 * DAY_MS).await;
+    let mut connection = pool.acquire().await.expect("connection");
+
+    let without = practice_due_in(&mut connection, &program.summary.id, NOW, false)
+        .await
+        .expect("due");
+    let with = practice_due_in(&mut connection, &program.summary.id, NOW, true)
+        .await
+        .expect("due");
+
+    let kinds = |due: &PracticeDueDto| -> Vec<DueKind> {
+        due.items.iter().map(|item| item.kind).collect()
+    };
+    assert_eq!(kinds(&without), [DueKind::DrillPatterns]);
+    assert_eq!(without.items[0].material.as_deref(), Some("passage"));
+    assert_eq!(
+        kinds(&with),
+        [
+            DueKind::DrillPatterns,
+            DueKind::DrillPatterns,
+            DueKind::CodingPatterns
+        ]
+    );
 }

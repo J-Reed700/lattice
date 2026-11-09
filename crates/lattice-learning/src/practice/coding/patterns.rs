@@ -165,11 +165,14 @@ fn plural(count: u32, one: &str, many: &str) -> String {
 }
 
 /// What is due at `now` for the course: problem patterns (one item, never naming a pattern), the lessons the
-/// drills have scheduled, and the drills' patterns, most overdue first.
+/// drills have scheduled, and the drills' patterns, most overdue first. Coding items (problem patterns and the
+/// drills' code patterns) are listed only when `code_fits`: patterns are the learner's across courses, and a course
+/// where code does not fit never gets code practice.
 pub async fn practice_due_in(
     connection: &mut SqliteConnection,
     program_id: &str,
     now: i64,
+    code_fits: bool,
 ) -> Result<PracticeDueDto> {
     let mut items: Vec<DueItemDto> = Vec::new();
 
@@ -180,7 +183,9 @@ pub async fn practice_due_in(
     .fetch_one(&mut *connection)
     .await
     .map_err(db)?;
-    if let (Ok(count @ 1..), Some(due_at)) = (u32::try_from(problem_due), problem_first) {
+    if let (true, Ok(count @ 1..), Some(due_at)) =
+        (code_fits, u32::try_from(problem_due), problem_first)
+    {
         items.push(DueItemDto {
             kind: DueKind::CodingPatterns,
             label: plural(count, "problem pattern", "problem patterns"),
@@ -230,6 +235,9 @@ pub async fn practice_due_in(
         let Some(material) = material_of(&name) else {
             continue;
         };
+        if !code_fits && material.language().is_some() {
+            continue;
+        }
         let states = schedules::pattern_states_in(connection, &material, &[]).await?;
         let due: Vec<i64> = states
             .iter()
