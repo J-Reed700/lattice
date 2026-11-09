@@ -14,6 +14,7 @@
 //! left beside it would put old vectors behind new passages.
 
 use super::chunking::NewPassage;
+use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::{AppError, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
@@ -123,6 +124,7 @@ pub(super) async fn read_counts(
     ))
     .bind(prefix)
     .fetch_one(&mut *connection)
+    .boxed()
     .await?;
     let passages = sqlx::query(&format!(
         "SELECT COUNT(*) AS total, COALESCE(SUM(d.embedded), 0) AS embedded
@@ -131,6 +133,7 @@ pub(super) async fn read_counts(
     ))
     .bind(prefix)
     .fetch_one(&mut *connection)
+    .boxed()
     .await?;
     let as_u32 = |value: i64| u32::try_from(value).unwrap_or(u32::MAX);
     Ok(Counts {
@@ -146,6 +149,7 @@ pub(super) async fn read_meta(
 ) -> std::result::Result<HashMap<String, String>, sqlx::Error> {
     let rows = sqlx::query("SELECT key, value FROM meta")
         .fetch_all(&mut *connection)
+        .boxed()
         .await?;
     Ok(rows
         .into_iter()
@@ -158,6 +162,7 @@ pub(super) async fn read_document_keys(
 ) -> std::result::Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar::<_, String>("SELECT key FROM index_documents")
         .fetch_all(connection)
+        .boxed()
         .await
 }
 
@@ -249,6 +254,7 @@ async fn other_version(pool: &SqlitePool) -> Result<bool> {
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     )
     .fetch_one(&mut *tx)
+    .boxed()
     .await
     .map_err(db_error("read the schema"))?;
     if tables == 0 {
@@ -257,6 +263,7 @@ async fn other_version(pool: &SqlitePool) -> Result<bool> {
     let version: Option<String> = sqlx::query_scalar("SELECT value FROM meta WHERE key = ?")
         .bind(META_VERSION)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .unwrap_or(None);
     Ok(version.as_deref() != Some(SCHEMA_VERSION))
@@ -362,6 +369,7 @@ impl PassageStore {
         sqlx::query_scalar::<_, String>("SELECT value FROM meta WHERE key = ?")
             .bind(key)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(db_error("read meta"))
     }
@@ -390,6 +398,7 @@ impl PassageStore {
         ))
         .bind(prefix)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db_error("read documents"))?;
         Ok(rows
@@ -416,6 +425,7 @@ impl PassageStore {
         ))
         .bind(prefix)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db_error("read documents"))
     }
@@ -445,6 +455,7 @@ impl PassageStore {
         let old: Vec<i64> = sqlx::query_scalar("SELECT id FROM passages WHERE document = ?")
             .bind(key)
             .fetch_all(&mut *tx)
+            .boxed()
             .await
             .map_err(db_error("read passages"))?;
         sqlx::query("DELETE FROM passages WHERE document = ?")
@@ -488,6 +499,7 @@ impl PassageStore {
             let ids: Vec<i64> = sqlx::query_scalar("SELECT id FROM passages WHERE document = ?")
                 .bind(key)
                 .fetch_all(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db_error("read passages"))?;
             removed.extend(ids);
@@ -515,6 +527,7 @@ impl PassageStore {
         ))
         .bind(prefix)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db_error("read pending documents"))
     }
@@ -527,6 +540,7 @@ impl PassageStore {
         )
         .bind(key)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db_error("read passages"))?;
         Ok(rows.into_iter().map(passage).collect())
@@ -544,6 +558,7 @@ impl PassageStore {
         )
         .bind(ids)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db_error("read passages"))?;
         Ok(rows.into_iter().map(passage).collect())
@@ -596,6 +611,7 @@ impl PassageStore {
         .bind(scope)
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db_error("search the full-text index"))?;
         Ok(rows
@@ -621,6 +637,7 @@ impl PassageStore {
         ))
         .bind(prefix)
         .fetch_one(&self.pool)
+        .boxed()
         .await
         .map(|exists| exists != 0)
         .map_err(db_error("read passages"))
@@ -639,6 +656,7 @@ impl PassageStore {
         )
         .bind(terms)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db_error("read the vocabulary"))?;
         Ok(rows

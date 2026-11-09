@@ -499,6 +499,7 @@ pub(crate) async fn lesson_rank_in(
     )
     .bind(lesson_id)
     .fetch_optional(connection)
+    .boxed()
     .await
     .map_err(db)
 }

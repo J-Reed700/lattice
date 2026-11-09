@@ -4,6 +4,7 @@
 //! cache stays valid.
 
 use async_trait::async_trait;
+use futures::FutureExt;
 use lattice_core::application::contracts::notes::{
     NoteTimestampRecord, VaultNoteUpsert, WorkspaceNoteRecord,
 };
@@ -74,6 +75,7 @@ impl DailyNotesRepository {
             .bind(note_id)
             .try_map(note_from_row)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to fetch workspace note {note_id}: {error}"))
@@ -115,6 +117,7 @@ impl DailyNotesRepository {
         sqlx::query(&query)
             .try_map(note_from_row)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(|error| AppError::Database(format!("Failed to list workspace notes: {error}")))
     }
@@ -131,6 +134,7 @@ impl DailyNotesRepository {
             .bind(journal_id)
             .try_map(note_from_row)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(|error| AppError::Database(format!("Failed to list journal pages: {error}")))
     }
@@ -156,6 +160,7 @@ impl DailyNotesRepository {
             .bind(journal_id)
             .try_map(note_from_row)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!(
@@ -177,6 +182,7 @@ impl DailyNotesRepository {
              LIMIT 1",
         )
         .fetch_optional(&self.pool)
+        .boxed()
         .await
         .map_err(|error| AppError::Database(format!("Failed to choose a capture journal: {error}")))
     }
@@ -188,6 +194,7 @@ impl DailyNotesRepository {
         sqlx::query(&query)
             .try_map(note_from_row)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to fetch latest workspace note: {error}"))
@@ -209,6 +216,7 @@ impl DailyNotesRepository {
             .bind(end_date)
             .try_map(note_from_row)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(|error| AppError::Database(format!("Failed to fetch notes by range: {error}")))
     }
@@ -238,6 +246,7 @@ impl DailyNotesRepository {
             .bind(date)
             .try_map(note_from_row)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to fetch adjacent workspace note: {error}"))
@@ -311,6 +320,7 @@ impl DailyNotesRepository {
             .bind(&note.id)
             .try_map(note_from_row)
             .fetch_one(&mut *tx)
+            .boxed()
             .await?;
         tx.commit().await?;
         Ok(saved)
@@ -354,6 +364,7 @@ impl DailyNotesRepository {
             )
             .bind(&note.id)
             .fetch_one(&mut **tx)
+            .boxed()
             .await?;
             return Err(if exists {
                 AppError::InvalidState("This page changed elsewhere. Your draft is still here; reload the saved page before merging your edits.".into())
@@ -477,6 +488,7 @@ impl DailyNotesRepository {
             .bind(note_id)
             .try_map(timestamp_from_row)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!(
@@ -489,6 +501,7 @@ impl DailyNotesRepository {
         sqlx::query("SELECT id, updated_at, created_at FROM daily_notes_workspace")
             .try_map(timestamp_from_row)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(|error| {
                 AppError::Database(format!("Failed to list workspace note timestamps: {error}"))

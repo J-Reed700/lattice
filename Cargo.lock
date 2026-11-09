@@ -4621,6 +4621,7 @@ name = "lattice-index"
 version = "1.0.0"
 dependencies = [
  "async-trait",
+ "futures",
  "lattice-core",
  "parking_lot",
  "proptest",
@@ -4683,6 +4684,7 @@ name = "lattice-store"
 version = "1.0.0"
 dependencies = [
  "async-trait",
+ "futures",
  "lattice-core",
  "sqlx",
  "tokio",
