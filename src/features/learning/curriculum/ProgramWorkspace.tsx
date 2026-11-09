@@ -164,7 +164,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const selectTab = (next: Tab) => {
     void afterNotebookSave(() => activateTab(next));
   };
-  const selectPracticeGroup = () => selectTab('workbench');
+  const selectPracticeGroup = () => { practiceView.openHome(); selectTab('workbench'); };
   const selectMoreTab = (next: Tab) => {
     void afterNotebookSave(() => {
       activateTab(next);

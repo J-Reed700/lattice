@@ -1,12 +1,13 @@
 import { useEffect, useState } from "react";
 
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Layers, LoaderCircle } from "lucide-react";
-import { useQuery } from "@tanstack/react-query";
-import { useInRouterContext } from "react-router";
 
-import { useCreateInterviewDeck } from "@/features/learning/recall/flashcards/useFlashcards";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
+import { useApi } from "@/contexts/ApiContext";
 import { practiceHomeApi } from "@/features/learning/practice/home/practiceHomeApi";
-import type { LearningPracticalActivityDto } from "@/lib/bindings";
+import { FlashcardSession } from "@/features/learning/recall/flashcards/FlashcardSession";
+import type { CreateInterviewStudyDeckRequestDto, LearningPracticalActivityDto, StudyDeckDto } from "@/lib/bindings";
 
 /** An instant as a datetime-local value. */
 function toLocalInput(ms: number) {
@@ -19,13 +20,23 @@ function toLocalInput(ms: number) {
  * answer gets retrieved from memory again and again, spaced to fit the
  * interview date, with the guide shown only after each attempt.
  */
-export function InterviewDrill(props: { programId: string; activity: LearningPracticalActivityDto }) {
-  // The drill opens its deck in Studio, so it needs the app's router.
-  return useInRouterContext() ? <DrillForm {...props} /> : null;
-}
-
-function DrillForm({ programId, activity }: { programId: string; activity: LearningPracticalActivityDto }) {
-  const create = useCreateInterviewDeck();
+export function InterviewDrill({ programId, activity }: { programId: string; activity: LearningPracticalActivityDto }) {
+  const api = useApi();
+  const client = useQueryClient();
+  const [deck, setDeck] = useState<StudyDeckDto | null>(null);
+  const create = useMutation({
+    mutationFn: async (request: CreateInterviewStudyDeckRequestDto) => {
+      const response = await api.createInterviewStudyDeck(request);
+      if (!response.ok) throw new Error(typeof response.details?.details === "string" ? response.details.details : response.error);
+      return response.data;
+    },
+    onSuccess: (made) => {
+      client.setQueryData(["study", "deck", made.id], made);
+      void client.invalidateQueries({ queryKey: ["study"] });
+      void client.invalidateQueries({ queryKey: ["learning-memory"] });
+      setDeck(made);
+    },
+  });
   const profile = useQuery({ queryKey: ["learning-practice-profile", programId], queryFn: () => practiceHomeApi.getProfile(programId), retry: false });
   const [when, setWhen] = useState("");
   const profileDate = profile.data?.interviewAt ?? null;
@@ -85,6 +96,13 @@ function DrillForm({ programId, activity }: { programId: string; activity: Learn
           {create.error.message}
         </p>
       )}
+      <Dialog open={deck !== null} onOpenChange={(open) => { if (!open) setDeck(null); }}>
+        <DialogContent className="max-h-[92dvh] max-w-3xl overflow-y-auto rounded-2xl border border-border-default bg-surface p-5 sm:p-6">
+          <DialogTitle className="pr-6 font-serif text-xl text-text-primary">{deck?.title}</DialogTitle>
+          <DialogDescription className="sr-only">Review the cards made from this interview.</DialogDescription>
+          {deck && <FlashcardSession cards={deck.cards} mode="flashcard" title={deck.title} targetAt={deck.targetAt} onClose={() => setDeck(null)} />}
+        </DialogContent>
+      </Dialog>
     </section>
   );
 }

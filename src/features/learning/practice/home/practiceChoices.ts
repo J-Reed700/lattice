@@ -2,7 +2,9 @@ import type { CodingBuildChoice } from '@/features/learning/practice/coding/Codi
 import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 
-import type { AttemptMode, ComposerRequest } from './usePracticeView';
+import type { ComposerRequest } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
+
+import type { AttemptMode } from './usePracticeView';
 
 export type CardId = 'explain' | 'spot' | 'code' | 'mock' | 'role';
 export type FitState = 'fits' | 'does_not_fit' | 'unknown';
@@ -78,14 +80,21 @@ export const EXPLAIN_OPTIONS: ChoiceOption[] = [
   { value: 'beginner', label: 'to a beginner', description: 'Teach it to a beginner.' },
 ];
 
+const normalizeLanguage = (language: string) => language.trim().toLowerCase();
+
+/** The learner's own language, in their own words, beside Python; only the value is normalized. */
 export function languageOptions(profileLanguage: string | null | undefined): ChoiceOption[] {
-  const values = [...new Set([profileLanguage?.trim().toLowerCase(), 'python'].filter((value): value is string => Boolean(value)))];
-  return values.map((value) => ({ value, label: value.charAt(0).toUpperCase() + value.slice(1) }));
+  const own = profileLanguage?.trim();
+  const options: ChoiceOption[] = own && normalizeLanguage(own) !== 'python' ? [{ value: normalizeLanguage(own), label: own }] : [];
+  return [...options, { value: 'python', label: 'Python' }];
 }
 
 export function defaultLanguage(profileLanguage: string | null | undefined): string {
-  return profileLanguage?.trim().toLowerCase() || 'python';
+  return profileLanguage?.trim() ? normalizeLanguage(profileLanguage) : 'python';
 }
+
+/** The difficulty of a coding round of the Mock card and of a retry under interview conditions. */
+export const MOCK_DIFFICULTY: Wire.ProblemDifficulty = 'medium';
 
 /** Mock interview carries the badge when the course has an interview date or the learner's own details mention one. */
 export function suggestsInterview(profile: Pick<Wire.LearningPracticeProfileDto, 'interviewAt' | 'details'> | null | undefined): boolean {
@@ -158,7 +167,7 @@ export function startAction(card: CardId, values: Record<string, string>, contex
             task: round === 'debugging' ? 'bug_fix' : 'problem',
             setting: values.setting === 'watched' ? 'watched' : 'mock',
             language: defaultLanguage(context.profile?.language),
-            difficulty: 'easy',
+            difficulty: MOCK_DIFFICULTY,
             focus: null,
             budgetSeconds: Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : null,
           },
