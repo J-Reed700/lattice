@@ -1,4 +1,4 @@
-//! A finding about a question or a check is repaired as a whole: the key,
+//! A finding about a unit is repaired as a whole: the key,
 //! the options, the explanation and the citations change together.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
@@ -126,27 +126,70 @@ fn a_check_finding_on_its_question_keeps_the_rewritten_answer() {
     assert_eq!(out["blocks"][0]["body"], repaired["blocks"][0]["body"]);
 }
 
-#[test]
-fn an_explanation_finding_with_a_passage_stays_confined_to_it() {
-    let mut previous = check_lesson();
-    previous["blocks"][0]["kind"] = json!("explanation");
-    previous["blocks"][0]["body"] = json!(
-        "The ls command lists files. The cd command changes folders. The rm command deletes."
-    );
+const CASE: &str = "Run ls on the file notes.txt in the projects folder.";
+const STEP_ONE: &str = "First, type ls notes.txt and press enter.";
+const STEP_TWO: &str = "Then check that notes.txt is listed.";
+const OTHER: &str = "The cd command changes folders.";
+
+fn worked_lesson() -> Value {
+    json!({"blocks":[
+        {"kind":"worked_example","title":"Example","body":format!("{CASE} {STEP_ONE} {STEP_TWO} {PROTECTED}"),"rubric":[],"sourceIndex":0,"quote":"ls shows the files."},
+        {"kind":"explanation","title":"Other","body":OTHER,"rubric":[],"sourceIndex":0,"quote":"ls shows the files."}
+    ],"questions":[]})
+}
+
+fn renamed_repair(previous: &Value) -> Value {
     let mut repaired = previous.clone();
-    repaired["blocks"][0]["body"] = json!(
-        "The ls command lists the files. The cd command moves between folders. The rm command deletes."
-    );
+    repaired["blocks"][0]["body"] = json!(format!(
+        "{} {} {} {PROTECTED}",
+        CASE.replace("notes.txt", "report.txt"),
+        STEP_ONE.replace("notes.txt", "report.txt"),
+        STEP_TWO.replace("notes.txt", "report.txt")
+    ));
+    repaired
+}
+
+#[test]
+fn a_block_finding_on_its_case_sentence_keeps_the_rename_in_the_steps_too() {
+    let previous = worked_lesson();
+    let repaired = renamed_repair(&previous);
+    let protected = vec![Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: PROTECTED.into(),
+        released: false,
+    }];
     let out = kept(
         &previous,
         &repaired,
-        finding(FindingSite::Section(0), "The ls command lists files."),
-        &[],
+        finding(FindingSite::Section(0), CASE),
+        &protected,
     );
-    assert_eq!(
-        out["blocks"][0]["body"],
-        json!("The ls command lists the files. The cd command changes folders. The rm command deletes.")
+    assert_eq!(out["blocks"][0]["body"], repaired["blocks"][0]["body"]);
+}
+
+#[test]
+fn a_repair_leaves_another_unit_and_a_protected_sentence_as_they_were() {
+    let previous = worked_lesson();
+    let mut repaired = renamed_repair(&previous);
+    repaired["blocks"][1]["body"] = json!("The cd command moves between folders.");
+    let protected = vec![Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: PROTECTED.into(),
+        released: false,
+    }];
+    let out = kept(
+        &previous,
+        &repaired,
+        finding(FindingSite::Section(0), CASE),
+        &protected,
     );
+    assert_eq!(out["blocks"][1], previous["blocks"][1]);
+    assert!(out["blocks"][0]["body"]
+        .as_str()
+        .unwrap()
+        .ends_with(PROTECTED));
 }
 
 #[test]
