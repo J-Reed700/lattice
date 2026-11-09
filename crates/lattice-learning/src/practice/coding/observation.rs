@@ -767,6 +767,15 @@ mod tests {
     }
 
     #[test]
+    fn the_rendering_lists_the_techniques_without_instructions() {
+        let (_, observation) = observation(CodingSetting::Coached, CodingStage::Plan);
+        let text = observation.render();
+        let names = observation.pattern_names.join(", ");
+        assert!(text.contains(&format!("Techniques the problem is built around: {names}\n")));
+        assert!(!text.contains("never name"));
+    }
+
+    #[test]
     fn the_rendering_carries_the_transcript_and_the_clarifications() {
         let problem = problem();
         let mut session = session(&problem, CodingSetting::Coached, CodingStage::Understand);

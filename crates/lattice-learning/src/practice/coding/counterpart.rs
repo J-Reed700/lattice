@@ -423,6 +423,13 @@ mod tests {
     }
 
     #[test]
+    fn a_reply_wrapped_in_a_json_fence_is_accepted() {
+        let fenced = format!("```json\n{}\n```", json("Check line 2."));
+        let reply = accepted(CodingSetting::Coached, &CodingCue::Reply, &fenced);
+        assert_eq!(reply.ok().flatten().map(|reply| reply.content), Some("Check line 2.".to_owned()));
+    }
+
+    #[test]
     fn an_answer_that_is_not_the_json_asked_for_is_refused() {
         let result = accepted(CodingSetting::Coached, &CodingCue::Reply, "plain words");
         assert!(matches!(result, Err(AppError::InvalidInput(_))), "{result:?}");
@@ -470,9 +477,9 @@ mod tests {
 
     #[test]
     fn the_schema_offers_the_clarifications_and_speak_only_on_a_checkpoint() {
-        let (problem, observation) = observation(CodingSetting::Watched, CodingStage::Code);
-        let plain = reply_schema(&problem, &observation, &CodingCue::Reply);
-        let checkpoint = reply_schema(&problem, &observation, &CodingCue::Checkpoint);
+        let (problem, _) = observation(CodingSetting::Watched, CodingStage::Code);
+        let plain = reply_schema(&problem, &CodingCue::Reply);
+        let checkpoint = reply_schema(&problem, &CodingCue::Checkpoint);
         let options = plain["properties"]["clarification"]["enum"].clone();
         assert_eq!(options, serde_json::json!(["0", "1", "your_call", "none"]));
         assert!(plain["properties"].get("speak").is_none());
