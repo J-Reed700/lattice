@@ -1,5 +1,6 @@
 //! Apply explicit edits atomically. Unmentioned lesson bytes and items cannot
 //! change as a side effect of asking a model to correct one fact.
+use super::repeats::{self, Counts};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -221,6 +222,7 @@ fn field_value(
     path: &str,
     original: &Value,
     edits: Vec<(usize, Edit)>,
+    lesson: &Counts,
 ) -> std::result::Result<Value, (usize, String)> {
     let first = edits.first().map_or(0, |(index, _)| *index);
     if let Some(text) = original.as_str() {
@@ -245,6 +247,14 @@ fn field_value(
             };
             if matches.next().is_some() {
                 return Err((index, format!("the before text of edit {index} occurs more than once in {path}; include enough surrounding text to make it unique.")));
+            }
+            let mut alone = text.to_owned();
+            alone.replace_range(start..start + before.len(), after);
+            if let Some(sentence) = repeats::gained_repeat(text, &alone, lesson) {
+                return Err((
+                    index,
+                    format!("edit {index} to {path} adds a sentence the lesson already has: \"{sentence}\". Reword it or leave it out."),
+                ));
             }
             ranges.push((start, start + before.len(), after));
         }
@@ -285,6 +295,7 @@ fn part_values(
     candidate: &Value,
     allowed: &[String],
     edits: Vec<(usize, Edit)>,
+    lesson: &Counts,
 ) -> std::result::Result<FieldValues, Problems> {
     let mut problems = Vec::new();
     let mut fields = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
@@ -309,7 +320,7 @@ fn part_values(
         let first = edits.first().map_or(0, |(index, _)| *index);
         match candidate.pointer(&path) {
             None => problems.push((first, format!("{path} is not in the draft."))),
-            Some(original) => match field_value(&path, original, edits) {
+            Some(original) => match field_value(&path, original, edits, lesson) {
                 Ok(value) => values.push((path, value)),
                 Err(problem) => problems.push(problem),
             },
@@ -325,6 +336,12 @@ fn part_values(
 /// Applies a patch part by part: the edits of a block or question that has
 /// any problem are left out and the other parts' edits apply.
 pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
+    apply_in(candidate, patch, &Value::Null)
+}
+
+/// [`apply`] where `lesson`, the lesson `candidate` is a part of, also holds
+/// the sentences an edit may not add again.
+pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result<Value> {
     let fail = |reason: String| {
         AppError::InvalidInput(format!(
             "The repair's edits could not be applied: {reason} The draft was preserved."
@@ -345,11 +362,12 @@ pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
                 .push((index, edit));
         }
     }
+    let held = repeats::counts_of(&[candidate, lesson]);
     let mut result = candidate.clone();
     let mut problems = Vec::new();
     let mut applied = false;
     for edits in parts.into_values() {
-        match part_values(candidate, &allowed, edits) {
+        match part_values(candidate, &allowed, edits, &held) {
             Ok(values) => {
                 applied |= !values.is_empty();
                 for (path, value) in values {

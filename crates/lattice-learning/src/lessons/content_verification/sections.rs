@@ -405,7 +405,7 @@ async fn mend_section(
     (schema, output_tokens): (&Value, usize),
     (unit, block, section): (usize, bool, &Value),
     (taken, protected): (&Taken, &[Protected]),
-    _lesson: &Value,
+    lesson: &Value,
 ) -> Result<Option<Value>> {
     let stands = |gap: &Gap, sentence: &Option<String>| -> Option<String> {
         let text = section.pointer(&format!("/{}", gap.field))?.as_str()?;
@@ -468,7 +468,14 @@ async fn mend_section(
     if !asked("edits") && !asked("citations") {
         return Ok(None);
     }
-    let repaired = text_edits::apply(&original, &raw)?;
+    let repaired = match text_edits::apply_in(&original, &raw, lesson) {
+        Ok(repaired) => repaired,
+        Err(error) if rejected(&error) => {
+            tracing::info!(%error, "claim.state: a flow repair's edits could not stand; the section keeps the text as cut");
+            return Ok(None);
+        }
+        Err(error) => return Err(error),
+    };
     let pointer = format!("/{list}/0");
     let (Some(before), Some(after)) = (original.pointer(&pointer), repaired.pointer(&pointer))
     else {

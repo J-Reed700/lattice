@@ -359,13 +359,13 @@ const WHOLE_SECTION: &str = "Give the corrected section itself instead: correct 
 async fn apply_or_replace_section(
     llm: &dyn LLMPort,
     (system, local): (&str, &Value),
-    original: &Value,
+    (original, lesson): (&Value, &Value),
     schema: &Value,
     field: &str,
     output_tokens: usize,
     edit_response: &str,
 ) -> Result<Value> {
-    let error = match text_edits::apply(original, edit_response) {
+    let error = match text_edits::apply_in(original, edit_response, lesson) {
         Ok(repaired) => return Ok(repaired),
         Err(error) => error,
     };
@@ -578,7 +578,7 @@ async fn repair_sections(
             let (repaired, put_back) = match repair_group(
                 llm,
                 &system,
-                (&local, original),
+                (&local, original, &candidate),
                 schema,
                 field,
                 output_tokens,
@@ -638,7 +638,7 @@ async fn repair_sections(
 async fn repair_group(
     llm: &dyn LLMPort,
     system: &str,
-    (local, original): (&Value, &Value),
+    (local, original, lesson): (&Value, &Value, &Value),
     schema: &Value,
     field: &str,
     output_tokens: usize,
@@ -658,7 +658,7 @@ async fn repair_group(
     let mut repaired = apply_or_replace_section(
         llm,
         (system, local),
-        original,
+        (original, lesson),
         schema,
         field,
         output_tokens,
