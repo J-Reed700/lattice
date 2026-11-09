@@ -56,19 +56,28 @@ impl LearningCurriculumRepository {
                 "Select one lesson to prepare.".into(),
             ));
         }
-        let job = self.start_job(request).await?;
-        self.retry_replayed_job_if_stopped(&request.program_id, request.expected_revision, job)
-            .await
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let id = Self::admit_job(&mut tx, request).await?;
+        let job = Self::job_on(&mut tx, &id).await?;
+        let job = Self::retry_replayed_job_if_stopped(
+            &mut tx,
+            &request.program_id,
+            request.expected_revision,
+            job,
+        )
+        .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(job)
     }
 
     async fn retry_replayed_job_if_stopped(
-        &self,
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
         program_id: &str,
         expected_revision: i64,
         job: LearningGenerationJob,
     ) -> Result<LearningGenerationJob> {
         let mut job = job;
-        let jobs = self.jobs(program_id).await?;
+        let jobs = Self::jobs_on(tx, program_id).await?;
         let mut visited = std::collections::HashSet::new();
         while let Some(child) = jobs
             .iter()
@@ -87,18 +96,18 @@ impl LearningCurriculumRepository {
                 | LearningGenerationJobStatus::Interrupted
                 | LearningGenerationJobStatus::Cancelled
         ) {
-            job = self
-                .retry_job(&LearningGenerationJobActionRequestDto {
-                    operation_id: stable_job_operation_id(
-                        program_id,
-                        &format!("retry-{}", job.id),
-                        expected_revision,
-                    ),
-                    program_id: program_id.to_string(),
-                    job_id: job.id.clone(),
+            let retry = LearningGenerationJobActionRequestDto {
+                operation_id: stable_job_operation_id(
+                    program_id,
+                    &format!("retry-{}", job.id),
                     expected_revision,
-                })
-                .await?;
+                ),
+                program_id: program_id.to_string(),
+                job_id: job.id.clone(),
+                expected_revision,
+            };
+            let id = Self::job_action_on(tx, &retry, JobAction::Retry).await?;
+            job = Self::job_on(tx, &id).await?;
         }
         Ok(job)
     }
@@ -138,15 +147,19 @@ impl LearningCurriculumRepository {
             };
             ids.push(Self::admit_job(&mut tx, &single).await?);
         }
-        tx.commit().await.map_err(db)?;
         let mut jobs = Vec::new();
         for id in &ids {
-            let job = self.job(id).await?;
-            let job = self
-                .retry_replayed_job_if_stopped(&request.program_id, request.expected_revision, job)
-                .await?;
+            let job = Self::job_on(&mut tx, id).await?;
+            let job = Self::retry_replayed_job_if_stopped(
+                &mut tx,
+                &request.program_id,
+                request.expected_revision,
+                job,
+            )
+            .await?;
             jobs.push(job);
         }
+        tx.commit().await.map_err(db)?;
         Ok(jobs)
     }
 
@@ -157,8 +170,9 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningGenerationJob> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let id = Self::admit_job(&mut tx, request).await?;
+        let job = Self::job_on(&mut tx, &id).await?;
         tx.commit().await.map_err(db)?;
-        self.job(&id).await
+        Ok(job)
     }
 
     /// The checks, dedupe and rows of one lesson job inside the caller's
@@ -337,9 +351,20 @@ impl LearningCurriculumRepository {
         request: &LearningGenerationJobActionRequestDto,
         action: JobAction,
     ) -> Result<LearningGenerationJob> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let id = Self::job_action_on(&mut tx, request, action).await?;
+        let job = Self::job_on(&mut tx, &id).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(job)
+    }
+
+    async fn job_action_on(
+        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        request: &LearningGenerationJobActionRequestDto,
+        action: JobAction,
+    ) -> Result<String> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation = curriculum_operation(
             &request.operation_id,
             &request.program_id,
@@ -347,14 +372,13 @@ impl LearningCurriculumRepository {
             &payload,
             "Operation ID was reused with different job action data.",
         );
-        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
-            tx.commit().await.map_err(db)?;
-            return self.job(&id).await;
+        if let Some(id) = operation.replay::<String, _>(&mut **tx).await? {
+            return Ok(id);
         }
         let program =
             sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
                 .bind(&request.program_id)
-                .fetch_optional(&mut *tx)
+                .fetch_optional(&mut **tx)
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -363,16 +387,16 @@ impl LearningCurriculumRepository {
                 "Program changed; reload and retry.".into(),
             ));
         }
-        let scope = job_scope(&mut tx, &request.job_id)
+        let scope = job_scope(tx, &request.job_id)
             .await?
             .filter(|scope| scope.program_id == request.program_id)
             .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
-        let old = JobStore::find_in(&mut tx, &request.job_id)
+        let old = JobStore::find_in(tx, &request.job_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Generation job not found".into()))?;
         let result_id = match action {
             JobAction::Cancel => {
-                JobStore::cancel_in(&mut tx, &request.job_id).await?;
+                JobStore::cancel_in(tx, &request.job_id).await?;
                 request.job_id.clone()
             }
             JobAction::Retry | JobAction::ContinueReview => {
@@ -387,7 +411,7 @@ impl LearningCurriculumRepository {
                     }
                     None
                 } else {
-                    Some(held_outlines(&mut tx, &request.program_id, &old).await?)
+                    Some(held_outlines(tx, &request.program_id, &old).await?)
                 };
                 if scope.content_revision != Some(program.get::<i64, _>("content_revision")) {
                     return Err(AppError::InvalidState(
@@ -397,7 +421,7 @@ impl LearningCurriculumRepository {
                 let admitted = match lessons {
                     None => {
                         JobStore::retry_in(
-                            &mut tx,
+                            tx,
                             &request.job_id,
                             &request.operation_id,
                             "Retry queued",
@@ -406,7 +430,7 @@ impl LearningCurriculumRepository {
                     }
                     Some(lessons) => {
                         JobStore::continue_in(
-                            &mut tx,
+                            tx,
                             &request.job_id,
                             &request.operation_id,
                             "Resuming verification",
@@ -418,23 +442,29 @@ impl LearningCurriculumRepository {
                 };
                 if admitted.created {
                     sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) SELECT ?,program_id,base_revision_number,content_revision FROM learning_jobs WHERE job_id=?")
-                        .bind(&admitted.id).bind(&request.job_id).execute(&mut *tx).await.map_err(db)?;
+                        .bind(&admitted.id).bind(&request.job_id).execute(&mut **tx).await.map_err(db)?;
                 }
                 admitted.id
             }
         };
-        operation.record(&mut *tx, &result_id).await?;
-        tx.commit().await.map_err(db)?;
-        self.job(&result_id).await
+        operation.record(&mut **tx, &result_id).await?;
+        Ok(result_id)
     }
 
     pub async fn job(&self, id: &str) -> Result<LearningGenerationJob> {
         let mut connection = self.pool.acquire().await.map_err(db)?;
+        Self::job_on(&mut connection, id).await
+    }
+
+    async fn job_on(
+        connection: &mut sqlx::SqliteConnection,
+        id: &str,
+    ) -> Result<LearningGenerationJob> {
         let not_found = || AppError::NotFound("Generation job not found".into());
-        let scope = job_scope(&mut connection, id)
+        let scope = job_scope(&mut *connection, id)
             .await?
             .ok_or_else(not_found)?;
-        let job = JobStore::find_in(&mut connection, id)
+        let job = JobStore::find_in(&mut *connection, id)
             .await?
             .ok_or_else(not_found)?;
         learning_job(job, scope)
