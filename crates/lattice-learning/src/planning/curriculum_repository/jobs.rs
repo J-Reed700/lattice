@@ -281,7 +281,7 @@ impl LearningCurriculumRepository {
             return Ok(existing.id);
         }
         let rank = match lesson_ids.first() {
-            Some(lesson) => lesson_rank_in(&mut **tx, lesson).await?,
+            Some(lesson) => lesson_rank_in(tx, lesson).await?,
             None => None,
         };
         let admitted = JobStore::submit_with_rank_in(
