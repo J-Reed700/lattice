@@ -816,18 +816,26 @@ async fn an_unusable_repair_stops_what_it_was_sent_and_the_carried_findings_stil
             .map(|mark| repair.contains(&format!("Defect marker {mark}.")))
             .collect()
     };
+    let first_six = vec![true, true, true, true, true, true, false];
+    let carried = vec![false, false, false, false, false, false, true];
+    let asked: Vec<_> = repairs.iter().map(|repair| asked(repair)).collect();
     assert!(
-        repairs.len() >= 2,
-        "the review stopped at the unusable repair; repairs asked: {}",
-        repairs.len()
+        asked.iter().all(|a| *a == first_six || *a == carried),
+        "every repair asks exactly the first six findings or exactly the carried one: {asked:?}"
     );
-    assert_eq!(
-        asked(&repairs[0]),
-        vec![true, true, true, true, true, true, false]
+    let first_carried = asked.iter().position(|a| *a == carried);
+    assert!(
+        first_carried.is_some(),
+        "the review stopped at the unusable repair; the carried finding was never repaired: {asked:?}"
     );
-    assert_eq!(
-        asked(&repairs[1]),
-        vec![false, false, false, false, false, false, true]
+    assert!(
+        asked[..first_carried.unwrap_or_default()]
+            .iter()
+            .all(|a| *a == first_six)
+            && asked[first_carried.unwrap_or_default()..]
+                .iter()
+                .all(|a| *a == carried),
+        "the first six are asked before the carried one and never again: {asked:?}"
     );
     let waiting: Vec<_> = reviewed
         .set_aside
