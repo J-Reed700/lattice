@@ -169,7 +169,8 @@ impl SyncRepository for PgSyncRepository {
         since_seq: i64,
         limit: i64,
     ) -> AppResult<PullBatch> {
-        let device = self.get_device(user_id, device_id).await?;
+        let mut tx = self.pool.begin().await?;
+        let device = Self::get_device_tx(&mut tx, user_id, device_id).await?;
 
         // Bound this page to a committed watermark. Pushes commit in sequence
         // order per user, so an exhausted page can safely advance past this
@@ -178,7 +179,7 @@ impl SyncRepository for PgSyncRepository {
             "SELECT MAX(seq) FROM document_ops WHERE user_id=$1",
         )
         .bind(user_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await?
         .unwrap_or(0);
 
@@ -209,7 +210,7 @@ impl SyncRepository for PgSyncRepository {
         .bind(device.id)
         .bind(limit)
         .bind(high_watermark)
-        .fetch_all(&self.pool)
+        .fetch_all(tx.as_mut())
         .await?;
 
         let changes = rows
@@ -251,7 +252,7 @@ impl SyncRepository for PgSyncRepository {
             "#,
         )
         .bind(user_id)
-        .fetch_all(&self.pool)
+        .fetch_all(tx.as_mut())
         .await?
         .into_iter()
         .map(|row| {
@@ -285,8 +286,10 @@ impl SyncRepository for PgSyncRepository {
         )
         .bind(user_id)
         .bind(device.id)
-        .execute(&self.pool)
+        .execute(tx.as_mut())
         .await?;
+
+        tx.commit().await?;
 
         Ok(PullBatch {
             changes,

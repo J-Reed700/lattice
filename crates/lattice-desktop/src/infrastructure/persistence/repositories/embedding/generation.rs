@@ -28,17 +28,14 @@ pub async fn prepare(pool: &SqlitePool, model: &dyn EmbeddingPort) -> Result<usi
     let mut cursor = String::new();
     let mut completed = 0;
     loop {
-        let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, COALESCE(NULLIF(contextualized_content, ''), content) FROM text_chunks WHERE id > ? ORDER BY id LIMIT 64")
-            .bind(&cursor).fetch_all(pool).await?;
+        let rows = chunk_page_after(pool, &cursor).await?;
         if rows.is_empty() {
             break;
         }
         for (id, text) in rows {
             cursor = id.clone();
             let hash = content_hash(&text);
-            let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embedding_generation_vectors WHERE model_identity = ? AND chunk_id = ? AND content_hash = ? AND dimension = ?")
-                .bind(&identity).bind(&id).bind(&hash).bind(model.dimension() as i64).fetch_one(pool).await?;
-            if exists > 0 {
+            if is_prepared(pool, &identity, &id, &hash, model.dimension()).await? {
                 completed += 1;
                 continue;
             }
@@ -78,13 +75,52 @@ pub async fn prepare(pool: &SqlitePool, model: &dyn EmbeddingPort) -> Result<usi
                 *value /= norm;
             }
             // The source may have been deleted or edited while inference ran.
-            sqlx::query("INSERT OR REPLACE INTO embedding_generation_vectors (model_identity, chunk_id, content_hash, embedding, dimension) SELECT ?, id, ?, ?, ? FROM text_chunks WHERE id = ? AND COALESCE(NULLIF(contextualized_content, ''), content) = ?")
-                .bind(&identity).bind(&hash).bind(embedding_encoding::encode_embedding(&combined)).bind(model.dimension() as i64).bind(&id).bind(&text).execute(pool).await?;
+            store_prepared(pool, &identity, &hash, &combined, &id, &text).await?;
             completed += 1;
         }
         tracing::info!(completed, model_identity = %identity, "Preparing embedding generation");
     }
     Ok(completed)
+}
+
+async fn chunk_page_after(pool: &SqlitePool, cursor: &str) -> Result<Vec<(String, String)>> {
+    Ok(sqlx::query_as("SELECT id, COALESCE(NULLIF(contextualized_content, ''), content) FROM text_chunks WHERE id > ? ORDER BY id LIMIT 64")
+        .bind(cursor).fetch_all(pool).await?)
+}
+
+async fn is_prepared(
+    pool: &SqlitePool,
+    identity: &str,
+    chunk_id: &str,
+    hash: &str,
+    dimension: usize,
+) -> Result<bool> {
+    let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embedding_generation_vectors WHERE model_identity = ? AND chunk_id = ? AND content_hash = ? AND dimension = ?")
+        .bind(identity).bind(chunk_id).bind(hash).bind(dimension as i64).fetch_one(pool).await?;
+    Ok(exists > 0)
+}
+
+/// The statement rechecks the chunk's text, so a chunk deleted or edited while
+/// inference ran stores nothing.
+async fn store_prepared(
+    pool: &SqlitePool,
+    identity: &str,
+    hash: &str,
+    vector: &[f32],
+    chunk_id: &str,
+    text: &str,
+) -> Result<()> {
+    sqlx::query("INSERT OR REPLACE INTO embedding_generation_vectors (model_identity, chunk_id, content_hash, embedding, dimension) SELECT ?, id, ?, ?, ? FROM text_chunks WHERE id = ? AND COALESCE(NULLIF(contextualized_content, ''), content) = ?")
+        .bind(identity).bind(hash).bind(embedding_encoding::encode_embedding(vector)).bind(vector.len() as i64).bind(chunk_id).bind(text).execute(pool).await?;
+    Ok(())
+}
+
+pub async fn count_chunks_with_content(pool: &SqlitePool) -> Result<i64> {
+    Ok(
+        sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE content != ''")
+            .fetch_one(pool)
+            .await?,
+    )
 }
 
 /// Never restore vectors from another model, even if dimensions happen to match.

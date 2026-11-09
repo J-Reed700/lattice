@@ -190,9 +190,10 @@ impl Container {
 
         // Folders being watched are also legitimately readable, and the watch
         // list is authoritative in the database rather than in settings.
-        match sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
-            .fetch_all(self.db_pool())
-            .await
+        match crate::infrastructure::persistence::repositories::file_library::watch_folder_paths(
+            self.db_pool(),
+        )
+        .await
         {
             Ok(paths) => roots.extend(paths.into_iter().map(PathBuf::from)),
             Err(e) => tracing::warn!(

@@ -195,16 +195,18 @@ pub async fn forget_all_in(path: &Path) -> Result<()> {
 }
 
 async fn forget_all(pool: &SqlitePool) -> Result<()> {
+    let mut tx = pool.begin_write().await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_intents')",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
     if exists {
         sqlx::query("DELETE FROM file_intents")
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 

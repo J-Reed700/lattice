@@ -245,20 +245,10 @@ impl DatabaseConnection {
         retry_with_backoff(
             RetryConfig::conservative(), // Less aggressive for maintenance tasks
             || async {
-                let size_result: (i64, i64) = sqlx::query_as(
-                    "SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()",
-                )
-                .fetch_one(&pool)
-                .await?;
+                let (page_count, page_size, freelist_count) = page_usage(&pool).await?;
 
-                let db_size = size_result.0 * size_result.1;
-
-                let freelist: (i64,) =
-                    sqlx::query_as("SELECT freelist_count FROM pragma_freelist_count()")
-                        .fetch_one(&pool)
-                        .await?;
-
-                let free_ratio = freelist.0 as f64 / size_result.0 as f64;
+                let db_size = page_count * page_size;
+                let free_ratio = freelist_count as f64 / page_count as f64;
 
                 // Vacuum if database is over threshold and more than 20% fragmented
                 if db_size > threshold_bytes && free_ratio > 0.2 {
@@ -308,6 +298,21 @@ impl DatabaseConnection {
 
         Ok(())
     }
+}
+
+/// Page count, page size and free pages, read in one snapshot.
+pub(super) async fn page_usage(pool: &SqlitePool) -> Result<(i64, i64, i64)> {
+    let mut tx = pool.begin_read().await?;
+    let (page_count, page_size): (i64, i64) =
+        sqlx::query_as("SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()")
+            .fetch_one(&mut *tx)
+            .await?;
+    let (freelist_count,): (i64,) =
+        sqlx::query_as("SELECT freelist_count FROM pragma_freelist_count()")
+            .fetch_one(&mut *tx)
+            .await?;
+    tx.commit().await?;
+    Ok((page_count, page_size, freelist_count))
 }
 
 // P1 Issue #3: Add query timeout wrapper to prevent queries from hanging indefinitely

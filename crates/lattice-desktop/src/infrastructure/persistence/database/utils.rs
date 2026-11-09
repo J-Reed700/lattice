@@ -59,22 +59,12 @@ impl DatabaseUtils {
     pub async fn run_maintenance(pool: &SqlitePool) -> Result<()> {
         sqlx::query("PRAGMA optimize").execute(pool).await?;
 
-        let size: (i64, i64) = sqlx::query_as(
-            "SELECT page_count, page_size FROM pragma_page_count(), pragma_page_size()",
-        )
-        .fetch_one(pool)
-        .await?;
-
-        let db_size = size.0 * size.1;
+        let (page_count, page_size, freelist_count) = super::connection::page_usage(pool).await?;
+        let db_size = page_count * page_size;
 
         // Vacuum if over 100MB and fragmented
         if db_size > 100_000_000 {
-            let freelist: (i64,) =
-                sqlx::query_as("SELECT freelist_count FROM pragma_freelist_count()")
-                    .fetch_one(pool)
-                    .await?;
-
-            let free_ratio = freelist.0 as f64 / size.0 as f64;
+            let free_ratio = freelist_count as f64 / page_count as f64;
 
             if free_ratio > 0.2 {
                 tracing::info!(

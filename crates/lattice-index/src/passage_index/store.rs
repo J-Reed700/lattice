@@ -153,6 +153,14 @@ pub(super) async fn read_meta(
         .collect())
 }
 
+pub(super) async fn read_document_keys(
+    connection: &mut SqliteConnection,
+) -> std::result::Result<Vec<String>, sqlx::Error> {
+    sqlx::query_scalar::<_, String>("SELECT key FROM index_documents")
+        .fetch_all(connection)
+        .await
+}
+
 /// A short-lived connection to `dir`'s store; `None` when it has none or it
 /// will not open. Reading through one leaves a live store's pool untouched.
 pub(super) async fn connect(dir: &Path) -> Option<SqliteConnection> {
