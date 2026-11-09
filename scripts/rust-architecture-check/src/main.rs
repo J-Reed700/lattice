@@ -11,6 +11,7 @@ use syn::{
     Attribute, Item, UseTree,
 };
 
+mod data_access;
 mod feature_graph;
 mod ratchet;
 
