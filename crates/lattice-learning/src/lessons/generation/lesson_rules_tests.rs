@@ -797,9 +797,22 @@ fn an_apostrophe_is_no_quoted_wording_to_cite() {
 }
 
 #[test]
+fn a_plural_possessive_is_no_quoted_wording_to_cite() {
+    for sentence in [
+        "The users' files and the admins' settings stay apart.",
+        "The users\u{2019} files and the admins\u{2019} settings stay apart.",
+        "The manual says 'rm deletes files permanently'.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        assert!(lesson_rules(&candidate).is_empty(), "{sentence}");
+    }
+}
+
+#[test]
 fn a_real_quotation_is_still_quoted_wording_to_cite() {
     for sentence in [
-        "The manual says 'rm deletes files permanently'.",
+        "The manual says \"rm deletes files permanently\".",
         "Remember \"the shell keeps a working directory\" always.",
     ] {
         let mut candidate = lesson();
@@ -811,7 +824,7 @@ fn a_real_quotation_is_still_quoted_wording_to_cite() {
 }
 
 const MISCONCEPTION: &str =
-    "Tempting wrong guess: 'the projects folder is where notes.txt always lives'.";
+    "Tempting wrong guess: \"the projects folder is where notes.txt always lives\".";
 
 #[test]
 fn a_misconception_in_quotation_marks_is_told_to_drop_them() {
@@ -886,7 +899,37 @@ fn a_right_choice_much_longer_than_the_others_is_a_finding_at_its_question() {
     );
     let notes = first_question_notes(&candidate);
     assert_eq!(notes.len(), 1, "{notes:?}");
-    assert!(notes[0].contains("close in length"), "{notes:?}");
+    assert!(notes[0].contains("Shorten the right choice"), "{notes:?}");
+}
+
+fn lengths_case(key_length: usize) -> Vec<String> {
+    let options = [
+        "a".repeat(45),
+        "b".repeat(28),
+        "c".repeat(key_length),
+        "d".repeat(45),
+    ];
+    let candidate = question_case(
+        "Which one is right?",
+        options.each_ref().map(String::as_str),
+        2,
+    );
+    first_question_notes(&candidate)
+}
+
+#[test]
+fn a_long_right_choice_is_told_the_measured_lengths_and_its_limit() {
+    let notes = lengths_case(73);
+    assert_eq!(notes.len(), 1, "{notes:?}");
+    for expected in ["73", "45", "72 characters or fewer"] {
+        assert!(notes[0].contains(expected), "{expected}: {notes:?}");
+    }
+}
+
+#[test]
+fn a_right_choice_exactly_at_its_limit_is_no_finding() {
+    let notes = lengths_case(72);
+    assert!(notes.is_empty(), "{notes:?}");
 }
 
 #[test]

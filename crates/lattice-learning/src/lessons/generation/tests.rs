@@ -651,11 +651,37 @@ fn recall_cards_are_written_for_a_learner_who_sees_only_the_lesson() {
 }
 
 #[test]
+fn the_writer_and_the_repairs_are_told_quoted_wording_takes_double_quotation_marks() {
+    let schema = lesson_schema(2);
+    for (who, text) in [
+        ("writer", citation_instructions(true)),
+        (
+            "teaching repair",
+            crate::lessons::text_edits::instructions(&schema),
+        ),
+        (
+            "claim repair",
+            crate::lessons::text_edits::rewrite_instructions(&schema),
+        ),
+    ] {
+        assert!(text.contains("double quotation marks"), "{who}: {text}");
+        assert!(
+            text.contains("never put wording in single quotation marks"),
+            "{who}"
+        );
+    }
+}
+
+#[test]
 fn the_writer_is_told_quotation_marks_are_for_quoted_wording() {
     for has_sources in [true, false] {
         let instructions = citation_instructions(has_sources);
         assert!(
-            instructions.contains("Quotation marks mark wording quoted from a source"),
+            instructions.contains(if has_sources {
+                "Wording quoted from a source goes in double quotation marks, and only in a cited sentence"
+            } else {
+                "Quotation marks mark wording quoted from a source"
+            }),
             "{has_sources}"
         );
         assert!(

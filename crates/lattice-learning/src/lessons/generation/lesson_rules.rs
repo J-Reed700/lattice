@@ -6,7 +6,7 @@
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text};
-use crate::assessment_engine::{distinct_options, key_fault, KeyFault};
+use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
 use crate::content_verification::{
     figures, names_a_source, needs_citation, quoted_wording, Givens, CITED_KINDS,
 };
@@ -501,11 +501,27 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
         } else if let Some(fault) = right.and_then(|right| key_fault(prompt, &choice_texts, right))
         {
             findings.push(match fault {
-                KeyFault::LengthBiased => structure(
-                    site,
-                    format!("{label}'s right choice stands out as the longest."),
-                    format!("{label}'s right choice is much longer than the others; the four choices must be close in length. Shorten the right choice, or make the wrong choices as specific."),
-                ),
+                KeyFault::LengthBiased => {
+                    let length = |at: usize| {
+                        choice_texts
+                            .get(at)
+                            .map_or(0, |choice| choice.trim().chars().count())
+                    };
+                    let key = right.map_or(0, length);
+                    let allowed = right
+                        .and_then(|right| longest_allowed_key(&choice_texts, right))
+                        .unwrap_or(0);
+                    let other = (0..choice_texts.len())
+                        .filter(|at| Some(*at) != right)
+                        .map(length)
+                        .max()
+                        .unwrap_or(0);
+                    structure(
+                        site,
+                        format!("{label}'s right choice stands out as the longest."),
+                        format!("{label}'s right choice is {key} characters and the longest wrong choice {other}; so that a learner cannot pick the right choice for its length, it may be at most {allowed} characters. Shorten the right choice to {allowed} characters or fewer, or make the wrong choices as specific."),
+                    )
+                }
                 KeyFault::GivesAway => structure(
                     site,
                     format!("{label}'s prompt gives away its answer."),

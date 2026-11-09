@@ -346,7 +346,7 @@ fn a_lessons_schema_offers_citations_and_another_schema_does_not() {
 fn follows_the_writers_citation_rules(text: &str) {
     for rule in [
         "Never say in the lesson's text where a statement comes from, by number or by name",
-        "Quotation marks mark wording quoted from a source, and only in a cited sentence.",
+        "Wording quoted from a source goes in double quotation marks, and only in a cited sentence; never put wording in single quotation marks.",
         "A misconception, a learner's thought, something a friend says or an example remark is written in the lesson's own sentence without quotation marks.",
     ] {
         assert!(text.contains(rule), "missing {rule:?} in {text}");
@@ -506,4 +506,14 @@ fn an_edit_to_an_unknown_block_is_a_problem_of_that_part_alone() -> Result<()> {
         "{message}"
     );
     Ok(())
+}
+
+#[test]
+fn a_repair_is_told_not_to_come_between_a_sentence_and_one_that_refers_back_to_it() {
+    assert!(
+        INSTRUCTIONS.contains(
+            "never between a sentence and the next one when the next one refers back to it"
+        ),
+        "{INSTRUCTIONS}"
+    );
 }

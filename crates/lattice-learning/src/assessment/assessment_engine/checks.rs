@@ -25,13 +25,20 @@ pub fn key_leaks(stem: &str, key_text: &str, other_options: &[String]) -> bool {
             .any(|o| o.chars().count() >= 3 && whole_words(&stem, &o))
 }
 
-/// Length bias (section 5.2): the key is the unique longest option by more
-/// than 60 % of the median option length.
-pub fn length_biased(options: &[String], key: usize) -> bool {
-    let mut lengths: Vec<usize> = options.iter().map(|o| o.trim().chars().count()).collect();
-    let Some(&key_length) = lengths.get(key) else {
-        return false;
-    };
+/// The most the key may exceed the longest other option by: 60 % of the
+/// median option length, whole characters.
+fn length_slack(lengths: &[usize]) -> usize {
+    let mut sorted = lengths.to_vec();
+    sorted.sort_unstable();
+    let median = sorted.get(sorted.len() / 2).copied().unwrap_or(0) as f64;
+    (0.6 * median) as usize
+}
+
+/// The longest the key may be before it stands out: the longest other option
+/// plus the slack. `None` when `key` is no option.
+pub fn longest_allowed_key(options: &[String], key: usize) -> Option<usize> {
+    let lengths: Vec<usize> = options.iter().map(|o| o.trim().chars().count()).collect();
+    lengths.get(key)?;
     let longest_other = lengths
         .iter()
         .enumerate()
@@ -39,9 +46,17 @@ pub fn length_biased(options: &[String], key: usize) -> bool {
         .map(|(_, l)| *l)
         .max()
         .unwrap_or(0);
-    lengths.sort_unstable();
-    let median = lengths.get(lengths.len() / 2).copied().unwrap_or(0) as f64;
-    key_length > longest_other && (key_length - longest_other) as f64 > 0.6 * median
+    Some(longest_other + length_slack(&lengths))
+}
+
+/// Length bias (section 5.2): the key is the unique longest option by more
+/// than 60 % of the median option length.
+pub fn length_biased(options: &[String], key: usize) -> bool {
+    let Some(allowed) = longest_allowed_key(options, key) else {
+        return false;
+    };
+    let key_length = options.get(key).map_or(0, |o| o.trim().chars().count());
+    key_length > allowed
 }
 
 /// Normalised stem similarity at or above which two items of one outcome are

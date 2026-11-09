@@ -102,13 +102,17 @@ fn scripted(outputs: Vec<String>) -> ScriptedModel {
 
 /// The writer's prompt: the plan's lesson 2 is this one.
 fn context(ideas: &[&str], actions: &[&str]) -> String {
+    context_planning(ideas, &[], actions, "")
+}
+
+fn context_planning(ideas: &[&str], terms: &[&str], actions: &[&str], contrast: &str) -> String {
     json!({
         "sources":[{"sourceIndex":0,"excerpt":EXCERPT}],
         "priorKnowledge":"The learner has used a graphical file manager.",
         "currentModule":{"title":"Shell basics","lessonSequence":[{"title":"Looking around","current":false},{"title":"Working in the terminal","current":true},{"title":"Making files","current":false}]},
         "courseSequence":{"curriculum":[{"title":"Shell basics","outcomes":["Run commands"],"milestone":"A logbook of daily shell habits","lessons":[{"title":"Looking around"},{"title":"Working in the terminal"},{"title":"Making files"}]},{"title":"Secure remote access","outcomes":["Connect to another machine"],"milestone":"A tidy list of saved connections","lessons":[{"title":"Keys and logins"}]}],"coursePlan":[
             {"title":"Looking around","position":"earlier","ideas":["A folder holds files"],"terms":["folder"],"actions":["Listing the files in a folder"],"contrast":""},
-            {"title":"Working in the terminal","position":"this","ideas":ideas,"terms":[],"actions":actions,"contrast":""},
+            {"title":"Working in the terminal","position":"this","ideas":ideas,"terms":terms,"actions":actions,"contrast":contrast},
             {"title":"Making files","position":"later","ideas":[],"terms":[],"actions":["Creating a file"],"contrast":""}
         ]}
     })
@@ -701,4 +705,196 @@ fn the_unseen_check_names_the_whole_outline_and_scopes_its_qualifier() {
     assert!(contract::SYSTEM.contains("courseOutline"));
     assert!(contract::SYSTEM
         .contains("text above or below or a step number that this lesson does not contain"));
+}
+
+const SOFTWARE_WORDS: [&str; 7] = [
+    "command",
+    "option",
+    "key combination",
+    "file operation",
+    "folder",
+    "a file",
+    "path",
+];
+
+fn assert_no_software_words(what: &str, text: &str) {
+    for word in SOFTWARE_WORDS {
+        assert!(!text.contains(word), "{what} mentions \"{word}\": {text}");
+    }
+}
+
+async fn finding_note(planned: Value, used: Value, marker: &str) -> Result<String> {
+    finding_note_in(context(&[], &[OPEN_TERMINAL]), planned, used, marker).await
+}
+
+async fn finding_note_in(
+    context_json: String,
+    planned: Value,
+    used: Value,
+    marker: &str,
+) -> Result<String> {
+    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let found = answer(planned, used, json!([]), json!([]));
+    let model = Routed::new(&scripted, vec![found.clone(), found]);
+    let candidate = lesson([
+        "The first step is shown.",
+        "Apply the second method\nto the first item.",
+        "Read the result.",
+    ]);
+    let result = run(&model, &candidate, &context_json, &[]).await?;
+    let note = result
+        .set_aside
+        .iter()
+        .map(|waiting| waiting.finding.note.clone())
+        .find(|note| note.contains(marker))
+        .unwrap_or_default();
+    Ok(note
+        .split_once(marker)
+        .map_or(note.clone(), |(_, rest)| format!("{marker}{rest}")))
+}
+
+#[tokio::test]
+async fn the_contract_check_describes_learner_actions_in_no_subjects_terms() -> Result<()> {
+    let system = contract::SYSTEM;
+    let start = system.find("1. planned:").unwrap();
+    let end = system.find("3. contradictions:").unwrap();
+    let checks = &system[start..end];
+    assert_no_software_words("checks 1 and 2", checks);
+    for expected in [
+        "the exact steps, and the result the learner should get",
+        "anything a part asks the learner to do or use that they need to be shown how to do (an action, a technique, a tool, a setting, or a variant of something taught)",
+        "A variant is a new thing: teaching how to do something does not teach doing it another way or with something added.",
+    ] {
+        assert!(checks.contains(expected), "missing {expected:?} in {checks}");
+    }
+
+    let scripted = scripted(vec![reviewed(3)]);
+    let model = Routed::new(&scripted, vec![]);
+    let candidate = lesson(["One.", "Two.", "Three."]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let drafting = model.drafting();
+    let start = drafting[0].find("Go through the lesson part by part in order.");
+    let end = drafting[0].find("say where the lesson, the earlier lessons");
+    assert!(start.is_some() && end.is_some(), "{}", drafting[0]);
+    let brief = &drafting[0][start.unwrap()..end.unwrap()];
+    assert_no_software_words("the brief", brief);
+    assert!(
+        brief.contains("each variant of it"),
+        "the brief never asks about variants: {brief}"
+    );
+
+    let action = finding_note(
+        json!([not_taught("action-0", 1)]),
+        json!([]),
+        "Teach it in the lesson's own words: ",
+    )
+    .await?;
+    assert!(
+        action.contains("the exact steps, and the result the learner should get"),
+        "{action}"
+    );
+    assert_no_software_words("the action note", &action);
+
+    let used_note = finding_note(
+        json!([]),
+        json!([used(1, "Apply the second method", "the second method")]),
+        "Teach it in this step",
+    )
+    .await?;
+    assert!(used_note.contains("exactly how to do it"), "{used_note}");
+    assert_no_software_words("the used-before-taught note", &used_note);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_untaught_idea_or_contrast_is_told_its_name_is_the_plans_label_and_a_term_is_not(
+) -> Result<()> {
+    let label = "is the course plan's label";
+    let idea = finding_note_in(
+        context_planning(&["A first idea"], &[], &[], ""),
+        json!([not_taught("idea-0", 1)]),
+        json!([]),
+        "The lesson does not yet teach the idea",
+    )
+    .await?;
+    let contrast = finding_note_in(
+        context_planning(&[], &[], &[], "A planned confusion"),
+        json!([not_taught("contrast", 1)]),
+        json!([]),
+        "The lesson does not yet teach the contrast",
+    )
+    .await?;
+    for note in [&idea, &contrast] {
+        assert!(!note.is_empty());
+        assert!(note.contains(label), "{note}");
+        assert!(note.contains("without copying the label"), "{note}");
+    }
+    let term = finding_note_in(
+        context_planning(&[], &["a planned term"], &[], ""),
+        json!([not_taught("term-0", 1)]),
+        json!([]),
+        "The lesson does not yet teach the term",
+    )
+    .await?;
+    assert!(!term.is_empty());
+    assert!(term.contains("say what it means"), "{term}");
+    assert!(!term.contains(label), "{term}");
+    assert!(!term.contains("copying the label"), "{term}");
+    Ok(())
+}
+
+const SHOWN: &str = "what it is for, exactly how to do it, and the result the learner should get";
+
+#[tokio::test]
+async fn check_two_counts_teaching_where_a_step_asks_for_it() -> Result<()> {
+    let system = contract::SYSTEM;
+    let start = system.find("2. usedBeforeTaught").unwrap();
+    let end = system.find("3. contradictions:").unwrap();
+    let check = &system[start..end];
+    let criterion = format!(
+        "or that it treats as known, which the lesson has not taught by the words that ask for it and which priorKnowledge and the actions and terms of earlierLessons do not cover. The lesson has taught it when an earlier part, or this part before or in those words, says {SHOWN}: words that ask for it and say all of this teach it where it is used."
+    );
+    assert!(check.contains(&criterion), "{check}");
+    assert!(
+        !system.contains("which no earlier part of this lesson teaches"),
+        "{check}"
+    );
+
+    let scripted = scripted(vec![reviewed(3)]);
+    let model = Routed::new(&scripted, vec![]);
+    let candidate = lesson(["One.", "Two.", "Three."]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let drafting = model.drafting();
+    let brief = format!(
+        "an earlier part, or the same part up to and including the words that ask for it, and whether that place says {SHOWN}"
+    );
+    assert!(drafting[0].contains(&brief), "{}", drafting[0]);
+    Ok(())
+}
+
+#[test]
+fn check_two_asks_for_a_noun_phrase_never_a_sentence() {
+    let system = contract::SYSTEM;
+    assert!(
+        system.contains(
+            "Give the part, the words copied exactly where the learner is asked to use it, and in what the name of what it asks for: a noun phrase, never a sentence."
+        ),
+        "{system}"
+    );
+    assert!(!system.contains("and what it is."), "{system}");
+}
+
+#[tokio::test]
+async fn the_check_and_the_note_define_shown_how_in_the_same_words() -> Result<()> {
+    let note = finding_note(
+        json!([]),
+        json!([used(1, "Apply the second method", "the second method")]),
+        "Teach it in this step",
+    )
+    .await?;
+    let (_, rest) = note.split_once("where it is first used (").unwrap();
+    let (phrase, _) = rest.split_once(')').unwrap();
+    assert_eq!(phrase, SHOWN, "{note}");
+    assert!(contract::SYSTEM.contains(phrase), "{}", contract::SYSTEM);
+    Ok(())
 }

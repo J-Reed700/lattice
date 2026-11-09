@@ -155,29 +155,17 @@ pub(crate) fn needs_citation(text: &str, givens: &Givens) -> bool {
     figures(text).any(|figure| !givens.holds(figure)) || quotes_or_attributes(text)
 }
 
-/// The wording between quotation marks, twelve characters or more of it. A
-/// double quote always marks; a single quote does not when a letter or digit
-/// stands on both sides of it, as in "shell's" or "don't": that is an
-/// apostrophe.
+/// Marks that open or close a quotation: double quotation marks only.
+pub(crate) const QUOTE_MARKS: &[char] = &['"', '\u{201c}', '\u{201d}'];
+
+/// The wording between double quotation marks, twelve characters or more of
+/// it. A single quote is an apostrophe or a possessive, never a quotation mark.
 pub(crate) fn quoted_wording(text: &str) -> impl Iterator<Item = &str> {
     let chars: Vec<(usize, char)> = text.char_indices().collect();
     let marks: Vec<usize> = chars
         .iter()
         .enumerate()
-        .filter(|&(at, &(_, c))| match c {
-            '"' | '\u{201c}' | '\u{201d}' => true,
-            '\'' | '\u{2018}' | '\u{2019}' => {
-                let inside_word = at
-                    .checked_sub(1)
-                    .and_then(|before| chars.get(before))
-                    .zip(chars.get(at + 1))
-                    .is_some_and(|(before, after)| {
-                        before.1.is_alphanumeric() && after.1.is_alphanumeric()
-                    });
-                !inside_word
-            }
-            _ => false,
-        })
+        .filter(|&(_, &(_, c))| QUOTE_MARKS.contains(&c))
         .map(|(at, _)| at)
         .collect();
     let mut spans = Vec::new();

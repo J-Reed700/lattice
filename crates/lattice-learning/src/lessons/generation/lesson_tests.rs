@@ -542,16 +542,53 @@ fn the_writer_teaches_exactly_its_lessons_planned_ideas_and_never_a_later_lesson
 }
 
 #[test]
-fn the_writer_makes_what_an_action_needs_with_a_command_it_teaches() {
+fn the_writer_has_the_learner_prepare_what_an_action_needs_with_steps_it_teaches() {
     let requirements = writer_requirements();
 
     assert!(
-        requirements.contains("needs something to exist first"),
+        requirements.contains("When an action needs something prepared first"),
         "{requirements}"
     );
     assert!(
-        requirements.contains("teaches that command where it is first used"),
+        requirements.contains("teaches them where they are first used"),
         "{requirements}"
+    );
+}
+
+#[test]
+fn the_writer_asks_for_what_an_action_needs_in_no_subjects_terms() {
+    let text = writer_requirements();
+    let rule = text
+        .lines()
+        .find(|line| line.contains("teach every action a practice or check asks"))
+        .unwrap();
+    for word in ["command", "option", "folder", "file", "path"] {
+        assert!(
+            !rule.contains(word),
+            "the action rule mentions \"{word}\": {rule}"
+        );
+    }
+    assert!(
+        rule.contains("the lesson has the learner prepare it with steps the lesson teaches"),
+        "{rule}"
+    );
+    let question = text
+        .lines()
+        .find(|line| line.contains("Every rationale and the explanation say what is true"))
+        .unwrap();
+    assert!(!question.contains("paths"), "{question}");
+    assert!(
+        question.contains("using the names and values its prompt gives"),
+        "{question}"
+    );
+}
+
+#[test]
+fn the_writer_is_told_a_section_never_says_the_same_thing_twice() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("a section never says the same thing twice"),
+        "{text}"
     );
 }
 
@@ -760,7 +797,7 @@ fn the_writer_asks_questions_only_about_what_the_learner_was_taught() {
 #[test]
 fn the_writer_is_told_question_reasons_say_what_is_true() {
     let text = writer_requirements();
-    let sentence = "Every rationale and the explanation say what is true about this question's own case, using the names, paths and values its prompt gives; never give what a source, an excerpt, a passage or a tutorial says or does not say as the reason.";
+    let sentence = "Every rationale and the explanation say what is true about this question's own case, using the names and values its prompt gives; never give what a source, an excerpt, a passage or a tutorial says or does not say as the reason.";
     assert!(text.contains(sentence), "missing {sentence:?} in {text}");
 }
 
@@ -769,7 +806,7 @@ fn the_writer_teaches_how_a_deliverable_is_recorded() {
     let text = writer_requirements();
     for expected in [
         "every step a deliverable needs, including how the learner records or saves their work",
-        "a deliverable kept in a file needs the way to write text into that file taught, here or in an earlier lesson's planned actions",
+        "a deliverable kept anywhere but the learner's own notes needs the way to record it there taught, here or in an earlier lesson's planned actions",
         "otherwise ask for the record in the learner's own notes",
     ] {
         assert!(text.contains(expected), "missing {expected:?} in {text}");
