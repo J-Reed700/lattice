@@ -1393,7 +1393,7 @@ async function runSourceLibraryJourney(
   await expect(panel.getByRole("alert")).toContainText(
     "Source update response was lost after persistence.",
   );
-  await panel.getByRole("button", { name: "Retry same operation" }).click();
+  await panel.getByRole("button", { name: "Try again" }).click();
   const availableUpdate = panel.getByRole("region", {
     name: "Available update",
   });

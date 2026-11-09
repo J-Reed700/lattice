@@ -32,8 +32,6 @@ export interface LearningCodeEditorProps {
   showPath?: boolean;
   /** Runs when the learner presses Mod-Enter (Cmd-Enter on macOS). */
   onRunShortcut?: () => void;
-  /** Alias for onRunShortcut. */
-  onRun?: () => void;
 }
 
 const externalDocumentSync = Annotation.define<boolean>();
@@ -103,8 +101,6 @@ function buildExtensions(language: CodeLanguage | null, readOnly: boolean, onCha
   ];
 }
 
-
-
 function isMacPlatform(): boolean {
   if (typeof navigator === 'undefined') return false;
   const platform = (navigator.platform || '').toUpperCase();
@@ -123,12 +119,10 @@ export function LearningCodeEditor({
   minHeight = 300,
   showPath = true,
   onRunShortcut,
-  onRun,
 }: LearningCodeEditorProps) {
   const hostRef = useRef<HTMLDivElement>(null);
   const viewRef = useRef<EditorView | null>(null);
-  const effectiveRun = onRun ?? onRunShortcut;
-  const latestPropsRef = useRef({ onChange, onRunShortcut: effectiveRun, ariaLabel });
+  const latestPropsRef = useRef({ onChange, onRunShortcut, ariaLabel });
   const activePathRef = useRef(path);
   const activeAriaLabelRef = useRef(ariaLabel);
   const pathGenerationRef = useRef(0);
@@ -136,7 +130,7 @@ export function LearningCodeEditor({
   const languageRef = useRef(activeLanguage);
   const readOnlyRef = useRef(readOnly);
 
-  latestPropsRef.current = { onChange, onRunShortcut: effectiveRun, ariaLabel };
+  latestPropsRef.current = { onChange, onRunShortcut, ariaLabel };
 
   useLayoutEffect(() => {
     const host = hostRef.current;
@@ -240,8 +234,8 @@ export function LearningCodeEditor({
         <div className="flex min-w-0 items-center gap-2">
           <span className="learning-code-editor__dot" aria-hidden="true" />
           {showPath && <span className="truncate font-mono text-xs text-[hsl(var(--text-secondary))]" title={path}>{path || 'Untitled'}</span>}
-          <span className="learning-code-editor__language shrink-0 rounded-full px-2 py-0.5 text-[11px] font-semibold uppercase tracking-[.12em]">{activeLanguage?.label ?? PLAIN_TEXT_LABEL}</span>
-          {readOnly && <span className="learning-code-editor__readonly shrink-0 text-[11px] font-semibold uppercase tracking-[.12em]">Read only</span>}
+          <span className="learning-code-editor__language shrink-0 rounded-full px-2 py-0.5 text-xs font-semibold uppercase tracking-[.12em]">{activeLanguage?.label ?? PLAIN_TEXT_LABEL}</span>
+          {readOnly && <span className="learning-code-editor__readonly shrink-0 text-xs font-semibold uppercase tracking-[.12em]">Read only</span>}
         </div>
         <button
           type="button"
@@ -262,12 +256,11 @@ export function LearningCodeEditor({
       <div
         className="learning-code-editor__body overflow-auto"
         style={{ minHeight: typeof minHeight === 'number' ? `${minHeight}px` : minHeight, maxHeight: '65vh' }}
-        aria-label={ariaLabel ?? `Code editor for ${path || 'untitled file'}`}
       >
         <div ref={hostRef} />
       </div>
       <footer className="learning-code-editor__hint flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[hsl(var(--border-subtle))] px-3 py-2 text-xs text-[hsl(var(--text-muted))] sm:px-4">
-        <span>{readOnly ? 'Read-only file' : `Tab indents · ${modLabel}Z undo · ${modLabel}F find · ${modLabel}Enter run`}</span>
+        <span>{readOnly ? 'Read-only file' : `Tab indents · ${modLabel}Z undo · ${modLabel}F find${onRunShortcut ? ` · ${modLabel}Enter run` : ''}`}</span>
         {!readOnly && <span>Press Esc, then Tab to move focus</span>}
       </footer>
     </section>

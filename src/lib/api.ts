@@ -5,8 +5,12 @@
  * than with the initial bundle. Each member keeps one identity, so it is safe
  * in dependency arrays and as a query function.
  */
+import { type ApiResult, ApiRequestError, unwrapApiResult } from '@/types/api/result';
+
 import type { VaultClients } from './apiClients';
+import type * as Wire from './bindings';
 import { getErrorMessage } from './errorUtils';
+import { parseApiError } from './errorHandling';
 
 export type ApiClient = VaultClients;
 
@@ -38,51 +42,26 @@ export const VaultAPI = new Proxy({} as VaultClients, {
   },
 });
 
-export type UnwrapResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error?: unknown; data?: unknown }
-  | { status: 'ok'; data: T }
-  | { status: 'error'; error?: unknown; data?: unknown }
-  | { ok: boolean; data?: T; error?: unknown }
-  | { status: 'ok' | 'error'; data?: T; error?: unknown };
-
-export function unwrap<T>(result: UnwrapResult<T>): T {
-  if (result && typeof result === 'object') {
-    if ('ok' in result) {
-      if (result.ok) return (result as { data: T }).data;
-      if (result.error instanceof Error) throw result.error;
-      throw new Error(getErrorMessage(result.error, 'The request could not be completed.'));
-    }
-    if ('status' in result) {
-      if (result.status === 'ok') return (result as { data: T }).data;
-      if (result.error instanceof Error) throw result.error;
-      throw new Error(getErrorMessage(result.error, 'The request could not be completed.'));
-    }
-  }
-  throw new Error('Invalid result structure');
+/** The value of a successful result; a failed one throws, keeping the backend's error details. */
+export function unwrap<T>(result: ApiResult<T> | Wire.Result<T, unknown>): T {
+  if ('ok' in result) return unwrapApiResult(result);
+  if (result.status === 'ok') return result.data;
+  if (result.error instanceof Error) throw result.error;
+  throw new ApiRequestError({ ok: false, error: getErrorMessage(result.error), details: parseApiError(result.error) });
 }
 
-function generateUuid(): string {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
-  }
-  const bytes = new Uint8Array(16);
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < bytes.length; i += 1) {
-      bytes[i] = Math.floor(Math.random() * 256);
-    }
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+/** A fresh id for an operation, session or record. */
+export function newId(): string {
+  return crypto.randomUUID();
 }
 
-export function newId(prefix?: string): string {
-  const uuid = generateUuid();
-  return prefix ? `${prefix}-${uuid}` : uuid;
+/** Whether the backend refused a write because the record changed since it was read. */
+export function isConflict(error: unknown): boolean {
+  if (typeof error !== 'object' || error === null) return false;
+  if ('code' in error && error.code === 'CONFLICT') return true;
+  if (!('details' in error)) return false;
+  const { details } = error;
+  return typeof details === 'object' && details !== null && 'code' in details && details.code === 'CONFLICT';
 }
 
 export default VaultAPI;

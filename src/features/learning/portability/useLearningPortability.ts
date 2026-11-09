@@ -2,6 +2,7 @@ import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/
 import { open } from '@tauri-apps/plugin-dialog';
 
 import { useApi } from '@/contexts/ApiContext';
+import { unwrapApiResult as unwrap } from '@/types/api/result';
 import { invalidateLearningSourceDependents, refreshLearningProgramAfterImport } from '@/features/learning/api/learningInvalidation';
 import { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 import { CONFLICT_KINDS } from '@/features/learning/portability/conflictPolicies';
@@ -32,11 +33,6 @@ export const learningPortabilityKey = (programId: string) => [...LEARNING_PORTAB
 export { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 export const semanticSourcesKey = (request: SearchLearningSourcesSemanticallyRequestDto | null) =>
   ['learning-semantic-sources', request?.programId, request?.query, request?.limit] as const;
-
-function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
 export function useLearningPortability(programId: string) {
   const api = useApi();
