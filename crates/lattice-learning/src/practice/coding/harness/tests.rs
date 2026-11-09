@@ -1,15 +1,15 @@
 use super::fake::{case, sample_spec};
 use super::*;
+use crate::embedded_runtime::LearningBuiltinRuntime;
 use crate::lab_runtime::{LearningLabExecutionResult, LearningLabRunStatus};
+use crate::persistence::{db, now};
+use crate::practical_dto::{LearningPracticalCheckStatus, StartLearningPracticalRunRequestDto};
 use crate::practice::coding::dto::CodingRunScope;
 use crate::practice::coding::problem::{CaseCompare, CaseStatus, CaseVisibility, ProblemCase};
 use crate::practice::practical_repository::{
     LearningPracticalRepository, PreparedExecution, PreparedHarness, PreparedRun,
 };
 use crate::practice::practical_runs::CodingRunStart;
-use crate::practical_dto::{LearningPracticalCheckStatus, StartLearningPracticalRunRequestDto};
-use crate::embedded_runtime::LearningBuiltinRuntime;
-use crate::persistence::{db, now};
 use lattice_core::shared::error::Result;
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -117,8 +117,18 @@ fn a_stopped_run_leaves_every_case_not_run() {
 
 #[test]
 fn a_line_forged_with_another_nonce_is_ignored_and_stays_in_the_program_output() {
-    let forged = line_with("ffffffffffffffffffffffffffffffff", "exact", "passed", None, "", None);
-    let stdout = format!("{forged}{}", line("unordered", "passed", Some("[1, 2]"), "", None));
+    let forged = line_with(
+        "ffffffffffffffffffffffffffffffff",
+        "exact",
+        "passed",
+        None,
+        "",
+        None,
+    );
+    let stdout = format!(
+        "{forged}{}",
+        line("unordered", "passed", Some("[1, 2]"), "", None)
+    );
     let harness = PythonHarness::new();
     let results = harness.results(&three_cases(), &stdout, NONCE, RunEnd::Finished);
     assert_eq!(results[0].status, CaseStatus::NotRun);
@@ -213,7 +223,12 @@ async fn setup(pool: &SqlitePool) -> Result<Setup> {
     let files = [
         ("solution.py", "starter", "def add(a, b):\n    pass\n", 1),
         ("problem/problem.json", "check", "{\"hidden\": true}", 0),
-        ("reference/solution.py", "reference", "def add(a, b):\n    return a + b\n", 0),
+        (
+            "reference/solution.py",
+            "reference",
+            "def add(a, b):\n    return a + b\n",
+            0,
+        ),
     ];
     for (ordinal, (path, role, content, editable)) in files.into_iter().enumerate() {
         sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,?,?,?,?)")
@@ -431,7 +446,13 @@ async fn a_hidden_cases_content_never_reaches_a_generic_run_read() -> Result<()>
         "{}{}{}",
         line("exact", "passed", Some("[0, 1]"), "", None),
         line("unordered", "passed", Some("[2, 1]"), "", None),
-        line("floats", "error", None, "secret print", Some("ValueError: secret")),
+        line(
+            "floats",
+            "error",
+            None,
+            "secret print",
+            Some("ValueError: secret")
+        ),
     );
     setup
         .repo
@@ -485,7 +506,10 @@ async fn a_run_without_a_harness_keeps_the_single_contained_evaluator_row() -> R
     );
     setup
         .repo
-        .finish_run(&prepared, execution(LearningLabRunStatus::Passed, stdout.clone()))
+        .finish_run(
+            &prepared,
+            execution(LearningLabRunStatus::Passed, stdout.clone()),
+        )
         .await?;
     let run = setup.repo.run(&prepared.dto.id).await?;
     assert_eq!(run.checks.len(), 1);
@@ -500,7 +524,10 @@ async fn a_run_without_a_harness_keeps_the_single_contained_evaluator_row() -> R
 async fn a_coding_runs_files_are_the_learners_and_the_harness_evaluator_only() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let setup = setup(&pool).await?;
-    let request = run_request(&setup, vec![("solution.py", "def add(a, b):\n    return a + b\n")]);
+    let request = run_request(
+        &setup,
+        vec![("solution.py", "def add(a, b):\n    return a + b\n")],
+    );
     let start = coding_start(&setup, request.clone(), CodingRunScope::All);
     let prepared = setup
         .repo

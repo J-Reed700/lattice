@@ -3,11 +3,11 @@ use crate::{
     embedded_runtime::BuiltinRuntimes,
     lab_runtime::{self, LearningLabExecutionResult, LearningLabRunStatus},
     practical_dto::*,
+    practical_repository::{LearningPracticalRepository, PreparedExecution, RunCleanup},
     practice::coding::{
         dto::CodingRunScope,
         problem::{ProblemCase, ProblemSpec},
     },
-    practical_repository::{LearningPracticalRepository, PreparedExecution, RunCleanup},
 };
 use lattice_core::shared::{
     error::{AppError, Result},

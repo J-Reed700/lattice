@@ -50,7 +50,7 @@ fn scope_name(scope: &CodingRunScope) -> &'static str {
     }
 }
 
-fn run_end(status: LearningLabRunStatus) -> RunEnd {
+fn run_end(status: &LearningLabRunStatus) -> RunEnd {
     match status {
         LearningLabRunStatus::Passed | LearningLabRunStatus::Failed => RunEnd::Finished,
         LearningLabRunStatus::TimedOut => RunEnd::TimedOut,
@@ -89,7 +89,7 @@ fn case_checks(
         &prepared.cases,
         &execution.stdout,
         &prepared.nonce,
-        run_end(execution.status),
+        run_end(&execution.status),
     );
     prepared
         .cases
