@@ -65,16 +65,18 @@ export function useAutosave<T>({
     timerRef.current = null;
   }, []);
 
-  const saveIfChanged = useCallback(async () => {
+  const saveIfChanged = useCallback(async (): Promise<void> => {
     const current = latest.current.value;
     if (Object.is(current, savedRef.current)) return;
     report('saving', null);
+    const madeAt = revisionRef.current;
     try {
-      const saved = await latest.current.save(current, revisionRef.current);
+      const saved = await latest.current.save(current, madeAt);
       savedRef.current = current;
       revisionRef.current = saved.revision;
       report('saved', null);
     } catch (cause) {
+      if (isConflict(cause) && revisionRef.current !== madeAt) return saveIfChanged();
       report(isConflict(cause) ? 'conflict' : 'error', getErrorMessage(cause, 'Your work could not be saved.'));
     }
   }, [report]);
