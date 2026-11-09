@@ -690,6 +690,13 @@ fn pointing_at_the_outline_or_an_earlier_lesson_is_not_unseen() {
 }
 
 #[test]
+fn the_contract_check_looks_for_unseen_words_in_questions_too() {
+    assert!(contract::SYSTEM.contains(
+        "words in any part, a question's choices, rationales and explanation included, that point the learner at something they never see"
+    ));
+}
+
+#[test]
 fn the_unseen_check_names_the_whole_outline_and_scopes_its_qualifier() {
     assert!(contract::SYSTEM.contains("courseOutline"));
     assert!(contract::SYSTEM
