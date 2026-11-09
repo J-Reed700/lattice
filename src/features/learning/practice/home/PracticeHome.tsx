@@ -42,13 +42,20 @@ export interface PracticeHomeProps {
 
 const ICONS: Record<CardId, LucideIcon> = { explain: MessageSquare, spot: FileSearch, code: Code2, mock: Bot, role: Users };
 
-const PROMISES: Record<CardId, string> = {
-  explain: 'Answer in your own words, get feedback, revise.',
-  spot: 'Review code or an explanation with planted mistakes, then see what you missed.',
-  code: 'Solve a problem, fix a bug or build a project, and run it.',
-  mock: 'Rehearse with an interviewer: live coding, debugging, technical questions, system design or behavioral.',
-  role: 'Talk through a scenario: an incident, a design review, a hard conversation.',
-};
+function listOf(items: string[]): string {
+  return items.length < 2 ? (items[0] ?? '') : `${items.slice(0, -1).join(', ')} or ${items[items.length - 1]}`;
+}
+
+/** What each card promises, naming only what the course can offer. */
+function promises(fit: ReturnType<typeof fitState>): Record<CardId, string> {
+  return {
+    explain: 'Answer in your own words, get feedback, revise.',
+    spot: `Review ${fit === 'fits' ? 'code or an explanation' : 'an explanation'} with planted mistakes, then see what you missed.`,
+    code: 'Solve a problem, fix a bug or build a project, and run it.',
+    mock: `Rehearse with an interviewer: ${listOf(mockRoundOptions(fit).map((round) => round.label))}.`,
+    role: 'Talk through a scenario: an incident, a design review, a hard conversation.',
+  };
+}
 
 const article = (word: string) => (/^[aeiou]/i.test(word) ? 'An ' : 'A ');
 
@@ -99,11 +106,12 @@ interface CardProps {
   id: CardId;
   programId: string;
   definition: CardDefinition;
+  promise: string;
   badge?: string;
   onStart: (values: Record<string, string>) => void;
 }
 
-function Card({ id, programId, definition, badge, onStart }: CardProps) {
+function Card({ id, programId, definition, promise, badge, onStart }: CardProps) {
   const uid = useId();
   const Icon = ICONS[id];
   const [values, setValues] = useState<Record<string, string>>({});
@@ -128,7 +136,7 @@ function Card({ id, programId, definition, badge, onStart }: CardProps) {
           {title}
         </h3>
         <p id={`${uid}-promise`} className="text-sm text-text-secondary">
-          {PROMISES[id]}
+          {promise}
         </p>
         <StartSentence
           programId={programId}
@@ -160,6 +168,7 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
 
   const fit = fitState(fitStatus.fit);
   const profile = profileState.profile ?? null;
+  const promiseOf = useMemo(() => promises(fit), [fit]);
   const defs = useMemo(() => definitions(fit, profile?.language), [fit, profile?.language]);
   const cards = visibleCards(fit);
   const context = { lessonId, profile };
@@ -214,6 +223,7 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
               id={id}
               programId={programId}
               definition={defs[id]}
+              promise={promiseOf[id]}
               badge={id === 'mock' && suggestsInterview(profile) ? "Fits what you're preparing for" : undefined}
               onStart={(values) => onStart(startAction(id, values, context))}
             />

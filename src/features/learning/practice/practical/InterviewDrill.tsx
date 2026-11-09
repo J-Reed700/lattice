@@ -1,13 +1,13 @@
 import { useEffect, useState } from "react";
 
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useQuery } from "@tanstack/react-query";
 import { Layers, LoaderCircle } from "lucide-react";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
-import { useApi } from "@/contexts/ApiContext";
 import { practiceHomeApi } from "@/features/learning/practice/home/practiceHomeApi";
 import { FlashcardSession } from "@/features/learning/recall/flashcards/FlashcardSession";
-import type { CreateInterviewStudyDeckRequestDto, LearningPracticalActivityDto, StudyDeckDto } from "@/lib/bindings";
+import { useCreateInterviewDeck } from "@/features/learning/recall/flashcards/useFlashcards";
+import type { LearningPracticalActivityDto, StudyDeckDto } from "@/lib/bindings";
 
 /** An instant as a datetime-local value. */
 function toLocalInput(ms: number) {
@@ -21,22 +21,8 @@ function toLocalInput(ms: number) {
  * interview date, with the guide shown only after each attempt.
  */
 export function InterviewDrill({ programId, activity }: { programId: string; activity: LearningPracticalActivityDto }) {
-  const api = useApi();
-  const client = useQueryClient();
   const [deck, setDeck] = useState<StudyDeckDto | null>(null);
-  const create = useMutation({
-    mutationFn: async (request: CreateInterviewStudyDeckRequestDto) => {
-      const response = await api.createInterviewStudyDeck(request);
-      if (!response.ok) throw new Error(typeof response.details?.details === "string" ? response.details.details : response.error);
-      return response.data;
-    },
-    onSuccess: (made) => {
-      client.setQueryData(["study", "deck", made.id], made);
-      void client.invalidateQueries({ queryKey: ["study"] });
-      void client.invalidateQueries({ queryKey: ["learning-memory"] });
-      setDeck(made);
-    },
-  });
+  const create = useCreateInterviewDeck();
   const profile = useQuery({ queryKey: ["learning-practice-profile", programId], queryFn: () => practiceHomeApi.getProfile(programId), retry: false });
   const [when, setWhen] = useState("");
   const profileDate = profile.data?.interviewAt ?? null;
@@ -68,7 +54,7 @@ export function InterviewDrill({ programId, activity }: { programId: string; act
         onSubmit={(event) => {
           event.preventDefault();
           if (create.isPending) return;
-          create.mutate({ programId, activityId: activity.id, targetAt: validTarget ? targetAt : null });
+          create.mutate({ programId, activityId: activity.id, targetAt: validTarget ? targetAt : null }, { onSuccess: setDeck });
         }}
       >
         <label className="text-xs font-medium text-text-secondary">

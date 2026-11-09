@@ -1,13 +1,11 @@
 import type * as Wire from '@/lib/bindings';
 import { newId } from '@/lib/api';
 import { studyActivityCall } from '@/lib/studyActivity';
+import { unwrapApiResult } from '@/types/api/result';
 import type { CommandName } from '@/shared/ipc/transport';
 
-/** A failed command, carrying the backend's error as `details` so `isConflict` can read its code. */
 async function call<T>(command: string, request: Record<string, unknown>): Promise<T> {
-  const result = await studyActivityCall<T>('learning', command as CommandName, { request });
-  if (result.ok) return result.data;
-  throw Object.assign(new Error(result.error), { details: result.details });
+  return unwrapApiResult(await studyActivityCall<T>('learning', command as CommandName, { request }));
 }
 
 /** The Practice page's commands: the course's profile, practice fit, what is due, and its coding sessions. */

@@ -32,8 +32,8 @@ const profile = (patch: Partial<Wire.LearningPracticeProfileDto> = {}): Wire.Lea
   ...patch,
 });
 
-function show(overrides: Partial<PracticeHomeProps> = {}) {
-  const props: PracticeHomeProps = {
+function homeProps(overrides: Partial<PracticeHomeProps> = {}): PracticeHomeProps {
+  return {
     programId: 'course-1',
     goal: 'Learn to code',
     lessonId: 'lesson-1',
@@ -43,6 +43,10 @@ function show(overrides: Partial<PracticeHomeProps> = {}) {
     onOpenWorkbench: vi.fn(),
     ...overrides,
   };
+}
+
+function show(overrides: Partial<PracticeHomeProps> = {}) {
+  const props = homeProps(overrides);
   render(<PracticeHome {...props} />);
   return props;
 }
@@ -69,6 +73,18 @@ describe('PracticeHome', () => {
     data.fit = { code: 'does_not_fit', reason: null };
     show();
     expect(cardTitles()).toEqual(['Explain', 'Spot the mistakes', 'Mock interview', 'Role-play']);
+  });
+
+  it('names code only when the course teaches it', () => {
+    data.fit = { code: 'does_not_fit', reason: null };
+    const { unmount } = render(<PracticeHome {...homeProps()} />);
+    for (const card of screen.getAllByRole('article')) expect(card.textContent).not.toMatch(/code|coding|debugging|system design/i);
+    unmount();
+
+    data.fit = { code: 'fits', reason: null };
+    show();
+    expect(screen.getByTestId('card-spot')).toHaveTextContent('code or an explanation');
+    expect(screen.getByTestId('card-mock')).toHaveTextContent('live coding, debugging, technical questions, system design or behavioral');
   });
 
   it('badges Mock interview when there is an interview date, without moving a card', () => {
