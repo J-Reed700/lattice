@@ -7,7 +7,9 @@ use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
 use crate::lessons::content_verification::Protected;
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::reference_collection::ReferenceCollection;
-use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::application::ports::llm_port::{
+    CompletionInput, CompletionRequest, CompletionResponse,
+};
 use std::sync::Mutex;
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
@@ -19,6 +21,7 @@ struct Routed<'a> {
     inner: &'a ScriptedModel,
     contract: Mutex<std::collections::VecDeque<String>>,
     asked: Mutex<Vec<String>>,
+    drafting: Mutex<Vec<String>>,
 }
 
 impl<'a> Routed<'a> {
@@ -27,7 +30,12 @@ impl<'a> Routed<'a> {
             inner,
             contract: Mutex::new(answers.into()),
             asked: Mutex::new(Vec::new()),
+            drafting: Mutex::new(Vec::new()),
         }
+    }
+
+    fn drafting(&self) -> Vec<String> {
+        self.drafting.lock().unwrap().clone()
     }
 
     fn asked(&self) -> Vec<String> {
@@ -40,6 +48,21 @@ impl LLMPort for Routed<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
         let is_contract = system.starts_with(contract::SYSTEM);
+        if is_contract && crate::lessons::structured_call::is_draft_request(request) {
+            let said = request.input.iter().filter_map(|item| match item {
+                CompletionInput::Message { role, content } if role == "system" => {
+                    Some(content.as_str())
+                }
+                _ => None,
+            });
+            self.drafting
+                .lock()
+                .unwrap()
+                .push(said.collect::<Vec<_>>().join(
+                    "
+",
+                ));
+        }
         if !is_contract || crate::lessons::structured_call::is_draft_request(request) {
             return self.inner.complete(request).await;
         }
@@ -78,7 +101,8 @@ fn context(ideas: &[&str], actions: &[&str]) -> String {
     json!({
         "sources":[{"sourceIndex":0,"excerpt":EXCERPT}],
         "priorKnowledge":"The learner has used a graphical file manager.",
-        "courseSequence":{"curriculum":[],"coursePlan":[
+        "currentModule":{"title":"Shell basics","lessonSequence":[{"title":"Looking around","current":false},{"title":"Working in the terminal","current":true},{"title":"Making files","current":false}]},
+        "courseSequence":{"curriculum":[{"title":"Shell basics","outcomes":["Run commands"],"milestone":"A logbook of daily shell habits","lessons":[{"title":"Looking around"},{"title":"Working in the terminal"},{"title":"Making files"}]},{"title":"Secure remote access","outcomes":["Connect to another machine"],"milestone":"A tidy list of saved connections","lessons":[{"title":"Keys and logins"}]}],"coursePlan":[
             {"title":"Looking around","position":"earlier","ideas":["A folder holds files"],"terms":["folder"],"actions":["Listing the files in a folder"],"contrast":""},
             {"title":"Working in the terminal","position":"this","ideas":ideas,"terms":[],"actions":actions,"contrast":""},
             {"title":"Making files","position":"later","ideas":[],"terms":[],"actions":["Creating a file"],"contrast":""}
@@ -103,7 +127,8 @@ fn reviewed(blocks: usize) -> String {
     let checks = (0..blocks)
         .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"No defect was found in this section.","hasDefect":false}))
         .collect();
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)}).to_string()
+    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
+        .to_string()
 }
 
 fn edits(edits: Value) -> String {
@@ -137,6 +162,23 @@ async fn run(
     context: &str,
     protected: &[Protected],
 ) -> Result<Reviewed> {
+    run_under(
+        model,
+        candidate,
+        context,
+        protected,
+        &json!({"type":"object"}),
+    )
+    .await
+}
+
+async fn run_under(
+    model: &dyn LLMPort,
+    candidate: &Value,
+    context: &str,
+    protected: &[Protected],
+    schema: &Value,
+) -> Result<Reviewed> {
     let sources = vec![crate::dto::LearningSourceDto {
         id: "saved-reference".into(),
         title: "Example reference".into(),
@@ -149,7 +191,7 @@ async fn run(
         model,
         LESSON_REPAIR_SYSTEM,
         context,
-        &json!({"type":"object"}),
+        schema,
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -199,13 +241,18 @@ async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section(
     assert_eq!(waiting(&result), [("teaching:section-1".to_owned(), None)]);
     let note = &result.set_aside[0].finding.note;
     assert!(note.contains(OPEN_TERMINAL), "{note}");
-    assert!(note.contains("does not teach it"), "{note}");
+    assert!(
+        note.contains("Teach it in the lesson's own words"),
+        "{note}"
+    );
+    assert!(!note.contains("course plan"), "{note}");
     let prompts = scripted.prompts.lock().unwrap();
     let repair = prompts
         .iter()
         .find(|prompt| prompt.contains("issuesToFix"))
         .unwrap();
-    assert!(repair.contains("does not teach it"));
+    assert!(repair.contains("Teach it in the lesson's own words"));
+    assert!(!repair.contains("Teach it here"));
     drop(prompts);
     let asked = model.asked();
     assert_eq!(asked.len(), 2);
@@ -508,4 +555,139 @@ async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
     .await?;
     assert!(model.asked().is_empty());
     Ok(())
+}
+
+fn defect_in_first_section() -> String {
+    let checks = (0..3)
+        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The first section states a wrong result.","hasDefect":index == 0}))
+        .collect();
+    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
+        .to_string()
+}
+
+fn actionable() -> String {
+    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The section states a wrong result."}]}).to_string()
+}
+
+const LEARNER_SEES_ONLY_THE_LESSON: &str = "never mentions the course plan";
+
+#[tokio::test]
+async fn the_span_edit_repair_is_told_the_learner_sees_only_the_lesson() -> Result<()> {
+    let scripted = scripted(vec![
+        defect_in_first_section(),
+        actionable(),
+        retitle(),
+        reviewed(3),
+    ]);
+    let model = Routed::new(&scripted, vec![]);
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let prompts = scripted.prompts.lock().unwrap();
+    let repair = prompts
+        .iter()
+        .find(|prompt| prompt.contains("issuesToFix"))
+        .map(String::as_str);
+    assert!(repair.is_some(), "no repair request was sent");
+    assert!(repair.unwrap().contains(LEARNER_SEES_ONLY_THE_LESSON));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_whole_lesson_repair_is_told_not_to_mention_the_plan_or_the_excerpts() -> Result<()> {
+    let mut broken = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    broken.as_object_mut().unwrap().remove("questions");
+    let fixed = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    let scripted = scripted(vec![fixed.to_string(), reviewed(3)]);
+    let model = Routed::new(&scripted, vec![]);
+    let schema = json!({"type":"object","required":["blocks","questions"]});
+    run_under(&model, &broken, &context(&[], &[]), &[], &schema).await?;
+    let prompts = scripted.prompts.lock().unwrap();
+    let repair = prompts
+        .iter()
+        .find(|prompt| prompt.contains("Repair the teaching material"))
+        .map(String::as_str);
+    assert!(repair.is_some(), "no whole-lesson repair request was sent");
+    assert!(repair
+        .unwrap()
+        .contains("the course plan or the sources' excerpts"));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_check_covers_the_steps_a_deliverable_needs_including_saving_the_work() -> Result<()> {
+    let scripted = scripted(vec![reviewed(3)]);
+    let model = Routed::new(&scripted, vec![]);
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let drafting = model.drafting();
+    assert_eq!(drafting.len(), 1);
+    assert!(
+        drafting[0].contains("how the learner records or saves the work"),
+        "{}",
+        drafting[0]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_request_carries_the_modules_title_and_milestone() -> Result<()> {
+    let scripted = scripted(vec![reviewed(3)]);
+    let model = Routed::new(&scripted, vec![]);
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let asked = model.asked();
+    assert_eq!(asked.len(), 1);
+    assert!(asked[0].contains("Shell basics"), "{}", asked[0]);
+    assert!(
+        asked[0].contains("A logbook of daily shell habits"),
+        "{}",
+        asked[0]
+    );
+    assert!(asked[0].contains("Making files"), "{}", asked[0]);
+    assert!(asked[0].contains("Secure remote access"), "{}", asked[0]);
+    assert!(
+        asked[0].contains("A tidy list of saved connections"),
+        "{}",
+        asked[0]
+    );
+    assert!(
+        asked[0].contains("Connect to another machine"),
+        "{}",
+        asked[0]
+    );
+    assert!(asked[0].contains("Keys and logins"), "{}", asked[0]);
+    Ok(())
+}
+
+#[test]
+fn pointing_at_the_outline_or_an_earlier_lesson_is_not_unseen() {
+    assert!(contract::SYSTEM
+        .contains("Pointing at the course outline or at an earlier lesson is not unseen"));
+}
+
+#[test]
+fn the_unseen_check_names_the_whole_outline_and_scopes_its_qualifier() {
+    assert!(contract::SYSTEM.contains("courseOutline"));
+    assert!(contract::SYSTEM
+        .contains("text above or below or a step number that this lesson does not contain"));
 }

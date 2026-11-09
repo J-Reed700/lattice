@@ -24,6 +24,10 @@ fn reasoning_rewrite(outcome: Outcome) -> Taken {
     rewrite(Goal::AgreeWithThePassages, outcome)
 }
 
+fn correct_rewrite(outcome: Outcome) -> Taken {
+    rewrite(Goal::CorrectWhatWasFound, outcome)
+}
+
 fn field_rewrite(outcome: Outcome) -> Taken {
     rewrite(Goal::AsTheFieldHasIt, outcome)
 }
@@ -396,7 +400,7 @@ fn a_vetoed_explanation_its_passages_do_not_ground_is_rewritten() {
     let vetoed = [consistency(Stands), veto(Refuted)];
     assert_eq!(
         walked(Reasoning, &then(&vetoed, &[ground(Refuted)])),
-        placed(Reasoning, false, false, "r.rewrite")
+        placed(Reasoning, false, false, "r.correct")
     );
 }
 
@@ -488,7 +492,7 @@ fn an_explanation_that_fails_every_rung_is_removed() {
             consistency(Stands),
             veto(Refuted),
             ground(Refuted),
-            reasoning_rewrite(Rewritten),
+            correct_rewrite(Rewritten),
             consistency(Stands),
             veto(Refuted),
             ground(Refuted),

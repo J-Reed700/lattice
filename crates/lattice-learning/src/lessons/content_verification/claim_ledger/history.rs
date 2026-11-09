@@ -4,7 +4,7 @@
 //! statement could not be applied.
 
 use super::{is_example, ClaimLedger};
-use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Step};
+use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Reading, Step};
 use lattice_core::domain::learning::claim_review::{
     Actor, CheckResult, ClaimEvent, ClaimId, RepairOutcome,
 };
@@ -67,6 +67,29 @@ impl ClaimLedger {
             .is_some_and(|node| node.name.ends_with(".again"));
         let why = if retry { self.not_applied(id) } else { None };
         Some((goal, why))
+    }
+
+    /// The reasons of the latest veto and the latest ground reading of `id`,
+    /// which a correction toward what the veto found must carry.
+    pub(in crate::lessons::content_verification) fn veto_and_ground_reasons(
+        &self,
+        id: &ClaimId,
+    ) -> (Option<String>, Option<String>) {
+        let latest = |wanted: Reading| {
+            self.entry(id).and_then(|entry| {
+                entry
+                    .events()
+                    .iter()
+                    .rev()
+                    .find_map(|record| match &record.event {
+                        ClaimEvent::Stepped { step, reason, .. } if *step == Step::Read(wanted) => {
+                            Some(reason.clone())
+                        }
+                        _ => None,
+                    })
+            })
+        };
+        (latest(Reading::Veto), latest(Reading::Ground))
     }
 
     /// The reason of the latest correction of `id` that could not be applied.
