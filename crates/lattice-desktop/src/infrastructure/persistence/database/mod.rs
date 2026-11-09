@@ -10,7 +10,6 @@ pub use init::initialize_database;
 pub use migrate::run_migrations;
 pub use performance_indexes::get_index_stats;
 pub use schema::rebuild_fts5_index;
-pub use utils::DatabaseUtils;
 pub mod schema_validation;
 
 #[cfg(test)]
