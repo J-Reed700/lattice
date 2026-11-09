@@ -407,6 +407,54 @@ mod window_tests {
         }
     }
 
+    /// Cuts its first answer off and completes the second.
+    struct CutOnce(std::sync::Mutex<Vec<Option<u32>>>);
+
+    #[async_trait::async_trait]
+    impl LLMPort for CutOnce {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            let mut budgets = self.0.lock().unwrap();
+            budgets.push(request.max_output_tokens);
+            if budgets.len() == 1 {
+                return Ok(CompletionResponse {
+                    finish_reason: "length".into(),
+                    ..CompletionResponse::from_text("{\"response\":\"The")
+                });
+            }
+            Ok(CompletionResponse::from_text("{}"))
+        }
+        fn model_name(&self) -> &str {
+            "cut-once"
+        }
+        fn max_context_tokens(&self) -> usize {
+            131_072
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cut_off_practice_answer_is_asked_again_with_twice_the_room() {
+        let llm = CutOnce(std::sync::Mutex::new(Vec::new()));
+        let raw = complete_json(
+            &llm,
+            "system",
+            "prompt".into(),
+            serde_json::json!({"type":"object"}),
+            1400,
+        )
+        .await
+        .expect("the doubled request completes");
+        assert_eq!(raw, "{}");
+        let budgets = llm.0.lock().unwrap().clone();
+        assert_eq!(budgets.len(), 2);
+        assert_eq!(
+            budgets.get(1).copied().flatten(),
+            budgets.first().copied().flatten().map(|b| b * 2)
+        );
+    }
+
     fn turns(count: usize) -> Vec<LearningPracticeTutorTurnDto> {
         (0..count)
             .map(|turn| LearningPracticeTutorTurnDto {
