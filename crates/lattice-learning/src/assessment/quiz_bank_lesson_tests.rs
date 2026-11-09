@@ -307,13 +307,12 @@ struct Unciting;
 impl LLMPort for Unciting {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, _) = crate::lessons::structured_call::task_messages(request);
-        Ok(CompletionResponse::from_text(
-            if system.starts_with("Write quiz questions") {
-                "{\"items\":[{}]}"
-            } else {
-                "{\"issues\":[]}"
-            },
-        ))
+        let answer = if system.starts_with("Write quiz questions") {
+            "{\"items\":[{}]}"
+        } else {
+            "{\"issues\":[]}"
+        };
+        Ok(CompletionResponse::from_text(answer))
     }
     fn model_name(&self) -> &str {
         "unciting-fixture"

@@ -113,7 +113,10 @@ pub(super) async fn quiz_stage(
     };
     let report = quiz_bank_jobs::BankReport {
         written: lesson_written + top_up.written,
-        dropped: lesson_dropped.into_iter().chain(top_up.dropped.clone()).collect(),
+        dropped: lesson_dropped
+            .into_iter()
+            .chain(top_up.dropped.clone())
+            .collect(),
     };
     let lesson_text = recorded["lesson"]["blocks"]
         .as_array()
