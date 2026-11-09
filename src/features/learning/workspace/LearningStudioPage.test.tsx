@@ -387,6 +387,43 @@ describe('Learning Studio program workflow', () => {
     await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('The course could not be queued.'))).toBe(true));
   });
 
+  it('drops a module preparation error once a single lesson is prepared', async () => {
+    const user = userEvent.setup();
+    const active = program('active');
+    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
+    mocks.list.mockResolvedValue(ok([summary(active)]));
+    mocks.get.mockResolvedValue(ok(active));
+    mocks.prepareModule.mockResolvedValue(fail('The module could not be queued.'));
+    mocks.prepare.mockResolvedValue(ok(active));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(await screen.findByRole('button', { name: 'Prepare all lessons' }));
+    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('The module could not be queued.'))).toBe(true));
+    await user.click(await screen.findByRole('button', { name: /^Read a worked example/ }));
+    const card = screen.getByRole('button', { name: /^Read a worked example/ }).closest('article') as HTMLElement;
+    await user.click(await within(card).findByRole('button', { name: 'Prepare lesson' }));
+    await waitFor(() => expect(mocks.prepare).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(screen.queryAllByRole('alert').some((alert) => alert.textContent?.includes('The module could not be queued.'))).toBe(false));
+  });
+
+  it('shows no preparation error of another course', async () => {
+    const user = userEvent.setup();
+    const first = program('active');
+    const second = imported(first, 'program-2', 'Another course');
+    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
+    mocks.list.mockResolvedValue(ok([summary(first), summary(second)]));
+    mocks.get.mockImplementation(async (id: string) => ok(id === 'program-2' ? second : first));
+    mocks.prepareCourse.mockResolvedValue(fail('The course could not be queued.'));
+    show();
+    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
+    await user.click(await screen.findByRole('button', { name: 'Prepare every lesson' }));
+    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('The course could not be queued.'))).toBe(true));
+    await user.click(screen.getByRole('button', { name: 'All programs' }));
+    await user.click(await screen.findByRole('button', { name: /Another course/ }));
+    expect(await screen.findByRole('heading', { level: 1, name: 'Another course' })).toBeVisible();
+    expect(screen.queryAllByRole('alert').some((alert) => alert.textContent?.includes('The course could not be queued.'))).toBe(false);
+  });
+
   it('lets the learner prepare another lesson while one is being prepared', async () => {
     const user = userEvent.setup();
     const active = program('active');

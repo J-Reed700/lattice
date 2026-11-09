@@ -57,14 +57,19 @@ export function coursePreparationLine(course: CoursePreparation): string | null 
   ].filter(Boolean).join(' · ');
 }
 
-/** Whole minutes between lessons, the median gap between the finish times of this course's prepared lessons; null before two have finished. */
+/** Whole minutes between lessons, the median gap between finishes where the next lesson was already queued; null when no gap counts. */
 export function preparationPaceMinutes(jobs: LearningGenerationJob[]): number | null {
-  const finishes = currentPreparationJobs(jobs)
+  const finished = currentPreparationJobs(jobs)
     .filter((job) => job.status === 'completed' && !job.endedByUpdate && heldLessonIds(job).length === 0)
-    .flatMap((job) => (job.finishedAt == null ? [] : [job.finishedAt]))
+    .flatMap((job) => (job.finishedAt == null ? [] : [{ createdAt: job.createdAt, finishedAt: job.finishedAt }]))
+    .sort((a, b) => a.finishedAt - b.finishedAt);
+  const gaps = finished.slice(1)
+    .flatMap((next, index) => {
+      const previous = finished[index];
+      return previous && next.createdAt <= previous.finishedAt ? [next.finishedAt - previous.finishedAt] : [];
+    })
     .sort((a, b) => a - b);
-  if (finishes.length < 2) return null;
-  const gaps = finishes.slice(1).map((finish, index) => finish - (finishes[index] ?? 0)).sort((a, b) => a - b);
+  if (gaps.length === 0) return null;
   const middle = Math.floor(gaps.length / 2);
   const median = gaps.length % 2 ? gaps[middle] ?? 0 : ((gaps[middle - 1] ?? 0) + (gaps[middle] ?? 0)) / 2;
   return Math.max(1, Math.round(median / 60_000));

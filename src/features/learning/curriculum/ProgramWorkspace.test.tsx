@@ -480,6 +480,27 @@ describe('Preparing the whole course', () => {
     expect(await screen.findByText('About one lesson every 4 min so far')).toBeVisible();
   });
 
+  it('leaves the idle time before a batch out of the pace', async () => {
+    const DAY = 24 * 60;
+    showCourse(course(), [
+      finished('lesson-1', 0),
+      finished('lesson-2', DAY + 10, { createdAt: 1_000_000 + DAY * MINUTE }),
+      finished('lesson-3', DAY + 14, { createdAt: 1_000_000 + DAY * MINUTE }),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText('About one lesson every 4 min so far')).toBeVisible();
+  });
+
+  it('shows no pace when the lessons finished apart because nothing was waiting between them', async () => {
+    showCourse(course(), [
+      finished('lesson-1', 0),
+      finished('lesson-2', 60, { createdAt: 1_000_000 + MINUTE }),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText(/lessons ready/)).toBeVisible();
+    expect(screen.queryByText(/About one lesson every/)).not.toBeInTheDocument();
+  });
+
   it('shows no pace before two lessons have finished, or when a finished job only held its lesson for review', async () => {
     showCourse(course(), [
       finished('lesson-1', 0), finished('lesson-2', 4, { resultId: 'needs_review:lesson-2' }),
