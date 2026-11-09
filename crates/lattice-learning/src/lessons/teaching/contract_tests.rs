@@ -366,6 +366,7 @@ async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Re
         unit: 0,
         field: "body".into(),
         quote: "Commands like ls take no folder name.".into(),
+        released: false,
     }];
     let result = run(&model, &candidate, &context(&[], &[]), &protected).await?;
     assert_eq!(
@@ -413,6 +414,7 @@ async fn a_finding_in_a_section_with_protected_sentences_is_repaired_when_it_tou
         unit: 1,
         field: "body".into(),
         quote: "Run pwd to print the folder you are in.".into(),
+        released: false,
     }];
     let result = run(&model, &candidate, &context(&[], &[]), &protected).await?;
     assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
@@ -456,6 +458,7 @@ async fn teaching_can_be_added_beside_an_editable_sentence_in_a_section_with_pro
         unit: 1,
         field: "body".into(),
         quote: "Run pwd to print the folder you are in.".into(),
+        released: false,
     }];
     let ctx = context(&[], &[OPEN_TERMINAL]);
     let result = run(&model, &candidate, &ctx, &protected).await?;
