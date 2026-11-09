@@ -232,26 +232,32 @@ pub(crate) fn strip_citation_apparatus(text: &str) -> String {
     }
 }
 
-/// A draft's block bodies and question explanations without the apparatus.
-/// A draft that held none comes back as the writer sent it.
+/// A draft's block bodies, question explanations and choice reasons without
+/// the apparatus. A draft that held none comes back as the writer sent it.
 pub(crate) fn strip_draft_apparatus(raw: String) -> String {
     let Ok(mut draft) = serde_json::from_str::<Value>(&raw) else {
         return raw;
     };
     let mut changed = 0;
+    let mut strip = |slot: &mut Value| {
+        let Some(text) = slot.as_str() else {
+            return;
+        };
+        let stripped = strip_citation_apparatus(text);
+        if stripped != text {
+            *slot = Value::String(stripped);
+            changed += 1;
+        }
+    };
     for (list, field) in [("blocks", "body"), ("questions", "explanation")] {
         let items = draft.get_mut(list).and_then(Value::as_array_mut);
         for item in items.into_iter().flatten() {
-            let Some(slot) = item.get_mut(field) else {
-                continue;
-            };
-            let Some(text) = slot.as_str() else {
-                continue;
-            };
-            let stripped = strip_citation_apparatus(text);
-            if stripped != text {
-                *slot = Value::String(stripped);
-                changed += 1;
+            if let Some(slot) = item.get_mut(field) {
+                strip(slot);
+            }
+            if list == "questions" {
+                let reasons = item.get_mut("rationales").and_then(Value::as_array_mut);
+                reasons.into_iter().flatten().for_each(&mut strip);
             }
         }
     }

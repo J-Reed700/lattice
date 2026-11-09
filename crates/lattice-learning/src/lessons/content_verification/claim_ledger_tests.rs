@@ -2716,3 +2716,27 @@ pub(super) fn unreadable() -> Figures {
         ..Figures::new()
     }
 }
+
+#[test]
+fn a_choices_reason_is_a_field_of_its_question_and_its_sentence_is_the_answer_keys() {
+    const REASON: &str = "B fails because it reverses the order.";
+    let lesson = json!({
+        "blocks":[{"kind":"explanation","title":"Idea","body":"The idea."}],
+        "questions":[{"prompt":"Which?","options":["a","b","c","d"],"explanation":"A holds.",
+            "rationales":["",REASON,"C fails.","D fails."]}]
+    });
+
+    let location = locate(&lesson, 1, REASON, None);
+
+    assert_eq!(location.unit_index, 1);
+    assert_eq!(location.unit_kind, UnitKind::AnswerKey);
+    assert_eq!(location.field, "rationales/1");
+    assert_eq!(
+        field_text(&lesson, 1, "rationales/2").as_deref(),
+        Some("C fails.")
+    );
+    assert_eq!(
+        unit_texts(&lesson)[1].1,
+        format!("a\n\nb\n\nc\n\nd\n\nA holds.\n\n\n\n{REASON}\n\nC fails.\n\nD fails.")
+    );
+}

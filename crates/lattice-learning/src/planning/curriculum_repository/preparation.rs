@@ -161,17 +161,21 @@ impl LearningCurriculumRepository {
                     "A preparation job cannot repeat lesson IDs.".into(),
                 ));
             }
-            let row =
-                sqlx::query("SELECT preparation FROM learning_lessons WHERE id=? AND program_id=?")
-                    .bind(lesson_id)
-                    .bind(&program_id)
-                    .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(db)?
-                    .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
-            if row.get::<String, _>("preparation") != "outline" {
+            let row = sqlx::query(
+                "SELECT preparation,completed,curriculum_state FROM learning_lessons WHERE id=? AND program_id=?",
+            )
+            .bind(lesson_id)
+            .bind(&program_id)
+            .fetch_optional(&mut *tx)
+            .await
+            .map_err(db)?
+            .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
+            if row.get::<String, _>("preparation") != "outline"
+                || row.get::<bool, _>("completed")
+                || row.get::<String, _>("curriculum_state") != "outline"
+            {
                 return Err(AppError::InvalidState(
-                    "Only outline lessons can be published by this job.".into(),
+                    "Only unfinished outline lessons can be published by this job.".into(),
                 ));
             }
             crate::content_verification::persist_report(&mut tx, &program_id, lesson_id, prepared)
@@ -279,15 +283,6 @@ impl LearningCurriculumRepository {
             };
             (program_id.clone(), message)
         } else {
-            // Publishing these lessons changed the course's content. The held
-            // lessons continue from this job (§6.2), and its own publication
-            // is no change made under it.
-            sqlx::query("UPDATE learning_jobs SET content_revision=(SELECT content_revision FROM learning_programs WHERE id=?) WHERE job_id=?")
-                .bind(&program_id)
-                .bind(id)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
             crate::content_verification::review_outcome(held)
         };
         JobStore::complete_in(&mut tx, id, &result_ref, &message).await?;

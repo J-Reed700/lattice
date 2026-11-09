@@ -62,8 +62,10 @@ function HeldLessonLine({ programId, lessonId, title, onReview }: { programId: s
  * line, the progress bar, Pause/Resume, and everything else behind Details.
  * A lesson held for review is a line that leads to the review screen.
  */
-export function LessonPreparationStatus({ job, pending, programId, revision, error, expanded: heldExpanded, onExpandedChange, lessonTitles, onReview }: {
+export function LessonPreparationStatus({ job, queuedMore = 0, pending, programId, revision, error, expanded: heldExpanded, onExpandedChange, lessonTitles, onReview }: {
   job?: LearningGenerationJob; pending: boolean; programId: string; revision: number; error?: string;
+  /** Lesson jobs waiting behind this one. */
+  queuedMore?: number;
   // A parent that unmounts the panel (the course tabs) holds this, so an opened Details survives a tab switch.
   expanded?: boolean; onExpandedChange?: (expanded: boolean) => void;
   /** Lesson titles by id, for lessons the job holds for review. */
@@ -115,7 +117,7 @@ export function LessonPreparationStatus({ job, pending, programId, revision, err
   const lesson = activity?.lessonTitle;
   const step = phase ? workflow[phase.group] : null;
   const statusLine = reconnecting ? `Preparation will resume automatically${lesson ? ` · ${lesson}` : ''}`
-    : active ? `Preparing ${lesson ?? 'your lesson'} · ${queued ? 'Queued' : step ?? 'Starting'}`
+    : active ? `Preparing ${lesson ?? 'your lesson'} · ${queued ? 'Queued' : step ?? 'Starting'}${queuedMore > 0 ? ` · ${queuedMore} more queued` : ''}`
     : paused ? `Lesson preparation paused${phase ? ` · at ${phase.title.toLowerCase()}` : ''}${lesson ? ` · ${lesson}` : ''}`
     : `Lesson preparation ${job?.status}${lesson ? ` · ${lesson}` : ''}`;
   return <section aria-label="Lesson preparation" className="my-3 rounded-xl border border-accent/30 bg-accent/5 px-4 py-3">

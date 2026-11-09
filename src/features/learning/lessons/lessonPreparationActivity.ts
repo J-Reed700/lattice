@@ -103,12 +103,12 @@ export function preparationState(job: LearningGenerationJob | undefined, pending
  * <title> · <current step>", "Lesson preparation failed: <title>". Null when
  * there is nothing to show: no job, nothing pending and no error.
  */
-export function preparationSummary(job: LearningGenerationJob | undefined, state: PreparationState, error?: string): string | null {
+export function preparationSummary(job: LearningGenerationJob | undefined, state: PreparationState, error?: string, queuedMore = 0): string | null {
   const title = job?.activity?.lessonTitle;
   const named = (label: string) => (title ? `${label}: ${title}` : label);
   if (state.held.length > 0) return named('Lesson waiting for your review');
   if (state.reconnecting) return named('Lesson preparation will resume automatically');
-  if (state.active) return `${named('Preparing lesson')} · ${state.queued ? 'Queued' : state.phase?.title ?? 'Starting'}`;
+  if (state.active) return `${named('Preparing lesson')} · ${state.queued ? 'Queued' : state.phase?.title ?? 'Starting'}${queuedMore > 0 ? ` · ${queuedMore} more queued` : ''}`;
   if (state.paused) return named('Lesson preparation paused');
   if (job && job.status !== 'completed') return named(`Lesson preparation ${job.status}`);
   if (error) return 'Lesson preparation failed';

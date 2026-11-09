@@ -11,10 +11,11 @@ fn seed_difficulty(kind: &LessonQuestionKind) -> u8 {
 }
 
 /// A prepared lesson's own reviewed questions as bank items (single choice;
-/// difficulty from their kind: practice 2, quiz 3, test 4). Options are
-/// reshuffled so the key's position is code's choice. A question that fails
-/// the bank's checks stays, marked `dropped`, so the lesson's questions keep
-/// their places.
+/// difficulty from their kind: practice 2, quiz 3, test 4). Options and their
+/// reasons keep the writer's order, which claims and the published editor
+/// address them by; every form draw shuffles them. A question that fails the
+/// bank's checks stays, marked `dropped`, so the lesson's questions keep their
+/// places.
 pub(crate) fn lesson_seed_items(
     lesson_id: &str,
     outcome_id: &str,
@@ -25,7 +26,7 @@ pub(crate) fn lesson_seed_items(
         .iter()
         .filter_map(|q| {
             let key = keys.iter().find(|k| k.question_id == q.id)?;
-            let mut candidate = engine::LearningAssessmentCandidate {
+            let candidate = engine::LearningAssessmentCandidate {
                 id: q.id.clone(),
                 outcome_ids: vec![outcome_id.to_string()],
                 format: LearningItemFormat::SingleChoice,
@@ -43,13 +44,10 @@ pub(crate) fn lesson_seed_items(
                 rubric: vec![],
                 key: engine::LearningAssessmentKey::Choice(key.correct_index),
                 explanation: key.explanation.clone(),
-                distractor_rationales: vec![],
+                distractor_rationales: key.rationales.clone(),
             };
             let review_status = match engine::validate_candidate(&candidate) {
-                Ok(()) => {
-                    engine::shuffle_authored(&mut candidate);
-                    "agreed"
-                }
+                Ok(()) => "agreed",
                 Err(error) => {
                     tracing::info!(question = %q.id, %error, "A lesson question was kept out of the quiz bank's draws");
                     "dropped"
