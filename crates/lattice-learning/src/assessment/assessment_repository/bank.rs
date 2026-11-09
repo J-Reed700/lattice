@@ -7,12 +7,13 @@ use super::{
 use crate::assessment_engine::{self as engine, LearningBlueprintRequirement};
 use crate::assessment_generation::{AuthoringNeed, MaterialPassage, StoredItem};
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
+use crate::lessons::claim_reviews::teaching_findings::waiting_questions_in;
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 /// An item on its way into the bank.
 #[derive(Debug, Clone)]
@@ -192,7 +193,8 @@ pub(crate) fn bank_state(
 }
 
 impl LearningAssessmentRepository {
-    /// The bank's agreed items: what forms may draw from.
+    /// The bank's agreed items: what forms may draw from, less a lesson question
+    /// whose check finding still waits for the user.
     pub(crate) async fn bank_in(
         connection: &mut SqliteConnection,
         program_id: &str,
@@ -203,7 +205,25 @@ impl LearningAssessmentRepository {
             .fetch_all(&mut *connection)
             .await
             .map_err(db)?;
+        let waiting = waiting_questions_in(connection, program_id).await?;
+        let mut held_back = HashSet::new();
+        if !waiting.is_empty() {
+            let own: Vec<(String, String)> = sqlx::query_as("SELECT id, lesson_id FROM learning_assessment_candidates WHERE program_id=? AND origin IN ('lesson','migrated') AND lesson_id IS NOT NULL ORDER BY rowid")
+                .bind(program_id)
+                .fetch_all(&mut *connection)
+                .await
+                .map_err(db)?;
+            let mut seen: HashMap<String, usize> = HashMap::new();
+            for (id, lesson_id) in own {
+                let index = seen.entry(lesson_id.clone()).or_insert(0);
+                if waiting.contains(&(lesson_id, *index)) {
+                    held_back.insert(id);
+                }
+                *index += 1;
+            }
+        }
         rows.iter()
+            .filter(|row| !held_back.contains(&row.get::<String, _>("id")))
             .map(|row| {
                 let id: String = row.get("id");
                 candidate_from_row(row, outcomes.get(&id).cloned().unwrap_or_default())
