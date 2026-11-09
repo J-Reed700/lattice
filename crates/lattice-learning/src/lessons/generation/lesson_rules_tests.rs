@@ -4,9 +4,9 @@ use serde_json::json;
 
 fn block(kind: &str, title: &str) -> Value {
     let body = if kind == "check" {
-        format!("{CASE}\n\n{CHECK_REVEAL}\n\n{REVEAL}")
+        format!("{title}: {CASE}\n\n{CHECK_REVEAL}\n\n{title}: {REVEAL}")
     } else {
-        "Body.".to_owned()
+        format!("Body of {title}.")
     };
     json!({"kind":kind,"title":title,"body":body})
 }
@@ -47,6 +47,19 @@ fn rule_notes_are_the_findings_notes() {
 #[test]
 fn a_lesson_in_its_mix_breaks_no_rule() {
     assert!(lesson_rules(&lesson()).is_empty());
+}
+
+#[test]
+fn a_teaching_sentence_in_two_sections_is_a_finding_at_the_later_one() {
+    const SHARED: &str = "You change the location with cd and check it with pwd.";
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!(format!("Opening. {SHARED}"));
+    candidate["blocks"][4]["body"] = json!(format!("Closing.  {SHARED}"));
+    let findings = lesson_rules(&candidate);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].kind, FindingKind::Teaching);
+    assert_eq!(findings[0].passage.as_deref(), Some(SHARED));
 }
 
 #[test]

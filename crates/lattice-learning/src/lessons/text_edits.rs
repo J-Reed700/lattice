@@ -420,6 +420,58 @@ mod tests {
         Ok(())
     }
 
+    fn two_sections() -> Value {
+        json!({"blocks":[
+            {"kind":"explanation","body":"Alpha is first. Beta is second."},
+            {"kind":"explanation","body":"Gamma stands here. Delta ends it."}
+        ],"questions":[]})
+    }
+
+    #[test]
+    fn an_edit_adding_a_sentence_another_section_has_is_rejected_and_the_field_is_unchanged() {
+        let original = two_sections();
+        let repeat = json!({"path":"/blocks/1/body","before":"Delta ends it.","after":"Delta ends it. Alpha is first."});
+        let alone = apply(&original, &json!({"edits":[repeat]}).to_string());
+        assert!(alone.is_err(), "the sentence is in section 1 already");
+        assert!(
+            alone.unwrap_err().to_string().contains("Alpha is first."),
+            "the reason names the sentence"
+        );
+        let good = json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."});
+        let mixed = apply(&original, &json!({"edits":[repeat, good]}).to_string()).unwrap();
+        assert_eq!(mixed["blocks"][1], original["blocks"][1]);
+        assert_eq!(
+            mixed["blocks"][0]["body"],
+            "Alpha is first. Beta comes second."
+        );
+    }
+
+    #[test]
+    fn an_edit_adding_a_sentence_its_own_field_has_is_rejected() {
+        let original = two_sections();
+        let repeat = json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta is second. Alpha is first."});
+        let outcome = apply(&original, &json!({"edits":[repeat]}).to_string());
+        assert!(outcome.is_err(), "the field has the sentence already");
+    }
+
+    #[test]
+    fn a_sentence_rewritten_in_place_is_accepted() {
+        let original = two_sections();
+        let edits = [
+            json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta is the second one."}),
+            json!({"path":"/blocks/1/body","before":"Gamma stands here. Delta ends it.","after":"Gamma stands here. Delta closes it."}),
+        ];
+        let repaired = apply(&original, &json!({"edits":edits}).to_string()).unwrap();
+        assert_eq!(
+            repaired["blocks"][0]["body"],
+            "Alpha is first. Beta is the second one."
+        );
+        assert_eq!(
+            repaired["blocks"][1]["body"],
+            "Gamma stands here. Delta closes it."
+        );
+    }
+
     #[test]
     fn a_refused_patch_says_which_edit_failed_and_why() {
         let original = json!({"blocks":[{"kind":"explanation","body":"Keep this. Wrong fact. Keep this too."}]});

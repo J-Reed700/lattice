@@ -405,6 +405,7 @@ async fn mend_section(
     (schema, output_tokens): (&Value, usize),
     (unit, block, section): (usize, bool, &Value),
     (taken, protected): (&Taken, &[Protected]),
+    _lesson: &Value,
 ) -> Result<Option<Value>> {
     let stands = |gap: &Gap, sentence: &Option<String>| -> Option<String> {
         let text = section.pointer(&format!("/{}", gap.field))?.as_str()?;
@@ -573,6 +574,7 @@ pub(super) async fn settle(
             (schema, output_tokens),
             (unit, unit < blocks, &section),
             (&taken, &protected),
+            &edited,
         )
         .await
         {
