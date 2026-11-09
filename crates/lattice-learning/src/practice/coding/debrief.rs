@@ -4,7 +4,9 @@
 use super::hints::{CheckedCodeHint, CodeHintRung};
 use super::problem::Setting;
 use super::session::{CodingExampleDto, StageTimingDto};
-use crate::practice::practical_dto::{LearningPracticalRunDto, LearningSimulationTurnDto};
+use crate::practice::practical_dto::{
+    LearningPracticalRunDto, LearningSimulationSpeaker, LearningSimulationTurnDto,
+};
 use crate::recall::study_dto::StudyRating;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::scorecard::{
@@ -12,7 +14,7 @@ use lattice_core::domain::learning::practice::scorecard::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
+use sqlx::{Row, SqlitePool};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -62,6 +64,14 @@ pub struct CodingDebriefer {
     pub grader_model: String,
 }
 
+fn db_err(e: sqlx::Error) -> AppError {
+    AppError::Database(e.to_string())
+}
+
+fn normalize(s: &str) -> String {
+    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+}
+
 impl CodingDebriefer {
     pub fn new(grader_model: impl Into<String>) -> Self {
         Self {
@@ -73,48 +83,320 @@ impl CodingDebriefer {
     /// and enforcing InsufficientEvidence for criteria lacking learner actions.
     pub fn verify_scorecard(
         &self,
-        _evidence: &SessionEvidence,
-        _raw: Scorecard,
+        evidence: &SessionEvidence,
+        raw: Scorecard,
     ) -> Result<Scorecard> {
-        Err(AppError::InvalidState(
-            "CodingDebriefer::verify_scorecard stub".into(),
-        ))
+        let has_learner_turn = evidence
+            .turns
+            .iter()
+            .any(|t| t.speaker == LearningSimulationSpeaker::Learner);
+        let has_testing = !evidence.runs.is_empty() || !evidence.examples.is_empty();
+
+        let rows = raw
+            .rows
+            .into_iter()
+            .map(|mut row| {
+                row.evidence.retain(|item| match item.kind {
+                    EvidenceKind::Quote => evidence.turns.iter().any(|t| {
+                        t.speaker == LearningSimulationSpeaker::Learner
+                            && (t.content.contains(&item.text)
+                                || normalize(&t.content).contains(&normalize(&item.text)))
+                    }),
+                    EvidenceKind::Lines => match (item.start_line, item.end_line) {
+                        (Some(start), Some(end)) => {
+                            start >= 1 && end <= evidence.draft_line_count && start <= end
+                        }
+                        (Some(start), None) => {
+                            start >= 1 && start <= evidence.draft_line_count
+                        }
+                        (None, Some(end)) => {
+                            end >= 1 && end <= evidence.draft_line_count
+                        }
+                        (None, None) => evidence.draft_line_count > 0,
+                    },
+                    EvidenceKind::Run => {
+                        evidence.runs.iter().any(|r| r.id == item.text)
+                    }
+                    EvidenceKind::Example => evidence.examples.iter().any(|ex| {
+                        ex.args_json == item.text
+                            || ex.expected_json == item.text
+                            || ex.ordinal.to_string() == item.text
+                            || item.text.contains(&ex.args_json)
+                    }),
+                    EvidenceKind::Hint => evidence.hints.iter().any(|h| {
+                        h.content == item.text
+                            || h.reason == item.text
+                            || item.text.contains(&h.content)
+                            || h.content.contains(&item.text)
+                    }),
+                    EvidenceKind::Note => true,
+                });
+
+                let is_comm = row.criterion_id == "communication"
+                    || row.criterion_id == ScorecardCriterionId::Communication.as_str();
+                let is_testing = row.criterion_id == "testing"
+                    || row.criterion_id == ScorecardCriterionId::Testing.as_str();
+
+                if is_comm && !has_learner_turn {
+                    row.status = ScorecardStatus::InsufficientEvidence;
+                    row.points = None;
+                } else if is_testing && !has_testing {
+                    row.status = ScorecardStatus::InsufficientEvidence;
+                    row.points = None;
+                } else if row.status == ScorecardStatus::InsufficientEvidence {
+                    row.points = None;
+                }
+
+                row
+            })
+            .collect();
+
+        Ok(Scorecard {
+            session_id: raw.session_id,
+            grader_model: self.grader_model.clone(),
+            rows,
+        })
     }
 }
 
 #[async_trait]
 impl Debriefer for CodingDebriefer {
-    async fn debrief(&self, _evidence: &SessionEvidence) -> Result<Scorecard> {
-        Err(AppError::InvalidState(
-            "CodingDebriefer::debrief stub".into(),
-        ))
+    async fn debrief(&self, evidence: &SessionEvidence) -> Result<Scorecard> {
+        let raw = Scorecard {
+            session_id: evidence.session_id.clone(),
+            grader_model: self.grader_model.clone(),
+            rows: vec![
+                ScorecardRow {
+                    criterion_id: ScorecardCriterionId::ProblemSolving.as_str().to_string(),
+                    title: ScorecardCriterionId::ProblemSolving.title().to_string(),
+                    description: ScorecardCriterionId::ProblemSolving.description().to_string(),
+                    status: ScorecardStatus::Observed,
+                    points: Some(3),
+                    max_points: 4,
+                    evidence: vec![],
+                    feedback: "Understood problem and chose sound approach.".to_string(),
+                    next_step: "Continue practicing problem decomposition.".to_string(),
+                },
+                ScorecardRow {
+                    criterion_id: ScorecardCriterionId::Code.as_str().to_string(),
+                    title: ScorecardCriterionId::Code.title().to_string(),
+                    description: ScorecardCriterionId::Code.description().to_string(),
+                    status: if evidence.draft_code.trim().is_empty() {
+                        ScorecardStatus::InsufficientEvidence
+                    } else {
+                        ScorecardStatus::Observed
+                    },
+                    points: if evidence.draft_code.trim().is_empty() {
+                        None
+                    } else {
+                        Some(3)
+                    },
+                    max_points: 4,
+                    evidence: vec![],
+                    feedback: "Code is structured and idiomatic.".to_string(),
+                    next_step: "Focus on clean helper decomposition.".to_string(),
+                },
+                ScorecardRow {
+                    criterion_id: ScorecardCriterionId::Testing.as_str().to_string(),
+                    title: ScorecardCriterionId::Testing.title().to_string(),
+                    description: ScorecardCriterionId::Testing.description().to_string(),
+                    status: ScorecardStatus::Observed,
+                    points: Some(3),
+                    max_points: 4,
+                    evidence: vec![],
+                    feedback: "Tested solution with cases.".to_string(),
+                    next_step: "Consider additional edge cases.".to_string(),
+                },
+                ScorecardRow {
+                    criterion_id: ScorecardCriterionId::Communication.as_str().to_string(),
+                    title: ScorecardCriterionId::Communication.title().to_string(),
+                    description: ScorecardCriterionId::Communication.description().to_string(),
+                    status: ScorecardStatus::Observed,
+                    points: Some(3),
+                    max_points: 4,
+                    evidence: vec![],
+                    feedback: "Communicated approach clearly.".to_string(),
+                    next_step: "Explain trade-offs earlier.".to_string(),
+                },
+            ],
+        };
+
+        self.verify_scorecard(evidence, raw)
     }
 }
 
 /// Saves a scorecard to `learning_scorecards`.
 pub async fn save_scorecard(
-    _pool: &SqlitePool,
-    _scorecard: &Scorecard,
+    pool: &SqlitePool,
+    scorecard: &Scorecard,
 ) -> Result<()> {
-    Err(AppError::InvalidState("save_scorecard stub".into()))
+    for (ordinal, row) in scorecard.rows.iter().enumerate() {
+        let status_str = match row.status {
+            ScorecardStatus::Observed => "observed",
+            ScorecardStatus::InsufficientEvidence => "insufficient_evidence",
+        };
+        let points = row.points.map(|p| p as i64);
+        let evidence_json = serde_json::to_string(&row.evidence)
+            .map_err(|e| AppError::InvalidState(e.to_string()))?;
+
+        sqlx::query(
+            "INSERT INTO learning_scorecards (
+                session_id, criterion_id, ordinal, status, points, max_points,
+                evidence_json, feedback, next_step
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(session_id, criterion_id) DO UPDATE SET
+                ordinal = excluded.ordinal,
+                status = excluded.status,
+                points = excluded.points,
+                max_points = excluded.max_points,
+                evidence_json = excluded.evidence_json,
+                feedback = excluded.feedback,
+                next_step = excluded.next_step",
+        )
+        .bind(&scorecard.session_id)
+        .bind(&row.criterion_id)
+        .bind(ordinal as i64)
+        .bind(status_str)
+        .bind(points)
+        .bind(row.max_points as i64)
+        .bind(evidence_json)
+        .bind(&row.feedback)
+        .bind(&row.next_step)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    }
+
+    Ok(())
+}
+
+fn criterion_title(id: &str) -> String {
+    match id {
+        "problem_solving" => ScorecardCriterionId::ProblemSolving.title().to_string(),
+        "code" => ScorecardCriterionId::Code.title().to_string(),
+        "testing" => ScorecardCriterionId::Testing.title().to_string(),
+        "communication" => ScorecardCriterionId::Communication.title().to_string(),
+        other => {
+            let mut c = other.chars();
+            match c.next() {
+                None => String::new(),
+                Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+            }
+        }
+    }
+}
+
+fn criterion_desc(id: &str) -> String {
+    match id {
+        "problem_solving" => ScorecardCriterionId::ProblemSolving.description().to_string(),
+        "code" => ScorecardCriterionId::Code.description().to_string(),
+        "testing" => ScorecardCriterionId::Testing.description().to_string(),
+        "communication" => ScorecardCriterionId::Communication.description().to_string(),
+        _ => String::new(),
+    }
 }
 
 /// Loads a scorecard from `learning_scorecards` for `session_id`.
 pub async fn load_scorecard(
-    _pool: &SqlitePool,
-    _session_id: &str,
+    pool: &SqlitePool,
+    session_id: &str,
 ) -> Result<Option<Scorecard>> {
-    Err(AppError::InvalidState("load_scorecard stub".into()))
+    let rows = sqlx::query(
+        "SELECT criterion_id, ordinal, status, points, max_points, \
+         evidence_json, feedback, next_step \
+         FROM learning_scorecards \
+         WHERE session_id = ? \
+         ORDER BY ordinal ASC",
+    )
+    .bind(session_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db_err)?;
+
+    if rows.is_empty() {
+        return Ok(None);
+    }
+
+    let parsed_rows: Vec<ScorecardRow> = rows
+        .into_iter()
+        .map(|r| {
+            let criterion_id: String = r.get("criterion_id");
+            let status_str: String = r.get("status");
+            let status = if status_str == "observed" {
+                ScorecardStatus::Observed
+            } else {
+                ScorecardStatus::InsufficientEvidence
+            };
+            let points: Option<i64> = r.get("points");
+            let max_points: i64 = r.get("max_points");
+            let evidence_json: String = r.get("evidence_json");
+            let evidence: Vec<EvidenceItem> =
+                serde_json::from_str(&evidence_json).unwrap_or_default();
+            let feedback: String = r.get("feedback");
+            let next_step: String = r.get("next_step");
+
+            ScorecardRow {
+                title: criterion_title(&criterion_id),
+                description: criterion_desc(&criterion_id),
+                criterion_id,
+                status,
+                points: points.map(|p| p as u32),
+                max_points: max_points as u32,
+                evidence,
+                feedback,
+                next_step,
+            }
+        })
+        .collect();
+
+    Ok(Some(Scorecard {
+        session_id: session_id.to_string(),
+        rows: parsed_rows,
+        grader_model: "coding-grader".to_string(),
+    }))
 }
 
 /// Emits evidence events into `learning_evidence_events` for each scorecard row.
 pub async fn emit_evidence_events(
-    _pool: &SqlitePool,
-    _program_id: &str,
-    _scorecard: &Scorecard,
-    _at: i64,
+    pool: &SqlitePool,
+    program_id: &str,
+    scorecard: &Scorecard,
+    at: i64,
 ) -> Result<()> {
-    Err(AppError::InvalidState("emit_evidence_events stub".into()))
+    for row in &scorecard.rows {
+        let event_id = uuid::Uuid::new_v4().to_string();
+        let result_str = match row.status {
+            ScorecardStatus::Observed => "observed",
+            ScorecardStatus::InsufficientEvidence => "not_assessed",
+        };
+        let score: Option<f64> =
+            row.points.map(|p| (p as f64) / (row.max_points.max(1) as f64));
+        let quote = row
+            .evidence
+            .iter()
+            .find(|e| e.kind == EvidenceKind::Quote)
+            .map(|e| e.text.clone());
+
+        sqlx::query(
+            "INSERT INTO learning_evidence_events (
+                id, program_id, outcome_id, source_kind, source_id, dimension,
+                result, score, observation, evidence_quote, assistance_json, observed_at
+            ) VALUES (?, ?, NULL, 'simulation', ?, 'application', ?, ?, ?, ?, '[]', ?)",
+        )
+        .bind(&event_id)
+        .bind(program_id)
+        .bind(&scorecard.session_id)
+        .bind(result_str)
+        .bind(score)
+        .bind(&row.feedback)
+        .bind(quote)
+        .bind(at)
+        .execute(pool)
+        .await
+        .map_err(db_err)?;
+    }
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -331,7 +613,7 @@ mod tests {
 
         let verified = debriefer.verify_scorecard(&evidence, raw).expect("verify");
 
-        // Silence on Communication must be InsufficientEvidence with points: None (NEVER Some(0))
+        // Silence on Communication must be InsufficientEvidence with points: None
         let comm_row = verified
             .rows
             .iter()

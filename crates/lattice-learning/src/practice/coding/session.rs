@@ -58,7 +58,8 @@ pub struct PublicProblemDto {
     /// Present only when `setting.discloses(Hidden::WorkedSolution, submitted)` is true.
     pub worked_solution: Option<String>,
     pub target_complexity: Option<String>,
-    /// Total number of misreadings in the problem, so the learner sees e.g. "Covers 2 of 3 common misreadings".
+    /// Total number of misreadings in the problem, so the learner sees
+    /// e.g. "Covers 2 of 3 common misreadings".
     pub total_misreadings: u32,
 }
 
