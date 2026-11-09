@@ -53,7 +53,7 @@ impl CustomCollectionsRepository {
         validate_kind_memberships(request.kind, &request.document_ids)?;
         let id = format!("custom:{}", Uuid::new_v4());
         let now = Utc::now().to_rfc3339();
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         sqlx::query("INSERT INTO custom_collections (id, name, kind, parent_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?)")
             .bind(&id).bind(name).bind(kind_str(request.kind)).bind(&request.parent_id).bind(&now).bind(&now)
             .execute(&mut *tx).await.map_err(map_unique_name)?;
@@ -80,7 +80,7 @@ impl CustomCollectionsRepository {
                 "A collection cannot be its own parent".into(),
             ));
         }
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         if let Some(parent) = parent_id {
             let cycle: bool = sqlx::query_scalar("WITH RECURSIVE descendants(id) AS (SELECT id FROM custom_collections WHERE parent_id = ? UNION ALL SELECT c.id FROM custom_collections c JOIN descendants d ON c.parent_id = d.id) SELECT EXISTS(SELECT 1 FROM descendants WHERE id = ?)")
                 .bind(id).bind(parent).fetch_one(&mut *tx).await?;
@@ -110,7 +110,7 @@ impl CustomCollectionsRepository {
     }
 
     pub async fn add_documents(&self, id: &str, document_ids: &[String]) -> Result<()> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         let kind =
             sqlx::query_scalar::<_, String>("SELECT kind FROM custom_collections WHERE id = ?")
                 .bind(id)
@@ -139,7 +139,7 @@ impl CustomCollectionsRepository {
     }
 
     pub async fn remove_documents(&self, id: &str, document_ids: &[String]) -> Result<()> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         let kind =
             sqlx::query_scalar::<_, String>("SELECT kind FROM custom_collections WHERE id = ?")
                 .bind(id)

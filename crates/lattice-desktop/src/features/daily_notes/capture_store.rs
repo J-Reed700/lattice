@@ -14,6 +14,7 @@ use lattice_core::application::contracts::notes::WorkspaceNoteRecord;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Sqlite, SqlitePool, Transaction};
 
 async fn capture_target(
@@ -79,7 +80,7 @@ pub(super) async fn capture_reference(
             "A capture requires a message, conversation, and destination title".into(),
         ));
     }
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = pool.begin_write().await?;
     let (mut note, _) = capture_target(
         &mut tx,
         &request.inbox_title,
@@ -113,7 +114,7 @@ pub(super) async fn quick_capture(
     conversation_ids: Vec<String>,
 ) -> Result<QuickCaptureResultDto> {
     let snippet = capture_snippet(content)?;
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
+    let mut tx = pool.begin_write().await?;
     let journal_id: Option<String> = sqlx::query_scalar("SELECT j.id FROM journals j LEFT JOIN daily_notes_workspace n ON n.journal_id = j.id WHERE j.is_archived = 0 GROUP BY j.id ORDER BY MAX(n.updated_at) DESC, j.sort_order, j.created_at, j.id LIMIT 1")
         .fetch_optional(&mut *tx).await?;
     let (mut note, created) = capture_target(&mut tx, title, journal_id.as_deref(), None).await?;

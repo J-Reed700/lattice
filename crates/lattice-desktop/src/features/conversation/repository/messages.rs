@@ -267,6 +267,11 @@ impl ConversationRepository {
     pub async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let result = sqlx::query!(
             r#"
             UPDATE conversation_messages
@@ -276,7 +281,7 @@ impl ConversationRepository {
             status,
             message_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to update message status: {}", e)))?;
 
@@ -292,7 +297,7 @@ impl ConversationRepository {
         let conversation_id: Option<String> =
             sqlx::query_scalar("SELECT conversation_id FROM conversation_messages WHERE id = ?")
                 .bind(message_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to get conversation_id: {}", e)))?;
 
@@ -302,12 +307,16 @@ impl ConversationRepository {
                 now,
                 conv_id
             )
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to update conversation timestamp: {}", e))
             })?;
         }
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(())
     }

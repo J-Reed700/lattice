@@ -16,10 +16,12 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 use tracing::{debug, info, warn};
 
 use super::format::ArchiveError;
+use crate::features::backup::database_repository;
+use lattice_core::shared::persistence::Transactions;
 
 mod extract;
 mod payload;
@@ -132,13 +134,9 @@ fn remove_db_sidecars(db: &Path) {
 
 /// Does `table` exist in the connected database?
 async fn table_exists(pool: &SqlitePool, table: &str) -> Result<bool, ArchiveError> {
-    let count: i64 =
-        sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = ?")
-            .bind(table)
-            .fetch_one(pool)
-            .await
-            .map_err(db_err)?;
-    Ok(count > 0)
+    database_repository::table_exists(pool, table)
+        .await
+        .map_err(db_err)
 }
 
 /// Extract the table named by an `content='...'` FTS5 option, if any.
@@ -166,16 +164,12 @@ fn fts_external_content_table(sql: &str) -> Option<String> {
 /// handles a future external-content index over an excluded table by
 /// rebuilding it.
 async fn reconcile_fts_tables(
-    pool: &SqlitePool,
+    connection: &mut SqliteConnection,
     cleared: &[String],
 ) -> Result<Vec<String>, ArchiveError> {
-    let rows: Vec<(String, Option<String>)> = sqlx::query_as(
-        "SELECT name, sql FROM sqlite_master \
-         WHERE type = 'table' AND sql IS NOT NULL AND lower(sql) LIKE '%using fts5%'",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(db_err)?;
+    let rows = database_repository::fts5_tables(&mut *connection)
+        .await
+        .map_err(db_err)?;
 
     let mut rebuilt = Vec::new();
     for (name, sql) in rows {
@@ -197,13 +191,9 @@ async fn reconcile_fts_tables(
             content = %content_table,
             "external-content fts5 index over a cleared table; rebuilding it empty"
         );
-        let escaped = name.replace('"', "\"\"");
-        sqlx::query(&format!(
-            "INSERT INTO \"{escaped}\"(\"{escaped}\") VALUES('rebuild')"
-        ))
-        .execute(pool)
-        .await
-        .map_err(db_err)?;
+        database_repository::rebuild_fts5_index(&mut *connection, &name)
+            .await
+            .map_err(db_err)?;
         rebuilt.push(name);
     }
     Ok(rebuilt)
@@ -231,11 +221,7 @@ pub async fn snapshot_database(
         }
     }
 
-    // `VACUUM INTO` takes a string literal, not a bind parameter. Escape the
-    // single quotes exactly like `BackupAdapter::create_backup` does.
-    let escaped = dest_str.replace('\'', "''");
-    sqlx::query(&format!("VACUUM INTO '{escaped}'"))
-        .execute(pool)
+    database_repository::vacuum_into(pool, &dest_str)
         .await
         .map_err(|error| {
             ArchiveError::Database(format!("VACUUM INTO {} failed: {error}", dest.display()))
@@ -295,32 +281,33 @@ pub async fn snapshot_database(
 /// Everything that happens on the scratch pool, so the caller can always
 /// close it afterwards.
 async fn clear_snapshot(pool: &SqlitePool) -> Result<(Vec<String>, Option<i64>), ArchiveError> {
+    let mut tx = pool.begin_write().await.map_err(db_err)?;
     let mut cleared: Vec<String> = Vec::new();
     for table in EXCLUDED_TABLES {
-        if !table_exists(pool, table).await? {
+        if !database_repository::table_exists(&mut *tx, table)
+            .await
+            .map_err(db_err)?
+        {
             debug!(table = %table, "excluded table absent from snapshot; skipping");
             continue;
         }
-        let escaped = table.replace('"', "\"\"");
-        sqlx::query(&format!("DELETE FROM \"{escaped}\""))
-            .execute(pool)
+        database_repository::clear_table(&mut *tx, table)
             .await
             .map_err(|error| ArchiveError::Database(format!("failed to clear {table}: {error}")))?;
         cleared.push((*table).to_string());
     }
 
-    reconcile_fts_tables(pool, &cleared).await?;
+    reconcile_fts_tables(&mut tx, &cleared).await?;
+    tx.commit().await.map_err(db_err)?;
 
-    // Reclaim the pages the deletes freed. Must run outside a transaction,
-    // which it does here because sqlx executes it on a bare connection.
-    sqlx::query("VACUUM")
-        .execute(pool)
+    // Reclaim the pages the deletes freed. SQLite refuses VACUUM inside a
+    // transaction, so it runs after the commit.
+    database_repository::vacuum(pool)
         .await
         .map_err(|error| ArchiveError::Database(format!("VACUUM of snapshot failed: {error}")))?;
 
     let migration_version = if table_exists(pool, "_sqlx_migrations").await? {
-        sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(version) FROM _sqlx_migrations")
-            .fetch_one(pool)
+        database_repository::newest_migration(pool)
             .await
             .map_err(db_err)?
     } else {
@@ -332,16 +319,9 @@ async fn clear_snapshot(pool: &SqlitePool) -> Result<(Vec<String>, Option<i64>),
 
 /// Does `table` have a column called `column`?
 async fn column_exists(pool: &SqlitePool, table: &str, column: &str) -> Result<bool, ArchiveError> {
-    // `pragma_table_info` is a table-valued function, so its argument is a
-    // string literal rather than a bind parameter; the quote doubling is the
-    // same defence `VACUUM INTO` above uses.
-    let escaped = table.replace('\'', "''");
-    let names: Vec<String> =
-        sqlx::query_scalar(&format!("SELECT name FROM pragma_table_info('{escaped}')"))
-            .fetch_all(pool)
-            .await
-            .map_err(db_err)?;
-    Ok(names.iter().any(|name| name == column))
+    database_repository::column_exists(pool, table, column)
+        .await
+        .map_err(db_err)
 }
 
 /// The blob hashes the archived database still points at.
@@ -392,11 +372,9 @@ async fn read_referenced_blob_hashes(
         return Ok(None);
     }
 
-    let checksums: Vec<Option<String>> =
-        sqlx::query_scalar("SELECT DISTINCT checksum FROM documents")
-            .fetch_all(pool)
-            .await
-            .map_err(db_err)?;
+    let checksums = database_repository::distinct_checksums(pool)
+        .await
+        .map_err(db_err)?;
 
     let total = checksums.len();
     let hashes: HashSet<String> = checksums
@@ -439,9 +417,7 @@ async fn count_rows(pool: &SqlitePool, table: &str) -> Result<u64, ArchiveError>
     if !table_exists(pool, table).await? {
         return Ok(0);
     }
-    let escaped = table.replace('"', "\"\"");
-    let count: i64 = sqlx::query_scalar(&format!("SELECT COUNT(*) FROM \"{escaped}\""))
-        .fetch_one(pool)
+    let count = database_repository::count_rows(pool, table)
         .await
         .map_err(db_err)?;
     Ok(u64::try_from(count).unwrap_or(0))
@@ -478,8 +454,7 @@ pub async fn validate_snapshot(db: &Path) -> Result<SnapshotInfo, ArchiveError> 
 }
 
 async fn inspect_snapshot(pool: &SqlitePool) -> Result<SnapshotInfo, ArchiveError> {
-    let integrity: String = sqlx::query_scalar("PRAGMA integrity_check")
-        .fetch_one(pool)
+    let integrity = database_repository::integrity_check(pool)
         .await
         .map_err(|error| ArchiveError::Corrupt(format!("integrity check failed: {error}")))?;
     if integrity != "ok" {
@@ -489,16 +464,14 @@ async fn inspect_snapshot(pool: &SqlitePool) -> Result<SnapshotInfo, ArchiveErro
     }
 
     let migration_version = if table_exists(pool, "_sqlx_migrations").await? {
-        sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(version) FROM _sqlx_migrations")
-            .fetch_one(pool)
+        database_repository::newest_migration(pool)
             .await
             .map_err(db_err)?
     } else {
         None
     };
 
-    let tables: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM sqlite_master WHERE type = 'table'")
-        .fetch_one(pool)
+    let tables = database_repository::table_count(pool)
         .await
         .map_err(db_err)?;
 
@@ -506,12 +479,9 @@ async fn inspect_snapshot(pool: &SqlitePool) -> Result<SnapshotInfo, ArchiveErro
         && table_exists(pool, "conversation_memory_items").await?
         && table_exists(pool, "conversation_memory_evidence").await?;
     let memory_schema_version = if memory_tables_present {
-        sqlx::query_scalar::<_, Option<i64>>(
-            "SELECT MAX(schema_version) FROM conversation_memory_state",
-        )
-        .fetch_one(pool)
-        .await
-        .map_err(db_err)?
+        database_repository::newest_memory_schema_version(pool)
+            .await
+            .map_err(db_err)?
     } else {
         None
     };

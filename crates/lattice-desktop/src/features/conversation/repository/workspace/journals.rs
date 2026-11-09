@@ -1,12 +1,13 @@
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 pub(super) async fn ensure_journal_space(
-    pool: &SqlitePool,
+    executor: impl sqlx::Executor<'_, Database = Sqlite>,
     journal_space_id: &str,
 ) -> Result<(), AppError> {
     let exists = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM journals WHERE id = ?")
         .bind(journal_space_id)
-        .fetch_one(pool)
+        .fetch_one(executor)
         .await
         .map_err(|e| AppError::Database(format!("Failed to verify journal: {}", e)))?;
 
@@ -44,6 +45,11 @@ impl ConversationRepository {
         let id = format!("journal_{}", uuid::Uuid::new_v4().simple());
         let now = Utc::now().to_rfc3339();
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         sqlx::query(
             r#"
         INSERT INTO journals (
@@ -61,7 +67,7 @@ impl ConversationRepository {
         .bind(tool_preferences_json)
         .bind(&now)
         .bind(&now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create journal: {}", e)))?;
 
@@ -75,9 +81,13 @@ impl ConversationRepository {
         "#,
         )
         .bind(&id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch created journal: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(created)
     }
@@ -106,6 +116,11 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
         let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let result = sqlx::query(
             r#"
         UPDATE journals
@@ -132,7 +147,7 @@ impl ConversationRepository {
         .bind(request.sort_order)
         .bind(&now)
         .bind(&request.journal_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to update journal: {}", e)))?;
 
@@ -153,9 +168,13 @@ impl ConversationRepository {
         "#,
         )
         .bind(&request.journal_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch updated journal: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(updated)
     }
@@ -243,12 +262,17 @@ impl ConversationRepository {
             ));
         }
 
-        ensure_journal_space(&self.pool, journal_space_id).await?;
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut *tx, journal_space_id).await?;
 
         let conversation_exists: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
                 .bind(conversation_id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify conversation: {}", e)))?;
 
@@ -268,7 +292,7 @@ impl ConversationRepository {
     .bind(journal_space_id)
     .bind(conversation_id)
     .bind(lattice_core::shared::persistence::timestamps::now_db_timestamp())
-    .execute(&self.pool)
+    .execute(&mut *tx)
     .await
     .map_err(|e| {
         AppError::Database(format!(
@@ -276,6 +300,10 @@ impl ConversationRepository {
             e
         ))
     })?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),

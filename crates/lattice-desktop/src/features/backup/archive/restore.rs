@@ -20,6 +20,7 @@ use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
 use crate::features::backup::adapter::roll_back_database;
+use crate::features::backup::database_repository;
 use lattice_core::application::ports::SettingsRepositoryPort;
 
 use super::config::ArchiveConfig;
@@ -300,10 +301,7 @@ impl ArchiveRestorer {
     /// Highest applied migration in the *live* database — what this build's
     /// schema actually is, rather than what the binary claims.
     async fn newest_local_migration(&self) -> Result<Option<i64>, ArchiveError> {
-        match sqlx::query_scalar::<_, Option<i64>>("SELECT MAX(version) FROM _sqlx_migrations")
-            .fetch_one(&self.pool)
-            .await
-        {
+        match database_repository::newest_migration(&self.pool).await {
             Ok(version) => Ok(version),
             Err(e) => {
                 // A database with no migration table is a test fixture or a

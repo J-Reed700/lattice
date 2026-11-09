@@ -15,6 +15,7 @@ mod cache;
 mod health;
 mod home;
 pub(crate) mod owner;
+mod owner_cache_repository;
 mod runner;
 mod service;
 

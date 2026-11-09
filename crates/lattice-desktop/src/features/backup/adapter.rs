@@ -13,6 +13,7 @@
 //! - Validates backup integrity before restore
 //! - Creates timestamped backup files
 
+use super::database_repository;
 use async_trait::async_trait;
 use chrono::Utc;
 use lattice_core::application::ports::backup_port::{BackupInfoData, BackupPort};
@@ -176,11 +177,7 @@ impl BackupAdapter {
         let _temporary_snapshot = TemporarySnapshot(temp_path.clone());
         let temp_str = temp_path.to_string_lossy().to_string();
         validate_sql_safe_path(&temp_str)?;
-        let escaped = temp_str.replace('\'', "''");
-        if let Err(error) = sqlx::query(&format!("VACUUM INTO '{escaped}'"))
-            .execute(&self.pool)
-            .await
-        {
+        if let Err(error) = database_repository::vacuum_into(&self.pool, &temp_str).await {
             error!("Failed to create safety backup: {}", error);
             return Err(AppError::Database(format!(
                 "Failed to create safety backup: {error}"
@@ -256,14 +253,11 @@ impl BackupAdapter {
             .await
             .ok()?;
 
-        let result: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
-            .fetch_one(&pool)
-            .await
-            .ok()?;
+        let count = database_repository::document_count(&pool).await.ok()?;
 
         pool.close().await;
 
-        Some(result.0 as usize)
+        Some(count as usize)
     }
 
     /// Get version from backup metadata
@@ -280,13 +274,8 @@ impl BackupAdapter {
             }
         };
 
-        let table_exists: i64 = match sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'",
-        )
-        .fetch_one(&pool)
-        .await
-        {
-            Ok(count) => count,
+        let has_table = match database_repository::has_schema_version_table(&pool).await {
+            Ok(has_table) => has_table,
             Err(error) => {
                 warn!(
                     "Failed to check schema_version table in backup ({}): {}",
@@ -298,17 +287,12 @@ impl BackupAdapter {
             }
         };
 
-        if table_exists == 0 {
+        if !has_table {
             pool.close().await;
             return None;
         }
 
-        let version: Option<i64> = match sqlx::query_scalar(
-            "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
-        )
-        .fetch_optional(&pool)
-        .await
-        {
+        let version: Option<i64> = match database_repository::latest_schema_version(&pool).await {
             Ok(value) => value,
             Err(error) => {
                 warn!(
@@ -347,17 +331,16 @@ impl BackupAdapter {
             .await
             .map_err(|e| AppError::Database(format!("Invalid backup file: {}", e)))?;
 
-        let result: (String,) = sqlx::query_as("PRAGMA integrity_check")
-            .fetch_one(&pool)
+        let result = database_repository::integrity_check(&pool)
             .await
             .map_err(|e| AppError::Database(format!("Backup integrity check failed: {}", e)))?;
 
         pool.close().await;
 
-        if result.0 != "ok" {
+        if result != "ok" {
             return Err(AppError::Database(format!(
                 "Backup integrity check failed: {}",
-                result.0
+                result
             )));
         }
 
@@ -461,13 +444,8 @@ impl BackupPort for BackupAdapter {
         // SECURITY: Validate path for SQL safety (CWE-89 mitigation)
         validate_sql_safe_path(&backup_path_str)?;
 
-        // SECURITY: Escape single quotes to prevent SQL injection
-        // Note: VACUUM INTO doesn't support parameterized queries
-        // Defense in depth: Path is validated above AND escaped here
-        let escaped_path = backup_path_str.replace("'", "''");
-
-        sqlx::query(&format!("VACUUM INTO '{}'", escaped_path))
-            .execute(&self.pool)
+        // Defense in depth: the repository escapes single quotes as well.
+        database_repository::vacuum_into(&self.pool, &backup_path_str)
             .await
             .map_err(|e| {
                 error!("Backup failed: {}", e);

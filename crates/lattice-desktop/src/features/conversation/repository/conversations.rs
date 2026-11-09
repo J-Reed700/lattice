@@ -13,6 +13,8 @@ use lattice_core::domain::conversation::{
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::ConversationId;
+use sqlx::Row;
+use std::collections::HashMap;
 
 impl ConversationRepository {
     /// Alias for `create_conversation`; the conversation follows the Settings
@@ -404,5 +406,21 @@ impl ConversationRepository {
             .map_err(|e| {
                 AppError::Database(format!("Failed to check conversation existence: {}", e))
             })
+    }
+
+    /// The titles of the conversations `ids` name, keyed by id.
+    pub async fn titles_of(&self, ids: &[&str]) -> Result<HashMap<String, String>> {
+        let ids = serde_json::to_string(ids).map_err(|e| AppError::Serialization(e.to_string()))?;
+        let rows = sqlx::query(
+            "SELECT id, title FROM conversations WHERE id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(ids)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(|e| AppError::Database(e.to_string()))?;
+        Ok(rows
+            .iter()
+            .map(|row| (row.get::<String, _>("id"), row.get::<String, _>("title")))
+            .collect())
     }
 }

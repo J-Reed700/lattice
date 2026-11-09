@@ -351,6 +351,7 @@ impl ImageRepository {
         message_id: &str,
         refs: &[String],
     ) -> Result<Vec<ImageRow>> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         if !refs.is_empty() {
             let mut update: QueryBuilder<Sqlite> =
                 QueryBuilder::new("UPDATE chat_images SET message_id = ");
@@ -364,16 +365,18 @@ impl ImageRepository {
                 list.push_bind(r);
             }
             list.push_unseparated(")");
-            update.build().execute(&self.pool).await.map_err(db)?;
+            update.build().execute(&mut *tx).await.map_err(db)?;
         }
-        sqlx::query_as(&format!(
+        let rows = sqlx::query_as(&format!(
             "SELECT {COLUMNS} FROM chat_images WHERE request_id = ? AND message_id = ? {BY_REF}"
         ))
         .bind(request_id)
         .bind(message_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
-        .map_err(db)
+        .map_err(db)?;
+        tx.commit().await.map_err(db)?;
+        Ok(rows)
     }
 
     /// The request's rows no message holds.

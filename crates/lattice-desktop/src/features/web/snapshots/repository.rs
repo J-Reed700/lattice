@@ -215,10 +215,11 @@ impl SnapshotRepository {
     /// The conversation that holds frozen copies no chat cited: pages saved
     /// from the library or as learning references. Created on first use.
     pub async fn library_conversation(&self) -> Result<String> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let space_id: Option<String> = sqlx::query_scalar(
             "SELECT id FROM conversation_spaces WHERE id = 'space_general' UNION ALL SELECT id FROM conversation_spaces LIMIT 1"
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
 
@@ -230,9 +231,10 @@ impl SnapshotRepository {
         .bind(space_id)
         .bind(&now)
         .bind(&now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(db)?;
+        tx.commit().await.map_err(db)?;
 
         Ok(LIBRARY_CONVERSATION.to_string())
     }

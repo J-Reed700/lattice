@@ -85,6 +85,11 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
         let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let result = sqlx::query(
             r#"
         UPDATE conversation_spaces
@@ -111,7 +116,7 @@ impl ConversationRepository {
         .bind(request.sort_order)
         .bind(&now)
         .bind(&request.space_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to update space: {}", e)))?;
 
@@ -132,9 +137,13 @@ impl ConversationRepository {
         "#,
         )
         .bind(&request.space_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch updated space: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(updated)
     }
