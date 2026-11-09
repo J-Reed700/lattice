@@ -402,9 +402,27 @@ pub async fn check(
 }
 
 #[cfg(test)]
+mod schema_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::review_findings::FindingKind;
+
+    /// A reply listing `decisions` in order, each under its issue ID.
+    fn reply(decisions: &[(&str, Value)]) -> Value {
+        let listed: Vec<Value> = decisions
+            .iter()
+            .map(|(id, decision)| {
+                let mut decision = decision.clone();
+                if let Some(fields) = decision.as_object_mut() {
+                    fields.insert("issueId".into(), json!(id));
+                }
+                decision
+            })
+            .collect();
+        json!({ "decisions": listed })
+    }
 
     fn proposal(text: &str) -> Vec<ReviewFinding> {
         vec![ReviewFinding::new(FindingKind::Teaching, None, text)]
@@ -438,7 +456,7 @@ mod tests {
             .collect();
         let references = ReferenceCollection::lexical(&sources)?;
         let model = ScriptedModel {
-            outputs: std::sync::Mutex::new(vec![json!({"issue-0":{"verdict":"not_established","basis":"external_fact","evidenceIds":[],"requirementId":null,"reason":"No passage establishes this correction."}}).to_string()].into()),
+            outputs: std::sync::Mutex::new(vec![json!({"decisions":[{"issueId":"issue-0","verdict":"not_established","basis":"external_fact","evidenceIds":[],"requirementId":null,"reason":"No passage establishes this correction."}]}).to_string()].into()),
             prompts: Default::default(),
         };
         let issues = proposal("Aggregate roots do not enforce invariants.");
@@ -462,8 +480,8 @@ mod tests {
     async fn a_malformed_actionable_finding_is_asked_for_once_more() -> Result<()> {
         use crate::lessons::course_generation_tests::ScriptedModel;
         let decision = |ids| {
-            json!({"issue-0":{"verdict":"actionable","basis":"lesson_contract",
-            "evidenceIds":ids,"requirementId":"requirements","partId":"blocks-0","reason":"The candidate omitted the required deliverable."}}).to_string()
+            json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"lesson_contract",
+            "evidenceIds":ids,"requirementId":"requirements","partId":"blocks-0","reason":"The candidate omitted the required deliverable."}]}).to_string()
         };
         let rejected = decision(json!([]));
         let model = ScriptedModel {
@@ -498,10 +516,19 @@ mod tests {
         use crate::lessons::course_generation_tests::ScriptedModel;
         let decision = |ids: Value, reason: &str| json!({"verdict":"actionable","basis":"lesson_contract","evidenceIds":ids,"requirementId":"requirements","partId":"blocks-0","reason":reason});
         // The first decision cites nothing, in both answers.
-        let answer = json!({
-            "issue-0": decision(json!([]), "The candidate omitted the required deliverable."),
-            "issue-1": decision(json!(["blocks-0"]), "The exercise never asks for the recorded state."),
-        });
+        let answer = reply(&[
+            (
+                "issue-0",
+                decision(json!([]), "The candidate omitted the required deliverable."),
+            ),
+            (
+                "issue-1",
+                decision(
+                    json!(["blocks-0"]),
+                    "The exercise never asks for the recorded state.",
+                ),
+            ),
+        ]);
         let model = ScriptedModel {
             outputs: std::sync::Mutex::new(vec![answer.to_string(), answer.to_string()].into()),
             prompts: Default::default(),
@@ -573,13 +600,13 @@ mod tests {
         // The first answer cites nothing for issue-0, so it is asked for
         // again; asked again, it cites nothing for issue-1, which the first
         // answer grounded.
-        let first = json!({"issue-0": uncited, "issue-1": grounded});
-        let second = json!({"issue-0": grounded, "issue-1": uncited});
+        let first = reply(&[("issue-0", uncited.clone()), ("issue-1", grounded.clone())]);
+        let second = reply(&[("issue-0", grounded.clone()), ("issue-1", uncited)]);
         assert_eq!(established_from(&first, &second, &issues).await?, notes);
         // An answer asked for again that breaks the protocol on another
         // verdict does not take the first answer's.
         let withdrawn = decision("not_established", json!([]), json!("requirements"));
-        let second = json!({"issue-0": grounded, "issue-1": withdrawn});
+        let second = reply(&[("issue-0", grounded), ("issue-1", withdrawn)]);
         assert_eq!(
             established_from(&first, &second, &issues).await?,
             notes[..1].to_vec()
@@ -596,10 +623,10 @@ mod tests {
             ("requirements".into(), EvidenceKind::Requirements),
         ]);
         let response = |ids: Value, requirement: Value, verdict: &str| {
-            json!({"issue-0":{
+            reply(&[("issue-0", json!({
             "verdict":verdict,"basis":"internal_conflict","evidenceIds":ids,
             "requirementId":requirement,"partId":"questions-0","reason":"The candidate gives incompatible descriptions of the same scenario."
-        }}).to_string()
+        }))]).to_string()
         };
         for ids in [
             json!([]),
@@ -645,7 +672,7 @@ mod tests {
             ("reference-0".into(), EvidenceKind::Reference),
         ]);
         let decision = |ids: Value, verdict: &str| {
-            json!({"issue-0":{"verdict":verdict,"basis":"external_fact","evidenceIds":ids,"requirementId":null,"partId":"lesson","reason":"The supplied evidence supports this comparison."}}).to_string()
+            reply(&[("issue-0", json!({"verdict":verdict,"basis":"external_fact","evidenceIds":ids,"requirementId":null,"partId":"lesson","reason":"The supplied evidence supports this comparison."}))]).to_string()
         };
         assert!(first(
             &decision(json!(["blocks-0"]), "actionable"),
@@ -695,7 +722,7 @@ mod tests {
             ("requirements".into(), EvidenceKind::Requirements),
         ]);
         let decision = |ids: Value, requirement: Value| {
-            json!({"issue-0":{"verdict":"actionable","basis":"lesson_contract","evidenceIds":ids,"requirementId":requirement,"partId":"blocks-0","reason":"The task omits the deliverable explicitly required by the contract."}}).to_string()
+            reply(&[("issue-0", json!({"verdict":"actionable","basis":"lesson_contract","evidenceIds":ids,"requirementId":requirement,"partId":"blocks-0","reason":"The task omits the deliverable explicitly required by the contract."}))]).to_string()
         };
         assert!(first(
             &decision(json!(["blocks-0"]), json!(null)),
@@ -722,9 +749,12 @@ mod tests {
             "The candidate gives incompatible descriptions of the same scenario. ".repeat(20);
         assert!(long.trim().chars().count() > 700);
         for reason in ["Yes.", long.as_str()] {
-            let response = json!({"issue-0":{
+            let response = reply(&[(
+                "issue-0",
+                json!({
                 "verdict":"actionable","basis":"internal_conflict","evidenceIds":["questions-0"],
-                "requirementId":null,"partId":"questions-0","reason":reason}})
+                "requirementId":null,"partId":"questions-0","reason":reason}),
+            )])
             .to_string();
             assert_eq!(
                 placed(first(&response, &issues, &evidence)?),
@@ -738,9 +768,12 @@ mod tests {
     fn a_blank_reason_is_still_refused() {
         let issues = proposal("The two statements in the candidate are incompatible.");
         let evidence = HashMap::from([("questions-0".into(), EvidenceKind::Candidate)]);
-        let response = json!({"issue-0":{
+        let response = reply(&[(
+            "issue-0",
+            json!({
             "verdict":"actionable","basis":"internal_conflict","evidenceIds":["questions-0"],
-            "requirementId":null,"partId":"questions-0","reason":"   "}})
+            "requirementId":null,"partId":"questions-0","reason":"   "}),
+        )])
         .to_string();
         assert!(first(&response, &issues, &evidence).is_err());
     }
@@ -763,7 +796,7 @@ mod tests {
         if let (Some(part), Some(fields)) = (part, decision.as_object_mut()) {
             fields.insert("partId".into(), json!(part));
         }
-        json!({"issue-0":decision}).to_string()
+        reply(&[("issue-0", decision)]).to_string()
     }
 
     #[test]
@@ -889,7 +922,7 @@ mod tests {
             "requirements".to_owned(),
         ];
         let schema = schema(&keys, &ids);
-        let decision = &schema["properties"]["issue-0"];
+        let decision = &schema["properties"]["decisions"]["items"];
         assert!(decision["required"]
             .as_array()
             .unwrap()
@@ -904,7 +937,7 @@ mod tests {
     async fn each_candidate_part_is_offered_with_the_label_the_user_sees() -> Result<()> {
         use crate::lessons::course_generation_tests::ScriptedModel;
         let model = ScriptedModel {
-            outputs: std::sync::Mutex::new(vec![json!({"issue-0":{"verdict":"not_established","basis":"external_fact","evidenceIds":[],"requirementId":null,"reason":"No passage establishes this correction."}}).to_string()].into()),
+            outputs: std::sync::Mutex::new(vec![json!({"decisions":[{"issueId":"issue-0","verdict":"not_established","basis":"external_fact","evidenceIds":[],"requirementId":null,"reason":"No passage establishes this correction."}]}).to_string()].into()),
             prompts: Default::default(),
         };
         let sources = ReferenceCollection::lexical(&[])?;

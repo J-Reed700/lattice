@@ -188,6 +188,20 @@ mod tests {
             prompts: Mutex::new(Vec::new()),
         }
     }
+    /// A reply listing `decisions` in order, each under its passage ID.
+    fn listed(decisions: &[(&str, Value)]) -> String {
+        let passages: Vec<Value> = decisions
+            .iter()
+            .map(|(id, decision)| {
+                let mut decision = decision.clone();
+                if let Some(fields) = decision.as_object_mut() {
+                    fields.insert("passageId".into(), json!(id));
+                }
+                decision
+            })
+            .collect();
+        json!({ "passages": passages }).to_string()
+    }
     fn requested(prompt: &str) -> Vec<String> {
         let data: Value = serde_json::from_str(prompt.rsplit("\n\n").next().unwrap()).unwrap();
         data["units"]
@@ -202,8 +216,8 @@ mod tests {
     #[tokio::test]
     async fn corrects_only_empty_decisions_and_preserves_reported_omissions() -> Result<()> {
         let model = model(vec![
-            json!({"p0":missing(),"p1":empty()}).to_string(),
-            json!({"p1":label()}).to_string(),
+            listed(&[("p0", missing()), ("p1", empty())]),
+            listed(&[("p1", label())]),
         ]);
         let raw = review(&model, &units(), None).await?;
         let parsed: Value = serde_json::from_str(&raw)?;
@@ -217,22 +231,19 @@ mod tests {
 
     #[tokio::test]
     async fn duplicate_or_foreign_decisions_cannot_silently_complete_mapping() -> Result<()> {
-        let duplicate = format!(
-            r#"{{"p0":{},"p0":{},"p1":{}}}"#,
-            missing(),
-            empty(),
-            label()
-        );
-        let model = model(vec![duplicate, json!({"p0":missing()}).to_string()]);
+        let duplicate = listed(&[("p0", missing()), ("p0", empty()), ("p1", label())]);
+        let model = model(vec![duplicate, listed(&[("p0", missing())])]);
         let raw = review(&model, &units(), None).await?;
         assert!(!resolve(&raw, &units())?[0].complete);
         assert_eq!(requested(&model.prompts.lock().unwrap()[1]), vec!["p0"]);
         let foreign =
             json!({"claimIds":["foreign-unit-claim"],"missingClaims":[],"nonFactualReason":""});
         assert!(!valid_row(&units(), "p0", &foreign));
-        let extra = self::model(vec![
-            json!({"p0":missing(),"p1":label(),"unknown":missing()}).to_string(),
-        ]);
+        let extra = self::model(vec![listed(&[
+            ("p0", missing()),
+            ("p1", label()),
+            ("unknown", missing()),
+        ])]);
         assert!(review(&extra, &units(), None).await.is_err());
         Ok(())
     }
@@ -242,20 +253,20 @@ mod tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        let first = model(vec![json!({"p0":missing(),"p1":empty()}).to_string()]);
+        let first = model(vec![listed(&[("p0", missing()), ("p1", empty())])]);
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             assert!(review(&first, &units(), None).await.is_err());
             Ok(())
         })
         .await?;
-        let next = model(vec![json!({"p1":label()}).to_string()]);
+        let next = model(vec![listed(&[("p1", label())])]);
         crate::lesson_drafts::run(&repo, &job, &lesson, async {
             let raw = review(&next, &units(), None).await?;
             assert!(!resolve(&raw, &units())?[0].complete);
             assert_eq!(requested(&next.prompts.lock().unwrap()[0]), vec!["p1"]);
             let mut changed = units();
             changed[0]["passages"][0]["text"] = json!("A different guarantee is asserted.");
-            let changed_model = model(vec![json!({"p0":missing(),"p1":label()}).to_string()]);
+            let changed_model = model(vec![listed(&[("p0", missing()), ("p1", label())])]);
             review(&changed_model, &changed, None).await?;
             assert_eq!(
                 requested(&changed_model.prompts.lock().unwrap()[0]),
