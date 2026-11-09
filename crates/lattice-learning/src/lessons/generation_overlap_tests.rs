@@ -426,7 +426,11 @@ async fn a_lessons_quiz_job_takes_the_lessons_rank() -> Result<()> {
             .into_iter()
             .find(|quiz| quiz.requested["scope"]["id"] == serde_json::json!(lesson))
             .unwrap();
-        assert_eq!(quiz.rank, Some(i64::try_from(place).unwrap()), "lesson {place}");
+        assert_eq!(
+            quiz.rank,
+            Some(i64::try_from(place).unwrap()),
+            "lesson {place}"
+        );
     }
     Ok(())
 }

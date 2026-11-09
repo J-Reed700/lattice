@@ -1169,7 +1169,8 @@ async fn a_dead_scope_stops_reserving_and_the_next_rank_becomes_the_head() {
     let first = seen(&scheduler, 1).await;
     let second = RankScope::new(2);
     let third = RankScope::new(3);
-    let second_call = admit_in_background(&scheduler, ranked(InferencePriority::Background, &second));
+    let second_call =
+        admit_in_background(&scheduler, ranked(InferencePriority::Background, &second));
     let third_call = admit_in_background(&scheduler, ranked(InferencePriority::Background, &third));
     settle().await;
     assert!(!second_call.is_finished() && !third_call.is_finished());
