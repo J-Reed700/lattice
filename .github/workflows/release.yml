@@ -153,8 +153,8 @@ jobs:
         run: |
           dpkg-deb --info "$INSTALLER"
           dpkg-deb --contents "$INSTALLER" | tee contents.txt
-          grep -E ' \./usr/bin/[^/]+$' contents.txt | grep -v llama-server
-          grep -E ' \./usr/bin/llama-server' contents.txt
+          grep -E ' (\./)?usr/bin/[^/]+$' contents.txt | grep -v llama-server
+          grep -E ' (\./)?usr/bin/llama-server' contents.txt
       - uses: actions/upload-artifact@v4
         with:
           name: installer-${{ matrix.name }}
