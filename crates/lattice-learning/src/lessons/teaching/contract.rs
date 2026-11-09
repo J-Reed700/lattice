@@ -264,12 +264,17 @@ fn findings(
             .iter()
             .find_map(|entry| part(&entry.section_id))
             .map_or(FindingSite::Lesson, |part| part.site);
+        let label = if item.kind == "term" {
+            ""
+        } else {
+            "The quoted name is the course plan's label for it, not wording for the lesson: teach what it names in the lesson's own sentences, worked into what the part already says, without copying the label. "
+        };
         found.push(
             ReviewFinding::new(
                 FindingKind::Teaching,
                 Some(site),
                 format!(
-                    "The lesson does not yet teach the {} \"{}\". Teach it in the lesson's own words: {}",
+                    "The lesson does not yet teach the {} \"{}\". {label}Teach it in the lesson's own words: {}",
                     item.kind,
                     item.text,
                     how_to_teach(item.kind)
