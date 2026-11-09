@@ -287,14 +287,14 @@ async fn clear_snapshot(pool: &SqlitePool) -> Result<(Vec<String>, Option<i64>),
     let mut tx = pool.begin_write().await.map_err(db_err)?;
     let mut cleared: Vec<String> = Vec::new();
     for table in EXCLUDED_TABLES {
-        if !database_repository::table_exists(&mut *tx, table)
+        if !database_repository::table_exists(&mut tx, table)
             .await
             .map_err(db_err)?
         {
             debug!(table = %table, "excluded table absent from snapshot; skipping");
             continue;
         }
-        database_repository::clear_table(&mut *tx, table)
+        database_repository::clear_table(&mut tx, table)
             .await
             .map_err(|error| ArchiveError::Database(format!("failed to clear {table}: {error}")))?;
         cleared.push((*table).to_string());

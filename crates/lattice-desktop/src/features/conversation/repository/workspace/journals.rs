@@ -268,7 +268,7 @@ impl ConversationRepository {
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        ensure_journal_space(&mut *tx, journal_space_id).await?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
 
         let conversation_exists: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
@@ -334,7 +334,7 @@ impl ConversationRepository {
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        ensure_journal_space(&mut *tx, journal_space_id).await?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
 
         sqlx::query(
             r#"
@@ -377,7 +377,7 @@ impl ConversationRepository {
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        ensure_journal_space(&mut *tx, journal_space_id).await?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
 
         let result = sqlx::query(
             "UPDATE journal_conversation_entries
@@ -414,7 +414,7 @@ impl ConversationRepository {
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        ensure_journal_space(&mut *tx, journal_space_id).await?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
         let pins = sqlx::query_scalar(
             "SELECT conversation_id FROM journal_conversation_entries
              WHERE journal_space_id = ? AND pinned_at IS NOT NULL
@@ -540,7 +540,7 @@ impl ConversationRepository {
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        ensure_journal_space(&mut *tx, journal_space_id).await?;
+        ensure_journal_space(&mut tx, journal_space_id).await?;
         let rows = qb
             .build_query_as::<ConversationExplorerRow>()
             .fetch_all(&mut *tx)

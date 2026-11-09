@@ -119,7 +119,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
             Ok(TagMapper::to_entities(&db_models))
         } else {
             // If not a TagFilter, return all tags
-            let tags = Self::all_in(&mut *tx).await?;
+            let tags = Self::all_in(&mut tx).await?;
             tx.commit()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;

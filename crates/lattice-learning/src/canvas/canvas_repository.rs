@@ -210,7 +210,7 @@ impl LearningCanvasRepository {
             "create",
             &payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -240,7 +240,7 @@ impl LearningCanvasRepository {
             &payload_hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &CanvasOperationResult {
                 revision: 0,
                 snapshot_id: None,
@@ -275,7 +275,7 @@ impl LearningCanvasRepository {
             "save",
             &payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -302,7 +302,7 @@ impl LearningCanvasRepository {
             &payload_hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &CanvasOperationResult {
                 revision: next,
                 snapshot_id: None,
@@ -336,7 +336,7 @@ impl LearningCanvasRepository {
             "snapshot",
             &payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -378,7 +378,7 @@ impl LearningCanvasRepository {
             &payload_hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &CanvasOperationResult {
                 revision,
                 snapshot_id: Some(&request.snapshot_id),
@@ -414,7 +414,7 @@ impl LearningCanvasRepository {
             "restore",
             &payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -478,7 +478,7 @@ impl LearningCanvasRepository {
             &payload_hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &CanvasOperationResult {
                 revision: next,
                 snapshot_id: Some(&request.pre_restore_snapshot_id),

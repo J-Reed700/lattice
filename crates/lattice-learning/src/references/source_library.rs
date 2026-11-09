@@ -253,7 +253,7 @@ fn context_excerpt(text: &str, match_char: usize) -> String {
 }
 
 async fn lock_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
-    if !repository::lock_active_program(&mut **tx, program_id).await? {
+    if !repository::lock_active_program(tx, program_id).await? {
         return Err(AppError::NotFound(
             "Active learning program not found".into(),
         ));
@@ -305,7 +305,7 @@ fn portability_operation<'a>(
 }
 
 async fn require_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
-    if !repository::active_program_exists(&mut **tx, program_id).await? {
+    if !repository::active_program_exists(tx, program_id).await? {
         return Err(AppError::NotFound(
             "Active learning program not found".into(),
         ));

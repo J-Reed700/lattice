@@ -250,7 +250,7 @@ impl TagRepository {
         .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create tag: {}", e)))?;
-        let tag = tag_by_name(&mut *tx, name.as_ref())
+        let tag = tag_by_name(&mut tx, name.as_ref())
             .await?
             .ok_or_else(|| AppError::Database("Tag creation failed".into()))?;
         tx.commit()

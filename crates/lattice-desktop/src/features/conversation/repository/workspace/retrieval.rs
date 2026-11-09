@@ -408,10 +408,10 @@ impl ConversationRepository {
                     Some((_, ids)) => ids,
                     // A conversation the caller named but that no longer exists:
                     // answer for the space rather than for nothing.
-                    None => Self::space_document_scope_on(&mut *tx, space_id).await?,
+                    None => Self::space_document_scope_on(&mut tx, space_id).await?,
                 }
             }
-            None => Self::space_document_scope_on(&mut *tx, space_id).await?,
+            None => Self::space_document_scope_on(&mut tx, space_id).await?,
         };
         if allowed.is_empty() {
             return Ok(Vec::new());

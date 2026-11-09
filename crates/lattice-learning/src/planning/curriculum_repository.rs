@@ -392,7 +392,7 @@ impl LearningCurriculumRepository {
             &payload,
             "Operation ID was reused with a different curriculum request.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             let plan = Self::plan_on(&mut tx, &request.program_id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(plan);
@@ -470,7 +470,7 @@ impl LearningCurriculumRepository {
             sqlx::query("INSERT INTO learning_curriculum_changes(revision_id,ordinal,operation,lesson_id,before_json,after_json,explanation) VALUES(?,?,?,?,?,?,?)")
                 .bind(&result.revision.id).bind(ordinal as i64).bind(op).bind(&change.lesson_id).bind(change.from_module_id.as_deref()).bind(encode(change)?).bind(&change.description).execute(&mut *tx).await.map_err(db)?;
         }
-        operation.record(&mut *tx, &result.revision.id).await?;
+        operation.record(&mut tx, &result.revision.id).await?;
         let plan = Self::plan_on(&mut tx, &request.program_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(plan)
@@ -491,7 +491,7 @@ impl LearningCurriculumRepository {
             &payload,
             "Operation ID was reused with different curriculum data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             let plan = Self::plan_on(&mut tx, &request.program_id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(plan);
@@ -519,7 +519,7 @@ impl LearningCurriculumRepository {
         sqlx::query("UPDATE learning_curriculum_revisions SET status='accepted',accepted_at=? WHERE id=? AND status='draft'").bind(now()).bind(&request.revision_id).execute(&mut *tx).await.map_err(db)?;
         materialize(&mut tx, &accepted).await?;
         sqlx::query("UPDATE learning_programs SET revision=revision+1,current_lesson_id=? WHERE id=? AND revision=?").bind(sqlx::query_scalar::<_,Option<String>>("SELECT resume_lesson_id FROM learning_curriculum_revisions WHERE id=?").bind(&request.revision_id).fetch_one(&mut *tx).await.map_err(db)?).bind(&request.program_id).bind(request.expected_revision).execute(&mut *tx).await.map_err(db)?;
-        operation.record(&mut *tx, &request.revision_id).await?;
+        operation.record(&mut tx, &request.revision_id).await?;
         let plan = Self::plan_on(&mut tx, &request.program_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(plan)
@@ -539,7 +539,7 @@ impl LearningCurriculumRepository {
             &payload,
             "Operation ID was reused with different discard data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             Self::seed_on(&mut tx, &request.program_id).await?;
             let plan = Self::plan_on(&mut tx, &request.program_id).await?;
             tx.commit().await.map_err(db)?;
@@ -562,7 +562,7 @@ impl LearningCurriculumRepository {
                 "Draft curriculum revision not found".into(),
             ));
         }
-        operation.record(&mut *tx, &request.revision_id).await?;
+        operation.record(&mut tx, &request.revision_id).await?;
         Self::seed_on(&mut tx, &request.program_id).await?;
         let plan = Self::plan_on(&mut tx, &request.program_id).await?;
         tx.commit().await.map_err(db)?;

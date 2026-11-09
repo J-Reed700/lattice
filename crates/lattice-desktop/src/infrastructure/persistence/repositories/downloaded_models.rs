@@ -348,7 +348,7 @@ impl DownloadedModelRepository {
         })?;
 
         let exists = if result.is_none() {
-            exists_by_id(&mut *tx, id).await?
+            exists_by_id(&mut tx, id).await?
         } else {
             false
         };

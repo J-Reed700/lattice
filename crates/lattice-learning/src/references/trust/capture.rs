@@ -358,7 +358,7 @@ async fn relate(
         .cloned()
         .collect();
     for id in active.difference(&comparison.compared) {
-        let text = version_text(&mut **tx, version.program_id, id).await?;
+        let text = version_text(tx, version.program_id, id).await?;
         let other = shingles(&text, &POLICY);
         relations.extend(page_relations(
             version.version_id,

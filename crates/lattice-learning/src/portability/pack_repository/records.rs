@@ -136,12 +136,12 @@ pub(super) async fn record_export(
         .await
         .map_err(db)?;
     pack_operation(&req.operation_id, "export", payload)
-        .forget(&mut *tx)
+        .forget(&mut tx)
         .await?;
     sqlx::query("INSERT INTO learning_pack_exports(id,program_id,operation_id,payload_hash,format_version,root_sha256,destination_path,privacy_manifest_json,entry_manifest_json,manifest_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
         .bind(&id).bind(&req.program_id).bind(&req.operation_id).bind(payload).bind(manifest.version as i64).bind(&manifest.root_sha256).bind(&destination).bind(json_string(&manifest.privacy)?).bind(json_string(&manifest.entries)?).bind(json_string(&manifest)?).bind(created).execute(&mut *tx).await.map_err(db)?;
     pack_operation(&req.operation_id, "export", payload)
-        .record(&mut *tx, &destination)
+        .record(&mut tx, &destination)
         .await?;
     tx.commit().await.map_err(db)?;
     Ok(LearningPackExportDto {
@@ -327,7 +327,7 @@ pub(super) async fn record_preview(
     sqlx::query("INSERT INTO learning_pack_import_previews(id,operation_id,payload_hash,source_path,root_sha256,program_id,program_title,conflict_policy,conflicts_json,changes_json,warnings_json,manifest_json,status,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,'pending',?)")
         .bind(&id).bind(&req.operation_id).bind(payload).bind(&req.source_path).bind(&decoded.manifest.root_sha256).bind(&result_program_id).bind(&preview.title).bind(policy_column(req.conflict_policy)?).bind(json_string(&preview.conflicts)?).bind(json_string(&preview.changes)?).bind(json_string(&preview.warnings)?).bind(&manifest_json).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
     pack_operation(&req.operation_id, "preview_import", payload)
-        .record(&mut *tx, &id)
+        .record(&mut tx, &id)
         .await?;
     tx.commit().await.map_err(db)?;
     Ok(result_program_id)

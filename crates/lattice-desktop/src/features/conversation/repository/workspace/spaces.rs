@@ -197,7 +197,7 @@ impl ConversationRepository {
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        ensure_standard_space(&mut *tx, &request.space_id).await?;
+        ensure_standard_space(&mut tx, &request.space_id).await?;
 
         let _current_space_id = sqlx::query_scalar::<_, String>(
             "SELECT space_id FROM conversations WHERE id = ? LIMIT 1",

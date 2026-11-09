@@ -252,7 +252,7 @@ impl LearningPackRepository {
         let program_id: String = row.get("program_id");
         sqlx::query("UPDATE learning_pack_import_previews SET status='cancelled',decided_at=? WHERE id=? AND status='pending'").bind(now).bind(&req.preview_id).execute(&mut *tx).await.map_err(db)?;
         pack_operation(&req.operation_id, "cancel_import", &payload)
-            .record(&mut *tx, &req.preview_id)
+            .record(&mut tx, &req.preview_id)
             .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&program_id).await
@@ -301,7 +301,7 @@ impl LearningPackRepository {
             replaces,
         )
         .await?;
-        let (program, ids) = Self::target_program(&mut *tx, &decoded, &original, &preview).await?;
+        let (program, ids) = Self::target_program(&mut tx, &decoded, &original, &preview).await?;
         let mut local_links = None;
         if replaces {
             local_links =

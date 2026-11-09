@@ -26,7 +26,7 @@ impl LearningCurriculumRepository {
         let payload = hash(request)?;
         let mut read = self.pool.begin_read().await.map_err(db)?;
         let attempt = match diagnostic_operation(operation_id, program_id, kind, &payload)
-            .replay::<String>(&mut *read)
+            .replay::<String>(&mut read)
             .await?
         {
             Some(id) => Some(Self::diagnostic_on(&mut read, &id).await?),
@@ -107,7 +107,7 @@ impl LearningCurriculumRepository {
             "start",
             &payload,
         );
-        if let Some(id) = operation.replay::<String>(&mut *tx).await? {
+        if let Some(id) = operation.replay::<String>(&mut tx).await? {
             let attempt = Self::diagnostic_on(&mut tx, &id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(attempt);
@@ -189,7 +189,7 @@ impl LearningCurriculumRepository {
         let created = now();
         sqlx::query("INSERT INTO learning_diagnostic_attempts(id,program_id,operation_id,status,prompt_json,response_json,findings_json,source_coverage_gaps_json,created_at,submitted_at,evaluation_json) VALUES(?,?,?,'active',?,'[]','[]','[]',?,NULL,?)")
             .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(encode(&prompts)?).bind(created).bind(encode(&tasks.unwrap_or_default())?).execute(&mut *tx).await.map_err(db)?;
-        operation.record(&mut *tx, &id).await?;
+        operation.record(&mut tx, &id).await?;
         let attempt = Self::diagnostic_on(&mut tx, &id).await?;
         tx.commit().await.map_err(db)?;
         Ok(attempt)
@@ -216,7 +216,7 @@ impl LearningCurriculumRepository {
             "submit",
             &payload,
         );
-        if let Some(id) = operation.replay::<String>(&mut *tx).await? {
+        if let Some(id) = operation.replay::<String>(&mut tx).await? {
             let attempt = Self::diagnostic_on(&mut tx, &id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(attempt);
@@ -309,7 +309,7 @@ impl LearningCurriculumRepository {
         }
         sqlx::query("UPDATE learning_diagnostic_attempts SET status=?,response_json=?,findings_json=?,source_coverage_gaps_json=?,submitted_at=?,revision=revision+1 WHERE id=? AND status='active'")
             .bind(if request.save_only { "active" } else { "submitted" }).bind(responses_json).bind(encode(&findings.unwrap_or_default())?).bind(encode(&gaps)?).bind(if request.save_only { None } else { Some(now()) }).bind(&request.diagnostic_id).execute(&mut *tx).await.map_err(db)?;
-        operation.record(&mut *tx, &request.diagnostic_id).await?;
+        operation.record(&mut tx, &request.diagnostic_id).await?;
         let attempt = Self::diagnostic_on(&mut tx, &request.diagnostic_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(attempt)
@@ -324,7 +324,7 @@ impl LearningCurriculumRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation =
             diagnostic_operation(&request.operation_id, &request.program_id, "skip", &payload);
-        if let Some(id) = operation.replay::<String>(&mut *tx).await? {
+        if let Some(id) = operation.replay::<String>(&mut tx).await? {
             let attempt = Self::diagnostic_on(&mut tx, &id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(attempt);
@@ -347,7 +347,7 @@ impl LearningCurriculumRepository {
         let prompts = serde_json::json!([]);
         sqlx::query("INSERT INTO learning_diagnostic_attempts(id,program_id,operation_id,status,prompt_json,response_json,findings_json,source_coverage_gaps_json,created_at,submitted_at) VALUES(?,?,?,'skipped',?,'[]','[]','[]',?,?)")
             .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(prompts.to_string()).bind(created).bind(created).execute(&mut *tx).await.map_err(db)?;
-        operation.record(&mut *tx, &id).await?;
+        operation.record(&mut tx, &id).await?;
         let attempt = Self::diagnostic_on(&mut tx, &id).await?;
         tx.commit().await.map_err(db)?;
         Ok(attempt)

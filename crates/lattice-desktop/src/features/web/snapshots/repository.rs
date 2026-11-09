@@ -201,7 +201,7 @@ impl SnapshotRepository {
         .map_err(db)?
         .rows_affected()
             == 1;
-        let row = snapshot_for_url(&mut *tx, conversation_id, normalized_url)
+        let row = snapshot_for_url(&mut tx, conversation_id, normalized_url)
             .await?
             .ok_or_else(|| AppError::Database("snapshot row vanished after insert".into()))?;
         tx.commit().await.map_err(db)?;

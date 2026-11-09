@@ -95,8 +95,8 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was already used for a different quiz.",
         );
-        if operation.seen(&mut *tx).await? {
-            let form = Self::form_in(&mut *tx, &req.form_id).await?;
+        if operation.seen(&mut tx).await? {
+            let form = Self::form_in(&mut tx, &req.form_id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(form);
         }
@@ -223,8 +223,8 @@ impl LearningAssessmentRepository {
                 sqlx::query("INSERT INTO learning_assessment_form_item_outcomes(form_id,item_ordinal,outcome_id) VALUES(?,?,?)").bind(&req.form_id).bind(ordinal as i64).bind(outcome).execute(&mut *tx).await.map_err(db)?;
             }
         }
-        operation.record(&mut *tx, &req.form_id).await?;
-        let form = Self::form_in(&mut *tx, &req.form_id).await?;
+        operation.record(&mut tx, &req.form_id).await?;
+        let form = Self::form_in(&mut tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(form)
     }
@@ -529,8 +529,8 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with a different answer.",
         );
-        if operation.seen(&mut *tx).await? {
-            let form = Self::form_in(&mut *tx, &req.form_id).await?;
+        if operation.seen(&mut tx).await? {
+            let form = Self::form_in(&mut tx, &req.form_id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(form);
         }
@@ -594,8 +594,8 @@ impl LearningAssessmentRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        operation.record(&mut *tx, &req.response.item_id).await?;
-        let form = Self::form_in(&mut *tx, &req.form_id).await?;
+        operation.record(&mut tx, &req.response.item_id).await?;
+        let form = Self::form_in(&mut tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(form)
     }
@@ -618,8 +618,8 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different quiz data.",
         );
-        if operation.seen(&mut *tx).await? {
-            let form = Self::form_in(&mut *tx, &req.form_id).await?;
+        if operation.seen(&mut tx).await? {
+            let form = Self::form_in(&mut tx, &req.form_id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(form);
         }
@@ -631,8 +631,8 @@ impl LearningAssessmentRepository {
                 "This quiz changed or is not open; reload and retry.",
             ));
         }
-        operation.record(&mut *tx, &()).await?;
-        let form = Self::form_in(&mut *tx, &req.form_id).await?;
+        operation.record(&mut tx, &()).await?;
+        let form = Self::form_in(&mut tx, &req.form_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(form)
     }

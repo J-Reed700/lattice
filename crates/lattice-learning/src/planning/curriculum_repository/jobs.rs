@@ -234,7 +234,7 @@ impl LearningCurriculumRepository {
             &payload,
             "Operation ID was reused with different job data.",
         );
-        if let Some(id) = operation.replay::<String>(&mut **tx).await? {
+        if let Some(id) = operation.replay::<String>(tx).await? {
             return Ok(id);
         }
         let content_revision =
@@ -292,7 +292,7 @@ impl LearningCurriculumRepository {
                     "A selected lesson already has preparation in progress. Let that job finish or cancel it before starting an overlapping batch.".into(),
                 ));
             }
-            operation.record(&mut **tx, &existing.id).await?;
+            operation.record(tx, &existing.id).await?;
             return Ok(existing.id);
         }
         let rank = match lesson_ids.first() {
@@ -318,7 +318,7 @@ impl LearningCurriculumRepository {
                 .bind(&admitted.id).bind(&request.program_id).bind(request.expected_revision).bind(content_revision)
                 .execute(&mut **tx).await.map_err(db)?;
         }
-        operation.record(&mut **tx, &admitted.id).await?;
+        operation.record(tx, &admitted.id).await?;
         Ok(admitted.id)
     }
 
@@ -377,7 +377,7 @@ impl LearningCurriculumRepository {
             &payload,
             "Operation ID was reused with different job action data.",
         );
-        if let Some(id) = operation.replay::<String>(&mut **tx).await? {
+        if let Some(id) = operation.replay::<String>(tx).await? {
             return Ok(id);
         }
         let program =
@@ -452,7 +452,7 @@ impl LearningCurriculumRepository {
                 admitted.id
             }
         };
-        operation.record(&mut **tx, &result_id).await?;
+        operation.record(tx, &result_id).await?;
         Ok(result_id)
     }
 

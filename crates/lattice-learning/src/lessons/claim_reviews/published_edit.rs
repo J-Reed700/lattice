@@ -80,7 +80,7 @@ pub(super) async fn update_report(
         connection,
         program_id,
         lesson_id,
-        &report.content_sha256(),
+        report.content_sha256(),
         &serde_json::to_string(&report)?,
     )
     .await

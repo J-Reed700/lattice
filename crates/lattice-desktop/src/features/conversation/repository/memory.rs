@@ -327,21 +327,6 @@ impl ConversationRepository {
 
     /// Active items by id, with their evidence, as another chat would see them:
     /// sequences zeroed, since they count the source chat's messages.
-    pub(super) async fn memory_items_by_id(&self, ids: &[String]) -> Result<Vec<MemoryItem>> {
-        if ids.is_empty() {
-            return Ok(Vec::new());
-        }
-        let mut tx =
-            self.pool.begin_read().await.map_err(|e| {
-                AppError::Database(format!("Failed to begin shared items read: {}", e))
-            })?;
-        let items = Self::memory_items_by_id_on(&mut tx, ids).await?;
-        tx.commit().await.map_err(|e| {
-            AppError::Database(format!("Failed to finish shared items read: {}", e))
-        })?;
-        Ok(items)
-    }
-
     pub(super) async fn memory_items_by_id_on(
         conn: &mut sqlx::SqliteConnection,
         ids: &[String],

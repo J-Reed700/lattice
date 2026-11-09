@@ -53,8 +53,8 @@ impl LearningRecallRepository {
             payload_hash: &hash,
             conflict: "Operation ID was reused with different recall data.",
         };
-        if let Some(selector_id) = operation.replay::<String>(&mut *tx).await? {
-            let selector = Self::selector_on(&mut *tx, &req.program_id, &selector_id).await?;
+        if let Some(selector_id) = operation.replay::<String>(&mut tx).await? {
+            let selector = Self::selector_on(&mut tx, &req.program_id, &selector_id).await?;
             tx.commit().await.map_err(db)?;
             return Ok(selector);
         }
@@ -86,8 +86,8 @@ impl LearningRecallRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        operation.record(&mut *tx, &req.selector_id).await?;
-        let created = Self::selector_on(&mut *tx, &req.program_id, &req.selector_id).await?;
+        operation.record(&mut tx, &req.selector_id).await?;
+        let created = Self::selector_on(&mut tx, &req.program_id, &req.selector_id).await?;
         tx.commit().await.map_err(db)?;
         Ok(created)
     }

@@ -377,17 +377,17 @@ impl MentionRepositoryPort for MentionRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         // Clear existing mentions for this document
-        Self::clear_document_mentions(&mut *tx, document_id).await?;
+        Self::clear_document_mentions(&mut tx, document_id).await?;
 
         for (mention_type, occurrences) in extracted {
             for (name, position) in occurrences {
-                let mention = Self::upsert_mention(&mut *tx, &name, &mention_type, None).await?;
+                let mention = Self::upsert_mention(&mut tx, &name, &mention_type, None).await?;
 
                 let context = self.extract_context(text, position);
 
                 // Link to document
                 Self::link_mention_to_document(
-                    &mut *tx,
+                    &mut tx,
                     document_id,
                     &mention.id,
                     Some(&context),

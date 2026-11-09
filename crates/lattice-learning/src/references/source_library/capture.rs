@@ -146,7 +146,7 @@ impl LearningSourceLibraryRepository {
             operation_kind,
             &payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             return Ok(SelectedSaved::Added);
@@ -164,7 +164,7 @@ impl LearningSourceLibraryRepository {
                 return Ok(SelectedSaved::Held { version_id });
             }
         }
-        if repository::ids_in_use(&mut *tx, program_id, source_id, version_id).await? {
+        if repository::ids_in_use(&mut tx, program_id, source_id, version_id).await? {
             return Err(invalid(
                 "The requested source or version ID is already in use.",
             ));
@@ -240,7 +240,7 @@ impl LearningSourceLibraryRepository {
             &payload_hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &SourceOperationResult {
                 version_id: Some(version_id),
                 revision: 0,
@@ -327,7 +327,7 @@ impl LearningSourceLibraryRepository {
             "refresh",
             &payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             return Ok(());
@@ -463,8 +463,8 @@ impl LearningSourceLibraryRepository {
             } else {
                 revision
             };
-        if next_revision != revision {
-            if !stored::set_pending_version(
+        if next_revision != revision
+            && !stored::set_pending_version(
                 &mut tx,
                 &req.program_id,
                 &req.source_id,
@@ -473,9 +473,8 @@ impl LearningSourceLibraryRepository {
                 checked,
             )
             .await?
-            {
-                return Err(invalid("Source changed; reload and retry."));
-            }
+        {
+            return Err(invalid("Source changed; reload and retry."));
         }
         let result_version = pending_id.as_deref();
         source_operation(
@@ -486,7 +485,7 @@ impl LearningSourceLibraryRepository {
             &payload_hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &SourceOperationResult {
                 version_id: result_version,
                 revision: next_revision,

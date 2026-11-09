@@ -28,7 +28,7 @@ impl LearningSourceLibraryRepository {
             "adopt",
             &hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             return Ok(());
@@ -69,7 +69,7 @@ impl LearningSourceLibraryRepository {
             &hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &SourceOperationResult {
                 version_id: Some(&req.version_id),
                 revision: next_revision,
@@ -101,7 +101,7 @@ impl LearningSourceLibraryRepository {
             "policy",
             &hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             return Ok(());
@@ -142,7 +142,7 @@ impl LearningSourceLibraryRepository {
             &hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &SourceOperationResult {
                 version_id: None,
                 revision: next,
@@ -172,7 +172,7 @@ impl LearningSourceLibraryRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
-            .seen(&mut *tx)
+            .seen(&mut tx)
             .await?
         {
             return Ok(());
@@ -206,7 +206,7 @@ impl LearningSourceLibraryRepository {
         )
         .await?;
         portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
-            .record(&mut *tx, &Some(&req.source_id))
+            .record(&mut tx, &Some(&req.source_id))
             .await?;
         tx.commit().await.map_err(db)
     }
@@ -251,7 +251,7 @@ impl LearningSourceLibraryRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
-            .seen(&mut *tx)
+            .seen(&mut tx)
             .await?
         {
             return Ok(());
@@ -366,7 +366,7 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Source changed; reload and retry."));
         }
         portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
-            .record(&mut *tx, &Some(&active_version))
+            .record(&mut tx, &Some(&active_version))
             .await?;
         tx.commit().await.map_err(db)
     }

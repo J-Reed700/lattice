@@ -48,10 +48,10 @@ impl ConversationRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         if let Some(new_title) = title {
-            set_title(&mut *tx, id, new_title).await?;
+            set_title(&mut tx, id, new_title).await?;
         }
         if let Some(new_system_prompt) = system_prompt {
-            set_system_prompt(&mut *tx, id, new_system_prompt).await?;
+            set_system_prompt(&mut tx, id, new_system_prompt).await?;
         }
         tx.commit()
             .await
@@ -116,12 +116,12 @@ impl ConversationRepository {
             .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-        let Some(conversation) = find_conversation(&mut *tx, id).await? else {
+        let Some(conversation) = find_conversation(&mut tx, id).await? else {
             return Ok(None);
         };
-        let messages = messages_of(&mut *tx, id).await?;
-        let document_refs = document_references_of(&mut *tx, id).await?;
-        let compaction = load_summary(&mut *tx, id).await?;
+        let messages = messages_of(&mut tx, id).await?;
+        let document_refs = document_references_of(&mut tx, id).await?;
+        let compaction = load_summary(&mut tx, id).await?;
         tx.commit()
             .await
             .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;

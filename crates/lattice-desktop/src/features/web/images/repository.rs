@@ -262,7 +262,7 @@ impl ImageRepository {
             return Ok(Vec::new());
         }
         let mut tx = self.pool.begin_write().await.map_err(db)?;
-        let candidates = rows_in_conversation(&mut *tx, conversation_id, ids).await?;
+        let candidates = rows_in_conversation(&mut tx, conversation_id, ids).await?;
         let claimable: Vec<String> = candidates
             .into_iter()
             .filter(|row| {
@@ -297,7 +297,7 @@ impl ImageRepository {
                 .await
                 .map_err(db)?;
         }
-        let rows = rows_in_conversation(&mut *tx, conversation_id, &claimable).await?;
+        let rows = rows_in_conversation(&mut tx, conversation_id, &claimable).await?;
         tx.commit().await.map_err(db)?;
         Ok(rows
             .into_iter()

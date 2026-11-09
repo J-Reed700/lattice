@@ -10,21 +10,6 @@ use lattice_core::shared::persistence::Transactions;
 use super::runs::{AuditRun, BatchRecord, CourseAuditUsage, RunKey, RunState};
 use crate::persistence::{db, decode, encode};
 
-pub(super) async fn load_run(pool: &SqlitePool, key: &RunKey) -> Result<Option<AuditRun>> {
-    sqlx::query(
-        "SELECT * FROM learning_lesson_audits \
-         WHERE lesson_id=? AND draft_sha256=? AND verifier_model=?",
-    )
-    .bind(&key.lesson_id)
-    .bind(&key.draft_sha256)
-    .bind(&key.verifier_model)
-    .fetch_optional(pool)
-    .await
-    .map_err(db)?
-    .map(|row| run_from_row(&row))
-    .transpose()
-}
-
 pub(super) async fn latest_run(pool: &SqlitePool, lesson_id: &str) -> Result<Option<AuditRun>> {
     sqlx::query(
         "SELECT * FROM learning_lesson_audits WHERE lesson_id=? \

@@ -529,7 +529,7 @@ pub(crate) async fn persist_report(
     })?;
     report.validate(lesson_id, lesson)?;
     for source in &report.sources {
-        let text = repository::active_version_text(&mut **tx, program_id, &source.id)
+        let text = repository::active_version_text(tx, program_id, &source.id)
             .await?
             .ok_or_else(|| invalid(SOURCE_INACTIVE))?;
         if digest(&text) != source.sha256 {
@@ -537,7 +537,7 @@ pub(crate) async fn persist_report(
         }
     }
     repository::insert_report(
-        &mut **tx,
+        tx,
         &repository::StoredReport {
             lesson_id,
             program_id,
@@ -549,7 +549,6 @@ pub(crate) async fn persist_report(
     )
     .await?;
     // The lesson's claim review, when it has one, ends with the publication.
-    repository::mark_review_ready(&mut **tx, lesson_id, chrono::Utc::now().timestamp_millis())
-        .await?;
+    repository::mark_review_ready(tx, lesson_id, chrono::Utc::now().timestamp_millis()).await?;
     Ok(())
 }

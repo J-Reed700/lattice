@@ -154,7 +154,7 @@ mod tests {
         assert!(!first.seen(&mut connection).await?);
         drop(connection);
         let mut tx = pool.begin().await.map_err(db)?;
-        first.record(&mut *tx, &7_i64).await?;
+        first.record(&mut tx, &7_i64).await?;
         tx.commit().await.map_err(db)?;
         let mut connection = pool.acquire().await.map_err(db)?;
         assert_eq!(first.replay::<i64>(&mut connection).await?, Some(7));
@@ -184,7 +184,7 @@ mod tests {
         let pool = pool().await?;
         let op = operation("save", "a");
         let mut tx = pool.begin().await.map_err(db)?;
-        op.record(&mut *tx, &()).await?;
+        op.record(&mut tx, &()).await?;
         tx.rollback().await.map_err(db)?;
         let mut connection = pool.acquire().await.map_err(db)?;
         assert!(!op.seen(&mut connection).await?);
