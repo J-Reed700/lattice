@@ -18,14 +18,14 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
     || CEILING_WHEN_UNREPORTED;
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
-  // What the user is typing, from when they untick "Model's max" until they
-  // leave the field. It starts empty: leaving it empty keeps every model at
-  // its maximum.
+  // What the user is typing, from when they untick "Longest trained window"
+  // (the most a model was trained for, not the window it loads with) until
+  // they leave the field. It starts empty: leaving it empty saves no default.
   const [entry, setEntry] = useState<string | null>(null);
   const saved = settings?.llm?.localContextWindow ?? null;
   const [shown, setShown] = useState<number | null>(saved);
   useEffect(() => { setShown(saved); }, [saved]);
-  const usesModelMax = shown === null && entry === null;
+  const usesDefault = shown === null && entry === null;
 
   const save = async (localContextWindow: number | null) => {
     setShown(localContextWindow);
@@ -59,7 +59,7 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
         <label className="flex items-center gap-1.5 whitespace-nowrap text-sm">
           <input
             type="checkbox"
-            checked={usesModelMax}
+            checked={usesDefault}
             onChange={(event) => {
               if (!event.target.checked) {
                 setEntry('');
@@ -69,7 +69,7 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
               if (shown !== null) void save(null);
             }}
           />
-          Model&apos;s max
+          Longest trained window
         </label>
         <input
           id="local-context-window"
@@ -77,8 +77,8 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
           min={MIN_WINDOW}
           max={ceiling}
           step={1}
-          disabled={usesModelMax}
-          placeholder={usesModelMax ? undefined : 'Tokens'}
+          disabled={usesDefault}
+          placeholder={usesDefault ? undefined : 'Tokens'}
           value={entry ?? shown ?? ''}
           onChange={(event) => setEntry(event.target.value)}
           onBlur={commit}

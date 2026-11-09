@@ -88,17 +88,21 @@ export function formatModelSize(bytes: number): string | null {
 }
 
 /**
- * The window a downloaded model runs with. A window saved in Settings is the
- * user's instruction and is shown exactly; otherwise the model loads at its
- * trained length, shown rounded: the most it loads with, since an unsaved
- * window is fitted to this machine's memory.
+ * The window a downloaded model loads with. A window saved for the model or
+ * for every local model is the user's instruction and is shown exactly;
+ * otherwise the largest window that fits this machine, for the model's KV
+ * cache setting; otherwise the trained window. Rounded, except a saved one.
  */
-export function formatContextLabel(model: Pick<DownloadedModel, 'configured_context_length' | 'trained_context_length'>): string | null {
-  const configured = model.configured_context_length;
-  if (configured) return `${configured.toLocaleString('en-US')} ctx · set by you`;
-  const trained = model.trained_context_length;
-  if (!trained) return null;
-  return trained >= 1024 ? `${Math.round(trained / 1024)}K ctx` : `${trained.toLocaleString('en-US')} ctx`;
+export function formatContextLabel(
+  model: Pick<DownloadedModel, 'model_id' | 'configured_context_length' | 'trained_context_length'> & FitHint,
+  settings?: Pick<LLMSettings, 'localContextWindow' | 'localModelConfigs'> | null,
+): string | null {
+  const saved = model.configured_context_length || settings?.localContextWindow;
+  if (saved) return `${saved.toLocaleString('en-US')} ctx · set by you`;
+  const kvCacheQuantization = settings?.localModelConfigs?.[model.model_id]?.kvCacheQuantization ?? false;
+  const window = fittedLaunchWindow(model, kvCacheQuantization) ?? model.trained_context_length;
+  if (!window) return null;
+  return window >= 1024 ? `${Math.round(window / 1024)}K ctx` : `${window.toLocaleString('en-US')} ctx`;
 }
 
 type FitHint = Pick<DownloadedModel, 'fits_context_length' | 'fits_context_length_with_kv_quantization'>;
@@ -314,7 +318,7 @@ export function buildChatModelOptions(
       subtitle,
       group: 'Local',
       backend: 'local',
-      contextLabel: formatContextLabel(m),
+      contextLabel: formatContextLabel(m, settings),
       supportsTools: m.supports_tool_calling ?? null,
       // A downloaded model sees once the catalog's projector is beside it and
       // vision is not switched off.

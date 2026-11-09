@@ -271,13 +271,13 @@ pub(super) fn startup_failure(
         };
     }
 
-    // An allocation llama.cpp could not make is the window not fitting: the
-    // backend came up, so it is no more a GPU failure than a corrupt file.
+    // An allocation llama.cpp could not make, for the weights or the cache, is
+    // the model not fitting: the backend came up, so it is not a GPU failure.
     if facts.memory_failure {
         return AttemptError {
             kind: AttemptFailure::OutOfMemory,
             message: format!(
-                "{} ran out of memory allocating its context window of {} tokens on the {}.{}",
+                "{} ran out of memory loading the model at a context window of {} tokens on the {}.{}",
                 binary.label(),
                 super::config::tokens(window),
                 if gpu_offload { "GPU" } else { "CPU" },

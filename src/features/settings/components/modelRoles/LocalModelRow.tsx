@@ -154,8 +154,9 @@ export function LocalModelRow({ model }: Props) {
   const savedWindow = model.configured_context_length ?? llmSettings?.localContextWindow ?? null;
   const kvCacheQuantization =
     llmSettings?.localModelConfigs?.[model.model_id]?.kvCacheQuantization ?? false;
-  const fits = savedWindow !== null ? tokensThatFit(model, savedWindow, kvCacheQuantization) : null;
   const fittedWindow = savedWindow === null ? fittedLaunchWindow(model, kvCacheQuantization) : null;
+  const launchWindow = savedWindow ?? fittedWindow ?? maxTokens;
+  const fits = launchWindow ? tokensThatFit(model, launchWindow, kvCacheQuantization) : null;
   const meta = [
     formatFileSize(model.file_size_bytes),
     maxTokens ? `Max ${maxTokens.toLocaleString('en-US')} tokens` : null,
@@ -175,9 +176,9 @@ export function LocalModelRow({ model }: Props) {
           <div className="truncate text-sm font-medium text-text-primary">{model.model_name}</div>
           <div className="truncate font-mono text-xs text-text-muted">{model.model_id}</div>
           <div className="mt-1.5 text-xs leading-relaxed tabular-nums text-text-muted">{meta}</div>
-          {savedWindow !== null && fits != null ? (
+          {launchWindow && fits != null ? (
             <div role="status" className="mt-0.5 text-xs text-warning-fg">
-              Loads at {savedWindow.toLocaleString('en-US')} tokens, which may not fit in this
+              Loads at {launchWindow.toLocaleString('en-US')} tokens, which may not fit in this
               machine&apos;s memory — about {fits.toLocaleString('en-US')} tokens fit.
             </div>
           ) : null}
