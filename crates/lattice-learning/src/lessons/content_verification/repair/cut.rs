@@ -5,7 +5,9 @@
 //! design §2.3, §2.6).
 use super::super::claim_ledger::{field_pointer, field_text, ClaimLedger, CutOf};
 use super::super::repair_work::{withdraw, withdraw_resolved};
-use super::super::sections::{answer_lost, gap_around_code, gaps, unit_label, unpublishable};
+use super::super::sections::{
+    answer_lost, gap_around_code, gaps, left_with_too_little, unit_label, unpublishable,
+};
 use super::super::*;
 use super::goal_words;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome};
@@ -197,17 +199,19 @@ fn ask_narrowing(context: &mut Value, narrowed: &[ClaimId]) {
 /// the cut, so the model is never asked to. What a statement's cut takes is
 /// the ledger's decision (`ClaimLedger::cut_of`), not the flag the request
 /// carried: the sentence that states it, wherever the lesson writes that
-/// sentence, when no other live statement stands on it; everything its quote
-/// touches once a narrowing of it was not applied. Otherwise nothing is cut: the
-/// statement stays among the claims sent, without `lastAttempt` and with the
-/// narrowing goal, for the model to take it out of its sentence, and its
-/// pending repair is marked so. The ledger keeps the sentences
-/// left beside each cut for the section's flow repair, and records the
-/// statements' cuts as the policy's step. A claim whose text cannot be taken
-/// out, because it is the whole of its field or sits in a code block, ends
-/// removed with its section, which goes out of the lesson (claim classes
-/// design §3.10). Returns how many claims it dealt with, or the error that
-/// stops the lesson when the cuts leave no claim of it standing.
+/// sentence, when no other live statement stands on it. Otherwise nothing is
+/// cut: the statement stays among the claims sent, without `lastAttempt` and
+/// with the narrowing goal, for the model to take it out of its sentence, and
+/// its pending repair is marked so; once that narrowing was not applied, the
+/// sentence stays with its other statements and the cut is refused. The ledger
+/// keeps the sentences left beside each cut for the section's flow repair, and
+/// records the statements' cuts as the policy's step. A statement whose text
+/// cannot be taken out, because it is the whole of its field or sits in a code
+/// block, or whose cut would leave a section with too little to teach, stays
+/// in the lesson and is published not verified; only a failed example's
+/// refused cut takes its section out (claim classes design 3.10). Returns how
+/// many claims it dealt with, or the error that stops the lesson when the cuts
+/// leave no claim of it standing.
 pub(in crate::lessons::content_verification) async fn last_attempts(
     policy: &dyn AcceptancePolicy,
     context: &mut Value,
@@ -245,6 +249,10 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 .map(|text| ledger.cut_of(&id, text));
             if matches!(decision, Some(CutOf::Narrow)) {
                 narrowed.push(id);
+                continue;
+            }
+            if matches!(decision, Some(CutOf::Whole)) {
+                refused.push(id);
                 continue;
             }
             let cut = text.as_deref().map_or(Cut::Absent, |text| {
@@ -285,7 +293,7 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 }
                 Cut::Absent => taken.push(id),
                 Cut::Refused => {
-                    if let Some(label) = label {
+                    if let (true, Some(label)) = (example, label) {
                         ledger.cuts.go(place.unit_index, label);
                     }
                     refused.push(id);
@@ -324,10 +332,10 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
             .collect::<Vec<ClaimId>>()
     };
     let mut cut = cut_by(ledger, &lesson, &taken, &refused);
-    // Cuts that would leave the lesson unpublishable are not made: the
-    // statements keep their sentences and are published not verified. The
-    // examples' own cuts are made, unless they alone would leave it so; an
-    // example is never marked.
+    // Cuts that would leave the lesson unpublishable, or a section with too
+    // little to teach, are not made: the statements keep their sentences and
+    // are published not verified. The examples' own cuts are made, unless they
+    // alone would leave the lesson so; an example is never marked.
     let statements: Vec<ClaimId> = taken
         .iter()
         .chain(&refused)
@@ -335,8 +343,16 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
         .cloned()
         .collect();
     let mut marked = 0;
+    let little_from_examples = after_examples
+        .as_ref()
+        .map(|(lesson, cuts)| left_with_too_little(lesson, cuts))
+        .unwrap_or_default();
+    let little_from_statements = left_with_too_little(&lesson, &ledger.cuts)
+        .iter()
+        .any(|unit| !little_from_examples.contains(unit));
     if !statements.is_empty()
         && (unpublishable(&lesson, &ledger.cuts).is_some()
+            || little_from_statements
             || (refused.is_empty() && ledger.nothing_left(&cut)))
     {
         let example_ids: Vec<ClaimId> = taken

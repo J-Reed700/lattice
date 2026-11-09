@@ -8,6 +8,15 @@ use crate::domain::learning::acceptance::Outcome::{
 };
 use crate::domain::learning::claim_review::Class::{Common, Internal, Sourced};
 
+/// `found` without the ninth invariant's violations, for a test of another
+/// invariant whose edit also reaches a rewrite.
+fn without_the_ninth(found: Vec<Violation>) -> Vec<Violation> {
+    found
+        .into_iter()
+        .filter(|violation| !matches!(violation, Violation::RewriteWithoutRefutation { .. }))
+        .collect()
+}
+
 /// What the standard policy breaks with `edit` applied to `class`'s node
 /// `name`.
 fn broken(class: Class, name: &'static str, edit: impl FnOnce(Node) -> Node) -> Vec<Violation> {
@@ -64,10 +73,16 @@ fn a_statement_cut_without_a_rewrite_breaks_the_second_invariant() {
         broken(Sourced, "s.read", |node| {
             node.on(&[Unproven], Next::to("s.cut"))
         }),
-        vec![Violation::CutWithoutRewrite {
-            class: Sourced,
-            node: id("s.cut"),
-        }]
+        vec![
+            Violation::CutWithoutRewrite {
+                class: Sourced,
+                node: id("s.cut"),
+            },
+            Violation::RewriteWithoutRefutation {
+                class: Sourced,
+                node: id("s.cut"),
+            },
+        ]
     );
 }
 
@@ -122,8 +137,9 @@ fn a_citation_fault_answered_with_anything_but_the_remedy_breaks_the_fourth_inva
         ("s.final", AllCommon, "s.cut"),
         ("s.reread", StandsElsewhere, "s.rewrite"),
     ] {
+        let found = broken(Sourced, name, |node| node.on(&[outcome], Next::to(to)));
         assert_eq!(
-            broken(Sourced, name, |node| node.on(&[outcome], Next::to(to))),
+            without_the_ninth(found),
             vec![Violation::CitationFaultNotRepaired {
                 class: Sourced,
                 node: id(name),
@@ -136,13 +152,14 @@ fn a_citation_fault_answered_with_anything_but_the_remedy_breaks_the_fourth_inva
 
 #[test]
 fn a_first_change_must_change_by_the_remedy_but_its_otherwise_goes_where_it_must() {
+    let found = broken(Sourced, "s.read", |node| {
+        node.on(
+            &[AllCommon],
+            Next::first_change(Target::node("s.rewrite"), "s.research"),
+        )
+    });
     assert_eq!(
-        broken(Sourced, "s.read", |node| {
-            node.on(
-                &[AllCommon],
-                Next::first_change(Target::node("s.rewrite"), "s.research"),
-            )
-        }),
+        without_the_ninth(found),
         vec![Violation::CitationFaultNotRepaired {
             class: Sourced,
             node: id("s.read"),
@@ -153,7 +170,7 @@ fn a_first_change_must_change_by_the_remedy_but_its_otherwise_goes_where_it_must
         broken(Sourced, "s.read", |node| {
             node.on(
                 &[AllCommon],
-                Next::first_change(Target::node("s.uncite"), "s.rewrite"),
+                Next::first_change(Target::node("s.uncite"), "s.research"),
             )
         }),
         Vec::<Violation>::new()

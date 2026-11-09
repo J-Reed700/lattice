@@ -44,7 +44,7 @@ pub(super) const RESEARCHING: [(Step, Outcome); 1] = [(PARTS, Outcome::Unproven)
 const REWRITING: [(Step, Outcome); 3] = [
     (PARTS, Outcome::Unproven),
     (Step::Research, Outcome::FoundNothing),
-    (PAGE, Outcome::Unproven),
+    (PAGE, Outcome::Refuted),
 ];
 const RECITING: [(Step, Outcome); 3] = [
     (PARTS, Outcome::Unproven),
@@ -54,9 +54,9 @@ const RECITING: [(Step, Outcome); 3] = [
 pub(super) const CUTTING: [(Step, Outcome); 5] = [
     (PARTS, Outcome::Unproven),
     (Step::Research, Outcome::FoundNothing),
-    (PAGE, Outcome::Unproven),
+    (PAGE, Outcome::Refuted),
     (REWRITE, Outcome::Rewritten),
-    (PARTS, Outcome::Unproven),
+    (PARTS, Outcome::Refuted),
 ];
 /// Steps that end a Reasoning statement Consistent.
 const CONSISTENT: [(Step, Outcome); 2] = [(CONSISTENCY, Outcome::Stands), (VETO, Outcome::Stands)];

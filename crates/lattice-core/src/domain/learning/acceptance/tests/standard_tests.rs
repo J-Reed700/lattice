@@ -104,7 +104,10 @@ fn the_edges_that_change_a_class_are_first_changes_or_enter_after_a_rewrite() {
     );
     assert_eq!(
         edge(Sourced, "s.citeread", Outcome::AllCommon),
-        Some(Next::first_change(Target::node("s.uncite"), "s.rewrite"))
+        Some(Next::first_change(
+            Target::node("s.uncite"),
+            End::Unverified
+        ))
     );
     assert_eq!(
         edge(Sourced, "s.uncite", Outcome::Done),
@@ -120,11 +123,11 @@ fn the_edges_that_change_a_class_are_first_changes_or_enter_after_a_rewrite() {
     );
     assert_eq!(
         edge(Common, "c.read", Outcome::NeedsSource),
-        Some(Next::first_change(Target::Enter(Sourced), "c.rewrite"))
+        Some(Next::first_change(Target::Enter(Sourced), End::Unverified))
     );
     assert_eq!(
         edge(Reasoning, "r.read", Outcome::NeedsSource),
-        Some(Next::first_change(Target::Enter(Sourced), "r.rewrite"))
+        Some(Next::first_change(Target::Enter(Sourced), End::Unverified))
     );
 }
 
@@ -206,7 +209,7 @@ fn a_ground_reading_has_two_edges_its_end_and_its_next_node() {
 }
 
 #[test]
-fn a_cut_removes_the_sentence_and_a_sentence_that_cannot_be_cut_takes_its_section() {
+fn a_cut_removes_the_sentence_and_a_sentence_that_cannot_be_cut_stays_unverified() {
     let policy = StandardPolicy::new();
     for (class, name) in [
         (Sourced, "s.cut"),
@@ -223,7 +226,7 @@ fn a_cut_removes_the_sentence_and_a_sentence_that_cannot_be_cut_takes_its_sectio
         );
         assert_eq!(
             node.next(Outcome::CannotCut),
-            Some(Next::End(End::Removed { section_goes: true }))
+            Some(Next::End(End::Unverified))
         );
     }
 }
