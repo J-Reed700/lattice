@@ -10,8 +10,9 @@ use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqliteConnection};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashSet;
 
 /// An item on its way into the bank.
@@ -263,6 +264,44 @@ impl LearningAssessmentRepository {
         rows.iter()
             .map(|row| candidate_from_row(row, vec![]).map(|c| c.candidate.into()))
             .collect()
+    }
+
+    /// [`Self::bank_needs_in`] as a unit of work of its own: working out a
+    /// need stores the outcomes and the blueprint revision it reads.
+    pub(crate) async fn bank_needs(
+        pool: &SqlitePool,
+        program_id: &str,
+        scope: &LearningQuizScopeDto,
+        top_up: bool,
+    ) -> Result<Vec<AuthoringNeed>> {
+        let mut tx = pool.begin_write().await.map_err(db)?;
+        let needs = Self::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(needs)
+    }
+
+    /// Store what was written for `need`, but no more than the bank still
+    /// lacks for its requirement. The lack is worked out again inside the
+    /// caller's unit, so a run that wrote the same need first is not doubled.
+    pub(crate) async fn insert_for_need_in(
+        connection: &mut SqliteConnection,
+        program_id: &str,
+        scope: &LearningQuizScopeDto,
+        top_up: bool,
+        need: &AuthoringNeed,
+        mut items: Vec<BankItem>,
+        author_model: Option<&str>,
+    ) -> Result<usize> {
+        let lacking = Self::bank_needs_in(connection, program_id, scope, top_up)
+            .await?
+            .into_iter()
+            .find(|n| {
+                n.requirement.outcome_id == need.requirement.outcome_id
+                    && n.requirement.format == need.requirement.format
+            })
+            .map_or(0, |n| n.count);
+        items.truncate(lacking);
+        insert_bank_items_in(connection, program_id, &items, author_model).await
     }
 
     /// What a quiz still needs written: per requirement, up to three forms'

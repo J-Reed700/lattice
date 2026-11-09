@@ -13,7 +13,7 @@ use lattice_core::domain::learning::claim_review::{
     EventProvenance, HumanBinding, UnitKind, UnverifiedReason, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqliteConnection;
+use lattice_core::shared::persistence::WriteTx;
 
 use super::actions::{in_section_body, ONLY_SECTION};
 use super::repository::blocks;
@@ -53,7 +53,7 @@ pub(super) fn gone(entry: &ClaimLedgerEntry) -> bool {
 
 /// The section's text as the lesson holds it now.
 pub(super) async fn section_body(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     lesson_id: &str,
     unit: usize,
 ) -> Result<String> {
@@ -66,7 +66,7 @@ pub(super) async fn section_body(
 /// the result with its new hash; a lesson with no stored report is left as it
 /// is.
 pub(super) async fn update_report(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     program_id: &str,
     lesson_id: &str,
     change: impl FnOnce(&mut LessonVerificationReport),
@@ -89,7 +89,7 @@ pub(super) async fn update_report(
 /// Writes the edit on `connection`; the claims that stood on the replaced
 /// text are the ones it returns.
 pub(super) async fn apply_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     edit: PublishedEdit<'_>,
 ) -> Result<HashSet<ClaimId>> {
     let PublishedEdit {

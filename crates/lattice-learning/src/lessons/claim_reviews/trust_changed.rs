@@ -218,7 +218,7 @@ pub async fn record_verifier_agreements(
     Ok(report)
 }
 
-async fn redecide_kinds(pool: &SqlitePool, kinds: Vec<ClaimKind>) -> Result<Redecided> {
+pub(super) async fn redecide_kinds(pool: &SqlitePool, kinds: Vec<ClaimKind>) -> Result<Redecided> {
     let mut report = Redecided::default();
     for kind in kinds {
         report.merge(trust_changed(pool, &TrustCause::Bar { kind }).await?);

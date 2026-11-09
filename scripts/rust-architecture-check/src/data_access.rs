@@ -1,11 +1,14 @@
-//! The three data-access rules, held at zero: one way to begin a transaction,
-//! SQL only in data modules, and one transaction for a function that runs several statements.
+//! The four data-access rules, held at zero: one way to begin a transaction,
+//! SQL only in data modules, one transaction for a function that runs several statements
+//! or is a unit of work, and sqlx's unit-of-work types only in data modules.
 use crate::{
     item_attrs,
     ratchet::{impl_item_attrs, production_files, token_paths, trait_item_attrs},
     test_only,
 };
 mod rule3;
+mod sqlx_types;
+mod unit_of_work;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use std::{collections::HashSet, fmt, path::Path};
 use syn::{
@@ -42,11 +45,18 @@ const DEFERRED: &str = "begins a deferred transaction; use begin_write() or begi
 const BEGIN_WITH: &str = "begins with begin_with(); use begin_write() or begin_read()";
 
 /// `(file, function, reason)`: a function rule 3 would flag, with the reason it must not be one transaction.
-pub const EXCEPTIONS: &[(&str, &str, &str)] = &[(
-    "crates/lattice-desktop/src/infrastructure/persistence/database/migrate.rs",
-    "run_migrations",
-    "sqlx's migrator runs each migration in its own transaction, and PRAGMA optimize after it refreshes planner statistics only",
-)];
+pub const EXCEPTIONS: &[(&str, &str, &str)] = &[
+    (
+        "crates/lattice-desktop/src/infrastructure/persistence/database/migrate.rs",
+        "run_migrations",
+        "sqlx's migrator runs each migration in its own transaction, and PRAGMA optimize after it refreshes planner statistics only",
+    ),
+    (
+        "crates/lattice-desktop/src/features/indexing/library_owner.rs",
+        "adopt",
+        "The owner file is created (create_new, never replacing) while the owner id is uncommitted: a file that cannot be created, or that another instance created first, rolls the id back, so the id and the file always agree.",
+    ),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
@@ -89,17 +99,20 @@ pub fn file_violations_with(
         return Vec::new();
     }
     let data = is_data_module(path);
+    let postgres = path.starts_with(POSTGRES);
     let mut scan = Scan {
         path,
-        begins: path != TRANSACTIONS && !path.starts_with(POSTGRES),
+        begins: path != TRANSACTIONS && !postgres,
         sql: !data,
         found: Vec::new(),
     };
     scan.visit_file(ast);
     let mut found = scan.found;
-    if data {
-        found.extend(rule3::violations(path, ast, exceptions));
+    if !data && !postgres {
+        found.extend(sqlx_types::violations(path, ast));
     }
+    found.extend(rule3::violations(path, ast, exceptions, data));
+    found.extend(unit_of_work::violations(path, ast, exceptions));
     found.sort_by_key(|violation| (violation.rule, violation.line));
     found
 }
@@ -403,3 +416,5 @@ impl<'ast> Visit<'ast> for Scan<'_> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod unit_of_work_tests;

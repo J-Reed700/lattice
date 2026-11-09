@@ -165,7 +165,7 @@ impl CustomCollectionsRepository {
 }
 
 async fn insert_memberships(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut sqlx::SqliteConnection,
     id: &str,
     ids: &[String],
 ) -> Result<()> {
@@ -175,7 +175,7 @@ async fn insert_memberships(
             continue;
         }
         sqlx::query("INSERT INTO custom_collection_documents (collection_id, document_id, ordinal) VALUES (?, ?, ?)")
-            .bind(id).bind(document_id).bind(ordinal as i64).execute(&mut **tx).await?;
+            .bind(id).bind(document_id).bind(ordinal as i64).execute(&mut *tx).await?;
     }
     Ok(())
 }

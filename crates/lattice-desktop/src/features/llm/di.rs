@@ -18,13 +18,11 @@ use crate::infrastructure::adapters::fs::tokio_checksum::TokioChecksumAdapter;
 use crate::infrastructure::adapters::fs::TokioFileSystemAdapter;
 use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 use crate::infrastructure::file_system::FileSystemAdapter;
-use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::download_manager::DownloadManager;
 use lattice_core::application::ports::llm_port::{
     InvalidationCause, ModelRequirements, ModelRole, OptionalLlmLoader, PinnedModel,
 };
-use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
     CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
 };
@@ -77,7 +75,6 @@ pub fn build(
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
     let checksum_service = Arc::new(TokioChecksumAdapter) as Arc<dyn ChecksumService>;
     let file_system_access = Arc::new(TokioFileSystemAdapter) as Arc<dyn FileSystemAccess>;
-    let uow_factory = Arc::new(SqliteUnitOfWorkFactory::new(db_pool)) as Arc<dyn UnitOfWorkFactory>;
 
     let get_system_capabilities_use_case = Arc::new(GetSystemCapabilitiesUseCase::new(system_info));
     let get_available_models_use_case =
@@ -96,7 +93,7 @@ pub fn build(
         credentials,
         checksum_service,
         file_system_access,
-        uow_factory,
+        db_pool,
     ));
     let delete_model_use_case = Arc::new(DeleteModelUseCase::new(
         model_storage.clone(),

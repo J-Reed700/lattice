@@ -15,9 +15,9 @@ use crate::persistence::{db, now};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{lesson_rating, ratings, score, validate};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
 /// Grades attempts. The model, the material, the grader and the database are the grading's own; the job runtime's
@@ -135,14 +135,24 @@ impl<'a> AttemptGrading<'a> {
             )
             .await?;
         }
-        finish(
-            transaction,
+        let finished = finish_in(
+            &mut transaction,
             context,
             recorded,
             &attempt.id,
             "Your review is graded",
         )
-        .await
+        .await?;
+        match finished {
+            Finish::Commit => {
+                transaction.commit().await.map_err(db)?;
+                Ok(JobOutcome::Committed)
+            }
+            Finish::Leave(outcome) => {
+                transaction.rollback().await.map_err(db)?;
+                Ok(outcome)
+            }
+        }
     }
 
     async fn give_up(
@@ -184,41 +194,55 @@ pub(crate) async fn give_up(
         &error.to_string(),
     )
     .await?;
-    finish(
-        transaction,
+    let finished = finish_in(
+        &mut transaction,
         context,
         recorded,
         attempt_id,
         "The review could not be graded",
     )
-    .await
+    .await?;
+    match finished {
+        Finish::Commit => {
+            transaction.commit().await.map_err(db)?;
+            Ok(JobOutcome::Committed)
+        }
+        Finish::Leave(outcome) => {
+            transaction.rollback().await.map_err(db)?;
+            Ok(outcome)
+        }
+    }
+}
+
+/// What the caller does with the transaction that recorded the attempt's state.
+enum Finish {
+    /// The job is completed in it: commit.
+    Commit,
+    /// Roll it back and end the job with this outcome.
+    Leave(JobOutcome),
 }
 
 /// Completes the job in the transaction that recorded the attempt's state. A state that was not recorded because the
 /// attempt was no longer waiting for a grade is left as it is, and the job completes without it.
-async fn finish(
-    mut transaction: Transaction<'static, Sqlite>,
+async fn finish_in(
+    transaction: &mut WriteTx,
     context: &JobContext,
     recorded: bool,
     attempt_id: &str,
     message: &str,
-) -> Result<JobOutcome> {
+) -> Result<Finish> {
     let result_ref = format!("attempt:{attempt_id}");
     if !recorded {
-        transaction.rollback().await.map_err(db)?;
-        return Ok(JobOutcome::Completed {
+        return Ok(Finish::Leave(JobOutcome::Completed {
             result_ref,
             message: "The review was no longer waiting for a grade.".into(),
-        });
+        }));
     }
-    let completed =
-        JobStore::complete_in(&mut transaction, context.id(), &result_ref, message).await?;
+    let completed = JobStore::complete_in(transaction, context.id(), &result_ref, message).await?;
     if !completed {
-        transaction.rollback().await.map_err(db)?;
-        return Ok(JobOutcome::Stopped);
+        return Ok(Finish::Leave(JobOutcome::Stopped));
     }
-    transaction.commit().await.map_err(db)?;
-    Ok(JobOutcome::Committed)
+    Ok(Finish::Commit)
 }
 
 /// Saves the job's progress at step `index` of [`GRADING_STEPS`]. False once the job is no longer running.

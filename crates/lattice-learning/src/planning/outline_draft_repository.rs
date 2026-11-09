@@ -121,7 +121,7 @@ impl LearningRepository {
 }
 
 pub(crate) async fn insert(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut sqlx::SqliteConnection,
     program: &LearningProgramDto,
     draft: &OutlineDraft,
 ) -> Result<()> {
@@ -131,8 +131,8 @@ pub(crate) async fn insert(
     sqlx::query("INSERT INTO learning_outline_drafts(program_id,state_json) VALUES(?,?)")
         .bind(&program.summary.id)
         .bind(&state)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await?;
-    sqlx::query("INSERT INTO learning_outline_checkpoints(program_id,revision,state_json,created_at) VALUES(?,?,?,?)").bind(&program.summary.id).bind(program.summary.revision).bind(&state).bind(draft.review.updated_at).execute(&mut **tx).await?;
+    sqlx::query("INSERT INTO learning_outline_checkpoints(program_id,revision,state_json,created_at) VALUES(?,?,?,?)").bind(&program.summary.id).bind(program.summary.revision).bind(&state).bind(draft.review.updated_at).execute(&mut *tx).await?;
     Ok(())
 }

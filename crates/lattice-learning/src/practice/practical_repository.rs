@@ -12,7 +12,7 @@ use crate::{
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 mod activities;
@@ -262,10 +262,10 @@ impl LearningPracticalRepository {
         Self { pool }
     }
 
-    async fn active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<i64> {
+    async fn active_program(tx: &mut SqliteConnection, program_id: &str) -> Result<i64> {
         let row = sqlx::query("SELECT status,revision FROM learning_programs WHERE id=?")
             .bind(program_id)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -277,10 +277,10 @@ impl LearningPracticalRepository {
         Ok(row.get("revision"))
     }
 
-    async fn writer_lock(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+    async fn writer_lock(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
         sqlx::query("UPDATE learning_programs SET revision=revision WHERE id=?")
             .bind(program_id)
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await
             .map_err(db)?;
         Ok(())

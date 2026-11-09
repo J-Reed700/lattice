@@ -9,7 +9,7 @@ use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
-use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
+use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::features::summaries::entity::DocumentSummary;
 use lattice_core::application::ports::summary_search::SummaryLevel;
@@ -466,36 +466,72 @@ pub(crate) async fn defer_work(
     Ok(())
 }
 
-pub(crate) async fn document_title(pool: &SqlitePool, document_id: &str) -> Result<Option<String>> {
+/// What a document's summaries are written from, read in one snapshot.
+pub(crate) struct SourceParts {
+    pub title: String,
+    pub cluster_label: Option<String>,
+    pub chunks: Vec<(Option<String>, String)>,
+}
+
+/// The document's title, newest cluster label and chunks, from one read
+/// unit so a re-index between them cannot mix two versions. `None` when the
+/// document is gone.
+pub(crate) async fn source_parts(
+    pool: &SqlitePool,
+    document_id: &str,
+) -> Result<Option<SourceParts>> {
+    let mut tx = pool
+        .begin_read()
+        .await
+        .map_err(|e| AppError::Database(format!("summary source read: {e}")))?;
+    let Some(title) = document_title_in(&mut tx, document_id).await? else {
+        return Ok(None);
+    };
+    let cluster_label = latest_cluster_label_in(&mut tx, document_id).await?;
+    let chunks = document_chunks_in(&mut tx, document_id).await?;
+    tx.commit()
+        .await
+        .map_err(|e| AppError::Database(format!("summary source read: {e}")))?;
+    Ok(Some(SourceParts {
+        title,
+        cluster_label,
+        chunks,
+    }))
+}
+
+async fn document_title_in(
+    conn: &mut SqliteConnection,
+    document_id: &str,
+) -> Result<Option<String>> {
     sqlx::query_scalar("SELECT file_name FROM documents WHERE id = ?")
         .bind(document_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await
         .map_err(|e| AppError::Database(format!("summary source title: {e}")))
 }
 
-pub(crate) async fn latest_cluster_label(
-    pool: &SqlitePool,
+async fn latest_cluster_label_in(
+    conn: &mut SqliteConnection,
     document_id: &str,
 ) -> Result<Option<String>> {
     sqlx::query_scalar(
         "SELECT c.label FROM cluster_members cm JOIN clusters c ON c.id = cm.cluster_id JOIN cluster_runs r ON r.id = c.run_id WHERE cm.document_id = ? ORDER BY r.ran_at DESC LIMIT 1",
     )
     .bind(document_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(|e| AppError::Database(format!("summary source cluster label: {e}")))
 }
 
-pub(crate) async fn document_chunks(
-    pool: &SqlitePool,
+async fn document_chunks_in(
+    conn: &mut SqliteConnection,
     document_id: &str,
 ) -> Result<Vec<(Option<String>, String)>> {
     sqlx::query_as(
         "SELECT section, content FROM text_chunks WHERE document_id = ? ORDER BY chunk_index",
     )
     .bind(document_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(|e| AppError::Database(format!("summary source chunks: {e}")))
 }

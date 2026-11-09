@@ -11,8 +11,8 @@ use lattice_core::domain::learning::claim_review::{
     UnitKind, UnverifiedReason, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::text::segmentation::sentences;
-use sqlx::SqliteConnection;
 
 use super::actions::{in_section_body, ONLY_SECTION};
 use super::published_edit::{gone, placed, section_body, update_report, CHANGED};
@@ -144,7 +144,7 @@ fn without_line(head: &str, rest: &str) -> String {
 /// section, every claim on it ended removed by `user`, the report updated.
 /// The claims it ended are the ones it returns.
 pub(super) async fn remove_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     lesson_id: &str,
     claim_id: &ClaimId,
     user: &EventProvenance,
@@ -225,7 +225,7 @@ pub(super) async fn remove_in(
 /// removed through [`remove_in`], which ends every claim that overlaps it.
 /// Returns the claim made and the claims the removal ended.
 pub(super) async fn remove_sentence_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     lesson_id: &str,
     unit: usize,
     sentence: &str,

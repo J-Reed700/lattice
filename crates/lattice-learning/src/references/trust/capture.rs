@@ -24,7 +24,8 @@ use lattice_core::domain::provenance::{
     RelationTarget, ShingleSet, Sketch, SourceDates, SourceRelation, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
+use lattice_core::shared::persistence::WriteTx;
+use sqlx::SqlitePool;
 use std::collections::BTreeSet;
 
 /// The extraction version of a library document's signals.
@@ -256,7 +257,7 @@ pub struct Recorded {
 /// Writes a newly inserted version's provenance row and its relations to
 /// the course's other sources, in the version's transaction.
 pub async fn record(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut WriteTx,
     version: &CapturedVersion<'_>,
     signals: &ProvenanceSignals,
     comparison: &Comparison,
@@ -282,7 +283,7 @@ pub async fn record(
 /// The signals a version's earlier version recorded, for a version that
 /// restores it with the same provenance (a re-import).
 pub async fn carried_forward(
-    conn: &mut SqliteConnection,
+    conn: &mut WriteTx,
     program_id: &str,
     version_id: &str,
 ) -> Result<ProvenanceSignals> {
@@ -341,7 +342,7 @@ fn extraction_version(signals: &ProvenanceSignals) -> String {
 /// The copies are `comparison`'s, for the sources still active; only one
 /// saved since it ran is read here.
 async fn relate(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut WriteTx,
     version: &CapturedVersion<'_>,
     record: &ProvenanceRecord,
     comparison: &Comparison,
@@ -403,7 +404,7 @@ fn other_end<'a>(relation: &'a SourceRelation, version_id: &str) -> &'a str {
 
 /// The course's captured version of `url` from another source, else the URL.
 async fn target(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut WriteTx,
     version: &CapturedVersion<'_>,
     url: &str,
 ) -> Result<RelationTarget> {

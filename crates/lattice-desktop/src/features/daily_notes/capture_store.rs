@@ -15,10 +15,10 @@ use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::SqlitePool;
 
 async fn capture_target(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut sqlx::SqliteConnection,
     title: &str,
     journal_id: Option<&str>,
     preferred: Option<&str>,
@@ -28,7 +28,7 @@ async fn capture_target(
         let row = sqlx::query(&query)
             .bind(id)
             .try_map(note_from_row)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut *tx)
             .await?;
         // A removed explicit destination must not silently send the capture elsewhere.
         return row
@@ -42,7 +42,7 @@ async fn capture_target(
         .bind(title)
         .bind(journal_id)
         .try_map(note_from_row)
-        .fetch_optional(&mut **tx)
+        .fetch_optional(&mut *tx)
         .await?
     {
         return Ok((row_to_dto(row)?, false));

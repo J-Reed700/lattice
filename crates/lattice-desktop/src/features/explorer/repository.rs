@@ -3,7 +3,7 @@
 
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 /// Binds a conversation to a folder (a canonical root), or unbinds it.
@@ -12,10 +12,26 @@ pub async fn set_conversation_root(
     conversation_id: &str,
     root: Option<&str>,
 ) -> Result<()> {
+    let mut tx = pool
+        .begin_write()
+        .await
+        .map_err(folder_error("set the Explorer folder"))?;
+    set_conversation_root_in(&mut tx, conversation_id, root).await?;
+    tx.commit()
+        .await
+        .map_err(folder_error("set the Explorer folder"))
+}
+
+/// [`set_conversation_root`] inside the caller's unit of work.
+pub async fn set_conversation_root_in(
+    conn: &mut SqliteConnection,
+    conversation_id: &str,
+    root: Option<&str>,
+) -> Result<()> {
     let result = sqlx::query("UPDATE conversations SET explorer_root = ? WHERE id = ?")
         .bind(root)
         .bind(conversation_id)
-        .execute(pool)
+        .execute(&mut *conn)
         .await
         .map_err(|e| AppError::Database(format!("Failed to set the Explorer folder: {e}")))?;
     if result.rows_affected() == 0 {
@@ -28,9 +44,21 @@ pub async fn set_conversation_root(
 
 /// The folder a conversation is bound to; `None` for an ordinary chat.
 pub async fn conversation_root(pool: &SqlitePool, conversation_id: &str) -> Result<Option<String>> {
+    let mut conn = pool
+        .acquire()
+        .await
+        .map_err(folder_error("read the Explorer folder"))?;
+    conversation_root_in(&mut conn, conversation_id).await
+}
+
+/// [`conversation_root`] inside the caller's unit of work.
+pub async fn conversation_root_in(
+    conn: &mut SqliteConnection,
+    conversation_id: &str,
+) -> Result<Option<String>> {
     sqlx::query_scalar::<_, Option<String>>("SELECT explorer_root FROM conversations WHERE id = ?")
         .bind(conversation_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await
         .map(Option::flatten)
         .map_err(|e| AppError::Database(format!("Failed to read the Explorer folder: {e}")))
@@ -161,8 +189,8 @@ pub async fn set_folder_pinned(pool: &SqlitePool, root: &str, pinned: bool) -> R
 
 /// Records the thread the folder's chat is showing. A folder not listed yet
 /// is added (named `name`, opened at `now`), as opening it would add it.
-pub async fn set_folder_last_thread(
-    pool: &SqlitePool,
+pub async fn set_folder_last_thread_in(
+    conn: &mut SqliteConnection,
     root: &str,
     name: &str,
     conversation_id: &str,
@@ -177,26 +205,22 @@ pub async fn set_folder_last_thread(
     .bind(name)
     .bind(now)
     .bind(conversation_id)
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     .map(|_| ())
     .map_err(folder_error("remember the folder's thread"))
 }
 
 /// Sets a folder's instructions and space, and moves its threads into that
-/// space, in one transaction. `space_id` is `None` for General. Returns how
-/// many threads moved.
-pub async fn set_folder_settings(
-    pool: &SqlitePool,
+/// space, inside the caller's unit of work. `space_id` is `None` for General.
+/// Returns how many threads moved.
+pub async fn set_folder_settings_in(
+    tx: &mut SqliteConnection,
     root: &str,
     instructions: Option<&str>,
     space_id: Option<&str>,
     now: &str,
 ) -> Result<u64> {
-    let mut tx = pool
-        .begin_write()
-        .await
-        .map_err(folder_error("save the folder's settings"))?;
     let result =
         sqlx::query("UPDATE explorer_folders SET instructions = ?, space_id = ? WHERE root = ?")
             .bind(instructions)
@@ -221,19 +245,16 @@ pub async fn set_folder_settings(
     .await
     .map_err(folder_error("move the folder's threads to its space"))?
     .rows_affected();
-    tx.commit()
-        .await
-        .map_err(folder_error("save the folder's settings"))?;
     Ok(moved)
 }
 
 /// The space a folder's threads belong to: its own, or General when it has
 /// none or is not listed yet.
-pub async fn folder_space(pool: &SqlitePool, root: &str) -> Result<String> {
+pub async fn folder_space_in(conn: &mut SqliteConnection, root: &str) -> Result<String> {
     let space: Option<Option<String>> =
         sqlx::query_scalar("SELECT space_id FROM explorer_folders WHERE root = ?")
             .bind(root)
-            .fetch_optional(pool)
+            .fetch_optional(&mut *conn)
             .await
             .map_err(folder_error("read the folder's space"))?;
     Ok(space
@@ -242,20 +263,20 @@ pub async fn folder_space(pool: &SqlitePool, root: &str) -> Result<String> {
 }
 
 /// Whether `space_id` names a space a folder can file its threads in.
-pub async fn space_is_open(pool: &SqlitePool, space_id: &str) -> Result<bool> {
+pub async fn space_is_open_in(conn: &mut SqliteConnection, space_id: &str) -> Result<bool> {
     sqlx::query_scalar::<_, i64>(
         "SELECT COUNT(*) FROM conversation_spaces WHERE id = ? AND is_archived = 0",
     )
     .bind(space_id)
-    .fetch_one(pool)
+    .fetch_one(&mut *conn)
     .await
     .map(|count| count > 0)
     .map_err(folder_error("check the space"))
 }
 
 /// Moves a thread into the space its folder files threads in.
-pub async fn move_thread_to_space(
-    pool: &SqlitePool,
+pub async fn move_thread_to_space_in(
+    conn: &mut SqliteConnection,
     conversation_id: &str,
     space_id: &str,
     now: &str,
@@ -267,7 +288,7 @@ pub async fn move_thread_to_space(
     .bind(now)
     .bind(conversation_id)
     .bind(space_id)
-    .execute(pool)
+    .execute(&mut *conn)
     .await
     .map(|_| ())
     .map_err(folder_error("move the thread to its folder's space"))

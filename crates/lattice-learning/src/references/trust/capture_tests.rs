@@ -25,6 +25,7 @@ use lattice_core::domain::provenance::{
     RelationTarget,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 use serde_json::json;
 use std::time::{Duration, Instant};
 
@@ -301,7 +302,7 @@ async fn a_source_saved_after_the_comparison_is_related_and_one_removed_since_is
     )
     .await?;
 
-    let mut tx = course.pool.begin().await.unwrap();
+    let mut tx = course.pool.begin_write().await.unwrap();
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by) VALUES(?,?,'pasted','seed',NULL,'fixed',?,NULL,0,1,1,'user')")
         .bind(&source_id).bind(&course.program_id).bind(&version_id)
         .execute(&mut *tx).await.unwrap();

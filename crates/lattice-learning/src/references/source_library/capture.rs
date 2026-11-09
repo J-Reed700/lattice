@@ -9,7 +9,7 @@ use super::repository::{
 use super::*;
 use crate::references::trust;
 use lattice_core::shared::http::url_identity::identity;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 
 impl LearningSourceLibraryRepository {
     /// Captures a source research selected, with the planner's reason for
@@ -520,7 +520,7 @@ struct Selection<'a> {
 /// same address (without its fragment) as either of the capture's, or the
 /// same text.
 async fn held_page(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut WriteTx,
     program_id: &str,
     addresses: [Option<&str>; 2],
     text_digest: &str,

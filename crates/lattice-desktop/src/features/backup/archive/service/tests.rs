@@ -435,3 +435,6 @@ async fn archive_round_trip_restores_database() {
 
     pool.close().await;
 }
+
+#[path = "restore_order_tests.rs"]
+mod restore_order;

@@ -347,7 +347,7 @@ pub(super) async fn compare_sources(
 }
 
 pub(super) async fn insert_source(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut sqlx::SqliteConnection,
     program_id: &str,
     source: &LearningSourceDto,
     reference: Option<&super::sources::InitialReference>,
@@ -360,7 +360,7 @@ pub(super) async fn insert_source(
         .replace('\r', "\n")
         .trim()
         .to_owned();
-    sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,?,?,?)").bind(&source.id).bind(program_id).bind(source.title.trim()).bind(&source.url).bind(&preview).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
+    sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,?,?,?)").bind(&source.id).bind(program_id).bind(source.title.trim()).bind(&source.url).bind(&preview).bind(source.acquired_at).execute(&mut *tx).await.map_err(db)?;
     let kind = if source.url.is_some() {
         "web"
     } else {
@@ -389,10 +389,10 @@ pub(super) async fn insert_source(
         .or(source.url.as_deref());
     let digest = hash_text(&text);
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by,found_by_search) VALUES(?,?,?,?,?,?,?,NULL,0,?,?,?,?)")
-        .bind(&source.id).bind(program_id).bind(kind).bind(origin).bind(requested_url).bind(policy).bind(&source.id).bind(source.acquired_at).bind(source.acquired_at).bind(lattice_core::domain::learning::claim_review::SourceAddedBy::Outline.as_str()).bind(reference.is_some_and(|r| r.found)).execute(&mut **tx).await.map_err(db)?;
+        .bind(&source.id).bind(program_id).bind(kind).bind(origin).bind(requested_url).bind(policy).bind(&source.id).bind(source.acquired_at).bind(source.acquired_at).bind(lattice_core::domain::learning::claim_review::SourceAddedBy::Outline.as_str()).bind(reference.is_some_and(|r| r.found)).execute(&mut *tx).await.map_err(db)?;
     let publisher = reference.and_then(|r| r.captured.publisher.as_deref());
     sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,1,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(&source.id).bind(program_id).bind(&source.id).bind(source.title.trim()).bind(publisher).bind(requested_url).bind(resolved_url).bind(&text).bind(text.chars().take(2400).collect::<String>()).bind(&digest).bind(text.split_whitespace().count() as i64).bind(reference.is_none() as i64).bind(reference.map(|r| r.captured.extraction_version.as_str()).unwrap_or("program_seed_bounded_v1")).bind(source.acquired_at).execute(&mut **tx).await.map_err(db)?;
+        .bind(&source.id).bind(program_id).bind(&source.id).bind(source.title.trim()).bind(publisher).bind(requested_url).bind(resolved_url).bind(&text).bind(text.chars().take(2400).collect::<String>()).bind(&digest).bind(text.split_whitespace().count() as i64).bind(reference.is_none() as i64).bind(reference.map(|r| r.captured.extraction_version.as_str()).unwrap_or("program_seed_bounded_v1")).bind(source.acquired_at).execute(&mut *tx).await.map_err(db)?;
     let signals = reference.map_or_else(
         || capture::not_extracted(capture::SEED_WITHOUT_CAPTURE),
         |r| r.captured.signals.clone(),

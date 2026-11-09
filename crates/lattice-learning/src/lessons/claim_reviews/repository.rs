@@ -62,21 +62,10 @@ impl ClaimReviewRepository {
         &self,
         lesson_id: &str,
     ) -> Result<HashMap<ClaimId, Vec<ShownPassage>>> {
-        let rows = sqlx::query(
-            "SELECT claim_id,evidence_json FROM learning_lesson_claims WHERE lesson_id=?",
-        )
-        .bind(lesson_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db)?;
-        rows.iter()
-            .map(|row| {
-                Ok((
-                    ClaimId(row.get("claim_id")),
-                    decode(row.get::<String, _>("evidence_json").as_str())?,
-                ))
-            })
-            .collect()
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let shown = shown_passages_in(&mut read, lesson_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(shown)
     }
 
     /// Replaces the passages a claim's card shows. Display only: the event
@@ -171,6 +160,27 @@ impl ClaimReviewStore for ClaimReviewRepository {
         .map_err(db)?;
         Ok(Revision(revision))
     }
+}
+
+/// [`ClaimReviewRepository::shown_passages`] inside the caller's unit of work.
+pub(super) async fn shown_passages_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+) -> Result<HashMap<ClaimId, Vec<ShownPassage>>> {
+    let rows =
+        sqlx::query("SELECT claim_id,evidence_json FROM learning_lesson_claims WHERE lesson_id=?")
+            .bind(lesson_id)
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(db)?;
+    rows.iter()
+        .map(|row| {
+            Ok((
+                ClaimId(row.get("claim_id")),
+                decode(row.get::<String, _>("evidence_json").as_str())?,
+            ))
+        })
+        .collect()
 }
 
 /// The refusal of a write made against an older revision (§9): the caller

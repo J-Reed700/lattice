@@ -71,7 +71,7 @@ fn support(version: &str, level: TrustLevel) -> Support {
 
 /// An established source alone for a specification, under the static
 /// bars: below the bar.
-fn below_the_bar(version: &str) -> TrustAssessment {
+pub(super) fn below_the_bar(version: &str) -> TrustAssessment {
     let profile = profile();
     let supports = vec![support(version, TrustLevel::Established)];
     TrustAssessment {
@@ -198,7 +198,7 @@ pub(super) async fn append(
 
 /// A claim the gate held below its bar, handed to the user, as the loop and
 /// the review card record it.
-async fn queued_below_the_bar(
+pub(super) async fn queued_below_the_bar(
     pool: &SqlitePool,
     lesson_id: &str,
     trust: TrustAssessment,

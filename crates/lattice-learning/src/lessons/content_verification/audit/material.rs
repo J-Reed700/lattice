@@ -19,6 +19,7 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::persistence::db;
 use crate::repository::LearningRepository;
 use crate::source_library::LearningSourceLibraryRepository;
+use lattice_core::shared::persistence::Transactions;
 
 pub struct AuditMaterial {
     pub draft_sha256: String,
@@ -107,15 +108,16 @@ async fn passages(
     let shown = ClaimReviewRepository::new(pool.clone())
         .shown_passages(lesson_id)
         .await?;
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let titles: HashMap<String, String> =
-        LearningSourceLibraryRepository::workspace_on(&mut connection, program_id, true)
-            .await?
-            .sources
-            .into_iter()
-            .flat_map(|source| source.versions)
-            .map(|version| (version.id, version.title))
-            .collect();
+    let mut read = pool.begin_read().await.map_err(db)?;
+    let workspace =
+        LearningSourceLibraryRepository::workspace_on(&mut read, program_id, true).await?;
+    read.commit().await.map_err(db)?;
+    let titles: HashMap<String, String> = workspace
+        .sources
+        .into_iter()
+        .flat_map(|source| source.versions)
+        .map(|version| (version.id, version.title))
+        .collect();
     Ok(shown
         .into_iter()
         .map(|(claim_id, passages)| {

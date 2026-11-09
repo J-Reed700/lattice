@@ -4,6 +4,7 @@ use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::LessonReviewState;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
 use crate::persistence::db;
@@ -62,13 +63,24 @@ pub(in crate::lessons::claim_reviews) async fn deleted_versions(
     pool: &SqlitePool,
     program_id: &str,
 ) -> Result<HashSet<String>> {
+    let mut read = pool.begin_read().await.map_err(db)?;
+    let versions = deleted_versions_in(&mut read, program_id).await?;
+    read.commit().await.map_err(db)?;
+    Ok(versions)
+}
+
+/// [`deleted_versions`] inside the caller's unit of work.
+pub(in crate::lessons::claim_reviews) async fn deleted_versions_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<HashSet<String>> {
     Ok(sqlx::query_scalar::<_, String>(
         "SELECT v.id FROM learning_source_versions v \
          JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id \
          WHERE v.program_id=? AND s.deleted_at IS NOT NULL",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)?
     .into_iter()

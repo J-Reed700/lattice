@@ -52,9 +52,7 @@ impl SqliteSourceTrustStore {
     /// Records the outcomes together: all or none.
     pub(crate) async fn record_outcomes(&self, outcomes: &[OutcomeRecord]) -> Result<()> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
-        for outcome in outcomes {
-            insert_outcome(&mut tx, outcome).await?;
-        }
+        outcomes::insert_all_in(&mut tx, outcomes).await?;
         tx.commit().await.map_err(db)
     }
 }
@@ -361,13 +359,10 @@ impl SourceTrustStore for SqliteSourceTrustStore {
     }
 
     async fn outcomes(&self) -> Result<Vec<OutcomeRecord>> {
-        sqlx::query("SELECT id,program_id,lesson_id,claim_id,source_version_id,origin_key,level,claim_kind,decision_sufficient,decision_right,label_source,policy,at FROM source_trust_outcomes ORDER BY at,rowid")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?
-            .iter()
-            .map(outcome_from_row)
-            .collect()
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let outcomes = outcomes::list_in(&mut read).await?;
+        read.commit().await.map_err(db)?;
+        Ok(outcomes)
     }
     /// `right` counts the claims that held (a sufficient decision that was
     /// right, or an insufficient one that was wrong: `Outcome::held`),

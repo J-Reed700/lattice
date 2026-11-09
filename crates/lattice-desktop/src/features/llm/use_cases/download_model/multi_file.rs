@@ -77,139 +77,70 @@ impl DownloadModelUseCase {
             }
         }
 
-        // STEP 1: Create parent Model record FIRST (satisfies FK constraint)
-        // Use explicit scope to ensure connections are released before download starts
-        let mut uow = self.uow_factory.create().await?;
-        let db_result = {
-            let model_repo = uow.model_repository()?;
+        // STEP 1: the parent Model record (satisfies the FK) and every file
+        // row land together, before the download starts.
+        let model = Model {
+            id: Uuid::new_v4().to_string(),
+            model_id: model_id.to_string(),
+            name: model_name.clone(),
+            description: Some(curated.description.clone()),
+            base_path: model_path.to_string_lossy().to_string(),
+            total_size_bytes: curated.total_size_bytes as i64,
+            architecture: "GGUF".to_string(), // Default to GGUF format for LLM models
+            model_type: match curated.category {
+                lattice_core::domain::models::selection::ModelCategory::LLM => "chat".to_string(),
+                lattice_core::domain::models::selection::ModelCategory::Embedding => {
+                    "embedding".to_string()
+                }
+                lattice_core::domain::models::selection::ModelCategory::OCR => "ocr".to_string(),
+                lattice_core::domain::models::selection::ModelCategory::Transcription => {
+                    // See ModelType::to_db_string: the models-table CHECK
+                    // constraint has no `transcription` value yet.
+                    "custom".to_string()
+                }
+                lattice_core::domain::models::selection::ModelCategory::Speech => {
+                    "unknown".to_string()
+                }
+            },
+            status: ModelStatus::Pending,
+            files: vec![],
+            is_active_for_chat: false,
+            is_active_for_embedding: false,
+            use_count: 0,
+            last_used_at: None,
+            metadata: None,
+            created_at: Utc::now(),
+            updated_at: Utc::now(),
+            downloaded_at: None,
+        };
 
-            let model = Model {
+        let mut model_files = Vec::with_capacity(curated.files.len());
+        for file in &curated.files {
+            let destination = paths.manifest_file_path(&file.filename)?;
+            model_files.push(ModelFile {
                 id: Uuid::new_v4().to_string(),
                 model_id: model_id.to_string(),
-                name: model_name.clone(),
-                description: Some(curated.description.clone()),
-                base_path: model_path.to_string_lossy().to_string(),
-                total_size_bytes: curated.total_size_bytes as i64,
-                architecture: "GGUF".to_string(), // Default to GGUF format for LLM models
-                model_type: match curated.category {
-                    lattice_core::domain::models::selection::ModelCategory::LLM => {
-                        "chat".to_string()
-                    }
-                    lattice_core::domain::models::selection::ModelCategory::Embedding => {
-                        "embedding".to_string()
-                    }
-                    lattice_core::domain::models::selection::ModelCategory::OCR => {
-                        "ocr".to_string()
-                    }
-                    lattice_core::domain::models::selection::ModelCategory::Transcription => {
-                        // See ModelType::to_db_string: the models-table CHECK
-                        // constraint has no `transcription` value yet.
-                        "custom".to_string()
-                    }
-                    lattice_core::domain::models::selection::ModelCategory::Speech => {
-                        "unknown".to_string()
-                    }
-                },
-                status: ModelStatus::Pending,
-                files: vec![],
-                is_active_for_chat: false,
-                is_active_for_embedding: false,
-                use_count: 0,
-                last_used_at: None,
-                metadata: None,
+                file_name: file.filename.clone(),
+                file_path: destination.to_string_lossy().to_string(),
+                relative_path: file.filename.clone(),
+                size_bytes: file.size_bytes as i64,
+                downloaded_bytes: 0,
+                checksum_sha256: file.checksum.clone(),
+                download_url: file.url.clone(),
+                status: FileStatus::Pending,
                 created_at: Utc::now(),
                 updated_at: Utc::now(),
                 downloaded_at: None,
-            };
-
-            model_repo
-                .create_model_with_files(&model, vec![])
-                .await
-                .map_err(|e| AppError::Database(format!("Failed to create model record: {}", e)))?;
-
-            info!(
-                model_id = %model_id,
-                model_name = %model_name,
-                "Created parent model record with Pending status for multi-file model"
-            );
-            Ok(())
-        };
-
-        match db_result {
-            Ok(()) => {
-                uow.commit().await.map_err(|e| {
-                    AppError::Database(format!("Failed to commit model record transaction: {}", e))
-                })?;
-            }
-            Err(err) => {
-                if let Err(rollback_err) = uow.rollback().await {
-                    return Err(AppError::Database(format!(
-                        "Failed to create model record: {}; rollback failed: {}",
-                        err, rollback_err
-                    )));
-                }
-                return Err(err);
-            }
+            });
         }
 
-        let mut uow = self.uow_factory.create().await?;
-        let db_result = {
-            let model_file_repo = uow.model_file_repository()?;
-
-            for file in &curated.files {
-                let destination = paths.manifest_file_path(&file.filename)?;
-
-                let model_file = ModelFile {
-                    id: Uuid::new_v4().to_string(),
-                    model_id: model_id.to_string(),
-                    file_name: file.filename.clone(),
-                    file_path: destination.to_string_lossy().to_string(),
-                    relative_path: file.filename.clone(),
-                    size_bytes: file.size_bytes as i64,
-                    downloaded_bytes: 0,
-                    checksum_sha256: file.checksum.clone(),
-                    download_url: file.url.clone(),
-                    status: FileStatus::Pending,
-                    created_at: Utc::now(),
-                    updated_at: Utc::now(),
-                    downloaded_at: None,
-                };
-
-                model_file_repo.create(&model_file).await.map_err(|e| {
-                    AppError::Database(format!("Failed to create model_file record: {}", e))
-                })?;
-
-                info!(
-                    model_id = %model_id,
-                    file_name = %file.filename,
-                    "Created model_file record with Pending status"
-                );
-            }
-
-            info!(
-                model_id = %model_id,
-                file_count = curated.files.len(),
-                "Pre-created all model_file records before download"
-            );
-            Ok(())
-        };
-
-        match db_result {
-            Ok(()) => {
-                uow.commit().await.map_err(|e| {
-                    AppError::Database(format!("Failed to commit model_file transaction: {}", e))
-                })?;
-            }
-            Err(err) => {
-                if let Err(rollback_err) = uow.rollback().await {
-                    return Err(AppError::Database(format!(
-                        "Failed to create model_file records: {}; rollback failed: {}",
-                        err, rollback_err
-                    )));
-                }
-                return Err(err);
-            }
-        }
+        self.record_pending(&model, &model_files).await?;
+        info!(
+            model_id = %model_id,
+            model_name = %model_name,
+            file_count = model_files.len(),
+            "Created model and model_file records with Pending status for multi-file model"
+        );
 
         // Yield to allow connection pool to reclaim connections
         tokio::task::yield_now().await;
@@ -265,37 +196,12 @@ impl DownloadModelUseCase {
         {
             Ok(ids) => ids,
             Err(error) => {
-                let mut uow = self.uow_factory.create().await?;
-                let update_result = {
-                    let model_repo = uow.model_repository()?;
-                    let model_file_repo = uow.model_file_repository()?;
-
-                    model_repo.update_status_failed(model_id).await?;
-                    for file in &curated.files {
-                        model_file_repo
-                            .update_file_status_by_model_and_name(
-                                model_id,
-                                &file.filename,
-                                FileStatus::Failed,
-                                Some(file.size_bytes as i64),
-                            )
-                            .await?;
-                    }
-                    Ok::<(), AppError>(())
-                };
-
-                match update_result {
-                    Ok(()) => uow.commit().await?,
-                    Err(err) => {
-                        if let Err(rollback_err) = uow.rollback().await {
-                            return Err(AppError::Database(format!(
-                                "Failed to mark download failed: {}; rollback failed: {}",
-                                err, rollback_err
-                            )));
-                        }
-                        return Err(err);
-                    }
-                }
+                let failed_files: Vec<(&str, Option<i64>)> = curated
+                    .files
+                    .iter()
+                    .map(|file| (file.filename.as_str(), Some(file.size_bytes as i64)))
+                    .collect();
+                self.record_failed(model_id, &failed_files).await?;
 
                 return Err(AppError::Network(format!(
                     "Failed to prepare model download: {}",

@@ -994,7 +994,7 @@ pub(super) async fn opened(
     let mut connection = pool.acquire().await.map_err(db)?;
     let taken = repository::mark_taken_in(&mut connection, drill_id, now()).await?;
     assert!(taken, "the drill {drill_id} was ready to be taken");
-    attempts::insert_in(&mut connection, drill_id, mode).await
+    attempts::repository::open_in(&mut connection, drill_id, mode).await
 }
 
 /// A pool with every migration, a drill stocked and an attempt opened on it and submitted, and its grading job

@@ -4,8 +4,8 @@ use chrono::{DateTime, Utc};
 use lattice_core::domain::download::{
     Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
 };
-use lattice_core::shared::persistence::Transactions;
-use sqlx::FromRow;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
+use sqlx::{FromRow, SqliteConnection};
 use std::sync::Arc;
 
 #[derive(Debug, FromRow)]
@@ -201,6 +201,13 @@ pub trait DownloadRepository: Send + Sync {
         bytes_per_second: f64,
     ) -> Result<(), DownloadError>;
     async fn delete(&self, id: &str) -> Result<(), DownloadError>;
+    /// Deletes the `superseded` sessions and saves `sessions` in one unit of
+    /// work, so a failure leaves both sets as they were.
+    async fn register(
+        &self,
+        superseded: &[String],
+        sessions: &[DownloadSession],
+    ) -> Result<(), DownloadError>;
     async fn list(&self) -> Result<Vec<DownloadSession>, DownloadError>;
     async fn list_by_state(
         &self,
@@ -220,6 +227,74 @@ pub trait DownloadRepository: Send + Sync {
     async fn delete_pending_by_model(&self, model_id: &str) -> Result<u64, DownloadError>;
 }
 
+/// Saves `session`, replacing a row with the same id, inside the caller's unit of work.
+async fn create_in(
+    conn: &mut SqliteConnection,
+    session: &DownloadSession,
+) -> Result<(), DownloadError> {
+    let state_str = format!("{:?}", session.state()).to_lowercase();
+
+    let (checksum_algorithm, checksum_value) = session
+        .checksum()
+        .map(|c| {
+            (
+                Some(format!("{:?}", c.algorithm()).to_lowercase()),
+                Some(c.value().to_string()),
+            )
+        })
+        .unwrap_or((None, None));
+
+    sqlx::query(
+        r#"
+        INSERT OR REPLACE INTO download_sessions (
+            id, url, destination, state,
+            bytes_downloaded, total_bytes, bytes_per_second,
+            checksum_algorithm, checksum_value,
+            error_message, retry_count, max_retries,
+            created_at, updated_at, started_at, completed_at,
+            model_name, model_id, model_file_name
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        "#,
+    )
+    .bind(session.id())
+    .bind(session.url())
+    .bind(
+        session.destination().to_str().ok_or_else(|| {
+            DownloadError::IoError("Invalid UTF-8 in destination path".to_string())
+        })?,
+    )
+    .bind(state_str)
+    .bind(session.progress().bytes_downloaded() as i64)
+    .bind(session.progress().total_bytes().map(|b| b as i64))
+    .bind(session.progress().bytes_per_second())
+    .bind(checksum_algorithm)
+    .bind(checksum_value)
+    .bind(session.error_message())
+    .bind(session.retry_count() as i32)
+    .bind(3i32) // max_retries
+    .bind(session.created_at().to_rfc3339())
+    .bind(session.updated_at().to_rfc3339())
+    .bind(session.started_at().map(|dt| dt.to_rfc3339()))
+    .bind(session.completed_at().map(|dt| dt.to_rfc3339()))
+    .bind(session.model_name())
+    .bind(session.model_id())
+    .bind(session.model_file_name())
+    .execute(&mut *conn)
+    .await
+    .map(|_| ())
+    .map_err(|e| DownloadError::IoError(format!("Failed to create session: {}", e)))
+}
+
+/// Deletes one session inside the caller's unit of work.
+async fn delete_in(conn: &mut SqliteConnection, id: &str) -> Result<(), DownloadError> {
+    sqlx::query("DELETE FROM download_sessions WHERE id = ?")
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .map(|_| ())
+        .map_err(|e| DownloadError::IoError(format!("Failed to delete session: {}", e)))
+}
+
 pub struct SqliteDownloadRepository {
     db_conn: Arc<DatabaseConnection>, // Single source of truth for database access
 }
@@ -228,99 +303,26 @@ impl SqliteDownloadRepository {
     pub fn new(db_conn: Arc<DatabaseConnection>) -> Self {
         Self { db_conn }
     }
+
+    async fn begin(&self) -> Result<WriteTx, DownloadError> {
+        self.db_conn
+            .pool()
+            .begin_write()
+            .await
+            .map_err(|e| DownloadError::IoError(format!("Failed to begin transaction: {}", e)))
+    }
+
+    async fn commit(tx: WriteTx) -> Result<(), DownloadError> {
+        tx.commit()
+            .await
+            .map_err(|e| DownloadError::IoError(format!("Failed to commit transaction: {}", e)))
+    }
 }
 
 #[async_trait]
 impl DownloadRepository for SqliteDownloadRepository {
     async fn create(&self, session: &DownloadSession) -> Result<(), DownloadError> {
-        tracing::info!(
-            "→ Step 1: Acquiring BEGIN IMMEDIATE transaction... download_id={}",
-            session.id()
-        );
-
-        let mut tx =
-            self.db_conn.pool().begin_write().await.map_err(|e| {
-                DownloadError::IoError(format!("Failed to begin transaction: {}", e))
-            })?;
-
-        tracing::info!(
-            "✓ Step 1 complete: BEGIN IMMEDIATE transaction acquired download_id={}",
-            session.id()
-        );
-
-        let state_str = format!("{:?}", session.state()).to_lowercase();
-
-        let (checksum_algorithm, checksum_value) = session
-            .checksum()
-            .map(|c| {
-                (
-                    Some(format!("{:?}", c.algorithm()).to_lowercase()),
-                    Some(c.value().to_string()),
-                )
-            })
-            .unwrap_or((None, None));
-
-        tracing::info!(
-            "→ Step 2: Executing INSERT query... download_id={}",
-            session.id()
-        );
-
-        sqlx::query(
-            r#"
-            INSERT OR REPLACE INTO download_sessions (
-                id, url, destination, state,
-                bytes_downloaded, total_bytes, bytes_per_second,
-                checksum_algorithm, checksum_value,
-                error_message, retry_count, max_retries,
-                created_at, updated_at, started_at, completed_at,
-                model_name, model_id, model_file_name
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            "#,
-        )
-        .bind(session.id())
-        .bind(session.url())
-        .bind(session.destination().to_str().ok_or_else(|| {
-            DownloadError::IoError("Invalid UTF-8 in destination path".to_string())
-        })?)
-        .bind(state_str)
-        .bind(session.progress().bytes_downloaded() as i64)
-        .bind(session.progress().total_bytes().map(|b| b as i64))
-        .bind(session.progress().bytes_per_second())
-        .bind(checksum_algorithm)
-        .bind(checksum_value)
-        .bind(session.error_message())
-        .bind(session.retry_count() as i32)
-        .bind(3i32) // max_retries
-        .bind(session.created_at().to_rfc3339())
-        .bind(session.updated_at().to_rfc3339())
-        .bind(session.started_at().map(|dt| dt.to_rfc3339()))
-        .bind(session.completed_at().map(|dt| dt.to_rfc3339()))
-        .bind(session.model_name())
-        .bind(session.model_id())
-        .bind(session.model_file_name())
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| DownloadError::IoError(format!("Failed to create session: {}", e)))?;
-
-        tracing::info!(
-            "✓ Step 2 complete: INSERT query executed download_id={}",
-            session.id()
-        );
-        tracing::info!(
-            "→ Step 3: Committing transaction... download_id={}",
-            session.id()
-        );
-
-        tx.commit()
-            .await
-            .map_err(|e| DownloadError::IoError(format!("Failed to commit transaction: {}", e)))?;
-
-        tracing::info!(
-            "✓ Step 3 complete: Transaction committed download_id={}",
-            session.id()
-        );
-
-        Ok(())
+        self.register(&[], std::slice::from_ref(session)).await
     }
 
     async fn get(&self, id: &str) -> Result<Option<DownloadSession>, DownloadError> {
@@ -438,22 +440,24 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<(), DownloadError> {
-        let mut tx =
-            self.db_conn.pool().begin_write().await.map_err(|e| {
-                DownloadError::IoError(format!("Failed to begin transaction: {}", e))
-            })?;
+        let mut tx = self.begin().await?;
+        delete_in(&mut tx, id).await?;
+        Self::commit(tx).await
+    }
 
-        sqlx::query("DELETE FROM download_sessions WHERE id = ?")
-            .bind(id)
-            .execute(&mut *tx)
-            .await
-            .map_err(|e| DownloadError::IoError(format!("Failed to delete session: {}", e)))?;
-
-        tx.commit()
-            .await
-            .map_err(|e| DownloadError::IoError(format!("Failed to commit transaction: {}", e)))?;
-
-        Ok(())
+    async fn register(
+        &self,
+        superseded: &[String],
+        sessions: &[DownloadSession],
+    ) -> Result<(), DownloadError> {
+        let mut tx = self.begin().await?;
+        for id in superseded {
+            delete_in(&mut tx, id).await?;
+        }
+        for session in sessions {
+            create_in(&mut tx, session).await?;
+        }
+        Self::commit(tx).await
     }
 
     async fn list(&self) -> Result<Vec<DownloadSession>, DownloadError> {
@@ -618,6 +622,29 @@ pub mod mock {
         async fn get(&self, id: &str) -> Result<Option<DownloadSession>, DownloadError> {
             let sessions = self.sessions.lock().unwrap();
             Ok(sessions.get(id).cloned())
+        }
+
+        async fn register(
+            &self,
+            superseded: &[String],
+            sessions: &[DownloadSession],
+        ) -> Result<(), DownloadError> {
+            let mut stored = self.sessions.lock().unwrap();
+            let mut next = stored.clone();
+            for id in superseded {
+                next.remove(id);
+            }
+            for session in sessions {
+                if next.contains_key(session.id()) {
+                    return Err(DownloadError::InvalidUrl(format!(
+                        "Session already exists: {}",
+                        session.id()
+                    )));
+                }
+                next.insert(session.id().to_string(), session.clone());
+            }
+            *stored = next;
+            Ok(())
         }
 
         async fn update(&self, session: &DownloadSession) -> Result<(), DownloadError> {

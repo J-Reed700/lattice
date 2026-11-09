@@ -19,7 +19,7 @@ use crate::infrastructure::{
     file_system::SecureFileStorage,
     persistence::{
         database::{initialize_database, DatabaseConnection},
-        repositories::{unit_of_work::SqliteUnitOfWorkFactory, DocumentRepositoryImpl},
+        repositories::DocumentRepositoryImpl,
     },
     storage::{ContentAddressedStorage, FileIntents},
 };
@@ -129,7 +129,6 @@ impl ImportHarness {
     ) -> anyhow::Result<Self> {
         let db = DatabaseConnection::new(dir.join("test.db")).await?;
         initialize_database(db.pool()).await?;
-        let uow = Arc::new(SqliteUnitOfWorkFactory::new(db.pool().clone()));
         let library = dir.join("library");
         let storage = Arc::new(ContentAddressedStorage::with_root(library.clone()));
         let documents = Arc::new(DocumentRepositoryImpl::new(db.pool().clone()));
@@ -148,7 +147,7 @@ impl ImportHarness {
                 embedding.clone(),
                 documents,
                 Arc::new(EmbeddingRepository::new(db.pool().clone())),
-                uow,
+                db.pool().clone(),
             )
             .with_library_gc(library_gc),
         ));
@@ -188,7 +187,7 @@ impl ImportHarness {
             &BatchItems::new(pool.clone()),
             FileImporter {
                 index_file: self.indexer.clone(),
-                uow_factory: Arc::new(SqliteUnitOfWorkFactory::new(pool.clone())),
+                pool: pool.clone(),
                 document_scope: Arc::new(SqliteDocumentScope::new(pool)),
                 load_embedding: load.clone(),
             },

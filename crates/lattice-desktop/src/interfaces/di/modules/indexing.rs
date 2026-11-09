@@ -191,9 +191,4 @@ impl IndexingModule {
     pub fn document_repo(&self) -> &Arc<dyn DocumentRepository> {
         &self.indexing.document_repo
     }
-
-    /// Opens the transactions that commit an imported document whole.
-    pub fn uow_factory(&self) -> &Arc<dyn lattice_core::application::ports::UnitOfWorkFactory> {
-        &self.indexing.uow_factory
-    }
 }

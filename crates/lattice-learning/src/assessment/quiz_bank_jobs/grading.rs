@@ -112,12 +112,11 @@ impl QuizGradingWorker {
         only: Option<i64>,
         note: Option<&str>,
     ) -> Result<Vec<PendingItem>> {
-        let repo = LearningAssessmentRepository::new(self.pool.clone());
-        let form = repo.get_form(form_id).await?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let form = LearningAssessmentRepository::form_in(&mut tx, form_id).await?;
         let Some(submission) = &form.submission else {
             return Ok(vec![]);
         };
-        let mut connection = self.pool.acquire().await.map_err(db)?;
         let mut out = Vec::new();
         for (ordinal, (item, result)) in form.items.iter().zip(&submission.item_results).enumerate()
         {
@@ -130,10 +129,7 @@ impl QuizGradingWorker {
                 continue;
             }
             let stored = LearningAssessmentRepository::drawn_candidate_in(
-                &mut connection,
-                program_id,
-                form_id,
-                &item.id,
+                &mut tx, program_id, form_id, &item.id,
             )
             .await?;
             let version = stored.candidate.source_version_ids.first().cloned();
@@ -175,6 +171,7 @@ impl QuizGradingWorker {
                 _ => {}
             }
         }
+        tx.commit().await.map_err(db)?;
         Ok(out)
     }
 

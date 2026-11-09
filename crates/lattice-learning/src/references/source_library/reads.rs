@@ -1,7 +1,7 @@
 //! Reading source workspaces, versions, search hits and prepared sources.
 use super::repository::reads as stored;
 use super::*;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{ReadTx, Transactions};
 
 /// A source's active version as the course index keys it: its immutable id,
 /// the title its passages are embedded under, and the hash of its text.
@@ -57,7 +57,7 @@ impl LearningSourceLibraryRepository {
 
     /// Read source metadata and history through an existing database snapshot.
     pub(crate) async fn workspace_on(
-        connection: &mut sqlx::SqliteConnection,
+        connection: &mut ReadTx,
         program_id: &str,
         include_deleted: bool,
     ) -> Result<LearningSourceWorkspaceDto> {

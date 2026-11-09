@@ -246,7 +246,8 @@ enum State {
 async fn hand_out(pool: &SqlitePool, drill: &str, state: State) -> Result<()> {
     let mut connection = pool.acquire().await.map_err(db)?;
     repository::mark_taken_in(&mut connection, drill, 1).await?;
-    let attempt = attempts::insert_in(&mut connection, drill, AttemptMode::Practice).await?;
+    let attempt =
+        attempts::repository::open_in(&mut connection, drill, AttemptMode::Practice).await?;
     drop(connection);
     if matches!(state, State::Open) {
         return Ok(());

@@ -11,7 +11,8 @@ use super::dto::{ExplorerFolderDto, ExplorerFolderListDto};
 use super::index::manager::FolderIndexManager;
 use super::repository;
 use chrono::{DateTime, SecondsFormat, Utc};
-use lattice_core::shared::Result;
+use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::{AppError, Result};
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -21,6 +22,10 @@ use tracing::info;
 /// so they sort as text.
 fn stamp(at: DateTime<Utc>) -> String {
     at.to_rfc3339_opts(SecondsFormat::Millis, true)
+}
+
+fn db(error: sqlx::Error) -> AppError {
+    AppError::Database(format!("Failed to save the Explorer folder: {error}"))
 }
 
 /// The name a folder is listed under until it is renamed: its own.
@@ -132,28 +137,30 @@ pub async fn set_settings(
 ) -> Result<u64> {
     let instructions = instructions.trim();
     if instructions.chars().count() > MAX_INSTRUCTIONS_CHARS {
-        return Err(lattice_core::shared::AppError::InvalidInput(format!(
+        return Err(AppError::InvalidInput(format!(
             "Folder instructions are limited to {MAX_INSTRUCTIONS_CHARS} characters."
         )));
     }
     let space_id = space_id.trim();
     let own_space =
         (!space_id.is_empty() && space_id != repository::GENERAL_SPACE_ID).then_some(space_id);
+    let mut tx = pool.begin_write().await.map_err(db)?;
     if let Some(space) = own_space {
-        if !repository::space_is_open(pool, space).await? {
-            return Err(lattice_core::shared::AppError::NotFound(format!(
+        if !repository::space_is_open_in(&mut tx, space).await? {
+            return Err(AppError::NotFound(format!(
                 "Space not found or archived: {space}"
             )));
         }
     }
-    let moved = repository::set_folder_settings(
-        pool,
+    let moved = repository::set_folder_settings_in(
+        &mut tx,
         root,
         (!instructions.is_empty()).then_some(instructions),
         own_space,
         &stamp(Utc::now()),
     )
     .await?;
+    tx.commit().await.map_err(db)?;
     info!(
         root,
         space = own_space.unwrap_or(repository::GENERAL_SPACE_ID),
@@ -170,34 +177,38 @@ pub async fn bind_thread(
     conversation_id: &str,
     root: Option<&str>,
 ) -> Result<()> {
-    repository::set_conversation_root(pool, conversation_id, root).await?;
+    let mut tx = pool.begin_write().await.map_err(db)?;
+    repository::set_conversation_root_in(&mut tx, conversation_id, root).await?;
     if let Some(root) = root {
-        let space = repository::folder_space(pool, root).await?;
-        repository::move_thread_to_space(pool, conversation_id, &space, &stamp(Utc::now())).await?;
+        let space = repository::folder_space_in(&mut tx, root).await?;
+        repository::move_thread_to_space_in(&mut tx, conversation_id, &space, &stamp(Utc::now()))
+            .await?;
     }
-    Ok(())
+    tx.commit().await.map_err(db)
 }
 
 /// Remembers the thread the folder's chat is showing, so the folder reopens
 /// on it. Only a thread bound to the folder can be its thread.
 pub async fn remember_thread(pool: &SqlitePool, root: &str, conversation_id: &str) -> Result<()> {
-    if repository::conversation_root(pool, conversation_id)
+    let mut tx = pool.begin_write().await.map_err(db)?;
+    if repository::conversation_root_in(&mut tx, conversation_id)
         .await?
         .as_deref()
         != Some(root)
     {
-        return Err(lattice_core::shared::AppError::InvalidInput(format!(
+        return Err(AppError::InvalidInput(format!(
             "Conversation {conversation_id} is not a thread of {root}"
         )));
     }
-    repository::set_folder_last_thread(
-        pool,
+    repository::set_folder_last_thread_in(
+        &mut tx,
         root,
         &default_name(Path::new(root)),
         conversation_id,
         &stamp(Utc::now()),
     )
-    .await
+    .await?;
+    tx.commit().await.map_err(db)
 }
 
 pub async fn set_pinned(pool: &SqlitePool, root: &str, pinned: bool) -> Result<()> {

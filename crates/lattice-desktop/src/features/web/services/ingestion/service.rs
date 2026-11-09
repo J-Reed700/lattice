@@ -10,6 +10,7 @@ use lattice_core::application::ports::{SearchResultCachePort, VectorSearchPort};
 use lattice_core::application::services::live_index::{
     publish_chunks_to_live_index, PublishedChunk,
 };
+use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 use tokenizers::Tokenizer;
@@ -105,17 +106,11 @@ impl WebIngestionServiceTrait for WebIngestionService {
         // 1. Extract article/video content from URL using strategy pipeline
         let article = self.extract_content_with_strategies(url).await?;
 
-        // 2. Archive article as markdown file in ~/.lattice/web-archive
-        let file_path = self
-            .web_archive
-            .archive_article(article.clone(), url)
-            .await?;
-
-        // 3. Chunk text content (fixed-size chunks)
+        // 2. Chunk text content (fixed-size chunks)
         let model_identity = self.embedding_service.model_identity();
         let chunks = self.chunk_text(&article.text_content)?;
 
-        // 4. Generate embeddings
+        // 3. Generate embeddings
         let chunk_texts: Vec<String> = chunks
             .iter()
             .map(|c| c.contextualized_content.clone())
@@ -128,8 +123,16 @@ impl WebIngestionServiceTrait for WebIngestionService {
             ));
         }
 
+        // 4. Archive article as markdown file in ~/.lattice/web-archive, once
+        // nothing slow is left before its row: the file first, then the row
+        // that names it, and the file goes again if the row cannot be written.
+        let file_path = self
+            .web_archive
+            .archive_article(article.clone(), url)
+            .await?;
+
         // 5. Store document + chunks + embeddings (using the real file path)
-        let stored_doc_id = self
+        let stored_doc_id = match self
             .index_storage
             .store_document_with_context_for_model(
                 &file_path,
@@ -138,7 +141,16 @@ impl WebIngestionServiceTrait for WebIngestionService {
                 embeddings.clone(),
                 &model_identity,
             )
-            .await?;
+            .await
+        {
+            Ok(id) => id,
+            Err(error) => {
+                if let Err(cleanup) = self.web_archive.delete_article(&file_path).await {
+                    tracing::warn!(%cleanup, path = %file_path.display(), "Could not remove an archived article whose document was not stored");
+                }
+                return Err(error);
+            }
+        };
 
         // 6. Publish to the live vector index, as file imports do. The rows
         // above are only in SQLite; without this the article is missing from

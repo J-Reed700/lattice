@@ -243,6 +243,13 @@ fn after_commit(path: &str, line: usize, name: &str) -> String {
     )
 }
 
+fn awaits(path: &str, line: usize, name: &str, what: &str) -> String {
+    format!(
+        "rule 3: {path}:{line} {name} awaits {what} while its write transaction is open; \
+         pass the transaction to it, or move the await before begin_write() or after commit()"
+    )
+}
+
 #[test]
 fn two_statements_on_the_pool_are_flagged() {
     let source = r#"pub async fn rename(pool: &SqlitePool) {
@@ -334,7 +341,10 @@ fn a_read_on_the_pool_inside_the_write_transaction_is_flagged() {
 "#;
     assert_eq!(
         found(REPOSITORY, own),
-        vec![on_pool(REPOSITORY, 1, "rename", 1, 2, "")]
+        vec![
+            on_pool(REPOSITORY, 1, "rename", 1, 2, ""),
+            awaits(REPOSITORY, 3, "rename", "fetch_one()"),
+        ]
     );
     let helper = r#"impl Repo {
     pub async fn rename(&self) {
@@ -350,7 +360,10 @@ fn a_read_on_the_pool_inside_the_write_transaction_is_flagged() {
 "#;
     assert_eq!(
         found(REPOSITORY, helper),
-        vec![on_pool(REPOSITORY, 2, "rename", 1, 2, "ensure_exists")]
+        vec![
+            on_pool(REPOSITORY, 2, "rename", 1, 2, "ensure_exists"),
+            awaits(REPOSITORY, 4, "rename", "ensure_exists()"),
+        ]
     );
 }
 
