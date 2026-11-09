@@ -465,3 +465,64 @@ fn a_long_distractor_rationale_is_kept_whole() {
         .distractor_rationales
         .contains(&rationale.trim().to_string()));
 }
+
+/// Keeps the instructions of each request and writes nothing.
+struct InstructionRecorder(Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl LLMPort for InstructionRecorder {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let (system, _) = crate::lessons::structured_call::task_messages(request);
+        self.0.lock().unwrap().push(system.to_owned());
+        Ok(CompletionResponse::from_text("{\"items\":[]}"))
+    }
+    fn model_name(&self) -> &str {
+        "instruction-recorder"
+    }
+    fn max_context_tokens(&self) -> usize {
+        131_072
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+async fn writer_instructions() -> Result<String> {
+    let need = need("Explain iron oxide reduction.".into(), 2);
+    let documents = documents(&need);
+    let collection = ReferenceCollection::lexical(&documents)?;
+    let batch = Batch {
+        need: &need,
+        count: 1,
+        notes: vec![],
+        repair: None,
+    };
+    let llm = InstructionRecorder(Mutex::new(Vec::new()));
+    batch.send(&llm, &collection).await?;
+    let sent = llm.0.lock().unwrap().clone();
+    Ok(sent.into_iter().next().unwrap_or_default())
+}
+
+#[tokio::test]
+async fn the_writer_is_told_what_the_learner_sees_and_never_to_cite_passages() -> Result<()> {
+    let system = writer_instructions().await?;
+    for sentence in [
+        "The learner sees each question with its options, explanation and rationales beside the lesson, never these passages as excerpts or the sources behind them.",
+        "never mention a passage, an excerpt, a tutorial, a document or a source",
+        "never give what one says or does not say as the reason an answer is right or wrong",
+    ] {
+        assert!(system.contains(sentence), "missing \"{sentence}\" in {system}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_writer_is_told_a_prompt_states_every_value_its_answer_depends_on() -> Result<()> {
+    let system = writer_instructions().await?;
+    let sentence = "A prompt states every value its answer depends on, such as a path or a name, so it can be answered from the prompt and the lesson alone.";
+    assert!(
+        system.contains(sentence),
+        "missing \"{sentence}\" in {system}"
+    );
+    Ok(())
+}
