@@ -69,7 +69,7 @@ fn text_key(variants: &[&str], numeric: Option<(f64, f64, &[&str])>) -> Learning
 
 #[test]
 fn typed_answers_ignore_case_accents_punctuation_articles_and_separators() {
-    assert_eq!(engine::normalize_answer("  The Café, Noir! "), "cafe noir");
+    assert_eq!(engine::normalize_answer("  The CafÃ©, Noir! "), "cafe noir");
     assert_eq!(engine::normalize_answer("1,000,000"), "1000000");
     assert_eq!(engine::normalize_answer("3.14"), "3.14");
     assert_eq!(engine::normalize_answer("An"), "an");
@@ -112,7 +112,7 @@ fn numbers_are_graded_in_code_within_an_absolute_tolerance() {
     }
     answer.text = Some("8".into());
     let grade = graded(engine::grade_keyed(&item, &answer).unwrap());
-    assert_eq!(grade.detail, "You gave 8; the answer is 7 ± 0.5 cm.");
+    assert_eq!(grade.detail, "You gave 8; the answer is 7 Â± 0.5 cm.");
     // A number never goes to the model, even when the key has no number.
     let plain = candidate(
         LearningItemFormat::ShortAnswer,
@@ -140,7 +140,7 @@ fn an_empty_answer_scores_zero_with_a_reason_and_no_model() {
 
 #[test]
 fn partial_credit_follows_the_section_three_rules() {
-    // Multi-select: max(0, hits − wrong picks) / |key|.
+    // Multi-select: max(0, hits âˆ’ wrong picks) / |key|.
     let multi = candidate(
         LearningItemFormat::MultiSelect,
         &["Alpha", "Bravo", "Charlie", "Delta", "Echo"],
@@ -1647,71 +1647,6 @@ async fn a_lesson_question_repeated_from_the_program_stays_in_its_place_as_dropp
     );
     Ok(())
 }
-fn reasoned_lesson_question() -> (Vec<LessonQuestion>, Vec<LessonAnswerKey>) {
-    let question_id = id();
-    let questions = vec![LessonQuestion {
-        id: question_id.clone(),
-        kind: LessonQuestionKind::Practice,
-        prompt: "Which layer of the atmosphere holds most of its weather?".into(),
-        options: ["Stratosphere", "Troposphere", "Mesosphere", "Thermosphere"]
-            .map(String::from)
-            .to_vec(),
-        source_ids: vec![],
-    }];
-    let keys = vec![LessonAnswerKey {
-        question_id,
-        correct_index: 1,
-        explanation: "Weather happens in the lowest layer.".into(),
-        rationales: [
-            "The stratosphere sits above the clouds.",
-            "",
-            "The mesosphere burns up meteors, not storms.",
-            "The thermosphere is far above any weather.",
-        ]
-        .map(String::from)
-        .to_vec(),
-    }];
-    (questions, keys)
-}
-
-#[test]
-fn a_lesson_question_is_seeded_with_its_reasons_in_the_writers_order() {
-    let (questions, keys) = reasoned_lesson_question();
-    for _ in 0..30 {
-        let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
-        assert_eq!(seeded.len(), 1);
-        assert_eq!(seeded[0].review_status, "agreed");
-        let candidate = LearningAssessmentCandidate::from(seeded[0].item.clone());
-        assert_eq!(candidate.options, questions[0].options);
-        assert_eq!(candidate.distractor_rationales, keys[0].rationales);
-        assert!(matches!(candidate.key, LearningAssessmentKey::Choice(1)));
-    }
-}
-
-#[test]
-fn a_form_draw_of_a_lesson_question_shuffles_and_each_reason_moves_with_its_choice() {
-    let (questions, keys) = reasoned_lesson_question();
-    let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
-    let candidate = LearningAssessmentCandidate::from(seeded[0].item.clone());
-    let order = (0..50)
-        .map(|n| engine::option_order(LearningItemFormat::SingleChoice, 4, &format!("form-{n}:q")))
-        .find(|order| *order != vec![0, 1, 2, 3])
-        .unwrap();
-
-    let reveal = engine::key_reveal(&candidate, &order);
-
-    assert_eq!(reveal.distractor_rationales.len(), 4);
-    for (shown, authored) in order.iter().enumerate() {
-        assert_eq!(
-            reveal.distractor_rationales[shown], keys[0].rationales[*authored],
-            "shown {shown} is authored {authored}"
-        );
-    }
-    let right = order.iter().position(|authored| *authored == 1).unwrap();
-    assert_eq!(reveal.correct_indices, vec![right]);
-    assert_eq!(reveal.distractor_rationales[right], "");
-}
-
 fn reasoned_lesson_question() -> (Vec<LessonQuestion>, Vec<LessonAnswerKey>) {
     let question_id = id();
     let questions = vec![LessonQuestion {
