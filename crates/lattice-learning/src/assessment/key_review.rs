@@ -393,6 +393,68 @@ mod tests {
         assert!(items.get("maxItems").is_none());
         Ok(())
     }
+    /// Cuts every answer off until a request reserves twice the room of the first.
+    struct NeedsDoubleRoom(Mutex<Vec<Option<u32>>>);
+
+    #[async_trait::async_trait]
+    impl LLMPort for NeedsDoubleRoom {
+        async fn complete(
+            &self,
+            request: &lattice_core::application::ports::llm_port::CompletionRequest,
+        ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+            use lattice_core::application::ports::llm_port::CompletionResponse;
+            let mut budgets = self.0.lock().unwrap();
+            budgets.push(request.max_output_tokens);
+            let first = budgets.first().copied().flatten().unwrap_or(0);
+            if request.max_output_tokens.unwrap_or(0) < first.saturating_mul(2) {
+                return Ok(CompletionResponse {
+                    finish_reason: "length".into(),
+                    ..CompletionResponse::from_text("{\"answers\":[{\"index\":0,\"reason\":")
+                });
+            }
+            Ok(CompletionResponse::from_text(
+                json!({"answers":[{"index":0,"reason":"Alpha follows.","correctIndices":[0],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string(),
+            ))
+        }
+        fn model_name(&self) -> &str {
+            "needs-double-room"
+        }
+        fn max_context_tokens(&self) -> usize {
+            131_072
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    #[tokio::test]
+    async fn a_cut_off_bank_solve_is_asked_again_with_twice_the_room() -> Result<()> {
+        let item = LearningAssessmentCandidate {
+            id: uuid::Uuid::new_v4().to_string(),
+            outcome_ids: vec![uuid::Uuid::new_v4().to_string()],
+            format: engine::LearningItemFormat::SingleChoice,
+            difficulty: 3,
+            prompt: "Which option follows?".into(),
+            options: vec![
+                "Alpha".into(),
+                "Bravo".into(),
+                "Charlie".into(),
+                "Delta".into(),
+            ],
+            left: vec![],
+            source_version_ids: vec![],
+            rubric: vec![],
+            key: engine::LearningAssessmentKey::Choice(0),
+            explanation: "Alpha follows.".into(),
+            distractor_rationales: vec![],
+        };
+        let llm = NeedsDoubleRoom(Mutex::new(Vec::new()));
+        let verdicts = review_bank_items(&llm, &[(&item, "Reference quote.")]).await?;
+        assert!(matches!(verdicts.as_slice(), [KeyVerdict::Agreed]));
+        let budgets = llm.0.lock().unwrap().clone();
+        assert_eq!(budgets.get(1).copied().flatten(), budgets[0].map(|b| b * 2));
+        Ok(())
+    }
     #[tokio::test]
     async fn the_bank_solve_schema_follows_the_questions_it_keys() {
         use crate::practice::practice_tests::Reply;
