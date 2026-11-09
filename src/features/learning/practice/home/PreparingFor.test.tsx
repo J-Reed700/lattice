@@ -1,120 +1,78 @@
+import type { ComponentProps } from 'react';
+
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { type LearningPracticeProfileDto, practiceHomeApi } from './practiceHomeApi';
+import type * as Wire from '@/lib/bindings';
+
 import { PreparingFor } from './PreparingFor';
+import { practiceHomeApi } from './practiceHomeApi';
+
+vi.mock('./practiceHomeApi', () => ({ practiceHomeApi: { saveProfile: vi.fn() } }));
+
+const profile: Wire.LearningPracticeProfileDto = {
+  programId: 'course-1',
+  details: 'Easy problems while someone watches',
+  language: 'python',
+  interviewAt: null,
+  company: null,
+  role: null,
+  revision: 3,
+};
+
+function show(overrides: Partial<ComponentProps<typeof PreparingFor>> = {}) {
+  const props = { programId: 'course-1', goal: 'Learn to code', profile, onSaved: vi.fn(), onReload: vi.fn(), ...overrides };
+  const view = render(<PreparingFor {...props} />);
+  return { props, view };
+}
+
+beforeEach(() => vi.resetAllMocks());
 
 describe('PreparingFor', () => {
-  beforeEach(() => {
-    vi.restoreAllMocks();
+  it('shows what the learner wrote, or the course goal before they write anything', () => {
+    const { view } = show();
+    expect(screen.getByText('Easy problems while someone watches')).toBeVisible();
+    view.unmount();
+    show({ profile: undefined });
+    expect(screen.getByText('Learn to code')).toBeVisible();
   });
 
-  it('displays the course goal, learner details, and interview date', () => {
-    const profile: LearningPracticeProfileDto = {
-      programId: 'program-1',
-      details: 'Easy problems in Python, live, someone watching and guiding.',
-      language: 'Python',
-      interviewAt: new Date('2026-11-20T12:00:00Z').getTime(),
-      company: null,
-      role: null,
-      revision: 1,
-    };
-
-    render(
-      <PreparingFor
-        programId="program-1"
-        courseGoal="Master algorithmic problem solving and coding under pressure"
-        profile={profile}
-      />,
-    );
-
-    expect(screen.getByText(/preparing for/i)).toBeInTheDocument();
-    expect(screen.getByText('Master algorithmic problem solving and coding under pressure')).toBeInTheDocument();
-    expect(screen.getByText('Easy problems in Python, live, someone watching and guiding.')).toBeInTheDocument();
-    expect(screen.getByText(/interview/i)).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^edit$/i })).toBeInTheDocument();
-  });
-
-  it('opens the edit form on clicking Edit', async () => {
+  it('saves against the revision it loaded', async () => {
     const user = userEvent.setup();
-    const profile: LearningPracticeProfileDto = {
-      programId: 'program-1',
-      details: 'Initial preparation notes',
-      language: 'Python',
-      interviewAt: null,
-      company: null,
-      role: null,
-      revision: 1,
-    };
-
-    render(
-      <PreparingFor
-        programId="program-1"
-        courseGoal="Master algorithmic problem solving"
-        profile={profile}
-      />,
-    );
-
-    const editBtn = screen.getByRole('button', { name: /^edit$/i });
-    await user.click(editBtn);
-
-    expect(screen.getByRole('textbox', { name: /details/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^save$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^cancel$/i })).toBeInTheDocument();
+    const saved = { ...profile, revision: 4, company: 'Acme' };
+    vi.mocked(practiceHomeApi.saveProfile).mockResolvedValue(saved);
+    const { props } = show();
+    await user.click(screen.getByRole('button', { name: /Edit/ }));
+    await user.type(screen.getByLabelText('Company'), 'Acme');
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(practiceHomeApi.saveProfile).toHaveBeenCalledWith(expect.objectContaining({ programId: 'course-1', company: 'Acme', expectedRevision: 3 }));
+    await waitFor(() => expect(props.onSaved).toHaveBeenCalledWith(saved));
   });
 
-  it('calls saveLearningPracticeProfile via practiceHomeApi on save', async () => {
+  it('says it changed elsewhere on a conflict and keeps Save off until the latest is loaded', async () => {
     const user = userEvent.setup();
-    const profile: LearningPracticeProfileDto = {
-      programId: 'program-1',
-      details: 'Initial notes',
-      language: 'Python',
-      interviewAt: null,
-      company: null,
-      role: null,
-      revision: 1,
-    };
+    vi.mocked(practiceHomeApi.saveProfile).mockRejectedValue(Object.assign(new Error('conflict'), { details: { code: 'CONFLICT' } }));
+    const { props } = show({ onReload: vi.fn().mockResolvedValue({ ...profile, revision: 5, details: 'Newer words' }) });
+    await user.click(screen.getByRole('button', { name: /Edit/ }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('changed somewhere else');
+    expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
 
-    const saveSpy = vi.spyOn(practiceHomeApi, 'saveProfile').mockResolvedValue({
-      ...profile,
-      details: 'Updated preparation notes for mock rounds',
-      revision: 2,
-    });
+    await user.click(screen.getByRole('button', { name: 'Load the latest' }));
+    expect(props.onReload).toHaveBeenCalled();
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Save' })).toBeEnabled());
+    expect(screen.getByLabelText('What you are preparing for')).toHaveValue('Newer words');
+  });
 
-    const onProfileChange = vi.fn();
-
-    render(
-      <PreparingFor
-        programId="program-1"
-        courseGoal="Master algorithmic problem solving"
-        profile={profile}
-        onProfileChange={onProfileChange}
-      />,
-    );
-
-    await user.click(screen.getByRole('button', { name: /^edit$/i }));
-
-    const detailsBox = screen.getByRole('textbox', { name: /details/i });
-    await user.clear(detailsBox);
-    await user.type(detailsBox, 'Updated preparation notes for mock rounds');
-
-    await user.click(screen.getByRole('button', { name: /^save$/i }));
-
-    expect(saveSpy).toHaveBeenCalledWith(
-      expect.objectContaining({
-        programId: 'program-1',
-        details: 'Updated preparation notes for mock rounds',
-      }),
-    );
-
-    await waitFor(() => {
-      expect(onProfileChange).toHaveBeenCalledWith(
-        expect.objectContaining({
-          details: 'Updated preparation notes for mock rounds',
-          revision: 2,
-        }),
-      );
-    });
+  it('offers a retry when the save fails for another reason', async () => {
+    const user = userEvent.setup();
+    vi.mocked(practiceHomeApi.saveProfile).mockRejectedValueOnce(new Error('disk full')).mockResolvedValueOnce(profile);
+    show();
+    await user.click(screen.getByRole('button', { name: /Edit/ }));
+    await user.click(screen.getByRole('button', { name: 'Save' }));
+    expect(await screen.findByText(/disk full/)).toBeVisible();
+    await user.click(screen.getByRole('button', { name: /Retry|Try again/ }));
+    expect(practiceHomeApi.saveProfile).toHaveBeenCalledTimes(2);
   });
 });

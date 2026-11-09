@@ -7,8 +7,9 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { InterviewDrill } from '@/features/learning/practice/practical/InterviewDrill';
 import type { LearningPracticalActivityDto } from '@/lib/bindings';
 
-const mocks = vi.hoisted(() => ({ create: vi.fn() }));
+const mocks = vi.hoisted(() => ({ create: vi.fn(), profile: vi.fn() }));
 vi.mock('@/lib/api', () => ({ default: { createInterviewStudyDeck: mocks.create } }));
+vi.mock('@/features/learning/practice/home/practiceHomeApi', () => ({ practiceHomeApi: { getProfile: mocks.profile } }));
 
 const activity = {
   id: 'activity', programId: 'program', lessonId: 'lesson', predecessorId: null, kind: 'interview', title: 'Acme interview',
@@ -37,7 +38,7 @@ function show() {
 }
 
 describe('InterviewDrill', () => {
-  beforeEach(() => { vi.resetAllMocks(); });
+  beforeEach(() => { vi.resetAllMocks(); mocks.profile.mockResolvedValue({ interviewAt: null }); });
 
   it('makes a deck with the interview date as its target and opens it', async () => {
     const user = userEvent.setup();
@@ -50,6 +51,20 @@ describe('InterviewDrill', () => {
     await user.click(screen.getByRole('button', { name: 'Make drill deck' }));
     expect(await screen.findByText('Opened deck drill-deck')).toBeVisible();
     expect(mocks.create).toHaveBeenCalledWith({ programId: 'program', activityId: 'activity', targetAt: new Date('2099-03-04T10:15').getTime() });
+  });
+
+  it('starts the date from the interview date in Preparing for, not a guess', async () => {
+    const at = new Date('2099-05-06T14:30').getTime();
+    mocks.profile.mockResolvedValue({ interviewAt: at });
+    show();
+    expect(await screen.findByLabelText('Interview date and time')).toHaveValue('2099-05-06T14:30');
+  });
+
+  it('leaves the date empty and asks for it when the course has none', async () => {
+    show();
+    await waitFor(() => expect(mocks.profile).toHaveBeenCalled());
+    expect(screen.getByLabelText('Interview date and time')).toHaveValue('');
+    expect(screen.getByText(/Add your interview date/)).toBeVisible();
   });
 
   it('shows why a deck could not be made and stays put', async () => {
