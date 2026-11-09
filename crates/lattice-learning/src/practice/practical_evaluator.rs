@@ -22,7 +22,7 @@ fn schema(runtime: &PracticalRuntimeContext) -> Value {
     };
     json!({
         "type":"object","additionalProperties":false,"required":["checkFiles"],
-        "properties":{"checkFiles":{"type":"array","minItems":1,"maxItems":16,"items":{
+        "properties":{"checkFiles":{"type":"array","minItems":1,"items":{
             "type":"object","additionalProperties":false,"required":["path","content"],
             "properties":{"path":path,"content":{"type":"string","minLength":1}}
         }}}

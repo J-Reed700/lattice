@@ -155,12 +155,12 @@ fn tutor_schema() -> serde_json::Value {
         "required":["response","citations","proposals"],
         "properties": {
             "response":{"type":"string","minLength":1},
-            "citations":{"type":"array","maxItems":5,"items":{
+            "citations":{"type":"array","items":{
                 "type":"object","additionalProperties":false,
                 "required":["sourceId","versionId","quote"],
                 "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1}}
             }},
-            "proposals":{"type":"array","maxItems":4,"items":{
+            "proposals":{"type":"array","items":{
                 "type":"object","additionalProperties":false,
                 "required":["kind","text","evidenceQuote"],
                 "properties":{"kind":{"enum":["misconception","follow_up"]},"text":{"type":"string","minLength":1},"evidenceQuote":{"type":["string","null"]}}
@@ -172,7 +172,7 @@ fn solution_schema() -> serde_json::Value {
     serde_json::json!({
         "type":"object", "additionalProperties":false,
         "required":["solution","citations"],
-        "properties":{"solution":{"type":"string","minLength":1},"citations":{"type":"array","maxItems":5,"items":{
+        "properties":{"solution":{"type":"string","minLength":1},"citations":{"type":"array","items":{
             "type":"object","additionalProperties":false,
             "required":["sourceId","versionId","quote"],
             "properties":{"sourceId":{"type":"string"},"versionId":{"type":"string"},"quote":{"type":"string","minLength":1}}
@@ -193,11 +193,8 @@ pub async fn tutor(
     let raw = complete_json(llm, TUTOR_SYSTEM, prompt, tutor_schema(), 1400).await?;
     let parsed: TutorJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The tutor returned malformed structured feedback."))?;
-    if parsed.response.trim().is_empty() || parsed.citations.len() > 5 || parsed.proposals.len() > 4
-    {
-        return Err(invalid(
-            "The tutor returned an empty response, or more citations or proposals than allowed.",
-        ));
+    if parsed.response.trim().is_empty() {
+        return Err(invalid("The tutor returned an empty response."));
     }
     validate_citations(&parsed.citations, sources)?;
     for p in &parsed.proposals {
@@ -225,10 +222,8 @@ pub async fn solution(
     let raw = complete_json(llm, SOLUTION_SYSTEM, prompt, solution_schema(), 1400).await?;
     let parsed: SolutionJson = serde_json::from_str(&raw)
         .map_err(|_| invalid("The model returned a malformed reference solution."))?;
-    if parsed.solution.trim().is_empty() || parsed.citations.len() > 5 {
-        return Err(invalid(
-            "The reference solution was empty or had more citations than allowed.",
-        ));
+    if parsed.solution.trim().is_empty() {
+        return Err(invalid("The reference solution was empty."));
     }
     validate_citations(&parsed.citations, sources)?;
     Ok(parsed)
