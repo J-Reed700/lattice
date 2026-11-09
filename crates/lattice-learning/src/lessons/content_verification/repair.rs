@@ -169,6 +169,7 @@ pub(super) fn goal_words(goal: Goal) -> &'static str {
         Goal::WhatThePassageStates => "Say only what the claim's evidence passages state. Where no passage states a detail, keep the sentence's point and leave that detail out.",
         Goal::AgreeWithThePassages => "Make the sentence agree with its evidence passages, correcting what the reason names.",
         Goal::AsTheFieldHasIt => "State it as the field generally has it, correcting what the reason names.",
+        Goal::CorrectWhatWasFound => "Correct what the reason found wrong in the sentence, and keep the rest of the sentence as it is.",
         Goal::KeepTheOthers => "Take this claim out of the sentence and keep each statement in alsoStates, said as it is now.",
     }
 }

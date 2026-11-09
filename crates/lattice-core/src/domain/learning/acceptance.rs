@@ -75,6 +75,8 @@ pub enum Goal {
     AsTheFieldHasIt,
     /// Narrow the sentence to what its other statements say.
     KeepTheOthers,
+    /// Correct what a veto found wrong in the sentence; keep the rest of it.
+    CorrectWhatWasFound,
 }
 
 /// One thing done to a statement.
