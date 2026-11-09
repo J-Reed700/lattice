@@ -1,4 +1,4 @@
-import type { CodingTask, Difficulty, Setting } from '@/lib/bindings';
+import type { CodingTask, Difficulty, Setting } from './codingApi';
 
 export interface CodingEntryRequest {
   task: CodingTask;
@@ -14,15 +14,17 @@ export interface CodingEntryProps {
   lessonId: string | null;
   request: CodingEntryRequest;
   onExit: () => void;
+  sessionId?: string | null;
 }
 
 /**
  * Entry point for coding sessions from PracticeHome (Code card & Mock interview coding rounds).
- * Wave 2 replaces this stub with the problem build progress and CodingSession screen.
+ * Orchestrates problem building, starting/resuming a CodingSession, and transitioning to Debrief.
+ * Minimal non-crashing stub for Stage 1.
  */
-export function CodingEntry({ onExit }: CodingEntryProps): JSX.Element {
+export function CodingEntry({ onExit }: CodingEntryProps) {
   return (
-    <section className="rounded-2xl border border-border-default bg-surface p-6">
+    <div data-testid="coding-entry-stub" className="rounded-2xl border border-border-default bg-surface p-6">
       <div className="flex items-center justify-between gap-3">
         <h3 className="font-serif text-xl text-text-primary">Coding session</h3>
         <button
@@ -33,6 +35,6 @@ export function CodingEntry({ onExit }: CodingEntryProps): JSX.Element {
           Back to Practice
         </button>
       </div>
-    </section>
+    </div>
   );
 }
