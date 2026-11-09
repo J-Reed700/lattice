@@ -577,6 +577,7 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
         research_web: None,
         verifier: None,
+        course_setups: Default::default(),
     };
     let runtime = JobRuntime::new(pool.clone());
     runtime
