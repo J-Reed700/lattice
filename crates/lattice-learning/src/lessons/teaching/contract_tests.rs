@@ -102,13 +102,17 @@ fn scripted(outputs: Vec<String>) -> ScriptedModel {
 
 /// The writer's prompt: the plan's lesson 2 is this one.
 fn context(ideas: &[&str], actions: &[&str]) -> String {
+    context_planning(ideas, &[], actions, "")
+}
+
+fn context_planning(ideas: &[&str], terms: &[&str], actions: &[&str], contrast: &str) -> String {
     json!({
         "sources":[{"sourceIndex":0,"excerpt":EXCERPT}],
         "priorKnowledge":"The learner has used a graphical file manager.",
         "currentModule":{"title":"Shell basics","lessonSequence":[{"title":"Looking around","current":false},{"title":"Working in the terminal","current":true},{"title":"Making files","current":false}]},
         "courseSequence":{"curriculum":[{"title":"Shell basics","outcomes":["Run commands"],"milestone":"A logbook of daily shell habits","lessons":[{"title":"Looking around"},{"title":"Working in the terminal"},{"title":"Making files"}]},{"title":"Secure remote access","outcomes":["Connect to another machine"],"milestone":"A tidy list of saved connections","lessons":[{"title":"Keys and logins"}]}],"coursePlan":[
             {"title":"Looking around","position":"earlier","ideas":["A folder holds files"],"terms":["folder"],"actions":["Listing the files in a folder"],"contrast":""},
-            {"title":"Working in the terminal","position":"this","ideas":ideas,"terms":[],"actions":actions,"contrast":""},
+            {"title":"Working in the terminal","position":"this","ideas":ideas,"terms":terms,"actions":actions,"contrast":contrast},
             {"title":"Making files","position":"later","ideas":[],"terms":[],"actions":["Creating a file"],"contrast":""}
         ]}
     })
@@ -720,6 +724,15 @@ fn assert_no_software_words(what: &str, text: &str) {
 }
 
 async fn finding_note(planned: Value, used: Value, marker: &str) -> Result<String> {
+    finding_note_in(context(&[], &[OPEN_TERMINAL]), planned, used, marker).await
+}
+
+async fn finding_note_in(
+    context_json: String,
+    planned: Value,
+    used: Value,
+    marker: &str,
+) -> Result<String> {
     let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
     let found = answer(planned, used, json!([]), json!([]));
     let model = Routed::new(&scripted, vec![found.clone(), found]);
@@ -728,7 +741,7 @@ async fn finding_note(planned: Value, used: Value, marker: &str) -> Result<Strin
         "Apply the second method\nto the first item.",
         "Read the result.",
     ]);
-    let result = run(&model, &candidate, &context(&[], &[OPEN_TERMINAL]), &[]).await?;
+    let result = run(&model, &candidate, &context_json, &[]).await?;
     let note = result
         .set_aside
         .iter()
@@ -790,5 +803,42 @@ async fn the_contract_check_describes_learner_actions_in_no_subjects_terms() -> 
     .await?;
     assert!(used_note.contains("exactly how to do it"), "{used_note}");
     assert_no_software_words("the used-before-taught note", &used_note);
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_untaught_idea_or_contrast_is_told_its_name_is_the_plans_label_and_a_term_is_not(
+) -> Result<()> {
+    let label = "is the course plan's label";
+    let idea = finding_note_in(
+        context_planning(&["A first idea"], &[], &[], ""),
+        json!([not_taught("idea-0", 1)]),
+        json!([]),
+        "The lesson does not yet teach the idea",
+    )
+    .await?;
+    let contrast = finding_note_in(
+        context_planning(&[], &[], &[], "A planned confusion"),
+        json!([not_taught("contrast", 1)]),
+        json!([]),
+        "The lesson does not yet teach the contrast",
+    )
+    .await?;
+    for note in [&idea, &contrast] {
+        assert!(!note.is_empty());
+        assert!(note.contains(label), "{note}");
+        assert!(note.contains("without copying the label"), "{note}");
+    }
+    let term = finding_note_in(
+        context_planning(&[], &["a planned term"], &[], ""),
+        json!([not_taught("term-0", 1)]),
+        json!([]),
+        "The lesson does not yet teach the term",
+    )
+    .await?;
+    assert!(!term.is_empty());
+    assert!(term.contains("say what it means"), "{term}");
+    assert!(!term.contains(label), "{term}");
+    assert!(!term.contains("copying the label"), "{term}");
     Ok(())
 }

@@ -583,6 +583,15 @@ fn the_writer_asks_for_what_an_action_needs_in_no_subjects_terms() {
     );
 }
 
+#[test]
+fn the_writer_is_told_a_section_never_says_the_same_thing_twice() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("a section never says the same thing twice"),
+        "{text}"
+    );
+}
+
 fn writer_requirements() -> String {
     let program = crate::tests::fixture();
     let lesson = program.modules[0].lessons[0].clone();

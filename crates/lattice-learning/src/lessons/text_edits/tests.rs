@@ -507,3 +507,13 @@ fn an_edit_to_an_unknown_block_is_a_problem_of_that_part_alone() -> Result<()> {
     );
     Ok(())
 }
+
+#[test]
+fn a_repair_is_told_not_to_come_between_a_sentence_and_one_that_refers_back_to_it() {
+    assert!(
+        INSTRUCTIONS.contains(
+            "never between a sentence and the next one when the next one refers back to it"
+        ),
+        "{INSTRUCTIONS}"
+    );
+}
