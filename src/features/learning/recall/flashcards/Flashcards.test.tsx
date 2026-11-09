@@ -163,12 +163,12 @@ describe('Flashcards', () => {
     await user.click(biology);
     await user.click(screen.getByRole('checkbox', { name: 'history.txt' }));
     await user.click(screen.getByRole('checkbox', { name: 'notes.docx' }));
-    expect(screen.getByRole('checkbox', { name: 'manual.pdf' })).toBeDisabled();
+    await user.click(screen.getByRole('checkbox', { name: 'manual.pdf' }));
     await user.type(screen.getByLabelText(/Topic or section/), 'photosynthesis');
     await user.type(screen.getByLabelText(/Learning goal/), 'Biology exam');
     await user.click(screen.getByRole('button', { name: 'Generate deck' }));
     await waitFor(() => expect(created).toHaveBeenCalledWith('new-deck'));
-    expect(mocks.generate).toHaveBeenCalledWith({ title: 'New study deck', focus: 'photosynthesis', studyGoal: 'Biology exam', count: 6, documentIds: ['0', '1', '2'] });
+    expect(mocks.generate).toHaveBeenCalledWith({ title: 'New study deck', focus: 'photosynthesis', studyGoal: 'Biology exam', count: 6, documentIds: ['0', '1', '2', '3'] });
   });
 
   it('retains generation progress and failures across navigation and saves a retried deck while away', async () => {

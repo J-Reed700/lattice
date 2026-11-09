@@ -13,10 +13,13 @@ fn not_blank(value: &str, label: &str) -> Result<()> {
 }
 pub fn validate_generation(request: &GenerateStudyDeckRequestDto) -> Result<()> {
     not_blank(&request.title, "Deck title")?;
-    if !(1..=3).contains(&request.document_ids.len()) || !(2..=12).contains(&request.count) {
+    if request.document_ids.is_empty() {
         return Err(AppError::InvalidInput(
-            "Select 1–3 documents and 2–12 cards".into(),
+            "Select at least one document".into(),
         ));
+    }
+    if !(2..=12).contains(&request.count) {
+        return Err(AppError::InvalidInput("Choose 2–12 cards".into()));
     }
     let mut seen = std::collections::HashSet::new();
     for id in &request.document_ids {
