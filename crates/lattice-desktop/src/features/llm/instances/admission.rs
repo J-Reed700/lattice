@@ -4,7 +4,7 @@ use std::path::Path;
 
 use async_trait::async_trait;
 
-use crate::features::llm::engine::factory::{launch_window, sidecar_config, LocalServerOptions};
+use crate::features::llm::engine::factory::{starting_config, LocalServerOptions};
 use crate::features::llm::engine::gguf_metadata::{read_model_info, GgufModelInfo};
 use crate::features::llm::engine::sidecar_manager::{
     memory_hint, Admission, SidecarConfig, SidecarRegistry,
@@ -28,7 +28,8 @@ pub(crate) trait IdleServer: Send + Sync {
 }
 
 /// What starting a bundled server would ask of the machine's memory. Only a
-/// hint: no load is ever refused on it.
+/// hint: no load is ever refused on it, and a window the user saved is never
+/// changed to fit.
 #[async_trait]
 pub(crate) trait GpuBudget: Send + Sync {
     /// Whether a server for `path` launched with `launch` fits now. It only
@@ -45,8 +46,8 @@ pub(crate) trait GpuBudget: Send + Sync {
     /// cache at f16 and quantized.
     async fn context_fit(&self, path: &Path) -> ContextFit;
 
-    /// The window `path` was trained for, which it launches with unless the
-    /// user saved another; `None` when its header does not say.
+    /// The window `path` was trained for, the most it launches with unless
+    /// the user saved another; `None` when its header does not say.
     fn trained_window(&self, path: &Path) -> Option<u32>;
 }
 
@@ -88,8 +89,9 @@ impl SidecarBudget {
         let registry = app.try_state::<SidecarRegistry>()?;
         let capabilities = detect_capabilities_with_app(app, self.devices()).await;
         let info = read_model_info(path);
-        let window = launch_window(launch, info.as_ref())?;
-        let config = sidecar_config(path, -1, window, launch, &capabilities, info.as_ref());
+        let held = registry.other_models_gpu_bytes(path);
+        let config = starting_config(path, -1, launch, &capabilities, info.as_ref(), held)?;
+        let config = registry.running_alike(&config).unwrap_or(config);
         Some(Plan {
             config,
             capabilities,

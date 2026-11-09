@@ -65,6 +65,7 @@ pub(super) fn generation_worker(
     let model_container = container.clone();
     let source_deps = source_deps(container);
     crate::features::learning::generation_jobs::LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes,
         research_web: Some(container.web_service()),
         verifier: Some(super::audit::container_verifier(container)),
