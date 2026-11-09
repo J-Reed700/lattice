@@ -456,6 +456,7 @@ impl CloudLlm {
             if status == reqwest::StatusCode::BAD_REQUEST {
                 let error = status_error(&self.provider, self.provider_name(), status, "");
                 let reason = rejection_reason(response).await;
+                schema::log_refusal(body, &reason);
                 return Err(bad_request_error(
                     shown_name(&self.provider, self.provider_name()),
                     &reason,
@@ -698,8 +699,9 @@ fn shown_name<'a>(provider: &LLMProvider, name: &'a str) -> &'a str {
     }
 }
 
-/// A 400's own reason. It is read only to tell its causes apart and is never
-/// logged or shown, since a provider's error can quote what was sent.
+/// A 400's own reason. It is read to tell its causes apart and is never
+/// shown, since a provider's error can quote what was sent; it is logged only
+/// when it refuses a response schema.
 async fn rejection_reason(response: reqwest::Response) -> String {
     response
         .json::<Value>()

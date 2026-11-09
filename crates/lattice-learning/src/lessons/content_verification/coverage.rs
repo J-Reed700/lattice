@@ -53,30 +53,36 @@ fn unit_input(input: &Value, unit: &UnitClaims) -> Value {
     input
 }
 
+/// The `id` of every entry of `field` across `units`.
+fn ids_of<'a>(units: &'a [Value], field: &str) -> Vec<&'a str> {
+    units
+        .iter()
+        .flat_map(|unit| unit[field].as_array().into_iter().flatten())
+        .filter_map(|entry| entry["id"].as_str())
+        .collect()
+}
+
+/// A list of decisions, each naming its passage. A decision's claim IDs may be
+/// any of the units' claims; `resolve` holds them to their own unit's.
 fn schema(units: &[Value]) -> Value {
-    let mut properties = serde_json::Map::new();
-    for unit in units {
-        let claim_ids: Vec<_> = unit["claims"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .filter_map(|c| c["id"].as_str())
-            .collect();
-        let claims = if claim_ids.is_empty() {
-            json!({"type":"array","maxItems":0,"items":{"type":"string"}})
-        } else {
-            json!({"type":"array","maxItems":claim_ids.len(),"uniqueItems":true,"items":{"type":"string","enum":claim_ids}})
-        };
-        for passage in unit["passages"].as_array().into_iter().flatten() {
-            if let Some(id) = passage["id"].as_str() {
-                properties.insert(id.to_owned(), json!({"type":"object","additionalProperties":false,"required":["claimIds","nonFactualReason","missingClaims"],"properties":{
-                    "claimIds":claims,"nonFactualReason":{"type":"string"},
-                    "missingClaims":{"type":"array","items":{"type":"string","minLength":1}}
-                }}));
-            }
-        }
-    }
-    json!({"type":"object","additionalProperties":false,"required":properties.keys().collect::<Vec<_>>(),"properties":properties})
+    let (passages, claims) = (ids_of(units, "passages"), ids_of(units, "claims"));
+    let passage_id = if passages.is_empty() {
+        json!({"type":"string"})
+    } else {
+        json!({"type":"string","enum":passages})
+    };
+    let claim_ids = if claims.is_empty() {
+        json!({"type":"array","maxItems":0,"items":{"type":"string"}})
+    } else {
+        json!({"type":"array","uniqueItems":true,"items":{"type":"string","enum":claims}})
+    };
+    json!({"type":"object","additionalProperties":false,"required":["passages"],"properties":{
+        "passages":{"type":"array","items":{"type":"object","additionalProperties":false,
+            "required":["passageId","claimIds","nonFactualReason","missingClaims"],"properties":{
+                "passageId":passage_id,"claimIds":claim_ids,"nonFactualReason":{"type":"string"},
+                "missingClaims":{"type":"array","items":{"type":"string","minLength":1}}
+            }}}
+    }})
 }
 
 fn fidelity_schema() -> Value {
@@ -382,6 +388,9 @@ pub async fn live_mapping_fixture(llm: &dyn LLMPort, fixture: &Value) -> Result<
     check_fidelity(llm, &raw, units, &mut coverage).await?;
     Ok(serde_json::to_value(coverage)?)
 }
+
+#[cfg(test)]
+mod passage_list_tests;
 
 #[cfg(test)]
 mod tests {
@@ -722,16 +731,12 @@ mod tests {
         let valid =
             json!({"a":decision("claim-a"),"b":decision("claim-a"),"c":decision("claim-c")});
         assert!(resolve(&valid.to_string(), &units).is_ok());
-        let validator = jsonschema::JSONSchema::compile(&schema(&units)).unwrap();
-        assert!(validator.is_valid(&valid));
         let mut missing = valid.clone();
         missing.as_object_mut().unwrap().remove("b");
         assert!(resolve(&missing.to_string(), &units).is_err());
-        assert!(!validator.is_valid(&missing));
         let mut wrong = valid.clone();
         wrong["b"] = decision("claim-c");
         assert!(resolve(&wrong.to_string(), &units).is_err());
-        assert!(!validator.is_valid(&wrong));
         let mut empty = valid.clone();
         empty["b"]["claimIds"] = json!([]);
         assert!(resolve(&empty.to_string(), &units).is_err());
