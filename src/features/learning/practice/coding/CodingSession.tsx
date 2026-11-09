@@ -1,15 +1,20 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
-import { Bot, HelpCircle, MessageSquare } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+import { ArrowLeft, HelpCircle, ShieldCheck } from 'lucide-react';
+
+import { newId } from '@/lib/api';
+import type * as Wire from '@/lib/bindings';
+import { getErrorMessage } from '@/lib/errorUtils';
+
 import { LearningCodeEditor } from '../practical/LearningCodeEditor';
+import { useLearningLabDraft } from '../practical/useLearningLabDraft';
+import { CaseResults } from '../shared/CaseResults';
 import { ElapsedClock } from '../shared/ElapsedClock';
-import { FileTabs, type FileTabItem } from '../shared/FileTabs';
-import { PracticeThread, type PracticeThreadTurn } from '../shared/PracticeThread';
-import {
-  codingApi,
-  type CodingSessionDto,
-  type CodingStage,
-  type RunScope,
-} from './codingApi';
+import { FileTabs } from '../shared/FileTabs';
+import { PracticeThread, type ThreadMessage } from '../shared/PracticeThread';
+import { StatusLine, type StatusState } from '../shared/StatusLine';
+import { caseResultViews, HELP_NAMES, SETTING_NAMES } from './caseViews';
+import { codingApi } from './codingApi';
+import { Debrief } from './Debrief';
 import { ExamplesTable } from './ExamplesTable';
 import { HintLadder } from './HintLadder';
 import { ProblemPane } from './ProblemPane';
@@ -17,463 +22,607 @@ import { RunBar } from './RunBar';
 import { StageRail } from './StageRail';
 
 export interface CodingSessionProps {
-  session: CodingSessionDto;
-  onUpdateSession?: (session: CodingSessionDto) => void;
-  onFinish?: (session: CodingSessionDto) => void;
-  onExit?: () => void;
-  className?: string;
+  programId: string;
+  sessionId: string;
+  onExit: () => void;
+  onTryInterview: (setting: Wire.CodingSetting) => void;
 }
 
-type MobileTab = 'problem' | 'code' | 'counterpart';
+/** How long typing must stop before a Watched interviewer looks at the changes. */
+export const TYPING_PAUSE_MS = 4_000;
+/** How long a Coached learner may do nothing before the coach checks in. */
+export const IDLE_AFTER_MS = 180_000;
+const BUSY_LABEL = 'Reading your code…';
+const SETTINGS: Wire.CodingSetting[] = ['coached', 'mock', 'watched'];
+const RUN_TITLES: Record<Wire.CodingRunScope, string> = {
+  examples: 'Examples',
+  all: 'Every case',
+  input: 'Your input',
+};
 
-export function CodingSession({
-  session,
-  onUpdateSession,
-  onFinish,
-  onExit,
-  className = '',
-}: CodingSessionProps) {
-  const [sessionState, setSessionState] = useState<CodingSessionDto>(session);
-  const [activeFile, setActiveFile] = useState<string>('solution.py');
-  const [mobileTab, setMobileTab] = useState<MobileTab>('code');
-  const [counterpartBusy, setCounterpartBusy] = useState<string | null>(null);
-  const [running, setRunning] = useState<boolean>(false);
-  const [askingHint, setAskingHint] = useState<boolean>(false);
-  const [checkingExample, setCheckingExample] = useState<boolean>(false);
+type Panel = 'problem' | 'code' | 'talk';
+type Failure = { message: string; retry?: () => void };
 
-  const draftTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+/** The interview setting the course last used on the Practice page; Mock the first time. */
+function lastInterviewSetting(programId: string): Wire.CodingSetting {
+  try {
+    const raw = localStorage.getItem(`lattice:practice:startSentence:${programId}:mock`);
+    const stored = raw ? (JSON.parse(raw) as { setting?: string }).setting : null;
+    return stored === 'watched' ? 'watched' : 'mock';
+  } catch {
+    return 'mock';
+  }
+}
 
-  // Sync prop updates if parent passes new session
+export function CodingSession({ programId, sessionId, onExit, onTryInterview }: CodingSessionProps) {
+  const [loaded, setLoaded] = useState<{ session: Wire.CodingSessionDto; activityRevision: number } | null>(null);
+  const [failure, setFailure] = useState<string | null>(null);
+  const [attempt, setAttempt] = useState(0);
+
   useEffect(() => {
-    setSessionState(session);
-  }, [session]);
-
-  const updateSession = useCallback(
-    (next: CodingSessionDto) => {
-      setSessionState(next);
-      onUpdateSession?.(next);
-    },
-    [onUpdateSession],
-  );
-
-  // Visibility and window focus tracking for clock pause / resume
-  useEffect(() => {
-    const handleVisibility = () => {
-      const isOpen = !document.hidden;
-      void codingApi.setCodingClock({
-        sessionId: sessionState.id,
-        open: isOpen,
-      });
-    };
-
-    const handleFocus = () => {
-      void codingApi.setCodingClock({
-        sessionId: sessionState.id,
-        open: true,
-      });
-    };
-
-    const handleBlur = () => {
-      void codingApi.setCodingClock({
-        sessionId: sessionState.id,
-        open: false,
-      });
-    };
-
-    document.addEventListener('visibilitychange', handleVisibility);
-    window.addEventListener('focus', handleFocus);
-    window.addEventListener('blur', handleBlur);
-
-    return () => {
-      document.removeEventListener('visibilitychange', handleVisibility);
-      window.removeEventListener('focus', handleFocus);
-      window.removeEventListener('blur', handleBlur);
-    };
-  }, [sessionState.id]);
-
-  // Active file content
-  const activeFileObj = sessionState.draftFiles.find((f) => f.path === activeFile) ?? sessionState.draftFiles[0];
-  const fileContent = activeFileObj?.content ?? '';
-
-  // File change handler with debounced draft observation in Watched mode
-  const handleCodeChange = (newContent: string) => {
-    const nextFiles = sessionState.draftFiles.map((f) =>
-      f.path === (activeFileObj?.path ?? 'solution.py') ? { ...f, content: newContent } : f,
-    );
-    setSessionState((prev) => ({ ...prev, draftFiles: nextFiles }));
-
-    if (sessionState.setting === 'watched') {
-      if (draftTimerRef.current) {
-        clearTimeout(draftTimerRef.current);
+    let cancelled = false;
+    setFailure(null);
+    (async () => {
+      try {
+        const session = await codingApi.getSession({ programId, sessionId });
+        const activityRevision = session.finished ? 0 : await codingApi.activityRevision(programId, session.activityId);
+        if (!cancelled) setLoaded({ session, activityRevision });
+      } catch (error) {
+        if (!cancelled) setFailure(getErrorMessage(error));
       }
-      draftTimerRef.current = setTimeout(() => {
-        void codingApi
-          .observeCodingDraft({
-            sessionId: sessionState.id,
-            files: nextFiles,
-          })
-          .then((updated) => {
-            if (updated) updateSession(updated);
-          })
-          .catch(() => {});
-      }, 2000);
-    }
-  };
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, [programId, sessionId, attempt]);
 
-  // Stage changes
-  const handleStageSelect = async (newStage: CodingStage) => {
-    try {
-      const updated = await codingApi.moveCodingStage({
-        operationId: `stage-${Date.now()}`,
-        sessionId: sessionState.id,
-        stage: newStage,
-        expectedRevision: sessionState.revision,
-      });
-      updateSession(updated);
-    } catch {
-      // Revert or keep
-    }
-  };
-
-  // Example checking
-  const handleCheckExample = async (argsJson: string, expectedJson: string) => {
-    setCheckingExample(true);
-    try {
-      const checked = await codingApi.checkCodingExample({
-        operationId: `ex-${Date.now()}`,
-        sessionId: sessionState.id,
-        argsJson,
-        expectedJson,
-      });
-      const nextExamples = [...sessionState.examples, checked];
-      updateSession({ ...sessionState, examples: nextExamples });
-    } finally {
-      setCheckingExample(false);
-    }
-  };
-
-  // Running code with scope
-  const handleRun = async (scope: RunScope, customInputJson?: string) => {
-    setRunning(true);
-    try {
-      const updated = await codingApi.runCodingSession({
-        operationId: `run-${Date.now()}`,
-        sessionId: sessionState.id,
-        scope,
-        files: sessionState.draftFiles,
-        customInputJson,
-      });
-      updateSession(updated);
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  // Asking for a hint
-  const handleAskHint = async () => {
-    setAskingHint(true);
-    try {
-      const updated = await codingApi.askCodingHint({
-        operationId: `hint-${Date.now()}`,
-        sessionId: sessionState.id,
-        expectedRevision: sessionState.revision,
-      });
-      updateSession(updated);
-    } finally {
-      setAskingHint(false);
-    }
-  };
-
-  // Counterpart thread turns
-  const handleSendTurn = async (content: string, spoken: boolean) => {
-    setCounterpartBusy('Reading your code…');
-    try {
-      const updated = await codingApi.sendCodingTurn({
-        operationId: `turn-${Date.now()}`,
-        sessionId: sessionState.id,
-        content,
-        spoken,
-        expectedRevision: sessionState.revision,
-      });
-      updateSession(updated);
-    } finally {
-      setCounterpartBusy(null);
-    }
-  };
-
-  // Finish session
-  const handleFinish = async () => {
-    try {
-      const finished = await codingApi.finishCodingSession({
-        operationId: `finish-${Date.now()}`,
-        sessionId: sessionState.id,
-        expectedRevision: sessionState.revision,
-      });
-      updateSession(finished);
-      onFinish?.(finished);
-    } catch {
-      // Handle error
-    }
-  };
-
-  const counterpartName = sessionState.setting === 'coached' ? 'Coach' : 'Interviewer';
-  const helpBadge = sessionState.setting === 'coached' ? 'Full help' : 'Hints only';
-  const settingLabel =
-    sessionState.setting === 'coached'
-      ? 'Coached'
-      : sessionState.setting === 'mock'
-      ? 'Mock'
-      : 'Watched';
-
-  const threadTurns: PracticeThreadTurn[] = sessionState.turns.map((t) => ({
-    id: t.id,
-    speaker: t.speaker === 'learner' ? 'learner' : sessionState.setting === 'coached' ? 'coach' : 'counterpart',
-    name: t.speaker === 'learner' ? 'You' : counterpartName,
-    content: t.content,
-    createdAt: t.createdAt,
-  }));
-
-  const fileTabsList: FileTabItem[] = sessionState.draftFiles.map((f) => ({
-    path: f.path,
-    label: f.path,
-  }));
-
-  const lastRun = sessionState.runs[sessionState.runs.length - 1] ?? null;
+  if (!loaded) {
+    const state: StatusState = failure
+      ? { kind: 'error', message: failure, retry: () => setAttempt((value) => value + 1) }
+      : { kind: 'busy', label: 'Opening your session…' };
+    return (
+      <div className="p-4">
+        <StatusLine state={state} />
+        {failure ? (
+          <button
+            type="button"
+            onClick={onExit}
+            className="mt-3 min-h-[44px] cursor-pointer rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-primary hover:bg-surface-raised"
+          >
+            Back to Practice
+          </button>
+        ) : null}
+      </div>
+    );
+  }
 
   return (
-    <div className={`flex flex-col min-h-screen bg-bg text-text-primary ${className}`}>
-      {/* Top Header */}
-      <header className="border-b border-border-default bg-surface px-4 py-3 sm:px-6">
-        <div className="mx-auto flex max-w-7xl flex-wrap items-center justify-between gap-4">
-          <div className="flex flex-wrap items-center gap-3">
-            {onExit && (
-              <button
-                type="button"
-                onClick={onExit}
-                className="text-xs font-medium text-text-secondary hover:text-text-primary cursor-pointer"
-              >
-                ← Practice
-              </button>
-            )}
-            <h1 className="font-serif text-lg font-semibold text-text-primary sm:text-xl m-0">
-              {sessionState.problem.title}
-            </h1>
-            <span className="inline-flex items-center rounded-md bg-accent-muted px-2.5 py-1 text-xs font-semibold text-accent">
-              {settingLabel}
-            </span>
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-raised px-2.5 py-0.5 text-xs font-medium text-text-secondary">
-              <Bot className="h-3.5 w-3.5" aria-hidden="true" />
-              <span>{helpBadge}</span>
-            </span>
-          </div>
+    <Workspace
+      programId={programId}
+      initial={loaded.session}
+      activityRevision={loaded.activityRevision}
+      onExit={onExit}
+      onTryInterview={onTryInterview}
+    />
+  );
+}
 
-          <div className="flex items-center gap-4">
-            <div className="flex items-center gap-2 text-xs text-text-secondary">
-              <span>Elapsed</span>
-              <ElapsedClock
-                elapsedMs={sessionState.activeMs}
-                running={!sessionState.finishedAt}
-              />
-              {sessionState.budgetSeconds && (
-                <span className="text-text-tertiary">
-                  of {Math.round(sessionState.budgetSeconds / 60)} min
-                </span>
-              )}
-            </div>
-            <button
-              type="button"
-              onClick={handleFinish}
-              className="inline-flex min-h-[36px] cursor-pointer items-center justify-center rounded-lg border border-border-default bg-surface px-4 text-xs font-semibold text-text-primary hover:bg-surface-raised"
-            >
-              Finish
-            </button>
-          </div>
+interface WorkspaceProps {
+  programId: string;
+  initial: Wire.CodingSessionDto;
+  activityRevision: number;
+  onExit: () => void;
+  onTryInterview: (setting: Wire.CodingSetting) => void;
+}
+
+function Workspace({ programId, initial, activityRevision, onExit, onTryInterview }: WorkspaceProps) {
+  const sessionId = initial.sessionId;
+  const [session, setSession] = useState(initial);
+  const sessionRef = useRef(initial);
+  const [clock, setClock] = useState(initial.clock);
+  const [panel, setPanel] = useState<Panel>('code');
+  const [activePath, setActivePath] = useState<string | null>(null);
+  const [activityAt, setActivityAt] = useState(0);
+  const [running, setRunning] = useState(false);
+  const [asking, setAsking] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const [finishing, setFinishing] = useState(false);
+  const [replyBusy, setReplyBusy] = useState(false);
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [sendError, setSendError] = useState<Failure | null>(null);
+  const [actionError, setActionError] = useState<Failure | null>(null);
+
+  const alive = useRef(true);
+  const responding = useRef(false);
+  const drainRef = useRef<() => Promise<void>>(async () => undefined);
+
+  const apply = useCallback((next: Wire.CodingSessionDto) => {
+    sessionRef.current = next;
+    setSession(next);
+    if (next.cuePending) void drainRef.current();
+  }, []);
+
+  const drain = useCallback(async () => {
+    if (responding.current) return;
+    responding.current = true;
+    setReplyBusy(true);
+    setReplyError(null);
+    try {
+      while (alive.current && sessionRef.current.cuePending) {
+        apply(await codingApi.respond({ programId, sessionId }));
+      }
+    } catch (error) {
+      if (alive.current) setReplyError(getErrorMessage(error));
+    } finally {
+      responding.current = false;
+      if (alive.current) setReplyBusy(false);
+    }
+  }, [apply, programId, sessionId]);
+  drainRef.current = drain;
+
+  useEffect(() => {
+    alive.current = true;
+    if (sessionRef.current.cuePending) void drainRef.current();
+    return () => {
+      alive.current = false;
+    };
+  }, []);
+
+  const refresh = useCallback(async () => {
+    try {
+      apply(await codingApi.getSession({ programId, sessionId }));
+    } catch {
+      /* the failure that led here is already shown */
+    }
+  }, [apply, programId, sessionId]);
+
+  const touch = useCallback(() => setActivityAt((value) => value + 1), []);
+
+  const starterFiles = useMemo(() => initial.draft, [initial]);
+  const draft = useLearningLabDraft({
+    programId,
+    activityId: initial.activityId,
+    activityRevision,
+    starterFiles,
+  });
+  const files = draft.files;
+  const filesRef = useRef(files);
+  filesRef.current = files;
+
+  const current = files.find((file) => file.path === activePath) ?? files[0];
+
+  useEffect(() => {
+    if (initial.finished) return;
+    const set = (open: boolean) => {
+      codingApi
+        .setClock({ programId, sessionId, open })
+        .then(setClock)
+        .catch(() => undefined);
+    };
+    if (!document.hidden) set(true);
+    const onVisibility = () => set(!document.hidden);
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisibility);
+      if (!sessionRef.current.finished) set(false);
+    };
+  }, [initial.finished, programId, sessionId]);
+
+  const observe = useCallback(
+    async (reason: Wire.DraftObservation) => {
+      try {
+        apply(await codingApi.observeDraft({ programId, sessionId, files: filesRef.current, reason }));
+      } catch {
+        /* the next checkpoint looks again */
+      }
+    },
+    [apply, programId, sessionId],
+  );
+
+  const codeSignature = files.map((file) => `${file.path}\u0000${file.content}`).join('\u0001');
+  const lastObserved = useRef(codeSignature);
+  useEffect(() => {
+    if (session.setting !== 'watched' || session.finished || codeSignature === lastObserved.current) return;
+    const timer = setTimeout(() => {
+      lastObserved.current = codeSignature;
+      void observe('pause');
+    }, TYPING_PAUSE_MS);
+    return () => clearTimeout(timer);
+  }, [codeSignature, session.setting, session.finished, observe]);
+
+  useEffect(() => {
+    if (session.setting !== 'coached' || session.finished) return;
+    const timer = setTimeout(() => void observe('idle'), IDLE_AFTER_MS);
+    return () => clearTimeout(timer);
+  }, [activityAt, session.setting, session.finished, observe]);
+
+  const guarded = useCallback(
+    async (work: () => Promise<Wire.CodingSessionDto>, retry?: () => void) => {
+      setActionError(null);
+      try {
+        apply(await work());
+        return true;
+      } catch (error) {
+        setActionError({ message: getErrorMessage(error), retry });
+        void refresh();
+        return false;
+      }
+    },
+    [apply, refresh],
+  );
+
+  const run = useCallback(
+    async (scope: Wire.CodingRunScope, input: string[] | null = null) => {
+      if (running) return;
+      touch();
+      setRunning(true);
+      await guarded(
+        () =>
+          codingApi.run({
+            operationId: newId(),
+            runId: newId(),
+            programId,
+            sessionId,
+            scope,
+            files: filesRef.current,
+            input,
+          }),
+        () => void run(scope, input),
+      );
+      setRunning(false);
+    },
+    [guarded, programId, running, sessionId, touch],
+  );
+
+  const onEditorKeys = (event: KeyboardEvent) => {
+    if (event.key === 'Enter' && event.shiftKey && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      event.stopPropagation();
+      void run('all');
+    }
+  };
+
+  const ask = async () => {
+    setAsking(true);
+    await guarded(
+      () =>
+        codingApi.askHint({
+          operationId: newId(),
+          programId,
+          sessionId,
+          files: filesRef.current,
+          expectedRevision: sessionRef.current.revision,
+        }),
+      () => void ask(),
+    );
+    setAsking(false);
+  };
+
+  const move = (stage: Wire.CodingStage) =>
+    guarded(() =>
+      codingApi.moveStage({
+        operationId: newId(),
+        programId,
+        sessionId,
+        stage,
+        expectedRevision: sessionRef.current.revision,
+      }),
+    );
+
+  const checkExample = async (example: { ordinal: number | null; args: string[]; expected: string }) => {
+    touch();
+    setChecking(true);
+    const ok = await guarded(() => codingApi.checkExample({ operationId: newId(), programId, sessionId, ...example }));
+    setChecking(false);
+    if (!ok) throw new Error('The example could not be checked.');
+  };
+
+  const removeExample = async (ordinal: number) => {
+    await guarded(() => codingApi.removeExample({ operationId: newId(), programId, sessionId, ordinal }));
+  };
+
+  const changeSetting = (setting: Wire.CodingSetting) =>
+    guarded(() =>
+      codingApi.setSetting({
+        operationId: newId(),
+        programId,
+        sessionId,
+        setting,
+        expectedRevision: sessionRef.current.revision,
+      }),
+    );
+
+  const reveal = () => guarded(() => codingApi.revealSolution({ operationId: newId(), programId, sessionId }));
+
+  const send = async (content: string, spoken: boolean): Promise<void> => {
+    touch();
+    setSendError(null);
+    try {
+      apply(
+        await codingApi.sendTurn({
+          operationId: newId(),
+          programId,
+          sessionId,
+          content,
+          spoken,
+          files: filesRef.current,
+          expectedRevision: sessionRef.current.revision,
+        }),
+      );
+    } catch (error) {
+      setSendError({ message: getErrorMessage(error), retry: () => void send(content, spoken) });
+      void refresh();
+    }
+  };
+
+  const finish = async () => {
+    setFinishing(true);
+    await draft.flush();
+    await guarded(
+      () => codingApi.finish({ operationId: newId(), programId, sessionId, files: filesRef.current }),
+      () => void finish(),
+    );
+    setFinishing(false);
+  };
+
+  const elapsedMs = useMemo(
+    () => clock.activeMs + (clock.openSince != null ? Math.max(0, Date.now() - clock.openSince) : 0),
+    [clock],
+  );
+
+  if (session.finished && session.debrief) {
+    return (
+      <Debrief
+        title={session.problem.title}
+        debrief={session.debrief}
+        onExit={onExit}
+        onTryInterview={() => onTryInterview(lastInterviewSetting(programId))}
+      />
+    );
+  }
+
+  const { problem, setting } = session;
+  const lastRun = session.runs[session.runs.length - 1] as Wire.CodingRunDto | undefined;
+  const counterpart = setting === 'coached' ? 'Coach' : 'Interviewer';
+  const messages: ThreadMessage[] = session.turns.map((turn) => ({
+    id: turn.id,
+    speaker: turn.speaker,
+    content: turn.content,
+  }));
+  const threadError = replyError ? { message: replyError, retry: () => void drain() } : sendError;
+  const saveFailure: Failure | null =
+    draft.saveState === 'error' || draft.saveState === 'conflict'
+      ? {
+          message: draft.error ?? 'Your code could not be saved.',
+          retry: () => void (draft.saveState === 'conflict' ? draft.keepLocalEdits() : draft.flush()),
+        }
+      : null;
+  const shown = actionError ?? saveFailure;
+  const status: StatusState | null = finishing
+    ? { kind: 'busy', label: 'Writing your debrief…' }
+    : shown
+      ? { kind: 'error', message: shown.message, retry: shown.retry }
+      : null;
+
+  const panelClass = (name: Panel) =>
+    `${panel === name ? 'flex' : 'hidden'} min-h-0 flex-col gap-4 lg:flex lg:overflow-y-auto`;
+
+  return (
+    <div className="flex h-full min-h-0 flex-col gap-3 p-3 sm:p-4">
+      <header className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex flex-wrap items-center gap-3">
+          <button
+            type="button"
+            onClick={onExit}
+            className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-lg px-2 text-sm font-medium text-text-secondary hover:text-text-primary"
+          >
+            <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+            <span>Practice</span>
+          </button>
+          <h1 className="m-0 font-serif text-xl font-semibold text-text-primary">{problem.title}</h1>
         </div>
-
-        {/* Stage Rail */}
-        <div className="mx-auto max-w-7xl pt-3">
-          <StageRail
-            currentStage={sessionState.stage}
-            onSelectStage={handleStageSelect}
+        <div className="flex flex-wrap items-center gap-3">
+          <div className="flex items-center gap-2">
+            <label htmlFor="coding-setting" className="text-sm text-text-secondary">
+              Setting
+            </label>
+            <select
+              id="coding-setting"
+              value={setting}
+              onChange={(event) => void changeSetting(event.target.value as Wire.CodingSetting)}
+              className="min-h-[44px] rounded-lg border border-border-default bg-surface px-2 text-sm text-text-primary"
+            >
+              {SETTINGS.map((option) => (
+                <option key={option} value={option}>
+                  {SETTING_NAMES[option]}
+                </option>
+              ))}
+            </select>
+            <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-raised px-2.5 py-1 text-xs font-medium text-text-secondary">
+              <ShieldCheck className="h-3.5 w-3.5" aria-hidden="true" />
+              <span>{HELP_NAMES[setting]}</span>
+            </span>
+          </div>
+          <ElapsedClock
+            elapsedMs={elapsedMs}
+            running={clock.openSince != null && !session.finished}
+            softLimitMs={clock.budgetSeconds != null ? clock.budgetSeconds * 1000 : null}
+            label="Elapsed"
           />
+          <button
+            type="button"
+            onClick={() => void finish()}
+            disabled={finishing}
+            className="min-h-[44px] cursor-pointer rounded-lg bg-accent px-4 text-sm font-semibold text-accent-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            Finish
+          </button>
         </div>
       </header>
 
-      {/* Mobile / Narrow Screen Tab Switcher */}
-      <div className="lg:hidden border-b border-border-default bg-surface px-4 py-2">
-        <div role="tablist" aria-label="Workspace panels" className="flex items-center gap-2">
+      <StageRail stages={session.stages} current={session.stage} onSelect={(stage) => void move(stage)} />
+
+      {status ? <StatusLine state={status} /> : null}
+
+      <div role="tablist" aria-label="Workspace panels" className="flex gap-2 lg:hidden">
+        {(
+          [
+            ['problem', 'Problem'],
+            ['code', 'Code'],
+            ['talk', counterpart],
+          ] as [Panel, string][]
+        ).map(([name, label]) => (
           <button
+            key={name}
             type="button"
             role="tab"
-            aria-selected={mobileTab === 'problem'}
-            onClick={() => setMobileTab('problem')}
-            className={`min-h-[36px] rounded-lg px-3 text-xs font-medium ${
-              mobileTab === 'problem'
-                ? 'bg-accent text-accent-fg font-semibold'
-                : 'text-text-secondary hover:text-text-primary'
+            aria-selected={panel === name}
+            onClick={() => setPanel(name)}
+            className={`min-h-[44px] cursor-pointer rounded-lg px-3 text-sm ${
+              panel === name ? 'bg-accent font-semibold text-accent-fg' : 'text-text-secondary hover:text-text-primary'
             }`}
           >
-            Problem
+            {label}
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mobileTab === 'code'}
-            onClick={() => setMobileTab('code')}
-            className={`min-h-[36px] rounded-lg px-3 text-xs font-medium ${
-              mobileTab === 'code'
-                ? 'bg-accent text-accent-fg font-semibold'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            Code
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={mobileTab === 'counterpart'}
-            onClick={() => setMobileTab('counterpart')}
-            className={`min-h-[36px] rounded-lg px-3 text-xs font-medium ${
-              mobileTab === 'counterpart'
-                ? 'bg-accent text-accent-fg font-semibold'
-                : 'text-text-secondary hover:text-text-primary'
-            }`}
-          >
-            {counterpartName}
-          </button>
-        </div>
+        ))}
       </div>
 
-      {/* Main Workspace Body: 3-column on lg+, tabs on mobile */}
-      <main className="mx-auto max-w-7xl w-full flex-1 p-4 sm:p-6">
-        <div className="grid grid-cols-1 gap-6 lg:grid-cols-12">
-          {/* Column 1: Problem & Examples (4 cols on lg) */}
-          <div
-            className={`space-y-6 lg:col-span-4 ${
-              mobileTab === 'problem' ? 'block' : 'hidden lg:block'
-            }`}
-          >
-            <ProblemPane
-              problem={sessionState.problem}
-              setting={sessionState.setting}
-            />
-            <ExamplesTable
-              examples={sessionState.examples}
-              totalMisreadings={sessionState.problem.totalMisreadings}
-              onCheckExample={handleCheckExample}
-              checking={checkingExample}
-              paramNames={sessionState.problem.signature.params.map((p) => p.name)}
-            />
-          </div>
-
-          {/* Column 2: Code Editor, RunBar, & HintLadder (5 cols on lg) */}
-          <div
-            className={`space-y-6 lg:col-span-5 ${
-              mobileTab === 'code' ? 'block' : 'hidden lg:block'
-            }`}
-          >
-            <div className="rounded-xl border border-border-default bg-surface shadow-xs overflow-hidden">
-              <FileTabs
-                files={fileTabsList}
-                activePath={activeFile}
-                onSelect={setActiveFile}
-              />
-              <div
-                className="bg-surface-sunken"
-                onInput={(e) => {
-                  const target = e.target as HTMLElement | null;
-                  if (
-                    target?.classList?.contains('cm-content') &&
-                    !target.querySelector('.cm-line') &&
-                    typeof target.textContent === 'string'
-                  ) {
-                    handleCodeChange(target.textContent);
-                  }
-                }}
+      <div className="grid min-h-0 flex-1 gap-4 lg:grid-cols-[minmax(0,1fr)_minmax(0,1.3fr)_minmax(0,1fr)]">
+        <div className={panelClass('problem')}>
+          <ProblemPane problem={problem} workedSolution={session.workedSolution} />
+          {!session.workedSolution ? (
+            <div className="flex flex-col items-start gap-1">
+              <button
+                type="button"
+                onClick={() => void reveal()}
+                disabled={!session.solutionAvailable}
+                aria-describedby={session.solutionAvailable ? undefined : 'coding-solution-reason'}
+                className="min-h-[44px] cursor-pointer rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-primary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
               >
-                <LearningCodeEditor
-                  path={activeFileObj?.path ?? 'solution.py'}
-                  value={fileContent}
-                  onChange={handleCodeChange}
-                  readOnly={false}
-                  onRunShortcut={() => handleRun('examples')}
-                  minHeight={320}
-                />
-              </div>
+                Show the worked solution
+              </button>
+              {!session.solutionAvailable ? (
+                <span id="coding-solution-reason" className="text-sm text-text-secondary">
+                  {setting === 'coached' ? 'It opens after your first submit.' : 'It comes with your debrief.'}
+                </span>
+              ) : null}
             </div>
-
-            <RunBar
-              onRunExamples={() => handleRun('examples')}
-              onRunCustom={(customInput) => handleRun('input', customInput)}
-              onSubmit={() => handleRun('all')}
-              running={running}
-              lastRun={lastRun}
-            />
-
-            {/* HintLadder is visible ONLY in Coached mode */}
-            {sessionState.setting === 'coached' && (
-              <HintLadder
-                hints={sessionState.hints}
-                availableNextRung={sessionState.availableNextRung}
-                onAskHint={handleAskHint}
-                asking={askingHint}
-              />
-            )}
-          </div>
-
-          {/* Column 3: Counterpart Thread (3 cols on lg) */}
-          <div
-            className={`lg:col-span-3 ${
-              mobileTab === 'counterpart' ? 'block' : 'hidden lg:block'
-            }`}
-          >
-            <div className="rounded-xl border border-border-default bg-surface p-4 shadow-xs">
-              <div className="mb-3 flex items-center gap-2 border-b border-border-subtle pb-3">
-                <MessageSquare className="h-4 w-4 text-accent" aria-hidden="true" />
-                <h2 className="font-serif text-lg font-semibold text-text-primary m-0">
-                  {counterpartName}
-                </h2>
-              </div>
-
-              <PracticeThread
-                draftKey={`coding-session-${sessionState.id}`}
-                turns={threadTurns}
-                onSend={handleSendTurn}
-                busy={counterpartBusy}
-                busyLabel={counterpartBusy}
-                placeholder={
-                  sessionState.setting === 'watched'
-                    ? 'Type your thinking, or use the mic…'
-                    : 'Ask, or explain your thinking…'
-                }
-                hint={
-                  sessionState.setting === 'watched'
-                    ? 'Talk through your thinking: type or use the mic'
-                    : undefined
-                }
-                footerActions={
-                  sessionState.setting === 'watched' ? (
-                    <div className="flex items-center gap-2 pt-2">
-                      <button
-                        type="button"
-                        onClick={handleAskHint}
-                        disabled={askingHint}
-                        className="inline-flex min-h-[36px] cursor-pointer items-center gap-1.5 rounded-lg border border-border-default bg-surface px-3 text-xs font-semibold text-text-primary hover:bg-surface-raised"
-                      >
-                        <HelpCircle className="h-3.5 w-3.5 text-text-secondary" aria-hidden="true" />
-                        <span>I&apos;m stuck</span>
-                      </button>
-                      <span className="text-xxs text-text-tertiary">
-                        Hints are noted in your debrief.
-                      </span>
-                    </div>
-                  ) : undefined
-                }
-              />
-            </div>
-          </div>
+          ) : null}
+          <ExamplesTable
+            signature={problem.signature}
+            examples={session.examples}
+            coverage={session.coverage}
+            busy={checking}
+            onCheck={checkExample}
+            onRemove={removeExample}
+          />
         </div>
-      </main>
+
+        <div className={panelClass('code')}>
+          <div
+            className="overflow-hidden rounded-xl border border-border-default bg-surface"
+            onKeyDownCapture={onEditorKeys}
+          >
+            {files.length > 1 ? (
+              <FileTabs
+                label="Files"
+                files={files.map((file) => ({ path: file.path }))}
+                active={current?.path ?? ''}
+                onSelect={setActivePath}
+              />
+            ) : null}
+            {current ? (
+              <LearningCodeEditor
+                path={current.path}
+                value={current.content}
+                onChange={(value) => {
+                  touch();
+                  draft.setFileContent(current.path, value);
+                }}
+                ariaLabel="Code"
+                minHeight={280}
+                showPath={files.length <= 1}
+                onRunShortcut={() => void run('examples')}
+              />
+            ) : null}
+          </div>
+
+          <RunBar
+            signature={problem.signature}
+            running={running}
+            onRunExamples={() => void run('examples')}
+            onSubmit={() => void run('all')}
+            onTryInput={(args) => void run('input', args)}
+          />
+
+          <section aria-labelledby="coding-results-heading" className="flex flex-col gap-2">
+            <h2 id="coding-results-heading" className="sr-only">
+              Results
+            </h2>
+            <CaseResults
+              cases={caseResultViews(lastRun?.cases ?? [])}
+              title={lastRun ? RUN_TITLES[lastRun.scope] : 'Results'}
+              emptyText="Run your examples to see the results here."
+            />
+            {lastRun?.referenceActual != null ? (
+              <p className="m-0 text-sm text-text-primary">
+                The reference returns <code className="font-mono">{lastRun.referenceActual}</code>
+              </p>
+            ) : null}
+            {lastRun && (lastRun.stdout || lastRun.stderr) ? (
+              <details className="rounded-lg border border-border-default bg-surface-sunken p-3 text-sm">
+                <summary className="cursor-pointer font-semibold text-text-primary">What your program printed</summary>
+                <pre className="m-0 mt-2 overflow-x-auto font-mono text-sm text-text-primary">
+                  {lastRun.stdout}
+                  {lastRun.stderr}
+                </pre>
+              </details>
+            ) : null}
+          </section>
+
+          {setting !== 'watched' ? (
+            <HintLadder hints={session.hints} nextRung={session.nextRung} asking={asking} onAsk={() => void ask()} />
+          ) : null}
+        </div>
+
+        <div className={panelClass('talk')}>
+          <section
+            aria-labelledby="coding-thread-heading"
+            className="flex min-h-0 flex-col gap-3 rounded-xl border border-border-default bg-surface p-4"
+          >
+            <h2 id="coding-thread-heading" className="m-0 font-serif text-lg font-semibold text-text-primary">
+              {counterpart}
+            </h2>
+            <PracticeThread
+              label={`Message the ${counterpart.toLowerCase()}`}
+              messages={messages}
+              onSend={send}
+              busy={replyBusy ? BUSY_LABEL : null}
+              error={threadError}
+              placeholder={setting === 'watched' ? 'Think out loud…' : 'Ask, or explain your thinking…'}
+              draftKey={`coding-thread-${sessionId}`}
+              suggestion={setting === 'watched' ? 'Talk through your thinking: type or use the mic' : null}
+              disabled={session.finished ? { reason: 'This session is finished.' } : null}
+            />
+            {setting === 'watched' ? (
+              <div className="flex flex-col items-start gap-1">
+                <button
+                  type="button"
+                  onClick={() => void ask()}
+                  disabled={asking}
+                  className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-primary hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <HelpCircle className="h-4 w-4" aria-hidden="true" />
+                  <span>I&apos;m stuck</span>
+                </button>
+                <span className="text-sm text-text-secondary">
+                  The interviewer answers in the conversation. Hints are noted in your debrief.
+                </span>
+              </div>
+            ) : null}
+          </section>
+        </div>
+      </div>
     </div>
   );
 }

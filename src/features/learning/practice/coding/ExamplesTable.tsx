@@ -1,210 +1,196 @@
-import { useState } from 'react';
-import { AlertCircle, Check, X } from 'lucide-react';
-import type { CodingExampleDto, ExampleVerdict } from './codingApi';
+import { useState, type FormEvent } from 'react';
+import { AlertTriangle, Check, X } from 'lucide-react';
+
+import type * as Wire from '@/lib/bindings';
 
 export interface ExamplesTableProps {
-  examples: CodingExampleDto[];
-  totalMisreadings: number;
-  onCheckExample: (argsJson: string, expectedJson: string) => Promise<void> | void;
-  checking?: boolean;
-  paramNames?: string[];
-  className?: string;
+  signature: Wire.ProblemSignature;
+  examples: Wire.CodingExampleDto[];
+  coverage: Wire.ExampleCoverageDto;
+  busy?: boolean;
+  onCheck: (example: { ordinal: number | null; args: string[]; expected: string }) => Promise<void>;
+  onRemove: (ordinal: number) => Promise<void>;
 }
 
-function VerdictBadge({ verdict }: { verdict: ExampleVerdict }) {
-  if (verdict === 'right') {
-    return (
-      <span className="inline-flex min-h-[28px] items-center gap-1.5 rounded-full bg-success-muted px-2.5 text-xs font-medium text-success-fg">
-        <Check className="h-3.5 w-3.5" aria-hidden="true" />
-        <span>Right</span>
-      </span>
-    );
-  }
+const FIELD =
+  'min-h-[44px] rounded-lg border border-border-default bg-surface px-3 py-2 font-mono text-sm text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring';
 
-  if (verdict === 'wrong') {
-    return (
-      <span className="inline-flex min-h-[28px] items-center gap-1.5 rounded-full bg-danger-muted px-2.5 text-xs font-medium text-danger-fg">
-        <X className="h-3.5 w-3.5" aria-hidden="true" />
-        <span>Not right</span>
-      </span>
-    );
-  }
-
+function Verdict({ example }: { example: Wire.CodingExampleDto }) {
+  const look = {
+    right: { Icon: Check, text: 'Right', tone: 'bg-success-muted text-success-fg' },
+    wrong: { Icon: X, text: 'Not right', tone: 'bg-danger-muted text-danger-fg' },
+    invalid: { Icon: AlertTriangle, text: 'Invalid', tone: 'bg-warning-muted text-warning-fg' },
+  }[example.verdict];
   return (
-    <span className="inline-flex min-h-[28px] items-center gap-1.5 rounded-full bg-warning-muted px-2.5 text-xs font-medium text-warning-fg">
-      <AlertCircle className="h-3.5 w-3.5" aria-hidden="true" />
-      <span>Invalid</span>
-    </span>
+    <div className="flex flex-col gap-1">
+      <span className={`inline-flex w-fit items-center gap-1.5 rounded-full px-2.5 py-1 text-xs font-medium ${look.tone}`}>
+        <look.Icon className="h-3.5 w-3.5" aria-hidden="true" />
+        <span>{look.text}</span>
+      </span>
+      {example.verdict === 'wrong' ? (
+        <span className="text-xs text-text-secondary">
+          {example.expects != null
+            ? `The problem expects ${example.expects}`
+            : "That's not what the problem expects. Check the statement."}
+        </span>
+      ) : null}
+      {example.verdict === 'invalid' && example.whyInvalid ? (
+        <span className="text-xs text-text-secondary">{example.whyInvalid}</span>
+      ) : null}
+    </div>
   );
 }
 
-export function ExamplesTable({
-  examples,
-  totalMisreadings,
-  onCheckExample,
-  checking = false,
-  paramNames = ['sentence'],
-  className = '',
-}: ExamplesTableProps) {
-  const [argsInput, setArgsInput] = useState('');
-  const [expectedInput, setExpectedInput] = useState('');
+export function ExamplesTable({ signature, examples, coverage, busy = false, onCheck, onRemove }: ExamplesTableProps) {
+  const blank = signature.params.map(() => '');
+  const [args, setArgs] = useState<string[]>(blank);
+  const [expected, setExpected] = useState('');
+  const [editing, setEditing] = useState<number | null>(null);
 
-  // Collect unique misreadings caught across all examples
-  const caughtSet = new Set<string>();
-  for (const ex of examples) {
-    if (ex.verdict === 'right' && ex.catches) {
-      for (const c of ex.catches) {
-        caughtSet.add(c);
-      }
+  const complete = args.every((value) => value.trim() !== '') && expected.trim() !== '';
+
+  const reset = () => {
+    setArgs(blank);
+    setExpected('');
+    setEditing(null);
+  };
+
+  const submit = async (event: FormEvent) => {
+    event.preventDefault();
+    if (!complete || busy) return;
+    try {
+      await onCheck({ ordinal: editing, args: args.map((value) => value.trim()), expected: expected.trim() });
+      reset();
+    } catch {
+      /* the screen shows why, and the fields keep what was typed */
     }
-  }
-  const caughtCount = Math.min(caughtSet.size, totalMisreadings);
-  const total = Math.max(totalMisreadings, 1);
+  };
 
-  const primaryParam = paramNames[0] || 'sentence';
-
-  const handleCheck = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!argsInput.trim() || checking) return;
-
-    // Normalize args to JSON array if user typed single string or raw value
-    let normalizedArgs = argsInput.trim();
-    if (!normalizedArgs.startsWith('[')) {
-      normalizedArgs = `[${normalizedArgs}]`;
-    }
-
-    const normalizedExpected = expectedInput.trim();
-    await onCheckExample(normalizedArgs, normalizedExpected);
-    setArgsInput('');
-    setExpectedInput('');
+  const edit = (example: Wire.CodingExampleDto) => {
+    setArgs(signature.params.map((_, index) => example.args[index] ?? ''));
+    setExpected(example.expected);
+    setEditing(example.ordinal);
   };
 
   return (
-    <section
-      aria-labelledby="examples-table-heading"
-      className={`rounded-xl border border-border-default bg-surface p-5 shadow-xs ${className}`}
-    >
-      <h2
-        id="examples-table-heading"
-        className="mb-2 font-serif text-xl font-semibold text-text-primary"
-      >
+    <section aria-labelledby="coding-examples-heading" className="rounded-xl border border-border-default bg-surface p-4">
+      <h2 id="coding-examples-heading" className="m-0 mb-2 font-serif text-lg font-semibold text-text-primary">
         Your examples
       </h2>
+      <p role="status" className="m-0 text-sm font-medium text-text-primary">
+        Your examples catch {coverage.caught} of {coverage.total} common mistakes
+      </p>
+      {coverage.uncaught ? (
+        <p className="m-0 mt-1 text-sm text-text-secondary">Not caught yet: {coverage.uncaught}</p>
+      ) : null}
 
-      {/* Misreading coverage summary */}
-      <div className="mb-4 flex flex-wrap items-center gap-3">
-        <p role="status" className="m-0 font-medium text-sm text-text-primary">
-          Your examples catch {caughtCount} of {total} common mistakes
-        </p>
-        <div aria-hidden="true" className="flex gap-1">
-          {Array.from({ length: total }).map((_, i) => (
-            <span
-              key={i}
-              className={`block h-2 w-9 rounded-full border border-border-subtle transition-colors ${
-                i < caughtCount ? 'bg-success-fg' : 'bg-surface-raised'
-              }`}
-            />
-          ))}
-        </div>
-      </div>
-
-      {/* Examples Table */}
-      {examples.length > 0 && (
-        <div className="mb-4 overflow-x-auto rounded-lg border border-border-subtle">
-          <table className="w-full min-w-[500px] border-collapse text-left text-xs">
+      {examples.length > 0 ? (
+        <div className="mt-3 overflow-x-auto rounded-lg border border-border-subtle">
+          <table className="w-full border-collapse text-left text-sm">
             <caption className="sr-only">Your checked examples</caption>
             <thead>
-              <tr className="border-b border-border-default bg-surface-sunken">
-                <th scope="col" className="p-2.5 font-mono font-semibold text-text-secondary">
-                  {primaryParam}
-                </th>
-                <th scope="col" className="p-2.5 font-mono font-semibold text-text-secondary">
-                  expected
-                </th>
-                <th scope="col" className="p-2.5 font-semibold text-text-secondary">
-                  Result
-                </th>
-                <th scope="col" className="p-2.5 font-semibold text-text-secondary">
-                  Catches
-                </th>
+              <tr className="border-b border-border-default bg-surface-sunken text-xs text-text-secondary">
+                <th scope="col" className="p-2 font-semibold">Call</th>
+                <th scope="col" className="p-2 font-semibold">Expected</th>
+                <th scope="col" className="p-2 font-semibold">Verdict</th>
+                <th scope="col" className="p-2 font-semibold"><span className="sr-only">Actions</span></th>
               </tr>
             </thead>
             <tbody className="divide-y divide-border-subtle">
-              {examples.map((ex, idx) => {
-                // Parse or display argsJson nicely
-                let displayArgs = ex.argsJson;
-                try {
-                  const parsed = JSON.parse(ex.argsJson);
-                  if (Array.isArray(parsed) && parsed.length === 1) {
-                    displayArgs = typeof parsed[0] === 'string' ? `"${parsed[0]}"` : String(parsed[0]);
-                  }
-                } catch {
-                  // Keep raw string
-                }
-
-                return (
-                  <tr key={idx} className="bg-surface hover:bg-surface-sunken/40">
-                    <td className="p-2.5 font-mono text-text-primary align-top whitespace-pre-wrap">
-                      {displayArgs}
-                    </td>
-                    <td className="p-2.5 font-mono text-text-primary align-top whitespace-pre-wrap">
-                      {ex.expectedJson || 'None'}
-                    </td>
-                    <td className="p-2.5 align-top">
-                      <VerdictBadge verdict={ex.verdict} />
-                    </td>
-                    <td className="p-2.5 text-text-secondary align-top">
-                      {ex.catches && ex.catches.length > 0
-                        ? ex.catches.join(', ')
-                        : '—'}
-                    </td>
-                  </tr>
-                );
-              })}
+              {examples.map((example, index) => (
+                <tr key={example.ordinal} className="align-top">
+                  <td className="whitespace-pre-wrap p-2 font-mono text-text-primary">
+                    {signature.function}({example.args.join(', ')})
+                  </td>
+                  <td className="whitespace-pre-wrap p-2 font-mono text-text-primary">{example.expected}</td>
+                  <td className="p-2"><Verdict example={example} /></td>
+                  <td className="p-2">
+                    <div className="flex flex-wrap gap-2">
+                      <button
+                        type="button"
+                        onClick={() => edit(example)}
+                        aria-label={`Edit example ${index + 1}`}
+                        className="min-h-[36px] cursor-pointer rounded-lg border border-border-default bg-surface px-3 text-xs font-semibold text-text-primary hover:bg-surface-raised"
+                      >
+                        Edit
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => void onRemove(example.ordinal)}
+                        aria-label={`Remove example ${index + 1}`}
+                        className="min-h-[36px] cursor-pointer rounded-lg border border-border-default bg-surface px-3 text-xs font-semibold text-text-primary hover:bg-surface-raised"
+                      >
+                        Remove
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
-      )}
+      ) : null}
 
-      {/* Example input form */}
-      <form onSubmit={handleCheck} className="flex flex-wrap items-end gap-3 pt-2">
-        <div className="flex flex-col gap-1.5 flex-1 min-w-[140px]">
-          <label htmlFor="ex-args" className="text-xs font-semibold text-text-primary">
-            {primaryParam}
-          </label>
-          <input
-            id="ex-args"
-            type="text"
-            value={argsInput}
-            onChange={(e) => setArgsInput(e.target.value)}
-            placeholder={`"a b a"`}
-            className="min-h-[44px] rounded-lg border border-border-default bg-surface px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-          />
+      <form onSubmit={submit} className="mt-3 flex flex-col gap-3">
+        <div className="flex flex-wrap items-end gap-3">
+          {signature.params.map((param, index) => (
+            <div key={param.name} className="flex min-w-[8rem] flex-1 flex-col gap-1">
+              <label htmlFor={`coding-example-${param.name}`} className="text-xs font-semibold text-text-primary">
+                {param.name}
+              </label>
+              <input
+                id={`coding-example-${param.name}`}
+                value={args[index] ?? ''}
+                onChange={(event) => setArgs((current) => current.map((value, at) => (at === index ? event.target.value : value)))}
+                spellCheck={false}
+                autoComplete="off"
+                className={FIELD}
+              />
+              <span className="font-mono text-xs text-text-secondary">{param.annotation}</span>
+            </div>
+          ))}
+          <div className="flex min-w-[8rem] flex-1 flex-col gap-1">
+            <label htmlFor="coding-example-expected" className="text-xs font-semibold text-text-primary">
+              expected
+            </label>
+            <input
+              id="coding-example-expected"
+              value={expected}
+              onChange={(event) => setExpected(event.target.value)}
+              spellCheck={false}
+              autoComplete="off"
+              className={FIELD}
+            />
+            <span className="font-mono text-xs text-text-secondary">{signature.returns}</span>
+          </div>
         </div>
-        <div className="flex flex-col gap-1.5 flex-1 min-w-[120px]">
-          <label htmlFor="ex-expected" className="text-xs font-semibold text-text-primary">
-            expected
-          </label>
-          <input
-            id="ex-expected"
-            type="text"
-            value={expectedInput}
-            onChange={(e) => setExpectedInput(e.target.value)}
-            placeholder={`"a"`}
-            className="min-h-[44px] rounded-lg border border-border-default bg-surface px-3 py-2 font-mono text-xs text-text-primary placeholder:text-text-muted focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-          />
+        <div className="flex flex-wrap items-start gap-3">
+          <div className="flex flex-col gap-1">
+            <button
+              type="submit"
+              disabled={!complete || busy}
+              aria-describedby={!complete ? 'coding-example-reason' : undefined}
+              className="min-h-[44px] cursor-pointer rounded-lg bg-accent px-4 text-sm font-semibold text-accent-fg hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Check
+            </button>
+            {!complete ? (
+              <span id="coding-example-reason" className="text-xs text-text-secondary">
+                Fill in every argument and the expected result, as Python values.
+              </span>
+            ) : null}
+          </div>
+          {editing != null ? (
+            <button
+              type="button"
+              onClick={reset}
+              className="min-h-[44px] cursor-pointer rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-primary hover:bg-surface-raised"
+            >
+              Cancel edit
+            </button>
+          ) : null}
         </div>
-        <button
-          type="submit"
-          disabled={checking || !argsInput.trim()}
-          className="inline-flex min-h-[44px] cursor-pointer items-center justify-center rounded-lg border border-border-default bg-surface-raised px-4 text-sm font-semibold text-text-primary transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {checking ? 'Checking…' : 'Check'}
-        </button>
       </form>
-      <p className="mt-2 text-xs text-text-tertiary">
-        Type Python values, like &quot;a b&quot; or None.
-      </p>
     </section>
   );
 }

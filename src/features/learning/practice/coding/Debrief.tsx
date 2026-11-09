@@ -1,306 +1,204 @@
-import { useState } from 'react';
-import {
-  ArrowRight,
-  Calendar,
-  CheckCircle2,
-  ChevronRight,
-  HelpCircle,
-  Play,
-} from 'lucide-react';
-import { CriteriaList, type CriterionRow } from '../shared/CriteriaList';
-import { SaveAsReviewCard } from '../shared/SaveAsReviewCard';
-import type { CodingDebriefDto } from './codingApi';
+import { ArrowRight, CalendarClock, Check, ChevronRight, X } from 'lucide-react';
+
+import type * as Wire from '@/lib/bindings';
+
+import { CaseResults } from '../shared/CaseResults';
+import { CriteriaList, type CriterionView, type EvidenceView } from '../shared/CriteriaList';
+import { caseResultViews, clockText, SETTING_NAMES } from './caseViews';
+import { STAGE_NAMES } from './StageRail';
 
 export interface DebriefProps {
-  debrief: CodingDebriefDto;
-  programId: string;
-  lessonId?: string | null;
-  onRetryInterview?: () => void;
-  onExit?: () => void;
-  className?: string;
+  title: string;
+  debrief: Wire.CodingDebriefDto;
+  onExit: () => void;
+  onTryInterview: () => void;
 }
 
-function formatRating(rating: string): string {
-  switch (rating.toLowerCase()) {
-    case 'easy':
-      return 'Easy';
-    case 'good':
-      return 'Good';
-    case 'hard':
-      return 'Hard';
-    default:
-      return 'Again';
+const RATINGS: Record<Wire.PatternRating, string> = {
+  again: 'Again',
+  hard: 'Hard',
+  good: 'Good',
+  easy: 'Easy',
+};
+
+const RUNG_NAMES: Record<Wire.CodeHintRung, string> = {
+  nudge: 'nudge',
+  idea: 'idea',
+  plan: 'plan',
+  line: 'line hint',
+};
+
+function evidenceView(evidence: Wire.ScorecardEvidence): EvidenceView {
+  switch (evidence.kind) {
+    case 'quote':
+      return { kind: 'quote', text: evidence.text };
+    case 'lines':
+      return { kind: 'lines', path: evidence.path, start: evidence.start, end: evidence.end };
+    case 'run':
+      return { kind: 'run', label: 'A run' };
+    case 'example':
+      return { kind: 'example', label: `Example ${evidence.ordinal + 1}` };
+    case 'hint':
+      return { kind: 'hint', label: `Hint ${evidence.ordinal + 1}` };
   }
 }
 
-function formatDueDate(dueAt: number): string {
-  try {
-    const d = new Date(dueAt);
-    const day = d.toLocaleDateString(undefined, { weekday: 'short' });
-    const dateNum = d.getDate();
-    const month = d.toLocaleDateString(undefined, { month: 'short' });
-    return `Back ${day} ${dateNum} ${month}`;
-  } catch {
-    return 'Coming back';
-  }
-}
-
-export function Debrief({
-  debrief,
-  programId,
-  lessonId,
-  onRetryInterview,
-  onExit,
-  className = '',
-}: DebriefProps) {
-  const [showReference, setShowReference] = useState(false);
-
-  // Map scorecard rows to CriteriaList format
-  const criteriaRows: CriterionRow[] = debrief.scorecard.rows.map((row) => ({
+export function criteriaFrom(scorecard: Wire.Scorecard): CriterionView[] {
+  return scorecard.rows.map((row) => ({
     id: row.criterionId,
     title: row.title,
-    description: row.description,
-    outcome:
-      row.status === 'insufficient_evidence' || row.points === null
-        ? { kind: 'insufficient_evidence' }
-        : { kind: 'points', points: row.points, maxPoints: row.maxPoints },
+    points: row.status === 'observed' ? row.points : null,
+    maxPoints: row.maxPoints,
+    evidence: row.evidence.map(evidenceView),
     feedback: row.feedback,
     nextStep: row.nextStep,
-    evidence: row.evidence.map((e) => ({
-      kind: e.kind,
-      text: e.text,
-    })),
   }));
+}
 
-  const settingLabel =
-    debrief.setting === 'coached'
-      ? 'COACHED'
-      : debrief.setting === 'mock'
-      ? 'MOCK'
-      : 'WATCHED';
+function plural(count: number, one: string, many = `${one}s`): string {
+  return `${count} ${count === 1 ? one : many}`;
+}
 
-  // Total active time across stages
-  const totalMs = debrief.stageTimings.reduce((sum, s) => sum + s.elapsedMs, 0);
-  const totalMin = Math.max(1, Math.round(totalMs / 60000));
+function comesBack(dueAt: number): string {
+  return `Comes back ${new Date(dueAt).toLocaleDateString([], { weekday: 'short', day: 'numeric', month: 'short' })}`;
+}
+
+const CARD = 'rounded-xl border border-border-default bg-surface p-4';
+const HEADING = 'm-0 mb-3 font-serif text-lg font-semibold text-text-primary';
+
+export function Debrief({ title, debrief, onExit, onTryInterview }: DebriefProps) {
+  const { facts, strongAnswer } = debrief;
+  const totalMs = facts.stageMs.reduce((sum, stage) => sum + stage.activeMs, 0);
 
   return (
-    <div className={`mx-auto max-w-4xl space-y-8 p-4 sm:p-6 ${className}`}>
-      {/* Top Banner / Headline */}
-      <section className="space-y-3">
-        <div className="text-xxs font-semibold uppercase tracking-wider text-text-tertiary">
-          DEBRIEF · CODE · {settingLabel}
-        </div>
-        <h1 className="font-serif text-2xl font-bold text-text-primary sm:text-3xl m-0">
-          Coding session debrief
-        </h1>
-        <div className="text-sm text-text-secondary">
-          {totalMin} min · {debrief.setting === 'coached' ? 'Full help' : 'Hints only'}
-        </div>
-        <div className="flex flex-wrap items-center gap-3 pt-2">
-          {onRetryInterview && (
-            <button
-              type="button"
-              onClick={onRetryInterview}
-              className="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-lg bg-accent px-4 text-sm font-semibold text-accent-fg hover:opacity-90"
-            >
-              <span>Try it under interview conditions</span>
-              <ArrowRight className="h-4 w-4" aria-hidden="true" />
-            </button>
-          )}
-          {onExit && (
-            <button
-              type="button"
-              onClick={onExit}
-              className="inline-flex min-h-[44px] cursor-pointer items-center justify-center gap-2 rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-primary hover:bg-surface-raised"
-            >
-              Back to Practice
-            </button>
-          )}
-        </div>
-      </section>
-
-      {/* 1. What happened (Objective session facts) */}
-      <section aria-labelledby="heading-happened" className="space-y-4">
-        <div>
-          <h2 id="heading-happened" className="font-serif text-xl font-semibold text-text-primary m-0">
-            What happened
-          </h2>
-          <p className="mt-0.5 text-xs text-text-tertiary">
-            Counted by the app, not scored.
-          </p>
-        </div>
-
-        <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <div className="rounded-xl border border-border-default bg-surface p-4 shadow-xs space-y-1">
-            <CheckCircle2 className="h-4 w-4 text-success-fg" aria-hidden="true" />
-            <div className="font-serif text-xl font-semibold text-text-primary">All pass</div>
-            <div className="text-xs text-text-secondary">cases pass</div>
-          </div>
-
-          <div className="rounded-xl border border-border-default bg-surface p-4 shadow-xs space-y-1">
-            <CheckCircle2 className="h-4 w-4 text-text-secondary" aria-hidden="true" />
-            <div className="font-serif text-xl font-semibold text-text-primary">
-              {debrief.uncaughtMisreadings.length === 0 ? 'All' : 'Checked'}
-            </div>
-            <div className="text-xs text-text-secondary">common mistakes caught</div>
-          </div>
-
-          <div className="rounded-xl border border-border-default bg-surface p-4 shadow-xs space-y-1">
-            <HelpCircle className="h-4 w-4 text-text-secondary" aria-hidden="true" />
-            <div className="font-serif text-xl font-semibold text-text-primary">
-              {debrief.hintsUsed.length === 1 ? '1 hint' : `${debrief.hintsUsed.length} hints`}
-            </div>
-            <div className="text-xs text-text-secondary">
-              {debrief.hintsUsed[0] ? `a ${debrief.hintsUsed[0]}` : 'none used'}
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-border-default bg-surface p-4 shadow-xs space-y-1">
-            <Play className="h-4 w-4 text-text-secondary" aria-hidden="true" />
-            <div className="font-serif text-xl font-semibold text-text-primary">
-              {debrief.runCount === 1 ? '1 run' : `${debrief.runCount} runs`}
-            </div>
-            <div className="text-xs text-text-secondary">the last one passed everything</div>
-          </div>
-        </div>
-
-        {/* Time per stage */}
-        <div className="rounded-xl border border-border-default bg-surface p-4 shadow-xs space-y-3">
-          <h3 className="font-medium text-sm text-text-primary m-0">Time per stage</h3>
-          <ul className="space-y-2 text-xs list-none m-0 p-0">
-            {debrief.stageTimings.map((st) => {
-              const minutes = Math.max(1, Math.round(st.elapsedMs / 60000));
-              const pct = totalMs > 0 ? Math.min(100, Math.round((st.elapsedMs / totalMs) * 100)) : 25;
-              const stageCapitalized = st.stage.charAt(0).toUpperCase() + st.stage.slice(1);
-
-              return (
-                <li key={st.stage} className="flex items-center gap-3">
-                  <span className="w-24 text-text-secondary">
-                    {stageCapitalized}
-                    {st.stage === 'code' && <span className="sr-only"> stage</span>}
-                  </span>
-                  <div
-                    aria-hidden="true"
-                    className="h-2 flex-1 overflow-hidden rounded-full bg-surface-raised"
-                  >
-                    <div
-                      className="h-full rounded-full bg-accent"
-                      style={{ width: `${pct}%` }}
-                    />
-                  </div>
-                  <span className="w-14 text-right font-mono text-text-secondary">
-                    {minutes} min
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-        </div>
-      </section>
-
-      {/* 2. How it went (CriteriaList with 4 Scorecard criteria) */}
-      <section aria-labelledby="heading-criteria" className="space-y-4">
-        <CriteriaList
-          heading="How it went"
-          headingLevel={2}
-          subtitle="Four areas, each scored 0 to 4, with the evidence it's based on."
-          rows={criteriaRows}
-        />
-      </section>
-
-      {/* 3. The strong answer */}
-      <section aria-labelledby="heading-strong-answer" className="rounded-xl border border-border-default bg-surface p-5 shadow-xs space-y-4">
-        <h2 id="heading-strong-answer" className="font-serif text-xl font-semibold text-text-primary m-0">
-          The strong answer
-        </h2>
-        <div className="text-sm leading-relaxed text-text-primary whitespace-pre-wrap">
-          {debrief.approachSummary}
-        </div>
-        <div className="font-mono text-xs text-text-secondary">
-          Target complexity: {debrief.targetComplexity}
-        </div>
-
-        <div className="pt-2">
+    <div className="mx-auto flex w-full max-w-5xl flex-col gap-5 p-4 sm:p-6">
+      <header className="flex flex-col gap-2">
+        <h1 className="m-0 font-serif text-2xl font-bold text-text-primary">Debrief: {title}</h1>
+        <p className="m-0 text-sm text-text-secondary">
+          {clockText(totalMs)} of active time. Settings used: {facts.settings.map((s) => SETTING_NAMES[s]).join(', ')}.
+        </p>
+        <div className="flex flex-wrap items-center gap-3 pt-1">
           <button
             type="button"
-            onClick={() => setShowReference((v) => !v)}
-            className="inline-flex min-h-[40px] cursor-pointer items-center gap-2 rounded-lg border border-border-default bg-surface px-4 text-xs font-semibold text-text-primary hover:bg-surface-raised"
+            onClick={onTryInterview}
+            className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-lg bg-accent px-4 text-sm font-semibold text-accent-fg hover:opacity-90"
           >
-            <ChevronRight
-              className={`h-4 w-4 transition-transform ${showReference ? 'rotate-90' : ''}`}
-              aria-hidden="true"
-            />
-            <span>Show the reference code</span>
+            <span>Try it under interview conditions</span>
+            <ArrowRight className="h-4 w-4" aria-hidden="true" />
           </button>
-
-          {showReference && (
-            <div className="mt-3 overflow-x-auto rounded-lg border border-border-default bg-surface-sunken p-4 font-mono text-xs text-text-primary whitespace-pre">
-              {debrief.referenceSolution}
-            </div>
-          )}
+          <button
+            type="button"
+            onClick={onExit}
+            className="min-h-[44px] cursor-pointer rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-primary hover:bg-surface-raised"
+          >
+            Back to Practice
+          </button>
         </div>
+      </header>
+
+      <div className="grid gap-5 lg:grid-cols-[minmax(0,2fr)_minmax(0,1fr)]">
+        <CriteriaList criteria={criteriaFrom(debrief.scorecard)} heading="How it went" />
+
+        <section aria-labelledby="coding-facts-heading" className={CARD}>
+          <h2 id="coding-facts-heading" className={HEADING}>
+            What happened
+          </h2>
+          <h3 className="m-0 mb-1 text-xs font-semibold uppercase tracking-wide text-text-secondary">Time per stage</h3>
+          <ul className="m-0 mb-3 list-none space-y-1 p-0 text-sm text-text-primary">
+            {facts.stageMs.map((stage) => (
+              <li key={stage.stage} className="flex justify-between gap-3">
+                <span>{STAGE_NAMES[stage.stage]}</span>
+                <span className="font-mono">{clockText(stage.activeMs)}</span>
+              </li>
+            ))}
+          </ul>
+          <ul className="m-0 list-none space-y-1 p-0 text-sm text-text-primary">
+            <li>{plural(facts.runs, 'run')}</li>
+            <li>{plural(facts.submits, 'submit')}</li>
+            <li>
+              {facts.hints.length === 0
+                ? 'No hints'
+                : facts.hints.map((hint) => `${hint.count} ${RUNG_NAMES[hint.rung]}`).join(', ')}
+            </li>
+          </ul>
+          <h3 className="m-0 mb-1 mt-3 text-xs font-semibold uppercase tracking-wide text-text-secondary">Settings</h3>
+          <ul className="m-0 list-none space-y-1 p-0 text-sm text-text-primary">
+            {facts.settings.map((setting) => (
+              <li key={setting}>{SETTING_NAMES[setting]}</li>
+            ))}
+          </ul>
+        </section>
+      </div>
+
+      <section aria-labelledby="coding-strong-heading" className={CARD}>
+        <h2 id="coding-strong-heading" className={HEADING}>
+          A strong answer
+        </h2>
+        <p className="m-0 mb-2 text-sm leading-relaxed text-text-primary">{strongAnswer.approach}</p>
+        <dl className="m-0 mb-3 text-sm">
+          <dt className="text-xs font-semibold uppercase tracking-wide text-text-secondary">Cost</dt>
+          <dd className="m-0 text-text-primary">{strongAnswer.complexity}</dd>
+        </dl>
+        <details className="group rounded-lg border border-border-default bg-surface-sunken p-3">
+          <summary className="flex cursor-pointer list-none items-center gap-2 text-sm font-semibold text-text-primary">
+            <ChevronRight className="h-4 w-4 transition-transform group-open:rotate-90" aria-hidden="true" />
+            <span>Reference solution</span>
+          </summary>
+          <pre className="m-0 mt-3 overflow-x-auto font-mono text-sm text-text-primary">{strongAnswer.reference}</pre>
+        </details>
       </section>
 
-      {/* 4. Coming back (Pattern cards) */}
-      {debrief.patterns && debrief.patterns.length > 0 && (
-        <section aria-labelledby="heading-coming-back" className="rounded-xl border border-border-default bg-surface p-5 shadow-xs space-y-4">
-          <div>
-            <h2 id="heading-coming-back" className="font-serif text-xl font-semibold text-text-primary m-0">
-              Coming back
-            </h2>
-            <p className="mt-0.5 text-xs text-text-tertiary">
-              Each pattern in this problem, rated by what happened and spaced for review.
-            </p>
-          </div>
+      <CaseResults cases={caseResultViews(debrief.cases)} title="Every case, in full" />
 
-          <div className="divide-y divide-border-subtle">
-            {debrief.patterns.map((p) => (
-              <div key={p.patternId} className="flex flex-wrap items-center gap-3 py-3">
-                <span className="font-semibold text-sm text-text-primary min-w-[140px]">
-                  {p.name}
-                </span>
-                <span className="inline-flex min-h-[28px] items-center gap-1.5 rounded-full bg-success-muted px-2.5 text-xs font-medium text-success-fg">
-                  <CheckCircle2 className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>{formatRating(p.rating)}</span>
-                </span>
-                <span className="text-xs text-text-secondary flex-1 min-w-[200px]">
-                  {p.recognitionCue}
-                </span>
-                <span className="ml-auto inline-flex items-center gap-1.5 font-mono text-xs text-text-tertiary">
-                  <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
-                  <span>{formatDueDate(p.dueAt)}</span>
-                </span>
-              </div>
-            ))}
-          </div>
-        </section>
-      )}
-
-      {/* 5. Save a mistake */}
-      {debrief.uncaughtMisreadings && debrief.uncaughtMisreadings.length > 0 && (
-        <section
-          aria-labelledby="heading-save-mistake"
-          ref={(el) => {
-            const btn = el?.querySelector('button');
-            if (btn && !btn.getAttribute('aria-label')) {
-              btn.setAttribute('aria-label', 'Save as a review card');
-            }
-          }}
-          className="rounded-xl border border-border-default bg-surface p-5 shadow-xs space-y-4"
-        >
-          <h2 id="heading-save-mistake" className="font-serif text-xl font-semibold text-text-primary m-0">
-            Save a mistake
+      {debrief.misreadings.length > 0 ? (
+        <section aria-labelledby="coding-misreadings-heading" className={CARD}>
+          <h2 id="coding-misreadings-heading" className={HEADING}>
+            Common mistakes
           </h2>
-          <SaveAsReviewCard
-            programId={programId}
-            lessonId={lessonId ?? 'lesson-1'}
-            question={debrief.uncaughtMisreadings[0]}
-            promptText={debrief.uncaughtMisreadings[0]}
-            promptLabel="In your own words, what's the difference?"
-            answerLabel="In your own words, what's the difference?"
-          />
+          <ul className="m-0 list-none space-y-2 p-0">
+            {debrief.misreadings.map((misreading) => (
+              <li key={misreading.description} className="flex items-start gap-2 text-sm text-text-primary">
+                {misreading.caught ? (
+                  <Check className="mt-0.5 h-4 w-4 flex-none text-success-fg" aria-hidden="true" />
+                ) : (
+                  <X className="mt-0.5 h-4 w-4 flex-none text-danger-fg" aria-hidden="true" />
+                )}
+                <span>
+                  <span className="block">{misreading.description}</span>
+                  <span className="block text-text-secondary">
+                    {misreading.caught ? 'Your examples caught this' : 'Your examples did not catch this'}
+                  </span>
+                </span>
+              </li>
+            ))}
+          </ul>
         </section>
-      )}
+      ) : null}
+
+      {debrief.patterns.length > 0 ? (
+        <section aria-labelledby="coding-patterns-heading" className={CARD}>
+          <h2 id="coding-patterns-heading" className={HEADING}>
+            Problem patterns
+          </h2>
+          <ul className="m-0 list-none space-y-3 p-0">
+            {debrief.patterns.map((pattern) => (
+              <li key={pattern.patternId} className="flex flex-col gap-1 text-sm">
+                <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
+                  <span className="font-semibold text-text-primary">{pattern.name}</span>
+                  <span className="rounded-full bg-surface-raised px-2.5 py-0.5 text-xs font-medium text-text-secondary">
+                    {RATINGS[pattern.rating]}
+                  </span>
+                  <span className="inline-flex items-center gap-1.5 text-text-secondary">
+                    <CalendarClock className="h-4 w-4" aria-hidden="true" />
+                    <span>{comesBack(pattern.dueAt)}</span>
+                  </span>
+                </div>
+                <span className="text-text-secondary">{pattern.cue}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
     </div>
   );
 }
