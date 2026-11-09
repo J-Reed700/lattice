@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react';
 
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor, within } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -266,7 +266,7 @@ describe('Course page', () => {
 
       await user.click(screen.getByRole('button', { name: 'Back to Practice' }));
       expect(await screen.findByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
-      expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
+      expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
     });
 
     it('is mounted once, and stays so while the learner is on Lessons and back', async () => {
@@ -323,6 +323,35 @@ describe('Course page', () => {
       await user.click(primaryTab('Practice'));
       expect(screen.getByRole('group', { name: 'Written practice mode' })).toBeVisible();
       expect(screen.queryByTestId('practice-home')).not.toBeInTheDocument();
+    });
+
+    it('returns to the retained screen when Practice is pressed from another tab, even as the render lands before the click', async () => {
+      const user = userEvent.setup();
+      show(program(GOAL));
+      await user.click(primaryTab('Practice'));
+      await user.click(within(await screen.findByTestId('card-explain')).getByRole('button', { name: /^Start/ }));
+      expect(await screen.findByRole('group', { name: 'Written practice mode' })).toBeVisible();
+      await user.click(primaryTab('Lessons'));
+
+      const practice = primaryTab('Practice');
+      fireEvent.mouseDown(practice);
+      await waitFor(() => expect(practice).toHaveAttribute('aria-selected', 'true'));
+      fireEvent.click(practice);
+      expect(screen.getByRole('group', { name: 'Written practice mode' })).toBeVisible();
+      expect(screen.getByTestId('practice-home')).not.toBeVisible();
+    });
+
+    it('opens the Practice page on Enter on the selected Practice tab', async () => {
+      const user = userEvent.setup();
+      show(program(GOAL));
+      await user.click(primaryTab('Practice'));
+      await user.click(within(await screen.findByTestId('card-explain')).getByRole('button', { name: /^Start/ }));
+      expect(await screen.findByRole('group', { name: 'Written practice mode' })).toBeVisible();
+
+      primaryTab('Practice').focus();
+      await user.keyboard('{Enter}');
+      expect(await screen.findByTestId('practice-home')).toBeVisible();
+      expect(screen.getByRole('group', { name: 'Written practice mode' })).not.toBeVisible();
     });
 
     it('opens the Practice page when Practice is clicked while already selected', async () => {

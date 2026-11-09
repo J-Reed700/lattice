@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as Wire from '@/lib/bindings';
 
-import { PreparingFor } from './PreparingFor';
 import { practiceHomeApi } from './practiceHomeApi';
+import { PreparingFor } from './PreparingFor';
 
 vi.mock('./practiceHomeApi', () => ({ practiceHomeApi: { saveProfile: vi.fn() } }));
 

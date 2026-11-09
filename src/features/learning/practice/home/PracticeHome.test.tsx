@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Wire from '@/lib/bindings';
 
 import { PracticeHome, type PracticeHomeProps } from './PracticeHome';
+
 import type { HistoryItem } from './historyItems';
 
 const data = vi.hoisted(() => ({
@@ -115,6 +116,19 @@ describe('PracticeHome', () => {
     await user.click(within(card).getByRole('button', { name: /^Start/ }));
     expect(props.onStart).toHaveBeenCalledWith(
       expect.objectContaining({ kind: 'coding-build', choice: expect.objectContaining({ lessonId: 'lesson-1', setting: 'coached', difficulty: 'easy', task: 'problem' }) }),
+    );
+  });
+
+  it('offers Python only for the Code card and starts in it with another profile language', async () => {
+    data.profile = profile({ language: 'JavaScript' });
+    const user = userEvent.setup();
+    const props = show();
+    const card = screen.getByTestId('card-code');
+    expect(within(card).queryByRole('combobox', { name: 'Language' })).not.toBeInTheDocument();
+    expect(card).toHaveTextContent('Python');
+    await user.click(within(card).getByRole('button', { name: /^Start/ }));
+    expect(props.onStart).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'coding-build', choice: expect.objectContaining({ language: 'python' }) }),
     );
   });
 

@@ -226,8 +226,16 @@ async fn starting_a_drill_gives_the_attempt_and_the_drill_as_the_learner_may_see
 
 #[tokio::test]
 async fn the_learners_view_of_a_drill_holds_nothing_of_its_key() -> Result<()> {
-    let (_, _, shown) = started().await?;
+    let (pool, attempt_id, shown) = started().await?;
     assert_nothing_of_the_key(&shown);
+    let (_, stored) = attempts::get(&pool, &attempt_id).await?;
+    let planted = stored
+        .drill
+        .key
+        .iter()
+        .filter(|issue| issue.origin == Origin::Planted)
+        .count();
+    assert!(planted > 0, "the test drill plants issues");
     let object = shown.as_object().expect("an object");
     let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
     keys.sort_unstable();
@@ -240,7 +248,8 @@ async fn the_learners_view_of_a_drill_holds_nothing_of_its_key() -> Result<()> {
         .map(String::as_str)
         .collect();
     drill_keys.sort_unstable();
-    assert_eq!(drill_keys, ["files", "lesson", "material", "title"]);
+    assert_eq!(drill_keys, ["files", "issues", "lesson", "material", "title"]);
+    assert_eq!(object["drill"]["issues"], planted);
     assert_eq!(
         object["drill"]["material"],
         json!({"kind": "code", "language": "python"})

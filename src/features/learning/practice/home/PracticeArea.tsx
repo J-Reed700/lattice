@@ -12,11 +12,11 @@ import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
-import type { HistoryTarget } from './historyItems';
+import { CODING_LANGUAGE, MOCK_DIFFICULTY, type StartAction } from './practiceChoices';
 import { PracticeHome } from './PracticeHome';
-import { MOCK_DIFFICULTY, type StartAction } from './practiceChoices';
 import { practiceHomeApi } from './practiceHomeApi';
-import { lastChosen } from './StartSentence';
+
+import type { HistoryTarget } from './historyItems';
 import type { PracticeViewState } from './usePracticeView';
 
 export interface PracticeAreaProps {
@@ -88,14 +88,14 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
           lessonId: item.lessonId ?? currentLesson?.id ?? null,
           task: 'problem',
           setting: 'coached',
-          language: lastChosen(programId, 'code', 'language') ?? 'python',
+          language: CODING_LANGUAGE,
           difficulty: 'easy',
         });
       } else {
         view.openDrill();
       }
     },
-    [currentLesson?.id, programId, view],
+    [currentLesson?.id, view],
   );
 
   const tryInterview = useCallback(
@@ -104,11 +104,11 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
         lessonId: currentLesson?.id ?? null,
         task: 'problem',
         setting,
-        language: lastChosen(programId, 'code', 'language') ?? 'python',
+        language: CODING_LANGUAGE,
         difficulty: MOCK_DIFFICULTY,
       });
     },
-    [currentLesson?.id, programId, view],
+    [currentLesson?.id, view],
   );
 
   const openSubTab = (id: SubTabId) => {

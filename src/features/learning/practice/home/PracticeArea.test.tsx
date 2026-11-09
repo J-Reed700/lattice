@@ -5,8 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type * as Wire from '@/lib/bindings';
 
 import { PracticeArea } from './PracticeArea';
-import type { HistoryTarget } from './historyItems';
 import { usePracticeView } from './usePracticeView';
+
+import type { HistoryTarget } from './historyItems';
 
 vi.mock('./PracticeHome', () => ({
   PracticeHome: ({ onOpenTarget, onOpenWorkbench }: { onOpenTarget: (target: HistoryTarget) => void; onOpenWorkbench: () => void }) => (
@@ -27,8 +28,14 @@ vi.mock('@/features/learning/practice/practical/PracticalWorkbenchPanel', () => 
 vi.mock('@/features/learning/drills/CourseDrillsPanel', () => ({
   CourseDrillsPanel: ({ attemptId }: { attemptId?: string | null }) => <p>{`Drills ${attemptId ?? 'new'}`}</p>,
 }));
-vi.mock('@/features/learning/practice/coding/CodingEntry', () => ({ CodingEntry: () => <p>Coding build</p> }));
-vi.mock('@/features/learning/practice/coding/CodingSession', () => ({ CodingSession: () => <p>Coding session</p> }));
+vi.mock('@/features/learning/practice/coding/CodingEntry', () => ({
+  CodingEntry: ({ choice }: { choice: { language: string } }) => <p>{`Coding build ${choice.language}`}</p>,
+}));
+vi.mock('@/features/learning/practice/coding/CodingSession', () => ({
+  CodingSession: ({ onTryInterview }: { onTryInterview: (setting: 'mock') => void }) => (
+    <button type="button" onClick={() => onTryInterview('mock')}>try interview</button>
+  ),
+}));
 vi.mock('./practiceHomeApi', () => ({ practiceHomeApi: { startCodingSession: vi.fn() } }));
 
 const lesson = (id: string) => ({ id, title: id }) as Wire.LearningLessonDto;
@@ -57,6 +64,25 @@ describe('PracticeArea', () => {
     render(<Harness />);
     await user.click(screen.getByRole('button', { name: 'open drill' }));
     expect(screen.getByText('Drills att-3')).toBeVisible();
+  });
+
+  it('tries an interview in Python even when another language was remembered for the Code card', async () => {
+    localStorage.setItem('lattice:practice:sentence:course-1:code', JSON.stringify({ language: 'javascript' }));
+    const user = userEvent.setup();
+    function Open() {
+      const view = usePracticeView();
+      return (
+        <>
+          <button type="button" onClick={() => view.openCoding('s1')}>open session</button>
+          <PracticeArea program={program} currentLesson={lesson('lesson-1')} currentModule={undefined} view={view} />
+        </>
+      );
+    }
+    render(<Open />);
+    await user.click(screen.getByRole('button', { name: 'open session' }));
+    await user.click(screen.getByRole('button', { name: 'try interview' }));
+    expect(screen.getByText('Coding build python')).toBeVisible();
+    localStorage.clear();
   });
 
   it('opens the practical workbench with no activity selected from the workbench button', async () => {

@@ -344,7 +344,6 @@ async fn running(
             nonce: NONCE.into(),
             cases: three_cases(),
             mine_ids: vec!["exact".into()],
-            coding_session_id: setup.session_id.clone(),
         }),
     })
 }

@@ -71,7 +71,7 @@ pub(super) fn parse_row(row: &SqliteRow) -> Result<CodingRow> {
             .ok_or_else(|| AppError::Database("Invalid coding stage".into()))?,
         budget_seconds: row
             .get::<Option<i64>, _>("budget_seconds")
-            .map(|seconds| to_u32(seconds))
+            .map(to_u32)
             .transpose()?,
         active_ms: u64::try_from(row.get::<i64, _>("active_ms"))
             .map_err(|_| AppError::Database("A stored duration is negative.".into()))?,
@@ -554,7 +554,7 @@ impl LearningPracticalRepository {
             && row
                 .pending_cue
                 .as_ref()
-                .map_or(true, |pending| cue.outranks(pending));
+                .is_none_or(|pending| cue.outranks(pending));
         if replaces {
             sqlx::query("UPDATE learning_coding_sessions SET pending_cue_json=? WHERE id=?")
                 .bind(json(cue)?)
@@ -577,13 +577,24 @@ impl LearningPracticalRepository {
         uuid(session_id, "coding session")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let taken: Option<String> = sqlx::query_scalar(
-            "UPDATE learning_coding_sessions SET pending_cue_json=NULL WHERE id=? AND program_id=? AND pending_cue_json IS NOT NULL RETURNING pending_cue_json",
+            "SELECT pending_cue_json FROM learning_coding_sessions WHERE id=? AND program_id=?",
         )
         .bind(session_id)
         .bind(program_id)
         .fetch_optional(&mut *tx)
         .await
-        .map_err(db)?;
+        .map_err(db)?
+        .flatten();
+        if taken.is_some() {
+            sqlx::query(
+                "UPDATE learning_coding_sessions SET pending_cue_json=NULL WHERE id=? AND program_id=?",
+            )
+            .bind(session_id)
+            .bind(program_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
+        }
         tx.commit().await.map_err(db)?;
         taken.as_deref().map(decode).transpose()
     }

@@ -33,7 +33,7 @@ export interface HistorySources {
 }
 
 const SETTING_LABELS: Record<Wire.CodingSetting, string> = { coached: 'Coached', mock: 'Mock', watched: 'Watched' };
-const TASK_LABELS: Record<Wire.CodingTask, string> = { problem: 'Problem', bug_fix: 'Bug to fix', project: 'Project' };
+const TASK_LABELS: Record<Wire.CodingTask, string> = { problem: 'Problem', bug_fix: 'Bug to fix' };
 const HELP_LABELS: Record<Wire.LearningPracticeMode, string> = { explore: 'Full help', practice: 'Hints only', demonstrate: 'No help' };
 const DRILL_MODE_LABELS: Record<Wire.AttemptMode, string> = { practice: 'Untimed', interview: 'Timed', rapid: 'Rapid' };
 

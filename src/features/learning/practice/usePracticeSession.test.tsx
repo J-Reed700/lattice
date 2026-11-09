@@ -190,7 +190,8 @@ describe('usePracticeSession', () => {
 
   it('saves the learner text against the refetched revision with one reload after an autosave conflict', async () => {
     mocks.save.mockImplementationOnce(async () => {
-      summary.revision = 9;
+      summary = { ...summary, revision: 9 };
+      session = { ...session, summary };
       throw conflictError('Stale.');
     });
     const { result } = setup();

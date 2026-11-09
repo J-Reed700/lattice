@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { History } from './History';
+
 import type { HistoryItem } from './historyItems';
 
 const item = (patch: Partial<HistoryItem>): HistoryItem => ({
@@ -20,7 +21,7 @@ const item = (patch: Partial<HistoryItem>): HistoryItem => ({
 
 const items = [
   item({}),
-  item({ id: 'b', card: 'spot', title: 'Review a parser', target: { kind: 'drill' } }),
+  item({ id: 'b', card: 'spot', title: 'Review a parser', target: { kind: 'drill', attemptId: 'att-1' } }),
   item({ id: 'c', card: 'mock', title: 'Acme interview', target: { kind: 'activity', activityId: 'act-1' } }),
 ];
 

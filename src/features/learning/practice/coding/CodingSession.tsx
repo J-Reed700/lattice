@@ -1,18 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent } from 'react';
+
 import { ArrowLeft, HelpCircle, ShieldCheck } from 'lucide-react';
 
 import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
-import { lastChosen } from '../home/StartSentence';
-import { LearningCodeEditor } from '../practical/LearningCodeEditor';
-import { useLearningLabDraft } from '../practical/useLearningLabDraft';
-import { CaseResults } from '../shared/CaseResults';
-import { ElapsedClock } from '../shared/ElapsedClock';
-import { FileTabs } from '../shared/FileTabs';
-import { PracticeThread, type ThreadMessage } from '../shared/PracticeThread';
-import { StatusLine, type StatusState } from '../shared/StatusLine';
 import { caseResultViews, HELP_NAMES, SETTING_NAMES } from './caseViews';
 import { codingApi } from './codingApi';
 import { Debrief } from './Debrief';
@@ -21,6 +14,14 @@ import { HintLadder } from './HintLadder';
 import { ProblemPane } from './ProblemPane';
 import { RunBar } from './RunBar';
 import { StageRail } from './StageRail';
+import { lastChosen } from '../home/StartSentence';
+import { LearningCodeEditor } from '../practical/LearningCodeEditor';
+import { useLearningLabDraft } from '../practical/useLearningLabDraft';
+import { CaseResults } from '../shared/CaseResults';
+import { ElapsedClock } from '../shared/ElapsedClock';
+import { FileTabs } from '../shared/FileTabs';
+import { PracticeThread, type ThreadMessage } from '../shared/PracticeThread';
+import { StatusLine, type StatusState } from '../shared/StatusLine';
 
 export interface CodingSessionProps {
   programId: string;
@@ -57,7 +58,7 @@ export function CodingSession({ programId, sessionId, onExit, onTryInterview }: 
   useEffect(() => {
     let cancelled = false;
     setFailure(null);
-    (async () => {
+    void (async () => {
       try {
         const session = await codingApi.getSession({ programId, sessionId });
         const activityRevision = session.finished ? 0 : await codingApi.activityRevision(programId, session.activityId);
@@ -114,6 +115,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
   const sessionId = initial.sessionId;
   const [session, setSession] = useState(initial);
   const sessionRef = useRef(initial);
+  const movingRef = useRef(false);
   const [clock, setClock] = useState(initial.clock);
   const [panel, setPanel] = useState<Panel>('code');
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -122,6 +124,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
   const [asking, setAsking] = useState(false);
   const [checking, setChecking] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [replyBusy, setReplyBusy] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<Failure | null>(null);
@@ -296,16 +299,25 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
     setAsking(false);
   };
 
-  const move = (stage: Wire.CodingStage) =>
-    guarded(() =>
-      codingApi.moveStage({
-        operationId: newId(),
-        programId,
-        sessionId,
-        stage,
-        expectedRevision: sessionRef.current.revision,
-      }),
-    );
+  const move = async (stage: Wire.CodingStage) => {
+    if (movingRef.current) return;
+    movingRef.current = true;
+    setMoving(true);
+    try {
+      await guarded(() =>
+        codingApi.moveStage({
+          operationId: newId(),
+          programId,
+          sessionId,
+          stage,
+          expectedRevision: sessionRef.current.revision,
+        }),
+      );
+    } finally {
+      movingRef.current = false;
+      setMoving(false);
+    }
+  };
 
   const checkExample = async (example: { ordinal: number | null; args: string[]; expected: string }) => {
     touch();
@@ -458,7 +470,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
         </div>
       </header>
 
-      <StageRail stages={session.stages} current={session.stage} onSelect={(stage) => void move(stage)} />
+      <StageRail stages={session.stages} current={session.stage} busy={moving} onSelect={(stage) => void move(stage)} />
 
       {status ? <StatusLine state={status} /> : null}
 

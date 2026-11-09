@@ -17,6 +17,6 @@ export function usePracticeLanguage(programId: string): { settled: boolean; lang
     };
   }, [programId]);
 
-  if (found === null || found.programId !== programId) return { settled: false, language: null };
+  if (found?.programId !== programId) return { settled: false, language: null };
   return { settled: true, language: found.language };
 }

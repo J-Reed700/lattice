@@ -1,5 +1,5 @@
-import { SaveStatus } from '@/components/ui/SaveStatus';
 import { TiptapViewer } from '@/components/TiptapEditor';
+import { SaveStatus } from '@/components/ui/SaveStatus';
 import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
 import {
   PreviousFeedback,
@@ -13,9 +13,9 @@ import {
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import { saveStatusOf } from '@/features/learning/practice/shared/useAutosave';
 import type { usePracticeSession } from '@/features/learning/practice/usePracticeSession';
+import { HINTS } from '@/features/learning/practice/workbench/helpModes';
 import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
-import { HINTS } from '@/features/learning/practice/workbench/helpModes';
 import type { LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 
 export interface EmbeddedPracticeViewProps {

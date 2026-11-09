@@ -6,7 +6,6 @@ use crate::practice::coding::patterns;
 use crate::practice::coding::records::{Applied, CodingOp, FinishWrite};
 use lattice_core::domain::learning::practice::ScoreStatus;
 use lattice_core::shared::error::Result;
-use sqlx::Row;
 
 /// The score a session's scorecard earned: points over the maximum of the rows that were observed.
 fn score_of(write: &FinishWrite<'_>) -> Option<f64> {

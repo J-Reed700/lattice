@@ -2,7 +2,6 @@ import { useIsMutating, useMutation, useQuery, useQueryClient } from '@tanstack/
 import { open } from '@tauri-apps/plugin-dialog';
 
 import { useApi } from '@/contexts/ApiContext';
-import { unwrapApiResult as unwrap } from '@/types/api/result';
 import { invalidateLearningSourceDependents, refreshLearningProgramAfterImport } from '@/features/learning/api/learningInvalidation';
 import { learningRecallKey } from '@/features/learning/api/learningQueryKeys';
 import { CONFLICT_KINDS } from '@/features/learning/portability/conflictPolicies';
@@ -27,6 +26,7 @@ import type {
   SearchLearningSourcesSemanticallyRequestDto,
 } from '@/lib/bindings';
 import { flushPendingSaves } from '@/lib/pendingSaves';
+import { unwrapApiResult as unwrap } from '@/types/api/result';
 
 export const LEARNING_PORTABILITY_PREFIX = ['learning-portability'] as const;
 export const learningPortabilityKey = (programId: string) => [...LEARNING_PORTABILITY_PREFIX, programId] as const;

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+
 import { AlertCircle, Check, Circle, Loader2 } from 'lucide-react';
 
 import { useJobStatus } from '@/features/jobs/api';
@@ -6,8 +7,8 @@ import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
-import { codingApi } from './codingApi';
 import { SETTING_NAMES } from './caseViews';
+import { codingApi } from './codingApi';
 
 export interface CodingBuildChoice {
   lessonId?: string | null;
@@ -28,7 +29,7 @@ export interface CodingEntryProps {
 
 const STEPS = ['Writing the problem', 'Proving it', 'Saving'] as const;
 
-type Phase = { kind: 'building' } | { kind: 'starting' } | { kind: 'failed'; message: string };
+type Phase = { kind: 'building' } | { kind: 'starting' } | { kind: 'failed'; message: string; stage: 'build' | 'start' };
 
 export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntryProps) {
   const [phase, setPhase] = useState<Phase>({ kind: 'building' });
@@ -38,8 +39,30 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
   const seen = useRef(new Map<string, Wire.JobDto>());
   const operationId = useRef(newId());
   const handled = useRef<string | null>(null);
+  const activityId = useRef<string | null>(null);
+  const startOperationId = useRef(newId());
   const latest = useRef({ choice, onReady });
   latest.current = { choice, onReady };
+
+  const start = useCallback(
+    async (activity: string) => {
+      setPhase({ kind: 'starting' });
+      try {
+        const { choice: picked, onReady: ready } = latest.current;
+        const session = await codingApi.startSession({
+          operationId: startOperationId.current,
+          programId,
+          activityId: activity,
+          setting: picked.setting,
+          budgetSeconds: picked.budgetSeconds ?? null,
+        });
+        ready(session.sessionId);
+      } catch (error) {
+        setPhase({ kind: 'failed', message: getErrorMessage(error), stage: 'start' });
+      }
+    },
+    [programId],
+  );
 
   const settle = useCallback(
     async (job: Wire.JobDto) => {
@@ -47,25 +70,13 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
       setStep(job.progressCurrent);
       if (job.status === 'completed' && job.resultRef && handled.current !== job.id) {
         handled.current = job.id;
-        setPhase({ kind: 'starting' });
-        try {
-          const { choice: picked, onReady: ready } = latest.current;
-          const session = await codingApi.startSession({
-            operationId: newId(),
-            programId,
-            activityId: job.resultRef,
-            setting: picked.setting,
-            budgetSeconds: picked.budgetSeconds ?? null,
-          });
-          ready(session.sessionId);
-        } catch (error) {
-          setPhase({ kind: 'failed', message: getErrorMessage(error) });
-        }
+        activityId.current = job.resultRef;
+        await start(job.resultRef);
       } else if (job.status === 'failed' || job.status === 'cancelled' || job.status === 'interrupted') {
-        setPhase({ kind: 'failed', message: job.error ?? 'The problem could not be built.' });
+        setPhase({ kind: 'failed', message: job.error ?? 'The problem could not be built.', stage: 'build' });
       }
     },
-    [programId],
+    [start],
   );
 
   useJobStatus((job) => {
@@ -93,7 +104,7 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
         if (early) void settle(early);
       })
       .catch((error: unknown) => {
-        if (!cancelled) setPhase({ kind: 'failed', message: getErrorMessage(error) });
+        if (!cancelled) setPhase({ kind: 'failed', message: getErrorMessage(error), stage: 'build' });
       });
     return () => {
       cancelled = true;
@@ -101,7 +112,13 @@ export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntr
   }, [programId, attempt, settle]);
 
   const retry = () => {
+    if (phase.kind === 'failed' && phase.stage === 'start' && activityId.current) {
+      void start(activityId.current);
+      return;
+    }
     operationId.current = newId();
+    startOperationId.current = newId();
+    activityId.current = null;
     jobId.current = null;
     handled.current = null;
     seen.current.clear();

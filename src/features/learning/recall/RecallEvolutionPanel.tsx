@@ -4,8 +4,8 @@ import { Clock3, Copy, History, RotateCcw, Save, Sparkles } from 'lucide-react';
 
 
 import { useDecideLearningRecallDuplicate, useLearningRecallV2, useReviewLearningRecallCard, useSaveLearningRecallCard } from '@/features/learning/portability/useLearningPortability';
-import { CardText, cardPreview } from '@/features/learning/recall/CardText';
 import { useRetry } from '@/features/learning/practice/shared/useRetry';
+import { CardText, cardPreview } from '@/features/learning/recall/CardText';
 import { SpacedRepetitionCurve } from '@/features/learning/recall/SpacedRepetitionCurve';
 import { useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { newId } from '@/lib/api';

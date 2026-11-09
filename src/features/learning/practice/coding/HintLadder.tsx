@@ -1,4 +1,5 @@
 import { useState } from 'react';
+
 import { Check, Lightbulb } from 'lucide-react';
 
 import type * as Wire from '@/lib/bindings';

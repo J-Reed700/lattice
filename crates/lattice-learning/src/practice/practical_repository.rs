@@ -239,7 +239,6 @@ pub(crate) struct PreparedHarness {
     pub(crate) nonce: String,
     pub(crate) cases: Vec<ProblemCase>,
     pub(crate) mine_ids: Vec<String>,
-    pub(crate) coding_session_id: String,
 }
 
 pub(crate) struct PreparedRun {

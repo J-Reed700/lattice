@@ -1,4 +1,5 @@
 import { useState, type FormEvent } from 'react';
+
 import { AlertTriangle, Check, X } from 'lucide-react';
 
 import type * as Wire from '@/lib/bindings';
@@ -116,7 +117,10 @@ export function ExamplesTable({ signature, examples, coverage, busy = false, onC
                       </button>
                       <button
                         type="button"
-                        onClick={() => void onRemove(example.ordinal)}
+                        onClick={() => {
+                          if (editing === example.ordinal) reset();
+                          void onRemove(example.ordinal);
+                        }}
                         aria-label={`Remove example ${index + 1}`}
                         className="min-h-[36px] cursor-pointer rounded-lg border border-border-default bg-surface px-3 text-xs font-semibold text-text-primary hover:bg-surface-raised"
                       >
@@ -131,7 +135,7 @@ export function ExamplesTable({ signature, examples, coverage, busy = false, onC
         </div>
       ) : null}
 
-      <form onSubmit={submit} className="mt-3 flex flex-col gap-3">
+      <form onSubmit={(event) => void submit(event)} className="mt-3 flex flex-col gap-3">
         <div className="flex flex-wrap items-end gap-3">
           {signature.params.map((param, index) => (
             <div key={param.name} className="flex min-w-[8rem] flex-1 flex-col gap-1">

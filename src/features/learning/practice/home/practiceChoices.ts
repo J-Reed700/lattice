@@ -1,8 +1,8 @@
 import type { CodingBuildChoice } from '@/features/learning/practice/coding/CodingEntry';
+import type { ComposerRequest } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
 import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 
-import type { ComposerRequest } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
 
 import type { AttemptMode } from './usePracticeView';
 
@@ -80,19 +80,9 @@ export const EXPLAIN_OPTIONS: ChoiceOption[] = [
   { value: 'beginner', label: 'to a beginner', description: 'Teach it to a beginner.' },
 ];
 
-const normalizeLanguage = (language: string) => language.trim().toLowerCase();
-
-/** The learner's own language, in their own words, beside Python; only the value is normalized. */
-export function languageOptions(profileLanguage: string | null | undefined): ChoiceOption[] {
-  const own = profileLanguage?.trim();
-  const options: ChoiceOption[] = own && normalizeLanguage(own) !== 'python' ? [{ value: normalizeLanguage(own), label: own }] : [];
-  return [...options, { value: 'python', label: 'Python' }];
-}
-
-export function defaultLanguage(profileLanguage: string | null | undefined): string {
-  return profileLanguage?.trim() ? normalizeLanguage(profileLanguage) : 'python';
-}
-
+/** Coding builds are written in Python only. */
+export const CODING_LANGUAGE = 'python';
+export const LANGUAGE_OPTIONS: ChoiceOption[] = [{ value: CODING_LANGUAGE, label: 'Python' }];
 /** The difficulty of a coding round of the Mock card and of a retry under interview conditions. */
 export const MOCK_DIFFICULTY: Wire.ProblemDifficulty = 'medium';
 
@@ -125,7 +115,10 @@ const SCENARIO_KINDS: Record<string, Wire.LearningPracticalActivityKind> = {
   conversation: 'conversation',
 };
 
-function asTask(value: string | undefined): Wire.CodingTask {
+/** What the Code card's task slot offers: the project opens a code lab, the rest are coding builds. */
+export type CodeCardTask = Wire.CodingTask | 'project';
+
+function asTask(value: string | undefined): CodeCardTask {
   return value === 'bug_fix' || value === 'project' ? value : 'problem';
 }
 
@@ -149,7 +142,7 @@ export function startAction(card: CardId, values: Record<string, string>, contex
           lessonId: context.lessonId,
           task,
           setting: 'coached',
-          language: values.language || defaultLanguage(context.profile?.language),
+          language: CODING_LANGUAGE,
           difficulty: asDifficulty(values.difficulty),
           focus: null,
           budgetSeconds: null,
@@ -166,7 +159,7 @@ export function startAction(card: CardId, values: Record<string, string>, contex
             lessonId: context.lessonId,
             task: round === 'debugging' ? 'bug_fix' : 'problem',
             setting: values.setting === 'watched' ? 'watched' : 'mock',
-            language: defaultLanguage(context.profile?.language),
+            language: CODING_LANGUAGE,
             difficulty: MOCK_DIFFICULTY,
             focus: null,
             budgetSeconds: Number.isFinite(minutes) && minutes > 0 ? minutes * 60 : null,
