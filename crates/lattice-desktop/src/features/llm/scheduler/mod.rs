@@ -306,7 +306,7 @@ impl InferenceScheduler {
         // Outside the lock: if the scope has just ended, this is where that is
         // announced, and the announcement takes the lock.
         if let Some(rank) = &request.rank {
-            let watcher: Weak<dyn RankWatcher> = Arc::downgrade(self);
+            let watcher: Weak<Self> = Arc::downgrade(self);
             rank.watch(watcher);
         }
         let lane = Lane::of(request.priority, request.rank.as_ref());

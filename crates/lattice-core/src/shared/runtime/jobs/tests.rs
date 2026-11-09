@@ -1331,9 +1331,7 @@ async fn rank_in_a_nested_future() -> Option<i64> {
 impl JobHandler for Peek {
     async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
         let top = current_rank().map(|ticket| ticket.rank());
-        let (first, second) = futures::join!(rank_in_a_nested_future(), async {
-            rank_in_a_nested_future().await
-        });
+        let (first, second) = futures::join!(rank_in_a_nested_future(), rank_in_a_nested_future());
         self.seen
             .send((vec![top, first, second], current_rank()))
             .unwrap();
