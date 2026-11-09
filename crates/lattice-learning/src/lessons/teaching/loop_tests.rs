@@ -518,14 +518,14 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
 #[tokio::test]
 async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragraph_with_verified_claims(
 ) -> Result<()> {
-    // One paragraph, one inventory passage, two verified claims located to
-    // their sentences; the teaching finding is about a sentence no claim
-    // stands on, in the review's second passage (claim sources design §18.5).
+    // Three paragraphs: two verified claims located to their sentences in the
+    // first; the teaching finding is about a sentence no claim stands on, in
+    // the second (claim sources design §18.5).
     use crate::lessons::content_verification::Protected;
     const V1: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
     const V2: &str = "Their inner membrane folds into cristae that enlarge its surface.";
     let body = format!(
-        "{V1} {V2} They carry their own circular DNA, passed down from the mother, and divide on their own whenever the cell needs more energy.\nFor example, a muscle cell that works harder grows fewer mitochondria over time.\nTry it yourself: find an electron micrograph of a muscle cell, count the mitochondria you can see in one part of it, then count them in a micrograph of a skin cell taken at the same scale, and write down which cell holds more of them and why you think it does."
+        "{V1} {V2} They carry their own circular DNA, passed down from the mother, and divide on their own whenever the cell needs more energy.\n\nFor example, a muscle cell that works harder grows fewer mitochondria over time.\n\nTry it yourself: find an electron micrograph of a muscle cell, count the mitochondria you can see in one part of it, then count them in a micrograph of a skin cell taken at the same scale, and write down which cell holds more of them and why you think it does."
     );
     let candidate = json!({"blocks":[{"kind":"explanation","title":"Example","body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT}],"questions":[]});
     let defect = || {
@@ -997,7 +997,7 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
     const V1: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
     const V2: &str = "Their inner membrane folds into cristae that enlarge its surface.";
     let block0_body = format!(
-        "{V1} {V2} They carry their own circular DNA, passed down from the mother, and divide on their own whenever the cell needs more energy.\nFor example, a muscle cell that works harder grows fewer mitochondria over time.\nTry it yourself: find an electron micrograph of a muscle cell, count the mitochondria you can see in one part of it, then count them in a micrograph of a skin cell taken at the same scale, and write down which cell holds more of them and why you think it does."
+        "{V1} {V2} They carry their own circular DNA, passed down from the mother, and divide on their own whenever the cell needs more energy.\n\nFor example, a muscle cell that works harder grows fewer mitochondria over time.\n\nTry it yourself: find an electron micrograph of a muscle cell, count the mitochondria you can see in one part of it, then count them in a micrograph of a skin cell taken at the same scale, and write down which cell holds more of them and why you think it does."
     );
     let block1_body = "The ribosome is a complex molecular machine found within all living cells that serves as the site of biological protein synthesis. Ribosomes link amino acids together in the specified order.";
     let candidate = json!({
