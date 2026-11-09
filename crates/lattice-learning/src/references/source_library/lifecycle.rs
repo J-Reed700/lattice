@@ -155,8 +155,8 @@ impl LearningSourceLibraryRepository {
             }
         }
         let reason = req.reason.trim();
-        if reason.is_empty() || reason.chars().count() > 500 {
-            return Err(invalid("Deletion reason must contain 1–500 characters."));
+        if reason.is_empty() {
+            return Err(invalid("Deletion reason must not be empty."));
         }
         let hash = hash(req)?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;

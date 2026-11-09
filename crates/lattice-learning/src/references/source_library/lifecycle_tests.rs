@@ -530,7 +530,6 @@ async fn deleting_a_source_needs_a_reason_and_happens_once() -> Result<()> {
     };
 
     assert_invalid(library.delete_source(&request("   ", 0)).await);
-    assert_invalid(library.delete_source(&request(&"r".repeat(501), 0)).await);
     assert_invalid(library.delete_source(&request("Outdated survey", 4)).await);
     let mut missing = request("Outdated survey", 0);
     missing.source_id = "no-such-source".into();
@@ -722,7 +721,7 @@ async fn shown_title_and_publisher(
 }
 
 #[tokio::test]
-async fn a_long_title_or_publisher_is_cut_to_what_the_library_shows_never_refused() -> Result<()> {
+async fn a_long_title_or_publisher_is_kept_whole_never_refused() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
     let library = LearningSourceLibraryRepository::new(pool.clone());
@@ -749,17 +748,14 @@ async fn a_long_title_or_publisher_is_cut_to_what_the_library_shows_never_refuse
             )
             .await?;
         let (shown_title, shown_publisher) = shown_title_and_publisher(&pool, &version_id).await?;
-        assert_eq!(shown_title, title.chars().take(180).collect::<String>());
-        assert_eq!(
-            shown_publisher,
-            Some(publisher.chars().take(180).collect::<String>())
-        );
+        assert_eq!(shown_title, title);
+        assert_eq!(shown_publisher, Some(publisher.clone()));
     }
     Ok(())
 }
 
 #[tokio::test]
-async fn a_refreshed_page_with_a_long_title_or_publisher_is_cut_never_failed() -> Result<()> {
+async fn a_refreshed_page_with_a_long_title_or_publisher_keeps_both_whole() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
     let library = LearningSourceLibraryRepository::new(pool.clone());
@@ -778,8 +774,8 @@ async fn a_refreshed_page_with_a_long_title_or_publisher_is_cut_never_failed() -
     assert_eq!(status, "update_available", "{message:?}");
     let pending = pending.expect("the refreshed version is pending");
     let (shown_title, shown_publisher) = shown_title_and_publisher(&pool, &pending).await?;
-    assert_eq!(shown_title, "t".repeat(180));
-    assert_eq!(shown_publisher, Some("p".repeat(180)));
+    assert_eq!(shown_title, "t".repeat(200));
+    assert_eq!(shown_publisher, Some("p".repeat(200)));
     Ok(())
 }
 
