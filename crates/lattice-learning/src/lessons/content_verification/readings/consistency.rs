@@ -32,8 +32,16 @@ impl Reader for Consistency {
                 None => asks.push((ordinal, *statement, shown, key)),
             }
         }
-        for (ordinal, statement, shown, key) in asks {
-            let judged = consistency_of(at.llm, &key, &statement.claim.statement, &shown).await?;
+        let mut asked: futures::stream::FuturesUnordered<_> = asks
+            .into_iter()
+            .map(|(ordinal, statement, shown, key)| async move {
+                let judged =
+                    consistency_of(at.llm, &key, &statement.claim.statement, &shown).await?;
+                Ok::<_, AppError>((ordinal, statement, shown, judged))
+            })
+            .collect();
+        while let Some(asked) = futures::StreamExt::next(&mut asked).await {
+            let (ordinal, statement, shown, judged) = asked?;
             let read = read_of(&statement, &shown, judged.map(|outcome| (outcome, false)));
             made.put(at, ordinal, read);
         }
