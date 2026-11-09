@@ -11,7 +11,6 @@ use super::{
     entries::{fresh, ExportScope, ImportScope, SectionRows},
     evidence_tables::{
         checked_rows, insert_row, snapshot_table, AggregateTableSnapshot, AggregateTableSpec,
-        MAX_TABLE_ROWS,
     },
     invalid, json, parse,
 };
@@ -196,13 +195,6 @@ impl SectionRows for ReviewTableRows {
         let mut entries = Vec::with_capacity(REVIEW_TABLES.len());
         for spec in REVIEW_TABLES {
             let mut table = snapshot_table(connection, spec, &scope.program.summary.id).await?;
-            if table.rows.len() > MAX_TABLE_ROWS {
-                return Err(invalid(format!(
-                    "This course has {} records in {}, more than the {MAX_TABLE_ROWS} per table a course pack can carry, so no computer could import it.",
-                    table.rows.len(),
-                    table.table
-                )));
-            }
             if spec.table == "jobs" {
                 // A published lesson's staged copy is the lesson itself.
                 for row in &mut table.rows {

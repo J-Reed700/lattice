@@ -73,66 +73,6 @@ async fn a_multi_megabyte_evidence_table_round_trips_in_its_own_entry() -> Resul
 }
 
 #[tokio::test]
-async fn a_table_over_the_import_cap_is_refused_at_export_and_backup() -> Result<()> {
-    const CAP: i64 = 50_000;
-    let home = pool().await?;
-    let program_id = course(&home).await?;
-    let home_dir = tempfile::tempdir()?;
-    let home_packs = packs(&home, home_dir.path());
-    let earlier = export(&home, home_dir.path(), &program_id).await?;
-    sqlx::query("WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i+1 FROM n WHERE i<=?) INSERT INTO learning_operations(operation_id,program_id,scope,kind,subject_id,payload_hash,result_json,created_at) SELECT 'heavy-'||i,?,'recall','review',NULL,'hash','null',i FROM n")
-        .bind(CAP).bind(&program_id).execute(&home).await?;
-    let names_cap = |error: &lattice_core::shared::error::AppError| {
-        let text = error.to_string();
-        assert!(
-            text.contains("learning_operations") && text.contains(&CAP.to_string()),
-            "{text}"
-        );
-    };
-
-    let refused = home_packs
-        .export(&move_request(&program_id))
-        .await
-        .expect_err("no computer could import this pack");
-    names_cap(&refused);
-    assert_eq!(home_packs.workspace(&program_id).await?.exports.len(), 1);
-
-    // Replacing the course would first back it up into a pack nobody could
-    // restore, so the replacement is refused and the course stays as it was.
-    let request = preview_request(&earlier, LearningPackConflictPolicy::ReplaceAfterBackup);
-    let previewed = home_packs.preview(&request).await?;
-    let preview = previewed
-        .import_previews
-        .iter()
-        .find(|preview| preview.id == request.preview_id)
-        .expect("the replace preview");
-    assert!(preview.can_apply, "{:?}", preview.conflicts);
-    let refused = home_packs
-        .apply(&ApplyLearningPackImportRequestDto {
-            operation_id: super::id(),
-            preview_id: preview.id.clone(),
-            expected_root_sha256: preview.manifest.root_sha256.clone(),
-        })
-        .await
-        .expect_err("the backup could not be restored");
-    names_cap(&refused);
-    let kept: i64 = sqlx::query_scalar(
-        "SELECT COUNT(*) FROM learning_operations WHERE program_id=? AND kind='review'",
-    )
-    .bind(&program_id)
-    .fetch_one(&home)
-    .await?;
-    assert_eq!(kept, CAP + 1);
-    let mut files = tokio::fs::read_dir(home_dir.path().join("learning-packs")).await?;
-    let mut count = 0;
-    while files.next_entry().await?.is_some() {
-        count += 1;
-    }
-    assert_eq!(count, 1, "only the earlier pack is on disk");
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_missing_or_extra_evidence_table_is_rejected() -> Result<()> {
     let home = pool().await?;
     let program_id = course(&home).await?;

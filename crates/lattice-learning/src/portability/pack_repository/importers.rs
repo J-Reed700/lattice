@@ -14,7 +14,6 @@ use super::{
 };
 use crate::references::trust::pack::SourceTrustPackEntry;
 use crate::{
-    canvas_repository::MAX_SCENE_BYTES,
     dto::{LearningPreparation, LearningProgramDto, LearningProgramStatus},
     pack::{
         sections::{
@@ -85,9 +84,6 @@ pub(super) async fn insert_lesson_states(
 ) -> Result<()> {
     if let Some(bytes) = pack.entries.get(LESSON_STATE_ENTRY) {
         let states: Vec<serde_json::Value> = parse(bytes)?;
-        if states.len() > 2_000 {
-            return Err(invalid("Pack has too many curriculum lesson states."));
-        }
         for mut state in states {
             remap_json_field(&mut state, "lessonId", map)?;
             remap_json_field(&mut state, "replacementLessonId", map)?;
@@ -116,9 +112,6 @@ pub(super) async fn insert_outcomes(
         return Ok(());
     };
     let rows: Vec<serde_json::Value> = parse(bytes)?;
-    if rows.len() > 2000 {
-        return Err(invalid("Pack has too many learning outcomes."));
-    }
     for row in rows {
         let old_id = value_str(&row, "id")?;
         let id = remap(map, old_id);
@@ -149,8 +142,8 @@ pub(super) async fn insert_canvas_snapshot(
         let _: serde_json::Value = parse(scene.as_bytes())?;
         let count = value_i64(row, "elementCount")?;
         let revision = value_i64(row, "revision")?;
-        if count < 0 || revision < 0 || scene.len() > MAX_SCENE_BYTES {
-            return Err(invalid("Pack canvas data exceeds its bounds."));
+        if count < 0 || revision < 0 {
+            return Err(invalid("Pack canvas data is invalid."));
         }
         sqlx::query("INSERT INTO learning_canvases(id,program_id,lesson_id,title,description,scene_json,element_count,revision,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(value_str(row,"id")?).bind(program_id).bind(row.get("lessonId").filter(|v|!v.is_null()).and_then(serde_json::Value::as_str)).bind(value_str(row,"title")?).bind(value_str(row,"description")?).bind(scene).bind(count).bind(revision).bind(value_i64(row,"createdAt")?).bind(value_i64(row,"updatedAt")?).execute(&mut *tx).await.map_err(db)?;
@@ -173,9 +166,6 @@ pub(super) async fn insert_events(
 ) -> Result<()> {
     if let Some(bytes) = pack.entries.get(EVIDENCE_ENTRY) {
         let rows: Vec<serde_json::Value> = parse(bytes)?;
-        if rows.len() > 20_000 {
-            return Err(invalid("Pack has too many evidence records."));
-        }
         for row in rows {
             let id = remap(map, value_str(&row, "id")?);
             let outcome = value_option_str(&row, "outcomeId")?.map(|v| remap(map, &v));
@@ -218,9 +208,6 @@ pub(super) async fn insert_follow_ups(
 ) -> Result<()> {
     if let Some(bytes) = pack.entries.get(FOLLOW_UP_ENTRY) {
         let rows: Vec<serde_json::Value> = parse(bytes)?;
-        if rows.len() > 5000 {
-            return Err(invalid("Pack has too many follow-up recommendations."));
-        }
         for row in rows {
             let id = remap(map, value_str(&row, "id")?);
             let outcome = value_option_str(&row, "outcomeId")?.map(|v| remap(map, &v));
@@ -665,9 +652,6 @@ pub(super) async fn insert_selectors(
                 || (status == "not_found" && candidate_count != 0)
                 || start.is_some_and(|v| v < 0)
                 || end.is_some_and(|v| v < 0)
-                || exact.chars().count() > 2000
-                || prefix.chars().count() > 500
-                || suffix.chars().count() > 500
                 || matches!(status, "exact" | "contextual")
                     && start.zip(end).is_none_or(|(s, e)| e <= s)
             {

@@ -10,10 +10,6 @@ use serde::{Deserialize, Serialize};
 use sqlx::{Column, Row, SqliteConnection, TypeInfo};
 use std::collections::HashMap;
 
-/// The most rows one evidence table may carry. Import refuses more, so
-/// export does too: a pack no computer can import is no backup.
-pub(super) const MAX_TABLE_ROWS: usize = 50_000;
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub(super) struct AggregateTableSnapshot {
@@ -229,9 +225,6 @@ pub(super) async fn checked_rows(
         return Err(invalid(
             "Pack aggregate columns do not match this application version.",
         ));
-    }
-    if table.rows.len() > MAX_TABLE_ROWS {
-        return Err(invalid("Pack aggregate has too many records."));
     }
     table
         .rows

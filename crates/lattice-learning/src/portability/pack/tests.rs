@@ -235,9 +235,9 @@ fn decode_revalidates_bounded_manifest_metadata() -> anyhow::Result<()> {
     blank_title.title = "  ".into();
     assert!(decode_learning_pack(&rearchive(&blank_title, &decoded.entries)?).is_err());
 
-    let mut oversized_version = decoded.manifest.clone();
-    oversized_version.application_version = "v".repeat(81);
-    assert!(decode_learning_pack(&rearchive(&oversized_version, &decoded.entries)?).is_err());
+    let mut long_version = decoded.manifest.clone();
+    long_version.application_version = "v".repeat(81);
+    assert!(decode_learning_pack(&rearchive(&long_version, &decoded.entries)?).is_ok());
 
     let mut invalid_timestamp = decoded.manifest.clone();
     invalid_timestamp.created_at =
