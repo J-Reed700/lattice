@@ -12,6 +12,7 @@ use crate::lab_runtime::{
 use crate::persistence::{db, now};
 use crate::practical_dto::*;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 use std::collections::HashSet;
 
@@ -32,7 +33,7 @@ impl LearningPracticalRepository {
         if let Some(session_id) = request.practice_session_id.as_deref() {
             uuid(session_id, "practice session")?;
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "practical_run",
@@ -222,7 +223,7 @@ impl LearningPracticalRepository {
             duration_ms: Some(execution.duration_ms),
         };
         let timestamp = now();
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let updated = sqlx::query("UPDATE learning_practical_runs SET status=?,stdout=?,stderr=?,output_truncated=?,exit_code=?,duration_ms=?,check_results_json=?,completed_at=? WHERE id=? AND status='running'")
             .bind(status_name(&status)).bind(&execution.stdout).bind(&execution.stderr)
             .bind(execution.output_truncated as i64).bind(execution.exit_code.map(i64::from))
@@ -262,7 +263,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.run_id, "run")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "practical_run",

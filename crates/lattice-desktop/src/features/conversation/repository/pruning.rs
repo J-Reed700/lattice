@@ -4,6 +4,7 @@ use super::ConversationRepository;
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use chrono::Utc;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 impl ConversationRepository {
     /// Deletes specific messages from a conversation; returns how many.
@@ -18,7 +19,7 @@ impl ConversationRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin pruning: {}", e)))?;
         let deleted = Self::delete_message_ids(&mut tx, conversation_id, message_ids).await?;
@@ -38,7 +39,7 @@ impl ConversationRepository {
     ) -> Result<u64> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin truncate: {}", e)))?;
 
@@ -75,7 +76,7 @@ impl ConversationRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Option<(String, i64, Option<String>)>> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to begin take_last_user_turn: {}", e))
         })?;
 

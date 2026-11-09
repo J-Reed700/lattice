@@ -21,6 +21,7 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::PinnedModel;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobFailure, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobStore,
     NewJob, RecoveryPolicy,
@@ -146,7 +147,7 @@ pub async fn queue_bank(
     top_up: bool,
 ) -> Result<String> {
     quiz_blueprints::validate_scope(scope)?;
-    let mut tx = pool.begin().await.map_err(db)?;
+    let mut tx = pool.begin_write().await.map_err(db)?;
     let needs =
         LearningAssessmentRepository::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
     let id = queue_in(
@@ -207,7 +208,7 @@ pub async fn prepare_bank_now(
     top_up: bool,
 ) -> Result<BankReport> {
     let needs = {
-        let mut tx = pool.begin().await.map_err(db)?;
+        let mut tx = pool.begin_write().await.map_err(db)?;
         let needs =
             LearningAssessmentRepository::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
         tx.commit().await.map_err(db)?;
@@ -228,7 +229,7 @@ pub async fn prepare_bank_now(
                 review_status: "agreed",
             })
             .collect();
-        let mut tx = pool.begin().await.map_err(db)?;
+        let mut tx = pool.begin_write().await.map_err(db)?;
         report.written += crate::assessment_repository::insert_bank_items_in(
             &mut tx,
             program_id,
@@ -269,7 +270,7 @@ impl JobHandler for QuizBankWorker {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let needs = {
-            let mut tx = self.pool.begin().await.map_err(db)?;
+            let mut tx = self.pool.begin_write().await.map_err(db)?;
             let needs =
                 LearningAssessmentRepository::bank_needs_in(&mut tx, &program_id, &scope, top_up)
                     .await?;
@@ -325,7 +326,7 @@ impl JobHandler for QuizBankWorker {
                     review_status: "agreed",
                 })
                 .collect();
-            let mut tx = self.pool.begin().await.map_err(db)?;
+            let mut tx = self.pool.begin_write().await.map_err(db)?;
             written += crate::assessment_repository::insert_bank_items_in(
                 &mut tx,
                 &program_id,
@@ -376,7 +377,7 @@ impl QuizBankWorker {
             Some(bank) => bank,
             None => {
                 let (title, objective, material, seeds) = {
-                    let mut tx = self.pool.begin().await.map_err(db)?;
+                    let mut tx = self.pool.begin_read().await.map_err(db)?;
                     let (title, objective): (String, String) = sqlx::query_as(
                         "SELECT title,objective FROM learning_lessons WHERE id=? AND program_id=?",
                     )
@@ -437,7 +438,7 @@ impl QuizBankWorker {
                 }
             })
             .collect();
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let written = crate::assessment_repository::insert_bank_items_in(
             &mut tx,
             program_id,

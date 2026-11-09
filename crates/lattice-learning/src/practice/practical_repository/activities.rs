@@ -13,6 +13,7 @@ use crate::practical_generation::{
 };
 use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, Sqlite, Transaction};
 use std::collections::HashSet;
 
@@ -27,7 +28,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.profile_id, "runtime profile")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         Self::active_program(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
@@ -85,7 +86,7 @@ impl LearningPracticalRepository {
             read_only_paths: vec![],
             limits: request.limits.clone(),
         })?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         Self::active_program(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
@@ -215,7 +216,7 @@ impl LearningPracticalRepository {
                 "Practical generation must record a model identity.",
             ));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "practical_activity",

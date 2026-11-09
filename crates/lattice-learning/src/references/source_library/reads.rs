@@ -1,5 +1,6 @@
 //! Reading source workspaces, versions, search hits and prepared sources.
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 /// A source's active version as the course index keys it: its immutable id,
 /// the title its passages are embedded under, and the hash of its text.
@@ -47,7 +48,7 @@ impl LearningSourceLibraryRepository {
     ) -> Result<LearningSourceWorkspaceDto> {
         Self::validate_program_id(program_id)?;
         self.backfill_legacy(program_id).await?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let workspace = Self::workspace_on(&mut tx, program_id, include_deleted).await?;
         tx.commit().await.map_err(db)?;
         Ok(workspace)

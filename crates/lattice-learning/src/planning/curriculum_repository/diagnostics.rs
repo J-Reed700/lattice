@@ -9,6 +9,7 @@ use crate::plan_dto::{
 };
 use crate::repository::LearningRepository;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 
 impl LearningCurriculumRepository {
@@ -81,7 +82,7 @@ impl LearningCurriculumRepository {
             .get(&request.program_id)
             .await?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation = diagnostic_operation(
             &request.operation_id,
             &request.program_id,
@@ -219,7 +220,7 @@ impl LearningCurriculumRepository {
             ));
         }
         let payload = hash(request)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation = diagnostic_operation(
             &request.operation_id,
             &request.program_id,
@@ -309,7 +310,7 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation =
             diagnostic_operation(&request.operation_id, &request.program_id, "skip", &payload);
         if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {

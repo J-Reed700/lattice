@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct MessageBookmarkRow {
@@ -97,7 +98,7 @@ impl ConversationRepository {
         &self,
         request: DeleteConversationMessageRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to start delete message transaction: {}", e))
         })?;
 

@@ -5,6 +5,7 @@
 use chrono::Utc;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
 use std::path::PathBuf;
 use tracing::{debug, error, info};
@@ -87,7 +88,7 @@ impl DownloadedModelRepository {
             .embedding_artifact_identity()
             .map(|identity| identity.as_str().to_string());
 
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
             error!(error = %e, model_id = %model_id, "Failed to begin transaction for model save");
             AppError::Database(format!("Failed to begin transaction: {}", e))
         })?;

@@ -1,5 +1,6 @@
 //! Submitting attempts for grading and deciding tutor proposals.
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 impl LearningPracticeRepository {
     pub async fn submit(
@@ -9,7 +10,7 @@ impl LearningPracticeRepository {
         rubric: &[LearningPracticeCriterionDto],
     ) -> Result<LearningPracticeWorkspaceDto> {
         Self::validate_ids(&req.program_id, &req.session_id, Some(&req.operation_id))?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         if practice_operation(
             &req.operation_id,
@@ -94,7 +95,7 @@ impl LearningPracticeRepository {
         } else {
             "reject_proposal"
         };
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &req.program_id).await?;
         if practice_operation(
             &req.operation_id,

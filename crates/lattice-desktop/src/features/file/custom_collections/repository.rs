@@ -3,6 +3,7 @@ use crate::features::file::custom_collections::dto::{
 };
 use chrono::Utc;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
@@ -17,7 +18,7 @@ impl CustomCollectionsRepository {
     }
 
     pub async fn list(&self) -> Result<Vec<CustomCollectionDto>> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let rows = sqlx::query("SELECT id, name, kind, parent_id, created_at, updated_at FROM custom_collections ORDER BY created_at DESC, rowid DESC")
             .fetch_all(&mut *tx).await?;
         let memberships = sqlx::query("SELECT collection_id, document_id FROM custom_collection_documents ORDER BY collection_id, ordinal")
