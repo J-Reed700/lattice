@@ -384,6 +384,9 @@ pub async fn live_mapping_fixture(llm: &dyn LLMPort, fixture: &Value) -> Result<
 }
 
 #[cfg(test)]
+mod passage_list_tests;
+
+#[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
@@ -722,16 +725,12 @@ mod tests {
         let valid =
             json!({"a":decision("claim-a"),"b":decision("claim-a"),"c":decision("claim-c")});
         assert!(resolve(&valid.to_string(), &units).is_ok());
-        let validator = jsonschema::JSONSchema::compile(&schema(&units)).unwrap();
-        assert!(validator.is_valid(&valid));
         let mut missing = valid.clone();
         missing.as_object_mut().unwrap().remove("b");
         assert!(resolve(&missing.to_string(), &units).is_err());
-        assert!(!validator.is_valid(&missing));
         let mut wrong = valid.clone();
         wrong["b"] = decision("claim-c");
         assert!(resolve(&wrong.to_string(), &units).is_err());
-        assert!(!validator.is_valid(&wrong));
         let mut empty = valid.clone();
         empty["b"]["claimIds"] = json!([]);
         assert!(resolve(&empty.to_string(), &units).is_err());

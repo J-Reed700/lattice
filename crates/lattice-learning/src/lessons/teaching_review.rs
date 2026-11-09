@@ -33,15 +33,15 @@ const REVIEW_DRAFT_BRIEF: &str = "Go through the candidate part by part: for a l
 
 #[cfg(test)]
 pub(super) fn fixture_checks(checks: Vec<Value>) -> Value {
-    Value::Object(
+    Value::Array(
         checks
             .into_iter()
             .map(|mut check| {
-                let index = check
-                    .as_object_mut()
-                    .and_then(|fields| fields.remove("index"))
-                    .unwrap_or(Value::Null);
-                (format!("section-{index}"), check)
+                if let Some(fields) = check.as_object_mut() {
+                    let index = fields.remove("index").unwrap_or(Value::Null);
+                    fields.insert("sectionId".into(), json!(format!("section-{index}")));
+                }
+                check
             })
             .collect(),
     )
@@ -362,6 +362,9 @@ async fn review_sections(
 pub mod test_support;
 
 #[cfg(test)]
+mod section_list_tests;
+
+#[cfg(test)]
 mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::test_support::candidate;
@@ -417,19 +420,23 @@ mod tests {
     }
 
     #[test]
-    fn response_slots_cannot_renumber_sections_or_cite_foreign_passages() {
+    fn response_slots_cannot_renumber_sections_or_cite_unknown_passages() {
         let (_, passages) = review_candidate(&candidate());
         let compiled = jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages)).unwrap();
         let mut response =
             json!({"issues":[],"blockChecks":fixture_checks(vec![check(0),check(1),check(2)])});
         assert!(compiled.is_valid(&response));
-        response["blockChecks"]["section-0"]["passageId"] = json!("section-1-passage-0");
+        response["blockChecks"][0]["passageId"] = json!("invented-passage");
         assert!(!compiled.is_valid(&response));
-        response["blockChecks"]["section-0"]["passageId"] = json!("section-0-passage-0");
-        response["blockChecks"]["section-0"]["index"] = json!(1);
+        response["blockChecks"][0]["passageId"] = json!("section-0-passage-0");
+        response["blockChecks"][0]["index"] = json!(1);
         assert!(!compiled.is_valid(&response));
-        let duplicate = r#"{"issues":[],"blockChecks":{"section-0":{},"section-0":{}}}"#;
-        assert!(generation::parse_json::<Review>(duplicate).is_err());
+        response["blockChecks"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("index");
+        response["blockChecks"][0]["sectionId"] = json!("section-7");
+        assert!(!compiled.is_valid(&response));
     }
 
     #[test]

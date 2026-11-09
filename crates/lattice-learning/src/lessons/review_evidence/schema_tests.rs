@@ -1,0 +1,110 @@
+use super::*;
+use crate::lessons::course_generation_tests::property_count;
+use crate::review_findings::FindingKind;
+
+fn issues(count: usize) -> Vec<ReviewFinding> {
+    (0..count)
+        .map(|i| ReviewFinding::new(FindingKind::Teaching, None, format!("Proposal {i}.")))
+        .collect()
+}
+
+fn keys(count: usize) -> Vec<String> {
+    (0..count).map(|i| format!("issue-{i}")).collect()
+}
+
+fn evidence() -> HashMap<String, EvidenceKind> {
+    HashMap::from([
+        ("blocks-0".into(), EvidenceKind::Candidate),
+        ("reference-0".into(), EvidenceKind::Reference),
+    ])
+}
+
+fn withheld(key: &str) -> Value {
+    json!({"issueId":key,"verdict":"not_established","basis":"external_fact","evidenceIds":[],"requirementId":null,"partId":"lesson","reason":"No passage establishes this correction."})
+}
+
+fn grounded(key: &str) -> Value {
+    json!({"issueId":key,"verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"requirementId":null,"partId":"blocks-0","reason":"The candidate contradicts itself."})
+}
+
+fn answer(decisions: Vec<Value>) -> String {
+    json!({ "decisions": decisions }).to_string()
+}
+
+fn first(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
+    accepted(raw, &issues(count), &evidence(), false, &mut HashMap::new())
+}
+
+fn last(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
+    accepted(raw, &issues(count), &evidence(), true, &mut HashMap::new())
+}
+
+#[test]
+fn the_schema_is_as_large_for_fifty_issues_as_for_one() {
+    let ids = ["blocks-0", "reference-0", "requirements"].map(String::from);
+    let one = schema(&keys(1), &ids);
+    let fifty = schema(&keys(50), &ids);
+    assert_eq!(property_count(&one), property_count(&fifty));
+    let listed = &fifty["properties"]["decisions"]["items"]["properties"]["issueId"]["enum"];
+    assert_eq!(listed.as_array().map(Vec::len), Some(50));
+}
+
+#[test]
+fn a_complete_answer_in_any_order_is_accepted() -> Result<()> {
+    let raw = answer(vec![withheld("issue-1"), grounded("issue-0")]);
+    let found = first(&raw, 2)?;
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].note, "Proposal 0.");
+    Ok(())
+}
+
+#[test]
+fn a_missing_issue_is_refused_with_its_key() {
+    let error = first(&answer(vec![withheld("issue-0")]), 2).unwrap_err();
+    assert!(error.to_string().contains("issue-1"), "{error}");
+    assert!(!error.to_string().contains("issue-0"), "{error}");
+}
+
+#[test]
+fn a_repeated_issue_is_refused_with_its_key() {
+    let raw = answer(vec![
+        withheld("issue-0"),
+        withheld("issue-1"),
+        withheld("issue-1"),
+    ]);
+    let error = first(&raw, 2).unwrap_err();
+    assert!(error.to_string().contains("issue-1"), "{error}");
+    assert!(!error.to_string().contains("issue-0"), "{error}");
+}
+
+#[test]
+fn a_decision_for_an_issue_that_was_not_asked_is_refused_with_its_key() {
+    let raw = answer(vec![withheld("issue-0"), withheld("issue-7")]);
+    let error = first(&raw, 1).unwrap_err();
+    assert!(error.to_string().contains("issue-7"), "{error}");
+}
+
+#[test]
+fn on_the_last_answer_only_the_repeated_issue_is_left_not_established() -> Result<()> {
+    let raw = answer(vec![
+        grounded("issue-0"),
+        grounded("issue-1"),
+        grounded("issue-1"),
+    ]);
+    let notes: Vec<_> = last(&raw, 2)?
+        .into_iter()
+        .map(|finding| finding.note)
+        .collect();
+    assert_eq!(notes, ["Proposal 0."]);
+    Ok(())
+}
+
+#[test]
+fn on_the_last_answer_only_the_missing_issue_is_left_not_established() -> Result<()> {
+    let notes: Vec<_> = last(&answer(vec![grounded("issue-1")]), 2)?
+        .into_iter()
+        .map(|finding| finding.note)
+        .collect();
+    assert_eq!(notes, ["Proposal 1."]);
+    Ok(())
+}
