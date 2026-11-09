@@ -339,7 +339,7 @@ describe('Course page', () => {
       await waitFor(() => expect(practice).toHaveAttribute('aria-selected', 'true'));
       fireEvent.click(practice);
       expect(screen.getByRole('group', { name: 'Written practice mode' })).toBeVisible();
-      expect(screen.getByTestId('practice-home')).not.toBeVisible();
+      expect(screen.queryByTestId('practice-home')).not.toBeInTheDocument();
     });
 
     it('opens the Practice page on Enter on the selected Practice tab', async () => {
@@ -352,7 +352,7 @@ describe('Course page', () => {
       primaryTab('Practice').focus();
       await user.keyboard('{Enter}');
       expect(await screen.findByTestId('practice-home')).toBeVisible();
-      expect(screen.getByRole('group', { name: 'Written practice mode' })).not.toBeVisible();
+      expect(screen.queryByRole('group', { name: 'Written practice mode' })).not.toBeInTheDocument();
     });
 
     it('opens the Practice page when Practice is clicked while already selected', async () => {
@@ -364,7 +364,7 @@ describe('Course page', () => {
 
       await user.click(primaryTab('Practice'));
       expect(await screen.findByTestId('practice-home')).toBeVisible();
-      expect(screen.getByRole('group', { name: 'Written practice mode' })).not.toBeVisible();
+      expect(screen.queryByRole('group', { name: 'Written practice mode' })).not.toBeInTheDocument();
     });
   });
 
