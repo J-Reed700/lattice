@@ -329,7 +329,7 @@ async fn review_sections(
                         continue;
                     };
                     if fields.insert("index".into(), json!(index)).is_some() {
-                        problems.push(format!("Section {index}: each sectionId appears once; do not supply an index field."));
+                        problems.push(format!("Section {index}: the sectionId names the section; do not supply an index field."));
                         continue;
                     }
                     let check: BlockCheck = match serde_json::from_value(value) {

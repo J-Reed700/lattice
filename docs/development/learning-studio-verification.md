@@ -1363,11 +1363,11 @@ Section reviews likewise answer with a `blockChecks` array whose entries name
 their section with an application-assigned `section-N` `sectionId` enum, and
 the same applies to review-finding decisions (`decisions` entries named by
 `issueId`) and coverage mapping (`passages` entries named by `passageId`);
-a schema with one property per runtime item exceeds Claude's grammar limit.
-Each entry has its own passage-ID enum; a reviewer cannot renumber its findings
-or select a passage from another section. Runtime validation also rejects
-missing, repeated and unknown IDs and retains valid section checks during
-response correction.
+a schema with one property per runtime item can exceed Claude's grammar limit.
+The single item schema's `passageId` enum lists the passages of every requested
+section, so runtime validation refuses a passage that belongs to another
+section. It also rejects missing, repeated and unknown IDs and retains valid
+section checks during response correction.
 Completed answer-key and teaching reviews are saved before later finding
 grounding or repair can fail. Restart reuses their recorded findings, including
 defects, only for identical inputs and model context. Changed questions rerun
