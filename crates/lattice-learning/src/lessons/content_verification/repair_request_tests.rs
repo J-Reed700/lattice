@@ -3,7 +3,8 @@
 //! applied, and only the sentences an earlier correction replaced or removed.
 use super::super::repair::goal_words;
 use super::acceptance_switch_tests::{
-    claim, identified, lesson_of, local_check, open, walk, CUTTING, RESEARCHING, SOURCED,
+    claim, identified, lesson_of, local_check, open, walk, walk_because, CUTTING, REASONED,
+    RESEARCHING, SOURCED,
 };
 use super::claim_ledger_tests::{pass_report, prepare, section};
 use super::class_checks_tests::Classes;
@@ -309,6 +310,72 @@ async fn the_request_after_a_correction_lists_the_sentence_it_removed_and_why() 
     assert_eq!(removed["sentence"], BAD);
     let reason = removed["reason"].as_str().unwrap_or_default();
     assert!(!reason.is_empty(), "{removed}");
+    Ok(())
+}
+
+/// What a reasoning statement is asked once a veto refuted it and its passages said nothing.
+const CORRECT_WHAT_WAS_FOUND: &str = "Correct what the reason found wrong in the sentence, and keep the rest of the sentence as it is.";
+
+#[tokio::test]
+async fn the_rewrite_of_a_vetoed_statement_its_passages_do_not_address_carries_the_veto_reason(
+) -> Result<()> {
+    const VETO: &str = "The sentence says the reader keeps every space, which the sources deny.";
+    const SILENT: &str = "The passages do not address this.";
+    let policy = StandardPolicy::new();
+    let sentence = "The reader keeps every space of a field, so headers match by position.";
+    let mut ledger = open().await?;
+    let id = claim(
+        &mut ledger,
+        "vetoed",
+        (sentence, sentence),
+        sentence,
+        REASONED,
+    )
+    .await?;
+    walk_because(
+        &mut ledger,
+        &id,
+        Class::Reasoning,
+        &[
+            (
+                Step::Read(Reading::Consistency),
+                Outcome::Stands,
+                "It follows.",
+            ),
+            (Step::Read(Reading::Veto), Outcome::Refuted, VETO),
+            (Step::Read(Reading::Ground), Outcome::Refuted, SILENT),
+        ],
+    )
+    .await?;
+    let lesson = lesson_of(sentence);
+    identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson,
+        &[(sentence, sentence)],
+        &[],
+    )
+    .await?;
+    let mut finding = unsupported(sentence);
+    finding.reason = SILENT.into();
+    let report = pass_report(vec![finding]);
+
+    let context = repair_context(
+        "{}",
+        &lesson,
+        &report,
+        (&ledger, &policy),
+        &[id],
+        &ReferenceCollection::lexical(&[])?,
+    )?;
+
+    let failed = context["failedClaims"].as_array().unwrap();
+    let [sent] = failed.as_slice() else {
+        panic!("one failed claim: {failed:?}");
+    };
+    assert_eq!(sent["goal"], CORRECT_WHAT_WAS_FOUND);
+    assert_eq!(sent["reason"], VETO);
+    assert_eq!(sent["groundReason"], SILENT);
     Ok(())
 }
 
