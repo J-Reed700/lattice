@@ -77,13 +77,24 @@ impl ClaimReviewRepository {
         claim_id: &ClaimId,
         passages: &[ShownPassage],
     ) -> Result<()> {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        Self::show_passages_in(&mut connection, lesson_id, claim_id, passages).await
+    }
+
+    /// [`Self::show_passages`] inside the caller's unit of work.
+    pub async fn show_passages_in(
+        conn: &mut SqliteConnection,
+        lesson_id: &str,
+        claim_id: &ClaimId,
+        passages: &[ShownPassage],
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE learning_lesson_claims SET evidence_json=? WHERE claim_id=? AND lesson_id=?",
         )
         .bind(encode(passages)?)
         .bind(&claim_id.0)
         .bind(lesson_id)
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await
         .map_err(db)?;
         Ok(())

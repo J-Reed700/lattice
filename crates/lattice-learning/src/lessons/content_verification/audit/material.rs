@@ -18,7 +18,7 @@ use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::persistence::db;
 use crate::repository::LearningRepository;
-use crate::source_library::LearningSourceLibraryRepository;
+use crate::source_library::workspace_in;
 use lattice_core::shared::persistence::Transactions;
 
 pub struct AuditMaterial {
@@ -105,12 +105,10 @@ async fn passages(
     program_id: &str,
     lesson_id: &str,
 ) -> Result<HashMap<ClaimId, Vec<AuditPassage>>> {
-    let shown = ClaimReviewRepository::new(pool.clone())
-        .shown_passages(lesson_id)
-        .await?;
+    let claims = ClaimReviewRepository::new(pool.clone());
+    let shown = claims.shown_passages(lesson_id).await?;
     let mut read = pool.begin_read().await.map_err(db)?;
-    let workspace =
-        LearningSourceLibraryRepository::workspace_on(&mut read, program_id, true).await?;
+    let workspace = workspace_in(&mut read, program_id, true).await?;
     read.commit().await.map_err(db)?;
     let titles: HashMap<String, String> = workspace
         .sources

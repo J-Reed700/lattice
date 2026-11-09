@@ -15,6 +15,8 @@
 
 mod checksum;
 mod chunks;
+#[cfg(test)]
+mod chunks_write_tests;
 mod context;
 mod documents;
 mod stats;

@@ -19,7 +19,7 @@ fn summary(r: &sqlx::sqlite::SqliteRow) -> LearningSourceVersionSummaryDto {
 }
 
 /// Read source metadata and history through an existing database snapshot.
-pub(in super::super) async fn workspace_on(
+pub(crate) async fn workspace_in(
     connection: &mut SqliteConnection,
     program_id: &str,
     include_deleted: bool,

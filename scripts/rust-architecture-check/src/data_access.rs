@@ -44,16 +44,29 @@ const SQL_MACROS: [&str; 3] = ["query", "query_as", "query_scalar"];
 const DEFERRED: &str = "begins a deferred transaction; use begin_write() or begin_read()";
 const BEGIN_WITH: &str = "begins with begin_with(); use begin_write() or begin_read()";
 
-/// `(file, function, reason)`: a function rule 3 would flag, with the reason it must not be one transaction.
-pub const EXCEPTIONS: &[(&str, &str, &str)] = &[
+/// The part of rule 3 an exception exempts a function from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exempt {
+    /// 3(a) to (d): one transaction, in order.
+    Shape,
+    /// 3(e): awaits while the write transaction is open.
+    Awaits,
+}
+
+/// `(file, function, exempt part, reason)`: a function rule 3 would flag, with the reason it must not be one transaction.
+pub type Exception<'a> = (&'a str, &'a str, Exempt, &'a str);
+
+pub const EXCEPTIONS: &[Exception<'static>] = &[
     (
         "crates/lattice-desktop/src/infrastructure/persistence/database/migrate.rs",
         "run_migrations",
+        Exempt::Shape,
         "sqlx's migrator runs each migration in its own transaction, and PRAGMA optimize after it refreshes planner statistics only",
     ),
     (
         "crates/lattice-desktop/src/features/indexing/library_owner.rs",
         "adopt",
+        Exempt::Awaits,
         "The owner file is created (create_new, never replacing) while the owner id is uncommitted: a file that cannot be created, or that another instance created first, rolls the id back, so the id and the file always agree.",
     ),
 ];
@@ -93,7 +106,7 @@ pub fn file_violations(path: &str, ast: &syn::File) -> Vec<Violation> {
 pub fn file_violations_with(
     path: &str,
     ast: &syn::File,
-    exceptions: &[(&str, &str, &str)],
+    exceptions: &[Exception],
 ) -> Vec<Violation> {
     if test_only(&ast.attrs) {
         return Vec::new();

@@ -942,3 +942,21 @@ async fn a_statement_a_section_edit_changed_offers_no_undo_and_an_undo_is_refuse
 async fn a_statement_a_section_edit_deleted_offers_no_undo_and_an_undo_is_refused() -> Result<()> {
     assert_no_undo_after(&without_statement(), GOOD).await
 }
+
+#[tokio::test]
+async fn a_rewrite_whose_example_cannot_be_recorded_writes_nothing() -> Result<()> {
+    let course = unchecked().await?;
+    course.flag_locally(GOOD).await?;
+    let before = snapshot(&course).await?;
+    sqlx::query(
+        "CREATE TRIGGER refuse_for_test BEFORE INSERT ON learning_checker_examples BEGIN SELECT RAISE(ABORT, 'refused for the test'); END",
+    )
+    .execute(&course.pool)
+    .await?;
+
+    let result = rewrite(&course, 0, "Section 0", &written_over(), false).await;
+
+    assert!(result.is_err());
+    assert_eq!(snapshot(&course).await?, before);
+    Ok(())
+}

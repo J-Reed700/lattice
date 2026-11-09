@@ -280,28 +280,17 @@ impl LearningAssessmentRepository {
         Ok(needs)
     }
 
-    /// Store what was written for `need`, but no more than the bank still
-    /// lacks for its requirement. The lack is worked out again inside the
-    /// caller's unit, so a run that wrote the same need first is not doubled.
-    pub(crate) async fn insert_for_need_in(
-        connection: &mut SqliteConnection,
+    /// [`insert_bank_items_in`] as a unit of work of its own.
+    pub(crate) async fn insert_bank_items(
+        pool: &SqlitePool,
         program_id: &str,
-        scope: &LearningQuizScopeDto,
-        top_up: bool,
-        need: &AuthoringNeed,
-        mut items: Vec<BankItem>,
+        items: &[BankItem],
         author_model: Option<&str>,
     ) -> Result<usize> {
-        let lacking = Self::bank_needs_in(connection, program_id, scope, top_up)
-            .await?
-            .into_iter()
-            .find(|n| {
-                n.requirement.outcome_id == need.requirement.outcome_id
-                    && n.requirement.format == need.requirement.format
-            })
-            .map_or(0, |n| n.count);
-        items.truncate(lacking);
-        insert_bank_items_in(connection, program_id, &items, author_model).await
+        let mut tx = pool.begin_write().await.map_err(db)?;
+        let stored = insert_bank_items_in(&mut tx, program_id, items, author_model).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(stored)
     }
 
     /// What a quiz still needs written: per requirement, up to three forms'

@@ -116,18 +116,13 @@ pub async fn prepare_bank_now(
                 review_status: "agreed",
             })
             .collect();
-        let mut tx = pool.begin_write().await.map_err(db)?;
-        report.written += LearningAssessmentRepository::insert_for_need_in(
-            &mut tx,
+        report.written += LearningAssessmentRepository::insert_bank_items(
+            pool,
             program_id,
-            scope,
-            top_up,
-            need,
-            items,
+            &items,
             Some(llm.model_name()),
         )
         .await?;
-        tx.commit().await.map_err(db)?;
     }
     Ok(report)
 }
@@ -213,18 +208,13 @@ impl JobHandler for QuizBankWorker {
                     review_status: "agreed",
                 })
                 .collect();
-            let mut tx = self.pool.begin_write().await.map_err(db)?;
-            written += LearningAssessmentRepository::insert_for_need_in(
-                &mut tx,
+            written += LearningAssessmentRepository::insert_bank_items(
+                &self.pool,
                 &program_id,
-                &scope,
-                top_up,
-                need,
-                items,
+                &items,
                 Some(llm.model_name()),
             )
             .await?;
-            tx.commit().await.map_err(db)?;
         }
         Ok(JobOutcome::Completed {
             result_ref: format!("quiz_bank:{written}"),
@@ -266,24 +256,7 @@ impl QuizBankWorker {
         let bank = match saved {
             Some(bank) => bank,
             None => {
-                let (title, objective, material, seeds) = {
-                    let mut tx = self.pool.begin_read().await.map_err(db)?;
-                    let (title, objective) =
-                        repository::lesson_title_objective_in(&mut tx, program_id, lesson_id)
-                            .await?
-                            .ok_or_else(|| {
-                                AppError::NotFound("Lesson not found in this course".into())
-                            })?;
-                    let material =
-                        LearningAssessmentRepository::lesson_material_in(&mut tx, lesson_id)
-                            .await?;
-                    let seeds = LearningAssessmentRepository::lesson_seeds_in(
-                        &mut tx, program_id, lesson_id,
-                    )
-                    .await?;
-                    tx.commit().await.map_err(db)?;
-                    (title, objective, material, seeds)
-                };
+                let inputs = repository::lesson_inputs(&self.pool, program_id, lesson_id).await?;
                 let Some(pin) = context.until_cancelled((self.load_llm)()).await else {
                     return Ok(JobOutcome::Stopped);
                 };
@@ -294,10 +267,10 @@ impl QuizBankWorker {
                         &self.pool,
                         program_id,
                         lesson_id,
-                        &title,
-                        &objective,
-                        material,
-                        seeds,
+                        &inputs.title,
+                        &inputs.objective,
+                        inputs.material,
+                        inputs.seeds,
                     ))
                     .await
                 else {
@@ -325,15 +298,13 @@ impl QuizBankWorker {
                 }
             })
             .collect();
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        let written = crate::assessment_repository::insert_bank_items_in(
-            &mut tx,
+        let written = LearningAssessmentRepository::insert_bank_items(
+            &self.pool,
             program_id,
             &items,
             bank.author_model.as_deref(),
         )
         .await?;
-        tx.commit().await.map_err(db)?;
         Ok(JobOutcome::Completed {
             result_ref: format!("quiz_bank:{written}"),
             message: format!("{written} questions written."),

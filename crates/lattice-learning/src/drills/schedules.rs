@@ -7,7 +7,7 @@ use lattice_core::domain::learning::drills::{Material, PatternRating};
 
 pub(crate) mod repository;
 mod store;
-#[cfg(test)]
+#[cfg(any(test, feature = "test-support"))]
 pub(crate) use store::fit_basis_in;
 pub(crate) use store::{
     fit_basis, lesson_fits_in, lesson_states_in, pattern_states_in, record_fit, record_fit_in,

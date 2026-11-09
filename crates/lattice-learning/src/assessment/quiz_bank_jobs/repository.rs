@@ -2,13 +2,46 @@
 //! waits for, and a lesson's heading.
 
 use super::{QUIZ_BANK, QUIZ_GRADING};
+use crate::assessment_generation::{MaterialPassage, StoredItem};
+use crate::assessment_repository::LearningAssessmentRepository;
 use crate::curriculum_repository::lesson_rank_in;
 use crate::persistence::db;
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::SqliteConnection;
+use sqlx::{SqliteConnection, SqlitePool};
+
+/// What a lesson's bank stage reads of the lesson.
+pub(super) struct LessonInputs {
+    pub(super) title: String,
+    pub(super) objective: String,
+    pub(super) material: Vec<MaterialPassage>,
+    pub(super) seeds: Vec<StoredItem>,
+}
+
+/// The lesson's heading, blocks and reviewed questions, read in one unit of work.
+pub(super) async fn lesson_inputs(
+    pool: &SqlitePool,
+    program_id: &str,
+    lesson_id: &str,
+) -> Result<LessonInputs> {
+    let mut tx = pool.begin_read().await.map_err(db)?;
+    let (title, objective) = lesson_title_objective_in(&mut tx, program_id, lesson_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
+    let material = LearningAssessmentRepository::lesson_material_in(&mut tx, lesson_id).await?;
+    let seeds =
+        LearningAssessmentRepository::lesson_seeds_in(&mut tx, program_id, lesson_id).await?;
+    tx.commit().await.map_err(db)?;
+    Ok(LessonInputs {
+        title,
+        objective,
+        material,
+        seeds,
+    })
+}
 
 fn digest(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))

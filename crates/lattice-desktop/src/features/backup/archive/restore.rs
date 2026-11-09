@@ -229,9 +229,6 @@ impl ArchiveRestorer {
                 ))
             })?;
 
-        // Files first, then the database whose rows name them: a stop in
-        // between leaves the old database and some extra files, and a retry
-        // skips what is already there.
         let files_restored = self
             .merge_files_library(extracted.files_dir.as_deref())
             .await;

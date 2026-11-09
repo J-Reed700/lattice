@@ -9,8 +9,8 @@
 //! shows.
 
 use super::repository::capture::{
-    active_texts, captured_version_of, other_active_version_ids, signals_json, version_text,
-    CourseText,
+    active_texts, active_texts_in, captured_version_of, other_active_version_ids, signals_json,
+    version_text, CourseText,
 };
 use super::repository::rows::{from_json, write_provenance, write_relations};
 use super::repository::unix_seconds;
@@ -24,7 +24,7 @@ use lattice_core::domain::provenance::{
     RelationTarget, ShingleSet, Sketch, SourceDates, SourceRelation, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::WriteTx;
+use lattice_core::shared::persistence::{ReadTx, WriteTx};
 use sqlx::SqlitePool;
 use std::collections::BTreeSet;
 
@@ -185,13 +185,28 @@ pub struct Comparison {
     relations: Vec<SourceRelation>,
 }
 
+/// The texts of a course's active sources, read ahead of comparing a
+/// version with them.
+pub struct SavedTexts(Vec<CourseText>);
+
+/// Reads the texts of the course's active sources.
+pub async fn saved_texts(conn: &mut ReadTx, program_id: &str) -> Result<SavedTexts> {
+    Ok(SavedTexts(active_texts_in(conn, program_id).await?))
+}
+
 /// Compares a version with the course's active sources.
 pub async fn compare(
     pool: &SqlitePool,
     program_id: &str,
     version: VersionText<'_>,
 ) -> Result<Comparison> {
-    compare_all(pool, program_id, &[version])
+    let saved = SavedTexts(active_texts(pool, program_id).await?);
+    compare_saved(saved, version).await
+}
+
+/// [`compare`] against texts already read.
+pub async fn compare_saved(saved: SavedTexts, version: VersionText<'_>) -> Result<Comparison> {
+    compare_all_saved(saved, &[version])
         .await?
         .pop()
         .ok_or_else(|| AppError::InternalError("A version went uncompared.".into()))
@@ -204,7 +219,15 @@ pub async fn compare_all(
     program_id: &str,
     versions: &[VersionText<'_>],
 ) -> Result<Vec<Comparison>> {
-    let saved = active_texts(pool, program_id).await?;
+    let saved = SavedTexts(active_texts(pool, program_id).await?);
+    compare_all_saved(saved, versions).await
+}
+
+async fn compare_all_saved(
+    saved: SavedTexts,
+    versions: &[VersionText<'_>],
+) -> Result<Vec<Comparison>> {
+    let saved = saved.0;
     let versions: Vec<CourseText> = versions
         .iter()
         .map(|version| CourseText {

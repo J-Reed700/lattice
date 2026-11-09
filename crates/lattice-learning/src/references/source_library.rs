@@ -25,6 +25,7 @@ mod lifecycle_tests;
 mod reads;
 pub use reads::ActiveVersion;
 mod repository;
+pub(crate) use repository::reads::workspace_in;
 mod user_evidence;
 pub use user_evidence::{ChosenVersion, SavedSource};
 

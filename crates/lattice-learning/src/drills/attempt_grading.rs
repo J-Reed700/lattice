@@ -13,7 +13,9 @@ use super::repository::StoredDrill;
 use super::schedules;
 use crate::persistence::{db, now};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::domain::learning::drills::{lesson_rating, ratings, score, validate};
+use lattice_core::domain::learning::drills::{
+    lesson_rating, ratings, score, validate, IssueRating, PatternRating,
+};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Transactions, WriteTx};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
@@ -122,37 +124,8 @@ impl<'a> AttemptGrading<'a> {
             fix: fix.as_deref(),
             model: self.llm.model_name(),
         };
-        let mut transaction = self.pool.begin_write().await.map_err(db)?;
-        let recorded =
-            attempts::repository::record_graded_in(&mut transaction, &attempt.id, &graded).await?;
-        if recorded {
-            schedules::record_in(
-                &mut transaction,
-                stored,
-                &rated,
-                lesson_rating(&stored.drill.material, key, &assessment),
-                now(),
-            )
-            .await?;
-        }
-        let finished = finish_in(
-            &mut transaction,
-            context,
-            recorded,
-            &attempt.id,
-            "Your review is graded",
-        )
-        .await?;
-        match finished {
-            Finish::Commit => {
-                transaction.commit().await.map_err(db)?;
-                Ok(JobOutcome::Committed)
-            }
-            Finish::Leave(outcome) => {
-                transaction.rollback().await.map_err(db)?;
-                Ok(outcome)
-            }
-        }
+        let lesson = lesson_rating(&stored.drill.material, key, &assessment);
+        save_grade(self.pool, context, attempt, stored, &graded, &rated, lesson).await
     }
 
     async fn give_up(
@@ -169,6 +142,43 @@ impl<'a> AttemptGrading<'a> {
             error,
         )
         .await
+    }
+}
+
+/// Stores the grade of `attempt`, a submitted attempt at `stored`, and the schedules it moves, and completes the job,
+/// in one transaction.
+async fn save_grade(
+    pool: &SqlitePool,
+    context: &JobContext,
+    attempt: &Attempt,
+    stored: &StoredDrill,
+    graded: &Graded<'_>,
+    rated: &[IssueRating],
+    lesson: Option<PatternRating>,
+) -> Result<JobOutcome> {
+    let mut transaction = pool.begin_write().await.map_err(db)?;
+    let recorded =
+        attempts::repository::record_graded_in(&mut transaction, &attempt.id, graded).await?;
+    if recorded {
+        schedules::record_in(&mut transaction, stored, rated, lesson, now()).await?;
+    }
+    let finished = finish_in(
+        &mut transaction,
+        context,
+        recorded,
+        &attempt.id,
+        "Your review is graded",
+    )
+    .await?;
+    match finished {
+        Finish::Commit => {
+            transaction.commit().await.map_err(db)?;
+            Ok(JobOutcome::Committed)
+        }
+        Finish::Leave(outcome) => {
+            transaction.rollback().await.map_err(db)?;
+            Ok(outcome)
+        }
     }
 }
 

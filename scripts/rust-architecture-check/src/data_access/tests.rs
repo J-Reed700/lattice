@@ -25,8 +25,8 @@ fn a_deferred_begin_is_flagged_and_the_two_explicit_begins_are_not() {
         .begin()
         .await
         .unwrap();
-    let write = pool.begin_write().await.unwrap();
     let read = pool.begin_read().await.unwrap();
+    let write = pool.begin_write().await.unwrap();
     let builder = connection.begin();
 }
 "#;
@@ -546,14 +546,24 @@ fn a_listed_function_is_excepted() {
 }
 "#;
     let ast = syn::parse_file(source).unwrap();
-    let listed = [(REPOSITORY, "compact", "VACUUM runs outside a transaction")];
+    let listed = [(
+        REPOSITORY,
+        "compact",
+        Exempt::Shape,
+        "VACUUM runs outside a transaction",
+    )];
     assert_eq!(
         file_violations_with(REPOSITORY, &ast, &[]).len(),
         1,
         "unlisted"
     );
     assert!(file_violations_with(REPOSITORY, &ast, &listed).is_empty());
-    let other_file = [("crates/x/src/repository.rs", "compact", "elsewhere")];
+    let other_file = [(
+        "crates/x/src/repository.rs",
+        "compact",
+        Exempt::Shape,
+        "elsewhere",
+    )];
     assert_eq!(file_violations_with(REPOSITORY, &ast, &other_file).len(), 1);
 }
 

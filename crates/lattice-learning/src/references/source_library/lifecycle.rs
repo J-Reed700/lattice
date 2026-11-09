@@ -232,10 +232,12 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Replacement source text must not be empty."));
         }
         let hash = hash(req)?;
-        let saved_text = stored::active_text(&self.pool, &req.program_id, &req.source_id).await?;
-        let comparison = trust::capture::compare(
-            &self.pool,
-            &req.program_id,
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let saved_text = stored::active_text_in(&mut read, &req.program_id, &req.source_id).await?;
+        let saved = trust::capture::saved_texts(&mut read, &req.program_id).await?;
+        read.commit().await.map_err(db)?;
+        let comparison = trust::capture::compare_saved(
+            saved,
             trust::capture::VersionText {
                 source_id: &req.source_id,
                 version_id: &req.version_id,

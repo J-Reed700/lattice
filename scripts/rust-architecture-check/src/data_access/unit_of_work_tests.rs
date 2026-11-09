@@ -489,3 +489,38 @@ fn the_library_owner_exception_is_honored() {
     let ast = syn::parse_file(source).unwrap();
     assert_eq!(file_violations_with(OWNER, &ast, &[]).len(), 1);
 }
+
+#[test]
+fn the_library_owner_exception_exempts_only_the_awaits_check() {
+    let source = r#"impl Owner {
+    pub async fn adopt(&self) -> Result<()> {
+        let n = self.repo.count(&self.pool).await?;
+        let mut tx = self.pool.begin_write().await?;
+        self.repo.set_owner_in(&mut tx, n).await?;
+        tokio::fs::File::create_new(&self.path).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+}
+"#;
+    assert_eq!(
+        found(OWNER, source),
+        vec![on_pool(OWNER, 2, "adopt", 1, 2, "")]
+    );
+    assert_eq!(
+        found(SERVICE, source),
+        vec![
+            on_pool(SERVICE, 2, "adopt", 1, 2, ""),
+            awaits(SERVICE, 6, "adopt", "tokio::fs::File::create_new()"),
+        ]
+    );
+    let ast = syn::parse_file(source).unwrap();
+    let shape = [(OWNER, "adopt", Exempt::Shape, "a reason")];
+    assert_eq!(
+        file_violations_with(OWNER, &ast, &shape)
+            .iter()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>(),
+        vec![awaits(OWNER, 6, "adopt", "tokio::fs::File::create_new()")]
+    );
+}

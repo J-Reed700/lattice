@@ -4,7 +4,7 @@
 //! the pool, begins at most one write and one read transaction, reads before it
 //! begins the write transaction, and runs nothing after the write transaction
 //! commits.
-use super::{is_punct, walk_tokens, Violation};
+use super::{is_punct, walk_tokens, Exception, Exempt, Violation};
 use crate::{
     item_attrs,
     ratchet::{impl_item_attrs, trait_item_attrs},
@@ -697,7 +697,7 @@ impl<'a> Resolver<'a> {
 pub fn violations(
     path: &str,
     ast: &syn::File,
-    exceptions: &[(&str, &str, &str)],
+    exceptions: &[Exception],
     data: bool,
 ) -> Vec<Violation> {
     let mut collect = Collect {
@@ -708,9 +708,9 @@ pub fn violations(
     let resolver = Resolver::new(&collect.defs);
     let mut found = Vec::new();
     for (position, def) in collect.defs.iter().enumerate() {
-        let excepted = exceptions
-            .iter()
-            .any(|(file, function, _)| *file == path && *function == def.name);
+        let excepted = exceptions.iter().any(|(file, function, exempt, _)| {
+            *file == path && *function == def.name && *exempt == Exempt::Shape
+        });
         if excepted || (!data && !def.unit) {
             continue;
         }

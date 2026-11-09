@@ -28,6 +28,9 @@ mod metadata;
 mod multi_file;
 mod single_file;
 
+#[cfg(test)]
+mod write_tests;
+
 pub struct DownloadModelUseCase {
     catalog: Arc<dyn ModelCatalogPort>,
     storage: Arc<dyn ModelStoragePort>,

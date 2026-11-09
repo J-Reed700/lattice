@@ -14,7 +14,7 @@ use lattice_core::application::ports::chat_images::{
     ChatImagesPort, CopiedMessage, ImageTurnScope,
 };
 
-struct NoNetwork;
+pub(super) struct NoNetwork;
 
 #[async_trait]
 impl ImageNetwork for NoNetwork {
@@ -29,7 +29,7 @@ impl ImageNetwork for NoNetwork {
     }
 }
 
-fn png() -> Vec<u8> {
+pub(super) fn png() -> Vec<u8> {
     let mut bytes = vec![0x89, b'P', b'N', b'G', 0x0D, 0x0A, 0x1A, 0x0A];
     bytes.extend_from_slice(&13u32.to_be_bytes());
     bytes.extend_from_slice(b"IHDR");

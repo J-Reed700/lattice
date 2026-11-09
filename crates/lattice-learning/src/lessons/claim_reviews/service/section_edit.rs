@@ -191,7 +191,7 @@ impl ClaimReviewService {
             ending: &ending,
             at: now(),
         };
-        let moved = self.write_edit(&ledger, &write).await?;
+        let moved = self.write_section_edit(&ledger, &write).await?;
         outcome.revision = self.settled_revision(&ledger, &lesson_id, moved).await?;
         Ok(outcome)
     }
@@ -200,7 +200,7 @@ impl ClaimReviewService {
     /// ledger's events, the stored report, the teaching notes' marker and
     /// what each ended statement gives the checker examples and calibration.
     /// Returns the kinds whose bar the settlement moved.
-    async fn write_edit(
+    async fn write_section_edit(
         &self,
         ledger: &Ledger,
         write: &SectionWrite<'_>,

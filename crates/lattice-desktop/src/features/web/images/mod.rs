@@ -19,6 +19,8 @@ pub mod store;
 #[cfg(test)]
 mod crash_tests;
 #[cfg(test)]
+mod gc_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod write_tests;

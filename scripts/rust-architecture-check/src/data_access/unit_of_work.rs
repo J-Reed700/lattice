@@ -3,7 +3,7 @@
 //! database's only write lock, so any other await makes every other writer wait.
 use super::{
     rule3::{binding, unit_params, Kind},
-    Violation,
+    Exception, Exempt, Violation,
 };
 use crate::{
     item_attrs,
@@ -209,19 +209,14 @@ impl<'ast> Visit<'ast> for Under<'_> {
     }
 }
 
-pub fn violations(
-    path: &str,
-    ast: &syn::File,
-    exceptions: &[(&str, &str, &str)],
-) -> Vec<Violation> {
+pub fn violations(path: &str, ast: &syn::File, exceptions: &[Exception]) -> Vec<Violation> {
     let mut functions = Functions::default();
     functions.visit_file(ast);
     let mut found = Vec::new();
     for (name, held, block) in functions.found {
-        if exceptions
-            .iter()
-            .any(|(file, function, _)| *file == path && *function == name)
-        {
+        if exceptions.iter().any(|(file, function, exempt, _)| {
+            *file == path && *function == name && *exempt == Exempt::Awaits
+        }) {
             continue;
         }
         let mut under = Under {
