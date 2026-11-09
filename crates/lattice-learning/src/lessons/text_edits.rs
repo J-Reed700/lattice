@@ -873,6 +873,13 @@ mod tests {
         ));
     }
 
+    #[test]
+    fn the_teaching_repair_says_what_needs_a_citation_in_one_sentence() {
+        let text = instructions(&crate::generation::lesson_schema(2));
+        let sentence = "A sentence that states a figure, a date, a version, a product's behaviour or quoted wording needs a citation.";
+        assert!(text.contains(sentence), "missing {sentence:?} in {text}");
+    }
+
     fn parted() -> Value {
         json!({"blocks":[
             {"kind":"explanation","title":"First","body":"Alpha holds. Beta fails."},
