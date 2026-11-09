@@ -1,84 +1,44 @@
 import { act, render, screen } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import { ElapsedClock, formatClock } from './ElapsedClock';
-
-describe('formatClock', () => {
-  it('formats milliseconds into m:ss format, counting a part of a second as the whole of it', () => {
-    expect(formatClock(545_000)).toBe('9:05');
-    expect(formatClock(600_000)).toBe('10:00');
-    expect(formatClock(999)).toBe('0:01');
-    expect(formatClock(0)).toBe('0:00');
-    expect(formatClock(-4_000)).toBe('0:00');
-  });
-});
+import { ElapsedClock } from './ElapsedClock';
 
 describe('ElapsedClock', () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date('2026-11-08T12:00:00Z'));
   });
-
   afterEach(() => {
     vi.useRealTimers();
   });
 
-  it('renders fixed elapsed time when elapsedMs is provided', () => {
-    render(<ElapsedClock elapsedMs={125_000} />);
-
-    expect(screen.getByRole('timer')).toHaveTextContent('2:05');
-  });
-
-  it('ticks forward when running is true with startedAt', () => {
-    render(<ElapsedClock startedAt={Date.now()} running={true} />);
-
-    expect(screen.getByRole('timer')).toHaveTextContent('0:00');
-
+  it('counts on from the elapsed time while running', () => {
+    render(<ElapsedClock elapsedMs={65_000} running label="Session time" />);
+    expect(screen.getByRole('timer', { name: 'Session time' })).toHaveTextContent('1:05');
     act(() => {
-      vi.advanceTimersByTime(65_000);
+      vi.advanceTimersByTime(5_000);
     });
-
-    expect(screen.getByRole('timer')).toHaveTextContent('1:05');
+    expect(screen.getByRole('timer')).toHaveTextContent('1:10');
   });
 
-  it('pauses counting when running is false', () => {
-    const { rerender } = render(<ElapsedClock startedAt={Date.now()} running={true} />);
-
+  it('keeps what it reached when it stops running', () => {
+    const { rerender } = render(<ElapsedClock elapsedMs={0} running />);
     act(() => {
       vi.advanceTimersByTime(30_000);
     });
-    expect(screen.getByRole('timer')).toHaveTextContent('0:30');
-
-    rerender(<ElapsedClock startedAt={Date.now()} running={false} elapsedMs={30_000} />);
-
+    rerender(<ElapsedClock elapsedMs={0} running={false} />);
     act(() => {
       vi.advanceTimersByTime(30_000);
     });
     expect(screen.getByRole('timer')).toHaveTextContent('0:30');
   });
 
-  it('shows soft budget and indicates overtime when budget is exceeded without ending the session', () => {
-    // 600_000 ms (10 min) budget, 700_000 ms elapsed (overtime)
-    render(<ElapsedClock elapsedMs={700_000} budgetMs={600_000} />);
-
-    // Must still show timer / clock
-    expect(screen.getByRole('timer')).toBeInTheDocument();
-
-    // Must indicate overtime status (soft budget exceeded)
-    const overtimeIndicator = screen.getByRole('status');
-    expect(overtimeIndicator).toHaveTextContent(/overtime|past budget|over budget|time is up/i);
-  });
-
-  it('continues ticking when overtime without ending or disabling', () => {
-    render(<ElapsedClock startedAt={Date.now() - 595_000} budgetMs={600_000} running={true} />);
-
-    expect(screen.getByRole('timer')).toHaveTextContent('9:55');
-
+  it('says so past the soft limit and carries on counting', () => {
+    render(<ElapsedClock elapsedMs={0} running softLimitMs={60_000} />);
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
     act(() => {
-      vi.advanceTimersByTime(15_000); // Now 610_000 ms, 10 seconds past budget
+      vi.advanceTimersByTime(61_000);
     });
-
-    expect(screen.getByRole('timer')).toHaveTextContent('10:10');
-    expect(screen.getByRole('status')).toBeInTheDocument();
+    expect(screen.getByRole('status')).toHaveTextContent(/past the 1:00/i);
+    expect(screen.getByRole('timer')).toHaveTextContent('1:01');
   });
 });

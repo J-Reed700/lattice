@@ -17,8 +17,10 @@ export async function apiCall<T>(
   args?: Record<string, unknown>,
 ): Promise<ApiResult<T>> {
   try {
-    const plugin = COMMAND_PLUGINS[command] ?? 'learning';
-    const data = await invoke<T>(`plugin:${plugin}|${command}`, args ?? {});
+    const data = await invoke<T>(
+      `plugin:${COMMAND_PLUGINS[command]}|${command}`,
+      args ?? {},
+    );
     return { ok: true, data };
   } catch (error) {
     const apiError = parseApiError(error);

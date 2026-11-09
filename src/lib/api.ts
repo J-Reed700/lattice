@@ -5,8 +5,10 @@
  * than with the initial bundle. Each member keeps one identity, so it is safe
  * in dependency arrays and as a query function.
  */
+import type { ApiResult } from '@/types/api/result';
+
 import type { VaultClients } from './apiClients';
-import { getErrorMessage } from './errorUtils';
+import type * as Wire from './bindings';
 
 export type ApiClient = VaultClients;
 
@@ -38,51 +40,16 @@ export const VaultAPI = new Proxy({} as VaultClients, {
   },
 });
 
-export type UnwrapResult<T> =
-  | { ok: true; data: T }
-  | { ok: false; error?: unknown; data?: unknown }
-  | { status: 'ok'; data: T }
-  | { status: 'error'; error?: unknown; data?: unknown }
-  | { ok: boolean; data?: T; error?: unknown }
-  | { status: 'ok' | 'error'; data?: T; error?: unknown };
-
-export function unwrap<T>(result: UnwrapResult<T>): T {
-  if (result && typeof result === 'object') {
-    if ('ok' in result) {
-      if (result.ok) return (result as { data: T }).data;
-      if (result.error instanceof Error) throw result.error;
-      throw new Error(getErrorMessage(result.error, 'The request could not be completed.'));
-    }
-    if ('status' in result) {
-      if (result.status === 'ok') return (result as { data: T }).data;
-      if (result.error instanceof Error) throw result.error;
-      throw new Error(getErrorMessage(result.error, 'The request could not be completed.'));
-    }
-  }
-  throw new Error('Invalid result structure');
+export function unwrap<T>(_result: ApiResult<T> | Wire.Result<T, unknown>): T {
+  throw new Error('not built yet');
 }
 
-function generateUuid(): string {
-  if (typeof globalThis.crypto?.randomUUID === 'function') {
-    return globalThis.crypto.randomUUID();
-  }
-  const bytes = new Uint8Array(16);
-  if (typeof globalThis.crypto?.getRandomValues === 'function') {
-    globalThis.crypto.getRandomValues(bytes);
-  } else {
-    for (let i = 0; i < bytes.length; i += 1) {
-      bytes[i] = Math.floor(Math.random() * 256);
-    }
-  }
-  bytes[6] = (bytes[6] & 0x0f) | 0x40;
-  bytes[8] = (bytes[8] & 0x3f) | 0x80;
-  const hex = [...bytes].map((b) => b.toString(16).padStart(2, '0')).join('');
-  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
+export function newId(): string {
+  return '';
 }
 
-export function newId(prefix?: string): string {
-  const uuid = generateUuid();
-  return prefix ? `${prefix}-${uuid}` : uuid;
+export function isConflict(_error: unknown): boolean {
+  return false;
 }
 
 export default VaultAPI;
