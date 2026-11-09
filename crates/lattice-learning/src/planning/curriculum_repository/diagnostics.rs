@@ -24,13 +24,16 @@ impl LearningCurriculumRepository {
     ) -> Result<Option<LearningDiagnosticAttemptDto>> {
         validate_operation_id(operation_id)?;
         let payload = hash(request)?;
-        match diagnostic_operation(operation_id, program_id, kind, &payload)
-            .replay::<String, _>(&self.pool)
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let attempt = match diagnostic_operation(operation_id, program_id, kind, &payload)
+            .replay::<String, _>(&mut *read)
             .await?
         {
-            Some(id) => Ok(Some(self.diagnostic(&id).await?)),
-            None => Ok(None),
-        }
+            Some(id) => Some(Self::diagnostic_on(&mut read, &id).await?),
+            None => None,
+        };
+        read.commit().await.map_err(db)?;
+        Ok(attempt)
     }
 
     pub async fn diagnostic_for_program(
@@ -38,7 +41,16 @@ impl LearningCurriculumRepository {
         program_id: &str,
         diagnostic_id: &str,
     ) -> Result<LearningDiagnosticAttemptDto> {
-        let attempt = self.diagnostic(diagnostic_id).await?;
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        Self::diagnostic_for_program_on(&mut connection, program_id, diagnostic_id).await
+    }
+
+    async fn diagnostic_for_program_on(
+        connection: &mut sqlx::SqliteConnection,
+        program_id: &str,
+        diagnostic_id: &str,
+    ) -> Result<LearningDiagnosticAttemptDto> {
+        let attempt = Self::diagnostic_on(connection, diagnostic_id).await?;
         if attempt.program_id != program_id {
             return Err(AppError::NotFound(
                 "Diagnostic not found in this program".into(),
@@ -52,12 +64,21 @@ impl LearningCurriculumRepository {
         program_id: &str,
         diagnostic_id: &str,
     ) -> Result<Vec<crate::diagnostic_generation::DiagnosticTask>> {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        Self::diagnostic_tasks_on(&mut connection, program_id, diagnostic_id).await
+    }
+
+    async fn diagnostic_tasks_on(
+        connection: &mut sqlx::SqliteConnection,
+        program_id: &str,
+        diagnostic_id: &str,
+    ) -> Result<Vec<crate::diagnostic_generation::DiagnosticTask>> {
         let encoded: String = sqlx::query_scalar(
             "SELECT evaluation_json FROM learning_diagnostic_attempts WHERE id=? AND program_id=?",
         )
         .bind(diagnostic_id)
         .bind(program_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(connection)
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Diagnostic not found".into()))?;
@@ -77,12 +98,9 @@ impl LearningCurriculumRepository {
         tasks: Option<&[crate::diagnostic_generation::DiagnosticTask]>,
     ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
-        self.seed_accepted(&request.program_id).await?;
-        let program = LearningRepository::new(self.pool.clone())
-            .get(&request.program_id)
-            .await?;
         let payload = hash(request)?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;
+        Self::seed_on(&mut tx, &request.program_id).await?;
         let operation = diagnostic_operation(
             &request.operation_id,
             &request.program_id,
@@ -90,8 +108,9 @@ impl LearningCurriculumRepository {
             &payload,
         );
         if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+            let attempt = Self::diagnostic_on(&mut tx, &id).await?;
             tx.commit().await.map_err(db)?;
-            return self.diagnostic(&id).await;
+            return Ok(attempt);
         }
         let revision: i64 = sqlx::query_scalar(
             "SELECT revision FROM learning_programs WHERE id=? AND status='active'",
@@ -110,6 +129,7 @@ impl LearningCurriculumRepository {
             .bind(&request.program_id).fetch_optional(&mut *tx).await.map_err(db)?
             .ok_or_else(|| AppError::NotFound("Accepted curriculum not found".into()))?;
         let accepted: LearningCurriculumRevision = decode(&accepted_json)?;
+        let program = LearningRepository::get_on(&mut tx, &request.program_id).await?;
         let mut prompts = Vec::new();
         for module in &accepted.modules {
             let source_module = program.modules.iter().find(|source| source.id == module.id);
@@ -170,8 +190,9 @@ impl LearningCurriculumRepository {
         sqlx::query("INSERT INTO learning_diagnostic_attempts(id,program_id,operation_id,status,prompt_json,response_json,findings_json,source_coverage_gaps_json,created_at,submitted_at,evaluation_json) VALUES(?,?,?,'active',?,'[]','[]','[]',?,NULL,?)")
             .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(encode(&prompts)?).bind(created).bind(encode(&tasks.unwrap_or_default())?).execute(&mut *tx).await.map_err(db)?;
         operation.record(&mut *tx, &id).await?;
+        let attempt = Self::diagnostic_on(&mut tx, &id).await?;
         tx.commit().await.map_err(db)?;
-        self.diagnostic(&id).await
+        Ok(attempt)
     }
 
     pub async fn submit_diagnostic(
@@ -187,23 +208,24 @@ impl LearningCurriculumRepository {
         findings: Option<&[LearningDiagnosticFindingDto]>,
     ) -> Result<LearningDiagnosticAttemptDto> {
         validate_operation_id(&request.operation_id)?;
-        if let Some(replay) = self
-            .diagnostic_replay(
-                &request.operation_id,
-                &request.program_id,
-                "submit",
-                request,
-            )
-            .await?
-        {
-            return Ok(replay);
+        let payload = hash(request)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let operation = diagnostic_operation(
+            &request.operation_id,
+            &request.program_id,
+            "submit",
+            &payload,
+        );
+        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+            let attempt = Self::diagnostic_on(&mut tx, &id).await?;
+            tx.commit().await.map_err(db)?;
+            return Ok(attempt);
         }
-        let attempt = self
-            .diagnostic_for_program(&request.program_id, &request.diagnostic_id)
-            .await?;
-        let tasks = self
-            .diagnostic_tasks(&request.program_id, &request.diagnostic_id)
-            .await?;
+        let attempt =
+            Self::diagnostic_for_program_on(&mut tx, &request.program_id, &request.diagnostic_id)
+                .await?;
+        let tasks =
+            Self::diagnostic_tasks_on(&mut tx, &request.program_id, &request.diagnostic_id).await?;
         if !tasks.is_empty() && !request.save_only {
             crate::diagnostic_generation::validate_findings(
                 &attempt,
@@ -218,18 +240,6 @@ impl LearningCurriculumRepository {
             return Err(AppError::InvalidInput(
                 "A self-inventory cannot be presented as a scored diagnostic.".into(),
             ));
-        }
-        let payload = hash(request)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
-        let operation = diagnostic_operation(
-            &request.operation_id,
-            &request.program_id,
-            "submit",
-            &payload,
-        );
-        if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
-            tx.commit().await.map_err(db)?;
-            return self.diagnostic(&id).await;
         }
         let revision: i64 = sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
             .bind(&request.program_id)
@@ -300,8 +310,9 @@ impl LearningCurriculumRepository {
         sqlx::query("UPDATE learning_diagnostic_attempts SET status=?,response_json=?,findings_json=?,source_coverage_gaps_json=?,submitted_at=?,revision=revision+1 WHERE id=? AND status='active'")
             .bind(if request.save_only { "active" } else { "submitted" }).bind(responses_json).bind(encode(&findings.unwrap_or_default())?).bind(encode(&gaps)?).bind(if request.save_only { None } else { Some(now()) }).bind(&request.diagnostic_id).execute(&mut *tx).await.map_err(db)?;
         operation.record(&mut *tx, &request.diagnostic_id).await?;
+        let attempt = Self::diagnostic_on(&mut tx, &request.diagnostic_id).await?;
         tx.commit().await.map_err(db)?;
-        self.diagnostic(&request.diagnostic_id).await
+        Ok(attempt)
     }
 
     pub async fn skip_diagnostic(
@@ -314,8 +325,9 @@ impl LearningCurriculumRepository {
         let operation =
             diagnostic_operation(&request.operation_id, &request.program_id, "skip", &payload);
         if let Some(id) = operation.replay::<String, _>(&mut *tx).await? {
+            let attempt = Self::diagnostic_on(&mut tx, &id).await?;
             tx.commit().await.map_err(db)?;
-            return self.diagnostic(&id).await;
+            return Ok(attempt);
         }
         let revision: i64 = sqlx::query_scalar(
             "SELECT revision FROM learning_programs WHERE id=? AND status='active'",
@@ -336,14 +348,18 @@ impl LearningCurriculumRepository {
         sqlx::query("INSERT INTO learning_diagnostic_attempts(id,program_id,operation_id,status,prompt_json,response_json,findings_json,source_coverage_gaps_json,created_at,submitted_at) VALUES(?,?,?,'skipped',?,'[]','[]','[]',?,?)")
             .bind(&id).bind(&request.program_id).bind(&request.operation_id).bind(prompts.to_string()).bind(created).bind(created).execute(&mut *tx).await.map_err(db)?;
         operation.record(&mut *tx, &id).await?;
+        let attempt = Self::diagnostic_on(&mut tx, &id).await?;
         tx.commit().await.map_err(db)?;
-        self.diagnostic(&id).await
+        Ok(attempt)
     }
 
-    async fn diagnostic(&self, id: &str) -> Result<LearningDiagnosticAttemptDto> {
+    async fn diagnostic_on(
+        connection: &mut sqlx::SqliteConnection,
+        id: &str,
+    ) -> Result<LearningDiagnosticAttemptDto> {
         let row = sqlx::query("SELECT * FROM learning_diagnostic_attempts WHERE id=?")
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(connection)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Diagnostic attempt not found".into()))?;
