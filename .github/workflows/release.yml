@@ -90,9 +90,58 @@ jobs:
             if (-not (Test-Path (Join-Path $nsis $required))) { throw "NSIS tools incomplete: $required is missing" }
           }
       - name: Build the installer
+        if: runner.os != 'Windows'
         env:
           STATIC_VCRUNTIME: 'true'
         run: npm run tauri -- build --ci --bundles ${{ matrix.bundles }}
+      - name: Build the Windows binaries
+        if: runner.os == 'Windows'
+        env:
+          STATIC_VCRUNTIME: 'true'
+        run: npm run tauri -- build --ci --no-bundle
+      - name: Stage the Visual C++ runtime the binaries import
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installerswhere.exe'
+          $vs = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
+          if (-not $vs) { throw 'Visual Studio was not found.' }
+          $redist = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $redist) { throw "No VC\Redist\MSVC version under $vs" }
+          $crt = Get-ChildItem (Join-Path $redist.FullName 'x64') -Directory -Filter 'Microsoft.VC14*.CRT' | Select-Object -First 1
+          if (-not $crt) { throw "No Microsoft.VC14*.CRT folder under $($redist.FullName)d" }
+          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**in\Hostx64d\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw 'dumpbin.exe was not found.' }
+          $desktop = 'crates/lattice-desktop'
+          $target = (cargo metadata --format-version 1 --no-deps --manifest-path "$desktop/Cargo.toml" | ConvertFrom-Json).target_directory
+          $shipped = @(Get-Item (Join-Path $target 'release\lattice-desktop.exe')) + @(Get-ChildItem (Join-Path $desktop 'binaries') -Include '*.exe', '*.dll' -Recurse)
+          Write-Host "Redist: $($crt.FullName)"
+          $stage = Join-Path $desktop 'vcredist'
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory $stage | Out-Null
+          $resources = [ordered]@{ 'resources/learning-python/' = 'resources/learning-python/' }
+          foreach ($binary in $shipped) {
+            $imports = & $dumpbin /nologo /dependents $binary.FullName
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed on $($binary.FullName)" }
+            $dlls = $imports | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() }
+            Write-Host "$($binary.Name) imports: $($dlls -join ', ')"
+            foreach ($dll in $dlls) {
+              $source = Join-Path $crt.FullName $dll
+              if (Test-Path $source) {
+                Copy-Item $source $stage -Force
+                $resources["vcredist/$dll"] = $dll
+              }
+            }
+          }
+          if ($resources.Count -eq 1) { throw 'No Visual C++ runtime import found; the check below would not be testing anything.' }
+          $overlay = @{ bundle = @{ resources = $resources } }
+          $overlay | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $desktop 'tauri.release.conf.json') -Encoding utf8
+          Get-Content (Join-Path $desktop 'tauri.release.conf.json') | Write-Host
+      - name: Bundle the Windows installer
+        if: runner.os == 'Windows'
+        env:
+          STATIC_VCRUNTIME: 'true'
+        run: npm run tauri -- build --ci --bundles nsis --config tauri.release.conf.json
       - name: Locate the installer
         id: bundle
         shell: bash
@@ -121,19 +170,37 @@ jobs:
           if (-not $installed) { throw 'The installer finished but the Lattice executable was not found.' }
           Write-Host "Installed $($exe.FullName)"
           if (-not (Get-ChildItem $installed -Filter 'llama-server*.exe')) { throw "No llama-server*.exe in $installed" }
-          # No installed binary may import the VC runtime (clean PCs lack it).
-          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
-          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (-not (Test-Path (Join-Path $installed 'resources\learning-python'))) { throw "resources\learning-python is missing from $installed" }
+          # Every import must resolve beside the binary, or be a Windows system DLL.
+          # The runner has the redist installed system-wide, so redist DLLs must sit beside the binary.
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installerswhere.exe'
+          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**in\Hostx64d\dumpbin.exe' | Select-Object -First 1
           if (-not $dumpbin) { throw 'dumpbin.exe was not found.' }
-          foreach ($binary in Get-ChildItem $installed -Filter '*.exe' -Recurse | Where-Object { $_.Name -notmatch '^uninstall' }) {
+          $vs = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
+          $redistRoot = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          $crt = Get-ChildItem (Join-Path $redistRoot.FullName 'x64') -Directory -Filter 'Microsoft.VC14*.CRT' | Select-Object -First 1
+          $redistNames = @(Get-ChildItem $crt.FullName -Filter '*.dll' | ForEach-Object { $_.Name.ToLower() })
+          $system32 = Join-Path $env:SystemRoot 'System32'
+          $rows = @()
+          $failures = @()
+          foreach ($binary in Get-ChildItem $installed -Include '*.exe', '*.dll' -Recurse | Where-Object { $_.Name -notmatch '^uninstall' }) {
             $output = & $dumpbin /nologo /dependents $binary.FullName
             if ($LASTEXITCODE -ne 0) { throw "dumpbin failed on $($binary.FullName)" }
-            $output | Write-Host
             $dlls = $output | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() }
             foreach ($dll in $dlls) {
-              if ($dll -match '^(vcruntime140(_1)?|msvcp140(_\d+)?|concrt140|vccorlib140)\.dll$') { throw "$($binary.Name) imports $dll, which needs the Visual C++ Redistributable." }
+              $name = $dll.ToLower()
+              $local = Test-Path (Join-Path $binary.DirectoryName $dll)
+              $where = 'unresolved'
+              if ($local) { $where = 'beside the binary' }
+              elseif ($redistNames -contains $name) { $failures += "$($binary.Name) imports $dll, a Visual C++ runtime DLL that is not beside it." }
+              elseif ($name -like 'api-ms-win-*' -or (Test-Path (Join-Path $system32 $dll))) { $where = 'Windows' }
+              else { $failures += "$($binary.Name) imports $dll, which is neither beside it nor in Windows." }
+              $rows += [pscustomobject]@{ Binary = $binary.FullName.Substring($installed.Length + 1); Import = $dll; ResolvedFrom = $where }
             }
           }
+          $rows | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Host
+          if (-not ($rows | Where-Object { $redistNames -contains $_.Import.ToLower() })) { throw 'No installed binary imports the Visual C++ runtime; the check is not testing anything.' }
+          if ($failures) { throw ($failures -join "`n") }
       - name: Smoke check the installer (macOS)
         if: runner.os == 'macOS'
         env:

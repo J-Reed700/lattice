@@ -99,7 +99,8 @@ On first launch the app shows "Set up AI" with a chat model and an embedding
 model sized to the machine's memory. The dialog shows each model's size and the
 total before anything downloads. Click Install. The downloads run in the
 background and both models are switched on when they finish. To use a cloud
-provider instead, open **Settings > AI > Chat** and save its API key.
+provider instead, click **Use an API key instead**, pick the provider, save its key and
+choose a model. Chats and courses then use it. **Settings > AI > Chat** changes it later.
 
 ### Build from source
 

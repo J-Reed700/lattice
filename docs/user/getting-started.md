@@ -82,12 +82,14 @@ The dialog shows each model's size and the total. Choose:
   while they download.
 - **Choose models** to pick your own in Settings. Model downloads are under
   **Settings > AI > Models**.
+- **Use an API key instead** to use a cloud provider: pick the provider, save your key
+  and choose a model. Chats and courses then use it.
 - **Not now** to skip. The dialog won't come back, but you can install models
   any time from **Settings > AI > Models**.
 
 Importing and indexing need the embedding model, so install at least that one
-before you import. Chat needs a chat model, or a provider you configure under
-**Settings > AI > Chat**.
+before you import. Chat needs a chat model, or a provider you set up with **Use an API key instead** (or later under
+**Settings > AI > Chat**).
 
 After the models download, Lattice runs offline. It uses the network only when
 you import a web page, turn on web or Wikipedia search in a chat, browse or
