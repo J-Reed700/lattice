@@ -257,6 +257,24 @@ pub(super) fn left_with_too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
     too_little(lesson, &cuts)
 }
 
+/// Puts `units` of `lesson` back as they are in `from`, and what `cuts` took
+/// from them back as it is in `earlier`.
+pub(super) fn restore_units(
+    (lesson, cuts): (&mut Value, &mut Cuts),
+    (from, earlier): (&Value, &Cuts),
+    units: &[usize],
+) {
+    for unit in units {
+        if let Some(section) = unit_at(from, *unit).cloned() {
+            set_unit(lesson, *unit, section);
+        }
+        match earlier.taken.get(unit) {
+            Some(taken) => cuts.taken.insert(*unit, taken.clone()),
+            None => cuts.taken.remove(unit),
+        };
+    }
+}
+
 /// The sections that took cuts and are left with too little to teach: fewer
 /// than two teaching sentences, or a check whose answer went.
 fn too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {

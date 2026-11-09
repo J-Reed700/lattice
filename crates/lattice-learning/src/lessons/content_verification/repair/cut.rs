@@ -6,7 +6,8 @@
 use super::super::claim_ledger::{field_pointer, field_text, ClaimLedger, CutOf};
 use super::super::repair_work::{withdraw, withdraw_resolved};
 use super::super::sections::{
-    answer_lost, gap_around_code, gaps, left_with_too_little, unit_label, unpublishable,
+    answer_lost, gap_around_code, gaps, left_with_too_little, restore_units, unit_label,
+    unpublishable,
 };
 use super::super::*;
 use super::goal_words;
@@ -207,8 +208,8 @@ fn ask_narrowing(context: &mut Value, narrowed: &[ClaimId]) {
 /// keeps the sentences left beside each cut for the section's flow repair, and
 /// records the statements' cuts as the policy's step. A statement whose text
 /// cannot be taken out, because it is the whole of its field or sits in a code
-/// block, or whose cut would leave a section with too little to teach, stays
-/// in the lesson and is published not verified; only a failed example's
+/// block, or whose cut would leave its section with too little to teach, stays
+/// in the lesson and is published not verified (the other cuts are made); only a failed example's
 /// refused cut takes its section out (claim classes design 3.10). Returns how
 /// many claims it dealt with, or the error that stops the lesson when the cuts
 /// leave no claim of it standing.
@@ -332,27 +333,51 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
             .collect::<Vec<ClaimId>>()
     };
     let mut cut = cut_by(ledger, &lesson, &taken, &refused);
-    // Cuts that would leave the lesson unpublishable, or a section with too
-    // little to teach, are not made: the statements keep their sentences and
-    // are published not verified. The examples' own cuts are made, unless they
-    // alone would leave the lesson so; an example is never marked.
+    // A statement whose cut leaves a section with too little to teach keeps
+    // its sentence and is published not verified; the other statements' cuts
+    // are made. The cuts that would leave the lesson unpublishable are held
+    // back too. An example's cut is made, unless it alone would leave the
+    // lesson so, and is never marked.
+    let mut marked = 0;
+    let (lesson_ex, cuts_ex) = after_examples
+        .clone()
+        .unwrap_or_else(|| (before.clone(), cuts_before.clone()));
+    let little_from_examples = left_with_too_little(&lesson_ex, &cuts_ex);
+    let thinned: Vec<usize> = left_with_too_little(&lesson, &ledger.cuts)
+        .into_iter()
+        .filter(|unit| !little_from_examples.contains(unit))
+        .collect();
+    let held: Vec<ClaimId> = taken
+        .iter()
+        .filter(|id| ledger.is_statement(id))
+        .filter(|id| {
+            ledger
+                .entry(id)
+                .is_some_and(|entry| thinned.contains(&entry.location().unit_index))
+        })
+        .cloned()
+        .collect();
+    if !held.is_empty() {
+        restore_units(
+            (&mut lesson, &mut ledger.cuts),
+            (&lesson_ex, &cuts_ex),
+            &thinned,
+        );
+        taken.retain(|id| !held.contains(id));
+        withdraw(context, |id| held.contains(id));
+        ledger.drop_repairs(&held).await?;
+        ledger.save_cuts().await?;
+        marked += ledger.publish_unverified(&held, None).await?;
+        cut = cut_by(ledger, &lesson, &taken, &refused);
+    }
     let statements: Vec<ClaimId> = taken
         .iter()
         .chain(&refused)
         .filter(|id| ledger.is_statement(id))
         .cloned()
         .collect();
-    let mut marked = 0;
-    let little_from_examples = after_examples
-        .as_ref()
-        .map(|(lesson, cuts)| left_with_too_little(lesson, cuts))
-        .unwrap_or_default();
-    let little_from_statements = left_with_too_little(&lesson, &ledger.cuts)
-        .iter()
-        .any(|unit| !little_from_examples.contains(unit));
     if !statements.is_empty()
         && (unpublishable(&lesson, &ledger.cuts).is_some()
-            || little_from_statements
             || (refused.is_empty() && ledger.nothing_left(&cut)))
     {
         let example_ids: Vec<ClaimId> = taken
@@ -361,8 +386,6 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
             .filter(|id| !statements.contains(id))
             .cloned()
             .collect();
-        let (lesson_ex, cuts_ex) =
-            after_examples.unwrap_or_else(|| (before.clone(), cuts_before.clone()));
         let all_cuts = std::mem::replace(&mut ledger.cuts, cuts_ex);
         let examples_refused = refused.iter().any(|id| !statements.contains(id));
         let examples_stop = !example_ids.is_empty()
@@ -377,7 +400,7 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
             withdraw(context, |id| statements.contains(id));
             ledger.drop_repairs(&statements).await?;
             ledger.save_cuts().await?;
-            marked = ledger.publish_unverified(&statements, None).await?;
+            marked += ledger.publish_unverified(&statements, None).await?;
             cut = cut_by(ledger, &lesson, &taken, &refused);
         }
     }
