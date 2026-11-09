@@ -1,5 +1,8 @@
 use super::*;
 use lattice_core::shared::error::AppError;
+use lattice_learning::practice::assistance_policy::{
+    written_help, written_level, AssistancePolicy, Help, HelpLevel, WrittenAssistance,
+};
 
 pub(super) fn practice_repo(
     container: &Container,
@@ -147,8 +150,12 @@ pub async fn request_learning_tutor_response(
                 ),
             ));
         }
-        (LearningTutorRequestKind::Hint, Some(LearningPracticeHintLevel::WorkedExplanation))
-            if session.summary.mode == LearningPracticeMode::Practice =>
+        (LearningTutorRequestKind::Hint, Some(_))
+            if written_level(&session.summary.mode) == HelpLevel::HintsOnly
+                && !WrittenAssistance.allows(
+                    written_help(&request.request_kind, request.hint_level.as_ref()),
+                    HelpLevel::HintsOnly,
+                ) =>
         {
             return Err(ApiError::from(
                 lattice_core::shared::error::AppError::InvalidInput(
@@ -252,7 +259,7 @@ pub async fn reveal_learning_practice_solution(
         )
         .await
         .map_err(ApiError::from)?;
-    if session.summary.mode != LearningPracticeMode::Explore {
+    if !WrittenAssistance.allows(Help::WorkedSolution, written_level(&session.summary.mode)) {
         return Err(ApiError::from(
             lattice_core::shared::error::AppError::InvalidInput(
                 "Worked solutions are available only in Explore mode.".into(),
