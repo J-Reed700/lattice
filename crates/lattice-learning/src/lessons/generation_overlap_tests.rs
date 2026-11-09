@@ -9,6 +9,7 @@ use crate::{
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobRuntime, JobStatus, JobStore};
 use std::sync::Mutex;
 
@@ -417,10 +418,10 @@ async fn a_lessons_quiz_job_takes_the_lessons_rank() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let (_, job) = repository_tests::queued_job(&pool).await;
     let lessons = lesson_ids_in_course_order(&pool, &job.program_id).await;
-    let mut connection = pool.acquire().await.unwrap();
     for (place, lesson) in lessons.iter().enumerate().rev() {
-        crate::quiz_bank_jobs::queue_lesson_bank_in(&mut connection, &job.program_id, lesson)
-            .await?;
+        let mut tx = pool.begin_write().await.map_err(crate::persistence::db)?;
+        crate::quiz_bank_jobs::queue_lesson_bank_in(&mut tx, &job.program_id, lesson).await?;
+        tx.commit().await.map_err(crate::persistence::db)?;
         let quiz = quiz_jobs(&pool, &job.program_id)
             .await?
             .into_iter()
