@@ -98,6 +98,7 @@ impl From<ApplicationError> for ApiError {
 /// Convert AppError (shared layer) to ApiError
 impl From<AppError> for ApiError {
     fn from(err: AppError) -> Self {
+        let busy = err.is_database_busy();
         match err {
             // Domain errors
             AppError::Domain(domain_err) => (*domain_err).into(),
@@ -199,6 +200,11 @@ impl From<AppError> for ApiError {
             },
 
             // Database errors
+            AppError::Database(ref msg) if busy => ApiError {
+                code: ErrorCode::DatabaseBusy,
+                message: "Database busy".to_string(),
+                details: Some(sanitize_database_error(msg)),
+            },
             AppError::Database(ref msg) => ApiError {
                 code: ErrorCode::DatabaseError,
                 message: "Database error".to_string(),
@@ -233,6 +239,11 @@ impl From<AppError> for ApiError {
             },
 
             // Service errors
+            AppError::ServiceNotAvailable(ref msg) if busy => ApiError {
+                code: ErrorCode::DatabaseBusy,
+                message: "Database busy".to_string(),
+                details: Some(msg.clone()),
+            },
             AppError::ServiceNotAvailable(ref msg) => ApiError {
                 code: ErrorCode::ServiceNotAvailable,
                 message: "Service not available".to_string(),

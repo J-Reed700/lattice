@@ -6351,6 +6351,10 @@ export type ErrorCode =
  */
 "MIGRATION_ERROR" |
 /**
+ * Another connection held the database; a later attempt gets it
+ */
+"DATABASE_BUSY" |
+/**
  * Network operation failed
  */
 "NETWORK_ERROR" |
