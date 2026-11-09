@@ -48,13 +48,24 @@ describe('TutorConversation', () => {
 
   it('closes the thread with its reason when the mode forbids the tutor', () => {
     setup({ canTutor: false, mode: 'demonstrate' });
-    expect(thread.props?.disabled).toEqual({ reason: 'Tutor assistance is closed in Demonstrate mode.' });
+    expect(thread.props?.disabled).toEqual({ reason: 'The tutor is closed with No help.' });
   });
 
   it('sends a question from the thread', async () => {
     const props = setup();
     await thread.props?.onSend('How should I state the limit?', false);
     expect(props.onAsk).toHaveBeenCalledWith('question', 'How should I state the limit?');
+  });
+
+  it('rejects the send when the ask fails, so the thread keeps the question', async () => {
+    setup({ onAsk: vi.fn(async () => false) });
+    await expect(thread.props?.onSend('How should I state the limit?', false)).rejects.toThrow();
+  });
+
+  it('shows a failed tutor request in the thread, with its retry', () => {
+    const retry = vi.fn();
+    setup({ error: { message: 'The tutor could not answer.', retry } });
+    expect(thread.props?.error).toEqual({ message: 'The tutor could not answer.', retry });
   });
 
   it('asks for a critique of the unsent text, and disables it with a reason when there is none', async () => {

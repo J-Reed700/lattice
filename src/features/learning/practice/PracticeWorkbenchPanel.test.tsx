@@ -108,7 +108,7 @@ describe('Learning Studio grounded practice workbench', () => {
     const user = userEvent.setup();
     currentSession = null; currentWorkspace.sessions = [];
     renderWorkbench(lesson, true);
-    await user.click(await screen.findByRole('button', { name: 'Start guided exercise' }));
+    await user.click(await screen.findByRole('button', { name: 'Start guided attempt' }));
     expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ taskKind: 'guided', mode: 'practice' }));
     await user.type(await screen.findByRole('textbox', { name: 'Your working' }), 'I separated the observed facts from my interpretation.');
     await user.click(screen.getByRole('button', { name: 'Check my reasoning' }));
@@ -120,11 +120,11 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(screen.queryByRole('button', { name: 'Reveal solution' })).not.toBeInTheDocument();
   });
 
-  it('labels the lesson's guided exercise as a region with its start button', async () => {
+  it('labels the lesson guided attempt as a region with its start button', async () => {
     currentSession = null; currentWorkspace.sessions = [];
     renderWorkbench(lesson, true);
-    const guided = await screen.findByRole('region', { name: 'Guided exercise' });
-    expect(within(guided).getByRole('button', { name: 'Start guided exercise' })).toBeVisible();
+    const guided = await screen.findByRole('region', { name: 'Guided attempt' });
+    expect(within(guided).getByRole('button', { name: 'Start guided attempt' })).toBeVisible();
   });
 
   it('keeps the guided answer editable while an autosave is in flight', async () => {
@@ -144,6 +144,44 @@ describe('Learning Studio grounded practice workbench', () => {
     release();
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
     expect(mocks.save.mock.calls[1][0]).toMatchObject({ text: 'First thought. Second thought.' });
+  });
+
+  it('shows one alert with Try again for a failed guided request, and no raw retry label', async () => {
+    const user = userEvent.setup();
+    currentSession!.summary.taskKind = 'guided';
+    currentWorkspace.sessions = [{ ...currentSession!.summary }];
+    mocks.tutor.mockImplementationOnce(async () => fail('The tutor could not answer.'));
+    renderWorkbench(lesson, true);
+    await user.type(await screen.findByRole('textbox', { name: 'Your working' }), 'My first step.');
+    await user.click(screen.getByRole('button', { name: 'Check my reasoning' }));
+    expect(await screen.findAllByRole('alert')).toHaveLength(1);
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: /^Retry / })).not.toBeInTheDocument();
+  });
+
+  it('offers one reload after a guided save conflict', async () => {
+    const user = userEvent.setup();
+    currentSession!.summary.taskKind = 'guided';
+    currentWorkspace.sessions = [{ ...currentSession!.summary }];
+    mocks.save.mockImplementationOnce(async () => ({ ok: false, error: Object.assign(new Error('Stale.'), { details: { code: 'CONFLICT' } }) }));
+    renderWorkbench(lesson, true);
+    await user.type(await screen.findByRole('textbox', { name: 'Your working' }), 'My first step.');
+    expect(await screen.findAllByRole('button', { name: 'Reload the saved attempt · keep my text' })).toHaveLength(1);
+  });
+
+  it('does not call its own submit another action', async () => {
+    const user = userEvent.setup();
+    currentSession!.summary.taskKind = 'guided';
+    currentWorkspace.sessions = [{ ...currentSession!.summary }];
+    let release!: () => void;
+    const submitted = mocks.submit.getMockImplementation()!;
+    mocks.submit.mockImplementationOnce((request) => new Promise((resolve) => { release = () => resolve(submitted(request)); }));
+    renderWorkbench(lesson, true);
+    await user.type(await screen.findByRole('textbox', { name: 'Your working' }), 'My first step.');
+    await user.click(screen.getByRole('button', { name: 'Submit guided response' }));
+    await waitFor(() => expect(mocks.submit).toHaveBeenCalledTimes(1));
+    expect(screen.queryByText('Another action is in progress.')).not.toBeInTheDocument();
+    release();
   });
 
   it('opens exact citations in embedded guided replies and hides them without changing the response', async () => {
@@ -182,12 +220,21 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(screen.queryByRole('button', { name: 'Start an attempt' })).not.toBeInTheDocument();
   });
 
-  it('starts a new attempt with the chosen aid contract', async () => {
+  it('names the help in the learner words, not the mode names', async () => {
+    renderWorkbench();
+    await screen.findByRole('textbox', { name: 'Your response' });
+    const group = screen.getByRole('group', { name: 'Help' });
+    expect(within(group).getAllByRole('button').map((button) => button.textContent)).toEqual(['Full help', 'Hints only', 'No help']);
+    expect(screen.getByText(/help used is recorded/)).toBeVisible();
+    expect(screen.queryByText(/Aid contract|aid is recorded|Explore|Demonstrate/)).not.toBeInTheDocument();
+  });
+
+  it('starts a new attempt with the chosen help', async () => {
     const user = userEvent.setup();
     currentSession = null;
     currentWorkspace.sessions = [];
     renderWorkbench();
-    await user.click(await screen.findByRole('radio', { name: /Demonstrate/ }));
+    await user.click(await screen.findByRole('radio', { name: /No help/ }));
     await user.click(screen.getByRole('button', { name: 'Start an attempt' }));
     await screen.findByRole('textbox', { name: 'Your response' });
     expect(mocks.start).toHaveBeenCalledWith(expect.objectContaining({ lessonId: 'lesson-1', mode: 'demonstrate', expectedProgramRevision: 8 }));
@@ -215,15 +262,15 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(await screen.findByRole('textbox', { name: 'Your working' })).toHaveAttribute('maxlength', String(LEARNER_TEXT_MAX_CHARS));
   });
 
-  it('enforces the Demonstrate aid contract and opens only frozen versions after submission', async () => {
+  it('enforces No help and opens only frozen versions after submission', async () => {
     const user = userEvent.setup();
     currentSession!.summary.mode = 'demonstrate';
     renderWorkbench();
     expect(await screen.findByRole('textbox', { name: 'Your response' })).toBeVisible();
     expect(screen.getByRole('button', { name: /Field notes/ })).toBeDisabled();
-    const thread = screen.getByRole('region', { name: 'Tutor messages' });
+    const thread = screen.getByRole('region', { name: 'Tutor conversation' });
     expect(within(thread).getByRole('button', { name: 'Send' })).toBeDisabled();
-    expect(screen.getByText('Tutor assistance is closed in Demonstrate mode.')).toBeVisible();
+    expect(screen.getByText('The tutor is closed with No help.')).toBeVisible();
     expect(screen.queryByRole('button', { name: /Review reveal choice/ })).not.toBeInTheDocument();
     await user.type(screen.getByRole('textbox', { name: 'Your response' }), 'My independent response.');
     await user.click(screen.getByRole('button', { name: 'Submit response' }));
@@ -243,7 +290,7 @@ describe('Learning Studio grounded practice workbench', () => {
     expect(mocks.reveal).not.toHaveBeenCalled();
     await user.click(screen.getByRole('button', { name: 'Reveal solution' }));
     expect(await screen.findByText('A worked explanation of the inference.')).toBeVisible();
-    const thread = screen.getByRole('region', { name: 'Tutor messages' });
+    const thread = screen.getByRole('region', { name: 'Tutor conversation' });
     await user.type(within(thread).getByRole('textbox'), 'Can you explain this source?');
     await user.click(within(thread).getByRole('button', { name: 'Send' }));
     expect(await screen.findByText('Start by separating the observation from your interpretation.')).toBeVisible();
@@ -309,9 +356,9 @@ describe('Learning Studio grounded practice workbench', () => {
     currentSession = null;
     currentWorkspace.sessions = [];
     renderWorkbench();
-    expect(await screen.findByRole('radio', { name: /Explore.*Full help/s })).toBeVisible();
-    expect(screen.getByRole('radio', { name: /Practice.*Hints only/s })).toBeVisible();
-    expect(screen.getByRole('radio', { name: /Demonstrate.*No help/s })).toBeVisible();
+    expect(await screen.findByRole('radio', { name: /Full help/ })).toBeVisible();
+    expect(screen.getByRole('radio', { name: /Hints only/ })).toBeVisible();
+    expect(screen.getByRole('radio', { name: /No help/ })).toBeVisible();
   });
 
   it('offers a conflict reload while retaining locally edited response text', async () => {
