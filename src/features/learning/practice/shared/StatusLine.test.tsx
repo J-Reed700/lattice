@@ -25,6 +25,14 @@ describe('StatusLine', () => {
     expect(retry).toHaveBeenCalledTimes(1);
   });
 
+  it('offers its own reload in place of Try again', () => {
+    const run = vi.fn();
+    render(<StatusLine state={{ kind: 'error', message: 'Changed elsewhere.', retry: vi.fn(), reload: { label: 'Reload thing', run } }} />);
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload thing' }));
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
   it('has no Try again button without a retry', () => {
     render(<StatusLine state={{ kind: 'error', message: 'Nothing to redo.' }} />);
     expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();

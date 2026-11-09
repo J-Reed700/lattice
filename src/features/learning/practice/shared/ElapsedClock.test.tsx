@@ -38,7 +38,12 @@ describe('ElapsedClock', () => {
     act(() => {
       vi.advanceTimersByTime(61_000);
     });
-    expect(screen.getByRole('status')).toHaveTextContent(/past the 1:00/i);
+    expect(screen.getByRole('status')).toHaveTextContent(/^Past 1:00\. You can keep going\.$/);
     expect(screen.getByRole('timer')).toHaveTextContent('1:01');
+  });
+
+  it('uses the given wording past the limit', () => {
+    render(<ElapsedClock elapsedMs={61_000} running={false} softLimitMs={60_000} pastLimit="Past the aim: stop." />);
+    expect(screen.getByRole('status')).toHaveTextContent('Past the aim: stop.');
   });
 });

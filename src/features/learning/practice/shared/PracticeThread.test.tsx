@@ -7,15 +7,15 @@ import type { VoicePhase } from '@/features/voice/model/voiceSession';
 import { PracticeThread, type PracticeThreadProps, type ThreadMessage } from './PracticeThread';
 
 const voice = { phase: 'off' as VoicePhase, toggle: vi.fn() };
-const voiceOptions: { send?: (text: string) => Promise<unknown> } = {};
+const voiceOptions: { send?: (text: string) => Promise<unknown>; reply?: () => string } = {};
 
 vi.mock('@/features/voice/hooks/useVoiceConversation', () => ({
-  useVoiceConversation: (options: { send: (text: string) => Promise<unknown> }) => {
+  useVoiceConversation: (options: { send: (text: string) => Promise<unknown>; reply?: () => string }) => {
     voiceOptions.send = options.send;
+    voiceOptions.reply = options.reply;
     return voice;
   },
 }));
-vi.mock('@/features/speech/hooks/useSpeech', () => ({ useSpeaker: () => vi.fn() }));
 
 const messages: ThreadMessage[] = [
   { id: 'm1', speaker: 'counterpart', content: 'What happens with duplicates?' },
@@ -107,12 +107,61 @@ describe('PracticeThread', () => {
     expect(screen.queryByRole('button', { name: /voice conversation/i })).not.toBeInTheDocument();
   });
 
-  it('sends what was said to onSend as a spoken turn', async () => {
-    const { onSend } = renderThread();
+  it('answers a spoken turn only when the reply arrives, and gives the hook its text', async () => {
+    const { onSend, rerender } = renderThread();
+    let outcome: unknown;
     await act(async () => {
-      await voiceOptions.send?.('I said this.');
+      void voiceOptions.send?.('I said this.').then((value) => {
+        outcome = value;
+      });
     });
     expect(onSend).toHaveBeenCalledWith('I said this.', true);
+    expect(outcome).toBeUndefined();
+    await act(async () => {
+      rerender(
+        <PracticeThread
+          label="Interview"
+          messages={[...messages, { id: 'm4', speaker: 'counterpart', content: 'And the cost?' }]}
+          onSend={onSend}
+          draftKey="thread-test"
+        />,
+      );
+    });
+    expect(outcome).toBe('answered');
+    expect(voiceOptions.reply?.()).toBe('And the cost?');
+  });
+
+  it('fails a spoken turn when an error appears while waiting for the reply', async () => {
+    const { onSend, rerender } = renderThread();
+    let outcome: unknown;
+    await act(async () => {
+      void voiceOptions.send?.('I said this.').then((value) => {
+        outcome = value;
+      });
+    });
+    await act(async () => {
+      rerender(
+        <PracticeThread
+          label="Interview"
+          messages={messages}
+          onSend={onSend}
+          draftKey="thread-test"
+          error={{ message: 'The reply failed.' }}
+        />,
+      );
+    });
+    expect(outcome).toBe('failed');
+  });
+
+  it('puts the words back in the box and fails when a spoken send is rejected', async () => {
+    const { onSend } = renderThread();
+    onSend.mockRejectedValueOnce(new Error('offline'));
+    let outcome: unknown;
+    await act(async () => {
+      outcome = await voiceOptions.send?.('Lost words.');
+    });
+    expect(outcome).toBe('failed');
+    expect(screen.getByRole('textbox', { name: 'Your response' })).toHaveValue('Lost words.');
   });
 
   it('shows the suggestion', () => {

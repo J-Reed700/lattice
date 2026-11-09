@@ -39,4 +39,47 @@ describe('CriteriaList', () => {
     expect(within(second).getByText('Not enough evidence')).toBeVisible();
     expect(within(second).queryByText(/of 4/)).not.toBeInTheDocument();
   });
+
+  it('shows the weight of a criterion that is not graded yet, with no icon and no score', () => {
+    render(
+      <CriteriaList
+        criteria={[
+          { id: 'u1', title: 'Covers the cases', description: 'Name what you tried.', maxPoints: 3, evidence: [] },
+          { id: 'u2', title: 'Reads clearly', maxPoints: 1, evidence: [] },
+        ]}
+      />,
+    );
+    const first = screen.getByText('Covers the cases').closest('li') as HTMLElement;
+    expect(within(first).getByText('Worth 3 points')).toBeInTheDocument();
+    expect(within(first).getByText('Name what you tried.')).toBeInTheDocument();
+    expect(within(first).queryByText('Not enough evidence')).not.toBeInTheDocument();
+    expect(first.querySelector('[data-score] svg')).toBeNull();
+    const second = screen.getByText('Reads clearly').closest('li') as HTMLElement;
+    expect(within(second).getByText('Worth 1 point')).toBeInTheDocument();
+    expect(screen.queryByText('Not enough evidence')).not.toBeInTheDocument();
+  });
+
+  it('shows an outcome by its label and level, with an icon and no points', () => {
+    render(
+      <CriteriaList
+        criteria={[
+          { id: 'o1', title: 'Names the cause', outcome: { label: 'Met', level: 'met' }, maxPoints: 2, evidence: [] },
+          { id: 'o2', title: 'Tests it', outcome: { label: 'Partly met', level: 'partly' }, maxPoints: 2, evidence: [] },
+          { id: 'o3', title: 'Explains why', outcome: { label: 'Not met', level: 'not_met' }, maxPoints: 2, evidence: [] },
+        ]}
+      />,
+    );
+    for (const [title, label, level] of [
+      ['Names the cause', 'Met', 'met'],
+      ['Tests it', 'Partly met', 'partly'],
+      ['Explains why', 'Not met', 'not_met'],
+    ]) {
+      const row = screen.getByText(title).closest('li') as HTMLElement;
+      const score = row.querySelector('[data-score]') as HTMLElement;
+      expect(score).toHaveTextContent(label);
+      expect(score).toHaveAttribute('data-level', level);
+      expect(score.querySelector('svg')).not.toBeNull();
+      expect(within(row).queryByText(/ of /)).not.toBeInTheDocument();
+    }
+  });
 });

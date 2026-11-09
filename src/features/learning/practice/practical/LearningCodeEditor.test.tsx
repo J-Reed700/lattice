@@ -2,7 +2,7 @@ import { language } from '@codemirror/language';
 import { EditorView } from '@codemirror/view';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 
 import { LearningCodeEditor } from '@/features/learning/practice/practical/LearningCodeEditor';
 
@@ -153,5 +153,53 @@ describe('LearningCodeEditor', () => {
     editorElement()?.focus();
     await user.keyboard('{Control>}{Enter}{/Control}');
     expect(onRunShortcut).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe('LearningCodeEditor platform shortcuts', () => {
+  const originalPlatform = navigator.platform;
+  const originalUserAgent = navigator.userAgent;
+
+  afterEach(() => {
+    Object.defineProperty(navigator, 'platform', { value: originalPlatform, configurable: true });
+    Object.defineProperty(navigator, 'userAgent', { value: originalUserAgent, configurable: true });
+  });
+
+  const pretend = (platform: string, userAgent: string) => {
+    Object.defineProperty(navigator, 'platform', { value: platform, configurable: true });
+    Object.defineProperty(navigator, 'userAgent', { value: userAgent, configurable: true });
+  };
+
+  it('shows Ctrl+F on Windows', () => {
+    pretend('Win32', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    render(<LearningCodeEditor path="main.py" value="print(1)" onChange={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /find in code/i })).toHaveAttribute('title', 'Find in code (Ctrl+F)');
+    expect(screen.getByText('Ctrl+F')).toBeInTheDocument();
+  });
+
+  it('shows Ctrl+F on Linux', () => {
+    pretend('Linux x86_64', 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36');
+    render(<LearningCodeEditor path="main.py" value="print(1)" onChange={vi.fn()} />);
+    expect(screen.getByText('Ctrl+F')).toBeInTheDocument();
+  });
+
+  it('shows ⌘F on a Mac, read from the user agent when the platform is empty', () => {
+    pretend('', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
+    render(<LearningCodeEditor path="main.py" value="print(1)" onChange={vi.fn()} />);
+    expect(screen.getByRole('button', { name: /find in code/i })).toHaveAttribute('title', 'Find in code (⌘F)');
+    expect(screen.getByText('⌘F')).toBeInTheDocument();
+  });
+
+  it('documents the run shortcut only when there is one, by platform', () => {
+    pretend('', 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36');
+    const mac = render(<LearningCodeEditor path="main.py" value="" onChange={vi.fn()} onRunShortcut={vi.fn()} />);
+    expect(screen.getByText(/⌘Enter run/)).toBeInTheDocument();
+    mac.unmount();
+    pretend('Win32', 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36');
+    const windows = render(<LearningCodeEditor path="main.py" value="" onChange={vi.fn()} onRunShortcut={vi.fn()} />);
+    expect(screen.getByText(/Ctrl\+Enter run/)).toBeInTheDocument();
+    windows.unmount();
+    render(<LearningCodeEditor path="main.py" value="" onChange={vi.fn()} />);
+    expect(screen.queryByText(/Enter run/)).not.toBeInTheDocument();
   });
 });

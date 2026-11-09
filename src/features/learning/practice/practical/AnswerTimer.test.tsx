@@ -19,7 +19,7 @@ describe('AnswerTimer', () => {
       vi.advanceTimersByTime(125_000);
     });
     expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('2:05');
-    expect(screen.getByRole('status')).toHaveTextContent(/past the 2:00/i);
+    expect(screen.getByRole('status')).toHaveTextContent('Past two minutes: land your result and stop.');
     rerender(<AnswerTimer since="question-2" />);
     expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('0:00');
     expect(screen.queryByRole('status')).not.toBeInTheDocument();

@@ -267,6 +267,28 @@ describe('SimulationPanel', () => {
     expect(screen.getByRole('button', { name: 'Finish simulation' })).toBeDisabled();
   });
 
+  it('offers a reload of the simulation, not Try again, when the backend reports a conflict', async () => {
+    api.sendLearningSimulationTurn.mockResolvedValueOnce({ ok: false, error: 'Another window changed this.', details: { code: 'CONFLICT' } });
+    renderPanel(session());
+    fireEvent.change(screen.getByLabelText('Your response'), { target: { value: 'My answer.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Another window changed this.');
+    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Reload simulation' }));
+    await waitFor(() => expect(screen.queryByRole('alert')).not.toBeInTheDocument());
+    expect(screen.getByLabelText('Your response')).toHaveValue('My answer.');
+  });
+
+  it('treats a message that merely says "conflict" as a plain error with Try again', async () => {
+    api.sendLearningSimulationTurn.mockResolvedValueOnce({ ok: false, error: 'Changed elsewhere (conflict).' });
+    renderPanel(session());
+    fireEvent.change(screen.getByLabelText('Your response'), { target: { value: 'My answer.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Send' }));
+    expect(await screen.findByRole('alert')).toHaveTextContent('Changed elsewhere');
+    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Reload simulation' })).not.toBeInTheDocument();
+  });
+
   it('retries the failed turn exactly and preserves a newer draft', async () => {
     api.sendLearningSimulationTurn.mockResolvedValueOnce({ ok: false, error: 'response lost' })
       .mockResolvedValueOnce({ ok: true, data: session({ revision: 4 }) });
