@@ -13,7 +13,7 @@ impl LearningRepository {
         }
         let r=sqlx::query("UPDATE learning_programs SET title=?,status='active',revision=revision+1 WHERE id=? AND revision=? AND status='draft'").bind(req.title.trim()).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if r.rows_affected() != 1 {
-            return Err(AppError::InvalidInput(
+            return Err(AppError::Conflict(
                 "Program changed or is no longer a draft; reload and retry.".into(),
             ));
         }
@@ -44,7 +44,7 @@ impl LearningRepository {
         }
         let changed=sqlx::query("UPDATE learning_programs SET revision=revision+1 WHERE id=? AND revision=? AND status='active'").bind(program_id).bind(expected_revision).execute(&mut *tx).await.map_err(db)?;
         if changed.rows_affected() != 1 {
-            return Err(AppError::InvalidInput(
+            return Err(AppError::Conflict(
                 "Program changed or is not active; reload and retry.".into(),
             ));
         }
@@ -86,7 +86,7 @@ impl LearningRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let changed=sqlx::query("UPDATE learning_programs SET revision=revision+1 WHERE id=? AND revision=? AND status='active'").bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if changed.rows_affected() != 1 {
-            return Err(AppError::InvalidInput(
+            return Err(AppError::Conflict(
                 "Program changed or is not active; reload and retry.".into(),
             ));
         }

@@ -1032,7 +1032,7 @@ export async function installLearningStudioBackend(page: Page) {
     const changeGenerationJob = (command: string, args: MockArgs) => {
         const request = getRequest<LearningGenerationJobActionRequestDto>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
-          throw new Error("Program changed; reload and retry.");
+          throw { code: "CONFLICT", message: "Program changed; reload and retry." };
         const job = state.planWorkspace.jobs.find((job) => job.id === request.jobId);
         if (!job) throw new Error("Job not found");
         if (command === "cancel_learning_generation_job") {
@@ -1049,8 +1049,10 @@ export async function installLearningStudioBackend(page: Page) {
     const practicalDraft = async (command: string, args: MockArgs) => {
         const request = getRequest<LabDraft & { operationId: string; expectedDraftRevision: number }>(args);
         const activity = state.practicalWorkspace.activities.find((item) => item.id === request.activityId);
-        if (request.programId !== program.summary.id || !activity || activity.revision !== request.activityRevision)
-          throw new Error("The lab activity changed. Reopen it before editing.");
+        if (request.programId !== program.summary.id || !activity)
+          throw { code: "NOT_FOUND", message: "Practical activity not found" };
+        if (activity.revision !== request.activityRevision)
+          throw { code: "CONFLICT", message: "The lab activity changed. Reopen it before editing." };
         const key = `${request.programId}:${request.activityId}:${request.activityRevision}`;
         const initial: LabDraft = { programId: request.programId, activityId: request.activityId, activityRevision: request.activityRevision, draftRevision: 0, files: activity.files.filter((file) => file.role === "starter" && file.editable).map(({ path, content }) => ({ path, content })), updatedAt: null };
         const current = state.labDrafts.get(key) ?? initial;
@@ -1140,7 +1142,7 @@ export async function installLearningStudioBackend(page: Page) {
       },
       repair_learning_outline: (args) => {
         const request = getArg<{ programId: string; expectedRevision: number }>(args, "request");
-        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw new Error("Draft changed");
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw { code: "CONFLICT", message: "Draft changed" };
         program.summary.revision += 1;
         program.modules[0].lessons[0].objective = "Compare observations and explain why they alone do not establish causality.";
         program.outlineReview = { status: "passed", repairPasses: 2, updatedAt: Date.now(), contentHash: "repaired-fixture", issues: [], note: "Outline checks passed for this revision. Lesson content is checked separately.", citationsVerified: 0, citationsRemoved: 0, referencesGathered: 0 };
@@ -2268,7 +2270,7 @@ export async function installLearningStudioBackend(page: Page) {
       ...quiz.handlers,
       complete_learning_lesson: (args) => {
         const request = getRequest<{ programId: string; lessonId: string; expectedRevision: number }>(args);
-        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw new Error("Program changed; reload and retry.");
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw { code: "CONFLICT", message: "Program changed; reload and retry." };
         const target = program.modules.flatMap((module) => module.lessons).find((entry) => entry.id === request.lessonId);
         if (!target) throw new Error("Lesson not found.");
         if (!target.completed) program.summary.completedLessons += 1;
@@ -2311,7 +2313,7 @@ export async function installLearningStudioBackend(page: Page) {
       preview_learning_curriculum_revision: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
-          throw new Error("Program changed; reload and retry.");
+          throw { code: "CONFLICT", message: "Program changed; reload and retry." };
         state.planWorkspace.programRevision = program.summary.revision;
         const planState = state.planWorkspace as unknown as Record<string, unknown>;
         const revision = planState.acceptedRevision as Record<string, unknown>;
@@ -2333,7 +2335,7 @@ export async function installLearningStudioBackend(page: Page) {
       accept_learning_curriculum_revision: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
-          throw new Error("Program changed; reload and retry.");
+          throw { code: "CONFLICT", message: "Program changed; reload and retry." };
         state.planWorkspace.programRevision = program.summary.revision;
         const planState = state.planWorkspace as unknown as Record<string, unknown>;
         const draft = planState.draftRevision as Record<string, unknown> | null;
@@ -2385,7 +2387,7 @@ export async function installLearningStudioBackend(page: Page) {
         const request = getRequest<Record<string, unknown>>(args);
         const cards = state.recallV2Workspace.cards as Array<Record<string, unknown>>;
         const existing = cards.find((item) => item.id === request.cardId);
-        if (existing && existing.contentRevision !== request.expectedContentRevision) throw new Error("Card changed; reload and retry.");
+        if (existing && existing.contentRevision !== request.expectedContentRevision) throw { code: "CONFLICT", message: "Card changed; reload and retry." };
         const content = request.content as Record<string, unknown>;
         if (existing) {
           const versions = existing.versions as Array<Record<string, unknown>>;
@@ -2411,7 +2413,7 @@ export async function installLearningStudioBackend(page: Page) {
         const card = (state.recallV2Workspace.cards as Array<Record<string, unknown>>).find((item) => item.id === request.cardId);
         if (!card) throw new Error("Recall card not found.");
         const scheduler = card.scheduler as Record<string, unknown>;
-        if (scheduler.reviewCount !== request.expectedReviewCount) throw new Error("Review state changed.");
+        if (scheduler.reviewCount !== request.expectedReviewCount) throw { code: "CONFLICT", message: "Review state changed." };
         const timestamp = Date.now();
         const intervalDays = request.rating === "good" ? 1 : request.rating === "easy" ? 2 : 0;
         Object.assign(scheduler, { reviewCount: Number(scheduler.reviewCount) + 1, intervalDays, dueAt: timestamp + intervalDays * 86_400_000, lastReviewedAt: timestamp });
