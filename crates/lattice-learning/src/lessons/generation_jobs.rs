@@ -728,3 +728,7 @@ pub(crate) mod overlap_tests;
 #[cfg(test)]
 #[path = "generation_setup_tests.rs"]
 mod setup_tests;
+
+#[cfg(test)]
+#[path = "generation_side_by_side_tests.rs"]
+mod side_by_side_tests;
