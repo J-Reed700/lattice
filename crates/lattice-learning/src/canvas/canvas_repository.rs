@@ -4,6 +4,7 @@ use crate::{
     operations::Operation,
     persistence::{db, hash, now},
 };
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use serde::Serialize;
@@ -145,6 +146,7 @@ impl LearningCanvasRepository {
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_one(&mut *tx)
+            .boxed()
             .await
             .map_err(db)?;
         if exists == 0 {
@@ -155,6 +157,7 @@ impl LearningCanvasRepository {
         )
         .bind(program_id)
         .fetch_all(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?;
         if rows.is_empty() {
@@ -165,7 +168,7 @@ impl LearningCanvasRepository {
             });
         }
         let snapshot_rows = sqlx::query("SELECT * FROM learning_canvas_snapshots WHERE program_id=? ORDER BY canvas_id,created_at,id")
-            .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+            .bind(program_id).fetch_all(&mut *tx).boxed().await.map_err(db)?;
         tx.commit().await.map_err(db)?;
         let mut snapshots_by_canvas: HashMap<String, Vec<LearningCanvasSnapshotDto>> =
             HashMap::new();
@@ -221,6 +224,7 @@ impl LearningCanvasRepository {
             sqlx::query_scalar("SELECT count(*) FROM learning_canvases WHERE id=?")
                 .bind(&request.canvas_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         if canvas_exists != 0 {
@@ -354,6 +358,7 @@ impl LearningCanvasRepository {
             sqlx::query_scalar("SELECT count(*) FROM learning_canvas_snapshots WHERE id=?")
                 .bind(&request.snapshot_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         if snapshot_exists != 0 {
@@ -435,6 +440,7 @@ impl LearningCanvasRepository {
         .bind(&request.canvas_id)
         .bind(&request.snapshot_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Canvas snapshot not found.".into()))?;
@@ -442,6 +448,7 @@ impl LearningCanvasRepository {
             sqlx::query_scalar("SELECT count(*) FROM learning_canvas_snapshots WHERE id=?")
                 .bind(&request.pre_restore_snapshot_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         if pre_snapshot_exists != 0 {
@@ -498,6 +505,7 @@ async fn validate_active_program(
         sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut **tx)
+            .boxed()
             .await
             .map_err(db)?;
     match status.as_deref() {
@@ -515,6 +523,7 @@ async fn validate_active_program(
                 .bind(program_id)
                 .bind(lesson_id)
                 .fetch_one(&mut **tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         if exists == 0 {
@@ -542,6 +551,7 @@ async fn lock_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str)
         sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut **tx)
+            .boxed()
             .await
             .map_err(db)?;
     match status.as_deref() {
@@ -588,6 +598,7 @@ async fn canvas_for_update(
         .bind(program_id)
         .bind(canvas_id)
         .fetch_optional(&mut **tx)
+        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Canvas not found in this program.".into()))

@@ -1,4 +1,5 @@
 use crate::persistence::db;
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqlitePool};
 
@@ -20,7 +21,7 @@ pub(in crate::references::trust) async fn active_version_id(
     )
     .bind(program_id)
     .bind(source_id)
-    .fetch_optional(pool)
+    .fetch_optional(pool).boxed()
     .await
     .map_err(db)?
     .flatten())
@@ -36,7 +37,7 @@ pub(in crate::references::trust) async fn claim_context(
     )
     .bind(claim_id)
     .bind(program_id)
-    .fetch_optional(pool)
+    .fetch_optional(pool).boxed()
     .await
     .map_err(db)?
     else {

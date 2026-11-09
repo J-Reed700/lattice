@@ -8,6 +8,7 @@ use crate::assessment_engine as engine;
 use crate::dto::*;
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
+use futures::FutureExt;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -107,6 +108,7 @@ impl LearningAssessmentRepository {
                 sqlx::query_scalar("SELECT program_id FROM learning_assessment_forms WHERE id=?")
                     .bind(parent)
                     .fetch_optional(&mut *tx)
+                    .boxed()
                     .await
                     .map_err(db)?;
             if belongs.as_deref() != Some(req.program_id.as_str()) {
@@ -152,6 +154,7 @@ impl LearningAssessmentRepository {
             sqlx::query_scalar("SELECT model_name FROM learning_programs WHERE id=?")
                 .bind(&req.program_id)
                 .fetch_optional(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         let mut frozen_sources = desired.source_version_ids.clone();
@@ -244,6 +247,7 @@ impl LearningAssessmentRepository {
         let h = sqlx::query("SELECT * FROM learning_assessment_forms WHERE id=?")
             .bind(form_id)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
@@ -252,7 +256,7 @@ impl LearningAssessmentRepository {
         let program_id: String = h.get("program_id");
         let rows = sqlx::query("SELECT i.*,rr.revision response_revision,rr.selected_indices_json,rr.text_response,rr.blank_responses_json,rr.matches_json,rr.ordered_values_json,rr.artifact_json FROM learning_assessment_form_items i LEFT JOIN learning_assessment_response_revisions rr ON rr.form_id=i.form_id AND rr.item_ordinal=i.ordinal AND rr.revision=(SELECT max(r2.revision) FROM learning_assessment_response_revisions r2 WHERE r2.form_id=i.form_id AND r2.item_ordinal=i.ordinal) WHERE i.form_id=? ORDER BY i.ordinal")
             .bind(form_id)
-            .fetch_all(&mut *connection)
+            .fetch_all(&mut *connection).boxed()
             .await
             .map_err(db)?;
         let mut items = Vec::with_capacity(rows.len());
@@ -261,7 +265,7 @@ impl LearningAssessmentRepository {
             "SELECT item_ordinal,outcome_id FROM learning_assessment_form_item_outcomes WHERE form_id=? ORDER BY item_ordinal,outcome_id",
         )
         .bind(form_id)
-        .fetch_all(&mut *connection)
+        .fetch_all(&mut *connection).boxed()
         .await
         .map_err(db)?;
         let mut outcomes: HashMap<i64, Vec<String>> = HashMap::new();
@@ -413,6 +417,7 @@ impl LearningAssessmentRepository {
         let Some(r) = sqlx::query("SELECT * FROM learning_assessment_submissions WHERE form_id=?")
             .bind(form_id)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?
         else {
@@ -420,7 +425,7 @@ impl LearningAssessmentRepository {
         };
         let rows = sqlx::query("SELECT r.*,i.candidate_id FROM learning_assessment_item_results r JOIN learning_assessment_form_items i ON i.form_id=r.form_id AND i.ordinal=r.item_ordinal WHERE r.form_id=? ORDER BY r.item_ordinal")
             .bind(form_id)
-            .fetch_all(&mut *connection)
+            .fetch_all(&mut *connection).boxed()
             .await
             .map_err(db)?;
         let mut results = Vec::with_capacity(rows.len());
@@ -455,7 +460,7 @@ impl LearningAssessmentRepository {
         let job = sqlx::query("SELECT id,status,error_message FROM jobs WHERE kind=? AND json_extract(requested_json,'$.formId')=? AND json_extract(requested_json,'$.contestId') IS NULL ORDER BY created_at DESC LIMIT 1")
             .bind(crate::quiz_bank_jobs::QUIZ_GRADING)
             .bind(form_id)
-            .fetch_optional(&mut *connection)
+            .fetch_optional(&mut *connection).boxed()
             .await
             .map_err(db)?;
         let live = job.as_ref().is_some_and(|j| {
@@ -541,6 +546,7 @@ impl LearningAssessmentRepository {
         .bind(&req.form_id)
         .bind(&req.program_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
@@ -554,7 +560,7 @@ impl LearningAssessmentRepository {
         let item = sqlx::query("SELECT ordinal,format,options_json,left_items_json FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?")
             .bind(&req.form_id)
             .bind(&req.response.item_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut *tx).boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| invalid("That question is not part of this quiz."))?;
@@ -568,7 +574,7 @@ impl LearningAssessmentRepository {
         let last: Option<i64> = sqlx::query_scalar("SELECT max(revision) FROM learning_assessment_response_revisions WHERE form_id=? AND item_ordinal=?")
             .bind(&req.form_id)
             .bind(ordinal)
-            .fetch_one(&mut *tx)
+            .fetch_one(&mut *tx).boxed()
             .await
             .map_err(db)?;
         let next = last.unwrap_or(0) + 1;

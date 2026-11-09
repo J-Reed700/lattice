@@ -1,5 +1,6 @@
 //! Reading the practice workspace and sessions back into DTOs, and replay checks.
 use super::*;
+use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -10,13 +11,14 @@ impl LearningPracticeRepository {
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *read)
+            .boxed()
             .await
             .map_err(db)?;
         if exists.is_none() {
             return Err(AppError::NotFound("Learning program not found".into()));
         }
         let rows=sqlx::query("SELECT s.*, a.revision AS artifact_revision, sub.grade_status FROM learning_practice_sessions s LEFT JOIN learning_practice_artifact_revisions a ON a.session_id=s.id AND a.revision=(SELECT max(revision) FROM learning_practice_artifact_revisions WHERE session_id=s.id) LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.program_id=? ORDER BY s.updated_at DESC,s.id")
-            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?;
+            .bind(program_id).fetch_all(&mut *read).boxed().await.map_err(db)?;
         read.commit().await.map_err(db)?;
         let sessions = rows
             .into_iter()
@@ -65,7 +67,7 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeSessionDto> {
         uuid(session_id, "session")?;
         let row=sqlx::query("SELECT s.*, a.revision AS artifact_revision,a.text AS artifact_text,a.sha256 AS artifact_sha,a.created_at AS artifact_updated,sub.grade_status,sub.artifact_revision AS result_artifact_revision,sub.artifact_text AS result_artifact_text,sub.rubric_json AS result_rubric,sub.criteria_json,sub.evidence_json,sub.assistance_json AS result_assistance,sub.mode AS result_mode,sub.grader_model,sub.submitted_at AS result_submitted_at FROM learning_practice_sessions s LEFT JOIN learning_practice_artifact_revisions a ON a.session_id=s.id AND a.revision=(SELECT max(revision) FROM learning_practice_artifact_revisions WHERE session_id=s.id) LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.id=?")
-            .bind(session_id).fetch_optional(&mut *connection).await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
+            .bind(session_id).fetch_optional(&mut *connection).boxed().await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
         let status_text: String = row.get("status");
         let summary = LearningPracticeSessionSummaryDto {
             task_kind: parse_task_kind(row.get("task_kind"))?,
@@ -148,6 +150,7 @@ impl LearningPracticeRepository {
         )
         .bind(session_id)
         .fetch_all(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?;
         rows.into_iter()
@@ -172,6 +175,7 @@ impl LearningPracticeRepository {
         )
         .bind(session_id)
         .fetch_all(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?;
         rows.into_iter()
@@ -202,6 +206,7 @@ impl LearningPracticeRepository {
         )
         .bind(session_id)
         .fetch_all(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?;
         rows.into_iter()
@@ -238,6 +243,7 @@ impl LearningPracticeRepository {
             sqlx::query_scalar("SELECT program_id FROM learning_practice_sessions WHERE id=?")
                 .bind(session_id)
                 .fetch_optional(&mut *read)
+                .boxed()
                 .await
                 .map_err(db)?;
         read.commit().await.map_err(db)?;
@@ -266,6 +272,7 @@ impl LearningPracticeRepository {
             sqlx::query_scalar("SELECT program_id FROM learning_practice_sessions WHERE id=?")
                 .bind(session_id)
                 .fetch_optional(&mut *read)
+                .boxed()
                 .await
                 .map_err(db)?;
         if owner.as_deref() != Some(program_id) {
@@ -275,6 +282,7 @@ impl LearningPracticeRepository {
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *read)
+                .boxed()
                 .await
                 .map_err(db)?;
         read.commit().await.map_err(db)?;
@@ -305,7 +313,7 @@ impl LearningPracticeRepository {
         let mut out = Vec::new();
         for id in ids.iter().take(32) {
             let row=sqlx::query("SELECT source_id,id,version_number,title,publisher,resolved_url,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,snapshot_hash,full_text FROM learning_source_versions WHERE program_id=? AND id=?")
-                .bind(program_id).bind(id).fetch_optional(&self.pool).await.map_err(db)?.ok_or_else(||AppError::NotFound("A source version frozen into this attempt is unavailable.".into()))?;
+                .bind(program_id).bind(id).fetch_optional(&self.pool).boxed().await.map_err(db)?.ok_or_else(||AppError::NotFound("A source version frozen into this attempt is unavailable.".into()))?;
             out.push(LearningSourceVersionDto {
                 source_id: row.get("source_id"),
                 version: LearningSourceVersionSummaryDto {

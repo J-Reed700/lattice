@@ -1,5 +1,6 @@
 //! Source selectors: creating, reading and re-matching them, and searching program sources.
 use super::*;
+use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -62,7 +63,7 @@ impl LearningRecallRepository {
             .bind(&req.program_id)
             .bind(&req.source_id)
             .bind(&req.source_version_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut *tx).boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Source version not found in this program.".into()))?;
@@ -113,6 +114,7 @@ impl LearningRecallRepository {
                 .bind(program_id)
                 .bind(selector_id)
                 .fetch_optional(connection)
+                .boxed()
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Source selector not found.".into()))?;
@@ -130,7 +132,7 @@ impl LearningRecallRepository {
             .bind(&req.program_id)
             .bind(&req.selector_id)
             .bind(&req.target_version_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&self.pool).boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Selector or source version not found.".into()))?;

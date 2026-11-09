@@ -7,6 +7,7 @@ use super::{
 use crate::embedded_runtime::LearningBuiltinRuntime;
 use crate::persistence::db;
 use crate::practical_dto::*;
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
@@ -28,6 +29,7 @@ impl LearningPracticalRepository {
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?;
         if exists.is_none() {
@@ -38,7 +40,7 @@ impl LearningPracticalRepository {
             "SELECT * FROM learning_practical_activities WHERE program_id=? ORDER BY created_at DESC,id",
         )
         .bind(program_id)
-        .fetch_all(&mut *connection)
+        .fetch_all(&mut *connection).boxed()
         .await
         .map_err(db)?;
         let mut activities = Vec::with_capacity(activity_rows.len());
@@ -55,6 +57,7 @@ impl LearningPracticalRepository {
         )
         .bind(program_id)
         .fetch_all(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?;
         let mut runs = Vec::with_capacity(run_rows.len());
@@ -65,7 +68,7 @@ impl LearningPracticalRepository {
             "SELECT * FROM learning_simulation_sessions WHERE program_id=? ORDER BY created_at DESC,id",
         )
         .bind(program_id)
-        .fetch_all(&mut *connection)
+        .fetch_all(&mut *connection).boxed()
         .await
         .map_err(db)?;
         let mut simulations = Vec::with_capacity(simulation_rows.len());
@@ -96,6 +99,7 @@ impl LearningPracticalRepository {
     ) -> Result<Vec<LearningRuntimeProfileDto>> {
         let rows = sqlx::query("SELECT * FROM learning_runtime_profiles ORDER BY name,id")
             .fetch_all(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?;
         rows.into_iter()
@@ -122,7 +126,7 @@ impl LearningPracticalRepository {
     ) -> Result<LearningPracticalActivityDto> {
         let id: String = row.get("id");
         let file_rows = sqlx::query("SELECT * FROM learning_practical_files WHERE activity_id=? AND role IN ('starter','reference') ORDER BY ordinal")
-            .bind(&id).fetch_all(&mut *connection).await.map_err(db)?;
+            .bind(&id).fetch_all(&mut *connection).boxed().await.map_err(db)?;
         let mut files = Vec::new();
         let mut interview_plan = None;
         for file in file_rows {
@@ -236,6 +240,7 @@ impl LearningPracticalRepository {
         )
         .bind(&id)
         .fetch_all(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?
         .into_iter()
@@ -290,6 +295,7 @@ impl LearningPracticalRepository {
         )
         .bind(&id)
         .fetch_all(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?
         .into_iter()
@@ -329,6 +335,7 @@ impl LearningPracticalRepository {
         let row = sqlx::query("SELECT * FROM learning_practical_runs WHERE id=?")
             .bind(run_id)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Practical run not found".into()))?;
@@ -344,6 +351,7 @@ impl LearningPracticalRepository {
         let row = sqlx::query("SELECT * FROM learning_simulation_sessions WHERE id=?")
             .bind(session_id)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Simulation not found".into()))?;

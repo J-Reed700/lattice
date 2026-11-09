@@ -1,6 +1,7 @@
 //! Persistence for study guide tangents: seeded conversations branching from lesson text.
 
 use super::*;
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 
@@ -30,6 +31,7 @@ impl LearningRepository {
         )
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| {
@@ -48,6 +50,7 @@ impl LearningRepository {
         .bind(&request.module_id)
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| {
@@ -66,7 +69,7 @@ impl LearningRepository {
         .bind(&request.lesson_id)
         .bind(&request.program_id)
         .bind(&request.module_id)
-        .fetch_optional(&mut *tx)
+        .fetch_optional(&mut *tx).boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| {
@@ -87,6 +90,7 @@ impl LearningRepository {
             .bind(&request.lesson_id)
             .bind(idx)
             .fetch_optional(&mut *tx)
+            .boxed()
             .await
             .map_err(db)?;
             block_title
@@ -105,6 +109,7 @@ impl LearningRepository {
             sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
                 .bind(&space_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?
                 > 0;
@@ -116,6 +121,7 @@ impl LearningRepository {
             )
             .bind(&base_name)
             .fetch_one(&mut *tx)
+            .boxed()
             .await
             .map_err(db)?
                 > 0;
@@ -263,7 +269,7 @@ impl LearningRepository {
             "SELECT DISTINCT origin FROM learning_source_library WHERE program_id = ? AND kind = 'document' AND deleted_at IS NULL",
         )
         .bind(&request.program_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *tx).boxed()
         .await
         .map_err(db)?;
         candidate_doc_ids.extend(library_doc_ids);
@@ -273,6 +279,7 @@ impl LearningRepository {
         )
         .bind(&request.program_id)
         .fetch_all(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?;
         candidate_doc_ids.extend(source_doc_ids);
@@ -285,6 +292,7 @@ impl LearningRepository {
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE id = ?")
                     .bind(&doc_id)
                     .fetch_one(&mut *tx)
+                    .boxed()
                     .await
                     .map_err(db)?
                     > 0;
@@ -323,7 +331,7 @@ impl LearningRepository {
             "SELECT url, title, excerpt FROM learning_sources WHERE program_id = ? AND url IS NOT NULL",
         )
         .bind(&request.program_id)
-        .fetch_all(&mut *tx)
+        .fetch_all(&mut *tx).boxed()
         .await
         .map_err(db)?;
 
@@ -427,6 +435,7 @@ impl LearningRepository {
         .bind(pid)
         .bind(pid)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db)
     }

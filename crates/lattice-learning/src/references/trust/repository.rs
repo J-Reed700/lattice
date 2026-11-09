@@ -9,6 +9,7 @@ use self::rows::{
 };
 use crate::persistence::db;
 use async_trait::async_trait;
+use futures::FutureExt;
 use lattice_core::application::ports::source_trust::{SourceTrustStore, StoredJudgement};
 use lattice_core::domain::provenance::{
     AuthorityAssessment, ClaimKind, ClaimProfile, JudgementKey, LabelSource, OriginKey, Outcome,
@@ -130,6 +131,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         sqlx::query(&sql)
             .bind(source_version_id)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(db)?
             .as_ref()
@@ -149,6 +151,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         sqlx::query(&sql)
             .bind(program_id)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(db)?
             .iter()
@@ -169,7 +172,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             .bind(&key.input_sha256)
             .bind(&key.policy)
             .bind(&key.model)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&self.pool).boxed()
             .await
             .map_err(db)?
             .as_ref()
@@ -211,6 +214,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         )
         .bind(to_json(&scope)?)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db)?;
         rows.iter()
@@ -232,7 +236,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             .bind(&subject_key.0)
             .bind(policy)
             .bind(model)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&self.pool).boxed()
             .await
             .map_err(db)?
             .as_ref()
@@ -271,7 +275,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             .bind(&key.input_sha256)
             .bind(&key.policy)
             .bind(&key.model)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&self.pool).boxed()
             .await
             .map_err(db)?
             .as_ref()
@@ -304,6 +308,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         sqlx::query(&sql)
             .bind(program_id)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(db)?
             .iter()
@@ -324,6 +329,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         let entries = sqlx::query(&sql)
             .bind(program_id)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(db)?
             .iter()
@@ -338,6 +344,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
         );
         sqlx::query(&sql)
             .fetch_all(&self.pool)
+            .boxed()
             .await
             .map_err(db)?
             .iter()
@@ -362,7 +369,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
 
     async fn outcomes(&self) -> Result<Vec<OutcomeRecord>> {
         sqlx::query("SELECT id,program_id,lesson_id,claim_id,source_version_id,origin_key,level,claim_kind,decision_sufficient,decision_right,label_source,policy,at FROM source_trust_outcomes ORDER BY at,rowid")
-            .fetch_all(&self.pool)
+            .fetch_all(&self.pool).boxed()
             .await
             .map_err(db)?
             .iter()
@@ -377,7 +384,7 @@ impl SourceTrustStore for SqliteSourceTrustStore {
             "SELECT COALESCE(SUM(decision_sufficient=decision_right),0), COALESCE(SUM(decision_sufficient<>decision_right),0) FROM source_trust_outcomes WHERE origin_key=?",
         )
         .bind(&origin_key.0)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.pool).boxed()
         .await
         .map_err(db)?;
         let count = |value: i64| {

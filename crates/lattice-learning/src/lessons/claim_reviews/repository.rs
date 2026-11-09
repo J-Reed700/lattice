@@ -4,6 +4,7 @@
 //! event, the replayed state and the review's revision in one transaction.
 //! Design: docs/design/2026-10-16-lesson-claim-review.md §3, §7.2, §9.
 
+use futures::FutureExt;
 use std::collections::HashMap;
 
 use async_trait::async_trait;
@@ -67,6 +68,7 @@ impl ClaimReviewRepository {
         )
         .bind(lesson_id)
         .fetch_all(&self.pool)
+        .boxed()
         .await
         .map_err(db)?;
         rows.iter()
@@ -106,6 +108,7 @@ impl ClaimReviewRepository {
         sqlx::query_scalar("SELECT updated_at FROM learning_lesson_reviews WHERE lesson_id=?")
             .bind(lesson_id)
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(db)
     }
@@ -116,6 +119,7 @@ impl ClaimReviewRepository {
             .bind(lesson_id)
             .bind(i64::try_from(ordinal).unwrap_or(i64::MAX))
             .fetch_optional(&self.pool)
+            .boxed()
             .await
             .map_err(db)
     }
@@ -166,7 +170,7 @@ impl ClaimReviewStore for ClaimReviewRepository {
         .bind(stop_reason)
         .bind(stamp)
         .bind(stamp)
-        .fetch_one(&self.pool)
+        .fetch_one(&self.pool).boxed()
         .await
         .map_err(db)?;
         Ok(Revision(revision))
@@ -189,6 +193,7 @@ pub(super) async fn check_revision(
         sqlx::query_scalar("SELECT revision FROM learning_lesson_reviews WHERE lesson_id=?")
             .bind(lesson_id)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?;
     let revision = revision.ok_or_else(|| {
@@ -225,6 +230,7 @@ pub(super) async fn append_in(
         sqlx::query_scalar("SELECT lesson_id FROM learning_lesson_claims WHERE claim_id=?")
             .bind(&claim_id.0)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?;
     if owner.as_deref().is_some_and(|owner| owner != lesson_id) {
@@ -281,7 +287,7 @@ pub(super) async fn append_in(
 pub(crate) async fn load_in(connection: &mut SqliteConnection, lesson_id: &str) -> Result<Ledger> {
     let review = sqlx::query("SELECT program_id,job_id,state,revision,draft_sha256,checker_model,stop_reason_json FROM learning_lesson_reviews WHERE lesson_id=?")
         .bind(lesson_id)
-        .fetch_optional(&mut *connection)
+        .fetch_optional(&mut *connection).boxed()
         .await
         .map_err(db)?;
     let Some(review) = review else {
@@ -311,11 +317,12 @@ pub(crate) async fn load_in(connection: &mut SqliteConnection, lesson_id: &str) 
     )
     .bind(lesson_id)
     .fetch_all(&mut *connection)
+    .boxed()
     .await
     .map_err(db)?;
     let rows = sqlx::query("SELECT e.claim_id,e.ordinal,e.actor,e.payload_json,e.job_id,e.at FROM learning_lesson_claim_events e JOIN learning_lesson_claims c ON c.claim_id=e.claim_id WHERE c.lesson_id=? ORDER BY e.claim_id,e.ordinal")
         .bind(lesson_id)
-        .fetch_all(&mut *connection)
+        .fetch_all(&mut *connection).boxed()
         .await
         .map_err(db)?;
     let mut logs: HashMap<String, Vec<RecordedEvent>> = HashMap::new();
@@ -345,7 +352,7 @@ async fn claim_events(
 ) -> Result<Vec<RecordedEvent>> {
     let rows = sqlx::query("SELECT claim_id,ordinal,actor,payload_json,job_id,at FROM learning_lesson_claim_events WHERE claim_id=? ORDER BY ordinal")
         .bind(&claim_id.0)
-        .fetch_all(&mut *connection)
+        .fetch_all(&mut *connection).boxed()
         .await
         .map_err(db)?;
     rows.iter().map(recorded).collect()

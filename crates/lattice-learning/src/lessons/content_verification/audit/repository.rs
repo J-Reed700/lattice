@@ -1,6 +1,7 @@
 //! The tables the Verifier audit reads and writes: `learning_lesson_audits`
 //! and the lesson's quiz bank.
 
+use futures::FutureExt;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
 
@@ -19,6 +20,7 @@ pub(super) async fn load_run(pool: &SqlitePool, key: &RunKey) -> Result<Option<A
     .bind(&key.draft_sha256)
     .bind(&key.verifier_model)
     .fetch_optional(pool)
+    .boxed()
     .await
     .map_err(db)?
     .map(|row| run_from_row(&row))
@@ -32,6 +34,7 @@ pub(super) async fn latest_run(pool: &SqlitePool, lesson_id: &str) -> Result<Opt
     )
     .bind(lesson_id)
     .fetch_optional(pool)
+    .boxed()
     .await
     .map_err(db)?
     .map(|row| run_from_row(&row))
@@ -47,6 +50,7 @@ pub(super) async fn course_usage(pool: &SqlitePool, program_id: &str) -> Result<
     )
     .bind(program_id)
     .fetch_one(pool)
+    .boxed()
     .await
     .map_err(db)?;
     let count = |column: &str| u64::try_from(row.get::<i64, _>(column)).unwrap_or_default();
@@ -111,6 +115,7 @@ pub(super) async fn open_run(
     .bind(&key.draft_sha256)
     .bind(&key.verifier_model)
     .fetch_optional(&mut *tx)
+    .boxed()
     .await
     .map_err(db)?
     .ok_or_else(|| AppError::Database("the audit row was not written".into()))?;
@@ -176,7 +181,7 @@ pub(super) async fn lesson_questions(
     Ok(sqlx::query("SELECT c.prompt,c.options_json,k.explanation,k.distractor_rationales_json FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin IN ('lesson','migrated') ORDER BY c.rowid")
         .bind(program_id)
         .bind(lesson_id)
-        .fetch_all(pool)
+        .fetch_all(pool).boxed()
         .await
         .map_err(db)?
         .into_iter()

@@ -24,6 +24,7 @@ use crate::{
         DecodedLearningPack,
     },
 };
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
@@ -270,6 +271,7 @@ pub(super) async fn insert_practical_snapshot(
             sqlx::query_scalar::<_, i64>("SELECT 1 FROM learning_runtime_profiles WHERE id=?")
                 .bind(profile)
                 .fetch_optional(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?
                 .is_some()

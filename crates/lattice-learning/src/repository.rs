@@ -6,6 +6,7 @@ use super::recall::{
     study_repository::StudyRepository,
 };
 use super::references::trust::capture;
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection, SqlitePool};
@@ -145,7 +146,7 @@ impl LearningRepository {
 
     pub async fn list(&self) -> Result<Vec<LearningProgramSummaryDto>> {
         let rows=sqlx::query("SELECT p.*, (SELECT count(*) FROM learning_modules m WHERE m.program_id=p.id) module_count, (SELECT count(*) FROM learning_lessons l WHERE l.program_id=p.id) lesson_count, (SELECT count(*) FROM learning_lessons l WHERE l.program_id=p.id AND l.completed=1) completed_lessons FROM learning_programs p ORDER BY p.created_at DESC,p.id")
-            .fetch_all(&self.pool).await.map_err(db)?;
+            .fetch_all(&self.pool).boxed().await.map_err(db)?;
         rows.into_iter()
             .map(|r| {
                 Ok(LearningProgramSummaryDto {
@@ -168,6 +169,7 @@ impl LearningRepository {
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_sources WHERE program_id=?)")
             .bind(program_id)
             .fetch_one(&self.pool)
+            .boxed()
             .await
             .map_err(db)
     }
@@ -187,6 +189,7 @@ impl LearningRepository {
         let p = sqlx::query("SELECT * FROM learning_programs WHERE id=?")
             .bind(id)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -195,12 +198,13 @@ impl LearningRepository {
         )
         .bind(id)
         .fetch_all(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?;
         // Batch children once per program instead of issuing two queries per lesson.
         let mut blocks_by_lesson: HashMap<String, Vec<LearningBlockDto>> = HashMap::new();
         for b in sqlx::query("SELECT b.* FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=? ORDER BY b.lesson_id,b.ordinal")
-            .bind(id).fetch_all(&mut *connection).await.map_err(db)? {
+            .bind(id).fetch_all(&mut *connection).boxed().await.map_err(db)? {
             blocks_by_lesson.entry(b.get("lesson_id")).or_default().push(LearningBlockDto {
                 kind: parse_block(b.get("kind"))?,
                 title: b.get("title"),
@@ -213,6 +217,7 @@ impl LearningRepository {
         for m in sqlx::query("SELECT * FROM learning_modules WHERE program_id=? ORDER BY ordinal")
             .bind(id)
             .fetch_all(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?
         {
@@ -251,7 +256,7 @@ impl LearningRepository {
                 OR EXISTS(SELECT 1 FROM learning_card_drafts d WHERE d.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(d.source_ids_json) WHERE value=s.id))
                 OR EXISTS(SELECT 1 FROM learning_card_origins o WHERE o.program_id=s.program_id AND EXISTS(SELECT 1 FROM json_each(o.source_ids_json) WHERE value=s.id))
             ) ORDER BY s.rowid")
-                .bind(id).fetch_all(&mut *connection).await.map_err(db)?
+                .bind(id).fetch_all(&mut *connection).boxed().await.map_err(db)?
                 .into_iter().map(|r| LearningSourceDto {
                     id: r.get("id"),
                     title: r.get("title"),

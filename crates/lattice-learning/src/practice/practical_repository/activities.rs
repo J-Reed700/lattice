@@ -12,6 +12,7 @@ use crate::practical_generation::{
     GeneratedPracticalActivity, PracticalFileRole, INTERVIEW_PLAN_FILE_PATH,
 };
 use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, Sqlite, Transaction};
@@ -48,6 +49,7 @@ impl LearningPracticalRepository {
             sqlx::query_scalar("SELECT 1 FROM learning_runtime_profiles WHERE id=?")
                 .bind(&request.profile_id)
                 .fetch_optional(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         if exists.is_some() {
@@ -243,13 +245,14 @@ impl LearningPracticalRepository {
         .bind(&request.lesson_id)
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?;
         let module_id =
             module_id.ok_or_else(|| AppError::NotFound("Learning lesson not found".into()))?;
         let outcome_ids = sqlx::query_scalar::<_, String>("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND (lesson_id=? OR (lesson_id IS NULL AND module_id=?)) ORDER BY ordinal,id")
             .bind(&request.program_id).bind(&request.lesson_id).bind(&module_id)
-            .fetch_all(&mut *tx).await.map_err(db)?;
+            .fetch_all(&mut *tx).boxed().await.map_err(db)?;
         for source_id in &generated.source_version_ids {
             let owned: Option<i64> = sqlx::query_scalar(
                 "SELECT 1 FROM learning_source_versions WHERE program_id=? AND id=?",
@@ -257,6 +260,7 @@ impl LearningPracticalRepository {
             .bind(&request.program_id)
             .bind(source_id)
             .fetch_optional(&mut *tx)
+            .boxed()
             .await
             .map_err(db)?;
             if owned.is_none() {
@@ -272,6 +276,7 @@ impl LearningPracticalRepository {
                     sqlx::query("SELECT * FROM learning_runtime_profiles WHERE id=? AND enabled=1")
                         .bind(profile_id)
                         .fetch_optional(&mut *tx)
+                        .boxed()
                         .await
                         .map_err(db)?
                         .ok_or_else(|| invalid("Selected runtime profile is unavailable."))?;
@@ -335,7 +340,7 @@ impl LearningPracticalRepository {
         activity_id: &str,
     ) -> Result<InternalActivitySnapshot> {
         let row = sqlx::query("SELECT a.*,p.enabled AS runtime_enabled FROM learning_practical_activities a LEFT JOIN learning_runtime_profiles p ON p.id=a.runtime_profile_id WHERE a.program_id=? AND a.id=?")
-            .bind(program_id).bind(activity_id).fetch_optional(&mut **tx).await.map_err(db)?
+            .bind(program_id).bind(activity_id).fetch_optional(&mut **tx).boxed().await.map_err(db)?
             .ok_or_else(||AppError::NotFound("Practical activity not found".into()))?;
         if row.get::<String, _>("status") != "ready" {
             return Err(invalid("Only ready practical activities can be used."));
@@ -345,6 +350,7 @@ impl LearningPracticalRepository {
         )
         .bind(activity_id)
         .fetch_all(&mut **tx)
+        .boxed()
         .await
         .map_err(db)?;
         let mut interview_plan = None;

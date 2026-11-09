@@ -1,4 +1,5 @@
 use crate::persistence::db;
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
@@ -21,7 +22,7 @@ pub(in crate::references::trust) async fn source_versions(
     )
     .bind(program_id)
     .bind(source_id)
-    .fetch_all(&mut *conn)
+    .fetch_all(&mut *conn).boxed()
     .await
     .map_err(db)?;
     Ok(covered_ids(&rows))
@@ -35,7 +36,7 @@ pub(in crate::references::trust) async fn site_versions(
         "SELECT program_id, source_version_id FROM source_provenance WHERE site=? ORDER BY program_id, source_version_id",
     )
     .bind(registrable_domain)
-    .fetch_all(&mut *conn)
+    .fetch_all(&mut *conn).boxed()
     .await
     .map_err(db)?;
     Ok(covered_ids(&rows))
@@ -56,6 +57,7 @@ pub(in crate::references::trust) async fn site_outcome_counts(
     )
     .bind(serde_json::to_string(sites)?)
     .fetch_all(pool)
+    .boxed()
     .await
     .map_err(db)
 }

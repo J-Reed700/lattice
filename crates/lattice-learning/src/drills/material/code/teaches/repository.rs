@@ -1,6 +1,7 @@
 //! The code fit check's verdicts: one for each lesson, kept with the basis it was made on.
 
 use crate::persistence::db;
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
@@ -28,7 +29,7 @@ pub(super) async fn teaches_on(
     .bind(program_id)
     .bind(lesson_id)
     .bind(basis)
-    .fetch_optional(pool)
+    .fetch_optional(pool).boxed()
     .await
     .map_err(db)?;
     Ok(teaches.map(|teaches| teaches != 0))

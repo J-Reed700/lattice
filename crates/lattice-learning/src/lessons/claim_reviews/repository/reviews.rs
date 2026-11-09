@@ -1,5 +1,6 @@
 //! Which lessons of a course are under review, and which sources are gone.
 
+use futures::FutureExt;
 use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::LessonReviewState;
@@ -20,7 +21,7 @@ pub(in crate::lessons::claim_reviews) async fn held_lessons(
     .bind(program_id)
     .bind(LessonReviewState::NeedsReview.as_str())
     .bind(LessonReviewState::Verifying.as_str())
-    .fetch_all(pool)
+    .fetch_all(pool).boxed()
     .await
     .map_err(db)
 }
@@ -35,6 +36,7 @@ pub(in crate::lessons::claim_reviews) async fn reviewed_lessons(
     )
     .bind(program_id)
     .fetch_all(&mut *connection)
+    .boxed()
     .await
     .map_err(db)
 }
@@ -51,6 +53,7 @@ pub(in crate::lessons::claim_reviews) async fn source_versions(
     .bind(program_id)
     .bind(source_id)
     .fetch_all(&mut *connection)
+    .boxed()
     .await
     .map_err(db)?
     .into_iter()
@@ -69,6 +72,7 @@ pub(in crate::lessons::claim_reviews) async fn deleted_versions(
     )
     .bind(program_id)
     .fetch_all(pool)
+    .boxed()
     .await
     .map_err(db)?
     .into_iter()
@@ -101,6 +105,7 @@ pub(in crate::lessons::claim_reviews) async fn weighed_lessons(
          WHERE e.kind = 'standing_assessed' ORDER BY c.lesson_id",
     )
     .fetch_all(pool)
+    .boxed()
     .await
     .map_err(|error| AppError::Database(error.to_string()))?;
     rows.iter()

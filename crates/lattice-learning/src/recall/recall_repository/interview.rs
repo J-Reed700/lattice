@@ -1,3 +1,4 @@
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 
@@ -23,6 +24,7 @@ pub(in crate::recall) async fn activity(
     .bind(program_id)
     .bind(activity_id)
     .fetch_optional(pool)
+    .boxed()
     .await
     .map_err(db)?;
     Ok(row.map(|row| InterviewActivity {
@@ -45,6 +47,7 @@ pub(in crate::recall) async fn files(
     .bind(paths[0])
     .bind(paths[1])
     .fetch_all(pool)
+    .boxed()
     .await
     .map_err(db)?;
     Ok(files
@@ -62,7 +65,7 @@ pub(in crate::recall) async fn source_title_and_link(
     let row = sqlx::query("SELECT title,COALESCE(resolved_url,requested_url) url FROM learning_source_versions WHERE program_id=? AND id=?")
         .bind(program_id)
         .bind(version_id)
-        .fetch_optional(pool)
+        .fetch_optional(pool).boxed()
         .await
         .map_err(db)?;
     Ok(row.map(|row| (row.get("title"), row.get("url"))))

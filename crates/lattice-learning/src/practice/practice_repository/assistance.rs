@@ -1,5 +1,6 @@
 //! Recording assistance: opened sources, tutor turns and revealed solutions.
 use super::*;
+use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningPracticeRepository {
@@ -60,6 +61,7 @@ impl LearningPracticeRepository {
         .bind(&req.source_id)
         .bind(&req.version_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?;
         if found.is_none() {

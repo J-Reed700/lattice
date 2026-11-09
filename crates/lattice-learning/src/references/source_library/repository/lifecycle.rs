@@ -1,4 +1,5 @@
 use super::*;
+use futures::FutureExt;
 
 pub(in super::super) struct AdoptionState {
     pub revision: i64,
@@ -12,7 +13,7 @@ pub(in super::super) async fn adoption_state(
     source_id: &str,
 ) -> Result<Option<AdoptionState>> {
     let row = sqlx::query("SELECT revision,pending_version_id,active_version_id FROM learning_source_library WHERE program_id=? AND id=?")
-        .bind(program_id).bind(source_id).fetch_optional(connection).await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_optional(connection).boxed().await.map_err(db)?;
     Ok(row.map(|r| AdoptionState {
         revision: r.get("revision"),
         pending_version_id: r.get("pending_version_id"),
@@ -46,7 +47,7 @@ pub(in super::super) async fn policy_state(
     source_id: &str,
 ) -> Result<Option<PolicyState>> {
     let row = sqlx::query("SELECT revision,kind,freshness_policy FROM learning_source_library WHERE program_id=? AND id=?")
-        .bind(program_id).bind(source_id).fetch_optional(connection).await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_optional(connection).boxed().await.map_err(db)?;
     Ok(row.map(|r| PolicyState {
         revision: r.get("revision"),
         kind: r.get("kind"),
@@ -84,6 +85,7 @@ pub(in super::super) async fn deletion_state(
     .bind(program_id)
     .bind(source_id)
     .fetch_optional(connection)
+    .boxed()
     .await
     .map_err(db)?;
     Ok(row.map(|r| DeletionState {
@@ -124,7 +126,7 @@ pub(in super::super) async fn active_text(
     )
     .bind(program_id)
     .bind(source_id)
-    .fetch_optional(pool)
+    .fetch_optional(pool).boxed()
     .await
     .map_err(db)
 }
@@ -147,6 +149,7 @@ pub(in super::super) async fn source_row(
         .bind(program_id)
         .bind(source_id)
         .fetch_optional(connection)
+        .boxed()
         .await
         .map_err(db)?;
     Ok(row.map(|r| SourceRow {
@@ -182,6 +185,7 @@ pub(in super::super) async fn stored_version(
     .bind(source_id)
     .bind(version_id)
     .fetch_optional(connection)
+    .boxed()
     .await
     .map_err(db)?;
     Ok(row.map(|r| StoredVersion {
@@ -205,6 +209,7 @@ pub(in super::super) async fn version_id_in_use(
             .bind(program_id)
             .bind(version_id)
             .fetch_optional(connection)
+            .boxed()
             .await
             .map_err(db)?;
     Ok(collision.is_some())

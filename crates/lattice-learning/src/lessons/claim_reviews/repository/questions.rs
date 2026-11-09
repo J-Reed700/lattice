@@ -1,5 +1,6 @@
 //! A lesson's own questions in the quiz bank.
 
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqliteConnection;
 
@@ -37,6 +38,7 @@ pub(in crate::lessons::claim_reviews) async fn question_at(
     .bind(lesson_id)
     .bind(i64::try_from(index).unwrap_or(i64::MAX))
     .fetch_optional(&mut *connection)
+    .boxed()
     .await
     .map_err(db)?;
     Ok(row.map(
@@ -65,7 +67,7 @@ pub(in crate::lessons::claim_reviews) async fn token_taken_by_another(
     .bind(program_id)
     .bind(token)
     .bind(candidate_id)
-    .fetch_optional(&mut *connection)
+    .fetch_optional(&mut *connection).boxed()
     .await
     .map_err(db)?;
     Ok(other.is_some())

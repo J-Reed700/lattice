@@ -15,6 +15,7 @@ use crate::{
     },
 };
 use async_trait::async_trait;
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection};
@@ -110,10 +111,10 @@ fn decode_canvases(pack: &DecodedLearningPack) -> Result<Option<CanvasPackSnapsh
 /// Every canvas and canvas snapshot row of one program.
 async fn read_canvases(tx: &mut SqliteConnection, program_id: &str) -> Result<CanvasPackSnapshot> {
     let canvas_rows=sqlx::query("SELECT id,lesson_id,title,description,scene_json,element_count,revision,created_at,updated_at FROM learning_canvases WHERE program_id=? ORDER BY created_at,id")
-            .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+            .bind(program_id).fetch_all(&mut *tx).boxed().await.map_err(db)?;
     let canvases:Vec<serde_json::Value>=canvas_rows.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"lessonId":r.get::<Option<String>,_>("lesson_id"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"sceneJson":r.get::<String,_>("scene_json"),"elementCount":r.get::<i64,_>("element_count"),"revision":r.get::<i64,_>("revision"),"createdAt":r.get::<i64,_>("created_at"),"updatedAt":r.get::<i64,_>("updated_at")})).collect();
     let snapshot_rows=sqlx::query("SELECT id,canvas_id,name,title,description,scene_json,element_count,canvas_revision,created_at FROM learning_canvas_snapshots WHERE program_id=? ORDER BY created_at,id")
-            .bind(program_id).fetch_all(&mut *tx).await.map_err(db)?;
+            .bind(program_id).fetch_all(&mut *tx).boxed().await.map_err(db)?;
     let snapshots:Vec<serde_json::Value>=snapshot_rows.into_iter().map(|r|serde_json::json!({"id":r.get::<String,_>("id"),"canvasId":r.get::<String,_>("canvas_id"),"name":r.get::<String,_>("name"),"title":r.get::<String,_>("title"),"description":r.get::<String,_>("description"),"sceneJson":r.get::<String,_>("scene_json"),"elementCount":r.get::<i64,_>("element_count"),"canvasRevision":r.get::<i64,_>("canvas_revision"),"createdAt":r.get::<i64,_>("created_at")})).collect();
     Ok(CanvasPackSnapshot {
         canvases,

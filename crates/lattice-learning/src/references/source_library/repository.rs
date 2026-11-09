@@ -1,5 +1,6 @@
 //! The source library's statements, their bindings and their row mapping.
 use super::*;
+use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -17,6 +18,7 @@ pub(super) async fn active_program_exists(
         sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=? AND status='active'")
             .bind(program_id)
             .fetch_optional(connection)
+            .boxed()
             .await
             .map_err(db)?;
     Ok(row.is_some())
@@ -37,7 +39,7 @@ pub(super) async fn ids_in_use(
     .bind(program_id)
     .bind(source_id)
     .bind(version_id)
-    .fetch_optional(connection)
+    .fetch_optional(connection).boxed()
     .await
     .map_err(db)?;
     Ok(collision.is_some())
@@ -48,7 +50,7 @@ pub(super) async fn backfill_legacy(pool: &SqlitePool, program_id: &str) -> Resu
     let waiting: Option<i64> = {
         let mut read = pool.begin_read().await.map_err(db)?;
         let waiting = sqlx::query_scalar("SELECT 1 FROM learning_source_versions WHERE program_id=? AND extraction_version=? AND content_sha256='' LIMIT 1")
-            .bind(program_id).bind(LEGACY_EXTRACTION).fetch_optional(&mut *read).await.map_err(db)?;
+            .bind(program_id).bind(LEGACY_EXTRACTION).fetch_optional(&mut *read).boxed().await.map_err(db)?;
         read.commit().await.map_err(db)?;
         waiting
     };
@@ -57,7 +59,7 @@ pub(super) async fn backfill_legacy(pool: &SqlitePool, program_id: &str) -> Resu
     }
     let mut tx = pool.begin_write().await.map_err(db)?;
     let rows = sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=? AND extraction_version=? AND content_sha256='' ")
-        .bind(program_id).bind(LEGACY_EXTRACTION).fetch_all(&mut *tx).await.map_err(db)?;
+        .bind(program_id).bind(LEGACY_EXTRACTION).fetch_all(&mut *tx).boxed().await.map_err(db)?;
     for row in rows {
         let id: String = row.get("id");
         let text: String = row.get("full_text");
@@ -88,7 +90,7 @@ pub(super) async fn version_with_digest(
     digest: &str,
 ) -> Result<Option<String>> {
     sqlx::query_scalar("SELECT id FROM learning_source_versions WHERE program_id=? AND source_id=? AND content_sha256=?")
-        .bind(program_id).bind(source_id).bind(digest).fetch_optional(connection).await.map_err(db)
+        .bind(program_id).bind(source_id).bind(digest).fetch_optional(connection).boxed().await.map_err(db)
 }
 
 pub(super) async fn next_version_number(
@@ -97,7 +99,7 @@ pub(super) async fn next_version_number(
     source_id: &str,
 ) -> Result<i64> {
     sqlx::query_scalar("SELECT COALESCE(MAX(version_number),0)+1 FROM learning_source_versions WHERE program_id=? AND source_id=?")
-        .bind(program_id).bind(source_id).fetch_one(connection).await.map_err(db)
+        .bind(program_id).bind(source_id).fetch_one(connection).boxed().await.map_err(db)
 }
 
 /// One immutable source version snapshot: each source field alongside its

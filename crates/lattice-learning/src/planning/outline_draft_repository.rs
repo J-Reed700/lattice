@@ -4,6 +4,7 @@ use crate::{
     outline_draft::OutlineDraft,
     repository::{compare_sources, insert_source, reference_of, LearningRepository},
 };
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 
@@ -21,6 +22,7 @@ impl LearningRepository {
             sqlx::query_scalar("SELECT state_json FROM learning_outline_drafts WHERE program_id=?")
                 .bind(id)
                 .fetch_optional(connection)
+                .boxed()
                 .await?;
         raw.map(|raw| serde_json::from_str(&raw).map_err(AppError::from))
             .transpose()
@@ -57,7 +59,7 @@ impl LearningRepository {
                 ));
             }
             let saved: Vec<String> = sqlx::query_scalar("SELECT id FROM learning_lessons WHERE module_id=? AND program_id=? ORDER BY ordinal")
-                .bind(&module.id).bind(&program.summary.id).fetch_all(&mut *tx).await?;
+                .bind(&module.id).bind(&program.summary.id).fetch_all(&mut *tx).boxed().await?;
             if saved
                 .iter()
                 .any(|id| !module.lessons.iter().any(|lesson| &lesson.id == id))

@@ -1,4 +1,5 @@
 use super::*;
+use futures::FutureExt;
 
 /// The active version of a live source, with what the dedupe compares.
 pub(in super::super) struct LiveSource {
@@ -25,7 +26,7 @@ pub(in super::super) async fn live_sources(
 ) -> Result<Vec<LiveSource>> {
     let rows = sqlx::query("SELECT s.id AS source_id,s.kind,s.origin,s.requested_url AS source_url,s.added_by,v.id AS version_id,v.title,v.requested_url,v.resolved_url,v.content_sha256,v.snapshot_hash FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id)
-        .fetch_all(pool)
+        .fetch_all(pool).boxed()
         .await
         .map_err(db)?;
     rows.into_iter()
@@ -58,7 +59,7 @@ pub(in super::super) async fn chosen_versions(
 ) -> Result<Vec<ChosenVersion>> {
     sqlx::query("SELECT s.id AS source_id,v.id AS version_id,v.full_text,s.added_by,s.selection_note FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id)
-        .fetch_all(pool)
+        .fetch_all(pool).boxed()
         .await
         .map_err(db)?
         .iter()
@@ -74,7 +75,7 @@ pub(in super::super) async fn chosen_version(
     sqlx::query("SELECT l.id AS source_id,v.id AS version_id,v.full_text,l.added_by,l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id=v.source_id AND l.program_id=v.program_id WHERE v.program_id=? AND v.id=?")
         .bind(program_id)
         .bind(version_id)
-        .fetch_optional(pool)
+        .fetch_optional(pool).boxed()
         .await
         .map_err(db)?
         .map(|row| chosen_from_row(&row))

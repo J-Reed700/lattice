@@ -2,6 +2,7 @@
 //! prepared lessons.
 
 use crate::persistence::db;
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -31,7 +32,7 @@ pub(super) async fn lesson_in(
     )
     .bind(lesson_id)
     .bind(program_id)
-    .fetch_optional(pool)
+    .fetch_optional(pool).boxed()
     .await
     .map_err(db)
 }
@@ -46,6 +47,7 @@ pub(super) async fn blocks_in(
     )
     .bind(lesson_id)
     .fetch_all(pool)
+    .boxed()
     .await
     .map_err(db)
 }
@@ -59,7 +61,7 @@ pub(crate) async fn prepared_bodies_in(
         "SELECT b.body FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=? AND l.preparation='ready' AND l.curriculum_state NOT IN ('replaced','skipped') ORDER BY l.id,b.ordinal",
     )
     .bind(program_id)
-    .fetch_all(connection)
+    .fetch_all(connection).boxed()
     .await
     .map_err(db)
 }

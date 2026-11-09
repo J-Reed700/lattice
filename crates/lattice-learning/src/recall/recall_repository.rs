@@ -13,6 +13,7 @@ use crate::{
     source_library::LearningSourceLibraryRepository,
     source_selector::{create_quote_selector, match_quote_selector, LearningQuoteMatch},
 };
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
@@ -82,6 +83,7 @@ impl LearningRecallRepository {
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?
                 .flatten();
@@ -91,7 +93,7 @@ impl LearningRecallRepository {
         };
         let rows = sqlx::query("SELECT c.* FROM study_cards c LEFT JOIN learning_recall_card_profiles p ON p.card_id=c.id WHERE c.deck_id=? AND p.card_id IS NULL ORDER BY c.id")
             .bind(&deck_id)
-            .fetch_all(&mut *tx)
+            .fetch_all(&mut *tx).boxed()
             .await
             .map_err(db)?;
         for row in rows {
@@ -159,6 +161,7 @@ impl LearningRecallRepository {
         .bind(program_id)
         .bind(card_id)
         .fetch_optional(&mut **tx)
+        .boxed()
         .await
         .map_err(db)?;
         let ids: Vec<String> = if let Some(value) = origin {
@@ -176,6 +179,7 @@ impl LearningRecallRepository {
             .bind(program_id)
             .bind(&id)
             .fetch_optional(&mut **tx)
+            .boxed()
             .await
             .map_err(db)?;
             if version_exists.is_some() {

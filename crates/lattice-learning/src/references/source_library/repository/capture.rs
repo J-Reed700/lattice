@@ -84,7 +84,7 @@ pub(in super::super) async fn refresh_offer(
     source_id: &str,
 ) -> Result<Option<RefreshOffer>> {
     let row = sqlx::query("SELECT s.revision,s.kind,s.requested_url,s.freshness_policy,s.deleted_at,p.status FROM learning_source_library s JOIN learning_programs p ON p.id=s.program_id WHERE s.program_id=? AND s.id=?")
-        .bind(program_id).bind(source_id).fetch_optional(pool).await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_optional(pool).boxed().await.map_err(db)?;
     Ok(row.map(|r| RefreshOffer {
         revision: r.get("revision"),
         kind: r.get("kind"),
@@ -111,7 +111,7 @@ pub(in super::super) async fn refresh_state(
     source_id: &str,
 ) -> Result<Option<RefreshState>> {
     let row = sqlx::query("SELECT revision,active_version_id,pending_version_id,kind,requested_url,freshness_policy FROM learning_source_library WHERE program_id=? AND id=?")
-        .bind(program_id).bind(source_id).fetch_optional(connection).await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_optional(connection).boxed().await.map_err(db)?;
     Ok(row.map(|r| RefreshState {
         revision: r.get("revision"),
         pending_version_id: r.get("pending_version_id"),
@@ -133,6 +133,7 @@ pub(in super::super) async fn version_digest(
     .bind(program_id)
     .bind(version_id)
     .fetch_optional(connection)
+    .boxed()
     .await
     .map_err(db)
 }

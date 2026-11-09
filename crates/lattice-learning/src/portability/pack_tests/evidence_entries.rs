@@ -8,6 +8,7 @@ use crate::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
@@ -67,6 +68,7 @@ async fn a_multi_megabyte_evidence_table_round_trips_in_its_own_entry() -> Resul
         sqlx::query_scalar("SELECT result_json FROM learning_operations WHERE operation_id=?")
             .bind(&operation_id)
             .fetch_one(&fresh)
+            .boxed()
             .await?;
     assert_eq!(restored, large);
     Ok(())
@@ -121,6 +123,7 @@ async fn a_table_over_the_import_cap_is_refused_at_export_and_backup() -> Result
     )
     .bind(&program_id)
     .fetch_one(&home)
+    .boxed()
     .await?;
     assert_eq!(kept, CAP + 1);
     let mut files = tokio::fs::read_dir(home_dir.path().join("learning-packs")).await?;
@@ -217,7 +220,7 @@ async fn two_canvases_travel_as_two_entries() -> Result<()> {
     let fresh_dir = tempfile::tempdir()?;
     merge_into(&packs(&fresh, fresh_dir.path()), &path).await?;
     let restored: Vec<(String, String, String, i64)> = sqlx::query_as("SELECT c.id,c.title,s.id,c.revision FROM learning_canvases c JOIN learning_canvas_snapshots s ON s.canvas_id=c.id WHERE c.program_id=? ORDER BY c.id")
-        .bind(&program_id).fetch_all(&fresh).await?;
+        .bind(&program_id).fetch_all(&fresh).boxed().await?;
     assert_eq!(
         restored,
         [

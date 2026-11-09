@@ -6,6 +6,7 @@ use crate::{
     content_verification::LessonVerificationReport, dto::LearningProgramDto,
     outline_draft::OutlineDraft, pack::DecodedLearningPack,
 };
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -108,11 +109,12 @@ pub(super) async fn snapshot(
         sqlx::query_scalar("SELECT state_json FROM learning_outline_drafts WHERE program_id=?")
             .bind(program_id)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?;
     let outline = outline.map(|json| parse(json.as_bytes())).transpose()?;
     let rows = sqlx::query("SELECT revision,state_json,created_at FROM learning_outline_checkpoints WHERE program_id=? ORDER BY revision")
-        .bind(program_id).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).fetch_all(&mut *connection).boxed().await.map_err(db)?;
     let outline_checkpoints = rows
         .into_iter()
         .map(|row| {
@@ -124,7 +126,7 @@ pub(super) async fn snapshot(
         })
         .collect::<Result<Vec<_>>>()?;
     let rows = sqlx::query("SELECT lesson_id,policy,content_sha256,report_json,checked_at FROM learning_lesson_verifications WHERE program_id=? ORDER BY lesson_id")
-        .bind(program_id).fetch_all(&mut *connection).await.map_err(db)?;
+        .bind(program_id).fetch_all(&mut *connection).boxed().await.map_err(db)?;
     let lessons = rows.into_iter().map(|row| {
         let lesson_id: String = row.get("lesson_id");
         let report: LessonVerificationReport = parse(row.get::<String, _>("report_json").as_bytes())?;

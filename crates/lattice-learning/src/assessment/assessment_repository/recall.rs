@@ -8,6 +8,7 @@ use crate::portability_dto::{
     LearningRecallCardFormat, LearningRecallContentDto, SaveLearningRecallCardRequestDto,
 };
 use crate::recall_repository::LearningRecallRepository;
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha256};
@@ -154,6 +155,7 @@ impl LearningAssessmentRepository {
         .bind(&req.form_id)
         .bind(&req.program_id)
         .fetch_optional(&mut *read)
+        .boxed()
         .await
         .map_err(db)?;
         if status.as_deref() != Some("submitted") {
@@ -167,6 +169,7 @@ impl LearningAssessmentRepository {
             .bind(&req.form_id)
             .bind(item_id)
             .fetch_optional(&mut *read)
+            .boxed()
             .await
             .map_err(db)?;
             if in_form.is_none() {
@@ -181,6 +184,7 @@ impl LearningAssessmentRepository {
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(&req.program_id)
                 .fetch_optional(&mut *read)
+                .boxed()
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("This course has no recall deck yet.".into()))?;

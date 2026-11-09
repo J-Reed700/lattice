@@ -1,5 +1,6 @@
 //! The library rows the provenance gate reads.
 
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 
@@ -26,7 +27,7 @@ pub(super) async fn version_row(
     )
     .bind(program_id)
     .bind(version_id)
-    .fetch_one(pool)
+    .fetch_one(pool).boxed()
     .await
     .map_err(db)?;
     Ok(VersionRow {

@@ -3,6 +3,7 @@
 //! a pack only imports into the same database schema that wrote it.
 use super::{db, invalid, validation::validate_program};
 use crate::{dto::LearningProgramDto, repository::LearningRepository};
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 
@@ -15,7 +16,7 @@ pub(super) async fn active_job_exists(
 ) -> Result<bool> {
     sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM jobs j JOIN learning_jobs lj ON lj.job_id=j.id WHERE lj.program_id=? AND j.status IN ('pending','running'))")
         .bind(program_id)
-        .fetch_one(&mut *connection)
+        .fetch_one(&mut *connection).boxed()
         .await
         .map_err(db)
 }
@@ -47,6 +48,7 @@ pub(super) async fn require_exportable(
 pub(super) async fn schema_version(connection: &mut SqliteConnection) -> Result<i64> {
     let version: Option<i64> = sqlx::query_scalar("SELECT MAX(version) FROM _sqlx_migrations")
         .fetch_one(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?;
     version

@@ -11,6 +11,7 @@ use crate::lab_runtime::{
 };
 use crate::persistence::{db, now};
 use crate::practical_dto::*;
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
@@ -66,6 +67,7 @@ impl LearningPracticalRepository {
             .bind(&request.program_id)
             .bind(session_id)
             .fetch_optional(&mut *tx)
+            .boxed()
             .await
             .map_err(db)?;
             if owned.is_none() {
@@ -287,6 +289,7 @@ impl LearningPracticalRepository {
                 .bind(&request.run_id)
                 .bind(&request.program_id)
                 .fetch_optional(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         if exists.is_none() {
@@ -308,6 +311,7 @@ impl LearningPracticalRepository {
         )
         .bind(id)
         .fetch_one(&self.pool)
+        .boxed()
         .await
         .map_err(db)?;
         cleanup_record(&row)
@@ -315,7 +319,7 @@ impl LearningPracticalRepository {
 
     pub(crate) async fn unfinished_runs(&self) -> Result<Vec<RunCleanup>> {
         let rows = sqlx::query("SELECT id,engine,activity_snapshot_json FROM learning_practical_runs WHERE status IN ('pending','running')")
-            .fetch_all(&self.pool).await.map_err(db)?;
+            .fetch_all(&self.pool).boxed().await.map_err(db)?;
         rows.iter().map(cleanup_record).collect()
     }
 

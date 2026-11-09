@@ -1,5 +1,6 @@
 use super::super::admission::UnusedSource;
 use super::*;
+use futures::FutureExt;
 use std::collections::HashSet;
 
 /// A page the gate has not read under its current policy, with its text.
@@ -28,7 +29,7 @@ pub(in super::super) async fn unadmitted(
     )
     .bind(program_id)
     .bind(policy)
-    .fetch_all(connection)
+    .fetch_all(connection).boxed()
     .await
     .map_err(db)?;
     Ok(rows
@@ -76,7 +77,7 @@ pub(in super::super) async fn admitted_under(
     .bind(program_id)
     .bind(policy)
     .bind(words)
-    .fetch_all(pool)
+    .fetch_all(pool).boxed()
     .await
     .map_err(db)?;
     Ok(rows
@@ -99,7 +100,7 @@ pub(in super::super) async fn refused_sources(
         "SELECT s.id AS source_id, s.revision, v.id AS version_id, v.title, v.not_a_source AS reason, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NOT NULL ORDER BY s.created_at,s.id",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(pool).boxed()
     .await
     .map_err(db)?;
     Ok(rows
@@ -125,7 +126,7 @@ pub(in super::super) async fn job_running(
     )
     .bind(kind)
     .bind(subject_id)
-    .fetch_optional(pool)
+    .fetch_optional(pool).boxed()
     .await
     .map_err(db)?;
     Ok(running.is_some())
@@ -139,7 +140,7 @@ pub(in super::super) async fn cited_by_reports(
         "SELECT DISTINCT json_extract(e.value, '$.source_id') FROM learning_lesson_verifications r, json_each(r.report_json, '$.findings') f, json_each(f.value, '$.evidence') e WHERE r.program_id=?",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(pool).boxed()
     .await
     .map_err(db)?
     .into_iter()
@@ -157,7 +158,7 @@ pub(in super::super) async fn admitted_added_by(
     )
     .bind(program_id)
     .bind(added_by)
-    .fetch_all(pool)
+    .fetch_all(pool).boxed()
     .await
     .map_err(db)?;
     Ok(rows

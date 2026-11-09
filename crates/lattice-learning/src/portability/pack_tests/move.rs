@@ -18,6 +18,7 @@ use crate::{
     repository::LearningRepository,
     tests::{pool, ready_program},
 };
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
@@ -59,15 +60,16 @@ async fn resume_state(pool: &SqlitePool, program_id: &str) -> Result<ResumeState
         sqlx::query_scalar("SELECT current_lesson_id FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_one(pool)
+            .boxed()
             .await?;
     let lessons = sqlx::query_as("SELECT id,completed,curriculum_state,replacement_lesson_id FROM learning_lessons WHERE program_id=? ORDER BY id")
-        .bind(program_id).fetch_all(pool).await?;
+        .bind(program_id).fetch_all(pool).boxed().await?;
     let attempts = sqlx::query_as("SELECT s.form_id,f.scope_kind,s.score,s.passed,s.submitted_at FROM learning_assessment_submissions s JOIN learning_assessment_forms f ON f.id=s.form_id WHERE s.program_id=? ORDER BY s.form_id")
-        .bind(program_id).fetch_all(pool).await?;
+        .bind(program_id).fetch_all(pool).boxed().await?;
     let cards = sqlx::query_as("SELECT c.id,c.stability,c.difficulty,c.due_at,c.last_reviewed_at,c.interval_days,c.review_count,c.lapses FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE m.program_id=? ORDER BY c.id")
-        .bind(program_id).fetch_all(pool).await?;
+        .bind(program_id).fetch_all(pool).boxed().await?;
     let reviews = sqlx::query_as("SELECT r.id,r.card_id,r.reviewed_at,r.rating,r.mode,r.correct,r.selected_option FROM study_reviews r JOIN study_cards c ON c.id=r.card_id JOIN learning_memory m ON m.deck_id=c.deck_id WHERE m.program_id=? ORDER BY r.id")
-        .bind(program_id).fetch_all(pool).await?;
+        .bind(program_id).fetch_all(pool).boxed().await?;
     Ok(ResumeState {
         current_lesson_id,
         lessons,
@@ -163,6 +165,7 @@ async fn studied_course(pool: &SqlitePool) -> Result<String> {
     let deck: String = sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
         .bind(&id)
         .fetch_one(pool)
+        .boxed()
         .await?;
     for card in ["card-a", "card-b"] {
         let card_id = format!("{id}-{card}");
@@ -251,7 +254,7 @@ pub(super) async fn import(
 
 async fn note_link(pool: &SqlitePool, program_id: &str) -> Result<Vec<(String, String)>> {
     Ok(sqlx::query_as("SELECT lesson_id,note_id FROM learning_lesson_note_links WHERE program_id=? ORDER BY lesson_id")
-        .bind(program_id).fetch_all(pool).await?)
+        .bind(program_id).fetch_all(pool).boxed().await?)
 }
 
 #[tokio::test]
@@ -322,6 +325,7 @@ async fn replace_moves_newer_progress_back_and_keeps_the_lesson_note() -> Result
         sqlx::query_scalar("SELECT journal_id FROM learning_memory WHERE program_id=?")
             .bind(&course)
             .fetch_one(&home)
+            .boxed()
             .await?;
     assert!(journal.is_some());
     let outbound = export_pack(&home_packs, &course).await?;
@@ -337,7 +341,7 @@ async fn replace_moves_newer_progress_back_and_keeps_the_lesson_note() -> Result
     )
     .await?;
     let lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal")
-        .bind(&course).fetch_all(&away).await?;
+        .bind(&course).fetch_all(&away).boxed().await?;
     complete(&away, &course, &lessons[2]).await?;
     submit(&away, &course, 1, Some(0)).await?;
     review(
@@ -386,12 +390,14 @@ async fn replace_moves_newer_progress_back_and_keeps_the_lesson_note() -> Result
         sqlx::query_scalar("SELECT journal_id FROM learning_memory WHERE program_id=?")
             .bind(&course)
             .fetch_one(&home)
+            .boxed()
             .await?;
     assert_eq!(restored_journal, journal);
     let note_body: String =
         sqlx::query_scalar("SELECT content FROM daily_notes_workspace WHERE id=?")
             .bind(&note[0].1)
             .fetch_one(&home)
+            .boxed()
             .await?;
     assert_eq!(note_body, "My own words");
 
@@ -486,10 +492,12 @@ async fn replace_and_export_wait_for_a_pending_generation_job() -> Result<()> {
     let job_rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_jobs WHERE job_id=?")
         .bind(&late_job)
         .fetch_one(&home)
+        .boxed()
         .await?;
     assert_eq!(job_rows, 1);
     let imports: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_pack_imports")
         .fetch_one(&home)
+        .boxed()
         .await?;
     assert_eq!(imports, 0);
     Ok(())

@@ -1,4 +1,5 @@
 use crate::persistence::db;
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
@@ -17,7 +18,7 @@ pub(in crate::references::trust) async fn active_texts(
         "SELECT l.id AS source_id, v.id, v.full_text FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.deleted_at IS NULL",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(pool).boxed()
     .await
     .map_err(db)?;
     Ok(saved
@@ -41,6 +42,7 @@ pub(in crate::references::trust) async fn signals_json(
     .bind(program_id)
     .bind(version_id)
     .fetch_optional(&mut *conn)
+    .boxed()
     .await
     .map_err(db)
 }
@@ -55,7 +57,7 @@ pub(in crate::references::trust) async fn other_active_version_ids(
     )
     .bind(program_id)
     .bind(source_id)
-    .fetch_all(&mut *conn)
+    .fetch_all(&mut *conn).boxed()
     .await
     .map_err(db)
 }
@@ -69,6 +71,7 @@ pub(in crate::references::trust) async fn version_text(
         .bind(program_id)
         .bind(version_id)
         .fetch_one(connection)
+        .boxed()
         .await
         .map_err(db)
 }
@@ -86,7 +89,7 @@ pub(in crate::references::trust) async fn captured_version_of(
     .bind(source_id)
     .bind(url)
     .bind(url)
-    .fetch_optional(&mut *conn)
+    .fetch_optional(&mut *conn).boxed()
     .await
     .map_err(db)
 }

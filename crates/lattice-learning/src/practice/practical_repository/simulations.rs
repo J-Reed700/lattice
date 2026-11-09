@@ -6,6 +6,7 @@ use super::{
 };
 use crate::persistence::{db, hash, now};
 use crate::practical_dto::*;
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
@@ -101,7 +102,7 @@ impl LearningPracticalRepository {
         let snapshot: String = sqlx::query_scalar(
             "SELECT activity_snapshot_json FROM learning_simulation_sessions WHERE program_id=? AND id=?",
         )
-        .bind(program_id).bind(session_id).fetch_optional(&self.pool).await.map_err(db)?
+        .bind(program_id).bind(session_id).fetch_optional(&self.pool).boxed().await.map_err(db)?
         .ok_or_else(|| AppError::NotFound("Simulation not found".into()))?;
         let activity: InternalActivitySnapshot = decode(&snapshot)?;
         Ok((
@@ -168,6 +169,7 @@ impl LearningPracticalRepository {
             .bind(&request.program_id)
             .bind(practice_id)
             .fetch_optional(&mut *tx)
+            .boxed()
             .await
             .map_err(db)?;
             if owned.is_none() {
@@ -233,6 +235,7 @@ impl LearningPracticalRepository {
         .bind(&request.session_id)
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Simulation not found".into()))?;
@@ -247,6 +250,7 @@ impl LearningPracticalRepository {
         )
         .bind(&request.session_id)
         .fetch_one(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?;
         let timestamp = now();
@@ -301,6 +305,7 @@ impl LearningPracticalRepository {
                 .bind(&request.session_id)
                 .bind(&request.program_id)
                 .fetch_optional(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Simulation not found".into()))?;
@@ -311,7 +316,7 @@ impl LearningPracticalRepository {
             return Err(invalid("Simulation changed; reload and retry."));
         }
         let learner_turns = sqlx::query("SELECT content FROM learning_simulation_turns WHERE session_id=? AND speaker='learner' ORDER BY ordinal")
-            .bind(&request.session_id).fetch_all(&mut *tx).await.map_err(db)?;
+            .bind(&request.session_id).fetch_all(&mut *tx).boxed().await.map_err(db)?;
         if learner_turns.is_empty() {
             return Err(invalid(
                 "Respond at least once before submitting a simulation.",
@@ -323,6 +328,7 @@ impl LearningPracticalRepository {
         )
         .bind(&request.session_id)
         .fetch_one(&mut *tx)
+        .boxed()
         .await
         .map_err(db)?;
         let timestamp = now();

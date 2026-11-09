@@ -3,6 +3,7 @@ use super::jobs::job_scope;
 use super::LearningCurriculumRepository;
 use crate::curriculum::{self, LearningCurriculumLessonState, LearningCurriculumRevision};
 use crate::persistence::{db, decode, encode, hash_text, now};
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
@@ -71,7 +72,7 @@ impl LearningCurriculumRepository {
     ) -> Result<()> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let in_course: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_jobs j JOIN learning_lessons l ON l.program_id=j.program_id WHERE j.job_id=? AND l.id=?)")
-            .bind(job_id).bind(lesson_id).fetch_one(&mut *tx).await.map_err(db)?;
+            .bind(job_id).bind(lesson_id).fetch_one(&mut *tx).boxed().await.map_err(db)?;
         if !in_course
             || !JobStore::put_checkpoint_in(
                 &mut tx,
@@ -135,6 +136,7 @@ impl LearningCurriculumRepository {
             sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
                 .bind(&program_id)
                 .fetch_one(&mut *tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         let current_revision: i64 = program.get("revision");
@@ -167,7 +169,7 @@ impl LearningCurriculumRepository {
             )
             .bind(lesson_id)
             .bind(&program_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut *tx).boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
@@ -222,7 +224,7 @@ impl LearningCurriculumRepository {
         // lesson records and the program revision. The old accepted snapshot
         // remains historical; readers never observe a half-prepared plan.
         let accepted_row = sqlx::query("SELECT id,snapshot_json,required_lesson_count,resume_lesson_id FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
-            .bind(&program_id).fetch_optional(&mut *tx).await.map_err(db)?
+            .bind(&program_id).fetch_optional(&mut *tx).boxed().await.map_err(db)?
             .ok_or_else(|| AppError::NotFound("Accepted curriculum not found".into()))?;
         let predecessor: String = accepted_row.get("id");
         let mut snapshot: LearningCurriculumRevision = decode(accepted_row.get("snapshot_json"))?;

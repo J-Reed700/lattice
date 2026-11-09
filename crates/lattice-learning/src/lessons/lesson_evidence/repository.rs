@@ -5,6 +5,7 @@ use crate::{
     lessons::claim_reviews::repository::load_in,
     repository::LearningRepository,
 };
+use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
@@ -46,6 +47,7 @@ pub(super) async fn read(
     .bind(program_id)
     .bind(lesson_id)
     .fetch_optional(&mut *tx)
+    .boxed()
     .await?;
     let report = raw.map(|raw| serde_json::from_str::<LessonVerificationReport>(&raw)
         .map_err(|_| AppError::InvalidState("Saved lesson evidence is unavailable: the verification report is invalid or uses an unsupported format.".into())))
@@ -53,7 +55,7 @@ pub(super) async fn read(
     let versions = if report.is_some() {
         sqlx::query_as::<_, SavedEvidenceVersion>(
             "SELECT v.id,v.title,v.resolved_url,v.requested_url,v.content_sha256,s.active_version_id,s.deleted_at FROM learning_source_versions v JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id WHERE v.program_id=?"
-        ).bind(program_id).fetch_all(&mut *tx).await?
+        ).bind(program_id).fetch_all(&mut *tx).boxed().await?
     } else {
         Vec::new()
     };

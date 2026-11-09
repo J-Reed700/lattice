@@ -1,5 +1,6 @@
 //! A lesson's sections and its stored verification report.
 
+use futures::FutureExt;
 use std::collections::HashMap;
 
 use lattice_core::shared::error::Result;
@@ -20,6 +21,7 @@ pub(in crate::lessons::claim_reviews) async fn section_body(
         .bind(lesson_id)
         .bind(ordinal(unit))
         .fetch_optional(&mut *connection)
+        .boxed()
         .await
         .map_err(db)
 }
@@ -35,6 +37,7 @@ pub(in crate::lessons::claim_reviews) async fn section_title_body(
     .bind(lesson_id)
     .bind(ordinal(unit))
     .fetch_optional(&mut *connection)
+    .boxed()
     .await
     .map_err(db)
 }
@@ -46,6 +49,7 @@ pub(in crate::lessons::claim_reviews) async fn section_count(
     sqlx::query_scalar("SELECT COUNT(*) FROM learning_blocks WHERE lesson_id=?")
         .bind(lesson_id)
         .fetch_one(&mut *connection)
+        .boxed()
         .await
         .map_err(db)
 }
@@ -92,6 +96,7 @@ pub(in crate::lessons::claim_reviews) async fn section_bodies(
     let rows = sqlx::query("SELECT ordinal, body FROM learning_blocks WHERE lesson_id=?")
         .bind(lesson_id)
         .fetch_all(pool)
+        .boxed()
         .await
         .map_err(db)?;
     Ok(rows
@@ -115,6 +120,7 @@ pub(in crate::lessons::claim_reviews) async fn lesson_in_course(
             .bind(lesson_id)
             .bind(program_id)
             .fetch_optional(pool)
+            .boxed()
             .await
             .map_err(db)?;
     Ok(in_course.is_some())
@@ -132,6 +138,7 @@ pub(in crate::lessons::claim_reviews) async fn verification_report(
     .bind(program_id)
     .bind(lesson_id)
     .fetch_optional(&mut *connection)
+    .boxed()
     .await
     .map_err(db)
 }

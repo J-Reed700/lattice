@@ -9,6 +9,7 @@ use crate::{
     pack::{decode_learning_pack, encode_learning_pack},
     portability_dto::{ExportLearningPackRequestDto, LearningPackExportOptionsDto},
 };
+use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
@@ -35,6 +36,7 @@ pub(super) async fn begin_apply(
     )
     .bind(preview_id)
     .fetch_optional(&mut *tx)
+    .boxed()
     .await
     .map_err(db)?;
     if pending.is_none() {
@@ -81,6 +83,7 @@ pub(super) async fn unrecoverable_reason(
         if sqlx::query_scalar::<_, i64>(sql)
             .bind(program_id)
             .fetch_one(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?
             > 0
@@ -104,6 +107,7 @@ pub(super) async fn replace_warnings(
     )
     .bind(program_id)
     .fetch_one(&mut *connection)
+    .boxed()
     .await
     .map_err(db)?;
     Ok(match unfinished {
@@ -151,6 +155,7 @@ pub(super) async fn snapshot_local_links(
     )
     .bind(program_id)
     .fetch_optional(&mut *connection)
+    .boxed()
     .await
     .map_err(db)?
     .flatten();
@@ -158,7 +163,7 @@ pub(super) async fn snapshot_local_links(
         "SELECT lesson_id,note_id,created_at FROM learning_lesson_note_links WHERE program_id=? ORDER BY rowid",
     )
     .bind(program_id)
-    .fetch_all(&mut *connection)
+    .fetch_all(&mut *connection).boxed()
     .await
     .map_err(db)?
     .into_iter()
@@ -168,19 +173,20 @@ pub(super) async fn snapshot_local_links(
         "SELECT conversation_id,lesson_id,section_index,section_title,selected_text,context_message_count,created_at FROM learning_tangents WHERE program_id=? ORDER BY created_at,conversation_id",
     )
     .bind(program_id)
-    .fetch_all(&mut *connection)
+    .fetch_all(&mut *connection).boxed()
     .await
     .map_err(db)?;
     let tutor_chats = sqlx::query_as("SELECT id,lesson_id FROM conversations WHERE program_id=?")
         .bind(program_id)
         .fetch_all(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?;
     let verifier = sqlx::query_as(
         "SELECT verifier_audit,verifier_web_search,verifier_consent_at,verifier_consent_provider FROM learning_programs WHERE id=?",
     )
     .bind(program_id)
-    .fetch_optional(&mut *connection)
+    .fetch_optional(&mut *connection).boxed()
     .await
     .map_err(db)?;
     Ok(LocalLinks {
@@ -290,6 +296,7 @@ async fn backup_if_present(
     let exists = sqlx::query_scalar::<_, i64>("SELECT 1 FROM learning_programs WHERE id=?")
         .bind(program_id)
         .fetch_optional(&mut *connection)
+        .boxed()
         .await
         .map_err(db)?;
     if exists.is_none() {

@@ -7,6 +7,7 @@ use super::bank::Shelf;
 use super::build::{Evidence, SourcePassage};
 use super::spec::DrillSpec;
 use crate::persistence::{db, decode, encode, now};
+use futures::FutureExt;
 use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue, Material};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
@@ -87,6 +88,7 @@ pub(crate) async fn insert_in(connection: &mut SqliteConnection, new: &NewDrill<
         Some(id) => sqlx::query_scalar("SELECT id FROM learning_programs WHERE id=?")
             .bind(id)
             .fetch_optional(&mut *connection)
+            .boxed()
             .await
             .map_err(db)?,
         None => None,
@@ -97,6 +99,7 @@ pub(crate) async fn insert_in(connection: &mut SqliteConnection, new: &NewDrill<
                 .bind(lesson_id)
                 .bind(program_id)
                 .fetch_optional(&mut *connection)
+                .boxed()
                 .await
                 .map_err(db)?
         }
@@ -183,6 +186,7 @@ pub(crate) async fn oldest_ready_on(
         .bind(shelf.material.language())
         .bind(lesson)
         .fetch_optional(connection)
+        .boxed()
         .await
         .map_err(db)?
         .as_ref()
@@ -200,6 +204,7 @@ pub(crate) async fn any_ready_in(
         .bind(material_name(shelf.material))
         .bind(shelf.material.language())
         .fetch_one(connection)
+        .boxed()
         .await
         .map_err(db)
 }
@@ -213,7 +218,7 @@ pub(crate) async fn drilled_passages(
         "SELECT source_json FROM learning_drills WHERE material='passage' AND program_id=? AND source_json IS NOT NULL ORDER BY created_at,rowid",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(pool).boxed()
     .await
     .map_err(db)?;
     stored.iter().map(|json| decode(json)).collect()
@@ -228,6 +233,7 @@ pub(crate) async fn source_owners(
         sqlx::query_as("SELECT id,source_id FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)
             .fetch_all(pool)
+            .boxed()
             .await
             .map_err(db)?;
     Ok(rows.into_iter().collect())
@@ -238,6 +244,7 @@ pub async fn find_in(connection: &mut SqliteConnection, id: &str) -> Result<Opti
     sqlx::query(&format!("SELECT {COLUMNS} FROM learning_drills WHERE id=?"))
         .bind(id)
         .fetch_optional(connection)
+        .boxed()
         .await
         .map_err(db)?
         .as_ref()

@@ -4,6 +4,7 @@ use crate::{
     operations::Operation,
     persistence::{db, hash_text, now},
 };
+use futures::FutureExt;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
@@ -180,6 +181,7 @@ impl LearningPracticeRepository {
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_optional(&mut **tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         match status.as_deref() {
@@ -199,6 +201,7 @@ impl LearningPracticeRepository {
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_optional(&mut **tx)
+                .boxed()
                 .await
                 .map_err(db)?;
         if program_status.as_deref() != Some("active") {
@@ -206,7 +209,7 @@ impl LearningPracticeRepository {
                 "Practice actions require an active learning program.",
             ));
         }
-        let row=sqlx::query("SELECT s.*, (SELECT max(revision) FROM learning_practice_artifact_revisions a WHERE a.session_id=s.id) artifact_revision, sub.grade_status FROM learning_practice_sessions s LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.program_id=? AND s.id=?").bind(program_id).bind(session_id).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
+        let row=sqlx::query("SELECT s.*, (SELECT max(revision) FROM learning_practice_artifact_revisions a WHERE a.session_id=s.id) artifact_revision, sub.grade_status FROM learning_practice_sessions s LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.program_id=? AND s.id=?").bind(program_id).bind(session_id).fetch_optional(&mut **tx).boxed().await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
         let summary = LearningPracticeSessionSummaryDto {
             task_kind: parse_task_kind(row.get("task_kind"))?,
             revises_session_id: row.get("revises_session_id"),
