@@ -510,4 +510,28 @@ mod tests {
             .unwrap()
             .is_empty());
     }
+
+    #[tokio::test]
+    async fn clearing_leaves_the_words_index_alone_when_the_trigram_index_cannot_be_cleared() {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content);
+             INSERT INTO chunks_fts(chunk_id, content) VALUES ('a', 'alpha');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        assert!(SqliteTextSearch::new(pool.clone()).clear().await.is_err());
+
+        let rows: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM chunks_fts")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(rows, 1);
+    }
 }

@@ -15,3 +15,6 @@ pub mod schema_validation;
 
 #[cfg(test)]
 mod query_tests;
+
+#[cfg(test)]
+mod schema_tests;

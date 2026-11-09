@@ -511,4 +511,55 @@ mod tests {
             .is_empty());
         assert!(!search.search("programming", 10).await.unwrap().is_empty());
     }
+
+    async fn pool_with_only_the_words_index() -> SqlitePool {
+        let pool = SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect(":memory:")
+            .await
+            .unwrap();
+        sqlx::raw_sql(
+            "CREATE VIRTUAL TABLE chunks_fts USING fts5(chunk_id UNINDEXED, content, header);
+             INSERT INTO chunks_fts(chunk_id, content, header) VALUES ('a', 'alpha', '');",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        pool
+    }
+
+    async fn count_commits(pool: &SqlitePool) -> std::sync::Arc<std::sync::atomic::AtomicUsize> {
+        let commits = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counted = std::sync::Arc::clone(&commits);
+        let mut connection = pool.acquire().await.unwrap();
+        connection
+            .lock_handle()
+            .await
+            .unwrap()
+            .set_commit_hook(move || {
+                counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                true
+            });
+        commits
+    }
+
+    #[tokio::test]
+    async fn optimizing_commits_nothing_when_the_second_index_cannot_be_optimized() {
+        let pool = pool_with_only_the_words_index().await;
+        let commits = count_commits(&pool).await;
+
+        assert!(BM25Search::new(pool).optimize_index().await.is_err());
+
+        assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
+
+    #[tokio::test]
+    async fn rebuilding_commits_nothing_when_the_second_index_cannot_be_rebuilt() {
+        let pool = pool_with_only_the_words_index().await;
+        let commits = count_commits(&pool).await;
+
+        assert!(BM25Search::new(pool).rebuild_index().await.is_err());
+
+        assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 0);
+    }
 }
