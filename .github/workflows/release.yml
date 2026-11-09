@@ -1,0 +1,143 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: The commit to build and publish
+        default: main
+  pull_request:
+    paths:
+      - .github/workflows/release.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  build:
+    name: Windows installer
+    runs-on: windows-2025
+    outputs:
+      sha: ${{ steps.commit.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.ref || github.event.pull_request.head.sha }}
+      - id: commit
+        shell: bash
+        run: echo "sha=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Fetch verified published sidecars
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
+      - run: npm ci
+      - name: Cache Tauri's bundling tools
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: tauri-tools-${{ runner.os }}-
+      # The pinned values come from the tauri-cli version's nsis/mod.rs, as in #376.
+      - name: Fetch Tauri's NSIS tools through the GitHub API
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tools = Join-Path $env:LOCALAPPDATA 'tauri'
+          $nsis = Join-Path $tools 'NSIS'
+          $dll = Join-Path $nsis 'Plugins\x86-unicode\additional\nsis_tauri_utils.dll'
+          if ((Test-Path (Join-Path $nsis 'makensis.exe')) -and (Test-Path $dll)) {
+            Write-Host 'NSIS tools already present'
+            return
+          }
+          function Get-Asset($tag, $repo, $pattern, $sha1) {
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              gh release download $tag --repo $repo --pattern $pattern --dir $env:RUNNER_TEMP --clobber | Out-Host
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 5) { throw "gh release download $tag failed after $attempt attempts" }
+              Start-Sleep -Seconds 15
+            }
+            $file = Join-Path $env:RUNNER_TEMP $pattern
+            $actual = (Get-FileHash -Algorithm SHA1 $file).Hash
+            if ($actual -ine $sha1) { throw "$pattern SHA1 $actual does not match $sha1" }
+            return $file
+          }
+          if (Test-Path $nsis) { Remove-Item -Recurse -Force $nsis }
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          $zip = Get-Asset 'nsis-3.11' 'tauri-apps/binary-releases' 'nsis-3.11.zip' 'EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D'
+          Expand-Archive -Path $zip -DestinationPath $tools -Force
+          Rename-Item (Join-Path $tools 'nsis-3.11') 'NSIS'
+          $utils = Get-Asset 'nsis_tauri_utils-v0.5.3' 'tauri-apps/nsis-tauri-utils' 'nsis_tauri_utils.dll' '75197FEE3C6A814FE035788D1C34EAD39349B860'
+          New-Item -ItemType Directory -Force (Split-Path $dll) | Out-Null
+          Copy-Item $utils $dll
+          foreach ($required in 'makensis.exe', 'Bin\makensis.exe', 'Include\MUI2.nsh') {
+            if (-not (Test-Path (Join-Path $nsis $required))) { throw "NSIS tools incomplete: $required is missing" }
+          }
+      - name: Build the installer
+        shell: bash
+        run: npm run tauri -- build --ci --bundles nsis
+      - name: Checksum the installer
+        shell: bash
+        run: |
+          cd target/release/bundle/nsis
+          exe=$(ls *-setup.exe)
+          sha256sum "$exe" > "$exe.sha256"
+          cat "$exe.sha256"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lattice-windows-installer
+          path: |
+            target/release/bundle/nsis/*-setup.exe
+            target/release/bundle/nsis/*-setup.exe.sha256
+          if-no-files-found: error
+          retention-days: 30
+
+  publish:
+    name: Publish release
+    if: github.event_name == 'workflow_dispatch'
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.build.outputs.sha }}
+      - uses: actions/download-artifact@v4
+        with:
+          name: lattice-windows-installer
+          path: dist-installer
+      - name: Create the release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          SHA: ${{ needs.build.outputs.sha }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          version=$(jq -r .version crates/lattice-desktop/tauri.conf.json)
+          exe=$(ls dist-installer/*-setup.exe)
+          sum=$(cut -d' ' -f1 "$exe.sha256")
+          {
+            echo "The Windows installer for Lattice $version, built from commit ${SHA:0:12}."
+            echo
+            echo "SHA-256: \`$sum\`"
+            echo
+            echo "The installer is not signed yet, so Windows may show 'Windows protected your PC'. Click More info, then Run anyway."
+          } > notes.md
+          gh release create "app-v$version-$RUN_NUMBER" "$exe" "$exe.sha256"             --repo "$GITHUB_REPOSITORY"             --target "$SHA"             --title "Lattice $version for Windows (build $RUN_NUMBER)"             --notes-file notes.md             --latest

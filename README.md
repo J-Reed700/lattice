@@ -91,7 +91,11 @@ Without a checkout (the source goes to `~/lattice`):
 curl -fsSL https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.sh | bash
 ```
 
-Windows: double-click `setup.cmd`, or without a checkout run
+Windows: download `Lattice_<version>_x64-setup.exe` from the
+[latest release](https://github.com/J-Reed700/lattice/releases/latest) and run it.
+The installer is not signed yet, so Windows may show "Windows protected your
+PC": click More info, then Run anyway. To build from source instead,
+double-click `setup.cmd`, or without a checkout run
 `irm https://raw.githubusercontent.com/J-Reed700/lattice/main/setup.ps1 | iex`
 in PowerShell.
 
