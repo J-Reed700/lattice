@@ -1017,7 +1017,7 @@ async fn a_named_document_question_is_focused_and_the_plan_schema_is_unchanged()
         "type":"object", "additionalProperties":false,
         "properties":{
             "queries":{"type":"array","items":{"type":"string"},"minItems":1,"maxItems":3},
-            "opening_document_ids":{"type":"array","items":{"type":"string"},"maxItems":4},
+            "opening_document_ids":{"type":"array","items":{"type":"string"}},
             "start_at_beginning":{"type":"boolean"}
         }, "required":["queries","opening_document_ids","start_at_beginning"]
     });
