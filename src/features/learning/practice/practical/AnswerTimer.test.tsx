@@ -29,4 +29,18 @@ describe('AnswerTimer', () => {
     rerender(<AnswerTimer since="question-2" running={false} />);
     expect(screen.getByText(/Answered in/)).toHaveTextContent('Answered in 0:00');
   });
+
+  it('shows an accessible timer and a status once past two minutes', () => {
+    const { rerender } = render(<AnswerTimer since="question-1" />);
+    expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('0:00');
+    expect(screen.getByText(/aim for about two minutes/i)).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(125_000);
+    });
+    expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('2:05');
+    expect(screen.getByRole('status')).toHaveTextContent('Past two minutes: land your result and stop.');
+    rerender(<AnswerTimer since="question-2" />);
+    expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('0:00');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
+  });
 });

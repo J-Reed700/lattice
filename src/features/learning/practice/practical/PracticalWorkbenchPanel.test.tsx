@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
-import { PracticalWorkbenchPanel } from "@/features/learning/practice/practical/PracticalWorkbenchPanel";
+import { type ComposerRequest, PracticalWorkbenchPanel } from "@/features/learning/practice/practical/PracticalWorkbenchPanel";
 import type { LearningLessonDto, LearningProgramDto } from "@/lib/bindings";
 
 
@@ -185,7 +185,7 @@ const session = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-function renderPractical(chosenLesson = lesson, projectRequest?: { id: string; brief: string }) {
+function renderPractical(chosenLesson = lesson, extra: { activityId?: string | null; composer?: ComposerRequest | null } = {}) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: Infinity },
@@ -195,10 +195,10 @@ function renderPractical(chosenLesson = lesson, projectRequest?: { id: string; b
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  return { client, ...render(
-    <PracticalWorkbenchPanel program={program} lesson={chosenLesson} projectRequest={projectRequest} />,
-    { wrapper },
-  ) };
+  const view = render(<PracticalWorkbenchPanel program={program} lesson={chosenLesson} {...extra} />, { wrapper });
+  const update = (next: { activityId?: string | null; composer?: ComposerRequest | null }) =>
+    view.rerender(<PracticalWorkbenchPanel program={program} lesson={chosenLesson} {...next} />);
+  return { client, ...view, update };
 }
 
 describe("Learning Studio Labs & simulations", () => {
@@ -429,12 +429,33 @@ describe("Learning Studio Labs & simulations", () => {
   it("opens a course project with its outcome-based brief already filled in", async () => {
     const user = userEvent.setup();
     const brief = "Build a comparison study. Deliver a design and justify its limitations.";
-    renderPractical(lesson, { id: "project-request", brief });
+    renderPractical(lesson, { composer: { id: "project-request", kind: "project", brief } });
     expect(await screen.findByLabelText("Activity type")).toHaveValue("project");
     expect(screen.getByLabelText("Your focus for this activity")).toHaveValue(brief);
     await user.click(screen.getByRole("button", { name: "Generate activity" }));
     await waitFor(() => expect(mocks.generate).toHaveBeenCalledOnce());
     expect(mocks.generate.mock.calls[0][0]).toMatchObject({ kind: "project", learnerBrief: brief, lessonId: lesson.id, runtimeProfileId: null, builtinRuntime: null });
+  });
+
+  it("opens the composer on the kind it is asked for, and again only for a new request", async () => {
+    const user = userEvent.setup();
+    const { update } = renderPractical(lesson, { composer: { id: "first", kind: "system_design" } });
+    expect(await screen.findByLabelText("Activity type")).toHaveValue("system_design");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByLabelText("Activity type")).not.toBeInTheDocument());
+    update({ composer: { id: "first", kind: "system_design" } });
+    expect(screen.queryByLabelText("Activity type")).not.toBeInTheDocument();
+    update({ composer: { id: "second", kind: "incident" } });
+    expect(await screen.findByLabelText("Activity type")).toHaveValue("incident");
+  });
+
+  it("selects the activity it is pointed at, on mount and when that changes", async () => {
+    mocks.workspace.mockResolvedValue(ok(workspace({ activities: [activity(), activity({ id: "activity-2", title: "Another activity" })] })));
+    const { update } = renderPractical(lesson, { activityId: "activity-2" });
+    expect(await screen.findByRole("button", { name: /Another activity/ })).toHaveAttribute("aria-pressed", "true");
+    update({ activityId: "activity-1" });
+    expect(await screen.findByRole("button", { name: /Inspect a data trail/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /Another activity/ })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("keeps container selection available for optional project activities", async () => {

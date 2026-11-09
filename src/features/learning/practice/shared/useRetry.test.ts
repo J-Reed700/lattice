@@ -57,4 +57,32 @@ describe('useRetry', () => {
     });
     expect(result.current.busy).toBe(false);
   });
+
+  it('flags a conflict, keeps the message, and does not retry the stale request', async () => {
+    const conflict = Object.assign(new Error('The source changed.'), { details: { code: 'CONFLICT' } });
+    const action = vi.fn<(value: string) => Promise<string>>().mockRejectedValue(conflict);
+    const { result } = renderHook(() => useRetry(action));
+    await act(async () => {
+      await result.current.run('x');
+    });
+    expect(result.current.conflict).toBe(true);
+    expect(result.current.error).toBe('The source changed.');
+    await act(async () => {
+      result.current.retry();
+    });
+    expect(action).toHaveBeenCalledTimes(1);
+  });
+
+  it('treats a message that only says "changed elsewhere" as a plain error', async () => {
+    const action = vi.fn<(value: string) => Promise<string>>().mockRejectedValue(new Error('Changed elsewhere.'));
+    const { result } = renderHook(() => useRetry(action));
+    await act(async () => {
+      await result.current.run('x');
+    });
+    expect(result.current.conflict).toBe(false);
+    await act(async () => {
+      result.current.retry();
+    });
+    expect(action).toHaveBeenCalledTimes(2);
+  });
 });

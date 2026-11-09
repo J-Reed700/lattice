@@ -75,4 +75,16 @@ describe('SaveAsReviewCard', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
     expect(mutation.mutate).toHaveBeenCalled();
   });
+
+  it('will not save a blank answer and says why', () => {
+    render(<SaveAsReviewCard programId="p1" lessonId="l1" front="Q" back="" />);
+    const button = screen.getByRole('button', { name: 'Make a recall card' });
+    expect(button).toBeDisabled();
+    expect(screen.getByText('Write the answer first.')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '   ' } });
+    expect(button).toBeDisabled();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'An answer.' } });
+    expect(button).toBeEnabled();
+    expect(screen.queryByText('Write the answer first.')).not.toBeInTheDocument();
+  });
 });
