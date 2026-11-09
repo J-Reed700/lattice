@@ -279,7 +279,7 @@ impl LearningPracticeRepository {
         ids: &[String],
     ) -> Result<Vec<LearningSourceVersionDto>> {
         let mut out = Vec::new();
-        for id in ids.iter().take(32) {
+        for id in ids {
             let row=sqlx::query("SELECT source_id,id,version_number,title,publisher,resolved_url,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at,snapshot_hash,full_text FROM learning_source_versions WHERE program_id=? AND id=?")
                 .bind(program_id).bind(id).fetch_optional(&self.pool).await.map_err(db)?.ok_or_else(||AppError::NotFound("A source version frozen into this attempt is unavailable.".into()))?;
             out.push(LearningSourceVersionDto {

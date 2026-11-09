@@ -55,11 +55,6 @@ impl LearningPracticeRepository {
         }
         source_ids.sort();
         source_ids.dedup();
-        if source_ids.len() > 32 {
-            return Err(invalid(
-                "A practice attempt can freeze no more than 32 source versions.",
-            ));
-        }
         for version_id in &source_ids {
             let owned: Option<i64> = sqlx::query_scalar(
                 "SELECT 1 FROM learning_source_versions WHERE program_id=? AND id=?",

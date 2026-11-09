@@ -274,25 +274,6 @@ async fn starting_needs_an_active_program_a_ready_lesson_and_owned_sources() -> 
         )
         .await,
     );
-    let crowded_lesson = program.modules[1].lessons[0].id.clone();
-    let many: Vec<String> = (0..33).map(|_| id()).collect();
-    add_block(
-        &pool,
-        &crowded_lesson,
-        0,
-        "explanation",
-        "Too many sources",
-        &many,
-        &[],
-    )
-    .await?;
-    assert_invalid(
-        repo.start(
-            &start_request(&program, &crowded_lesson, LearningPracticeMode::Practice),
-            "crowded",
-        )
-        .await,
-    );
 
     assert!(repo
         .workspace(&program.summary.id)
