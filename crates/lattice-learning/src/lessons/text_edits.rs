@@ -612,6 +612,29 @@ mod tests {
         assert_eq!(schema(&original)["properties"]["edits"]["minItems"], 1);
     }
 
+    fn follows_the_writers_citation_rules(text: &str) {
+        for rule in [
+            "Never say in the lesson's text where a statement comes from, by number or by name",
+            "Quotation marks mark wording quoted from a source, and only in a cited sentence.",
+            "A misconception, a learner's thought, something a friend says or an example remark is written in the lesson's own sentence without quotation marks.",
+        ] {
+            assert!(text.contains(rule), "missing {rule:?} in {text}");
+        }
+        assert!(!text.contains("attribution"), "{text}");
+    }
+
+    #[test]
+    fn the_teaching_repair_follows_the_writers_citation_rules() {
+        follows_the_writers_citation_rules(&instructions(&crate::generation::lesson_schema(2)));
+    }
+
+    #[test]
+    fn the_claim_repair_follows_the_writers_citation_rules() {
+        follows_the_writers_citation_rules(&rewrite_instructions(
+            &crate::generation::lesson_schema(2),
+        ));
+    }
+
     fn parted() -> Value {
         json!({"blocks":[
             {"kind":"explanation","title":"First","body":"Alpha holds. Beta fails."},
