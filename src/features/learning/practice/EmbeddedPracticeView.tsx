@@ -1,3 +1,5 @@
+import { AlertCircle, Check, Loader2, Pencil } from 'lucide-react';
+
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
 import {
@@ -13,36 +15,21 @@ import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import type { usePracticeSession } from '@/features/learning/practice/usePracticeSession';
 import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
-import type {
-  LearningLessonDto,
-  LearningPracticeHintLevel,
-  LearningProgramDto,
-} from '@/lib/bindings';
+import { HINTS } from '@/features/learning/practice/workbench/helpModes';
+import type { LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 
 export interface EmbeddedPracticeViewProps {
   program: LearningProgramDto;
   lesson: LearningLessonDto | undefined;
   sessionState: ReturnType<typeof usePracticeSession>;
-  text: string;
-  savedText: string;
-  setText: (value: string) => void;
-  textRef: React.MutableRefObject<string>;
-  saveNow: () => Promise<boolean>;
   onContinue?: () => void;
-  hints: { id: LearningPracticeHintLevel; title: string; prompt: string }[];
 }
 
 export function EmbeddedPracticeView({
   program,
   lesson,
   sessionState,
-  text,
-  savedText,
-  setText,
-  textRef,
-  saveNow,
   onContinue,
-  hints,
 }: EmbeddedPracticeViewProps) {
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const programId = program.summary.id;
@@ -55,7 +42,13 @@ export function EmbeddedPracticeView({
     session,
     active,
     busyState,
-    busyLabel,
+    busy,
+    text,
+    setText,
+    dirty,
+    autosave,
+    saveNow,
+    reloadAttempt,
     actionError,
     conflict,
     retryAction,
@@ -74,12 +67,11 @@ export function EmbeddedPracticeView({
     : null;
   const sourceVersion = useLearningSourceVersion(sourceRequest);
 
-  const nextHint = hints.slice(0, 3).find((hint) => !hintUsed.includes(hint.id));
-  const busy = Boolean(busyLabel);
-  const locked = busy && busyState !== 'saving';
+  const nextHint = HINTS.slice(0, 3).find((hint) => !hintUsed.includes(hint.id));
+  const submitReason = !text.trim() ? 'Write your working first.' : busy ? 'Another action is in progress.' : null;
 
   return (
-    <div className="mt-5 space-y-4 border-t border-border-default pt-5">
+    <section aria-label="Guided exercise" className="mt-5 space-y-4 border-t border-border-default pt-5">
       {!sessionId ? (
         <div>
           <p className="text-sm leading-6 text-text-secondary">
@@ -91,16 +83,11 @@ export function EmbeddedPracticeView({
             onClick={() => void startSession()}
             className="mt-3 min-h-11 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg disabled:opacity-50"
           >
-            {busy ? 'Starting…' : 'Start guided exercise'}
+            {busyState === 'starting' ? 'Starting…' : 'Start guided exercise'}
           </button>
         </div>
       ) : sessionQuery.isError ? (
-        <StatusLine
-          error={sessionQuery.error.message}
-          onRetry={() => void sessionQuery.refetch()}
-          retryLabel="Retry exercise"
-          retryAriaLabel="Retry exercise"
-        />
+        <StatusLine state={{ kind: 'error', message: sessionQuery.error.message, retry: () => void sessionQuery.refetch() }} />
       ) : !session ? (
         <p role="status" className="text-xs text-text-muted">Opening your saved exercise…</p>
       ) : (
@@ -109,8 +96,24 @@ export function EmbeddedPracticeView({
             <label htmlFor={`guided-answer-${lessonId}`} className="text-sm font-semibold text-text-primary">
               Your working
             </label>
-            <span role="status" className="text-xs text-text-muted">
-              {busyLabel || (text === savedText ? 'Saved' : 'Saving…')}
+            <span role="status" className="flex items-center gap-1.5 text-xs text-text-muted">
+              {autosave.state === 'saving' ? (
+                <>
+                  <Loader2 size={13} className="animate-spin text-accent" aria-hidden="true" /> Saving…
+                </>
+              ) : autosave.state === 'error' || autosave.state === 'conflict' ? (
+                <>
+                  <AlertCircle size={13} className="text-danger-fg" aria-hidden="true" /> Save needs attention
+                </>
+              ) : dirty ? (
+                <>
+                  <Pencil size={13} aria-hidden="true" /> Unsaved changes
+                </>
+              ) : (
+                <>
+                  <Check size={13} className="text-success-fg" aria-hidden="true" /> Saved
+                </>
+              )}
             </span>
           </div>
           <textarea
@@ -118,11 +121,8 @@ export function EmbeddedPracticeView({
             rows={6}
             value={text}
             maxLength={LEARNER_TEXT_MAX_CHARS}
-            disabled={!active || locked}
-            onChange={(event) => {
-              setText(event.target.value);
-              textRef.current = event.target.value;
-            }}
+            disabled={!active || busy}
+            onChange={(event) => setText(event.target.value)}
             placeholder="Show your first step, explain your reasoning, or paste your code…"
             className="w-full rounded-xl border border-border-default bg-surface p-4 text-sm leading-6 text-text-primary outline-hidden focus:border-accent disabled:opacity-70"
           />
@@ -161,6 +161,7 @@ export function EmbeddedPracticeView({
               >
                 Submit guided response
               </button>
+              {submitReason && <p className="w-full text-xs text-text-muted">{submitReason}</p>}
             </div>
           )}
           {session.tutorTurns.length > 0 && (
@@ -169,7 +170,7 @@ export function EmbeddedPracticeView({
                 <article key={turn.id} className="rounded-xl bg-accent-muted p-4">
                   <p className="mb-2 text-xs font-semibold text-accent">
                     {turn.requestKind === 'hint'
-                      ? `Hint · ${hints.find((hint) => hint.id === turn.hintLevel)?.title ?? index + 1}`
+                      ? `Hint · ${HINTS.find((hint) => hint.id === turn.hintLevel)?.title ?? index + 1}`
                       : 'Feedback on your reasoning'}
                   </p>
                   <div className="text-sm leading-6 text-text-primary">
@@ -226,6 +227,20 @@ export function EmbeddedPracticeView({
           {session.summary.revisesSessionId && <PreviousFeedback session={session} />}
         </>
       )}
+      {!actionError && (autosave.state === 'error' || autosave.state === 'conflict') && (
+        <StatusLine
+          state={{
+            kind: 'error',
+            message: autosave.error ?? 'Your work could not be saved.',
+            retry: autosave.state === 'error' ? () => void autosave.flush() : undefined,
+          }}
+        />
+      )}
+      {!actionError && autosave.state === 'conflict' && (
+        <button type="button" onClick={() => void reloadAttempt()} className="text-sm font-semibold underline">
+          Reload saved exercise
+        </button>
+      )}
       {actionError && (
         <div role="alert" className="rounded-xl bg-danger-muted p-3 text-sm text-danger-fg">
           <p>{actionError}</p>
@@ -242,7 +257,7 @@ export function EmbeddedPracticeView({
           {conflict && (
             <button
               type="button"
-              onClick={() => void sessionQuery.refetch()}
+              onClick={() => void reloadAttempt()}
               className="mt-2 font-semibold underline"
             >
               Reload saved exercise
@@ -250,6 +265,6 @@ export function EmbeddedPracticeView({
           )}
         </div>
       )}
-    </div>
+    </section>
   );
 }

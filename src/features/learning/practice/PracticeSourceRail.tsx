@@ -59,7 +59,7 @@ export function FrozenSourceRail({
         <p role="status" className="mt-4 text-xs text-text-muted">Loading frozen sources…</p>
       ) : workspace.isError ? (
         <div className="mt-4">
-          <StatusLine error={workspace.error.message} onRetry={() => void workspace.refetch()} retryLabel="Retry source list" retryAriaLabel="Retry source list" />
+          <StatusLine state={{ kind: 'error', message: workspace.error.message, retry: () => void workspace.refetch() }} />
         </div>
       ) : frozen.length ? (
         <div className="mt-4 space-y-2">
@@ -149,7 +149,7 @@ export function ExactSourceReader({
         <p role="status" className="mt-3 text-xs text-text-muted">Opening exact saved version…</p>
       ) : query.isError ? (
         <div className="mt-3">
-          <StatusLine error={query.error.message} onRetry={() => void query.refetch()} retryLabel="Retry" retryAriaLabel="Retry" />
+          <StatusLine state={{ kind: 'error', message: query.error.message, retry: () => void query.refetch() }} />
         </div>
       ) : query.data && (
         <>

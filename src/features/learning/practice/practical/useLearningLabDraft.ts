@@ -1,11 +1,10 @@
-import { newId, unwrap } from '@/lib/api';
+import { isConflict, newId, unwrap } from '@/lib/api';
 import { getErrorMessage } from '@/lib/errorUtils';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useApi } from '@/contexts/ApiContext';
 import type { LearningLabFile, LearningPracticalDraftDto, SaveLearningPracticalDraftRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
-import { isConflictError } from '../shared/useAutosave';
 
 const AUTOSAVE_DELAY_MS = 550;
 type LoadState = 'idle' | 'loading' | 'ready' | 'error';
@@ -32,10 +31,6 @@ type DraftContext = {
   timer: number | null;
 };
 
-function isConflict(error: unknown) {
-  if (isConflictError(error)) return true;
-  return /revision|conflict|changed|stale/i.test(getErrorMessage(error));
-}
 function sameFiles(a: LearningLabFile[] | null, b: LearningLabFile[]) {
   return Boolean(a?.length === b.length && a?.every((file, index) => file.path === b[index]?.path && file.content === b[index]?.content));
 }

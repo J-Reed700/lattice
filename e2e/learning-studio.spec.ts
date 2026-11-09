@@ -1861,13 +1861,6 @@ async function runPracticeWorkbenchJourney(
     name: "Module workspace",
   });
   await openStudioSection(page, "Written practice");
-  const workbenchTab = page.getByRole("tablist", { name: "Practice activities" }).getByRole("tab", {
-    name: "Written practice",
-    exact: true,
-  });
-  await workbenchTab.focus();
-  await expect(workbenchTab).toBeFocused();
-  await workbenchTab.click();
   const workbench = page.getByRole("region", {
     name: "Grounded Practice Workbench",
   });
@@ -1935,7 +1928,7 @@ async function runPracticeWorkbenchJourney(
   await expect(workbench.getByRole("alert")).toContainText(
     "Practice mutation response was lost after persistence.",
   );
-  await workbench.getByRole("button", { name: "Retry save" }).click();
+  await workbench.getByRole("button", { name: "Try again" }).click();
   await expect(
     workbench.getByRole("status").filter({ hasText: "Saved" }),
   ).toBeVisible();
@@ -2101,7 +2094,8 @@ async function runPracticeWorkbenchJourney(
   const demonstrate = modeGroup.getByRole("button", { name: "Demonstrate" });
   await demonstrate.click();
   await expect(demonstrate).toHaveAttribute("aria-pressed", "true");
-  await expect(workbench.getByRole("button", { name: "Ask tutor" })).toBeDisabled();
+  const tutorThread = workbench.getByRole("region", { name: "Tutor messages" });
+  await expect(tutorThread.getByRole("button", { name: "Send" })).toBeDisabled();
   await expect(workbench.getByRole("button", { name: "Request critique" })).toBeDisabled();
   await expect(workbench.getByRole("button", { name: /Orienting question/ })).toBeDisabled();
   await expect(workbench.getByRole("button", { name: /Review reveal choice/ })).toHaveCount(0);
@@ -2192,11 +2186,9 @@ async function runPracticeWorkbenchJourney(
   await expect(sourceReader.getByText("Version 1 · saved", { exact: false })).toBeVisible();
   await expect(sourceReader.getByText("Record the same measure across the observation period.", { exact: false })).toBeVisible();
 
-  const tutorPrompt = workbench.getByRole("textbox", {
-    name: "Ask a question or request critique",
-  });
+  const tutorPrompt = workbench.getByRole("region", { name: "Tutor messages" }).getByRole("textbox");
   await tutorPrompt.fill("How should I state a limit on the sample?");
-  await workbench.getByRole("button", { name: "Ask tutor" }).click();
+  await workbench.getByRole("region", { name: "Tutor messages" }).getByRole("button", { name: "Send" }).click();
   const proposalSection = workbench
     .locator("section")
     .filter({ hasText: "Tutor proposals" });
