@@ -147,9 +147,20 @@ pub(in super::super) async fn version_usage(
     program_id: &str,
     version_id: &str,
 ) -> Result<Vec<LearningSourceUsageDto>> {
+    let mut read = pool.begin_read().await.map_err(db)?;
+    let usage = version_usage_on(&mut read, program_id, version_id).await?;
+    read.commit().await.map_err(db)?;
+    Ok(usage)
+}
+
+async fn version_usage_on(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    version_id: &str,
+) -> Result<Vec<LearningSourceUsageDto>> {
     let mut out = Vec::new();
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,b.title ref_title FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=? AND EXISTS(SELECT 1 FROM json_each(b.source_ids_json) WHERE value=?) ORDER BY l.ordinal,b.ordinal")
-        .bind(program_id).bind(version_id).fetch_all(pool).await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -159,7 +170,7 @@ pub(in super::super) async fn version_usage(
         });
     }
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,c.prompt ref_title FROM learning_assessment_candidates c JOIN learning_lessons l ON l.id=c.lesson_id WHERE c.program_id=? AND c.review_status='agreed' AND EXISTS(SELECT 1 FROM json_each(c.source_version_ids_json) WHERE value=?) ORDER BY l.ordinal,c.rowid")
-        .bind(program_id).bind(version_id).fetch_all(pool).await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -169,7 +180,7 @@ pub(in super::super) async fn version_usage(
         });
     }
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,d.question ref_title FROM learning_card_drafts d JOIN learning_lessons l ON l.id=d.lesson_id WHERE d.program_id=? AND d.status='pending' AND EXISTS(SELECT 1 FROM json_each(d.source_ids_json) WHERE value=?) ORDER BY l.ordinal,d.created_at")
-        .bind(program_id).bind(version_id).fetch_all(pool).await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -179,7 +190,7 @@ pub(in super::super) async fn version_usage(
         });
     }
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,c.question ref_title FROM learning_card_origins o JOIN learning_lessons l ON l.id=o.lesson_id JOIN study_cards c ON c.id=o.card_id WHERE o.program_id=? AND EXISTS(SELECT 1 FROM json_each(o.source_ids_json) WHERE value=?) ORDER BY l.ordinal,o.accepted_at")
-        .bind(program_id).bind(version_id).fetch_all(pool).await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),

@@ -124,8 +124,10 @@ impl ClaimReviewRepository {
 #[async_trait]
 impl ClaimReviewStore for ClaimReviewRepository {
     async fn load(&self, lesson_id: &str) -> Result<Ledger> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        load_in(&mut connection, lesson_id).await
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let ledger = load_in(&mut read, lesson_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(ledger)
     }
 
     async fn append(
