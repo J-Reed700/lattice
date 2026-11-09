@@ -136,8 +136,7 @@ impl Batch<'_> {
             "difficultyMin": r.difficulty_min,
             "difficultyMax": r.difficulty_max,
             "returnCount": self.count,
-            "doNotRepeat": self.need.existing_prompts.iter().rev().take(30)
-                .map(|p| p.chars().take(160).collect::<String>()).collect::<Vec<_>>(),
+            "doNotRepeat": self.need.existing_prompts.iter().rev().collect::<Vec<_>>(),
             "problemsToAvoid": self.notes,
             "repair": self.repair,
             "passages": [],
