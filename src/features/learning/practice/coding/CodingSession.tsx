@@ -5,6 +5,7 @@ import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
+import { lastChosen } from '../home/StartSentence';
 import { LearningCodeEditor } from '../practical/LearningCodeEditor';
 import { useLearningLabDraft } from '../practical/useLearningLabDraft';
 import { CaseResults } from '../shared/CaseResults';
@@ -45,13 +46,7 @@ type Failure = { message: string; retry?: () => void };
 
 /** The interview setting the course last used on the Practice page; Mock the first time. */
 function lastInterviewSetting(programId: string): Wire.CodingSetting {
-  try {
-    const raw = localStorage.getItem(`lattice:practice:startSentence:${programId}:mock`);
-    const stored = raw ? (JSON.parse(raw) as { setting?: string }).setting : null;
-    return stored === 'watched' ? 'watched' : 'mock';
-  } catch {
-    return 'mock';
-  }
+  return lastChosen(programId, 'mock', 'setting') === 'watched' ? 'watched' : 'mock';
 }
 
 export function CodingSession({ programId, sessionId, onExit, onTryInterview }: CodingSessionProps) {

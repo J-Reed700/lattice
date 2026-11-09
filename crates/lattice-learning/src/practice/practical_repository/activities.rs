@@ -255,8 +255,8 @@ impl LearningPracticalRepository {
         }
         let revision = Self::active_program(&mut tx, &request.program_id).await?;
         if revision != request.expected_program_revision {
-            return Err(invalid(
-                "The learning program changed; regenerate this activity.",
+            return Err(AppError::Conflict(
+                "The learning program changed; regenerate this activity.".into(),
             ));
         }
         let module_id: Option<String> = sqlx::query_scalar(
