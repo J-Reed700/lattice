@@ -26,14 +26,8 @@ impl UserActivity {
         }
         #[cfg(windows)]
         {
-            let power = match windows_power::Request::begin(reason) {
-                Ok(request) => Some(request),
-                Err(error) => {
-                    tracing::warn!(%error, "Could not keep the PC awake for active user work");
-                    None
-                }
-            };
-            Self { _power: power }
+            let _ = reason;
+            Self { _power: None }
         }
         #[cfg(not(any(target_os = "macos", windows)))]
         {
