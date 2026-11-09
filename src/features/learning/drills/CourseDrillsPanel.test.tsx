@@ -1410,6 +1410,40 @@ describe('naming the lesson and leaving a drill', () => {
   });
 });
 
+describe('opening a given attempt', () => {
+  it('opens the review of an attempt still running, without the setup', async () => {
+    api.codeReviewResult.mockResolvedValue(attempt());
+    render(<CourseDrillsPanel programId="course-1" attemptId="attempt-1" />);
+    expect(await screen.findByRole('heading', { name: 'A rate limiter' })).toBeVisible();
+    expect(api.codeReviewResult).toHaveBeenCalledWith('attempt-1');
+    expect(screen.getByRole('button', { name: 'Submit review' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Start drill' })).not.toBeInTheDocument();
+  });
+
+  it('opens the reveal of a finished attempt', async () => {
+    api.codeReviewResult.mockResolvedValue(graded());
+    render(<CourseDrillsPanel programId="course-1" attemptId="attempt-1" />);
+    expect(await screen.findByText('Revealed attempt-1')).toBeVisible();
+  });
+
+  it('opens again when the id changes, and not when the same id renders again', async () => {
+    api.codeReviewResult.mockImplementation((id: string) => Promise.resolve(graded({ attemptId: id })));
+    const view = render(<CourseDrillsPanel programId="course-1" attemptId="attempt-1" />);
+    expect(await screen.findByText('Revealed attempt-1')).toBeVisible();
+    view.rerender(<CourseDrillsPanel programId="course-1" attemptId="attempt-1" />);
+    expect(api.codeReviewResult).toHaveBeenCalledTimes(1);
+    view.rerender(<CourseDrillsPanel programId="course-1" attemptId="attempt-2" />);
+    expect(await screen.findByText('Revealed attempt-2')).toBeVisible();
+    expect(api.codeReviewResult).toHaveBeenCalledTimes(2);
+  });
+
+  it('shows the setup as before when no id is given', async () => {
+    show();
+    expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
+    expect(api.codeReviewResult).not.toHaveBeenCalled();
+  });
+});
+
 describe('the timed clock', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
