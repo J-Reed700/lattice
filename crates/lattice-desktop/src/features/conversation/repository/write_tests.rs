@@ -11,12 +11,17 @@ use std::time::Duration;
 
 const HELD: Duration = Duration::from_millis(300);
 
+/// Opens a migrated database with two connections already open, so a read never waits for a connection to open behind another writer.
 async fn open() -> (tempfile::TempDir, ConversationRepository) {
     let directory = tempfile::tempdir().unwrap();
     let database = DatabaseConnection::new(directory.path().join("writes.db"))
         .await
         .unwrap();
     initialize_database(database.pool()).await.unwrap();
+    let first = database.pool().acquire().await.unwrap();
+    let second = database.pool().acquire().await.unwrap();
+    drop(first);
+    drop(second);
     (
         directory,
         ConversationRepository::new(database.pool().clone()),
