@@ -270,11 +270,6 @@ impl LearningCurriculumRepository {
                     "Diagnostic responses must use each prompt ID at most once.".into(),
                 ));
             }
-            if response.response.trim().chars().count() > 4000 {
-                return Err(AppError::InvalidInput(
-                    "Diagnostic responses must be 4000 characters or fewer.".into(),
-                ));
-            }
             if response.response.trim().is_empty() && !request.save_only {
                 return Err(AppError::InvalidInput(
                     "Answer every self-inventory prompt or skip the diagnostic.".into(),
