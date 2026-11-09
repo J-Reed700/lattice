@@ -1647,6 +1647,7 @@ async fn a_lesson_question_repeated_from_the_program_stays_in_its_place_as_dropp
     );
     Ok(())
 }
+
 fn reasoned_lesson_question() -> (Vec<LessonQuestion>, Vec<LessonAnswerKey>) {
     let question_id = id();
     let questions = vec![LessonQuestion {
