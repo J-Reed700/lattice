@@ -111,6 +111,11 @@ pub async fn practice_fit(
     known(&repo.fit_state(program_id).await?)
 }
 
+/// Whether the course's fit is known to be code. Checking and does-not-fit both read as false.
+pub async fn code_fits(repo: &LearningPracticeRepository, program_id: &str) -> Result<bool> {
+    Ok(practice_fit(repo, program_id).await?.code == CodeFit::Fits)
+}
+
 /// What `state` already decides.
 fn known(state: &FitState) -> Result<PracticeFitDto> {
     if state.language.is_some() {

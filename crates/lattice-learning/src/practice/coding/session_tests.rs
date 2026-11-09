@@ -1142,9 +1142,12 @@ async fn what_is_due_lists_no_pattern_names() {
     ctx.finish(&session, &id()).await.unwrap();
     let due = ctx
         .sessions()
-        .due(&PracticeDueRequestDto {
-            program_id: ctx.program_id.clone(),
-        })
+        .due(
+            &PracticeDueRequestDto {
+                program_id: ctx.program_id.clone(),
+            },
+            true,
+        )
         .await
         .unwrap();
     for item in due.items {
@@ -1152,4 +1155,68 @@ async fn what_is_due_lists_no_pattern_names() {
             assert!(!item.label.contains(pattern.name), "{}", item.label);
         }
     }
+}
+
+/// A due problem pattern in the course, then what the Practice page lists under the course's fit.
+async fn due_with_fit(ctx: &Ctx) -> PracticeDueDto {
+    sqlx::query(
+        "INSERT INTO learning_drill_pattern_schedules(material,pattern_id,stability,difficulty,last_reviewed_at,due_at,interval_days,review_count,lapses) VALUES('problem:python',?,1.0,5.0,0,1,1,1,0)",
+    )
+    .bind(PROBLEM_PATTERNS[0].id)
+    .execute(&ctx.pool)
+    .await
+    .unwrap();
+    let practice = crate::practice_repository::LearningPracticeRepository::new(ctx.pool.clone());
+    let code_fits = crate::practice::practice_fit::code_fits(&practice, &ctx.program_id)
+        .await
+        .unwrap();
+    ctx.sessions()
+        .due(
+            &PracticeDueRequestDto {
+                program_id: ctx.program_id.clone(),
+            },
+            code_fits,
+        )
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn due_lists_no_problem_patterns_for_a_course_with_a_no_code_verdict() {
+    let ctx = Ctx::new().await;
+    let practice = crate::practice_repository::LearningPracticeRepository::new(ctx.pool.clone());
+    let state = practice.fit_state(&ctx.program_id).await.unwrap();
+    let basis = crate::practice::practice_fit::basis_of(&state.outline).unwrap();
+    practice
+        .record_fit(&ctx.program_id, &basis, false, "About speaking.", "test", 1)
+        .await
+        .unwrap();
+    let due = due_with_fit(&ctx).await;
+    assert!(due.items.iter().all(|item| item.kind != DueKind::CodingPatterns));
+}
+
+#[tokio::test]
+async fn due_lists_no_problem_patterns_while_the_fit_is_being_checked() {
+    let ctx = Ctx::new().await;
+    let due = due_with_fit(&ctx).await;
+    assert!(due.items.iter().all(|item| item.kind != DueKind::CodingPatterns));
+}
+
+#[tokio::test]
+async fn due_lists_problem_patterns_for_a_course_with_a_profile_language() {
+    let ctx = Ctx::new().await;
+    crate::practice_repository::LearningPracticeRepository::new(ctx.pool.clone())
+        .save_profile(&crate::dto::SaveLearningPracticeProfileRequestDto {
+            program_id: ctx.program_id.clone(),
+            details: "Backend interview".into(),
+            language: Some("python".into()),
+            interview_at: None,
+            company: None,
+            role: None,
+            expected_revision: 0,
+        })
+        .await
+        .unwrap();
+    let due = due_with_fit(&ctx).await;
+    assert!(due.items.iter().any(|item| item.kind == DueKind::CodingPatterns));
 }
