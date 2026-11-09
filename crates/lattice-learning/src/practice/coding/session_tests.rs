@@ -1,8 +1,8 @@
 //! The session's commands on an in-memory database, with a fake model, a fake runner and a fake clock.
 
-use super::dto::*;
 use super::counterpart::CounterpartReply;
 use super::debrief::{Debrief, Debriefer, SessionEvidence};
+use super::dto::*;
 use super::examples::ExampleCheck;
 use super::hints::CodeHint;
 use super::observation::WorkspaceObservation;
@@ -14,11 +14,13 @@ use crate::assessment_engine::LearningRubricCriterion;
 use crate::dto::LearningPracticeMode;
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::*;
-use crate::practical_generation::{GeneratedPracticalActivity, GeneratedPracticalFile, PracticalFileRole};
+use crate::practical_generation::{
+    GeneratedPracticalActivity, GeneratedPracticalFile, PracticalFileRole,
+};
 use crate::practical_repository::LearningPracticalRepository;
 use crate::practical_runs::CodingRunStart;
+use crate::practice::test_support::fixture;
 use crate::repository::LearningRepository;
-use crate::test_support::fixture;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::{
     ScoreStatus, Scorecard, ScorecardEvidence, ScorecardRow, PROBLEM_PATTERNS,
@@ -35,7 +37,13 @@ fn id() -> String {
     uuid::Uuid::new_v4().to_string()
 }
 
-fn case(id: &str, category: &str, arg: &str, expected: &str, visibility: CaseVisibility) -> ProblemCase {
+fn case(
+    id: &str,
+    category: &str,
+    arg: &str,
+    expected: &str,
+    visibility: CaseVisibility,
+) -> ProblemCase {
     ProblemCase {
         id: id.into(),
         category: category.into(),
@@ -66,7 +74,11 @@ fn problem() -> Problem {
             language: "python".into(),
             difficulty: ProblemDifficulty::Medium,
             target_complexity: "O(1) time".into(),
-            patterns: PROBLEM_PATTERNS.iter().take(1).map(|p| p.id.to_owned()).collect(),
+            patterns: PROBLEM_PATTERNS
+                .iter()
+                .take(1)
+                .map(|p| p.id.to_owned())
+                .collect(),
             starter: "def double(n):\n    pass\n".into(),
         },
         reference: "def double(n):\n    return n * 2\n".into(),
@@ -87,7 +99,13 @@ fn problem() -> Problem {
         cases: vec![
             case("e1", "a small number", "2", "4", CaseVisibility::Example),
             case("h1", "zero", "0", "0", CaseVisibility::Hidden),
-            case("h2", "a negative number", "-3", "-6", CaseVisibility::Hidden),
+            case(
+                "h2",
+                "a negative number",
+                "-3",
+                "-6",
+                CaseVisibility::Hidden,
+            ),
         ],
         reference_ms: BTreeMap::new(),
         bug: None,
@@ -129,7 +147,12 @@ impl CodingAids for FakeAids {
         "fake-model"
     }
 
-    async fn check_example(&self, _problem: &Problem, _args: &[String], expected: &str) -> Result<ExampleCheck> {
+    async fn check_example(
+        &self,
+        _problem: &Problem,
+        _args: &[String],
+        expected: &str,
+    ) -> Result<ExampleCheck> {
         Ok(match expected {
             "4" => ExampleCheck {
                 verdict: ExampleVerdict::Right,
@@ -187,11 +210,7 @@ impl CodingAids for FakeAids {
         _observation: &WorkspaceObservation,
     ) -> Result<Option<CounterpartReply>> {
         self.reply_calls.fetch_add(1, Ordering::SeqCst);
-        self.replies
-            .lock()
-            .unwrap()
-            .pop_front()
-            .unwrap_or(Ok(None))
+        self.replies.lock().unwrap().pop_front().unwrap_or(Ok(None))
     }
 }
 
@@ -204,7 +223,11 @@ struct FakeRuns {
 
 #[async_trait]
 impl CodingRuns for FakeRuns {
-    async fn start(&self, start: &CodingRunStart, payload_hash: &str) -> Result<LearningPracticalRunDto> {
+    async fn start(
+        &self,
+        start: &CodingRunStart,
+        payload_hash: &str,
+    ) -> Result<LearningPracticalRunDto> {
         let base = &start.base;
         let failing = self.failing.lock().unwrap().clone();
         let details = start
@@ -231,7 +254,10 @@ impl CodingRuns for FakeRuns {
                 elapsed_ms: Some(1),
             })
             .collect::<Vec<_>>();
-        let status = if details.iter().any(|detail| detail.status == CaseStatus::Failed) {
+        let status = if details
+            .iter()
+            .any(|detail| detail.status == CaseStatus::Failed)
+        {
             "failed"
         } else {
             "passed"
@@ -413,7 +439,12 @@ impl Ctx {
             .unwrap();
     }
 
-    async fn run(&self, session: &CodingSessionDto, scope: CodingRunScope, input: Option<Vec<String>>) -> Result<CodingSessionDto> {
+    async fn run(
+        &self,
+        session: &CodingSessionDto,
+        scope: CodingRunScope,
+        input: Option<Vec<String>>,
+    ) -> Result<CodingSessionDto> {
         self.sessions()
             .run(&RunCodingSessionRequestDto {
                 operation_id: id(),
@@ -427,7 +458,12 @@ impl Ctx {
             .await
     }
 
-    async fn move_to(&self, session: &CodingSessionDto, stage: CodingStage, expected_revision: i64) -> Result<CodingSessionDto> {
+    async fn move_to(
+        &self,
+        session: &CodingSessionDto,
+        stage: CodingStage,
+        expected_revision: i64,
+    ) -> Result<CodingSessionDto> {
         self.sessions()
             .move_stage(&MoveCodingStageRequestDto {
                 operation_id: id(),
@@ -439,7 +475,12 @@ impl Ctx {
             .await
     }
 
-    async fn example(&self, session: &CodingSessionDto, ordinal: Option<u32>, expected: &str) -> Result<CodingSessionDto> {
+    async fn example(
+        &self,
+        session: &CodingSessionDto,
+        ordinal: Option<u32>,
+        expected: &str,
+    ) -> Result<CodingSessionDto> {
         self.sessions()
             .check_example(&CheckCodingExampleRequestDto {
                 operation_id: id(),
@@ -452,7 +493,11 @@ impl Ctx {
             .await
     }
 
-    async fn finish(&self, session: &CodingSessionDto, operation_id: &str) -> Result<CodingSessionDto> {
+    async fn finish(
+        &self,
+        session: &CodingSessionDto,
+        operation_id: &str,
+    ) -> Result<CodingSessionDto> {
         self.sessions()
             .finish(&FinishCodingSessionRequestDto {
                 operation_id: operation_id.into(),
@@ -534,7 +579,10 @@ async fn the_list_is_newest_first_and_reports_the_last_submit() {
         })
         .await
         .unwrap();
-    let ids = listed.iter().map(|each| each.session_id.as_str()).collect::<Vec<_>>();
+    let ids = listed
+        .iter()
+        .map(|each| each.session_id.as_str())
+        .collect::<Vec<_>>();
     assert_eq!(ids, [newer.session_id.as_str(), older.session_id.as_str()]);
     assert_eq!(listed[1].passed, Some(3));
     assert_eq!(listed[1].total, Some(3));
@@ -546,18 +594,38 @@ async fn the_list_is_newest_first_and_reports_the_last_submit() {
 async fn moving_forward_records_the_stages_passed_over_and_a_stale_revision_conflicts() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Mock).await;
-    let moved = ctx.move_to(&session, CodingStage::Code, session.revision).await.unwrap();
+    let moved = ctx
+        .move_to(&session, CodingStage::Code, session.revision)
+        .await
+        .unwrap();
     assert_eq!(moved.stage, CodingStage::Code);
     assert_eq!(moved.revision, session.revision + 1);
-    let bundle = ctx.repo.coding_session(&ctx.program_id, &session.session_id).await.unwrap();
-    let event = bundle.events.iter().rev().find(|event| event.kind == "stage").unwrap();
+    let bundle = ctx
+        .repo
+        .coding_session(&ctx.program_id, &session.session_id)
+        .await
+        .unwrap();
+    let event = bundle
+        .events
+        .iter()
+        .rev()
+        .find(|event| event.kind == "stage")
+        .unwrap();
     assert_eq!(event.payload["from"], "understand");
     assert_eq!(event.payload["to"], "code");
-    assert_eq!(event.payload["skipped"], serde_json::json!(["examples", "plan"]));
+    assert_eq!(
+        event.payload["skipped"],
+        serde_json::json!(["examples", "plan"])
+    );
 
-    let stale = ctx.move_to(&moved, CodingStage::Test, session.revision).await;
+    let stale = ctx
+        .move_to(&moved, CodingStage::Test, session.revision)
+        .await;
     assert!(is_conflict(&stale), "{stale:?}");
-    let back = ctx.move_to(&moved, CodingStage::Understand, moved.revision).await.unwrap();
+    let back = ctx
+        .move_to(&moved, CodingStage::Understand, moved.revision)
+        .await
+        .unwrap();
     let event = ctx
         .repo
         .coding_session(&ctx.program_id, &session.session_id)
@@ -576,8 +644,13 @@ async fn moving_forward_records_the_stages_passed_over_and_a_stale_revision_conf
 async fn a_stage_the_task_lacks_is_refused() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Mock).await;
-    let refused = ctx.move_to(&session, CodingStage::Reproduce, session.revision).await;
-    assert!(matches!(refused, Err(AppError::InvalidInput(_))), "{refused:?}");
+    let refused = ctx
+        .move_to(&session, CodingStage::Reproduce, session.revision)
+        .await;
+    assert!(
+        matches!(refused, Err(AppError::InvalidInput(_))),
+        "{refused:?}"
+    );
 }
 
 #[tokio::test]
@@ -618,7 +691,10 @@ async fn an_example_is_checked_edited_and_removed() {
             expected: "4".into(),
         })
         .await;
-    assert!(matches!(wrong_arity, Err(AppError::InvalidInput(_))), "{wrong_arity:?}");
+    assert!(
+        matches!(wrong_arity, Err(AppError::InvalidInput(_))),
+        "{wrong_arity:?}"
+    );
 }
 
 #[tokio::test]
@@ -643,22 +719,38 @@ async fn mock_never_shows_a_failing_hidden_case_and_coached_does() {
     ctx.runs.failing.lock().unwrap().push("h1".into());
     let mock = ctx.start(CodingSetting::Mock).await;
     let after = ctx.run(&mock, CodingRunScope::All, None).await.unwrap();
-    let hidden = after.runs[0].cases.iter().find(|each| each.case_id == "h1").unwrap();
+    let hidden = after.runs[0]
+        .cases
+        .iter()
+        .find(|each| each.case_id == "h1")
+        .unwrap();
     assert_eq!(hidden.status, CaseStatus::Failed);
     assert_eq!(hidden.category, "zero");
     assert_eq!(hidden.args, None);
     assert_eq!(hidden.expected, None);
     assert_eq!(hidden.actual, None);
     assert_eq!(hidden.printed, None);
-    let passing_hidden = after.runs[0].cases.iter().find(|each| each.case_id == "h2").unwrap();
+    let passing_hidden = after.runs[0]
+        .cases
+        .iter()
+        .find(|each| each.case_id == "h2")
+        .unwrap();
     assert_eq!(passing_hidden.args, None);
-    let example = after.runs[0].cases.iter().find(|each| each.case_id == "e1").unwrap();
+    let example = after.runs[0]
+        .cases
+        .iter()
+        .find(|each| each.case_id == "e1")
+        .unwrap();
     assert_eq!(example.args, Some(vec!["2".into()]));
     assert_eq!(example.expected.as_deref(), Some("4"));
 
     let coached = ctx.start(CodingSetting::Coached).await;
     let after = ctx.run(&coached, CodingRunScope::All, None).await.unwrap();
-    let hidden = after.runs[0].cases.iter().find(|each| each.case_id == "h1").unwrap();
+    let hidden = after.runs[0]
+        .cases
+        .iter()
+        .find(|each| each.case_id == "h1")
+        .unwrap();
     assert_eq!(hidden.args, Some(vec!["0".into()]));
     assert_eq!(hidden.expected.as_deref(), Some("0"));
     assert_eq!(hidden.actual.as_deref(), Some("99"));
@@ -668,7 +760,10 @@ async fn mock_never_shows_a_failing_hidden_case_and_coached_does() {
 async fn the_first_run_of_every_case_is_the_submit() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Mock).await;
-    let examples = ctx.run(&session, CodingRunScope::Examples, None).await.unwrap();
+    let examples = ctx
+        .run(&session, CodingRunScope::Examples, None)
+        .await
+        .unwrap();
     assert!(!examples.submitted);
     assert_eq!(examples.runs[0].cases.len(), 1);
     let all = ctx.run(&examples, CodingRunScope::All, None).await.unwrap();
@@ -683,9 +778,16 @@ async fn an_examples_run_adds_the_learners_right_examples_as_their_own_cases() {
     let session = ctx.start(CodingSetting::Coached).await;
     let with_example = ctx.example(&session, None, "4").await.unwrap();
     ctx.example(&with_example, None, "5").await.unwrap();
-    let after = ctx.run(&session, CodingRunScope::Examples, None).await.unwrap();
+    let after = ctx
+        .run(&session, CodingRunScope::Examples, None)
+        .await
+        .unwrap();
     let cases = &after.runs[0].cases;
-    assert_eq!(cases.len(), 2, "the statement's example and the one right example");
+    assert_eq!(
+        cases.len(),
+        2,
+        "the statement's example and the one right example"
+    );
     let mine = cases.iter().find(|each| each.mine).unwrap();
     assert_eq!(mine.case_id, "mine-1");
     assert_eq!(mine.category, "Your example 1");
@@ -695,21 +797,31 @@ async fn an_examples_run_adds_the_learners_right_examples_as_their_own_cases() {
 async fn an_input_run_shows_what_the_reference_returns_only_in_coached() {
     let ctx = Ctx::new().await;
     let coached = ctx.start(CodingSetting::Coached).await;
-    let after = ctx.run(&coached, CodingRunScope::Input, Some(vec!["2".into()])).await.unwrap();
+    let after = ctx
+        .run(&coached, CodingRunScope::Input, Some(vec!["2".into()]))
+        .await
+        .unwrap();
     assert_eq!(after.runs[0].reference_actual.as_deref(), Some("4"));
     assert_eq!(after.runs[0].cases[0].case_id, "input");
 
     let mock = ctx.start(CodingSetting::Mock).await;
-    let after = ctx.run(&mock, CodingRunScope::Input, Some(vec!["2".into()])).await.unwrap();
+    let after = ctx
+        .run(&mock, CodingRunScope::Input, Some(vec!["2".into()]))
+        .await
+        .unwrap();
     assert_eq!(after.runs[0].reference_actual, None);
 
     let missing = ctx.run(&mock, CodingRunScope::Input, None).await;
-    assert!(matches!(missing, Err(AppError::InvalidInput(_))), "{missing:?}");
+    assert!(
+        matches!(missing, Err(AppError::InvalidInput(_))),
+        "{missing:?}"
+    );
 }
 
 #[tokio::test]
 async fn the_worked_solution_is_never_available_in_mock_and_only_after_a_submit_in_coached() {
     let ctx = Ctx::new().await;
+    let ctx = &ctx;
     let reveal = |session: &CodingSessionDto| {
         let request = RevealCodingSolutionRequestDto {
             operation_id: id(),
@@ -733,13 +845,17 @@ async fn the_worked_solution_is_never_available_in_mock_and_only_after_a_submit_
     assert!(submitted.solution_available);
     assert_eq!(submitted.worked_solution, None, "available is not shown");
     let revealed = reveal(&submitted).await.unwrap();
-    assert_eq!(revealed.worked_solution.as_deref(), Some(problem().reference.as_str()));
+    assert_eq!(
+        revealed.worked_solution.as_deref(),
+        Some(problem().reference.as_str())
+    );
 }
 
 #[tokio::test]
 async fn the_clock_counts_open_time_only_and_a_stale_span_ends_at_the_last_event() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Mock).await;
+    let ctx = &ctx;
     let clock = |open: bool| {
         let request = SetCodingClockRequestDto {
             program_id: ctx.program_id.clone(),
@@ -756,16 +872,26 @@ async fn the_clock_counts_open_time_only_and_a_stale_span_ends_at_the_last_event
     let closed = clock(false).await;
     assert_eq!((closed.active_ms, closed.open_since), (5_000, None));
     ctx.clock.set(90_000);
-    assert_eq!(clock(false).await.active_ms, 5_000, "closing a closed clock changes nothing");
+    assert_eq!(
+        clock(false).await.active_ms,
+        5_000,
+        "closing a closed clock changes nothing"
+    );
 
     ctx.clock.set(100_000);
     clock(true).await;
     ctx.clock.set(102_000);
     let current = ctx.get(&session).await;
-    ctx.move_to(&current, CodingStage::Plan, current.revision).await.unwrap();
+    ctx.move_to(&current, CodingStage::Plan, current.revision)
+        .await
+        .unwrap();
     ctx.clock.set(9_000_000);
     let reopened = clock(true).await;
-    assert_eq!(reopened.active_ms, 5_000 + 2_000, "the stale span ended at the stage move");
+    assert_eq!(
+        reopened.active_ms,
+        5_000 + 2_000,
+        "the stale span ended at the stage move"
+    );
     assert_eq!(reopened.open_since, Some(9_000_000));
 }
 
@@ -776,16 +902,35 @@ async fn a_cue_is_replaced_only_by_one_that_outranks_it() {
     let (program, id) = (&ctx.program_id, &session.session_id);
     ctx.clear_cue(&session).await;
 
-    ctx.repo.offer_coding_cue(program, id, &CodingCue::Checkpoint).await.unwrap();
-    ctx.repo.offer_coding_cue(program, id, &CodingCue::Idle).await.unwrap();
+    ctx.repo
+        .offer_coding_cue(program, id, &CodingCue::Checkpoint)
+        .await
+        .unwrap();
+    ctx.repo
+        .offer_coding_cue(program, id, &CodingCue::Idle)
+        .await
+        .unwrap();
     let kept = ctx.repo.take_coding_cue(program, id).await.unwrap();
     assert!(matches!(kept, Some(CodingCue::Checkpoint)), "{kept:?}");
 
-    ctx.repo.offer_coding_cue(program, id, &CodingCue::Idle).await.unwrap();
-    ctx.repo.offer_coding_cue(program, id, &CodingCue::Reply).await.unwrap();
+    ctx.repo
+        .offer_coding_cue(program, id, &CodingCue::Idle)
+        .await
+        .unwrap();
+    ctx.repo
+        .offer_coding_cue(program, id, &CodingCue::Reply)
+        .await
+        .unwrap();
     let replaced = ctx.repo.take_coding_cue(program, id).await.unwrap();
     assert!(matches!(replaced, Some(CodingCue::Reply)), "{replaced:?}");
-    assert!(ctx.repo.take_coding_cue(program, id).await.unwrap().is_none(), "a cue is taken once");
+    assert!(
+        ctx.repo
+            .take_coding_cue(program, id)
+            .await
+            .unwrap()
+            .is_none(),
+        "a cue is taken once"
+    );
 }
 
 #[tokio::test]
@@ -832,7 +977,11 @@ async fn a_reply_becomes_the_counterparts_turn_and_the_cue_is_spent() {
         assert_eq!(after.turns[0].content, "Walk me through the input.");
         assert_eq!(after.turns[0].model_name.as_deref(), Some("fake-model"));
         assert!(!after.cue_pending);
-        let bundle = ctx.repo.coding_session(&ctx.program_id, &session.session_id).await.unwrap();
+        let bundle = ctx
+            .repo
+            .coding_session(&ctx.program_id, &session.session_id)
+            .await
+            .unwrap();
         assert!(bundle.events.iter().any(|event| event.kind == "draft_seen"));
     }
 }
@@ -858,14 +1007,22 @@ async fn silence_stores_no_turn_but_spends_the_cue() {
 async fn a_failed_respond_puts_the_cue_back_and_returns_the_error() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Mock).await;
-    ctx.aids.queue(Err(AppError::ServiceNotAvailable("the model is busy".into())));
+    ctx.aids.queue(Err(AppError::ServiceNotAvailable(
+        "the model is busy".into(),
+    )));
     let request = CodingSessionRequestDto {
         program_id: ctx.program_id.clone(),
         session_id: session.session_id.clone(),
     };
     let failed = ctx.sessions().respond(&request).await;
-    assert!(matches!(failed, Err(AppError::ServiceNotAvailable(_))), "{failed:?}");
-    assert!(ctx.get(&session).await.cue_pending, "the screen can try again");
+    assert!(
+        matches!(failed, Err(AppError::ServiceNotAvailable(_))),
+        "{failed:?}"
+    );
+    assert!(
+        ctx.get(&session).await.cue_pending,
+        "the screen can try again"
+    );
 
     ctx.aids.queue(Ok(Some(CounterpartReply {
         content: "Go on.".into(),
@@ -882,9 +1039,20 @@ async fn a_cue_that_arrived_during_a_failed_reply_is_not_overwritten() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Mock).await;
     let (program, id) = (&ctx.program_id, &session.session_id);
-    let taken = ctx.repo.take_coding_cue(program, id).await.unwrap().unwrap();
-    ctx.repo.offer_coding_cue(program, id, &CodingCue::Submitted).await.unwrap();
-    ctx.repo.restore_coding_cue(program, id, &taken).await.unwrap();
+    let taken = ctx
+        .repo
+        .take_coding_cue(program, id)
+        .await
+        .unwrap()
+        .unwrap();
+    ctx.repo
+        .offer_coding_cue(program, id, &CodingCue::Submitted)
+        .await
+        .unwrap();
+    ctx.repo
+        .restore_coding_cue(program, id, &taken)
+        .await
+        .unwrap();
     let pending = ctx.repo.take_coding_cue(program, id).await.unwrap();
     assert!(matches!(pending, Some(CodingCue::Submitted)), "{pending:?}");
 }
@@ -893,6 +1061,7 @@ async fn a_cue_that_arrived_during_a_failed_reply_is_not_overwritten() {
 async fn a_hint_is_stored_by_rung_and_a_stale_revision_conflicts() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Coached).await;
+    let ctx = &ctx;
     let ask = |revision: i64| {
         let request = AskCodingHintRequestDto {
             operation_id: id(),
@@ -909,11 +1078,17 @@ async fn a_hint_is_stored_by_rung_and_a_stale_revision_conflicts() {
     assert_eq!(after.hints[0].rung, CodeHintRung::Nudge);
     assert_eq!(after.hints[0].stage, CodingStage::Understand);
     assert_eq!(after.next_rung, CodeHintRung::Idea);
-    assert!(after.turns.is_empty(), "outside Watched a hint is not in the thread");
+    assert!(
+        after.turns.is_empty(),
+        "outside Watched a hint is not in the thread"
+    );
 
     let stale = ask(session.revision).await;
     assert!(is_conflict(&stale), "{stale:?}");
-    assert_eq!(ask(after.revision).await.unwrap().hints[1].rung, CodeHintRung::Idea);
+    assert_eq!(
+        ask(after.revision).await.unwrap().hints[1].rung,
+        CodeHintRung::Idea
+    );
 }
 
 #[tokio::test]
@@ -933,7 +1108,10 @@ async fn in_watched_a_hint_is_also_the_interviewers_turn() {
         .unwrap();
     assert!(after.hints[0].in_role);
     assert_eq!(after.turns.len(), 1);
-    assert_eq!(after.turns[0].speaker, LearningSimulationSpeaker::Counterpart);
+    assert_eq!(
+        after.turns[0].speaker,
+        LearningSimulationSpeaker::Counterpart
+    );
 }
 
 #[tokio::test]
@@ -941,6 +1119,7 @@ async fn a_learner_turn_is_stored_with_the_draft_and_cues_the_counterpart() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Mock).await;
     ctx.clear_cue(&session).await;
+    let ctx = &ctx;
     let send = |revision: i64| {
         let request = SendCodingTurnRequestDto {
             operation_id: id(),
@@ -981,6 +1160,7 @@ async fn an_observed_draft_is_saved_and_idle_waits_for_a_quiet_spell() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Coached).await;
     ctx.clear_cue(&session).await;
+    let ctx = &ctx;
     let observe = |reason: DraftObservation, content: &str| {
         let request = ObserveCodingDraftRequestDto {
             program_id: ctx.program_id.clone(),
@@ -995,10 +1175,16 @@ async fn an_observed_draft_is_saved_and_idle_waits_for_a_quiet_spell() {
     assert_eq!(saved.draft, starter_files("def double(n):\n    return n\n"));
 
     ctx.clock.advance(super::session::IDLE_AFTER_MS - 1);
-    assert!(!observe(DraftObservation::Idle, "def double(n):\n    return n\n").await.cue_pending);
+    assert!(
+        !observe(DraftObservation::Idle, "def double(n):\n    return n\n")
+            .await
+            .cue_pending
+    );
     ctx.clock.advance(2);
     assert!(
-        observe(DraftObservation::Idle, "def double(n):\n    return n\n").await.cue_pending,
+        observe(DraftObservation::Idle, "def double(n):\n    return n\n")
+            .await
+            .cue_pending,
         "a stage move 180 s ago no longer counts"
     );
 }
@@ -1008,6 +1194,7 @@ async fn a_pause_over_an_unchanged_draft_cues_nothing_and_a_changed_one_cues_a_c
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Watched).await;
     ctx.clear_cue(&session).await;
+    let ctx = &ctx;
     let pause = |content: &str| {
         let request = ObserveCodingDraftRequestDto {
             program_id: ctx.program_id.clone(),
@@ -1018,13 +1205,18 @@ async fn a_pause_over_an_unchanged_draft_cues_nothing_and_a_changed_one_cues_a_c
         async move { ctx.sessions().observe_draft(&request).await.unwrap() }
     };
     assert!(!pause(&problem().spec.starter).await.cue_pending);
-    assert!(pause("def double(n):\n    return n * 2\n").await.cue_pending);
+    assert!(
+        pause("def double(n):\n    return n * 2\n")
+            .await
+            .cue_pending
+    );
 }
 
 #[tokio::test]
 async fn changing_the_setting_logs_it_and_gives_the_budget_a_session_lacked() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Coached).await;
+    let ctx = &ctx;
     let change = |setting: CodingSetting, revision: i64| {
         let request = SetCodingSettingRequestDto {
             operation_id: id(),
@@ -1037,11 +1229,22 @@ async fn changing_the_setting_logs_it_and_gives_the_budget_a_session_lacked() {
     };
     let mock = change(CodingSetting::Mock, session.revision).await.unwrap();
     assert_eq!(mock.setting, CodingSetting::Mock);
-    assert_eq!(mock.clock.budget_seconds, Some(default_budget_seconds(ProblemDifficulty::Medium)));
-    assert_eq!(mock.settings_used, [CodingSetting::Coached, CodingSetting::Mock]);
-    assert!(is_conflict(&change(CodingSetting::Watched, session.revision).await));
+    assert_eq!(
+        mock.clock.budget_seconds,
+        Some(default_budget_seconds(ProblemDifficulty::Medium))
+    );
+    assert_eq!(
+        mock.settings_used,
+        [CodingSetting::Coached, CodingSetting::Mock]
+    );
+    assert!(is_conflict(
+        &change(CodingSetting::Watched, session.revision).await
+    ));
     let back = change(CodingSetting::Coached, mock.revision).await.unwrap();
-    assert_eq!(back.settings_used, [CodingSetting::Coached, CodingSetting::Mock]);
+    assert_eq!(
+        back.settings_used,
+        [CodingSetting::Coached, CodingSetting::Mock]
+    );
 }
 
 #[tokio::test]
@@ -1060,34 +1263,64 @@ async fn finishing_twice_writes_once_and_shows_everything_in_the_debrief() {
     assert_eq!(debrief.model, "fake-model");
     assert_eq!(debrief.strong_answer.approach, "Multiply by two.");
     assert_eq!(debrief.strong_answer.reference, problem().reference);
-    let hidden = debrief.cases.iter().find(|each| each.case_id == "h1").unwrap();
-    assert_eq!(hidden.args, Some(vec!["0".into()]), "the debrief keeps nothing back");
+    let hidden = debrief
+        .cases
+        .iter()
+        .find(|each| each.case_id == "h1")
+        .unwrap();
+    assert_eq!(
+        hidden.args,
+        Some(vec!["0".into()]),
+        "the debrief keeps nothing back"
+    );
     assert_eq!(debrief.misreadings.len(), 2);
-    assert_eq!(first.worked_solution.as_deref(), Some(problem().reference.as_str()));
+    assert_eq!(
+        first.worked_solution.as_deref(),
+        Some(problem().reference.as_str())
+    );
     assert!(first.clock.open_since.is_none());
 
-    let evidence = ctx.repo.coding_evidence_count(&submitted.session_id).await.unwrap();
-    assert_eq!(evidence, 1, "one event for the activity's one outcome");
-    let schedules: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_drill_pattern_schedules WHERE material='problem:python'")
-        .fetch_one(&ctx.pool)
+    let evidence = ctx
+        .repo
+        .coding_evidence_count(&submitted.session_id)
         .await
         .unwrap();
+    assert_eq!(evidence, 1, "one event for the activity's one outcome");
+    let schedules: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM learning_drill_pattern_schedules WHERE material='problem:python'",
+    )
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
     assert_eq!(schedules, problem().spec.patterns.len() as i64);
 
     let second = ctx.finish(&submitted, &id()).await.unwrap();
     assert!(second.finished);
-    assert_eq!(ctx.debriefer.calls.load(Ordering::SeqCst), 1, "no second debrief");
-    assert_eq!(ctx.repo.coding_evidence_count(&submitted.session_id).await.unwrap(), 1);
-    let scorecards: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_scorecards WHERE session_id=?")
-        .bind(&submitted.session_id)
-        .fetch_one(&ctx.pool)
-        .await
-        .unwrap();
+    assert_eq!(
+        ctx.debriefer.calls.load(Ordering::SeqCst),
+        1,
+        "no second debrief"
+    );
+    assert_eq!(
+        ctx.repo
+            .coding_evidence_count(&submitted.session_id)
+            .await
+            .unwrap(),
+        1
+    );
+    let scorecards: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM learning_scorecards WHERE session_id=?")
+            .bind(&submitted.session_id)
+            .fetch_one(&ctx.pool)
+            .await
+            .unwrap();
     assert_eq!(scorecards, 2);
-    let schedules_after: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_drill_pattern_schedules WHERE material='problem:python'")
-        .fetch_one(&ctx.pool)
-        .await
-        .unwrap();
+    let schedules_after: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM learning_drill_pattern_schedules WHERE material='problem:python'",
+    )
+    .fetch_one(&ctx.pool)
+    .await
+    .unwrap();
     assert_eq!(schedules_after, schedules);
 }
 
@@ -1100,7 +1333,9 @@ async fn the_same_finish_operation_replays_and_a_finished_session_takes_no_chang
     let again = ctx.finish(&finished, &operation).await.unwrap();
     assert_eq!(again.revision, finished.revision);
 
-    let moved = ctx.move_to(&finished, CodingStage::Plan, finished.revision).await;
+    let moved = ctx
+        .move_to(&finished, CodingStage::Plan, finished.revision)
+        .await;
     assert!(moved.is_err(), "{moved:?}");
     let ran = ctx.run(&finished, CodingRunScope::All, None).await;
     assert!(ran.is_err(), "{ran:?}");
@@ -1111,6 +1346,7 @@ async fn the_ledger_refuses_an_operation_id_reused_for_another_request() {
     let ctx = Ctx::new().await;
     let session = ctx.start(CodingSetting::Mock).await;
     let operation = id();
+    let ctx = &ctx;
     let move_with = |stage: CodingStage| {
         let request = MoveCodingStageRequestDto {
             operation_id: operation.clone(),

@@ -163,7 +163,10 @@ fn reference_actual_of(bundle: &SessionBundle, run_id: &str) -> Option<String> {
         .map(str::to_owned)
 }
 
-fn debrief_view(bundle: &SessionBundle, draft: &[LearningLabFile]) -> Result<Option<CodingDebriefDto>> {
+fn debrief_view(
+    bundle: &SessionBundle,
+    draft: &[LearningLabFile],
+) -> Result<Option<CodingDebriefDto>> {
     let (Some(stored), Some(scorecard), true) = (
         &bundle.debrief,
         &bundle.scorecard,
@@ -182,16 +185,23 @@ fn debrief_view(bundle: &SessionBundle, draft: &[LearningLabFile]) -> Result<Opt
         },
         patterns: stored.ratings.clone(),
         cases: last_all_run(bundle)
-            .map(|run| run.cases.iter().map(|detail| case_view(detail, true)).collect())
+            .map(|run| {
+                run.cases
+                    .iter()
+                    .map(|detail| case_view(detail, true))
+                    .collect()
+            })
             .unwrap_or_default(),
         misreadings: bundle
             .problem
             .misreadings
             .iter()
-            .map(|misreading| crate::practice::coding::dto::MisreadingViewDto {
-                description: misreading.description.clone(),
-                caught: caught.contains(&misreading.id.as_str()),
-            })
+            .map(
+                |misreading| crate::practice::coding::dto::MisreadingViewDto {
+                    description: misreading.description.clone(),
+                    caught: caught.contains(&misreading.id.as_str()),
+                },
+            )
             .collect(),
         model: stored.model.clone(),
     }))

@@ -1,8 +1,8 @@
 //! The cases a run covers, by scope.
 use crate::practice::coding::dto::CodingRunScope;
+use crate::practice::coding::dto::ExampleVerdict;
 use crate::practice::coding::problem::{CaseVisibility, Problem, ProblemCase};
 use crate::practice::coding::records::StoredExample;
-use crate::practice::coding::dto::ExampleVerdict;
 use lattice_core::shared::error::{AppError, Result};
 
 /// The id of the one case an input run holds.
@@ -16,7 +16,13 @@ pub struct RunCases {
     pub mine_ids: Vec<String>,
 }
 
-fn learner_case(problem: &Problem, id: String, category: String, args: Vec<String>, expected: Option<String>) -> ProblemCase {
+fn learner_case(
+    problem: &Problem,
+    id: String,
+    category: String,
+    args: Vec<String>,
+    expected: Option<String>,
+) -> ProblemCase {
     ProblemCase {
         id,
         category,
