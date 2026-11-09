@@ -238,8 +238,8 @@ impl LearningSourceLibraryRepository {
     ) -> Result<Vec<LearningSourceSearchResultDto>> {
         Self::validate_program_id(&req.program_id)?;
         let query = req.query.trim();
-        if query.is_empty() || query.chars().count() > 200 {
-            return Err(invalid("Search query must contain 1–200 characters"));
+        if query.is_empty() {
+            return Err(invalid("Search query must not be empty"));
         }
         let limit = req.limit.clamp(1, 50) as i64;
         let mut rows=sqlx::query("SELECT source_id,id,title,full_text FROM learning_source_versions WHERE program_id=? ORDER BY acquired_at DESC,id")

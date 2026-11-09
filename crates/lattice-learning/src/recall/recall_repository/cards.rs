@@ -111,16 +111,6 @@ impl LearningRecallRepository {
         };
         let timestamp = now();
         if new_card {
-            let count: i64 = sqlx::query_scalar("SELECT count(*) FROM study_cards WHERE deck_id=?")
-                .bind(&deck_id)
-                .fetch_one(&mut *tx)
-                .await
-                .map_err(db)?;
-            if count >= MAX_CARDS {
-                return Err(invalid(
-                    "A Learning recall deck can contain at most 2,000 cards.",
-                ));
-            }
             sqlx::query("INSERT INTO study_cards(id,deck_id,question,answer,options_json,correct_index,explanation,source_json,topic,due_at,format) VALUES(?,?,?,?,?,?,?,?,?,?,?)")
                 .bind(&req.card_id)
                 .bind(&deck_id)
