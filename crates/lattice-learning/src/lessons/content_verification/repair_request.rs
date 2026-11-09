@@ -120,6 +120,15 @@ pub(super) fn repair_context(
                 // after it tests, and why the first could not be applied.
                 if let Some((goal, why)) = ledger.rewrite_ask(policy, id) {
                     fields.insert("goal".into(), json!(goal_words(goal)));
+                    if goal == Goal::CorrectWhatWasFound {
+                        let (veto, ground) = ledger.veto_and_ground_reasons(id);
+                        if let Some(reason) = veto {
+                            fields.insert("reason".into(), json!(reason));
+                        }
+                        if let Some(reason) = ground {
+                            fields.insert("groundReason".into(), json!(reason));
+                        }
+                    }
                     if let Some(reason) = why {
                         fields.insert("notApplied".into(), json!(reason));
                     }

@@ -62,7 +62,7 @@ pub(super) const CUTTING: [(Step, Outcome); 5] = [
 const CONSISTENT: [(Step, Outcome); 2] = [(CONSISTENCY, Outcome::Stands), (VETO, Outcome::Stands)];
 
 pub(super) const SOURCED: (Class, ClassifiedBy) = (Class::Sourced, ClassifiedBy::Writer);
-const REASONED: (Class, ClassifiedBy) = (Class::Reasoning, ClassifiedBy::Model);
+pub(super) const REASONED: (Class, ClassifiedBy) = (Class::Reasoning, ClassifiedBy::Model);
 
 pub(super) fn lesson_of(body: &str) -> Value {
     json!({"blocks":[{"kind":"explanation","title":"Rows","body":body,"rubric":[]}],"questions":[]})
@@ -102,6 +102,20 @@ pub(super) async fn walk(
     class: Class,
     steps: &[(Step, Outcome)],
 ) -> Result<()> {
+    let because: Vec<_> = steps
+        .iter()
+        .map(|&(step, outcome)| (step, outcome, "Because."))
+        .collect();
+    walk_because(ledger, id, class, &because).await
+}
+
+/// `walk`, each step giving its own reason.
+pub(super) async fn walk_because(
+    ledger: &mut claim_ledger::ClaimLedger,
+    id: &ClaimId,
+    class: Class,
+    steps: &[(Step, Outcome, &str)],
+) -> Result<()> {
     let policy = StandardPolicy::new();
     let mut here = Some(Position {
         class,
@@ -109,7 +123,7 @@ pub(super) async fn walk(
         reasked: false,
         node: policy.graph(class).entry(),
     });
-    for &(step, outcome) in steps {
+    for &(step, outcome, reason) in steps {
         let at = here.expect("a step after the statement ended");
         let (then, next) = decide(&policy, at, Taken { step, outcome }).expect("an edge");
         here = next;
@@ -118,7 +132,7 @@ pub(super) async fn walk(
             step,
             outcome,
             then,
-            reason: "Because.".into(),
+            reason: reason.into(),
             rewrite_ahead: next.is_some_and(|next| rewrite_ahead(&policy, next)),
         };
         ledger.append(id, stepped).await?;

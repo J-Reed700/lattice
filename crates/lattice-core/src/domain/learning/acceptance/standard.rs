@@ -174,7 +174,19 @@ fn reasoning() -> Graph {
                 .on(&[Stands], Next::End(End::Consistent))
                 .on(&[Refuted], Next::to("r.ground")),
         )
-        .with(ground("r.ground", End::Consistent, "r.rewrite"))
+        .with(ground("r.ground", End::Consistent, "r.correct"))
+        .with(rewrite(
+            "r.correct",
+            Goal::CorrectWhatWasFound,
+            "r.final",
+            "r.correct.again",
+        ))
+        .with(rewrite(
+            "r.correct.again",
+            Goal::CorrectWhatWasFound,
+            "r.final",
+            "r.cut",
+        ))
         .with(rewrite(
             "r.rewrite",
             Goal::AgreeWithThePassages,

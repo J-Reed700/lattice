@@ -41,6 +41,7 @@ fn the_standard_policys_nodes_are_the_designs_tables() {
     let veto = Step::Read(Reading::Veto);
     let sourced_rewrite = Step::Rewrite(Goal::WhatThePassageStates);
     let reasoning_rewrite = Step::Rewrite(Goal::AgreeWithThePassages);
+    let correct_rewrite = Step::Rewrite(Goal::CorrectWhatWasFound);
     let field_rewrite = Step::Rewrite(Goal::AsTheFieldHasIt);
     let rows: Vec<(Class, &str, Step, u32)> = vec![
         (Sourced, "s.read", parts, 1),
@@ -57,6 +58,8 @@ fn the_standard_policys_nodes_are_the_designs_tables() {
         (Reasoning, "r.read", consistency, 1),
         (Reasoning, "r.veto", veto, 3),
         (Reasoning, "r.ground", ground, 1),
+        (Reasoning, "r.correct", correct_rewrite, 1),
+        (Reasoning, "r.correct.again", correct_rewrite, 1),
         (Reasoning, "r.rewrite", reasoning_rewrite, 1),
         (Reasoning, "r.rewrite.again", reasoning_rewrite, 1),
         (Reasoning, "r.final", consistency, 1),
@@ -189,7 +192,7 @@ fn only_a_part_wise_reading_can_say_all_common_and_only_a_page_can_stand_elsewhe
 fn a_ground_reading_has_two_edges_its_end_and_its_next_node() {
     let policy = StandardPolicy::new();
     for (class, name, end, refuted) in [
-        (Reasoning, "r.ground", End::Consistent, "r.rewrite"),
+        (Reasoning, "r.ground", End::Consistent, "r.correct"),
         (Reasoning, "r.reground", End::Consistent, "r.cut"),
         (Common, "c.ground", End::GeneralKnowledge, "c.rewrite"),
         (Common, "c.reground", End::GeneralKnowledge, "c.cut"),
