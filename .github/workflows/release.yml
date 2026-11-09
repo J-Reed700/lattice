@@ -140,4 +140,9 @@ jobs:
             echo
             echo "The installer is not signed yet, so Windows may show 'Windows protected your PC'. Click More info, then Run anyway."
           } > notes.md
-          gh release create "app-v$version-$RUN_NUMBER" "$exe" "$exe.sha256"             --repo "$GITHUB_REPOSITORY"             --target "$SHA"             --title "Lattice $version for Windows (build $RUN_NUMBER)"             --notes-file notes.md             --latest
+          gh release create "app-v$version-$RUN_NUMBER" "$exe" "$exe.sha256" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SHA" \
+            --title "Lattice $version for Windows (build $RUN_NUMBER)" \
+            --notes-file notes.md \
+            --latest
