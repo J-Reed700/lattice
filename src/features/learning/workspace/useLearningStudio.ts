@@ -12,6 +12,7 @@ import type {
   AcceptLearningProgramRequestDto,
   PrepareLearningLessonRequestDto,
   PrepareLearningModuleRequestDto,
+  PrepareLearningCourseRequestDto,
   CompleteLearningLessonRequestDto,
 } from '@/lib/bindings';
 import { failureToError } from '@/lib/errorHandling';
@@ -149,6 +150,10 @@ export function usePrepareLearningLesson() {
 export function usePrepareLearningModule() {
   const api = useApi();
   return useProgramMutation<PrepareLearningModuleRequestDto>(api.prepareLearningModule);
+}
+export function usePrepareLearningCourse() {
+  const api = useApi();
+  return useProgramMutation<PrepareLearningCourseRequestDto>(api.prepareLearningCourse);
 }
 export function useCompleteLearningLesson() {
   const api = useApi();

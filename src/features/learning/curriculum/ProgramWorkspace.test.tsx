@@ -395,3 +395,112 @@ describe('Course page', () => {
     });
   });
 });
+
+describe('Preparing the whole course', () => {
+  const MINUTE = 60_000;
+  const lessonJob = (lessonId: string, overrides: Partial<LearningGenerationJob> = {}) => job({ id: `job-${lessonId}`, lessonIds: [lessonId], ...overrides });
+  const finished = (lessonId: string, minutes: number, overrides: Partial<LearningGenerationJob> = {}) => lessonJob(lessonId, {
+    status: 'completed', resultId: lessonId, createdAt: 1_000_000, startedAt: 1_000_000, finishedAt: 1_000_000 + minutes * MINUTE, ...overrides,
+  });
+  const showCourse = (course: LearningProgramDto, jobs: LearningGenerationJob[], onPrepareCourse = vi.fn()) => {
+    api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs } });
+    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+      <ProgramWorkspace program={course} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
+        onPrepare={vi.fn()} preparePending={false} onPrepareCourse={onPrepareCourse} onComplete={vi.fn()} completePending={false} />
+    </QueryClientProvider>);
+    return onPrepareCourse;
+  };
+  /** Four lessons across two modules: lesson-3 ready, the rest outline. */
+  const course = () => {
+    const base = twoModules();
+    base.modules[1].lessons[0] = { ...gas, preparation: 'ready' } as LearningLessonDto;
+    return base;
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    api.review.mockResolvedValue({ ok: true, data: null });
+  });
+
+  it('offers Prepare every lesson when an unfinished lesson has no job, and prepares the course from it', async () => {
+    const user = userEvent.setup();
+    const onPrepareCourse = showCourse(course(), [lessonJob('lesson-1'), lessonJob('lesson-2', { status: 'pending' })]);
+    await user.click(await screen.findByRole('button', { name: 'Prepare every lesson' }));
+    expect(onPrepareCourse).toHaveBeenCalledTimes(1);
+  });
+
+  it('hides Prepare every lesson while a pending or running job covers every unfinished lesson', async () => {
+    showCourse(course(), [lessonJob('lesson-1'), lessonJob('lesson-2', { status: 'pending' }), lessonJob('lesson-4', { status: 'pending' })]);
+    expect(await screen.findByText(/lessons ready/)).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Prepare every lesson' })).not.toBeInTheDocument();
+  });
+
+  it('offers it again for a lesson whose job was cancelled', async () => {
+    showCourse(course(), [lessonJob('lesson-1'), lessonJob('lesson-2', { status: 'pending' }), lessonJob('lesson-4', { status: 'cancelled' })]);
+    expect(await screen.findByRole('button', { name: 'Prepare every lesson' })).toBeEnabled();
+  });
+
+  it('hides it when every lesson is ready or complete', async () => {
+    const done = course();
+    for (const lesson of done.modules.flatMap((module) => module.lessons)) lesson.preparation = 'ready';
+    showCourse(done, []);
+    expect(await screen.findByText('Lessons complete')).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Prepare every lesson' })).not.toBeInTheDocument();
+  });
+
+  it('counts the lessons ready, preparing, waiting and needing attention', async () => {
+    showCourse(course(), [lessonJob('lesson-1'), lessonJob('lesson-2', { status: 'pending' }), lessonJob('lesson-4', { status: 'failed', error: 'The model stopped.' })]);
+    expect(await screen.findByText('1 of 4 lessons ready · 1 preparing · 1 waiting · 1 needs attention')).toBeVisible();
+  });
+
+  it('counts a lesson held for review as needing attention, and says need for several', async () => {
+    showCourse(course(), [
+      lessonJob('lesson-1', { status: 'completed', resultId: 'needs_review:lesson-1', finishedAt: 5 }),
+      lessonJob('lesson-2', { status: 'failed', error: 'The model stopped.' }),
+    ]);
+    expect(await screen.findByText('1 of 4 lessons ready · 2 need attention')).toBeVisible();
+  });
+
+  it('leaves out the parts that are zero but the first', async () => {
+    showCourse(course(), [lessonJob('lesson-1', { status: 'pending' }), lessonJob('lesson-2', { status: 'pending' })]);
+    expect(await screen.findByText('1 of 4 lessons ready · 2 waiting')).toBeVisible();
+  });
+
+  it('shows no progress line when nothing is in flight', async () => {
+    showCourse(course(), []);
+    expect(await screen.findByText('Lessons complete')).toBeVisible();
+    expect(screen.queryByText(/lessons ready/)).not.toBeInTheDocument();
+  });
+
+  it('shows the median gap between finished lessons as the pace', async () => {
+    showCourse(course(), [
+      finished('lesson-1', 0), finished('lesson-2', 4), finished('lesson-3', 10), finished('lesson-5', 12),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText('About one lesson every 4 min so far')).toBeVisible();
+  });
+
+  it('shows no pace before two lessons have finished, or when a finished job only held its lesson for review', async () => {
+    showCourse(course(), [
+      finished('lesson-1', 0), finished('lesson-2', 4, { resultId: 'needs_review:lesson-2' }),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText(/lessons ready/)).toBeVisible();
+    expect(screen.queryByText(/About one lesson every/)).not.toBeInTheDocument();
+  });
+
+  it('shows each running lesson its own progress', async () => {
+    const running = (checksCompleted: number, checksTotal: number) => ({
+      phase: 'evidence', phaseStartedAt: 1, lastActivityAt: 1, lastCheckpointAt: null, lessonTitle: '', modelName: 'Test model',
+      modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 1, checksCompleted, checksTotal, checksReused: 0,
+      newReferences: null, claims: null, recentSteps: [],
+    }) as unknown as LearningGenerationJob['activity'];
+    showCourse(course(), [
+      lessonJob('lesson-1', { activity: running(3, 10) }),
+      lessonJob('lesson-2', { activity: running(7, 20), createdAt: Date.now() }),
+    ]);
+    const inCard = (lessonId: string) => within(document.getElementById(`lesson-${lessonId}`) as HTMLElement);
+    expect(await inCard('lesson-1').findByText('Preparing · 3 of 10 checked')).toBeVisible();
+    expect(await inCard('lesson-2').findByText('Preparing · 7 of 20 checked')).toBeVisible();
+  });
+});

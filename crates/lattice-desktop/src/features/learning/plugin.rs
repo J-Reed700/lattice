@@ -235,6 +235,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             accept_learning_program,
             prepare_learning_lesson,
             prepare_learning_module,
+            prepare_learning_course,
             complete_learning_lesson,
             delete_learning_program,
             get_learning_memory,

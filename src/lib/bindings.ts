@@ -456,6 +456,14 @@ async prepareLearningModule(request: PrepareLearningModuleRequestDto) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
+async prepareLearningCourse(request: PrepareLearningCourseRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_course", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|complete_learning_lesson", { request }) };
@@ -9403,6 +9411,7 @@ export type PerformanceTierDto =
  * Accurate models (> 5s/response)
  */
 "Accurate"
+export type PrepareLearningCourseRequestDto = { programId: string; expectedRevision: number }
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type PrepareLearningModuleRequestDto = { programId: string; moduleId: string; expectedRevision: number }
 export type PrepareLearningQuizBankRequestDto = { operationId: string; programId: string; scope: LearningQuizScopeDto;

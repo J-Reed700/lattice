@@ -9,8 +9,8 @@ use crate::curriculum::{
 };
 use crate::persistence::{db, decode, hash};
 use crate::plan_dto::{
-    LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto,
-    StartLearningModuleJobsRequestDto,
+    LearningGenerationJobActionRequestDto, StartLearningCourseJobsRequestDto,
+    StartLearningGenerationJobRequestDto, StartLearningModuleJobsRequestDto,
 };
 use crate::quiz_bank_jobs::{QUIZ_BANK, QUIZ_GRADING};
 use lattice_core::shared::error::{AppError, Result};
@@ -147,6 +147,15 @@ impl LearningCurriculumRepository {
             jobs.push(job);
         }
         Ok(jobs)
+    }
+
+    /// Saves a job for each unprepared lesson of the course, in course order.
+    /// The caller dispatches them.
+    pub async fn start_course_jobs(
+        &self,
+        _request: &StartLearningCourseJobsRequestDto,
+    ) -> Result<Vec<LearningGenerationJob>> {
+        Err(AppError::InvalidState("not built".into()))
     }
 
     /// Saves a lesson job for the runtime to run. The caller dispatches it.

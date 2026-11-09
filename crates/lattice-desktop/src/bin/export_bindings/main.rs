@@ -122,6 +122,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::accept_learning_program,
             lattice::features::learning::plugin::prepare_learning_lesson,
             lattice::features::learning::plugin::prepare_learning_module,
+            lattice::features::learning::plugin::prepare_learning_course,
             lattice::features::learning::plugin::complete_learning_lesson,
             lattice::features::learning::plugin::delete_learning_program,
             lattice::features::learning::plugin::get_learning_memory,
