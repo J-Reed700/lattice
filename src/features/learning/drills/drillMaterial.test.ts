@@ -29,7 +29,7 @@ describe('what a drill is made of', () => {
 
 describe('the line that says what a drill is', () => {
   it('names the lesson, the language and the mode of a drill on code', () => {
-    expect(drillMeta({ ...code, lesson }, 'interview')).toBe('Spacing · C# · Interview');
+    expect(drillMeta({ ...code, lesson }, 'interview')).toBe('Spacing · C# · Timed');
   });
 
   it('names the lesson, the source and the mode of a drill on a passage', () => {
