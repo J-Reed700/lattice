@@ -448,6 +448,14 @@ async prepareLearningLesson(request: PrepareLearningLessonRequestDto) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
+async prepareLearningModule(request: PrepareLearningModuleRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_module", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|complete_learning_lesson", { request }) };
@@ -7898,7 +7906,11 @@ errorCode?: ErrorCode | null;
 /**
  * Ended by an update that replaced how lessons are prepared: history, not an attempt to resume.
  */
-endedByUpdate?: boolean; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+endedByUpdate?: boolean;
+/**
+ * The lessons the job prepares, in course order.
+ */
+lessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -9392,6 +9404,7 @@ export type PerformanceTierDto =
  */
 "Accurate"
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
+export type PrepareLearningModuleRequestDto = { programId: string; moduleId: string; expectedRevision: number }
 export type PrepareLearningQuizBankRequestDto = { operationId: string; programId: string; scope: LearningQuizScopeDto;
 /**
  * Add questions to a ready bank ("Prepare more questions").

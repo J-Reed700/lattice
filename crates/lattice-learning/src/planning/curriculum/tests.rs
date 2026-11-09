@@ -103,6 +103,7 @@ fn job(status: LearningGenerationJobStatus) -> LearningGenerationJob {
         error: None,
         error_code: None,
         ended_by_update: false,
+        lesson_ids: Vec::new(),
         retry_of_job_id: None,
         created_at: 10,
         started_at: None,

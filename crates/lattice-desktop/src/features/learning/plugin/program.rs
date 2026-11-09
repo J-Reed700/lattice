@@ -246,6 +246,37 @@ pub async fn prepare_learning_lesson(
 
 #[tauri::command]
 #[specta::specta]
+pub async fn prepare_learning_module(
+    request: PrepareLearningModuleRequestDto,
+    container: State<'_, Container>,
+) -> Result<LearningProgramDto, ApiError> {
+    let operation_id = crate::features::learning::curriculum_repository::stable_job_operation_id(
+        &request.program_id,
+        &format!("module:{}", request.module_id),
+        request.expected_revision,
+    );
+    let jobs = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
+        container.db_pool().clone(),
+    )
+    .start_module_jobs(&StartLearningModuleJobsRequestDto {
+        operation_id,
+        program_id: request.program_id.clone(),
+        module_id: request.module_id,
+        expected_revision: request.expected_revision,
+    })
+    .await
+    .map_err(ApiError::from)?;
+    for job in &jobs {
+        container.jobs().submitted(&job.id).await;
+    }
+    LearningRepository::new(container.db_pool().clone())
+        .get(&request.program_id)
+        .await
+        .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
 pub async fn complete_learning_lesson(
     request: CompleteLearningLessonRequestDto,
     container: State<'_, Container>,
