@@ -21,6 +21,8 @@ mod tangents;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod write_tests;
 mod workspace;
 
 use sqlx::SqlitePool;
