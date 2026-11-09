@@ -144,9 +144,9 @@ fn counts_of_text(text: &str) -> Counts {
 }
 
 /// Whether `name` holds text a lesson teaches: not its kind, and not the
-/// citations, which quote sentences the part holds.
+/// citations and quotes, which copy sentences of a source or of the part.
 fn teaches(name: &str) -> bool {
-    name != "kind" && name != "citations"
+    !["kind", "citations", "quote"].contains(&name)
 }
 
 fn collect(value: &Value, counts: &mut Counts) {

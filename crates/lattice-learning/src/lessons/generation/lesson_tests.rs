@@ -31,7 +31,11 @@ fn question(kind: &str, prompt: &str, cited: bool) -> Value {
 /// Seven sections, two sharing a title, one with no body, no reflection; five
 /// questions, one of them practice.
 fn off_shape_value(cited: bool) -> Value {
-    let long = "A substantive explanation. ".repeat(30);
+    let long = |part: usize| -> String {
+        (0..30)
+            .map(|n| format!("A substantive explanation {n} of part {part}. "))
+            .collect()
+    };
     let mut blocks: Vec<_> = [
         "explanation",
         "explanation",
@@ -42,7 +46,7 @@ fn off_shape_value(cited: bool) -> Value {
     ]
     .iter()
     .enumerate()
-    .map(|(i, kind)| block(kind, &format!("Part {i}"), &long, cited))
+    .map(|(i, kind)| block(kind, &format!("Part {i}"), &long(i), cited))
     .collect();
     blocks[1]["title"] = json!("Part 0");
     blocks.push(block("recap", "Recap", "", cited));
