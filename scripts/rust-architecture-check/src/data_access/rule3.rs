@@ -1,6 +1,7 @@
-//! Rule 3: a function that runs two or more statements on the pool, one of them
-//! a write, does it in one `begin_write()` transaction. Statements reached
-//! through same-file helpers count as the caller's.
+//! Rule 3: a function whose statements, its own plus those of same-file helpers
+//! it calls, number two or more runs none on the pool, begins at most one write
+//! and one read transaction, reads before it begins the write transaction, and
+//! runs nothing after the write transaction commits.
 use super::{is_punct, walk_tokens, Violation};
 use crate::{
     item_attrs,
@@ -24,7 +25,20 @@ const STATEMENTS: [&str; 7] = [
     "fetch_optional",
     "fetch_many",
 ];
-const WRITES: [&str; 2] = ["execute", "execute_many"];
+
+#[derive(Clone, Copy, PartialEq)]
+enum Kind {
+    Write,
+    Read,
+}
+
+/// What a statement runs on.
+#[derive(Clone, Copy, PartialEq)]
+enum Target {
+    Pool,
+    Transaction(Kind),
+    Other,
+}
 
 type Position = (usize, usize);
 
@@ -63,7 +77,6 @@ struct Helper {
 
 enum Event {
     Statement {
-        write: bool,
         arg: Arg,
         at: Position,
     },
@@ -72,11 +85,16 @@ enum Event {
         args: Vec<Arg>,
         at: Position,
     },
-    Begin(Position),
-    /// A commit, and where the block it sits in ends.
-    Commit {
+    Begin {
+        kind: Kind,
         at: Position,
-        until: Position,
+    },
+    Commit {
+        kind: Kind,
+        /// The block it sits in, and whether that block is inside the body's own.
+        block: usize,
+        nested: bool,
+        at: Position,
     },
 }
 
@@ -85,7 +103,7 @@ impl Event {
         match self {
             Event::Statement { at, .. }
             | Event::Helper { at, .. }
-            | Event::Begin(at)
+            | Event::Begin { at, .. }
             | Event::Commit { at, .. } => *at,
         }
     }
@@ -124,33 +142,50 @@ fn split_arguments(stream: TokenStream) -> Vec<Arg> {
     args
 }
 
-/// Every statement, helper call, `begin_write()` and `commit()` in a function
-/// body, and the connections it checks out.
+/// Every statement, helper call, `begin_write()`, `begin_read()` and `commit()`
+/// in a function body, the connections it checks out and the transactions it
+/// begins.
 #[derive(Default)]
 struct Body {
     acquired: HashSet<String>,
+    writes: HashSet<String>,
+    reads: HashSet<String>,
     events: Vec<Event>,
-    blocks: Vec<Position>,
+    blocks: Vec<usize>,
+    next_block: usize,
+    /// Blocks with a `return` among their own statements.
+    returning: HashSet<usize>,
 }
 
 impl Body {
-    fn call(&mut self, method: &str, arguments: &str, at: Position) {
+    fn call(&mut self, method: &str, arguments: &str, receiver: Option<&str>, at: Position) {
         if STATEMENTS.contains(&method) {
             self.events.push(Event::Statement {
-                write: WRITES.contains(&method),
                 arg: Arg::new(arguments),
                 at,
             });
         }
         match method {
-            "begin_write" => self.events.push(Event::Begin(at)),
+            "begin_write" => self.events.push(Event::Begin {
+                kind: Kind::Write,
+                at,
+            }),
+            "begin_read" => self.events.push(Event::Begin {
+                kind: Kind::Read,
+                at,
+            }),
             "commit" => {
-                let until = self
-                    .blocks
-                    .last()
-                    .copied()
-                    .unwrap_or((usize::MAX, usize::MAX));
-                self.events.push(Event::Commit { at, until });
+                let reads = receiver.is_some_and(|receiver| {
+                    receiver
+                        .split(|c: char| !(c.is_alphanumeric() || c == '_'))
+                        .any(|word| self.reads.contains(word))
+                });
+                self.events.push(Event::Commit {
+                    kind: if reads { Kind::Read } else { Kind::Write },
+                    block: self.blocks.last().copied().unwrap_or(0),
+                    nested: self.blocks.len() > 1,
+                    at,
+                });
             }
             _ => {}
         }
@@ -170,7 +205,16 @@ impl<'ast> Visit<'ast> for Body {
         }
     }
     fn visit_block(&mut self, block: &'ast syn::Block) {
-        self.blocks.push(position(block.brace_token.span.close()));
+        let id = self.next_block;
+        self.next_block += 1;
+        if block
+            .stmts
+            .iter()
+            .any(|stmt| matches!(stmt, syn::Stmt::Expr(Expr::Return(_), _)))
+        {
+            self.returning.insert(id);
+        }
+        self.blocks.push(id);
         visit::visit_block(self, block);
         self.blocks.pop();
     }
@@ -185,9 +229,15 @@ impl<'ast> Visit<'ast> for Body {
                 .to_string()
                 .split_whitespace()
                 .collect();
-            if text.contains("acquire()") {
-                if let Some(name) = binding(&local.pat) {
-                    self.acquired.insert(name);
+            if let Some(name) = binding(&local.pat) {
+                if text.contains("acquire()") {
+                    self.acquired.insert(name.clone());
+                }
+                if text.contains("begin_write(") {
+                    self.writes.insert(name.clone());
+                }
+                if text.contains("begin_read(") {
+                    self.reads.insert(name);
                 }
             }
         }
@@ -196,7 +246,13 @@ impl<'ast> Visit<'ast> for Body {
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         let method = call.method.to_string();
         let at = position(call.method.span());
-        self.call(&method, &call.args.to_token_stream().to_string(), at);
+        let receiver = call.receiver.to_token_stream().to_string();
+        self.call(
+            &method,
+            &call.args.to_token_stream().to_string(),
+            Some(&receiver),
+            at,
+        );
         if is_self(&call.receiver) {
             let helper = Helper {
                 name: method,
@@ -260,7 +316,16 @@ impl<'ast> Visit<'ast> for Body {
             };
             let named = |token: Option<&TokenTree>, word: &str| matches!(token, Some(TokenTree::Ident(ident)) if ident == word);
             if is_punct(before(1), '.') {
-                self.call(&name, &arguments.stream().to_string(), at);
+                let receiver = match before(2) {
+                    Some(TokenTree::Ident(ident)) => Some(ident.to_string()),
+                    _ => None,
+                };
+                self.call(
+                    &name,
+                    &arguments.stream().to_string(),
+                    receiver.as_deref(),
+                    at,
+                );
                 if named(before(2), "self") {
                     let helper = Helper {
                         name,
@@ -381,11 +446,10 @@ impl<'ast> Visit<'ast> for Collect {
     }
 }
 
-/// A statement that runs on the pool, and the helpers it was reached through.
-struct Counted {
-    write: bool,
-    at: Position,
-    via: Vec<String>,
+enum Item {
+    Statement { target: Target, via: Vec<String> },
+    Begin(Kind),
+    Commit { kind: Kind, early: bool },
 }
 
 struct Resolver<'a> {
@@ -403,41 +467,60 @@ impl<'a> Resolver<'a> {
         Self { defs, index }
     }
 
-    /// Whether `arg` is the pool inside `def`. `bound` holds the parameters that
-    /// received the pool; it is `None` for the function being checked, where
-    /// the text decides.
-    fn is_pool(def: &Def, bound: Option<&HashSet<String>>, arg: &Arg) -> bool {
-        let received = |word: &String| bound.is_some_and(|bound| bound.contains(word));
-        let uses_parameter = bound.is_some() && arg.words.iter().any(|w| def.params.contains(w));
-        arg.squashed.contains("self.pool")
+    /// What `arg` is inside `def`. `bound` holds what each parameter received;
+    /// it is `None` for the function being checked, where the text decides.
+    fn target(def: &Def, bound: Option<&HashMap<String, Target>>, arg: &Arg) -> Target {
+        let named = |names: &HashSet<String>| arg.words.iter().any(|word| names.contains(word));
+        if named(&def.body.writes) {
+            return Target::Transaction(Kind::Write);
+        }
+        if named(&def.body.reads) {
+            return Target::Transaction(Kind::Read);
+        }
+        if let Some(target) = bound.and_then(|bound| arg.words.iter().find_map(|w| bound.get(w))) {
+            return *target;
+        }
+        if arg.squashed.contains("self.pool")
             || arg.squashed.contains("acquire()")
-            || arg.words.iter().any(|w| def.body.acquired.contains(w))
-            || arg.words.iter().any(received)
-            || (!uses_parameter && arg.squashed.contains("pool"))
+            || named(&def.body.acquired)
+            || arg.squashed.contains("pool")
+        {
+            Target::Pool
+        } else {
+            Target::Other
+        }
     }
 
-    fn collect(
+    /// The statements, begins and commits of a function in the order they run,
+    /// with those of the same-file helpers it calls in place.
+    fn flatten(
         &self,
         at: usize,
-        bound: Option<&HashSet<String>>,
+        bound: Option<&HashMap<String, Target>>,
         stack: &mut Vec<usize>,
-        site: Option<Position>,
         via: &mut Vec<String>,
-        out: &mut Vec<Counted>,
+        out: &mut Vec<Item>,
     ) {
         let Some(def) = self.defs.get(at) else {
             return;
         };
         for event in &def.body.events {
             match event {
-                Event::Statement { write, arg, at } if Self::is_pool(def, bound, arg) => {
-                    out.push(Counted {
-                        write: *write,
-                        at: site.unwrap_or(*at),
-                        via: via.clone(),
-                    });
-                }
-                Event::Helper { helper, args, at } => {
+                Event::Statement { arg, .. } => out.push(Item::Statement {
+                    target: Self::target(def, bound, arg),
+                    via: via.clone(),
+                }),
+                Event::Begin { kind, .. } => out.push(Item::Begin(*kind)),
+                Event::Commit {
+                    kind,
+                    block,
+                    nested,
+                    ..
+                } => out.push(Item::Commit {
+                    kind: *kind,
+                    early: *nested && def.body.returning.contains(block),
+                }),
+                Event::Helper { helper, args, .. } => {
                     let owner = if helper.same_type {
                         def.owner.as_deref()
                     } else {
@@ -453,20 +536,20 @@ impl<'a> Resolver<'a> {
                         continue;
                     }
                     let skip = usize::from(callee.receiver && !helper.method);
-                    let received: HashSet<String> = callee
+                    let mut received: HashMap<String, Target> = callee
                         .params
                         .iter()
-                        .zip(args.iter().skip(skip))
-                        .filter(|(_, arg)| Self::is_pool(def, bound, arg))
-                        .map(|(param, _)| param.clone())
+                        .map(|param| (param.clone(), Target::Other))
                         .collect();
+                    for (param, arg) in callee.params.iter().zip(args.iter().skip(skip)) {
+                        received.insert(param.clone(), Self::target(def, bound, arg));
+                    }
                     stack.push(next);
                     via.push(helper.name.clone());
-                    self.collect(next, Some(&received), stack, site.or(Some(*at)), via, out);
+                    self.flatten(next, Some(&received), stack, via, out);
                     via.pop();
                     stack.pop();
                 }
-                Event::Statement { .. } | Event::Begin(_) | Event::Commit { .. } => {}
             }
         }
     }
@@ -488,16 +571,21 @@ pub fn violations(
         if excepted {
             continue;
         }
-        let mut counted = Vec::new();
-        resolver.collect(
+        let mut items = Vec::new();
+        resolver.flatten(
             position,
             None,
             &mut vec![position],
-            None,
             &mut Vec::new(),
-            &mut counted,
+            &mut items,
         );
-        let writes = counted.iter().filter(|call| call.write).count();
+        let statements = items
+            .iter()
+            .filter(|item| matches!(item, Item::Statement { .. }))
+            .count();
+        if statements < 2 {
+            continue;
+        }
         let mut add = |message: String| {
             found.push(Violation {
                 rule: 3,
@@ -506,52 +594,93 @@ pub fn violations(
                 message,
             });
         };
-        if counted.len() >= 2 && writes >= 1 {
-            let mut helpers: Vec<&str> = Vec::new();
-            for name in counted.iter().flat_map(|call| &call.via) {
-                if !helpers.contains(&name.as_str()) {
-                    helpers.push(name);
+        let name = &def.name;
+
+        let mut on_pool = 0;
+        let mut helpers: Vec<&str> = Vec::new();
+        for item in &items {
+            if let Item::Statement {
+                target: Target::Pool,
+                via,
+            } = item
+            {
+                on_pool += 1;
+                for helper in via {
+                    if !helpers.contains(&helper.as_str()) {
+                        helpers.push(helper);
+                    }
                 }
             }
+        }
+        if on_pool > 0 {
             let through = if helpers.is_empty() {
                 String::new()
             } else {
                 format!(" (through {})", helpers.join(", "))
             };
             add(format!(
-                "{} runs {} statements on the pool{through}, {writes} of them writes, \
-                 outside a transaction",
-                def.name,
-                counted.len()
+                "{name} runs {on_pool} of its {statements} statements on the pool{through}; \
+                 run them in one transaction"
             ));
         }
-        let begins = def
-            .body
-            .events
+
+        let begun = |wanted: Kind| {
+            items
+                .iter()
+                .filter(|item| matches!(item, Item::Begin(kind) if *kind == wanted))
+                .count()
+        };
+        let (writes, reads) = (begun(Kind::Write), begun(Kind::Read));
+        if writes > 1 || reads > 1 {
+            add(format!(
+                "{name} begins {writes} write and {reads} read transactions; \
+                 begin at most one of each"
+            ));
+        }
+
+        let begin_write = items
             .iter()
-            .any(|event| matches!(event, Event::Begin(_)));
-        let commits: Vec<(Position, Position)> = def
-            .body
-            .events
-            .iter()
-            .filter_map(|event| match event {
-                Event::Commit { at, until } => Some((*at, *until)),
-                _ => None,
+            .position(|item| matches!(item, Item::Begin(Kind::Write)));
+        let read_after_begin = begin_write.is_some_and(|begin| {
+            items.iter().skip(begin).any(|item| {
+                matches!(
+                    item,
+                    Item::Statement {
+                        target: Target::Transaction(Kind::Read),
+                        ..
+                    }
+                )
             })
-            .collect();
-        let last_commit = commits.iter().map(|(at, _)| *at).max();
-        if let (true, Some(last)) = (begins, last_commit) {
-            let inside = |call: &Counted| {
-                call.at < last
-                    && !commits
-                        .iter()
-                        .any(|(at, until)| *at < call.at && call.at <= *until)
-            };
-            if counted.iter().any(inside) {
+        });
+        if read_after_begin {
+            add(format!(
+                "{name} reads in a read transaction after beginning its write \
+                 transaction; do the reads first"
+            ));
+        }
+
+        let commits = |early: bool| {
+            items
+                .iter()
+                .enumerate()
+                .filter_map(|(at, item)| match item {
+                    Item::Commit {
+                        kind: Kind::Write,
+                        early: skipped,
+                    } if early || !*skipped => Some(at),
+                    _ => None,
+                })
+                .max()
+        };
+        if let Some(last) = commits(false).or_else(|| commits(true)) {
+            let after = items
+                .iter()
+                .skip(last + 1)
+                .any(|item| matches!(item, Item::Statement { .. }));
+            if after {
                 add(format!(
-                    "{} runs a statement on the pool before committing its write \
-                     transaction; run it in the transaction",
-                    def.name
+                    "{name} runs a statement after committing its write transaction; \
+                     run it in the transaction"
                 ));
             }
         }

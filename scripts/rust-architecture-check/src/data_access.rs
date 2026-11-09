@@ -1,5 +1,5 @@
 //! The three data-access rules, held at zero: one way to begin a transaction,
-//! SQL only in data modules, and one transaction per multi-statement write.
+//! SQL only in data modules, and one transaction for a function that runs several statements.
 use crate::{
     item_attrs,
     ratchet::{impl_item_attrs, production_files, token_paths, trait_item_attrs},
@@ -41,7 +41,7 @@ const SQL_MACROS: [&str; 3] = ["query", "query_as", "query_scalar"];
 const DEFERRED: &str = "begins a deferred transaction; use begin_write() or begin_read()";
 const BEGIN_WITH: &str = "begins with begin_with(); use begin_write() or begin_read()";
 
-/// `(file, function, reason)` for a function SQLite refuses to run in a transaction.
+/// `(file, function, reason)`: a function rule 3 would flag, with the reason it must not be one transaction.
 pub const EXCEPTIONS: &[(&str, &str, &str)] = &[];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
