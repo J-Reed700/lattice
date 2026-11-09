@@ -269,13 +269,12 @@ async fn suggested_language_in(
     connection: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Option<String>> {
-    let profile_language: Option<String> = sqlx::query_scalar(
-        "SELECT language FROM learning_practice_profiles WHERE program_id=?",
-    )
-    .bind(program_id)
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
+    let profile_language: Option<String> =
+        sqlx::query_scalar("SELECT language FROM learning_practice_profiles WHERE program_id=?")
+            .bind(program_id)
+            .fetch_optional(&mut *connection)
+            .await
+            .map_err(db)?;
     if let Some(language) = profile_language.filter(|language| check_language(language).is_ok()) {
         return Ok(Some(language));
     }

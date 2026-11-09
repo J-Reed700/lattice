@@ -22,10 +22,7 @@ pub enum ProofError {
         results: Vec<CaseResult>,
     },
     /// Fewer than `MIN_KILLED_MISREADINGS` were killed by the test cases.
-    InsufficientMisreadings {
-        killed: usize,
-        required: usize,
-    },
+    InsufficientMisreadings { killed: usize, required: usize },
     /// The proof operation was cancelled.
     Cancelled,
 }
@@ -107,10 +104,16 @@ pub async fn prove_misreadings(
             return Err(ProofError::Cancelled);
         }
 
-        let (outcome, results) =
-            run_cases(runner, harness, spec, &candidate.code, cases, cancel.clone())
-                .await
-                .map_err(|_| ProofError::Cancelled)?;
+        let (outcome, results) = run_cases(
+            runner,
+            harness,
+            spec,
+            &candidate.code,
+            cases,
+            cancel.clone(),
+        )
+        .await
+        .map_err(|_| ProofError::Cancelled)?;
 
         let mut killed_by = Vec::new();
         for result in &results {

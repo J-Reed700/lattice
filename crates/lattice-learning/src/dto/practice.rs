@@ -87,7 +87,7 @@ pub struct LearningPracticeCriterionDto {
     pub max_points: i64,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningPracticeCitationDto {
     pub source_id: String,
@@ -315,7 +315,6 @@ pub struct DecideLearningPracticeProposalRequestDto {
     pub expected_revision: i64,
     pub proposal_id: String,
 }
-
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]

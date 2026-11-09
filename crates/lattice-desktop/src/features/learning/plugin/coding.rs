@@ -44,8 +44,7 @@ impl CodeRunner for FallbackRunner {
         _cancel: CancellationToken,
     ) -> CoreResult<RunOutcome> {
         Ok(RunOutcome::Failed {
-            failed: 1,
-            passed: 0,
+            output: String::new(),
         })
     }
     async fn run_capturing(
@@ -56,8 +55,7 @@ impl CodeRunner for FallbackRunner {
     ) -> CoreResult<(RunOutcome, String)> {
         Ok((
             RunOutcome::Failed {
-                failed: 1,
-                passed: 0,
+                output: String::new(),
             },
             String::new(),
         ))
@@ -109,7 +107,11 @@ pub async fn start_coding_build(
         message: "Waiting to build coding problem".into(),
     };
 
-    let job = container.jobs().submit(&new_job).await.map_err(ApiError::from)?;
+    let job = container
+        .jobs()
+        .submit(&new_job)
+        .await
+        .map_err(ApiError::from)?;
     container.jobs().submitted(&job.id).await;
 
     Ok(StartedCodingBuildDto { job_id: job.id })
@@ -201,8 +203,8 @@ pub struct CheckCodingExampleRequestDto {
 pub async fn check_coding_example(
     request: CheckCodingExampleRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingExampleDto, ApiError> {
-    let runtimes = BuiltinRuntimes::new(None);
     let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
     let harness = PythonHarness::new();
     session::check_coding_example(
@@ -234,8 +236,8 @@ pub struct RunCodingSessionRequestDto {
 pub async fn run_coding_session(
     request: RunCodingSessionRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
-    let runtimes = BuiltinRuntimes::new(None);
     let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
     let harness = PythonHarness::new();
     session::run_coding_session(
@@ -266,12 +268,12 @@ pub struct AskCodingHintRequestDto {
 pub async fn ask_coding_hint(
     request: AskCodingHintRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
     let pin = container
         .learning_llm(Default::default())
         .await
         .map_err(ApiError::from)?;
-    let runtimes = BuiltinRuntimes::new(None);
     let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
     let harness = PythonHarness::new();
     session::ask_coding_hint(
@@ -303,12 +305,12 @@ pub struct SendCodingTurnRequestDto {
 pub async fn send_coding_turn(
     request: SendCodingTurnRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
     let pin = container
         .learning_llm(Default::default())
         .await
         .map_err(ApiError::from)?;
-    let runtimes = BuiltinRuntimes::new(None);
     let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
     let harness = PythonHarness::new();
     session::send_coding_turn(
@@ -339,12 +341,12 @@ pub struct ObserveCodingDraftRequestDto {
 pub async fn observe_coding_draft(
     request: ObserveCodingDraftRequestDto,
     container: State<'_, Container>,
+    runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<CodingSessionDto, ApiError> {
     let pin = container
         .learning_llm(Default::default())
         .await
         .map_err(ApiError::from)?;
-    let runtimes = BuiltinRuntimes::new(None);
     let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
     let harness = PythonHarness::new();
     session::observe_coding_draft(

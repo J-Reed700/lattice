@@ -2,7 +2,6 @@
 
 use super::*;
 use crate::drills::lesson::LessonContext;
-use crate::dto::*;
 use crate::practice_generation::generate_written_practice_prompt;
 use crate::practice_repository::LearningPracticeRepository;
 use lattice_core::shared::error::{AppError, Result};
@@ -170,8 +169,8 @@ async fn feeding_profile_language_and_details_into_written_practice_generation()
 }
 
 #[tokio::test]
-async fn written_practice_session_starts_with_contextualized_task_prompt_from_profile(
-) -> Result<()> {
+async fn written_practice_session_starts_with_contextualized_task_prompt_from_profile() -> Result<()>
+{
     let pool = active_memory_pool().await?;
     let (program, lesson) = setup(&pool).await?;
     let repo = LearningPracticeRepository::new(pool);
@@ -192,7 +191,9 @@ async fn written_practice_session_starts_with_contextualized_task_prompt_from_pr
 
     let session = repo.get_session(&session_req.session_id).await?;
     assert!(
-        session.task_prompt.contains("Specialized systems engineering"),
+        session
+            .task_prompt
+            .contains("Specialized systems engineering"),
         "practice session task_prompt must reflect profile details"
     );
     assert!(

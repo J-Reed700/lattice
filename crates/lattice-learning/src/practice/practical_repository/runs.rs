@@ -400,9 +400,10 @@ fn extract_case_checks(stdout: &str) -> Vec<LearningPracticalCheckResultDto> {
                     let message = match status {
                         LearningPracticalCheckStatus::Passed => "Case passed.".to_string(),
                         LearningPracticalCheckStatus::Failed => "Case failed.".to_string(),
-                        LearningPracticalCheckStatus::Error => {
-                            raw.error.clone().unwrap_or_else(|| "Case raised an error.".to_string())
-                        }
+                        LearningPracticalCheckStatus::Error => raw
+                            .error
+                            .clone()
+                            .unwrap_or_else(|| "Case raised an error.".to_string()),
                         LearningPracticalCheckStatus::NotRun => "Case not run.".to_string(),
                     };
                     let visibility = match raw.visibility.as_deref() {

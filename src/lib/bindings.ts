@@ -4453,6 +4453,10 @@ export type AppError =
  */
 { ConcurrentModification: { resource: string; details: string } } |
 /**
+ * Conflict error (e.g. revision mismatch)
+ */
+{ Conflict: string } |
+/**
  * Domain layer error - business rule violations
  * BOXED to prevent stack overflow (DomainError is ~160 variants)
  */
@@ -4849,6 +4853,7 @@ export type CapturedSourcesDto = { messageId: string;
  * could be read carrying its snapshot.
  */
 sources: SourceDto[] }
+export type CaseCheckDetailDto = { caseId: string; category: string; args: string[]; expected: string | null; actual: string | null; printed: string; error: string | null; visibility: Visibility }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
  * What the window needs to show a stored picture. Travels in the stream
@@ -6413,6 +6418,10 @@ export type ErrorCode =
  * Concurrent modification detected
  */
 "CONCURRENT_MODIFICATION" |
+/**
+ * Conflict detected (e.g. revision mismatch)
+ */
+"CONFLICT" |
 /**
  * Processing queue is full
  */
@@ -8233,9 +8242,9 @@ export type LearningPlanDto = { programId: string;
 programRevision: number; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
 export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto; exportNotice: LearningPackExportNoticeDto }
 export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; interviewPlan?: LearningInterviewPlanDto | null; revision: number; createdAt: number; updatedAt: number }
-export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
+export type LearningPracticalActivityKind = "code_lab" | "coding_problem" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
-export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null }
+export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null; detail?: CaseCheckDetailDto | null }
 export type LearningPracticalCheckStatus = "passed" | "failed" | "error" | "not_run"
 /**
  * Learner-owned starter files for one immutable practical activity revision.
@@ -11376,6 +11385,10 @@ verification: JsonValue;
  */
 turn?: TurnRecordDto | null }
 export type VersionInfoDto = { version: string; buildDate: string | null; commitHash: string | null }
+/**
+ * Whether a case is shown to the learner before and during the session.
+ */
+export type Visibility = "public" | "hidden"
 /**
  * A user's statement that a model takes pictures, and how its encoder
  * resizes and charges for them.

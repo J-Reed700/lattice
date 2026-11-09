@@ -92,10 +92,11 @@ impl LearningPracticeRepository {
             role: r.get("role"),
             revision: r.get("revision"),
         });
-        let fallback_prompt = crate::practice::practice_generation::generate_written_practice_prompt(
-            &objective,
-            profile.as_ref(),
-        );
+        let fallback_prompt =
+            crate::practice::practice_generation::generate_written_practice_prompt(
+                &objective,
+                profile.as_ref(),
+            );
         let block_kind = match req.task_kind {
             LearningPracticeTaskKind::Guided => "guided_practice",
             LearningPracticeTaskKind::Independent => "independent_practice",

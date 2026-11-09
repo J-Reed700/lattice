@@ -63,7 +63,7 @@ impl LearningPracticeRepository {
         }
 
         let existing: Option<(i64, Option<i64>)> = sqlx::query_as(
-            "SELECT revision, interview_at FROM learning_practice_profiles WHERE program_id=?"
+            "SELECT revision, interview_at FROM learning_practice_profiles WHERE program_id=?",
         )
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
@@ -110,7 +110,8 @@ impl LearningPracticeRepository {
         .await
         .map_err(db)?;
 
-        Self::update_interview_target_in_tx(&mut tx, &request.program_id, request.interview_at).await?;
+        Self::update_interview_target_in_tx(&mut tx, &request.program_id, request.interview_at)
+            .await?;
 
         tx.commit().await.map_err(db)?;
 
@@ -132,7 +133,7 @@ impl LearningPracticeRepository {
         target_at: Option<i64>,
     ) -> Result<()> {
         let activity_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM learning_practical_activities WHERE program_id=? AND kind='interview'"
+            "SELECT id FROM learning_practical_activities WHERE program_id=? AND kind='interview'",
         )
         .bind(program_id)
         .fetch_all(&mut **tx)
@@ -140,20 +141,19 @@ impl LearningPracticeRepository {
         .map_err(db)?;
 
         for activity_id in activity_ids {
-            let deck_ids: Vec<String> = sqlx::query_scalar(
-                "SELECT id FROM study_decks WHERE id LIKE ?"
-            )
-            .bind(format!("%{activity_id}%"))
-            .fetch_all(&mut **tx)
-            .await
-            .map_err(db)?;
+            let deck_ids: Vec<String> =
+                sqlx::query_scalar("SELECT id FROM study_decks WHERE id LIKE ?")
+                    .bind(format!("%{activity_id}%"))
+                    .fetch_all(&mut **tx)
+                    .await
+                    .map_err(db)?;
 
             for deck_id in deck_ids {
                 match target_at {
                     Some(target) => {
                         sqlx::query(
                             "INSERT INTO study_deck_targets (deck_id, target_at) VALUES (?, ?)
-                             ON CONFLICT(deck_id) DO UPDATE SET target_at=excluded.target_at"
+                             ON CONFLICT(deck_id) DO UPDATE SET target_at=excluded.target_at",
                         )
                         .bind(&deck_id)
                         .bind(target)

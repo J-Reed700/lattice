@@ -211,7 +211,10 @@ async fn test_run_cases_three_cases_reports_three_results() -> Result<()> {
 
     assert_eq!(outcome, RunOutcome::Passed);
     assert_eq!(results.len(), 3);
-    assert_eq!(results.get(0).map(|r| r.case_id.as_str()), Some("case_exact"));
+    assert_eq!(
+        results.get(0).map(|r| r.case_id.as_str()),
+        Some("case_exact")
+    );
     assert_eq!(results.get(0).map(|r| r.status), Some(CaseStatus::Passed));
     assert_eq!(
         results.get(0).map(|r| r.printed.as_str()),
@@ -228,7 +231,10 @@ async fn test_run_cases_three_cases_reports_three_results() -> Result<()> {
     );
     assert_eq!(results.get(1).map(|r| r.status), Some(CaseStatus::Passed));
 
-    assert_eq!(results.get(2).map(|r| r.case_id.as_str()), Some("case_float"));
+    assert_eq!(
+        results.get(2).map(|r| r.case_id.as_str()),
+        Some("case_float")
+    );
     assert_eq!(results.get(2).map(|r| r.status), Some(CaseStatus::Passed));
     Ok(())
 }
@@ -250,8 +256,14 @@ fn test_python_harness_results_comparisons_stdout_and_exceptions() {
     assert_eq!(results.len(), 3);
     assert_eq!(results.get(0).map(|r| r.case_id.as_str()), Some("c1"));
     assert_eq!(results.get(0).map(|r| r.status), Some(CaseStatus::Passed));
-    assert_eq!(results.get(0).map(|r| r.printed.as_str()), Some("print from c1"));
-    assert_eq!(results.get(0).and_then(|r| r.actual.as_deref()), Some("[0, 1]"));
+    assert_eq!(
+        results.get(0).map(|r| r.printed.as_str()),
+        Some("print from c1")
+    );
+    assert_eq!(
+        results.get(0).and_then(|r| r.actual.as_deref()),
+        Some("[0, 1]")
+    );
 
     assert_eq!(results.get(1).map(|r| r.case_id.as_str()), Some("c2"));
     assert_eq!(results.get(1).map(|r| r.status), Some(CaseStatus::Passed));
@@ -294,7 +306,8 @@ fn test_python_harness_evaluator_generates_checks_and_cases() {
 }
 
 #[tokio::test]
-async fn test_run_cases_timeout_marks_inflight_and_remaining_not_run_with_scale_last() -> Result<()> {
+async fn test_run_cases_timeout_marks_inflight_and_remaining_not_run_with_scale_last() -> Result<()>
+{
     let case_scale = Case {
         id: "case_scale".into(),
         category: "scale test".into(),
@@ -373,14 +386,18 @@ async fn test_run_cases_timeout_marks_inflight_and_remaining_not_run_with_scale_
     assert_eq!(results.get(2).map(|r| r.status), Some(CaseStatus::NotRun));
 
     // Scale case scheduled last
-    assert_eq!(results.get(3).map(|r| r.case_id.as_str()), Some("case_scale"));
+    assert_eq!(
+        results.get(3).map(|r| r.case_id.as_str()),
+        Some("case_scale")
+    );
     assert_eq!(results.get(3).map(|r| r.status), Some(CaseStatus::NotRun));
 
     Ok(())
 }
 
 #[tokio::test]
-async fn test_finish_run_project_without_case_helper_reports_one_contained_evaluator_row() -> Result<()> {
+async fn test_finish_run_project_without_case_helper_reports_one_contained_evaluator_row(
+) -> Result<()> {
     let pool = crate::tests::pool().await?;
     let (repo, prepared) = setup_test_run(&pool).await?;
 
@@ -397,7 +414,10 @@ async fn test_finish_run_project_without_case_helper_reports_one_contained_evalu
 
     let run = repo.run(&prepared.dto.id).await?;
     assert_eq!(run.checks.len(), 1);
-    assert_eq!(run.checks.get(0).map(|c| c.name.as_str()), Some("Contained evaluator"));
+    assert_eq!(
+        run.checks.get(0).map(|c| c.name.as_str()),
+        Some("Contained evaluator")
+    );
     assert_eq!(
         run.checks.get(0).map(|c| c.status),
         Some(LearningPracticalCheckStatus::Passed)
@@ -433,7 +453,10 @@ async fn test_finish_run_with_case_lines_writes_one_row_per_case_with_details() 
     let run = repo.run(&prepared.dto.id).await?;
     assert_eq!(run.checks.len(), 3);
 
-    assert_eq!(run.checks.get(0).map(|c| c.name.as_str()), Some("case_exact"));
+    assert_eq!(
+        run.checks.get(0).map(|c| c.name.as_str()),
+        Some("case_exact")
+    );
     assert_eq!(
         run.checks.get(0).map(|c| c.status),
         Some(LearningPracticalCheckStatus::Passed)
@@ -443,13 +466,19 @@ async fn test_finish_run_with_case_lines_writes_one_row_per_case_with_details() 
     assert_eq!(detail0.map(|d| d.case_id.as_str()), Some("case_exact"));
     assert_eq!(detail0.map(|d| d.printed.as_str()), Some("debug print"));
 
-    assert_eq!(run.checks.get(1).map(|c| c.name.as_str()), Some("case_unordered"));
+    assert_eq!(
+        run.checks.get(1).map(|c| c.name.as_str()),
+        Some("case_unordered")
+    );
     assert_eq!(
         run.checks.get(1).map(|c| c.status),
         Some(LearningPracticalCheckStatus::Passed)
     );
 
-    assert_eq!(run.checks.get(2).map(|c| c.name.as_str()), Some("case_float"));
+    assert_eq!(
+        run.checks.get(2).map(|c| c.name.as_str()),
+        Some("case_float")
+    );
     assert_eq!(
         run.checks.get(2).map(|c| c.status),
         Some(LearningPracticalCheckStatus::Passed)

@@ -425,6 +425,8 @@ mod tests {
                 word_count: text.split_whitespace().count(),
                 truncated: false,
                 extraction_version: "test".into(),
+                acquired_at: 0,
+                snapshot_hash: "hash".into(),
             },
             full_text: text.into(),
             usage: vec![],

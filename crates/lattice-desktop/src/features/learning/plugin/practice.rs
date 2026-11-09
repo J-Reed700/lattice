@@ -413,7 +413,6 @@ pub async fn reject_learning_practice_proposal(
         .map_err(ApiError::from)
 }
 
-
 #[tauri::command]
 #[specta::specta]
 pub async fn get_learning_practice_profile(

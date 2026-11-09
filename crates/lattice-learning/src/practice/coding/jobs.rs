@@ -1,15 +1,17 @@
 //! Background jobs for coding sessions: building and proving a problem before it is shown.
 
-use std::collections::BTreeMap;
 use async_trait::async_trait;
 use serde::Serialize;
 use sqlx::SqlitePool;
+use std::collections::BTreeMap;
 
 use crate::drills::runner::runner_for;
 use crate::embedded_runtime::BuiltinRuntimes;
-use crate::practice::coding::harness::{PythonHarness, DEFAULT_NONCE};
+use crate::practice::coding::harness::{CaseHarness, PythonHarness, DEFAULT_NONCE};
 use crate::practice::coding::problem::ProblemSpec;
-use crate::practice::coding::source::{BuildSteps, GeneratedProblems, ProblemRequest, ProblemSource};
+use crate::practice::coding::source::{
+    BuildSteps, GeneratedProblems, ProblemRequest, ProblemSource,
+};
 use crate::quiz_bank_jobs::ModelLoader;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{
@@ -85,7 +87,9 @@ struct FileToInsert {
 impl JobHandler for CodingBuildWorker {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
         let request: ProblemRequest = serde_json::from_value(context.job().requested.clone())
-            .map_err(|e| AppError::InvalidInput(format!("Invalid coding build job request: {e}")))?;
+            .map_err(|e| {
+                AppError::InvalidInput(format!("Invalid coding build job request: {e}"))
+            })?;
 
         let runner = runner_for(&request.language, &self.runtimes).ok_or_else(|| {
             AppError::InvalidInput(format!(
@@ -170,8 +174,7 @@ impl JobHandler for CodingBuildWorker {
         let misreadings_json = serde_json::to_string(&problem.misreadings)
             .map_err(|e| AppError::Serialization(e.to_string()))?;
 
-        let evaluator_files =
-            harness.evaluator(&problem.spec, &problem.cases, DEFAULT_NONCE);
+        let evaluator_files = harness.evaluator(&problem.spec, &problem.cases, DEFAULT_NONCE);
 
         let mut files_to_insert = vec![
             FileToInsert {
@@ -228,15 +231,16 @@ impl JobHandler for CodingBuildWorker {
             .map_err(|e| AppError::Database(e.to_string()))?;
         }
 
-        tx.commit().await.map_err(|e| AppError::Database(e.to_string()))?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
 
-        Ok(JobOutcome::Completed(Some(serde_json::json!({
-            "activityId": activity_id,
-            "programId": request.program_id,
-        }))))
+        Ok(JobOutcome::Completed {
+            result_ref: Some(activity_id),
+            message: "Coding problem is ready".into(),
+        })
     }
 }
-
 
 #[cfg(test)]
 mod tests {

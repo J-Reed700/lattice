@@ -16,7 +16,8 @@ mod tests;
 pub const DEFAULT_NONCE: &str = "__LATTICE_CASE__:";
 
 pub trait CaseHarness: Send + Sync {
-    fn evaluator(&self, problem: &ProblemSpec, cases: &[Case], nonce: &str) -> Vec<LearningLabFile>;
+    fn evaluator(&self, problem: &ProblemSpec, cases: &[Case], nonce: &str)
+        -> Vec<LearningLabFile>;
     fn results(&self, stdout: &str, nonce: &str) -> Vec<CaseResult>;
 }
 
@@ -56,7 +57,9 @@ pub async fn run_cases(
         .map(|f| f.path.clone())
         .collect();
 
-    let (outcome, stdout) = runner.run_capturing(&files, &read_only_paths, cancel).await?;
+    let (outcome, stdout) = runner
+        .run_capturing(&files, &read_only_paths, cancel)
+        .await?;
     let finished_results = harness.results(&stdout, DEFAULT_NONCE);
 
     let finished_map: HashMap<&str, &CaseResult> = finished_results
@@ -79,7 +82,9 @@ pub async fn run_cases(
                     status: CaseStatus::TimedOut,
                     actual: None,
                     printed: String::new(),
-                    error: Some("The run exceeded the runtime's time limit and was stopped.".to_owned()),
+                    error: Some(
+                        "The run exceeded the runtime's time limit and was stopped.".to_owned(),
+                    ),
                     elapsed_ms: None,
                 });
             } else {

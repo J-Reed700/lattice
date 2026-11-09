@@ -10,7 +10,7 @@ use crate::practice::practical_dto::{
 use crate::recall::study_dto::StudyRating;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::scorecard::{
-    EvidenceItem, EvidenceKind, Scorecard, ScorecardCriterionId, ScorecardRow, ScorecardStatus,
+    EvidenceItem, EvidenceKind, Scorecard, ScorecardRow, ScorecardStatus,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};

@@ -29,7 +29,12 @@ struct RawCaseOutput {
 }
 
 impl CaseHarness for PythonHarness {
-    fn evaluator(&self, problem: &ProblemSpec, cases: &[Case], nonce: &str) -> Vec<LearningLabFile> {
+    fn evaluator(
+        &self,
+        problem: &ProblemSpec,
+        cases: &[Case],
+        nonce: &str,
+    ) -> Vec<LearningLabFile> {
         let mut ordered_cases = Vec::with_capacity(cases.len());
         for case in cases {
             if !case.scale {
@@ -42,11 +47,12 @@ impl CaseHarness for PythonHarness {
             }
         }
 
-        let cases_json = serde_json::to_string_pretty(&ordered_cases).unwrap_or_else(|_| "[]".to_owned());
+        let cases_json =
+            serde_json::to_string_pretty(&ordered_cases).unwrap_or_else(|_| "[]".to_owned());
         let fn_name = &problem.signature.function;
 
         let checks_py = format!(
-r#"# Auto-generated test harness for coding problem
+            r#"# Auto-generated test harness for coding problem
 import ast
 import copy
 import io

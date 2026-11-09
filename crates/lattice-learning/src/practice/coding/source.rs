@@ -7,7 +7,9 @@ use tokio_util::sync::CancellationToken;
 
 use crate::drills::runner::CodeRunner;
 use crate::practice::coding::harness::CaseHarness;
-use crate::practice::coding::problem::{Case, CodingTask, Difficulty, Misreading, Problem, ProblemSpec, Setting};
+use crate::practice::coding::problem::{
+    Case, CodingTask, Difficulty, Misreading, Problem, ProblemSpec, Setting,
+};
 use crate::practice::coding::proof::{prove_misreadings, prove_reference, ProofError};
 use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
 use lattice_core::domain::learning::practice::problem_patterns::statement_names_pattern;
@@ -128,7 +130,7 @@ impl<'a> ProblemSource for GeneratedProblems<'a> {
 
         for _attempt in 0..MAX_BUILD_ATTEMPTS {
             if cancel.is_cancelled() {
-                return Err(AppError::Cancelled);
+                return Err(AppError::InvalidState("Cancelled".into()));
             }
 
             // Step 0: Drafting problem statement and cases
@@ -146,7 +148,7 @@ impl<'a> ProblemSource for GeneratedProblems<'a> {
             };
 
             let completion_req = CompletionRequest {
-                inputs: vec![CompletionInput::Message {
+                input: vec![CompletionInput::Message {
                     role: "user".into(),
                     content: prompt,
                 }],
@@ -155,12 +157,15 @@ impl<'a> ProblemSource for GeneratedProblems<'a> {
 
             let response = self.llm.complete(&completion_req).await?;
             let json_text = self.extract_json(&response.text);
-            let candidate: GeneratedProblemDraft = serde_json::from_str(json_text).map_err(|e| {
-                AppError::InvalidInput(format!("Failed to parse problem draft JSON: {e}"))
-            })?;
+            let candidate: GeneratedProblemDraft =
+                serde_json::from_str(json_text).map_err(|e| {
+                    AppError::InvalidInput(format!("Failed to parse problem draft JSON: {e}"))
+                })?;
 
             // Validate that statement does not name its pattern
-            if let Err(e) = self.validate_statement(&candidate.spec.statement, &candidate.spec.patterns) {
+            if let Err(e) =
+                self.validate_statement(&candidate.spec.statement, &candidate.spec.patterns)
+            {
                 last_feedback = Some(format!("The statement named a pattern: {e}"));
                 continue;
             }
@@ -168,7 +173,7 @@ impl<'a> ProblemSource for GeneratedProblems<'a> {
             // Step 1: Proving reference solution
             steps.step(1, STEP_PROVING_REFERENCE).await?;
             if cancel.is_cancelled() {
-                return Err(AppError::Cancelled);
+                return Err(AppError::InvalidState("Cancelled".into()));
             }
 
             let reference_ms = match prove_reference(
@@ -182,14 +187,17 @@ impl<'a> ProblemSource for GeneratedProblems<'a> {
             .await
             {
                 Ok(ms) => ms,
-                Err(ProofError::ReferenceFailed { failed_cases, results: _ }) => {
+                Err(ProofError::ReferenceFailed {
+                    failed_cases,
+                    results: _,
+                }) => {
                     last_feedback = Some(format!(
                         "The reference solution failed on cases: {:?}. Please provide a working reference solution.",
                         failed_cases
                     ));
                     continue;
                 }
-                Err(ProofError::Cancelled) => return Err(AppError::Cancelled),
+                Err(ProofError::Cancelled) => return Err(AppError::InvalidState("Cancelled".into())),
                 Err(e) => {
                     last_feedback = Some(format!("Proof error on reference: {:?}", e));
                     continue;
@@ -199,7 +207,7 @@ impl<'a> ProblemSource for GeneratedProblems<'a> {
             // Step 2: Verifying misreadings
             steps.step(2, STEP_VERIFYING_MISREADINGS).await?;
             if cancel.is_cancelled() {
-                return Err(AppError::Cancelled);
+                return Err(AppError::InvalidState("Cancelled".into()));
             }
 
             let proven_misreadings = match prove_misreadings(
@@ -219,7 +227,7 @@ impl<'a> ProblemSource for GeneratedProblems<'a> {
                     ));
                     continue;
                 }
-                Err(ProofError::Cancelled) => return Err(AppError::Cancelled),
+                Err(ProofError::Cancelled) => return Err(AppError::InvalidState("Cancelled".into())),
                 Err(e) => {
                     last_feedback = Some(format!("Proof error on misreadings: {:?}", e));
                     continue;
@@ -278,7 +286,7 @@ mod tests {
     impl LLMPort for MockLLM {
         async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
             let count = self.call_count.fetch_add(1, Ordering::SeqCst);
-            let mut list = self.responses.lock().unwrap();
+            let list = self.responses.lock().unwrap();
             let text = if count < list.len() {
                 list[count].clone()
             } else {
@@ -293,6 +301,10 @@ mod tests {
 
         fn max_context_tokens(&self) -> usize {
             8192
+        }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
         }
     }
 
@@ -569,7 +581,11 @@ mod tests {
         let result = generator
             .problem(&request, &steps, CancellationToken::new())
             .await;
-        assert!(result.is_ok(), "problem generation should succeed: {:?}", result.err());
+        assert!(
+            result.is_ok(),
+            "problem generation should succeed: {:?}",
+            result.err()
+        );
 
         let recorded = steps.steps.lock().unwrap().clone();
         assert_eq!(recorded.len(), 3, "must record exactly 3 build steps");

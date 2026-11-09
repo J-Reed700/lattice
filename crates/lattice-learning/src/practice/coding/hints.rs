@@ -641,7 +641,7 @@ mod tests {
     #[tokio::test]
     async fn test_hint_rejects_verbatim_reference_line() {
         let runner = TestRunner {
-            outcome: RunOutcome::Failed { failed: 1, passed: 0 },
+            outcome: RunOutcome::Failed { output: String::new() },
             output: String::new(),
         };
         let harness = PythonHarness::new();

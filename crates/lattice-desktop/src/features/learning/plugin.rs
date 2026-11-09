@@ -184,7 +184,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 },
                 JobKindRegistration {
                     kind: super::drills::jobs::DRILL_GRADING.into(),
-                    handler: std::sync::Arc::new(drill_grading_worker(&container, runtimes.clone())),
+                    handler: std::sync::Arc::new(drill_grading_worker(
+                        &container,
+                        runtimes.clone(),
+                    )),
                     config: super::drills::jobs::grading_job_config(),
                 },
                 JobKindRegistration {
@@ -370,6 +373,15 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             code_review_languages,
             course_drills,
             start_coding_build,
+            start_coding_session,
+            get_coding_session,
+            move_coding_stage,
+            check_coding_example,
+            run_coding_session,
+            ask_coding_hint,
+            send_coding_turn,
+            observe_coding_draft,
+            set_coding_clock,
             finish_coding_session,
             practice_due
         ])

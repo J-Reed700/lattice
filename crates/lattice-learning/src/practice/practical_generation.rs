@@ -34,7 +34,7 @@ use super::simulation_policy::{
     Cue, InterviewQuestionsPolicy, Reply, ScenarioPolicy, SessionEvent, SessionState, TurnPolicy,
 };
 pub use interview_generation::generate_interview_plan;
-pub(crate) use interview_generation::public_interview_activity;
+use interview_generation::public_interview_activity;
 pub(crate) use interview_generation::validate_interviewer_reply;
 
 pub const INTERVIEW_PLAN_FILE_PATH: &str = "interview/plan.json";

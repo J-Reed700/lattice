@@ -133,7 +133,7 @@ pub struct CodingExampleDto {
 }
 
 /// Problem information visible to the learner, redacted according to the setting and session state.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PublicProblemDto {
     pub title: String,
@@ -159,7 +159,7 @@ pub struct StageTimingDto {
 }
 
 /// Complete state of a coding session returned to the frontend.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct CodingSessionDto {
     pub id: String,
@@ -1273,7 +1273,7 @@ mod tests {
         assert!(wrong_ex.catches.is_empty());
 
         let runner_inv = TestRunner {
-            outcome: RunOutcome::Failed { failed: 1, passed: 0 },
+            outcome: RunOutcome::Failed { output: String::new() },
             output: String::new(),
         };
         let invalid_ex = evaluate_example(
