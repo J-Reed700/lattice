@@ -1024,6 +1024,38 @@ async getLearningPracticeWorkspace(id: string) : Promise<Result<LearningPractice
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningPracticeProfile(request: GetLearningPracticeProfileRequestDto) : Promise<Result<LearningPracticeProfileDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practice_profile", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningPracticeProfile(request: SaveLearningPracticeProfileRequestDto) : Promise<Result<LearningPracticeProfileDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_practice_profile", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getPracticeFit(request: PracticeFitRequestDto) : Promise<Result<PracticeFitDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_practice_fit", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async checkPracticeFit(request: PracticeFitRequestDto) : Promise<Result<PracticeFitDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|check_practice_fit", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningPracticeSession(id: string) : Promise<Result<LearningPracticeSessionDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practice_session", { id }) };
@@ -1483,6 +1515,145 @@ async codeReviewLanguages() : Promise<string[]> {
 async courseDrills(programId: string, language: string | null) : Promise<Result<CourseDrillsDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_drills", { programId, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Queues a coding problem build job that generates and proves a problem before saving it.
+ */
+async startCodingBuild(request: StartCodingBuildRequestDto) : Promise<Result<StartCodingBuildResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_coding_build", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startCodingSession(request: StartCodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_coding_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getCodingSession(request: CodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_coding_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listCodingSessions(request: ListCodingSessionsRequestDto) : Promise<Result<CodingSessionSummaryDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_coding_sessions", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async moveCodingStage(request: MoveCodingStageRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|move_coding_stage", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async checkCodingExample(request: CheckCodingExampleRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|check_coding_example", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeCodingExample(request: RemoveCodingExampleRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|remove_coding_example", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async runCodingSession(request: RunCodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|run_coding_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async askCodingHint(request: AskCodingHintRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|ask_coding_hint", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sendCodingTurn(request: SendCodingTurnRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|send_coding_turn", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async respondCodingSession(request: CodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|respond_coding_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async observeCodingDraft(request: ObserveCodingDraftRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|observe_coding_draft", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setCodingClock(request: SetCodingClockRequestDto) : Promise<Result<ClockDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_coding_clock", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setCodingSetting(request: SetCodingSettingRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_coding_setting", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async revealCodingSolution(request: RevealCodingSolutionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reveal_coding_solution", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async finishCodingSession(request: FinishCodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|finish_coding_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async practiceDue(request: PracticeDueRequestDto) : Promise<Result<PracticeDueDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|practice_due", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -4862,7 +5033,11 @@ export type CapturedSourcesDto = { messageId: string;
  * could be read carrying its snapshot.
  */
 sources: SourceDto[] }
-export type CaseCheckDetailDto = { caseId: string; category: string; args: string[]; expected: string | null; actual: string | null; printed: string; error: string | null; visibility: Visibility }
+export type CaseCheckDetailDto = { caseId: string; category: string; visibility: CaseVisibility; scale: boolean;
+/**
+ * A learner example run as a case.
+ */
+mine: boolean; status: CaseStatus; args: string[] | null; expected: string | null; actual: string | null; printed: string | null; error: string | null; elapsedMs: number | null }
 /**
  * How one case ended.
  */
@@ -6239,14 +6414,15 @@ export type DownloadedModelResponse = { id: string; model_name: string; model_id
 supports_tool_calling?: boolean | null;
 /**
  * The context window saved for this model in Settings; `None` loads it
- * at its trained length.
+ * at the largest window that fits, up to its trained length.
  */
 configured_context_length?: number | null;
 /**
  * The largest window, up to its trained length, this model fits this
  * machine's memory at now, beside the other models loaded. Shown as a
- * warning beside a larger setting, never applied. `None` when the
- * machine does not report its memory or the header cannot say.
+ * warning beside a larger saved window, which it never changes; the
+ * window a model with none saved loads with. `None` when the machine
+ * does not report its memory or the header cannot say.
  */
 fits_context_length?: number | null;
 /**
@@ -11654,10 +11830,6 @@ verification: JsonValue;
  */
 turn?: TurnRecordDto | null }
 export type VersionInfoDto = { version: string; buildDate: string | null; commitHash: string | null }
-/**
- * Whether a case is shown to the learner before and during the session.
- */
-export type Visibility = "public" | "hidden"
 /**
  * A user's statement that a model takes pictures, and how its encoder
  * resizes and charges for them.
