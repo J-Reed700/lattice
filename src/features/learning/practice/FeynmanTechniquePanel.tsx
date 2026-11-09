@@ -339,6 +339,7 @@ function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProp
                         {reviewCardPointIndex === index ? (
                           <SaveAsReviewCard
                             programId={program.summary.id}
+                            lessonId={lesson?.id}
                             front={point.title}
                             back={point.body.trim() || point.title}
                             sourceLabel="Drafted from a gap found using the Feynman technique"

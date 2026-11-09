@@ -24,6 +24,7 @@ export interface TutorConversationProps {
   onAsk: (kind: 'question' | 'critique', prompt: string) => Promise<boolean>;
   onHint: (hint: HintRung) => Promise<boolean>;
   onOpenCitation: (citation: TutorTurn['citations'][number]) => void;
+  error?: { message: string; retry?: () => void } | null;
 }
 
 function turnTitle(turn: TutorTurn) {
@@ -33,7 +34,7 @@ function turnTitle(turn: TutorTurn) {
 
 function closedReason(active: boolean, mode: Wire.LearningPracticeMode): string {
   if (!active) return 'This attempt is submitted. Start a revision to ask the tutor again.';
-  return mode === 'demonstrate' ? 'Tutor assistance is closed in Demonstrate mode.' : 'Tutor assistance is closed.';
+  return mode === 'demonstrate' ? 'The tutor is closed with No help.' : 'The tutor is closed.';
 }
 
 export function TutorConversation({
@@ -50,6 +51,7 @@ export function TutorConversation({
   onAsk,
   onHint,
   onOpenCitation,
+  error = null,
 }: TutorConversationProps) {
   const draftKey = `practice-tutor:${sessionId}`;
   const [composer, setComposer] = useDraft(draftKey);
@@ -82,8 +84,9 @@ export function TutorConversation({
           placeholder={canTutor ? 'Ask about a step, assumption, or source…' : closedReason(active, mode)}
           busy={busyState === 'tutor' ? 'The tutor is responding…' : null}
           disabled={disabled}
+          error={error}
           onSend={async (content) => {
-            await onAsk('question', content);
+            if (!(await onAsk('question', content))) throw new Error('The question was not sent.');
           }}
           renderMessage={(message) => {
             const turn = turnById.get(message.id);
@@ -126,7 +129,7 @@ export function TutorConversation({
             <div className="flex items-center gap-2">
               <Lightbulb size={14} className="text-accent" aria-hidden="true" />
               <span className="text-xs font-semibold text-text-primary">Hint ladder</span>
-              <span className="text-xs text-text-muted">Each rung is a recorded aid</span>
+              <span className="text-xs text-text-muted">Each hint is recorded</span>
             </div>
             <div className="mt-2.5 grid gap-2 sm:grid-cols-2">
               {HINTS.map((hint, index) => {
@@ -156,7 +159,7 @@ export function TutorConversation({
                 );
               })}
             </div>
-            {!canTutor && <p className="mt-2 text-xs text-text-muted">Hints are unavailable in this mode.</p>}
+            {!canTutor && <p className="mt-2 text-xs text-text-muted">Hints are closed with No help.</p>}
           </div>
         </div>
       )}

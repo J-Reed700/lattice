@@ -3,15 +3,18 @@ import type * as Wire from '@/lib/bindings';
 
 type Proposal = Wire.LearningPracticeSessionDto['proposals'][number];
 
+const STATUS_WORDS: Record<string, string> = { pending: 'Waiting for you', accepted: 'Accepted', rejected: 'Not used' };
+
 export interface ProposalListProps {
   programId: string;
+  lessonId: string;
   proposals: Proposal[];
   active: boolean;
   busy: boolean;
   onDecide: (proposalId: string, accepted: boolean) => void;
 }
 
-export function ProposalList({ programId, proposals, active, busy, onDecide }: ProposalListProps) {
+export function ProposalList({ programId, lessonId, proposals, active, busy, onDecide }: ProposalListProps) {
   if (proposals.length === 0) return null;
   return (
     <section className="rounded-2xl border border-border-default bg-surface p-5">
@@ -24,7 +27,7 @@ export function ProposalList({ programId, proposals, active, busy, onDecide }: P
               <span className="rounded-full bg-accent-muted px-2.5 py-1 text-xs font-semibold uppercase tracking-wider text-accent">
                 {proposal.kind === 'follow_up' ? 'Follow-up' : 'Possible misconception'}
               </span>
-              <span className="text-xs text-text-muted">{proposal.status}</span>
+              <span className="text-xs text-text-muted">{STATUS_WORDS[proposal.status] ?? proposal.status}</span>
             </div>
             <p className="mt-2 text-sm leading-6 text-text-secondary">{proposal.text}</p>
             {proposal.evidenceQuote && (
@@ -54,7 +57,7 @@ export function ProposalList({ programId, proposals, active, busy, onDecide }: P
               </div>
             )}
             {proposal.kind === 'misconception' && proposal.status === 'accepted' && (
-              <MisconceptionCard programId={programId} idea={proposal.text} />
+              <MisconceptionCard programId={programId} lessonId={lessonId} idea={proposal.text} />
             )}
           </article>
         ))}

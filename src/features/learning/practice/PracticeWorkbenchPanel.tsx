@@ -19,7 +19,7 @@ import {
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import { usePracticeSession } from '@/features/learning/practice/usePracticeSession';
 import { AssistanceLedger, dateLabel } from '@/features/learning/practice/workbench/AssistanceLedger';
-import { HELP_MODES, helpModeOf } from '@/features/learning/practice/workbench/helpModes';
+import { HELP_MODES, helpModeOf, helpWord } from '@/features/learning/practice/workbench/helpModes';
 import { NewAttempt } from '@/features/learning/practice/workbench/NewAttempt';
 import { ProposalList } from '@/features/learning/practice/workbench/ProposalList';
 import { ResponseEditor } from '@/features/learning/practice/workbench/ResponseEditor';
@@ -66,9 +66,8 @@ export function PracticeWorkbenchPanel({
     sourceOpeningAllowed,
     busyState,
     busy,
-    actionError,
+    failure,
     conflict,
-    retryAction,
     solutionConfirm,
     setSolutionConfirm,
     selectedSource,
@@ -110,6 +109,8 @@ export function PracticeWorkbenchPanel({
     return <EmbeddedPracticeView program={program} lesson={lesson} sessionState={sessionState} onContinue={onContinue} />;
   }
 
+  const otherFailure = failure?.kind === 'tutor' ? null : failure;
+
   const openCitation = (citation: { sourceId: string; versionId: string }) => {
     const src = sourceForVersion(sourceWorkspace.data?.sources ?? [], citation.sourceId, citation.versionId);
     if (src) void doOpenSource(src, citation.versionId, saveNow);
@@ -148,7 +149,7 @@ export function PracticeWorkbenchPanel({
                   .filter((item) => item.lessonId === lessonId && (item.taskKind ?? 'independent') === taskKind)
                   .map((item) => (
                     <option key={item.id} value={item.id}>
-                      {item.status === 'submitted' ? 'Submitted' : 'In progress'} · {item.mode} · {dateLabel(item.createdAt)}
+                      {item.status === 'submitted' ? 'Submitted' : 'In progress'} · {helpWord(item.mode)} · {dateLabel(item.createdAt)}
                     </option>
                   ))}
               </select>
@@ -224,7 +225,7 @@ export function PracticeWorkbenchPanel({
                     <h4 className="mt-1 font-serif text-xl text-text-primary">Respond to the problem</h4>
                   </div>
                   <span className="rounded-full bg-surface-sunken px-3 py-1.5 text-xs font-medium uppercase tracking-wider text-text-muted">
-                    {summary?.mode} mode · aid is recorded
+                    {helpWord(mode)} · help used is recorded
                   </span>
                 </div>
                 <div className="mt-4 rounded-xl bg-surface-sunken p-4 text-sm leading-7 text-text-secondary">
@@ -234,7 +235,7 @@ export function PracticeWorkbenchPanel({
                   <span className="text-xs font-semibold uppercase tracking-wider text-text-muted">Lesson objective</span>
                   <p className="mt-1 text-xs leading-5 text-text-secondary">{session.lessonObjective}</p>
                 </div>
-                <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Session mode">
+                <div className="mt-5 flex flex-wrap gap-2" role="group" aria-label="Help">
                   {HELP_MODES.map((item) => (
                     <button
                       key={item.id}
@@ -248,12 +249,12 @@ export function PracticeWorkbenchPanel({
                           : 'border-border-default text-text-secondary hover:border-accent'
                       }`}
                     >
-                      {item.title}
+                      {item.help}
                     </button>
                   ))}
                 </div>
                 <p className="mt-2 text-xs leading-5 text-text-muted">
-                  Aid contract: {helpModeOf(mode)?.description}
+                  {helpModeOf(mode)?.description}
                 </p>
               </section>
 
@@ -262,8 +263,8 @@ export function PracticeWorkbenchPanel({
                 dirty={dirty}
                 active={active}
                 autosave={autosave}
-                actionError={actionError}
-                onRetryAction={retryAction ? () => void retryAction.run() : undefined}
+                actionError={otherFailure?.message ?? ''}
+                onRetryAction={otherFailure?.retry}
                 conflict={conflict}
                 busy={busy}
                 submitting={busyState === 'submitting'}
@@ -290,6 +291,7 @@ export function PracticeWorkbenchPanel({
                 onAsk={(kind, prompt) => sendTutor(kind, prompt, undefined, saveNow)}
                 onHint={(hint) => sendTutor('hint', hint.prompt, hint.id, saveNow)}
                 onOpenCitation={openCitation}
+                error={failure?.kind === 'tutor' ? { message: failure.message, retry: failure.retry } : null}
               />
 
               {session.revealedSolution && (
@@ -313,6 +315,7 @@ export function PracticeWorkbenchPanel({
 
               <ProposalList
                 programId={programId}
+                lessonId={session.summary.lessonId}
                 proposals={session.proposals}
                 active={active}
                 busy={busy}
@@ -326,7 +329,7 @@ export function PracticeWorkbenchPanel({
                 versionIds={session.summary.sourceVersionIds}
                 disabledReason={
                   !sourceOpeningAllowed
-                    ? 'Source opening is closed during an independent Demonstrate attempt.'
+                    ? 'Sources are closed with No help.'
                     : busy
                       ? 'Another workbench action is in progress.'
                       : undefined

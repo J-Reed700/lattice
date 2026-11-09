@@ -48,10 +48,10 @@ export function RubricPanel({
     return {
       id: criterion.id,
       title: `${criterion.title} · ${dimensionName(criterion.dimension)}`,
-      points: feedback?.score ?? null,
+      description: criterion.description,
       maxPoints: criterion.maxPoints,
       evidence: feedback?.evidenceQuote ? [{ kind: 'quote', text: feedback.evidenceQuote }] : [],
-      feedback: feedback?.observation ?? criterion.description,
+      ...(feedback ? { points: feedback.score, feedback: feedback.observation } : {}),
     };
   });
 

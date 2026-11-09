@@ -14,7 +14,7 @@ export function NewAttempt({ choice, onChoose, onStart, starting, busy }: NewAtt
   return (
     <div className="mt-5 grid gap-4 md:grid-cols-[minmax(0,1fr)_auto] md:items-start">
       <fieldset className="min-w-0">
-        <legend className="text-xs font-semibold text-text-primary">Choose your aid contract</legend>
+        <legend className="text-xs font-semibold text-text-primary">Help</legend>
         <div className="mt-2 grid gap-2 sm:grid-cols-3">
           {HELP_MODES.map((item) => (
             <label
@@ -32,9 +32,8 @@ export function NewAttempt({ choice, onChoose, onStart, starting, busy }: NewAtt
                   onChange={() => onChoose(item.id)}
                   className="accent-accent"
                 />
-                <span className="text-xs font-semibold text-text-primary">{item.title}</span>
+                <span className="text-xs font-semibold text-text-primary">{item.help}</span>
               </span>
-              <span className="mt-1 block text-xs font-semibold text-accent">Help: {item.help}</span>
               <span className="mt-1 block text-xs leading-5 text-text-secondary">{item.description}</span>
             </label>
           ))}

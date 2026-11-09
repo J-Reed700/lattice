@@ -66,7 +66,7 @@ export function StartingPointPanel({ programId, onStudy, onChallenge }: { progra
       } catch (cause) {
         const message = cause instanceof Error ? cause.message : String(cause);
         setError(message);
-        setConflict(/changed elsewhere|reload|revision/i.test(message));
+        setConflict(isConflict(cause));
         return false;
       } finally { setSaving(false); }
     })();

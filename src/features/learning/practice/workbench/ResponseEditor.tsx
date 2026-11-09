@@ -1,5 +1,4 @@
-import { AlertCircle, Check, Loader2, Pencil } from 'lucide-react';
-
+import { SaveStatus } from '@/components/ui/SaveStatus';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import type { UseAutosaveResult } from '@/features/learning/practice/shared/useAutosave';
 
@@ -18,35 +17,6 @@ export interface ResponseEditorProps {
   onSubmit: () => void;
 }
 
-function SaveIndicator({ state, dirty }: { state: UseAutosaveResult['state']; dirty: boolean }) {
-  if (state === 'saving') {
-    return (
-      <>
-        <Loader2 size={13} className="animate-spin text-accent" aria-hidden="true" /> Saving…
-      </>
-    );
-  }
-  if (state === 'error' || state === 'conflict') {
-    return (
-      <>
-        <AlertCircle size={13} className="text-danger-fg" aria-hidden="true" /> Save needs attention
-      </>
-    );
-  }
-  if (dirty) {
-    return (
-      <>
-        <Pencil size={13} aria-hidden="true" /> Unsaved changes
-      </>
-    );
-  }
-  return (
-    <>
-      <Check size={13} className="text-success-fg" aria-hidden="true" /> Saved
-    </>
-  );
-}
-
 export function ResponseEditor({
   text,
   dirty,
@@ -61,6 +31,7 @@ export function ResponseEditor({
   onReload,
   onSubmit,
 }: ResponseEditorProps) {
+  const saveState = autosave.state === 'saving' ? 'saving' : dirty || autosave.state === 'error' || autosave.state === 'conflict' ? 'unsaved' : 'saved';
   const saveFailed = autosave.state === 'error' || autosave.state === 'conflict';
   const submitReason = !text.trim() ? 'Write a response to submit it.' : busy && !submitting ? 'Another action is in progress.' : null;
 
@@ -71,9 +42,7 @@ export function ResponseEditor({
           <div className="text-xs font-semibold uppercase tracking-[.15em] text-accent">Your artifact</div>
           <h4 className="mt-1 font-serif text-xl text-text-primary">Work through the reasoning</h4>
         </div>
-        <div className="flex items-center gap-2 text-xs text-text-muted" role="status" aria-live="polite">
-          <SaveIndicator state={autosave.state} dirty={dirty} />
-        </div>
+        <SaveStatus state={saveState} />
       </div>
       <label htmlFor="workbench-artifact" className="sr-only">
         Your response

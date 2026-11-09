@@ -4,7 +4,6 @@ export type HelpLabel = 'Full help' | 'Hints only' | 'No help';
 
 export interface HelpMode {
   id: Wire.LearningPracticeMode;
-  title: string;
   help: HelpLabel;
   description: string;
 }
@@ -16,9 +15,9 @@ export interface HintRung {
 }
 
 export const HELP_MODES: HelpMode[] = [
-  { id: 'explore', title: 'Explore', help: 'Full help', description: 'Ask questions, use any hint, and reveal the worked solution after a deliberate confirmation.' },
-  { id: 'practice', title: 'Practice', help: 'Hints only', description: 'Ask questions and use scaffolded hints. Worked explanations and the solution stay closed.' },
-  { id: 'demonstrate', title: 'Demonstrate', help: 'No help', description: 'Write and submit independently. Source opening, tutor hints, and solutions are closed during the attempt.' },
+  { id: 'explore', help: 'Full help', description: 'Ask questions, use any hint, and reveal the worked solution after a deliberate confirmation.' },
+  { id: 'practice', help: 'Hints only', description: 'Ask questions and use scaffolded hints. Worked explanations and the solution stay closed.' },
+  { id: 'demonstrate', help: 'No help', description: 'Write and submit independently. Source opening, tutor hints, and solutions are closed during the attempt.' },
 ];
 
 export const HINTS: HintRung[] = [
@@ -29,3 +28,5 @@ export const HINTS: HintRung[] = [
 ];
 
 export const helpModeOf = (id: Wire.LearningPracticeMode): HelpMode | undefined => HELP_MODES.find((mode) => mode.id === id);
+
+export const helpWord = (id: Wire.LearningPracticeMode): HelpLabel => helpModeOf(id)?.help ?? 'Full help';

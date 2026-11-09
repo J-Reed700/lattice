@@ -1,5 +1,4 @@
-import { AlertCircle, Check, Loader2, Pencil } from 'lucide-react';
-
+import { SaveStatus } from '@/components/ui/SaveStatus';
 import { TiptapViewer } from '@/components/TiptapEditor';
 import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
 import {
@@ -49,9 +48,8 @@ export function EmbeddedPracticeView({
     autosave,
     saveNow,
     reloadAttempt,
-    actionError,
+    failure,
     conflict,
-    retryAction,
     selectedSource,
     setSelectedSource,
     hintUsed,
@@ -68,14 +66,21 @@ export function EmbeddedPracticeView({
   const sourceVersion = useLearningSourceVersion(sourceRequest);
 
   const nextHint = HINTS.slice(0, 3).find((hint) => !hintUsed.includes(hint.id));
-  const submitReason = !text.trim() ? 'Write your working first.' : busy ? 'Another action is in progress.' : null;
+  const saveState = autosave.state === 'saving' ? 'saving' : dirty || autosave.state === 'error' || autosave.state === 'conflict' ? 'unsaved' : 'saved';
+  const saveFailed = autosave.state === 'error' || autosave.state === 'conflict';
+  const error = failure
+    ? { message: failure.message, retry: failure.retry }
+    : saveFailed
+      ? { message: autosave.error ?? 'Your work could not be saved.', retry: autosave.state === 'error' ? () => void autosave.flush() : undefined }
+      : null;
+  const submitReason = !text.trim() ? 'Write your working first.' : busy && busyState !== 'submitting' ? 'Another action is in progress.' : null;
 
   return (
-    <section aria-label="Guided exercise" className="mt-5 space-y-4 border-t border-border-default pt-5">
+    <section aria-label="Guided attempt" className="mt-5 space-y-4 border-t border-border-default pt-5">
       {!sessionId ? (
         <div>
           <p className="text-sm leading-6 text-text-secondary">
-            Try the exercise in your own words. Your work saves as you go; request one hint at a time when you need it.
+            Try the attempt in your own words. Your work saves as you go; request one hint at a time when you need it.
           </p>
           <button
             type="button"
@@ -83,38 +88,20 @@ export function EmbeddedPracticeView({
             onClick={() => void startSession()}
             className="mt-3 min-h-11 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg disabled:opacity-50"
           >
-            {busyState === 'starting' ? 'Starting…' : 'Start guided exercise'}
+            {busyState === 'starting' ? 'Starting…' : 'Start guided attempt'}
           </button>
         </div>
       ) : sessionQuery.isError ? (
         <StatusLine state={{ kind: 'error', message: sessionQuery.error.message, retry: () => void sessionQuery.refetch() }} />
       ) : !session ? (
-        <p role="status" className="text-xs text-text-muted">Opening your saved exercise…</p>
+        <p role="status" className="text-xs text-text-muted">Opening your saved attempt…</p>
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label htmlFor={`guided-answer-${lessonId}`} className="text-sm font-semibold text-text-primary">
               Your working
             </label>
-            <span role="status" className="flex items-center gap-1.5 text-xs text-text-muted">
-              {autosave.state === 'saving' ? (
-                <>
-                  <Loader2 size={13} className="animate-spin text-accent" aria-hidden="true" /> Saving…
-                </>
-              ) : autosave.state === 'error' || autosave.state === 'conflict' ? (
-                <>
-                  <AlertCircle size={13} className="text-danger-fg" aria-hidden="true" /> Save needs attention
-                </>
-              ) : dirty ? (
-                <>
-                  <Pencil size={13} aria-hidden="true" /> Unsaved changes
-                </>
-              ) : (
-                <>
-                  <Check size={13} className="text-success-fg" aria-hidden="true" /> Saved
-                </>
-              )}
-            </span>
+            <SaveStatus state={saveState} />
           </div>
           <textarea
             id={`guided-answer-${lessonId}`}
@@ -227,43 +214,11 @@ export function EmbeddedPracticeView({
           {session.summary.revisesSessionId && <PreviousFeedback session={session} />}
         </>
       )}
-      {!actionError && (autosave.state === 'error' || autosave.state === 'conflict') && (
-        <StatusLine
-          state={{
-            kind: 'error',
-            message: autosave.error ?? 'Your work could not be saved.',
-            retry: autosave.state === 'error' ? () => void autosave.flush() : undefined,
-          }}
-        />
-      )}
-      {!actionError && autosave.state === 'conflict' && (
+      {error && <StatusLine state={{ kind: 'error', message: error.message, retry: error.retry }} />}
+      {conflict && (
         <button type="button" onClick={() => void reloadAttempt()} className="text-sm font-semibold underline">
-          Reload saved exercise
+          Reload the saved attempt · keep my text
         </button>
-      )}
-      {actionError && (
-        <div role="alert" className="rounded-xl bg-danger-muted p-3 text-sm text-danger-fg">
-          <p>{actionError}</p>
-          {retryAction && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void retryAction.run()}
-              className="mt-2 font-semibold underline"
-            >
-              {retryAction.label}
-            </button>
-          )}
-          {conflict && (
-            <button
-              type="button"
-              onClick={() => void reloadAttempt()}
-              className="mt-2 font-semibold underline"
-            >
-              Reload saved exercise
-            </button>
-          )}
-        </div>
       )}
     </section>
   );

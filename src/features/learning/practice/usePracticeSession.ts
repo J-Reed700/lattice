@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
+import { useRetry } from '@/features/learning/practice/shared/useRetry';
 import { useAutosave } from '@/features/learning/practice/shared/useAutosave';
 import {
   useAcceptLearningPracticeProposal,
@@ -23,7 +24,7 @@ import type {
   LearningSourceLibraryItemDto,
   SaveLearningPracticeArtifactRequestDto,
 } from '@/lib/bindings';
-import { isConflict, newId } from '@/lib/api';
+import { newId } from '@/lib/api';
 import { registerPendingSave } from '@/lib/pendingSaves';
 
 export type PracticeBusyState =
@@ -70,17 +71,14 @@ export function usePracticeSession({
 
   const [modeChoice, setModeChoice] = useState<LearningPracticeMode>(embedded ? 'practice' : 'explore');
   const [busyState, setBusyState] = useState<PracticeBusyState>('idle');
-  const [actionError, setActionError] = useState('');
-  const [actionConflict, setConflict] = useState(false);
+  const [failedKind, setFailedKind] = useState<PracticeBusyState | null>(null);
   const [text, setTextState] = useState('');
   const [hydratedFor, setHydratedFor] = useState<string | null>(null);
-  const [retryAction, setRetryAction] = useState<{ label: string; run: () => Promise<void> } | null>(null);
 
   const [solutionConfirm, setSolutionConfirm] = useState(false);
   const [selectedSource, setSelectedSource] = useState<{ sourceId: string; versionId: string } | null>(null);
   const [hintUsed, setHintUsed] = useState<LearningPracticeHintLevel[]>([]);
 
-  const conflictRef = useRef(false);
   const revisionRef = useRef(0);
   const textRef = useRef('');
   const savedTextRef = useRef('');
@@ -138,12 +136,10 @@ export function usePracticeSession({
     setHydratedFor(session.summary.id);
   }, [session, sessionId, hydratedFor]);
 
-  const setText = useCallback((value: string) => {
+  const setText = (value: string) => {
     textRef.current = value;
     setTextState(value);
-    setActionError('');
-    setRetryAction(null);
-  }, []);
+  };
 
   const saveArtifact = async (value: string, expectedRevision: number) => {
     if (!summary) throw new Error('There is no attempt to save.');
@@ -181,68 +177,30 @@ export function usePracticeSession({
   saveNowRef.current = saveNow;
   useEffect(() => registerPendingSave(() => saveNowRef.current()), []);
 
-  const reloadAttempt = async () => {
-    await sessionQuery.refetch();
-    setConflict(false);
-    conflictRef.current = false;
-    await autosave.flush();
-  };
-
-  const perform = useCallback(async (state: PracticeBusyState, run: () => Promise<unknown>) => {
-    setBusyState(state);
-    setActionError('');
-    setRetryAction(null);
-    setConflict(false);
+  const action = async (kind: PracticeBusyState, invoke: () => Promise<unknown>) => {
+    setBusyState(kind);
     try {
-      await run();
-      conflictRef.current = false;
+      await invoke();
+      if (sessionId) await sessionQuery.refetch();
+      await workspace.refetch();
+      setFailedKind(null);
       return true;
     } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      const isConf = isConflict(error);
-      conflictRef.current = isConf;
-      setActionError(message);
-      setConflict(isConf);
-      return false;
+      setFailedKind(kind);
+      throw error;
     } finally {
       setBusyState('idle');
     }
-  }, []);
+  };
+  const actions = useRetry(action);
+  const runAction = async (kind: PracticeBusyState, invoke: () => Promise<unknown>) => (await actions.run(kind, invoke)) === true;
 
-  const runRetryable = useCallback(
-    async <T,>(
-      state: PracticeBusyState,
-      label: string,
-      invoke: (request: T) => Promise<unknown>,
-      request: T,
-    ) => {
-      const stableRun = async () => invoke(request);
-      const execute = async () => {
-        const ok = await perform(state, stableRun);
-        if (ok) {
-          try {
-            if (sessionId) await sessionQuery.refetch();
-            await workspace.refetch();
-          } finally {
-            setBusyState('idle');
-          }
-        } else if (!conflictRef.current) {
-          const retry = {
-            label: `Retry ${label.toLowerCase()}`,
-            run: async () => {
-              await execute();
-            },
-          };
-          setRetryAction(() => retry);
-        }
-        return ok;
-      };
-      return await execute();
-    },
-    [perform, sessionId, sessionQuery, workspace],
-  );
+  const reloadAttempt = async () => {
+    await runAction('idle', async () => {});
+    await autosave.flush();
+  };
 
-  const startSession = useCallback(async () => {
+  const startSession = async () => {
     if (lesson?.preparation !== 'ready') return;
     const id = newId();
     const request = {
@@ -255,146 +213,110 @@ export function usePracticeSession({
       taskKind,
       revisesSessionId: session?.summary.status === 'submitted' ? session.summary.id : null,
     };
-    await runRetryable('starting', 'Start attempt', async (payload) => {
-      await start.mutateAsync(payload);
+    await runAction('starting', async () => {
+      await start.mutateAsync(request);
       setSessionId(id);
-    }, request);
-  }, [lesson, program.summary.revision, programId, session, modeChoice, taskKind, runRetryable, start]);
+    });
+  };
 
-  const switchMode = useCallback(
-    async (next: LearningPracticeMode, preSave?: () => Promise<boolean>) => {
-      if (!summary || !active || next === mode) return;
-      if (preSave && !(await preSave())) return;
-      const latest = sessionQuery.data?.summary ?? summary;
-      const request = {
-        operationId: newId(),
-        programId,
-        sessionId: latest.id,
-        expectedRevision: revisionRef.current || latest.revision,
-        mode: next,
-      };
-      if (
-        await runRetryable('changing_mode', 'Change mode', (payload) => changeMode.mutateAsync(payload), request)
-      ) {
-        setModeChoice(next);
-      }
-    },
-    [summary, active, mode, sessionQuery.data?.summary, programId, runRetryable, changeMode],
-  );
+  const switchMode = async (next: LearningPracticeMode, preSave?: () => Promise<boolean>) => {
+    if (!summary || !active || next === mode) return;
+    if (preSave && !(await preSave())) return;
+    const latest = sessionQuery.data?.summary ?? summary;
+    const request = {
+      operationId: newId(),
+      programId,
+      sessionId: latest.id,
+      expectedRevision: revisionRef.current || latest.revision,
+      mode: next,
+    };
+    if (await runAction('changing_mode', () => changeMode.mutateAsync(request))) setModeChoice(next);
+  };
 
-  const sendTutor = useCallback(
-    async (
-      requestKind: 'hint' | 'question' | 'critique',
-      prompt: string,
-      hintLevel?: LearningPracticeHintLevel,
-      preSave?: () => Promise<boolean>,
-    ) => {
-      if (!summary || !active || !canTutor || !prompt.trim()) return false;
-      if (preSave && !(await preSave())) return false;
-      const latest = sessionQuery.data?.summary ?? summary;
-      const request = {
-        operationId: newId(),
-        programId,
-        sessionId: latest.id,
-        expectedRevision: revisionRef.current || latest.revision,
-        requestKind,
-        prompt: prompt.trim(),
-        hintLevel: hintLevel ?? null,
-      };
-      const label = requestKind === 'hint' ? 'Request hint' : requestKind === 'critique' ? 'Request critique' : 'Ask tutor';
-      const ok = await runRetryable('tutor', label, (payload) => tutor.mutateAsync(payload), request);
-      if (ok && hintLevel) {
-        setHintUsed((current) => (current.includes(hintLevel) ? current : [...current, hintLevel]));
-      }
-      return ok;
-    },
-    [summary, active, canTutor, sessionQuery.data?.summary, programId, runRetryable, tutor],
-  );
+  const sendTutor = async (
+    requestKind: 'hint' | 'question' | 'critique',
+    prompt: string,
+    hintLevel?: LearningPracticeHintLevel,
+    preSave?: () => Promise<boolean>,
+  ) => {
+    if (!summary || !active || !canTutor || !prompt.trim()) return false;
+    if (preSave && !(await preSave())) return false;
+    const latest = sessionQuery.data?.summary ?? summary;
+    const request = {
+      operationId: newId(),
+      programId,
+      sessionId: latest.id,
+      expectedRevision: revisionRef.current || latest.revision,
+      requestKind,
+      prompt: prompt.trim(),
+      hintLevel: hintLevel ?? null,
+    };
+    const ok = await runAction('tutor', () => tutor.mutateAsync(request));
+    if (ok && hintLevel) setHintUsed((current) => (current.includes(hintLevel) ? current : [...current, hintLevel]));
+    return ok;
+  };
 
-  const doOpenSource = useCallback(
-    async (source: LearningSourceLibraryItemDto, versionId: string, preSave?: () => Promise<boolean>) => {
-      if (!summary || busyState !== 'idle') return;
-      if (!active) {
-        setSelectedSource({ sourceId: source.id, versionId });
-        return;
-      }
-      if (mode === 'demonstrate') return;
-      if (preSave && !(await preSave())) return;
-      const latest = sessionQuery.data?.summary ?? summary;
-      const request = {
-        operationId: newId(),
-        programId,
-        sessionId: latest.id,
-        expectedRevision: revisionRef.current || latest.revision,
-        sourceId: source.id,
-        versionId,
-      };
-      if (
-        await runRetryable('opening_source', 'Open saved source', (payload) => openSource.mutateAsync(payload), request)
-      ) {
-        setSelectedSource({ sourceId: source.id, versionId });
-      }
-    },
-    [summary, busyState, active, mode, sessionQuery.data?.summary, programId, runRetryable, openSource],
-  );
+  const doOpenSource = async (source: LearningSourceLibraryItemDto, versionId: string, preSave?: () => Promise<boolean>) => {
+    if (!summary || busyState !== 'idle') return;
+    if (!active) {
+      setSelectedSource({ sourceId: source.id, versionId });
+      return;
+    }
+    if (mode === 'demonstrate') return;
+    if (preSave && !(await preSave())) return;
+    const latest = sessionQuery.data?.summary ?? summary;
+    const request = {
+      operationId: newId(),
+      programId,
+      sessionId: latest.id,
+      expectedRevision: revisionRef.current || latest.revision,
+      sourceId: source.id,
+      versionId,
+    };
+    if (await runAction('opening_source', () => openSource.mutateAsync(request))) {
+      setSelectedSource({ sourceId: source.id, versionId });
+    }
+  };
 
-  const doReveal = useCallback(
-    async (preSave?: () => Promise<boolean>) => {
-      if (!summary || !solutionAllowed) return;
-      if (preSave && !(await preSave())) return;
-      const latest = sessionQuery.data?.summary ?? summary;
-      const request = {
-        operationId: newId(),
-        programId,
-        sessionId: latest.id,
-        expectedRevision: revisionRef.current || latest.revision,
-      };
-      if (
-        await runRetryable('revealing', 'Reveal solution', (payload) => reveal.mutateAsync(payload), request)
-      ) {
-        setSolutionConfirm(false);
-      }
-    },
-    [summary, solutionAllowed, sessionQuery.data?.summary, programId, runRetryable, reveal],
-  );
+  const doReveal = async (preSave?: () => Promise<boolean>) => {
+    if (!summary || !solutionAllowed) return;
+    if (preSave && !(await preSave())) return;
+    const latest = sessionQuery.data?.summary ?? summary;
+    const request = {
+      operationId: newId(),
+      programId,
+      sessionId: latest.id,
+      expectedRevision: revisionRef.current || latest.revision,
+    };
+    if (await runAction('revealing', () => reveal.mutateAsync(request))) setSolutionConfirm(false);
+  };
 
-  const doSubmit = useCallback(
-    async (text: string, preSave?: () => Promise<boolean>) => {
-      if (!summary || !active || !text.trim()) return;
-      if (preSave && !(await preSave())) return;
-      const latest = sessionQuery.data?.summary ?? summary;
-      const request = {
-        operationId: newId(),
-        programId,
-        sessionId: latest.id,
-        expectedRevision: revisionRef.current || latest.revision,
-      };
-      await runRetryable('submitting', 'Submit response', (payload) => submit.mutateAsync(payload), request);
-    },
-    [summary, active, sessionQuery.data?.summary, programId, runRetryable, submit],
-  );
+  const doSubmit = async (value: string, preSave?: () => Promise<boolean>) => {
+    if (!summary || !active || !value.trim()) return;
+    if (preSave && !(await preSave())) return;
+    const latest = sessionQuery.data?.summary ?? summary;
+    const request = {
+      operationId: newId(),
+      programId,
+      sessionId: latest.id,
+      expectedRevision: revisionRef.current || latest.revision,
+    };
+    await runAction('submitting', () => submit.mutateAsync(request));
+  };
 
-  const decide = useCallback(
-    async (proposalId: string, accepted: boolean, preSave?: () => Promise<boolean>) => {
-      if (!summary || !active) return;
-      if (preSave && !(await preSave())) return;
-      const latest = sessionQuery.data?.summary ?? summary;
-      const request = {
-        operationId: newId(),
-        programId,
-        sessionId: latest.id,
-        expectedRevision: revisionRef.current || latest.revision,
-        proposalId,
-      };
-      await runRetryable(
-        'deciding',
-        accepted ? 'Accept proposal' : 'Reject proposal',
-        (payload) => (accepted ? acceptProposal.mutateAsync(payload) : rejectProposal.mutateAsync(payload)),
-        request,
-      );
-    },
-    [summary, active, sessionQuery.data?.summary, programId, runRetryable, acceptProposal, rejectProposal],
-  );
+  const decide = async (proposalId: string, accepted: boolean, preSave?: () => Promise<boolean>) => {
+    if (!summary || !active) return;
+    if (preSave && !(await preSave())) return;
+    const latest = sessionQuery.data?.summary ?? summary;
+    const request = {
+      operationId: newId(),
+      programId,
+      sessionId: latest.id,
+      expectedRevision: revisionRef.current || latest.revision,
+      proposalId,
+    };
+    await runAction('deciding', () => (accepted ? acceptProposal.mutateAsync(request) : rejectProposal.mutateAsync(request)));
+  };
 
   const busyLabel =
     busyState === 'starting'
@@ -435,21 +357,13 @@ export function usePracticeSession({
     sourceOpeningAllowed,
     busyState,
     busyLabel,
-    actionError,
-    setActionError,
-    conflict: actionConflict || autosave.state === 'conflict',
-    setConflict,
-    retryAction,
-    setRetryAction,
+    failure: actions.error === null ? null : { kind: failedKind, message: actions.error, retry: actions.conflict ? undefined : actions.retry },
+    conflict: actions.conflict || autosave.state === 'conflict',
     solutionConfirm,
     setSolutionConfirm,
     selectedSource,
     setSelectedSource,
     hintUsed,
-    setHintUsed,
-    revisionRef,
-    saveRequestRef,
-    perform,
     startSession,
     switchMode,
     sendTutor,
@@ -458,6 +372,5 @@ export function usePracticeSession({
     doSubmit,
     decide,
     workspace,
-    saveMutation: save,
   };
 }

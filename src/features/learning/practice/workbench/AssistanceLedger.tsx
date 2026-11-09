@@ -1,5 +1,6 @@
 import { ArrowDownRight, ShieldCheck } from 'lucide-react';
 
+import { helpWord } from '@/features/learning/practice/workbench/helpModes';
 import type * as Wire from '@/lib/bindings';
 
 type AssistanceEvent = Wire.LearningPracticeSessionDto['assistance'][number];
@@ -8,7 +9,7 @@ const KIND_LABELS: Record<string, string> = {
   source_opened: 'Opened a frozen source',
   hint: 'Requested a tutor hint',
   solution_revealed: 'Revealed worked solution',
-  mode_changed: 'Changed aid contract',
+  mode_changed: 'Changed help',
 };
 
 export const dateLabel = (value: number) => {
@@ -31,7 +32,7 @@ export function AssistanceLedger({ events }: { events: AssistanceEvent[] }) {
               <span className="min-w-0">
                 <span className="block text-xs font-medium text-text-primary">{KIND_LABELS[event.kind] ?? event.kind}</span>
                 <span className="mt-0.5 block text-xs leading-4 text-text-muted">
-                  {event.mode} · response revision {event.artifactRevision} · {dateLabel(event.createdAt)}
+                  {helpWord(event.mode)} · {dateLabel(event.createdAt)}
                 </span>
               </span>
             </li>
@@ -39,11 +40,11 @@ export function AssistanceLedger({ events }: { events: AssistanceEvent[] }) {
         </ol>
       ) : (
         <p className="mt-3 text-xs leading-5 text-text-muted">
-          No assistance recorded yet. Source openings, tutor turns, mode changes, and solution reveals are listed here.
+          No assistance recorded yet. Source openings, tutor turns, help changes, and solution reveals are listed here.
         </p>
       )}
       <div className="mt-4 rounded-lg bg-surface-sunken px-3 py-2 text-xs leading-4 text-text-muted">
-        <ShieldCheck size={12} className="mr-1 inline text-accent" aria-hidden="true" /> Results are interpreted alongside the aid used.
+        <ShieldCheck size={12} className="mr-1 inline text-accent" aria-hidden="true" /> Results are interpreted alongside the help used.
       </div>
     </section>
   );
