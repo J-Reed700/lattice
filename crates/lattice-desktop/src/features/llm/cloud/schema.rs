@@ -46,6 +46,24 @@ pub(super) fn refusal(reason: &str) -> Option<AppError> {
     .then(|| AppError::ModelRejected(REFUSAL.into()))
 }
 
+/// Logs Claude's reason for refusing the response schema of `body`, with the
+/// fields of the schema it refused.
+pub(super) fn log_refusal(body: &Value, reason: &str) {
+    if !asks_for_format(body) || refusal(reason).is_none() {
+        return;
+    }
+    let fields = body
+        .pointer("/output_config/format/schema/properties")
+        .and_then(Value::as_object)
+        .map(|properties| properties.keys().cloned().collect::<Vec<_>>().join(","))
+        .unwrap_or_default();
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    tracing::warn!(reason, model, schema_fields = %fields, "Claude refused the response schema");
+}
+
 /// `body` with its response schema asked for in the system prompt instead of
 /// as a format. The caller's parser checks the reply as it would any other.
 pub(super) fn in_words(mut body: Value) -> Value {

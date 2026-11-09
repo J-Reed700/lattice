@@ -108,3 +108,25 @@ fn on_the_last_answer_only_the_missing_issue_is_left_not_established() -> Result
     assert_eq!(notes, ["Proposal 1."]);
     Ok(())
 }
+
+#[test]
+fn the_decision_schema_requires_a_part_among_the_candidates_or_lesson() {
+    let ids = ["blocks-0", "questions-1", "reference-0", "requirements"].map(String::from);
+    let schema = schema(&keys(1), &ids);
+    let decision = &schema["properties"]["decisions"]["items"];
+    assert!(decision["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("partId")));
+    assert_eq!(
+        decision["properties"]["partId"]["enum"],
+        json!(["blocks-0", "questions-1", "lesson"])
+    );
+}
+
+#[test]
+fn the_decision_schema_bounds_no_text_but_a_blank() {
+    let ids = ["blocks-0", "requirements"].map(String::from);
+    let bounds = crate::lessons::course_generation_tests::length_bounds(&schema(&keys(1), &ids));
+    assert!(bounds.is_empty(), "{bounds:?}");
+}
