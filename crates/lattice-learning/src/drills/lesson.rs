@@ -71,16 +71,6 @@ impl LessonContext {
                 "The lesson is not one of the course's.".into(),
             ));
         };
-        let profile_details: Option<String> =
-            sqlx::query_scalar("SELECT details FROM learning_practice_profiles WHERE program_id=?")
-                .bind(program_id)
-                .fetch_optional(pool)
-                .await
-                .map_err(db)?;
-        let goal = match profile_details.filter(|d| !d.trim().is_empty()) {
-            Some(details) => format!("{goal} ({details})"),
-            None => goal,
-        };
         let blocks: Vec<(String, String, String)> = sqlx::query_as(
             "SELECT kind,body,source_ids_json FROM learning_blocks WHERE lesson_id=? ORDER BY ordinal",
         )

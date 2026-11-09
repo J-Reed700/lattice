@@ -7,6 +7,19 @@ use lattice_core::{
 };
 use serde::Deserialize;
 
+/// The task of a lesson with no written exercise of its own: its objective, and what the learner said they are
+/// preparing for when they said anything.
+pub fn fallback_task_prompt(objective: &str, details: Option<&str>) -> String {
+    let task = format!(
+        "{}\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.",
+        objective.trim()
+    );
+    match details.map(str::trim).filter(|details| !details.is_empty()) {
+        Some(details) => format!("{task}\n\nYou are preparing for: {details}"),
+        None => task,
+    }
+}
+
 fn invalid(message: &str) -> AppError {
     AppError::InvalidInput(message.into())
 }
@@ -379,39 +392,6 @@ fn validate_grade(
         return Err(invalid("The grader returned duplicate criteria."));
     }
     Ok((parsed.status, out))
-}
-
-/// Builds the written practice task prompt for an objective, incorporating the
-/// learner's practice profile details and language target when set.
-pub fn generate_written_practice_prompt(
-    objective: &str,
-    profile: Option<&LearningPracticeProfileDto>,
-) -> String {
-    let base = format!(
-        "{}\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.",
-        objective.trim()
-    );
-    let Some(profile) = profile else {
-        return base;
-    };
-    let mut extras = Vec::new();
-    let details = profile.details.trim();
-    if !details.is_empty() {
-        extras.push(format!("Preparing for: {details}"));
-    }
-    if let Some(language) = profile
-        .language
-        .as_deref()
-        .map(str::trim)
-        .filter(|l| !l.is_empty())
-    {
-        extras.push(format!("Target language: {language}"));
-    }
-    if extras.is_empty() {
-        base
-    } else {
-        format!("{base}\n\n{}", extras.join(" · "))
-    }
 }
 
 #[cfg(test)]

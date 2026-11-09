@@ -8,7 +8,7 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use serde::Deserialize;
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 
 #[derive(Clone)]
 pub struct StudyRepository {
@@ -564,39 +564,52 @@ impl StudyRepository {
     /// recalled at least once before the target.
     pub async fn set_target(&self, deck_id: &str, target_at: Option<i64>, now: i64) -> Result<()> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
+        if !Self::set_target_in(&mut tx, deck_id, target_at, now).await? {
+            return Err(AppError::NotFound("Study deck no longer exists".into()));
+        }
+        tx.commit().await.map_err(db)
+    }
+
+    /// [`Self::set_target`] in the caller's transaction. False, and nothing changed, when the deck does not exist.
+    pub(crate) async fn set_target_in(
+        connection: &mut SqliteConnection,
+        deck_id: &str,
+        target_at: Option<i64>,
+        now: i64,
+    ) -> Result<bool> {
         let exists = sqlx::query("SELECT 1 FROM study_decks WHERE id=?")
             .bind(deck_id)
-            .fetch_optional(&mut *tx)
+            .fetch_optional(&mut *connection)
             .await
             .map_err(db)?;
         if exists.is_none() {
-            return Err(AppError::NotFound("Study deck no longer exists".into()));
+            return Ok(false);
         }
         match target_at {
             Some(target) => {
                 sqlx::query("INSERT INTO study_deck_targets(deck_id,target_at) VALUES(?,?) ON CONFLICT(deck_id) DO UPDATE SET target_at=excluded.target_at")
                     .bind(deck_id)
                     .bind(target)
-                    .execute(&mut *tx)
+                    .execute(&mut *connection)
                     .await
                     .map_err(db)?;
                 sqlx::query("UPDATE study_cards SET due_at=? WHERE deck_id=? AND due_at>?")
                     .bind(now)
                     .bind(deck_id)
                     .bind(target.saturating_sub(FINAL_WINDOW_MS))
-                    .execute(&mut *tx)
+                    .execute(&mut *connection)
                     .await
                     .map_err(db)?;
             }
             None => {
                 sqlx::query("DELETE FROM study_deck_targets WHERE deck_id=?")
                     .bind(deck_id)
-                    .execute(&mut *tx)
+                    .execute(&mut *connection)
                     .await
                     .map_err(db)?;
             }
         }
-        tx.commit().await.map_err(db)
+        Ok(true)
     }
 
     pub async fn review(

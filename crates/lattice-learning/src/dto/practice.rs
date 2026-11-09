@@ -337,5 +337,34 @@ pub struct SaveLearningPracticeProfileRequestDto {
     pub interview_at: Option<i64>,
     pub company: Option<String>,
     pub role: Option<String>,
-    pub expected_revision: Option<i64>,
+    /// The revision the learner last read; 0 for a profile never saved.
+    pub expected_revision: i64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct GetLearningPracticeProfileRequestDto {
+    pub program_id: String,
+}
+
+/// Whether the course teaches writing, reading or debugging program code.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "snake_case")]
+pub enum CodeFit {
+    Fits,
+    DoesNotFit,
+    Checking,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PracticeFitDto {
+    pub code: CodeFit,
+    pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PracticeFitRequestDto {
+    pub program_id: String,
 }

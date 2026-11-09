@@ -423,11 +423,11 @@ pub async fn reject_learning_practice_proposal(
 #[tauri::command]
 #[specta::specta]
 pub async fn get_learning_practice_profile(
-    program_id: String,
+    request: GetLearningPracticeProfileRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningPracticeProfileDto, ApiError> {
     practice_repo(&container)
-        .get_profile(&program_id)
+        .get_profile(&request.program_id)
         .await
         .map_err(ApiError::from)
 }
@@ -442,4 +442,46 @@ pub async fn save_learning_practice_profile(
         .save_profile(&request)
         .await
         .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_practice_fit(
+    request: PracticeFitRequestDto,
+    container: State<'_, Container>,
+) -> Result<PracticeFitDto, ApiError> {
+    crate::features::learning::practice_fit::practice_fit(
+        &practice_repo(&container),
+        &request.program_id,
+    )
+    .await
+    .map_err(ApiError::from)
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn check_practice_fit(
+    request: PracticeFitRequestDto,
+    container: State<'_, Container>,
+) -> Result<PracticeFitDto, ApiError> {
+    let repo = practice_repo(&container);
+    let known = crate::features::learning::practice_fit::practice_fit(&repo, &request.program_id)
+        .await
+        .map_err(ApiError::from)?;
+    if known.code != CodeFit::Checking {
+        return Ok(known);
+    }
+    let pin = learning_model(
+        &container,
+        model_requirements::practice(),
+        "Checking whether the course teaches code",
+    )
+    .await?;
+    crate::features::learning::practice_fit::check_practice_fit(
+        &repo,
+        pin.llm.as_ref(),
+        &request.program_id,
+    )
+    .await
+    .map_err(ApiError::from)
 }

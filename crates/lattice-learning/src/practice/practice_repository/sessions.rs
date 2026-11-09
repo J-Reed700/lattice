@@ -77,27 +77,13 @@ impl LearningPracticeRepository {
         }
         let title: String = lesson.get("title");
         let objective: String = lesson.get("objective");
-        let profile_row = sqlx::query(
-            "SELECT details, language, interview_at, company, role, revision FROM learning_practice_profiles WHERE program_id=?",
-        )
-        .bind(&req.program_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
-        let profile = profile_row.map(|r| LearningPracticeProfileDto {
-            program_id: req.program_id.clone(),
-            details: r.get("details"),
-            language: r.get("language"),
-            interview_at: r.get("interview_at"),
-            company: r.get("company"),
-            role: r.get("role"),
-            revision: r.get("revision"),
-        });
-        let fallback_prompt =
-            crate::practice::practice_generation::generate_written_practice_prompt(
-                &objective,
-                profile.as_ref(),
-            );
+        let details = profile_in(&mut tx, &req.program_id)
+            .await?
+            .map(|profile| profile.details);
+        let fallback_prompt = crate::practice_generation::fallback_task_prompt(
+            &objective,
+            details.as_deref(),
+        );
         let block_kind = match req.task_kind {
             LearningPracticeTaskKind::Guided => "guided_practice",
             LearningPracticeTaskKind::Independent => "independent_practice",
