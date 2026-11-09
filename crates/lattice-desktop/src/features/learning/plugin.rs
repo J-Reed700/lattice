@@ -271,6 +271,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             edit_learning_course_plan_entry,
             change_learning_course_plan_entries,
             undo_learning_course_plan_entry,
+            prepare_learning_ahead,
             complete_learning_lesson,
             delete_learning_program,
             get_learning_memory,

@@ -352,6 +352,7 @@
     "learning:allow-edit-learning-course-plan-entry",
     "learning:allow-change-learning-course-plan-entries",
     "learning:allow-undo-learning-course-plan-entry",
+    "learning:allow-prepare-learning-ahead",
     "learning:allow-complete-learning-lesson",
     "learning:allow-delete-learning-program",
     "learning:allow-get-learning-memory",

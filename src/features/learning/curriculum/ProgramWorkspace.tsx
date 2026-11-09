@@ -25,7 +25,7 @@ import { StudyHabitsBar, type FrameworkAction } from '@/features/learning/habits
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
 import { LessonPreparationLine } from '@/features/learning/lessons/LessonPreparationLine';
 import { LessonPreparationStatus } from '@/features/learning/lessons/LessonPreparationProgress';
-import { preparationQueue, queuedLesson } from '@/features/learning/lessons/preparationQueue';
+import { coursePreparation, coursePreparationLine, paceLine, preparationPaceMinutes, preparationQueue, queuedLesson, unqueuedLessons } from '@/features/learning/lessons/preparationQueue';
 import { currentPreparationJobs, heldLessonIds } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { NotebookPanel, RecallPanel } from '@/features/learning/memory/MemoryPanels';
 import { useLearningMemory, useSaveLearningCardDraft } from '@/features/learning/memory/useLearningMemory';
@@ -61,7 +61,7 @@ const LazyCanvasPanel = lazy(() => import('@/features/learning/canvas/CanvasPane
 type Tab = StudyTab;
 type NotebookDraft = { title: string; content: string };
 
-export function ProgramWorkspace({ program, destination, outlineGeneration, initialTangentId, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, onPrepareModule, preparePending, prepareError, onComplete, completePending, completeError, onReview }: {
+export function ProgramWorkspace({ program, destination, outlineGeneration, initialTangentId, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, onPrepareModule, onLessonOpened, preparePending, prepareError, onComplete, completePending, completeError, onReview }: {
   destination?: StudyDestination;
   outlineGeneration?: OutlineOperation;
   initialTangentId?: string | null;
@@ -70,6 +70,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   onOpenProgram: (programId: string) => void;
   onPrepare: (lesson: LearningLessonDto) => void; preparePending: boolean; prepareError?: Error;
   onPrepareModule?: (module: LearningModuleDto) => void;
+  /** Called when the learner opens a prepared lesson, so the course can prepare ahead of it. */
+  onLessonOpened?: (lessonId: string) => void;
   onComplete: (lesson: LearningLessonDto) => void; completePending: boolean; completeError?: Error;
   /** Opens a lesson's claim review screen (UI design §2.3). */
   onReview?: (programId: string, lessonId: string, claimId?: string) => void;
@@ -161,10 +163,19 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const memoryQuery = useLearningMemory(program.summary.id, activeProgram);
   const theme = useEffectiveTheme();
   const currentModule = program.modules.find((m) => m.id === moduleId) ?? program.modules[0];
-  const heldLessons = new Set(currentPreparationJobs(preparationPlan.data?.jobs ?? []).flatMap((job) => heldLessonIds(job)));
-  const unqueuedLessons = (currentModule?.lessons ?? []).filter((lesson) => lesson.preparation === 'outline' && !lesson.completed && !queuedLesson(queue, lesson.id) && !heldLessons.has(lesson.id));
-  const currentLesson = lessonId ? (currentModule?.lessons.find((l) => l.id === lessonId) ?? currentModule?.lessons[0]) : undefined;
+  const planJobs = preparationPlan.data?.jobs ?? [];
+  const unqueuedInModule = unqueuedLessons(currentModule?.lessons ?? [], planJobs);
   const allLessons = program.modules.flatMap((m) => m.lessons.map((lesson) => ({ module: m, lesson })));
+  const courseLine = coursePreparationLine(coursePreparation(allLessons.map(({ lesson }) => lesson), planJobs));
+  const paceMinutes = preparationPaceMinutes(planJobs);
+  const currentLesson = lessonId ? (currentModule?.lessons.find((l) => l.id === lessonId) ?? currentModule?.lessons[0]) : undefined;
+  const lessonOpened = useRef(onLessonOpened);
+  lessonOpened.current = onLessonOpened;
+  const openedLessonId = currentLesson?.id;
+  const openedPreparation = currentLesson?.preparation;
+  useEffect(() => {
+    if (activeProgram && openedLessonId && openedPreparation === 'ready') lessonOpened.current?.(openedLessonId);
+  }, [activeProgram, program.summary.id, openedLessonId, openedPreparation]);
   const completedCount = allLessons.filter(({ lesson }) => lesson.completed).length;
   const readyCount = allLessons.filter(({ lesson }) => lesson.preparation === 'ready').length;
   const quizzes = useQuizOverview(program.summary.id, activeProgram);
@@ -331,7 +342,11 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
               {quizzes.data && quizzes.data.quizzesTotal > 0 && <div className="studio-course-progress-row mt-2"><span>Quizzes passed</span><strong>{quizzes.data.quizzesPassed} <span className="font-normal text-text-muted">/ {quizzes.data.quizzesTotal}</span></strong></div>}
             </div>
           </div>
-          {program.summary.status === 'draft' && <div className="studio-course-draft-actions"><p>{outlineBlocked ? 'Resolve the outline findings before accepting this course.' : 'Accept to prepare lessons individually and track progress.'}</p><div className="flex items-center gap-3">{acceptError && <span role="alert" className="max-w-xs text-sm text-danger-fg">{acceptError}</span>}<Button variant="outline" type="button" disabled={acceptPending || outlineBlocked || !title.trim()} onClick={() => onAccept(title.trim())} className="studio-button studio-button-primary disabled:opacity-50">{acceptPending ? 'Saving…' : 'Accept program'}</Button></div></div>}
+          {activeProgram && courseLine && <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-text-secondary">
+            <span>{courseLine}</span>
+            {paceMinutes != null && <span>{paceLine(paceMinutes)}</span>}
+          </div>}
+          {program.summary.status === 'draft' && <div className="studio-course-draft-actions"><p>{outlineBlocked ? 'Resolve the outline findings before starting this course.' : 'Starting prepares module 1 now, and each next module while you study.'}</p><div className="flex items-center gap-3">{acceptError && <span role="alert" className="max-w-xs text-sm text-danger-fg">{acceptError}</span>}<Button variant="outline" type="button" disabled={acceptPending || outlineBlocked || !title.trim()} onClick={() => onAccept(title.trim())} className="studio-button studio-button-primary disabled:opacity-50">{acceptPending ? 'Starting…' : 'Start this course'}</Button></div></div>}
         </header>
     <OutlineReviewPanel program={program} generation={outlineGeneration} repair={repair} />
 
@@ -350,7 +365,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
             <p className="line-clamp-1">{currentModule?.summary}</p>
             {showCitations && currentModule && <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'module_summary', currentModule.id, currentModule.summary)} evidence={visibleOutlineEvidence} />}
           </div>
-          {activeProgram && onPrepareModule && currentModule && unqueuedLessons.length > 0 && <Button type="button" variant="outline" disabled={preparePending || Boolean(waitsForIndex)} onClick={() => onPrepareModule(currentModule)} className="studio-button shrink-0 disabled:opacity-50">Prepare all lessons</Button>}
+          {activeProgram && onPrepareModule && currentModule && unqueuedInModule.length > 0 && <Button type="button" variant="outline" disabled={preparePending || Boolean(waitsForIndex)} onClick={() => onPrepareModule(currentModule)} className="studio-button shrink-0 disabled:opacity-50">Prepare all lessons</Button>}
           <details className="group relative shrink-0 text-sm">
             <summary className="min-h-10 cursor-pointer list-none rounded-full border border-border px-3 py-2 text-text-secondary hover:border-accent/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">Module details <span className="text-accent">⌄</span></summary>
             <div className="absolute right-0 z-20 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-surface p-4 shadow-xl">

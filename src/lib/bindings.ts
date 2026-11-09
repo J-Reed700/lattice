@@ -496,6 +496,14 @@ async undoLearningCoursePlanEntry(request: UndoCoursePlanEntryRequestDto) : Prom
     else return { status: "error", error: e  as any };
 }
 },
+async prepareLearningAhead(request: PrepareLearningAheadRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_ahead", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|complete_learning_lesson", { request }) };
@@ -9459,6 +9467,7 @@ export type PlanLearningCourseRequestDto = { programId: string }
  * What one lesson teaches, as topics.
  */
 export type PlannedLesson = { lessonId: string; ideas: string[]; terms: string[]; actions: string[]; contrast: string }
+export type PrepareLearningAheadRequestDto = { programId: string; lessonId: string }
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type PrepareLearningModuleRequestDto = { programId: string; moduleId: string; expectedRevision: number }
 export type PrepareLearningQuizBankRequestDto = { operationId: string; programId: string; scope: LearningQuizScopeDto;
