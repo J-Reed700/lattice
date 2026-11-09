@@ -265,6 +265,73 @@ async fn test_validate_arguments() {
         .is_err());
 }
 
+#[tokio::test]
+async fn an_argument_past_a_declared_range_is_not_refused() {
+    use lattice_core::application::contracts::tools::ToolDefinition;
+    use serde_json::json;
+
+    let registry = Arc::new(MockFunctionRegistry::new());
+    let tool = ToolDefinition::new(
+        "ranged",
+        "Ranged",
+        json!({
+            "type": "object",
+            "properties": {
+                "limit": {"type": "integer", "minimum": 1, "maximum": 50},
+                "threshold": {"type": "number", "minimum": 0.0, "maximum": 1.0}
+            }
+        }),
+    )
+    .unwrap();
+    registry.register(tool).unwrap();
+    let executor = FunctionExecutor::new(test_executor_services(
+        registry as Arc<dyn FunctionRegistryTrait>,
+        Arc::new(MockWebService::new()) as Arc<dyn WebServiceTrait>,
+    ));
+
+    assert!(executor
+        .validate_arguments("ranged", &json!({"limit": 500, "threshold": 1.5}))
+        .is_ok());
+    assert!(executor
+        .validate_arguments("ranged", &json!({"limit": 0, "threshold": -1.0}))
+        .is_ok());
+    assert!(executor
+        .validate_arguments("ranged", &json!({"limit": "many"}))
+        .is_err());
+}
+
+#[tokio::test]
+async fn a_count_past_the_declared_maximum_is_clamped_to_it() {
+    let registry: Arc<dyn FunctionRegistryTrait> = Arc::new(
+        crate::features::function_calling::registry::init_function_registry()
+            .expect("the shipped registry builds"),
+    );
+    let executor = FunctionExecutor::new(test_executor_services(
+        registry,
+        Arc::new(MockWebService::new()),
+    ));
+
+    let result = executor
+        .execute(FunctionCall::new(
+            "call_big",
+            "list_documents",
+            serde_json::json!({"limit": 100000}),
+        ))
+        .await
+        .expect("execution should succeed");
+
+    assert!(result.success, "{result:?}");
+    assert_eq!(result.data.expect("data")["limit"], 500);
+}
+
+#[test]
+fn a_custom_endpoint_count_past_the_declared_maximum_is_not_refused() {
+    assert!(FunctionExecutor::validate_custom_query_arguments(
+        &serde_json::json!({"query": "tokio", "max_results": 500})
+    )
+    .is_ok());
+}
+
 #[test]
 fn test_normalize_tool_arguments_date_only_filters() {
     use chrono::Timelike;
