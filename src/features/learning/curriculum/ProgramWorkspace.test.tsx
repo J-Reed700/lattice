@@ -503,6 +503,13 @@ describe('The course progress line', () => {
   });
 
   describe('preparing ahead of the learner', () => {
+    beforeEach(() => {
+      Element.prototype.scrollIntoView = vi.fn();
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    });
+
     const withLessonOneReady = () => {
       const base = course();
       base.modules[0].lessons[0].preparation = 'ready';

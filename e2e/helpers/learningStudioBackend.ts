@@ -1151,6 +1151,12 @@ export async function installLearningStudioBackend(page: Page) {
       list_learning_tangents: (): LearningTangentDto[] => [],
       set_conversation_course: (): null => null,
       get_learning_program: () => program,
+      prepare_learning_ahead: (args) => {
+        const request = getRequest<{ programId: string; lessonId: string }>(args);
+        if (request.programId !== program.summary.id) throw new Error("Learning program not found");
+        findLesson(request.lessonId);
+        return program;
+      },
       get_learning_outline_evidence: () => {
         if (state.outlineEvidenceFailuresRemaining > 0) {
           state.outlineEvidenceFailuresRemaining -= 1;

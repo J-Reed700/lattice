@@ -1900,6 +1900,11 @@ test('Learning Studio integrates with the app shell and opens its Quizzes tab', 
       list_conversation_spaces: () => [],
       list_learning_programs: () => [program.summary],
       get_learning_program: () => program,
+      prepare_learning_ahead: (args) => {
+        const request = (args as { request?: { programId?: string; lessonId?: string } })?.request;
+        if (request?.programId !== program.summary.id || !program.modules.some((module) => module.lessons.some((entry) => entry.id === request.lessonId))) throw new Error('That lesson is not in this course.');
+        return program;
+      },
       get_learning_outline_evidence: () => null,
       get_learning_memory: () => ({ programId: program.summary.id, journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }),
       get_learning_practice_workspace: () => ({ programId: program.summary.id, sessions: [] }),
