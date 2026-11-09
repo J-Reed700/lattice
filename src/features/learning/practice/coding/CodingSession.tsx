@@ -57,7 +57,7 @@ export function CodingSession({ programId, sessionId, onExit, onTryInterview }: 
   useEffect(() => {
     let cancelled = false;
     setFailure(null);
-    (async () => {
+    void (async () => {
       try {
         const session = await codingApi.getSession({ programId, sessionId });
         const activityRevision = session.finished ? 0 : await codingApi.activityRevision(programId, session.activityId);
