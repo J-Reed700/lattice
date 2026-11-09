@@ -11,6 +11,7 @@ use crate::practical_dto::*;
 use crate::practical_generation::{
     GeneratedPracticalActivity, PracticalFileRole, INTERVIEW_PLAN_FILE_PATH,
 };
+use crate::practice::coding::problem::Problem;
 use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -431,4 +432,47 @@ impl LearningPracticalRepository {
             generator_model: row.get("generator_model"),
         })
     }
+}
+
+impl LearningPracticalRepository {
+    /// The lesson a coding build is for: the one asked for, else the program's current lesson, else its first.
+    pub async fn build_lesson(
+        &self,
+        _program_id: &str,
+        _lesson_id: Option<&str>,
+    ) -> Result<BuildLesson> {
+        Err(invalid("Build lessons are not read yet."))
+    }
+
+    /// The revision an activity saved for this program must name.
+    pub async fn program_revision(&self, _program_id: &str) -> Result<i64> {
+        Err(invalid("Program revisions are not read yet."))
+    }
+
+    /// The problem a coding activity was saved with, read from its private problem file.
+    pub async fn stored_problem(
+        &self,
+        _program_id: &str,
+        _activity_id: &str,
+    ) -> Result<StoredProblem> {
+        Err(invalid("Stored problems are not read yet."))
+    }
+}
+
+/// A lesson as a coding build reads it.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildLesson {
+    pub id: String,
+    pub title: String,
+    pub objective: String,
+}
+
+/// A saved coding problem as the app reads it back, with what the activity recorded beside it.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StoredProblem {
+    pub problem: Problem,
+    pub lesson_id: String,
+    pub outcome_ids: Vec<String>,
+    pub builtin_runtime: Option<LearningBuiltinRuntime>,
+    pub builtin_runtime_version: Option<String>,
 }
