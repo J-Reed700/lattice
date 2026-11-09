@@ -112,7 +112,7 @@ pub async fn rename(pool: &SqlitePool, root: &str, name: &str) -> Result<()> {
     let name = if name.is_empty() {
         default_name(Path::new(root))
     } else {
-        name.chars().take(120).collect()
+        name.to_owned()
     };
     repository::rename_folder(pool, root, &name).await
 }

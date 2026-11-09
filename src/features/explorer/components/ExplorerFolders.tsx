@@ -283,7 +283,6 @@ function RenameField({ name, onDone }: { name: string; onDone: (_name: string | 
       aria-label="Folder name"
       autoFocus
       value={value}
-      maxLength={120}
       onChange={(event) => setValue(event.target.value)}
       onFocus={(event) => event.currentTarget.select()}
       onKeyDown={(event) => {
