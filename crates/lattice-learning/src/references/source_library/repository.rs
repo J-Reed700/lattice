@@ -1,7 +1,7 @@
 //! The source library's statements, their bindings and their row mapping.
 use super::*;
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{Executor, SqliteConnection};
+use sqlx::SqliteConnection;
 
 pub(super) mod admission;
 pub(super) mod capture;
@@ -9,28 +9,25 @@ pub(super) mod evidence;
 pub(super) mod lifecycle;
 pub(super) mod reads;
 
-pub(super) async fn active_program_exists<'e, E>(executor: E, program_id: &str) -> Result<bool>
-where
-    E: Executor<'e, Database = Sqlite>,
-{
+pub(super) async fn active_program_exists(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<bool> {
     let row: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=? AND status='active'")
             .bind(program_id)
-            .fetch_optional(executor)
+            .fetch_optional(connection)
             .await
             .map_err(db)?;
     Ok(row.is_some())
 }
 
-pub(super) async fn ids_in_use<'e, E>(
-    executor: E,
+pub(super) async fn ids_in_use(
+    connection: &mut SqliteConnection,
     program_id: &str,
     source_id: &str,
     version_id: &str,
-) -> Result<bool>
-where
-    E: Executor<'e, Database = Sqlite>,
-{
+) -> Result<bool> {
     let collision: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM learning_source_library WHERE program_id=? AND id IN (?,?) UNION SELECT 1 FROM learning_source_versions WHERE program_id=? AND id IN (?,?) LIMIT 1",
     )
@@ -40,7 +37,7 @@ where
     .bind(program_id)
     .bind(source_id)
     .bind(version_id)
-    .fetch_optional(executor)
+    .fetch_optional(connection)
     .await
     .map_err(db)?;
     Ok(collision.is_some())

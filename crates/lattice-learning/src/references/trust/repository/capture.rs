@@ -1,6 +1,6 @@
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
-use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 
 /// One saved or about-to-be-saved text of a course.
 pub(in crate::references::trust) struct CourseText {
@@ -60,18 +60,15 @@ pub(in crate::references::trust) async fn other_active_version_ids(
     .map_err(db)
 }
 
-pub(in crate::references::trust) async fn version_text<'e, E>(
-    executor: E,
+pub(in crate::references::trust) async fn version_text(
+    connection: &mut SqliteConnection,
     program_id: &str,
     version_id: &str,
-) -> Result<String>
-where
-    E: sqlx::Executor<'e, Database = Sqlite>,
-{
+) -> Result<String> {
     sqlx::query_scalar("SELECT full_text FROM learning_source_versions WHERE program_id=? AND id=?")
         .bind(program_id)
         .bind(version_id)
-        .fetch_one(executor)
+        .fetch_one(connection)
         .await
         .map_err(db)
 }

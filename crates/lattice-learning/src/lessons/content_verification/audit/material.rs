@@ -16,6 +16,7 @@ use super::{AuditPassage, AuditUnit};
 use crate::content_verification::unit_texts;
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
+use crate::persistence::db;
 use crate::repository::LearningRepository;
 use crate::source_library::LearningSourceLibraryRepository;
 

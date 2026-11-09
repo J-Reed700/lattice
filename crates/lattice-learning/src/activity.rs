@@ -11,7 +11,8 @@ use lattice_core::application::ports::{
 };
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
 use lattice_core::shared::Result;
-use repository::{course_titles, lesson_titles};
+pub(crate) use repository::course_titles;
+use repository::lesson_titles;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;

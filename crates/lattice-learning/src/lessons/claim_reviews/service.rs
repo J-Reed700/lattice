@@ -13,6 +13,7 @@ use lattice_core::domain::learning::claim_review::{
     HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use serde_json::Value;
 use sqlx::SqlitePool;
 

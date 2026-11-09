@@ -15,6 +15,7 @@ use crate::dto::{
     LearningSourceTrustEntryDto, LearningSourceTrustViewDto, LearningTrackRecordDto,
     LearningTrustClaimRequestDto, LearningTrustLevel, LearningTrustReasonDto,
 };
+use crate::persistence::db;
 use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::application::services::source_trust::{
     claim_profile_key, standing_key, CLAIM_PROFILE_POLICY, OWNERSHIP_POLICY, STANDING_POLICY,
@@ -143,7 +144,8 @@ impl Course<'_> {
     }
 
     async fn text(&self, version_id: &str) -> Result<String> {
-        version_text(self.pool(), self.program_id, version_id).await
+        let mut connection = self.pool().acquire().await.map_err(db)?;
+        version_text(&mut connection, self.program_id, version_id).await
     }
 
     async fn claim(&self, claim: &LearningTrustClaimRequestDto) -> Result<LearningClaimTrustDto> {

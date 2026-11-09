@@ -273,14 +273,14 @@ async fn install_schema(pool: &SqlitePool) -> Result<()> {
         .execute(&mut *tx)
         .await
         .map_err(db_error("create the schema"))?;
-    put_meta(&mut *tx, META_VERSION, SCHEMA_VERSION)
+    put_meta(&mut tx, META_VERSION, SCHEMA_VERSION)
         .await
         .map_err(db_error("write meta"))?;
     tx.commit().await.map_err(db_error("create the schema"))
 }
 
 async fn put_meta(
-    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    connection: &mut SqliteConnection,
     key: &str,
     value: &str,
 ) -> std::result::Result<(), sqlx::Error> {
@@ -290,7 +290,7 @@ async fn put_meta(
     )
     .bind(key)
     .bind(value)
-    .execute(executor)
+    .execute(connection)
     .await
     .map(|_| ())
 }
@@ -367,7 +367,8 @@ impl PassageStore {
     }
 
     pub async fn set_meta(&self, key: &str, value: &str) -> Result<()> {
-        put_meta(&self.pool, key, value)
+        let mut connection = self.pool.acquire().await.map_err(db_error("write meta"))?;
+        put_meta(&mut connection, key, value)
             .await
             .map_err(db_error("write meta"))
     }

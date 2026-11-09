@@ -297,6 +297,7 @@ pub(crate) fn deck(material: &InterviewMaterial, now: i64) -> StudyDeckDto {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::db;
     use serde_json::json;
 
     fn plan() -> LearningInterviewPlanDto {

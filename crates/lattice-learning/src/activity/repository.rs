@@ -3,7 +3,7 @@ use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
 /// The titles of `programs` by id; a course deleted meanwhile is left out.
-pub(super) async fn course_titles(
+pub(crate) async fn course_titles(
     pool: &SqlitePool,
     programs: &[String],
 ) -> Result<HashMap<String, String>> {
