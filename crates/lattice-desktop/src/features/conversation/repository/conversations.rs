@@ -37,14 +37,23 @@ impl ConversationRepository {
         _message_count: Option<i64>,
         _total_tokens: Option<i64>,
     ) -> Result<()> {
+        if title.is_none() && system_prompt.is_none() {
+            return Ok(());
+        }
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         if let Some(new_title) = title {
-            self.update_title(id, new_title).await?;
+            set_title(&mut *tx, id, new_title).await?;
         }
-
         if let Some(new_system_prompt) = system_prompt {
-            self.update_system_prompt(id, new_system_prompt).await?;
+            set_system_prompt(&mut *tx, id, new_system_prompt).await?;
         }
-
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
         Ok(())
     }
 
@@ -186,62 +195,11 @@ impl ConversationRepository {
     }
 
     pub async fn update_title(&self, id: &str, new_title: &str) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-
-        let result = sqlx::query!(
-            r#"
-            UPDATE conversations
-            SET title = ?, updated_at = ?
-            WHERE id = ?
-            "#,
-            new_title,
-            now,
-            id
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to update conversation title: {}", e)))?;
-
-        if result.rows_affected() == 0 {
-            return Err(AppError::NotFound(format!(
-                "Conversation not found: {}",
-                id
-            )));
-        }
-
-        Ok(())
+        set_title(&self.pool, id, new_title).await
     }
 
     pub async fn update_system_prompt(&self, id: &str, system_prompt: Option<&str>) -> Result<()> {
-        let now = Utc::now().to_rfc3339();
-
-        let result = sqlx::query!(
-            r#"
-            UPDATE conversations
-            SET system_prompt = ?, updated_at = ?
-            WHERE id = ?
-            "#,
-            system_prompt,
-            now,
-            id
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| {
-            AppError::Database(format!(
-                "Failed to update conversation system prompt: {}",
-                e
-            ))
-        })?;
-
-        if result.rows_affected() == 0 {
-            return Err(AppError::NotFound(format!(
-                "Conversation not found: {}",
-                id
-            )));
-        }
-
-        Ok(())
+        set_system_prompt(&self.pool, id, system_prompt).await
     }
 
     /// The model this chat asked for.
@@ -423,4 +381,71 @@ impl ConversationRepository {
             .map(|row| (row.get::<String, _>("id"), row.get::<String, _>("title")))
             .collect())
     }
+}
+
+async fn set_title(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    id: &str,
+    new_title: &str,
+) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+
+    let result = sqlx::query!(
+        r#"
+            UPDATE conversations
+            SET title = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        new_title,
+        now,
+        id
+    )
+    .execute(executor)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to update conversation title: {}", e)))?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!(
+            "Conversation not found: {}",
+            id
+        )));
+    }
+
+    Ok(())
+}
+
+async fn set_system_prompt(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    id: &str,
+    system_prompt: Option<&str>,
+) -> Result<()> {
+    let now = Utc::now().to_rfc3339();
+
+    let result = sqlx::query!(
+        r#"
+            UPDATE conversations
+            SET system_prompt = ?, updated_at = ?
+            WHERE id = ?
+            "#,
+        system_prompt,
+        now,
+        id
+    )
+    .execute(executor)
+    .await
+    .map_err(|e| {
+        AppError::Database(format!(
+            "Failed to update conversation system prompt: {}",
+            e
+        ))
+    })?;
+
+    if result.rows_affected() == 0 {
+        return Err(AppError::NotFound(format!(
+            "Conversation not found: {}",
+            id
+        )));
+    }
+
+    Ok(())
 }
