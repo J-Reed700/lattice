@@ -114,6 +114,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
   const sessionId = initial.sessionId;
   const [session, setSession] = useState(initial);
   const sessionRef = useRef(initial);
+  const movingRef = useRef(false);
   const [clock, setClock] = useState(initial.clock);
   const [panel, setPanel] = useState<Panel>('code');
   const [activePath, setActivePath] = useState<string | null>(null);
@@ -122,6 +123,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
   const [asking, setAsking] = useState(false);
   const [checking, setChecking] = useState(false);
   const [finishing, setFinishing] = useState(false);
+  const [moving, setMoving] = useState(false);
   const [replyBusy, setReplyBusy] = useState(false);
   const [replyError, setReplyError] = useState<string | null>(null);
   const [sendError, setSendError] = useState<Failure | null>(null);
@@ -296,16 +298,25 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
     setAsking(false);
   };
 
-  const move = (stage: Wire.CodingStage) =>
-    guarded(() =>
-      codingApi.moveStage({
-        operationId: newId(),
-        programId,
-        sessionId,
-        stage,
-        expectedRevision: sessionRef.current.revision,
-      }),
-    );
+  const move = async (stage: Wire.CodingStage) => {
+    if (movingRef.current) return;
+    movingRef.current = true;
+    setMoving(true);
+    try {
+      await guarded(() =>
+        codingApi.moveStage({
+          operationId: newId(),
+          programId,
+          sessionId,
+          stage,
+          expectedRevision: sessionRef.current.revision,
+        }),
+      );
+    } finally {
+      movingRef.current = false;
+      setMoving(false);
+    }
+  };
 
   const checkExample = async (example: { ordinal: number | null; args: string[]; expected: string }) => {
     touch();
@@ -458,7 +469,7 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
         </div>
       </header>
 
-      <StageRail stages={session.stages} current={session.stage} onSelect={(stage) => void move(stage)} />
+      <StageRail stages={session.stages} current={session.stage} busy={moving} onSelect={(stage) => void move(stage)} />
 
       {status ? <StatusLine state={status} /> : null}
 

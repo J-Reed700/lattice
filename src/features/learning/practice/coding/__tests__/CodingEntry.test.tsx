@@ -107,4 +107,25 @@ describe('CodingEntry', () => {
     await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(onCancel).toHaveBeenCalled();
   });
+
+  it('retries only the session start when it fails after the build completed', async () => {
+    const user = userEvent.setup();
+    vi.mocked(codingApi.startSession)
+      .mockRejectedValueOnce(new Error('The session could not start.'))
+      .mockResolvedValue(codingSession({ sessionId: 'session-9' }));
+    const onReady = vi.fn();
+    render(<CodingEntry programId="program-1" choice={choice} onReady={onReady} onCancel={vi.fn()} />);
+    await waitFor(() => expect(codingApi.startBuild).toHaveBeenCalledTimes(1));
+
+    publish(job({ status: 'completed', progressCurrent: 3, resultRef: 'activity-7' }));
+    expect(await screen.findByText('The session could not start.')).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Try again' }));
+
+    await waitFor(() => expect(onReady).toHaveBeenCalledWith('session-9'));
+    expect(codingApi.startBuild).toHaveBeenCalledTimes(1);
+    expect(codingApi.startSession).toHaveBeenCalledTimes(2);
+    const [first, second] = vi.mocked(codingApi.startSession).mock.calls.map(([request]) => request);
+    expect(second.operationId).toBe(first.operationId);
+    expect(second.activityId).toBe('activity-7');
+  });
 });

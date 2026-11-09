@@ -75,7 +75,7 @@ export function Debrief({ title, debrief, onExit, onTryInterview }: DebriefProps
       <header className="flex flex-col gap-2">
         <h1 className="m-0 font-serif text-2xl font-bold text-text-primary">Debrief: {title}</h1>
         <p className="m-0 text-sm text-text-secondary">
-          {clockText(totalMs)} of active time. Settings used: {facts.settings.map((s) => SETTING_NAMES[s]).join(', ')}.
+          {clockText(totalMs)} of active time.
         </p>
         <div className="flex flex-wrap items-center gap-3 pt-1">
           <button
