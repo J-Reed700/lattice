@@ -738,7 +738,7 @@ async fn a_round_reads_then_researches_then_recites_then_repairs_and_settles_onc
         [
             Outcome::Unproven,
             Outcome::FoundNothing,
-            Outcome::Unproven,
+            Outcome::Refuted,
             Outcome::Rewritten,
             Outcome::Stands,
         ],

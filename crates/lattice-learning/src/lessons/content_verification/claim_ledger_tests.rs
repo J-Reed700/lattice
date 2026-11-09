@@ -104,6 +104,15 @@ impl Figures {
         }
     }
 
+    /// A judge that calls a figure contradicted, which is what takes a
+    /// statement to its rewrite and its cut.
+    pub(super) fn contradicting() -> Self {
+        Self {
+            contradicted: true,
+            ..Self::new()
+        }
+    }
+
     pub(super) async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
             let data = self::context(prompt);
@@ -360,7 +369,7 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let sources = [source()];
-    let model = Figures::new();
+    let model = Figures::contradicting();
     // A second section keeps a claim: a lesson with none left is no
     // extraction the loop accepts.
     let (raw, report) = prepare(
@@ -2637,7 +2646,7 @@ async fn a_lesson_whose_cuts_would_take_more_than_a_third_of_its_sections_is_pub
         bare(2, &second)
     ],"questions":[]});
     let prepared = course
-        .prepare(&Figures::new(), &draft)
+        .prepare(&Figures::contradicting(), &draft)
         .await
         .expect("the lesson publishes, two statements not verified");
 
@@ -2649,7 +2658,7 @@ async fn a_lesson_whose_cuts_would_take_more_than_a_third_of_its_sections_is_pub
     for sentence in [figure(0), figure(1)] {
         let on = shown.on(&sentence);
         assert_eq!(on.len(), 1, "{sentence}: {:?}", shown.claims);
-        shown.assert_not_verified(on[0], "unsupported");
+        shown.assert_not_verified(on[0], "contradicted");
     }
     Ok(())
 }
@@ -2664,7 +2673,7 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("quiz", &figure(5)), quiz("quiz", &figure(6))]);
     let (raw, report) = course
-        .prepare(&Figures::new(), &draft)
+        .prepare(&Figures::contradicting(), &draft)
         .await
         .expect("the lesson publishes, two statements not verified");
 
@@ -2689,7 +2698,7 @@ async fn a_lesson_whose_cuts_would_take_every_question_of_a_kind_it_asks_is_publ
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("practice", &figure(5)), quiz("quiz", GOOD)]);
     let (raw, report) = course
-        .prepare(&Figures::new(), &draft)
+        .prepare(&Figures::contradicting(), &draft)
         .await
         .expect("the lesson publishes, one statement not verified");
 

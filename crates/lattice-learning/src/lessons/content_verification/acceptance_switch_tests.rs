@@ -540,7 +540,7 @@ async fn a_sentence_a_checkpointed_repair_wrote_after_its_record_was_lost_is_rea
     assert_eq!(node_of(&ledger, &kept), Some("s.final"));
 
     // A reading that fails it sends it to its cut: it is not rewritten again.
-    let reader = Says::new(&[Outcome::Unproven]);
+    let reader = Says::new(&[Outcome::Refuted]);
     read_pass(&mut ledger, &reader, &pass, &lesson).await?;
     assert_eq!(node_of(&ledger, &successor), Some("s.cut"));
     assert!(matches!(
@@ -1265,12 +1265,15 @@ async fn cut_sent(quote: &str, body: &str) -> Result<(claim_ledger::ClaimLedger,
 
 #[tokio::test]
 async fn a_cut_that_takes_the_sentence_out_ends_the_statement_removed() -> Result<()> {
-    let body = format!("{SENTENCE} {HEADER}");
+    let body = format!("{SENTENCE} {HEADER} {MORE}");
     let (mut ledger, id, mut context) = cut_sent(SENTENCE, &body).await?;
 
     repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
-    assert_eq!(context["candidate"]["blocks"][1]["body"], HEADER);
+    assert_eq!(
+        context["candidate"]["blocks"][1]["body"],
+        format!("{HEADER} {MORE}")
+    );
     let entry = ledger.entry(&id).unwrap();
     assert_eq!(
         entry.decided(),

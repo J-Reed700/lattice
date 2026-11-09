@@ -378,7 +378,7 @@ async fn the_last_attempt_takes_the_sentence_out_and_leaves_the_rest_to_the_mode
 }
 
 #[tokio::test]
-async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed_with_its_section(
+async fn a_last_attempt_that_cannot_take_the_sentence_out_publishes_the_claim_not_verified(
 ) -> Result<()> {
     let body = "Cut this.";
     let llm = SmallWindow {
@@ -407,20 +407,14 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
         1
     );
 
-    // The sentence stays where it is; its section is the one that goes.
+    // The sentence stays where it is, and so does its section.
     assert_eq!(context["candidate"]["blocks"][0]["body"], body);
     assert!(section_failures(&context, 0).is_empty());
-    assert_eq!(ledger.cuts.going.get(&0).map(String::as_str), Some("T"));
-    // The claim is terminal, and nothing waits for the user.
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    // The claim is terminal, published not verified, and nothing waits for the user.
     let entry = ledger.entry(&last).unwrap();
     assert!(
-        matches!(
-            entry.state(),
-            ClaimState::Removed {
-                by: Actor::Machine,
-                ..
-            }
-        ),
+        matches!(entry.state(), ClaimState::Unverified { .. }),
         "{:?}",
         entry.state()
     );
@@ -432,7 +426,8 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
 }
 
 #[tokio::test]
-async fn the_other_claims_of_a_section_that_goes_are_no_work_for_the_model() -> Result<()> {
+async fn the_other_claims_of_a_section_with_a_refused_cut_are_still_work_for_the_model(
+) -> Result<()> {
     let body = "Cut this.";
     let llm = SmallWindow {
         window: 4_000,
@@ -465,11 +460,12 @@ async fn the_other_claims_of_a_section_that_goes_are_no_work_for_the_model() -> 
 
     cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
-    assert!(
-        section_failures(&context, 0).is_empty(),
-        "a section that goes is not rewritten"
+    assert_eq!(
+        claim_ids(&section_failures(&context, 0)),
+        vec![ClaimId("other".into())],
+        "a refused cut leaves the section's other claims to the model"
     );
-    assert!(targets(&context)?.is_empty());
+    assert!(ledger.cuts.going.is_empty());
     assert!(llm.requests.lock().unwrap().is_empty());
     Ok(())
 }
@@ -515,7 +511,7 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
 }
 
 #[tokio::test]
-async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Result<()> {
+async fn a_claim_on_a_sentence_whose_cut_was_refused_is_still_work_for_the_model() -> Result<()> {
     let body = "Keep this. Cut this. Fix this.";
     let llm = SmallWindow {
         window: 4_000,
@@ -555,15 +551,13 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
         1
     );
 
+    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
     assert_eq!(
-        context["candidate"]["blocks"][0]["body"],
-        "Keep this. Fix this."
+        claim_ids(&section_failures(&context, 0)),
+        vec![mate.clone()],
+        "the other claim's sentence stays with it"
     );
-    assert!(
-        section_failures(&context, 0).is_empty(),
-        "the other claim's sentence is gone with the cut"
-    );
-    // Its record stays: the pass after finds the claim gone and removes it.
+    // Its record stays: it is still work for the model.
     assert!(ledger
         .pending
         .repairs
@@ -573,8 +567,7 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
 }
 
 #[tokio::test]
-async fn last_attempts_that_leave_the_lesson_no_claim_stop_it_and_end_every_claim_they_cut_removed(
-) -> Result<()> {
+async fn a_refused_cut_beside_a_live_claim_takes_nothing_out_and_stops_nothing() -> Result<()> {
     let body = "Keep this. Cut this. Fix this.";
     let llm = SmallWindow {
         window: 4_000,
@@ -607,29 +600,20 @@ async fn last_attempts_that_leave_the_lesson_no_claim_stop_it_and_end_every_clai
         ],
     });
 
-    let error = cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger)
-        .await
-        .unwrap_err();
+    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
-    assert_eq!(
-        error.to_string(),
-        "The sources do not support enough of this lesson: every statement in it would have to be taken out."
+    // The refused cut takes nothing out and stops nothing.
+    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
+    let entry = ledger.entry(&last).unwrap();
+    assert!(
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
     );
-    for id in [&last, &mate] {
-        let entry = ledger.entry(id).unwrap();
-        assert!(
-            matches!(
-                entry.state(),
-                ClaimState::Removed {
-                    by: Actor::Machine,
-                    ..
-                }
-            ),
-            "{:?}",
-            entry.state()
-        );
-    }
-    assert!(ledger.pending.repairs.is_empty());
+    assert!(!matches!(
+        ledger.entry(&mate).unwrap().state(),
+        ClaimState::Removed { .. }
+    ));
     assert!(llm.requests.lock().unwrap().is_empty());
     Ok(())
 }
@@ -932,7 +916,7 @@ async fn a_target_whose_correction_was_put_back_goes_to_its_retry_and_the_groups
         for (step, outcome) in [
             (Step::Read(Reading::Parts), Outcome::Unproven),
             (Step::Research, Outcome::FoundNothing),
-            (Step::Read(Reading::Page), Outcome::Unproven),
+            (Step::Read(Reading::Page), Outcome::Refuted),
         ] {
             assert!(ledger.record_step(&policy, id, step, outcome).await?);
         }
@@ -1223,7 +1207,7 @@ async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_and_e
 }
 
 #[tokio::test]
-async fn a_cut_whose_sentence_another_live_statement_stands_on_takes_everything_its_quote_touches(
+async fn a_cut_whose_sentence_another_live_statement_stands_on_is_refused_once_its_narrowing_was_not_applied(
 ) -> Result<()> {
     let llm = SmallWindow {
         window: 4_000,
@@ -1253,13 +1237,14 @@ async fn a_cut_whose_sentence_another_live_statement_stands_on_takes_everything_
 
     cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
-    // Once its narrowing was not applied, the quote is cut whole.
-    assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
+    // Once its narrowing was not applied, nothing is cut: the sentence stays
+    // with the statement beside it.
+    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
     Ok(())
 }
 
 #[tokio::test]
-async fn a_claim_that_draws_on_several_sentences_of_its_quote_is_cut_with_everything_the_quote_touches(
+async fn a_claim_that_draws_on_several_sentences_of_its_quote_is_refused_once_its_narrowing_was_not_applied(
 ) -> Result<()> {
     let llm = SmallWindow {
         window: 4_000,
@@ -1274,8 +1259,8 @@ async fn a_claim_that_draws_on_several_sentences_of_its_quote_is_cut_with_everyt
 
     cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
-    // Once its narrowing was not applied, the whole quote goes.
-    assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
+    // Once its narrowing was not applied, nothing is cut: the quote stays.
+    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
     Ok(())
 }
 
@@ -1291,12 +1276,12 @@ async fn at_the_cut(ledger: &mut ClaimLedger, id: &ClaimId) -> Result<()> {
     for (step, outcome) in [
         (Step::Read(Reading::Parts), Outcome::Unproven),
         (Step::Research, Outcome::FoundNothing),
-        (Step::Read(Reading::Page), Outcome::Unproven),
+        (Step::Read(Reading::Page), Outcome::Refuted),
         (
             Step::Rewrite(Goal::WhatThePassageStates),
             Outcome::Rewritten,
         ),
-        (Step::Read(Reading::Parts), Outcome::Unproven),
+        (Step::Read(Reading::Parts), Outcome::Refuted),
     ] {
         assert!(ledger.record_step(&policy, id, step, outcome).await?);
     }
@@ -1412,7 +1397,7 @@ async fn a_statement_narrowed_is_still_sent_and_nothing_is_decided_for_it_yet() 
 }
 
 #[tokio::test]
-async fn a_statement_whose_narrowing_was_not_applied_is_cut_whole_and_its_neighbour_goes_with_it(
+async fn a_statement_whose_narrowing_was_not_applied_keeps_its_sentence_and_is_published_not_verified(
 ) -> Result<()> {
     let body = format!("Intro line. {GLAZE} Closing line.");
     let llm = SmallWindow {
@@ -1452,29 +1437,22 @@ async fn a_statement_whose_narrowing_was_not_applied_is_cut_whole_and_its_neighb
 
     cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
-    // Everything its quote touches goes, the words of the neighbour with them.
-    assert_eq!(
-        context["candidate"]["blocks"][0]["body"],
-        "Intro line. Closing line."
-    );
-    let events = ledger.entry(&cut).unwrap().events();
+    // The sentence stays with its neighbour's words; the statement is published
+    // not verified.
+    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
+    let entry = ledger.entry(&cut).unwrap();
     assert!(
-        events.iter().any(|record| matches!(
-            &record.event,
-            ClaimEvent::RepairAttempted {
-                outcome: RepairOutcome::Removed,
-                goal: None,
-                ..
-            }
-        )),
-        "{events:?}"
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
     );
+    let events = entry.events();
     assert!(
         events.iter().any(|record| matches!(
             &record.event,
             ClaimEvent::Stepped {
                 step: Step::Cut,
-                outcome: Outcome::Cut,
+                outcome: Outcome::CannotCut,
                 ..
             }
         )),
