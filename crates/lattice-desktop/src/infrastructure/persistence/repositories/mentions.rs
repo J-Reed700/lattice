@@ -13,8 +13,9 @@ use lattice_core::application::ports::mention_repository_port::{
     MentionData, MentionRepositoryPort, MentionWithContextData,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lazy_regex::regex;
-use sqlx::{Row, SqlitePool};
+use sqlx::{Executor, Row, Sqlite, SqlitePool};
 use std::collections::HashMap;
 use uuid::Uuid;
 
@@ -85,99 +86,8 @@ impl MentionRepository {
         mentions
     }
 
-    /// Link mention to document with context
-    async fn link_mention_to_document(
-        &self,
-        document_id: &str,
-        mention_id: &str,
-        context: Option<&str>,
-        position: Option<i64>,
-    ) -> Result<()> {
-        let id = Uuid::new_v4().to_string();
-        let created_at = Utc::now().to_rfc3339();
-
-        sqlx::query!(
-            r#"
-            INSERT INTO document_mentions (id, document_id, mention_id, context, position, created_at)
-            VALUES (?, ?, ?, ?, ?, ?)
-            "#,
-            id,
-            document_id,
-            mention_id,
-            context,
-            position,
-            created_at
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to link mention: {}", e)))?;
-
-        Ok(())
-    }
-
-    /// Clear all mentions for a document (for reindexing)
-    async fn clear_document_mentions(&self, document_id: &str) -> Result<()> {
-        sqlx::query!(
-            "DELETE FROM document_mentions WHERE document_id = ?",
-            document_id
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to clear mentions: {}", e)))?;
-        Ok(())
-    }
-
-    /// Extract @mentions and `[[wikilinks]]` from text and store them.
-    ///
-    /// This is a public wrapper for the trait method, allowing direct calls
-    /// on MentionRepository instances without going through the trait.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::Database` if storage operations fail
-    pub async fn extract_and_store_mentions(
-        &self,
-        document_id: &str,
-        text: &str,
-    ) -> Result<Vec<MentionWithContextData>, AppError> {
-        // Clear existing mentions for this document
-        self.clear_document_mentions(document_id).await?;
-
-        let extracted = self.extract_mentions_from_text(text);
-        let mut results = Vec::new();
-
-        for (mention_type, occurrences) in extracted {
-            for (name, position) in occurrences {
-                let mention = self.create_mention(&name, &mention_type, None).await?;
-
-                let context = self.extract_context(text, position);
-
-                // Link to document
-                self.link_mention_to_document(
-                    document_id,
-                    &mention.id,
-                    Some(&context),
-                    Some(position as i64),
-                )
-                .await?;
-
-                results.push(MentionWithContextData {
-                    mention,
-                    document_id: document_id.to_string(),
-                    context: Some(context),
-                    position: Some(position as i64),
-                });
-            }
-        }
-
-        Ok(results)
-    }
-}
-
-#[async_trait]
-impl MentionRepositoryPort for MentionRepository {
-    async fn create_mention(
-        &self,
+    async fn upsert_mention(
+        executor: impl Executor<'_, Database = Sqlite>,
         name: &str,
         mention_type: &str,
         metadata: Option<&str>,
@@ -200,7 +110,7 @@ impl MentionRepositoryPort for MentionRepository {
             metadata,
             created_at
         )
-        .fetch_one(&self.pool)
+        .fetch_one(executor)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create mention: {}", e)))?;
 
@@ -215,6 +125,79 @@ impl MentionRepositoryPort for MentionRepository {
             metadata: row.metadata,
             created_at: row.created_at,
         })
+    }
+
+    /// Link mention to document with context
+    async fn link_mention_to_document(
+        executor: impl Executor<'_, Database = Sqlite>,
+        document_id: &str,
+        mention_id: &str,
+        context: Option<&str>,
+        position: Option<i64>,
+    ) -> Result<()> {
+        let id = Uuid::new_v4().to_string();
+        let created_at = Utc::now().to_rfc3339();
+
+        sqlx::query!(
+            r#"
+            INSERT INTO document_mentions (id, document_id, mention_id, context, position, created_at)
+            VALUES (?, ?, ?, ?, ?, ?)
+            "#,
+            id,
+            document_id,
+            mention_id,
+            context,
+            position,
+            created_at
+        )
+        .execute(executor)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to link mention: {}", e)))?;
+
+        Ok(())
+    }
+
+    /// Clear all mentions for a document (for reindexing)
+    async fn clear_document_mentions(
+        executor: impl Executor<'_, Database = Sqlite>,
+        document_id: &str,
+    ) -> Result<()> {
+        sqlx::query!(
+            "DELETE FROM document_mentions WHERE document_id = ?",
+            document_id
+        )
+        .execute(executor)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to clear mentions: {}", e)))?;
+        Ok(())
+    }
+
+    /// Extract @mentions and `[[wikilinks]]` from text and store them.
+    ///
+    /// This is a public wrapper for the trait method, allowing direct calls
+    /// on MentionRepository instances without going through the trait.
+    ///
+    /// # Errors
+    ///
+    /// - `AppError::Database` if storage operations fail
+    pub async fn extract_and_store_mentions(
+        &self,
+        document_id: &str,
+        text: &str,
+    ) -> Result<Vec<MentionWithContextData>, AppError> {
+        MentionRepositoryPort::extract_and_store_mentions(self, document_id, text).await
+    }
+}
+
+#[async_trait]
+impl MentionRepositoryPort for MentionRepository {
+    async fn create_mention(
+        &self,
+        name: &str,
+        mention_type: &str,
+        metadata: Option<&str>,
+    ) -> Result<MentionData, AppError> {
+        Self::upsert_mention(&self.pool, name, mention_type, metadata).await
     }
 
     async fn find_mention_by_name(&self, name: &str) -> Result<Option<MentionData>, AppError> {
@@ -380,20 +363,26 @@ impl MentionRepositoryPort for MentionRepository {
         document_id: &str,
         text: &str,
     ) -> Result<Vec<MentionWithContextData>, AppError> {
-        // Clear existing mentions for this document
-        self.clear_document_mentions(document_id).await?;
-
         let extracted = self.extract_mentions_from_text(text);
         let mut results = Vec::new();
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        // Clear existing mentions for this document
+        Self::clear_document_mentions(&mut *tx, document_id).await?;
+
         for (mention_type, occurrences) in extracted {
             for (name, position) in occurrences {
-                let mention = self.create_mention(&name, &mention_type, None).await?;
+                let mention = Self::upsert_mention(&mut *tx, &name, &mention_type, None).await?;
 
                 let context = self.extract_context(text, position);
 
                 // Link to document
-                self.link_mention_to_document(
+                Self::link_mention_to_document(
+                    &mut *tx,
                     document_id,
                     &mention.id,
                     Some(&context),
@@ -409,6 +398,10 @@ impl MentionRepositoryPort for MentionRepository {
                 });
             }
         }
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(results)
     }
