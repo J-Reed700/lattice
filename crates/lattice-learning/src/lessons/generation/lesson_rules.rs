@@ -202,7 +202,6 @@ fn uncited_specifics(
         if !needs_citation(&sentence, &givens) {
             continue;
         }
-        let shown: String = sentence.chars().take(90).collect();
         let quotes: Vec<&str> = cited
             .iter()
             .filter(|(cited, _)| same_sentence(cited, &sentence))
@@ -220,7 +219,7 @@ fn uncited_specifics(
         let (summary, note, quote) = if quotes.is_empty() {
             let summary =
                 format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
-            let note = format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.");
+            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.");
             (summary, note, "")
         } else {
             let (missing, quote) = quotes
@@ -235,7 +234,7 @@ fn uncited_specifics(
                 "The quotation cited for this sentence does not contain {}: \u{201c}{sentence}\u{201d}",
                 join_plain(&missing)
             );
-            let note = format!("{label}: the quote cited for \"{shown}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "));
+            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "));
             (summary, note, quote)
         };
         findings.push(citation(site, summary, note, (quote, sentence.as_str())));

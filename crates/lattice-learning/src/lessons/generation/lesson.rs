@@ -637,7 +637,6 @@ fn cite_sentences(
                 }
             }
             Err(AppError::InvalidInput(message)) => {
-                let shown: String = cited.sentence.chars().take(80).collect();
                 let summary = if cited.sentence.trim().is_empty() {
                     "The quotation cited for a sentence could not be found in its source."
                         .to_owned()
@@ -652,7 +651,8 @@ fn cite_sentences(
                         FindingKind::Quotation,
                         Some(site),
                         format!(
-                            "The source citation of the sentence \"{shown}\" could not be confirmed: {message}"
+                            "The source citation of the sentence \"{}\" could not be confirmed: {message}",
+                            cited.sentence
                         ),
                     )
                     .with_summary(summary)
