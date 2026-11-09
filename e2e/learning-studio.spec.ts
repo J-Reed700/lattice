@@ -1868,7 +1868,7 @@ async function runPracticeWorkbenchJourney(
     workbench.getByRole("heading", { name: "Make your thinking visible" }),
   ).toBeVisible();
 
-  const practiceChoice = workbench.getByRole("radio", { name: /Practice/ });
+  const practiceChoice = workbench.getByRole("radio", { name: /Hints only/ });
   await practiceChoice.focus();
   await expect(practiceChoice).toBeFocused();
   await practiceChoice.check();
