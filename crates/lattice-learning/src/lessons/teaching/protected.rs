@@ -1,5 +1,5 @@
 //! The teaching review after a claim repair or a user edit leaves the
-//! sentences claims stand on as they are (claim sources design Â§10.3): a
+//! sentences claims stand on as they are (claim sources design §10.3): a
 //! finding about a protected sentence waits for the user, and the review's
 //! repair changes only the sentences its findings name, every other one
 //! reverted and every protected one byte-identical.
