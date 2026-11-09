@@ -27,9 +27,8 @@ export const practiceHomeApi = {
 
   /** A Coached session on a coding activity that has none yet; returns its id. */
   startCodingSession: async (programId: string, activityId: string): Promise<string> => {
-    const session = await call<Wire.CodingSessionDto>('start_coding_session', {
-      request: { operationId: newId(), programId, activityId, setting: 'coached', budgetSeconds: null },
-    });
+    const request: Wire.StartCodingSessionRequestDto = { operationId: newId(), programId, activityId, setting: 'coached', budgetSeconds: null };
+    const session = await call<Wire.CodingSessionDto>('start_coding_session', { request });
     return session.sessionId;
   },
 };
