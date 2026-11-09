@@ -8,9 +8,6 @@ use lattice_core::shared::error::{AppError, Result};
 use reqwest::header::{ACCEPT, ACCEPT_LANGUAGE};
 use url::Url;
 
-/// Results asked of a user's own endpoint in one call.
-const CUSTOM_ENDPOINT_MAX_RESULTS: u64 = 100;
-
 impl FunctionExecutor {
     /// Execute a configured custom query tool.
     pub(super) fn handle_custom_query_tool<'a>(
@@ -34,7 +31,7 @@ impl FunctionExecutor {
                 .get("max_results")
                 .and_then(|v| v.as_u64())
                 .unwrap_or(tool.default_max_results as u64)
-                .clamp(1, CUSTOM_ENDPOINT_MAX_RESULTS);
+                .max(1);
 
             {
                 let mut query_pairs = parsed_url.query_pairs_mut();

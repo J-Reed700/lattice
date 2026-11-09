@@ -163,12 +163,12 @@ describe('TuningTab', () => {
   });
 
   describe('tool output', () => {
-    it('saves sizes clamped to range', () => {
+    it('saves sizes of at least one', () => {
       render(<TuningTab />);
-      edit('Excerpt characters', '50');
-      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ toolOutput: { ...toolOutput, excerptChars: 100 } });
+      edit('Excerpt characters', '0');
+      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ toolOutput: { ...toolOutput, excerptChars: 1 } });
       edit('Highlight terms', '99');
-      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ toolOutput: { ...toolOutput, highlightTermsMax: 32 } });
+      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ toolOutput: { ...toolOutput, highlightTermsMax: 99 } });
     });
 
     it('saves each template on blur', () => {

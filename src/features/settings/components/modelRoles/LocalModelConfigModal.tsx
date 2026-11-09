@@ -15,7 +15,7 @@ import { ROLES } from './roleConfig';
 import { HelpTooltip, MIN_CONTEXT_LENGTH, TokenLimitField } from './TokenLimitField';
 import { NUMBER_FIELD_CLASS, SWITCH_CLASS, clamp, toFinite } from '../AITab/shared';
 
-const DEFAULT_MAX_CONTEXT_LENGTH = 262_144;
+const DEFAULT_CONTEXT_LENGTH = 262_144;
 const DEFAULT_CONCURRENT_PREDICTIONS = 4;
 
 function extractQuantizationTag(model: DownloadedModel): string {
@@ -41,10 +41,8 @@ export function LocalModelConfigModal({
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
   const isEmbeddingModel = model.model_type === 'embedding' || model.model_type === 'text_embeddings';
 
-  const maxSupportedTokens =
-    model.trained_context_length && model.trained_context_length >= MIN_CONTEXT_LENGTH
-      ? model.trained_context_length
-      : DEFAULT_MAX_CONTEXT_LENGTH;
+  const trainedTokens = model.trained_context_length || null;
+  const maxSupportedTokens = trainedTokens ?? DEFAULT_CONTEXT_LENGTH;
 
   const savedConfig: LocalModelConfigDto | undefined =
     settings?.llm?.localModelConfigs?.[model.model_id];
@@ -103,11 +101,11 @@ export function LocalModelConfigModal({
       // A window the user did not touch stays as it was saved: none saved
       // keeps the window fitted to this machine.
       const editedContext = contextEdited
-        ? Math.round(clamp(contextLength, MIN_CONTEXT_LENGTH, maxSupportedTokens))
+        ? Math.round(clamp(contextLength, MIN_CONTEXT_LENGTH, trainedTokens ?? Infinity))
         : null;
       const modelContext = editedContext ?? savedConfig?.contextLength ?? null;
       const globalContext = editedContext ?? settings.llm.localContextWindow ?? null;
-      const resolvedSlots = Math.round(clamp(maxConcurrentPredictions, 1, 8));
+      const resolvedSlots = Math.max(1, Math.round(maxConcurrentPredictions));
       const resolvedSeed = useFixedSeed ? Math.max(0, Math.round(seed)) : null;
 
       const nextConfigs = { ...(settings.llm.localModelConfigs ?? {}) };
@@ -208,7 +206,7 @@ export function LocalModelConfigModal({
                 label="Context Length"
                 help="Tokens the model keeps in its active context window. The model loads with the window you set here. Until you set one, it loads with the largest window that fits this machine's memory now, up to its maximum. A window you set that is larger than fits fails to load and says how much it needed."
                 min={MIN_CONTEXT_LENGTH}
-                max={maxSupportedTokens}
+                max={trainedTokens}
                 value={fittedWindow ?? contextLength}
                 onChange={(value) => {
                   setContextEdited(true);
@@ -217,7 +215,7 @@ export function LocalModelConfigModal({
               >
                 {fittedWindow !== null ? (
                   <p role="status" className="mt-1.5 text-[11px] text-text-muted">
-                    {`Loads at ${fittedWindow.toLocaleString('en-US')} tokens, the largest window that fits this machine's memory now. The model was trained for up to ${maxSupportedTokens.toLocaleString('en-US')}.`}
+                    {`Loads at ${fittedWindow.toLocaleString('en-US')} tokens, the largest window that fits this machine's memory now.${trainedTokens === null ? '' : ` The model was trained for up to ${trainedTokens.toLocaleString('en-US')}.`}`}
                   </p>
                 ) : null}
                 {fitWarning ? (
@@ -245,13 +243,13 @@ export function LocalModelConfigModal({
                     aria-label="Max Concurrent Predictions"
                     type="number"
                     min={1}
-                    max={8}
                     step={1}
                     value={maxConcurrentPredictions}
                     onChange={(event) =>
                       setMaxConcurrentPredictions(
-                        Math.round(
-                          clamp(toFinite(event.target.value, maxConcurrentPredictions), 1, 8),
+                        Math.max(
+                          1,
+                          Math.round(toFinite(event.target.value, maxConcurrentPredictions)),
                         ),
                       )
                     }

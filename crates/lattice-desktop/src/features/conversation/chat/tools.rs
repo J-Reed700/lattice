@@ -174,8 +174,7 @@ pub(super) fn build_llm_tool_definitions(
                             "type": "integer",
                             "description": "Requested max result count",
                             "default": tool.default_max_results,
-                            "minimum": 1,
-                            "maximum": 100
+                            "minimum": 1
                         }
                     },
                     "required": ["query"]

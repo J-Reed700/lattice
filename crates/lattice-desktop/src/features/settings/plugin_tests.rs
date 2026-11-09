@@ -198,7 +198,7 @@ async fn custom_tool_probe_appends_the_query_clamps_the_limit_and_previews_the_b
         .is_some_and(|value| value.starts_with("text/plain")));
     assert!(response
         .final_url
-        .contains("lang=en&q=sourdough+starter&limit=100"));
+        .contains("lang=en&q=sourdough+starter&limit=500"));
     assert_eq!(response.body_preview.chars().count(), 2_001);
     assert!(response.body_preview.ends_with('…'));
 

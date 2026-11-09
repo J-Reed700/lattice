@@ -47,7 +47,7 @@ describe('LocalContextWindowRow', () => {
     expect(windowField()).toHaveValue(null);
   });
 
-  it('saves the window the user types, within the bounds', async () => {
+  it('saves the window the user types, at least one token', async () => {
     renderRow();
 
     await userEvent.setup().click(fitEach());
@@ -55,10 +55,12 @@ describe('LocalContextWindowRow', () => {
     fireEvent.blur(windowField());
     fireEvent.change(windowField(), { target: { value: '100' } });
     fireEvent.blur(windowField());
+    fireEvent.change(windowField(), { target: { value: '0' } });
+    fireEvent.blur(windowField());
 
-    expect(saved()).toEqual([{ localContextWindow: 60_416 }, { localContextWindow: 512 }]);
+    expect(saved()).toEqual([{ localContextWindow: 60_416 }, { localContextWindow: 100 }, { localContextWindow: 1 }]);
     expect(fitEach()).not.toBeChecked();
-    expect(windowField()).toHaveValue(512);
+    expect(windowField()).toHaveValue(1);
   });
 
   it('reaches the largest window a model here is trained for', async () => {
@@ -74,25 +76,25 @@ describe('LocalContextWindowRow', () => {
     expect(windowField()).toHaveAttribute('max', '1048576');
   });
 
-  it('keeps a ceiling when no model reports its window', () => {
+  it('sets no ceiling when no model reports its window', () => {
     renderRow(32_768, trainedFor([null]));
 
     fireEvent.change(windowField(), { target: { value: '9000000' } });
     fireEvent.blur(windowField());
 
-    expect(saved()).toEqual([{ localContextWindow: 262_144 }]);
+    expect(saved()).toEqual([{ localContextWindow: 9_000_000 }]);
   });
 
-  it('keeps a ceiling when the list of models is empty', () => {
+  it('sets no ceiling when the list of models is empty', () => {
     renderRow(32_768, []);
 
-    expect(windowField()).toHaveAttribute('max', '262144');
+    expect(windowField()).not.toHaveAttribute('max');
 
     fireEvent.change(windowField(), { target: { value: '9000000' } });
     fireEvent.blur(windowField());
 
-    expect(saved()).toEqual([{ localContextWindow: 262_144 }]);
-    expect(windowField()).toHaveValue(262_144);
+    expect(saved()).toEqual([{ localContextWindow: 9_000_000 }]);
+    expect(windowField()).toHaveValue(9_000_000);
   });
 
   it('leaving the field empty keeps no default window, so each model fits this machine', async () => {

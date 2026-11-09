@@ -530,7 +530,7 @@ impl Default for RouterSettingsDto {
     }
 }
 
-/// Shortest stall timeout a setting can express: zero seconds is no timeout.
+/// One second is the floor: the runtime turns 0 into 1, never into no timeout.
 pub const MIN_LLM_STALL_TIMEOUT_SECONDS: u32 = 1;
 
 /// Long enough to cover prompt ingestion on a local model, short enough that a
