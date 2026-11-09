@@ -114,7 +114,7 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
     for source in &candidate.source_version_ids {
         id(source, "source version")?;
     }
-    if candidate.distractor_rationales.len() > candidate.options.len().max(8) {
+    if candidate.distractor_rationales.len() > candidate.options.len() {
         return Err(invalid(
             "An assessment item has more distractor rationales than options.",
         ));
