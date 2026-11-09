@@ -202,10 +202,10 @@ describe('ChatView', () => {
     expect(h.store.setComposerDraft).toHaveBeenCalledWith(`> ${passage}\n\n`);
   });
 
-  it('caps a long quote', () => {
+  it('quotes a long passage whole', () => {
     renderView(`/chat?quote=${'a'.repeat(2500)}`);
     const draft = (h.store.setComposerDraft as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
-    expect(draft).toBe(`> ${'a'.repeat(2000)}\n\n`);
+    expect(draft).toBe(`> ${'a'.repeat(2500)}\n\n`);
   });
 
   describe('?documentId=', () => {
