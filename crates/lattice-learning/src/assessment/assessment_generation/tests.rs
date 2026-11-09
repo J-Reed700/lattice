@@ -517,6 +517,17 @@ async fn the_writer_is_told_what_the_learner_sees_and_never_to_cite_passages() -
 }
 
 #[tokio::test]
+async fn the_writer_is_told_an_explanation_is_about_its_own_question() -> Result<()> {
+    let system = writer_instructions().await?;
+    let sentence = "An explanation and its rationales are about the question's own case: they use the names, paths and values its prompt gives, never another example's.";
+    assert!(
+        system.contains(sentence),
+        "missing \"{sentence}\" in {system}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn the_writer_is_told_a_prompt_states_every_value_its_answer_depends_on() -> Result<()> {
     let system = writer_instructions().await?;
     let sentence = "A prompt states every value its answer depends on, such as a path or a name, so it can be answered from the prompt and the lesson alone.";
