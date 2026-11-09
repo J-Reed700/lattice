@@ -172,7 +172,7 @@ mod tests {
         let mut candidate = json!({"modules":[{"summary":{"sourceIndex":0,"quote":"The pastry's 'rest' takes five minutes before rolling."}}]});
         assert_eq!(restore_source_quotes(&mut candidate, &sources), 1);
         assert_eq!(candidate["modules"][0]["summary"]["quote"], exact);
-        assert!(generation::generated_source_ids(
+        assert!(generation::optional_citation(
             &sources,
             Some(0),
             "The pastry's 'rest' takes five minutes before rolling."

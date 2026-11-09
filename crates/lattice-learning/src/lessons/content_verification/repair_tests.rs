@@ -99,6 +99,7 @@ async fn a_section_whose_edits_cannot_be_applied_is_asked_for_in_the_same_conver
         unit: 0,
         field: "body".into(),
         quote: "Keep that.".into(),
+        released: false,
     };
 
     let (repaired, put_back) = repair_group(
@@ -677,11 +678,13 @@ async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncite
         unit: 0,
         field: "body".into(),
         quote: "Fix this.".into(),
+        released: false,
     };
     let kept = Protected {
         unit: 0,
         field: "body".into(),
         quote: "Keep this.".into(),
+        released: false,
     };
 
     let (repaired, _) = repair_group(
