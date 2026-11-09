@@ -26,7 +26,6 @@ export function LessonFromMemory({ lessonId, compared, onCompare }: {
         value={explanation}
         onChange={(event) => setExplanation(event.target.value)}
         rows={6}
-        maxLength={8000}
         placeholder="The ideas, why they work, when they don’t apply, and how they connect…"
         className="mt-3 block w-full min-w-0 rounded-md border border-border bg-surface px-3 py-2 text-sm leading-6 text-text-primary"
       />

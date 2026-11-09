@@ -120,7 +120,6 @@ export function LessonCheck({ programId, lessonId, lessonTitle, section, body, p
           value={answer}
           onChange={(event) => setAnswer(event.target.value)}
           rows={4}
-          maxLength={4000}
           placeholder="What happens, and why?"
           className="mt-3 block w-full min-w-0 rounded-md border border-border bg-surface px-3 py-2 text-sm leading-6 text-text-primary"
         />

@@ -90,7 +90,7 @@ function MisconceptionCard({ programId, lessonId, misconception }: { programId: 
   if (draft.isSuccess) return <p role="status" className="mt-3 text-xs text-text-secondary"><Check size={12} className="mr-1 inline text-accent" />Saved as a recall card draft. It comes back in Recall.</p>;
   return <div className="mt-3 rounded-lg border border-border bg-surface p-3">
     <label className="block text-xs font-medium text-text-primary">What is actually right, in your own words?
-      <textarea rows={2} maxLength={2000} value={correction} onChange={(event) => setCorrection(event.target.value)} className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 text-text-primary outline-hidden focus:border-accent" />
+      <textarea rows={2} value={correction} onChange={(event) => setCorrection(event.target.value)} className="mt-1.5 w-full rounded-lg border border-border bg-background px-3 py-2 text-sm leading-6 text-text-primary outline-hidden focus:border-accent" />
     </label>
     <button type="button" disabled={!correction.trim() || draft.isPending} onClick={() => draft.mutate({ draftId: null, programId, lessonId, question: `What is wrong with this idea, and what is right instead? “${misconception}”`, answer: correction.trim(), explanation: 'Drafted from a misconception found in practice', sourceIds: [] })} className="mt-2 rounded-full bg-accent px-3 py-1.5 text-xs font-semibold text-accent-fg disabled:opacity-50">{draft.isPending ? 'Saving…' : 'Make a recall card'}</button>
     {draft.isError && <p role="alert" className="mt-2 text-xs text-rose-700">{draft.error.message}</p>}

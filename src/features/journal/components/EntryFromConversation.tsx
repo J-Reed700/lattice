@@ -107,7 +107,7 @@ export function EntryFromConversation({
     }
     try {
       const titleBase = entry.title.trim() || 'Journal Entry';
-      const conversationTitle = `Sources · ${titleBase}`.slice(0, 90);
+      const conversationTitle = `Sources · ${titleBase}`;
       // A chat about this entry's sources searches what the entry searched.
       // Read from the saved row, not the sidebar's list, which may be showing
       // another space and would hand back nothing.
