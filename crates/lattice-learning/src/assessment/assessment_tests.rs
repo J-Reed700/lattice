@@ -1540,6 +1540,122 @@ async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
     Ok(())
 }
 
+/// The lesson's own question ids in order, with the middle one agreed and a
+/// bank-origin item added; and the ids `bank_in` returns.
+async fn three_own_questions(pool: &SqlitePool) -> Result<(String, String, Vec<String>)> {
+    let (program_id, lesson_id) = placed_lesson(pool).await?;
+    sqlx::query("UPDATE learning_assessment_candidates SET review_status='agreed' WHERE lesson_id=? AND origin='lesson'")
+        .bind(&lesson_id)
+        .execute(pool)
+        .await
+        .map_err(db)?;
+    let scope = LearningQuizScopeDto {
+        kind: LearningQuizScopeKind::Lesson,
+        id: Some(lesson_id.clone()),
+    };
+    fill_bank(pool, &program_id, &scope).await?;
+    let own: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid",
+    )
+    .bind(&lesson_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(own.len(), 3);
+    Ok((program_id, lesson_id, own))
+}
+
+async fn add_finding(
+    pool: &SqlitePool,
+    lesson_id: &str,
+    site: &str,
+    index: i64,
+    state: &str,
+    part_changed_at: Option<i64>,
+) -> Result<()> {
+    let kept_at = (state == "kept").then_some(1_i64);
+    sqlx::query("INSERT INTO learning_lesson_teaching_findings(lesson_id,finding_key,kind,site,unit_index,unit_title,unit_sha256,note,repairs,state,found_at,kept_at,part_changed_at) VALUES(?,?,'answer_key',?,?,'q','sha','note',0,?,1,?,?)")
+        .bind(lesson_id)
+        .bind(format!("{site}-{index}"))
+        .bind(site)
+        .bind(index)
+        .bind(state)
+        .bind(kept_at)
+        .bind(part_changed_at)
+        .execute(pool)
+        .await
+        .map_err(db)?;
+    Ok(())
+}
+
+async fn drawn_ids(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
+    let mut connection = pool.acquire().await.map_err(db)?;
+    let bank = LearningAssessmentRepository::bank_in(&mut connection, program_id).await?;
+    Ok(bank.into_iter().map(|c| c.candidate.id).collect())
+}
+
+#[tokio::test]
+async fn a_lesson_question_with_a_waiting_finding_is_not_drawn() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    add_finding(&pool, &lesson_id, "question", 1, "waiting", None).await?;
+    let drawn = drawn_ids(&pool, &program_id).await?;
+    assert!(!drawn.contains(&own[1]));
+    assert!(drawn.contains(&own[0]) && drawn.contains(&own[2]));
+    let banked: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM learning_assessment_candidates WHERE program_id=? AND origin='bank'",
+    )
+    .bind(&program_id)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    assert!(!banked.is_empty() && banked.iter().all(|b| drawn.contains(b)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_kept_finding_leaves_the_question_drawn() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    add_finding(&pool, &lesson_id, "question", 1, "kept", None).await?;
+    assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_edited_question_with_a_waiting_finding_is_drawn() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    add_finding(&pool, &lesson_id, "question", 1, "waiting", Some(5)).await?;
+    assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_waiting_section_finding_leaves_the_question_drawn() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    add_finding(&pool, &lesson_id, "section", 1, "waiting", None).await?;
+    assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_finding_index_counts_a_dropped_question() -> Result<()> {
+    let pool = migrated().await?;
+    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
+    sqlx::query("UPDATE learning_assessment_candidates SET review_status='dropped' WHERE id=?")
+        .bind(&own[0])
+        .execute(&pool)
+        .await
+        .map_err(db)?;
+    add_finding(&pool, &lesson_id, "question", 1, "waiting", None).await?;
+    let drawn = drawn_ids(&pool, &program_id).await?;
+    assert!(!drawn.contains(&own[1]));
+    assert!(drawn.contains(&own[2]));
+    Ok(())
+}
+
 /// A program accepted at revision 1, its lessons not yet published.
 async fn accepted_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
     let program = crate::tests::fixture();
