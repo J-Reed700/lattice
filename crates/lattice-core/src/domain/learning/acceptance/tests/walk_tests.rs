@@ -876,3 +876,142 @@ fn a_second_change_of_class_diverges() {
         }
     );
 }
+
+const UNVERIFIED: Walked = Walked::Ended(End::Unverified);
+
+#[test]
+fn a_statement_nothing_states_after_research_loses_its_citation_and_meets_commons_bar_never_a_rewrite(
+) {
+    let unproven = [parts(Unproven), research(FoundNothing), page(Unproven)];
+    assert_eq!(
+        walked(Sourced, &unproven),
+        placed(Sourced, false, false, "s.uncite")
+    );
+    assert_eq!(
+        walked(Sourced, &then(&unproven, &[uncite()])),
+        placed(Common, true, false, "c.read")
+    );
+    assert_eq!(
+        walked(Sourced, &then(&unproven, &[uncite(), knowledge(Stands)])),
+        Walked::Ended(End::GeneralKnowledge)
+    );
+}
+
+#[test]
+fn a_recited_statement_nothing_states_loses_its_citation_instead_of_being_rewritten() {
+    let recited = [
+        parts(Unproven),
+        research(Saved),
+        page(StandsElsewhere),
+        recite(),
+    ];
+    assert_eq!(
+        walked(Sourced, &then(&recited, &[parts(Unproven)])),
+        placed(Sourced, false, false, "s.uncite")
+    );
+}
+
+#[test]
+fn a_statement_that_changed_class_and_is_still_unproven_ends_unverified() {
+    let unproven = [parts(Unproven), research(FoundNothing), page(Unproven)];
+    assert_eq!(
+        walked(Common, &then(&[knowledge(NeedsSource)], &unproven)),
+        UNVERIFIED
+    );
+    assert_eq!(
+        walked(
+            Reasoning,
+            &then(
+                &[consistency(NeedsSource)],
+                &[parts(Unproven), research(Saved), page(Unproven)]
+            )
+        ),
+        UNVERIFIED
+    );
+}
+
+#[test]
+fn a_rewrite_whose_parts_are_unproven_ends_unverified_and_one_that_is_refuted_is_cut() {
+    let rewritten = [
+        parts(Unproven),
+        research(Saved),
+        page(Refuted),
+        sourced_rewrite(Rewritten),
+    ];
+    assert_eq!(
+        walked(Sourced, &then(&rewritten, &[parts(Unproven)])),
+        UNVERIFIED
+    );
+    assert_eq!(
+        walked(Sourced, &then(&rewritten, &[parts(Refuted)])),
+        placed(Sourced, false, false, "s.cut")
+    );
+}
+
+#[test]
+fn a_common_statement_that_already_changed_class_and_needs_a_source_ends_unverified() {
+    assert_eq!(
+        walked(
+            Sourced,
+            &[parts(AllCommon), uncite(), knowledge(NeedsSource)]
+        ),
+        UNVERIFIED
+    );
+}
+
+#[test]
+fn a_rewritten_common_statement_that_needs_a_source_ends_unverified() {
+    let policy = StandardPolicy::new();
+    assert_eq!(
+        walk_from(
+            &policy,
+            position(Common, false, false, "c.final"),
+            &[knowledge(NeedsSource)]
+        ),
+        UNVERIFIED
+    );
+}
+
+#[test]
+fn a_rewritten_explanation_that_needs_a_source_ends_unverified_and_one_that_is_refuted_is_cut() {
+    let policy = StandardPolicy::new();
+    let at = position(Reasoning, false, false, "r.final");
+    assert_eq!(
+        walk_from(&policy, at, &[consistency(NeedsSource)]),
+        UNVERIFIED
+    );
+    assert_eq!(
+        walk_from(&policy, at, &[consistency(Refuted)]),
+        placed(Reasoning, false, false, "r.cut")
+    );
+}
+
+#[test]
+fn a_cut_that_cannot_be_made_ends_unverified_in_every_class() {
+    let policy = StandardPolicy::new();
+    for (class, node) in [
+        (Sourced, "s.cut"),
+        (Reasoning, "r.cut"),
+        (Common, "c.cut"),
+        (Internal, "i.cut"),
+    ] {
+        assert_eq!(
+            walk_from(
+                &policy,
+                position(class, false, false, node),
+                &[cut(CannotCut)]
+            ),
+            UNVERIFIED,
+            "{node}"
+        );
+        assert_eq!(
+            walk_from(
+                &policy,
+                position(class, false, false, node),
+                &[cut(Outcome::Cut)]
+            ),
+            REMOVED,
+            "{node}"
+        );
+    }
+}

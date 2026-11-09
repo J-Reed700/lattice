@@ -166,6 +166,9 @@ pub enum End {
     Consistent,
     GeneralKnowledge,
     NotAClaim,
+    /// The sources are silent, or the sentence cannot be cut: it stays in the
+    /// lesson as written, published not verified.
+    Unverified,
     Removed {
         /// The sentence could not be cut, so its section goes.
         section_goes: bool,
