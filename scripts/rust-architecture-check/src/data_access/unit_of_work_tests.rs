@@ -524,3 +524,52 @@ fn the_library_owner_exception_exempts_only_the_awaits_check() {
         vec![awaits(OWNER, 6, "adopt", "tokio::fs::File::create_new()")]
     );
 }
+
+#[test]
+fn a_unit_moved_into_a_helper_is_closed_for_the_rest_of_the_function() {
+    let source = r#"pub async fn run(pool: &SqlitePool, model: &Model) -> Result<()> {
+    let mut tx = pool.begin_write().await?;
+    save(&mut tx).await?;
+    finish(tx).await?;
+    model.call().await;
+    Ok(())
+}
+"#;
+    assert_eq!(found(SERVICE, source), Vec::<String>::new());
+}
+
+#[test]
+fn a_unit_passed_by_mutable_reference_stays_open() {
+    let source = r#"pub async fn run(pool: &SqlitePool, model: &Model) -> Result<()> {
+    let mut tx = pool.begin_write().await?;
+    helper(&mut tx).await?;
+    model.call().await;
+    Ok(())
+}
+"#;
+    assert_eq!(
+        found(SERVICE, source),
+        vec![awaits(SERVICE, 4, "run", "call()")]
+    );
+}
+
+#[test]
+fn a_function_that_owns_the_write_unit_is_under_it_until_it_commits() {
+    let before = r#"pub async fn finish(tx: WriteTx, model: &Model) -> Result<()> {
+    model.call().await;
+    tx.commit().await?;
+    Ok(())
+}
+"#;
+    assert_eq!(
+        found(SERVICE, before),
+        vec![awaits(SERVICE, 2, "finish", "call()")]
+    );
+    let after = r#"pub async fn finish(tx: WriteTx, model: &Model) -> Result<()> {
+    tx.commit().await?;
+    model.call().await;
+    Ok(())
+}
+"#;
+    assert_eq!(found(SERVICE, after), Vec::<String>::new());
+}
