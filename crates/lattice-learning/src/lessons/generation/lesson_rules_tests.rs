@@ -730,3 +730,44 @@ fn a_prose_sentence_after_a_label_is_still_compared() {
     assert_eq!(findings[0].key().site, FindingSite::Section(4));
     assert_eq!(findings[0].passage.as_deref(), Some(SHARED));
 }
+
+#[test]
+fn what_stands_under_a_step_after_its_fence_is_no_repeated_sentence() {
+    let method = |name: &str| {
+        format!("{name}\n\n1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/pi/Music`.")
+    };
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] =
+        json!(format!("{}\n\n{}", method("Method A"), method("Method B")));
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn a_second_paragraph_indented_under_an_item_is_no_repeated_sentence() {
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!("Method A\n\n- Step one.\n\n  Check the result with care.\n\nMethod B\n\n- Step two.\n\n  Check the result with care.");
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn lines_inside_tilde_fences_are_no_repeated_sentences() {
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!("~~~\nRepeat this line of text.\n~~~\n\nUnrelated opening.\n\n~~~\nRepeat this line of text.\n~~~");
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn prose_after_a_list_has_ended_is_compared_again() {
+    const STEP: &str = "1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/pi/Music`.";
+    const SAID: &str = "Say this once here.";
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!(format!("{SAID}\n\n{STEP}"));
+    candidate["blocks"][4]["body"] = json!(format!("{STEP}\n\n{SAID}"));
+    let findings = lesson_rules(&candidate);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].passage.as_deref(), Some(SAID));
+}
