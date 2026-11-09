@@ -5,7 +5,7 @@ import { cn } from '@/lib/utils';
 export type StatusState =
   | { kind: 'idle' }
   | { kind: 'busy'; label: string }
-  | { kind: 'error'; message: string; retry?: () => void };
+  | { kind: 'error'; message: string; retry?: () => void; reload?: { label: string; run: () => void } };
 
 /** A busy line or an error with Try again, announced to screen readers. */
 export function StatusLine({ state, className }: { state: StatusState; className?: string }) {
@@ -32,7 +32,17 @@ export function StatusLine({ state, className }: { state: StatusState; className
         <AlertCircle className="h-4 w-4 shrink-0" aria-hidden="true" />
         <span>{state.message}</span>
       </span>
-      {state.retry && (
+      {state.reload ? (
+        <button
+          type="button"
+          onClick={state.reload.run}
+          className="inline-flex items-center gap-1 font-medium underline focus:outline-hidden focus:ring-2 focus:ring-ring"
+        >
+          <RotateCcw className="h-3 w-3" aria-hidden="true" />
+          {state.reload.label}
+        </button>
+      ) : (
+        state.retry && (
         <button
           type="button"
           onClick={state.retry}
@@ -41,6 +51,7 @@ export function StatusLine({ state, className }: { state: StatusState; className
           <RotateCcw className="h-3 w-3" aria-hidden="true" />
           Try again
         </button>
+        )
       )}
     </div>
   );

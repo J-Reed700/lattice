@@ -26,9 +26,10 @@ export function SaveAsReviewCard({
   const program = useLearningProgram(lessonId ? null : programId);
   const fallback = program.data?.summary.currentLessonId ?? program.data?.modules[0]?.lessons[0]?.id ?? null;
   const target = lessonId ?? fallback;
+  const blank = answer.trim() === '';
 
   const submit = () => {
-    if (!target) return;
+    if (!target || blank) return;
     save.mutate(
       {
         draftId: null,
@@ -59,7 +60,7 @@ export function SaveAsReviewCard({
         <button
           type="button"
           onClick={submit}
-          disabled={!target || save.isPending || save.isSuccess}
+          disabled={!target || blank || save.isPending || save.isSuccess}
           className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60"
         >
           <Layers size={14} aria-hidden="true" />
@@ -72,6 +73,7 @@ export function SaveAsReviewCard({
           </p>
         )}
       </div>
+      {blank && <p className="text-xs text-text-secondary">Write the answer first.</p>}
       {!target && (
         <p className="text-xs text-text-secondary">Open a lesson in this course first; the card is filed under it.</p>
       )}

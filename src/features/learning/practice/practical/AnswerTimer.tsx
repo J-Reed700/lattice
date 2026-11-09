@@ -11,7 +11,7 @@ const AIM_MS = 120_000;
 export function AnswerTimer({ since, running = true }: { since: string; running?: boolean }) {
   return (
     <div className="flex flex-wrap items-center gap-3">
-      <ElapsedClock key={since} elapsedMs={0} running={running} softLimitMs={AIM_MS} label="Answer time" />
+      <ElapsedClock key={since} elapsedMs={0} running={running} softLimitMs={AIM_MS} label="Answer time" pastLimit="Past two minutes: land your result and stop." />
       <p className="text-xs text-text-secondary">
         {running ? 'Answering now. Aim for about two minutes, out loud.' : 'Answer sent.'}
       </p>

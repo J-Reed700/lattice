@@ -17,11 +17,13 @@ export function ElapsedClock({
   running,
   softLimitMs,
   label = 'Elapsed',
+  pastLimit,
 }: {
   elapsedMs: number;
   running: boolean;
   softLimitMs?: number | null;
   label?: string;
+  pastLimit?: string;
 }) {
   const [shown, setShown] = useState(elapsedMs);
   const reached = useRef(elapsedMs);
@@ -63,7 +65,7 @@ export function ElapsedClock({
           className="inline-flex items-center gap-1 rounded-full bg-warning-muted px-2.5 py-0.5 font-medium text-warning-fg"
         >
           <Timer size={13} aria-hidden="true" />
-          Past the {formatClock(softLimitMs)} you set. You can keep going.
+          {pastLimit ?? `Past ${formatClock(softLimitMs)}. You can keep going.`}
         </span>
       )}
     </div>

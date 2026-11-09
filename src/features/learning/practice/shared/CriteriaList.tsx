@@ -9,20 +9,58 @@ export type EvidenceView =
   | { kind: 'hint'; label: string }
   | { kind: 'text'; text: string };
 
+export type CriterionLevel = 'met' | 'partly' | 'not_met';
+
 export interface CriterionView {
   id: string;
   title: string;
-  points: number | null;
+  description?: string;
+  /** A number is a grade, null is "not enough evidence", and leaving it out means not graded yet. */
+  points?: number | null;
+  outcome?: { label: string; level: CriterionLevel };
   maxPoints: number;
   evidence: EvidenceView[];
   feedback?: string;
   nextStep?: string;
 }
 
-function Score({ points, maxPoints }: { points: number | null; maxPoints: number }) {
+const levelStyle: Record<CriterionLevel, { Icon: typeof CheckCircle2; tone: string }> = {
+  met: { Icon: CheckCircle2, tone: 'bg-success-muted text-success-fg' },
+  partly: { Icon: AlertCircle, tone: 'bg-warning-muted text-warning-fg' },
+  not_met: { Icon: XCircle, tone: 'bg-danger-muted text-danger-fg' },
+};
+
+function Score({ criterion }: { criterion: CriterionView }) {
+  const { points, maxPoints, outcome } = criterion;
+  if (outcome) {
+    const { Icon, tone } = levelStyle[outcome.level];
+    return (
+      <span
+        data-score
+        data-level={outcome.level}
+        className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${tone}`}
+      >
+        <Icon size={14} className="shrink-0" aria-hidden="true" />
+        <span>{outcome.label}</span>
+      </span>
+    );
+  }
+  if (points === undefined) {
+    return (
+      <span
+        data-score
+        className="inline-flex items-center rounded-full bg-surface-raised px-2.5 py-0.5 text-xs font-medium text-text-secondary"
+      >
+        Worth {maxPoints} {maxPoints === 1 ? 'point' : 'points'}
+      </span>
+    );
+  }
   if (points === null) {
     return (
-      <span className="inline-flex items-center gap-1.5 rounded-full bg-surface-raised px-2.5 py-0.5 text-xs font-medium text-text-secondary">
+      <span
+        data-score
+        className="inline-flex items-center gap-1.5 rounded-full bg-surface-raised px-2.5 py-0.5 text-xs font-medium text-text-secondary"
+      >
         <HelpCircle size={14} className="shrink-0" aria-hidden="true" />
         <span>Not enough evidence</span>
       </span>
@@ -30,14 +68,12 @@ function Score({ points, maxPoints }: { points: number | null; maxPoints: number
   }
   const full = points >= maxPoints;
   const none = points <= 0;
-  const Icon = full ? CheckCircle2 : none ? XCircle : AlertCircle;
-  const tone = full
-    ? 'bg-success-muted text-success-fg'
-    : none
-      ? 'bg-danger-muted text-danger-fg'
-      : 'bg-warning-muted text-warning-fg';
+  const { Icon, tone } = levelStyle[full ? 'met' : none ? 'not_met' : 'partly'];
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${tone}`}>
+    <span
+      data-score
+      className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-0.5 text-xs font-medium ${tone}`}
+    >
       <Icon size={14} className="shrink-0" aria-hidden="true" />
       <span>
         {points} of {maxPoints}
@@ -96,8 +132,9 @@ export function CriteriaList({ criteria, heading }: { criteria: CriterionView[];
           <li key={criterion.id} className="rounded-xl border border-border-subtle bg-surface-sunken p-3 sm:p-4">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <span className="text-sm font-semibold text-text-primary">{criterion.title}</span>
-              <Score points={criterion.points} maxPoints={criterion.maxPoints} />
+              <Score criterion={criterion} />
             </div>
+            {criterion.description && <p className="mt-1 text-xs text-text-secondary">{criterion.description}</p>}
             {(criterion.feedback || criterion.evidence.length > 0 || criterion.nextStep) && (
               <div className="mt-3 space-y-2 border-t border-border-subtle pt-2">
                 {criterion.feedback && <p className="text-xs text-text-secondary">{criterion.feedback}</p>}

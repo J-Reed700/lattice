@@ -260,7 +260,7 @@ export function LearningCodeEditor({
         <div ref={hostRef} />
       </div>
       <footer className="learning-code-editor__hint flex flex-wrap items-center justify-between gap-x-3 gap-y-1 border-t border-[hsl(var(--border-subtle))] px-3 py-2 text-xs text-[hsl(var(--text-muted))] sm:px-4">
-        <span>{readOnly ? 'Read-only file' : `Tab indents · ${modLabel}Z undo · ${modLabel}F find · ${modLabel}Enter run`}</span>
+        <span>{readOnly ? 'Read-only file' : `Tab indents · ${modLabel}Z undo · ${modLabel}F find${onRunShortcut ? ` · ${modLabel}Enter run` : ''}`}</span>
         {!readOnly && <span>Press Esc, then Tab to move focus</span>}
       </footer>
     </section>

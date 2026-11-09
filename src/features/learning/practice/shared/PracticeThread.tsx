@@ -2,8 +2,6 @@ import { Send } from 'lucide-react';
 import type React from 'react';
 import { useEffect, useRef } from 'react';
 
-import { useSpeaker } from '@/features/speech/hooks/useSpeech';
-import { speechChunks } from '@/features/speech/model/speechText';
 import { VOICE_STATUS, VoiceButton } from '@/features/voice/components/VoiceButton';
 import { useVoiceConversation } from '@/features/voice/hooks/useVoiceConversation';
 import { cn } from '@/lib/utils';
@@ -26,7 +24,7 @@ export interface PracticeThreadProps {
   messages: ThreadMessage[];
   onSend: (content: string, spoken: boolean) => Promise<void>;
   busy?: string | null;
-  error?: { message: string; retry?: () => void } | null;
+  error?: { message: string; retry?: () => void; reload?: { label: string; run: () => void } } | null;
   placeholder?: string;
   draftKey?: string;
   voice?: boolean;
@@ -73,10 +71,9 @@ function Message({ message, render }: { message: ThreadMessage; render?: Practic
 
 interface FooterProps {
   messages: ThreadMessage[];
+  error: PracticeThreadProps['error'];
   onSend: PracticeThreadProps['onSend'];
   setText: (value: string) => void;
-  spokenSentAfter: React.MutableRefObject<string | null>;
-  lastId: string | null;
   disabled: boolean;
 }
 
@@ -84,31 +81,63 @@ function Hint({ children }: { children: React.ReactNode }) {
   return <span className="text-xs text-text-muted">{children}</span>;
 }
 
-function VoiceControls({ messages, onSend, setText, spokenSentAfter, lastId, disabled }: FooterProps) {
-  const speak = useSpeaker();
+interface ReplyWait {
+  after: string | null;
+  error: FooterProps['error'];
+  resolve: (outcome: 'answered' | 'failed') => void;
+}
+
+function newerReply(messages: ThreadMessage[], after: string | null): ThreadMessage | undefined {
+  const last = messages[messages.length - 1];
+  return last && last.id !== after && last.speaker !== 'learner' ? last : undefined;
+}
+
+function VoiceControls({ messages, error, onSend, setText, disabled }: FooterProps) {
+  const current = useRef({ messages, error });
+  const waiting = useRef<ReplyWait | null>(null);
+  const answer = useRef('');
+
+  useEffect(() => {
+    current.current = { messages, error };
+    const wait = waiting.current;
+    if (!wait) return;
+    const reply = newerReply(messages, wait.after);
+    if (reply) {
+      answer.current = reply.content;
+      waiting.current = null;
+      wait.resolve('answered');
+    } else if (error && error !== wait.error) {
+      waiting.current = null;
+      wait.resolve('failed');
+    }
+  }, [messages, error]);
+
   const { phase, toggle } = useVoiceConversation({
     conversationId: null,
     send: async (text) => {
-      spokenSentAfter.current = lastId ?? '';
+      const after = current.current.messages[current.current.messages.length - 1]?.id ?? null;
+      const before = current.current.error;
+      const outcome = new Promise<'answered' | 'failed'>((resolve) => {
+        waiting.current = { after, error: before, resolve };
+      });
       try {
         await onSend(text, true);
-      } catch (cause) {
-        spokenSentAfter.current = null;
+      } catch {
+        waiting.current = null;
         setText(text);
-        throw cause;
+        return 'failed';
       }
-      return 'answered';
+      const reply = newerReply(current.current.messages, after);
+      if (reply && waiting.current) {
+        answer.current = reply.content;
+        waiting.current = null;
+        return 'answered';
+      }
+      return outcome;
     },
+    reply: () => answer.current,
     fill: setText,
   });
-
-  const latest = messages[messages.length - 1];
-  useEffect(() => {
-    if (spokenSentAfter.current === null || !latest || latest.speaker === 'learner') return;
-    if (latest.id === spokenSentAfter.current) return;
-    spokenSentAfter.current = null;
-    void speak(`practice-thread:${latest.id}`, speechChunks(latest.content));
-  }, [latest, speak, spokenSentAfter]);
 
   return (
     <>
@@ -137,7 +166,6 @@ export function PracticeThread({
   const [text, setText] = useDraft(draftKey ?? null);
   const box = useRef<HTMLTextAreaElement>(null);
   const log = useRef<HTMLDivElement>(null);
-  const spokenSentAfter = useRef<string | null>(null);
   const wasBusy = useRef(Boolean(busy));
   const lastId = messages[messages.length - 1]?.id ?? null;
 
@@ -177,7 +205,7 @@ export function PracticeThread({
   const status = busy
     ? ({ kind: 'busy', label: busy } as const)
     : error
-      ? ({ kind: 'error', message: error.message, retry: error.retry } as const)
+      ? ({ kind: 'error', message: error.message, retry: error.retry, reload: error.reload } as const)
       : ({ kind: 'idle' } as const);
 
   return (
@@ -213,10 +241,9 @@ export function PracticeThread({
         {voice ? (
           <VoiceControls
             messages={messages}
+            error={error}
             onSend={onSend}
             setText={setText}
-            spokenSentAfter={spokenSentAfter}
-            lastId={lastId}
             disabled={Boolean(disabled)}
           />
         ) : (

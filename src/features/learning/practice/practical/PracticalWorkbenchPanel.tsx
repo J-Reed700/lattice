@@ -25,18 +25,34 @@ import type {
   LearningLabFile,
   LearningSimulationSessionDto,
   StartLearningPracticalRunRequestDto,
+  LearningInterviewRoundKind,
   LearningLessonDto,
+  LearningPracticalActivityKind,
   LearningProgramDto,
 } from "@/lib/bindings";
+
+/** Asks the workbench to open the composer ready to go; a new `id` asks again. */
+export type ComposerRequest = {
+  id: string;
+  kind: LearningPracticalActivityKind;
+  brief?: string;
+  interview?: {
+    companyName: string | null;
+    targetRole: string | null;
+    roundKind: LearningInterviewRoundKind;
+  };
+};
 
 export function PracticalWorkbenchPanel({
   program,
   lesson,
-  projectRequest,
+  activityId = null,
+  composer = null,
 }: {
   program: LearningProgramDto;
   lesson: LearningLessonDto | null;
-  projectRequest?: { id: string; brief: string } | null;
+  activityId?: string | null;
+  composer?: ComposerRequest | null;
 }) {
   const api = useApi();
   const programId = program.summary.id;
@@ -59,16 +75,15 @@ export function PracticalWorkbenchPanel({
       }
     },
   });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(activityId);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
   const [composerOpened, setComposerOpened] = useState(false);
-  const [dismissedProjectId, setDismissedProjectId] = useState<string | null>(null);
-  const projectBrief =
-    projectRequest && projectRequest.id !== dismissedProjectId ? projectRequest.brief : null;
-  const composerOpen = composerOpened || projectBrief !== null;
+  const [dismissedComposerId, setDismissedComposerId] = useState<string | null>(null);
+  const openRequest = composer && composer.id !== dismissedComposerId ? composer : null;
+  const composerOpen = composerOpened || openRequest !== null;
   const setComposerOpen = (open: boolean) => {
     setComposerOpened(open);
-    if (!open && projectRequest) setDismissedProjectId(projectRequest.id);
+    if (!open && composer) setDismissedComposerId(composer.id);
   };
   const newActivityRef = useRef<HTMLButtonElement>(null);
   const [runtimeSetupRequest, setRuntimeSetupRequest] = useState(0);
@@ -77,6 +92,15 @@ export function PracticalWorkbenchPanel({
   const startingRunRef = useRef(false);
   const [simulation, setSimulation] =
     useState<LearningSimulationSessionDto | { newAttemptFor: string } | null>(null);
+  const [seenActivityId, setSeenActivityId] = useState(activityId);
+  if (activityId !== seenActivityId) {
+    setSeenActivityId(activityId);
+    if (activityId) {
+      setSelectedId(activityId);
+      setSelectedRunId(null);
+      setSimulation(null);
+    }
+  }
   const [runError, setRunError] = useState<string | null>(null);
   const runRequestRef = useRef<{
     fingerprint: string;
@@ -420,8 +444,9 @@ export function PracticalWorkbenchPanel({
         <ActivityComposer
           program={program}
           lesson={lesson}
-          initialBrief={projectBrief ?? undefined}
-          initialKind={projectBrief ? "project" : undefined}
+          initialBrief={openRequest?.brief}
+          initialKind={openRequest?.kind}
+          initialInterview={openRequest?.interview}
           profiles={profiles}
           builtinRuntimes={builtinRuntimes}
           returnFocusRef={newActivityRef}

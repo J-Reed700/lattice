@@ -124,7 +124,13 @@ export function SimulationPanel({
   const status: StatusState = busyLabel
     ? { kind: 'busy', label: busyLabel }
     : failed?.error
-      ? { kind: 'error', message: failed.error, retry: failed.retry }
+      ? failed.conflict
+        ? {
+            kind: 'error',
+            message: failed.error,
+            reload: { label: 'Reload simulation', run: () => { refreshAfterError(); setLastOperation(null); } },
+          }
+        : { kind: 'error', message: failed.error, retry: failed.retry }
       : { kind: 'idle' };
 
   const lastQuestionId = session?.turns.filter((item) => item.speaker === 'counterpart').at(-1)?.id;
@@ -341,7 +347,7 @@ export function SimulationPanel({
               messages={messages}
               onSend={send}
               busy={busyLabel}
-              error={status.kind === 'error' ? { message: status.message, retry: status.retry } : null}
+              error={status.kind === 'error' ? { message: status.message, retry: status.retry, reload: status.reload } : null}
               placeholder={`Respond as ${session.learnerRole}…`}
               draftKey={draftKey ?? undefined}
               maxLength={LEARNER_TEXT_MAX_CHARS}
