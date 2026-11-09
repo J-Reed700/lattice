@@ -116,7 +116,10 @@ export function ExamplesTable({ signature, examples, coverage, busy = false, onC
                       </button>
                       <button
                         type="button"
-                        onClick={() => void onRemove(example.ordinal)}
+                        onClick={() => {
+                          if (editing === example.ordinal) reset();
+                          void onRemove(example.ordinal);
+                        }}
                         aria-label={`Remove example ${index + 1}`}
                         className="min-h-[36px] cursor-pointer rounded-lg border border-border-default bg-surface px-3 text-xs font-semibold text-text-primary hover:bg-surface-raised"
                       >
