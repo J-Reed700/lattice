@@ -3,9 +3,6 @@ import type {
   LearningPracticalRunStatus,
 } from "@/lib/bindings";
 
-export { newId as uuid } from "@/lib/api";
-export { unwrap } from "@/lib/api";
-export { getErrorMessage as errorText } from "@/lib/errorUtils";
 export function dateText(value?: number | null) {
   if (value == null) return "Time unavailable";
   const date = new Date(value);
@@ -20,11 +17,11 @@ export function isSimulationKind(kind: LearningPracticalActivityKind) {
 }
 
 export function statusStyle(status: LearningPracticalRunStatus) {
-  if (status === "passed") return "text-emerald-700 dark:text-emerald-300 bg-emerald-500/10";
-  if (status === "failed") return "text-rose-700 dark:text-rose-300 bg-rose-500/10";
+  if (status === "passed") return "text-success-fg bg-success-muted";
+  if (status === "failed") return "text-danger-fg bg-danger-muted";
   if (status === "running" || status === "pending")
-    return "text-accent bg-accent/10";
-  return "text-text-muted bg-background";
+    return "text-accent bg-accent-muted";
+  return "text-text-secondary bg-surface-raised";
 }
 
 /**

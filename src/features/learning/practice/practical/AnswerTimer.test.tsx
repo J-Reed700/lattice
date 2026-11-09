@@ -4,29 +4,42 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { AnswerTimer } from '@/features/learning/practice/practical/AnswerTimer';
 
 describe('AnswerTimer', () => {
-  beforeEach(() => { vi.useFakeTimers(); });
-  afterEach(() => { vi.useRealTimers(); });
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+  afterEach(() => {
+    vi.useRealTimers();
+  });
 
   it('counts the current answer against two minutes and restarts for the next question', () => {
     const { rerender } = render(<AnswerTimer since="question-1" />);
-    expect(screen.getByText(/aim for about two minutes/)).toHaveTextContent('Answering for 0:00');
-    act(() => { vi.advanceTimersByTime(125_000); });
-    expect(screen.getByText(/past two minutes/)).toHaveTextContent('Answering for 2:05');
+    expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('0:00');
+    expect(screen.getByText(/aim for about two minutes/i)).toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(125_000);
+    });
+    expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('2:05');
+    expect(screen.getByRole('status')).toHaveTextContent(/past the 2:00/i);
     rerender(<AnswerTimer since="question-2" />);
-    expect(screen.getByText(/aim for about two minutes/)).toHaveTextContent('Answering for 0:00');
+    expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('0:00');
+    expect(screen.queryByRole('status')).not.toBeInTheDocument();
   });
 
-  it('stops while the answer is with the interviewer and resumes if the send fails', () => {
+  it('holds while the answer is with the interviewer and resumes if the send fails', () => {
     const { rerender } = render(<AnswerTimer since="question-1" />);
-    act(() => { vi.advanceTimersByTime(90_000); });
+    act(() => {
+      vi.advanceTimersByTime(90_000);
+    });
     rerender(<AnswerTimer since="question-1" running={false} />);
-    act(() => { vi.advanceTimersByTime(75_000); });
-    expect(screen.getByText(/Answered in/)).toHaveTextContent('Answered in 1:30');
-    expect(screen.queryByText(/past two minutes/)).not.toBeInTheDocument();
+    act(() => {
+      vi.advanceTimersByTime(75_000);
+    });
+    expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('1:30');
+    expect(screen.getByText('Answer sent.')).toBeInTheDocument();
     rerender(<AnswerTimer since="question-1" />);
-    act(() => { vi.advanceTimersByTime(10_000); });
-    expect(screen.getByText(/Answering for/)).toHaveTextContent('Answering for 1:40');
-    rerender(<AnswerTimer since="question-2" running={false} />);
-    expect(screen.getByText(/Answered in/)).toHaveTextContent('Answered in 0:00');
+    act(() => {
+      vi.advanceTimersByTime(10_000);
+    });
+    expect(screen.getByRole('timer', { name: 'Answer time' })).toHaveTextContent('1:40');
   });
 });

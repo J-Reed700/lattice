@@ -23,7 +23,8 @@ const mocks = vi.hoisted(() => ({
   getDraft: vi.fn(),
   saveDraft: vi.fn(),
 }));
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   default: {
     getLearningPracticalWorkspace: mocks.workspace,
     getLearningRuntimeCatalog: mocks.runtimeCatalog,
@@ -38,6 +39,11 @@ vi.mock("@/lib/api", () => ({
     saveLearningPracticalDraft: mocks.saveDraft,
   },
 }));
+
+vi.mock("@/features/voice/hooks/useVoiceConversation", () => ({
+  useVoiceConversation: () => ({ phase: "off", toggle: vi.fn() }),
+}));
+vi.mock("@/features/speech/hooks/useSpeech", () => ({ useSpeaker: () => vi.fn() }));
 
 // Test the workspace's persistence and execution contract here. The real
 // CodeMirror view has its own tests and is exercised by browser journeys.
@@ -345,7 +351,7 @@ describe("Learning Studio Labs & simulations", () => {
       "Connection interrupted",
     );
     const first = mocks.startRun.mock.calls.at(-1)?.[0];
-    await user.click(screen.getByRole("button", { name: "Retry run" }));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(mocks.startRun).toHaveBeenCalledTimes(2));
     expect(mocks.startRun.mock.calls[1][0]).toEqual(first);
     expect(
@@ -369,14 +375,14 @@ describe("Learning Studio Labs & simulations", () => {
     );
     const startRequest = mocks.startSimulation.mock.calls[0][0];
     await user.click(
-      screen.getByRole("button", { name: "Retry same operation" }),
+      screen.getByRole("button", { name: "Try again" }),
     );
     await waitFor(() => expect(mocks.startSimulation).toHaveBeenCalledTimes(2));
     expect(mocks.startSimulation.mock.calls[1][0]).toEqual(startRequest);
     const response = screen.getByRole("textbox", { name: "Your response" });
     await user.type(response, "I would first confirm the timeline.");
     await user.click(
-      screen.getByRole("button", { name: "Send simulation turn" }),
+      screen.getByRole("button", { name: "Send" }),
     );
     expect(
       await screen.findByText("What observation led you to that conclusion?"),
@@ -776,7 +782,7 @@ describe("Learning Studio Labs & simulations", () => {
     const user = userEvent.setup();
     renderPractical();
     await user.type(await screen.findByLabelText("Your response"), "I would verify retries.");
-    await user.click(screen.getByRole("button", { name: "Send simulation turn" }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Finish interview" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Finish interview" }));
     expect(await screen.findByText("Feedback from the saved attempt.")).toBeVisible();
