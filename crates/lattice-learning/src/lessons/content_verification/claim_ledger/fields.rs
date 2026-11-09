@@ -25,7 +25,7 @@ pub(crate) fn field_text(candidate: &Value, unit: usize, field: &str) -> Option<
 }
 
 /// The fields of a unit a claim can come from, in the order searched.
-fn unit_fields(item: &Value, block: bool) -> Vec<String> {
+pub(crate) fn unit_fields(item: &Value, block: bool) -> Vec<String> {
     let mut fields: Vec<String> = Vec::new();
     let names: &[&str] = if block {
         &["body", "title", "rubric"]

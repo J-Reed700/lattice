@@ -33,7 +33,7 @@ use citations::{
 pub(crate) use claim_ledger::locate;
 pub(crate) use claim_ledger::{
     claim_quote, field_pointer, field_text, held_for_review, held_lessons, located, located_quote,
-    review_outcome, unit_texts, HeldForReview,
+    review_outcome, unit_fields, unit_texts, HeldForReview,
 };
 mod class_checks;
 mod classify;

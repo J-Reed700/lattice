@@ -1678,3 +1678,76 @@ async fn parts_tells_of_each_statement_of_its_batch_once_at_its_own_place_whoeve
     })
     .await
 }
+
+/// Answers every part-wise check, holding the one about `held` until `gate`
+/// is opened.
+struct HeldUntil {
+    held: &'static str,
+    gate: std::sync::Arc<tokio::sync::Notify>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for HeldUntil {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let prompt: String = request
+            .input
+            .iter()
+            .filter_map(|input| match input {
+                lattice_core::application::ports::llm_port::CompletionInput::Message {
+                    content,
+                    ..
+                } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        if prompt.contains(self.held) {
+            self.gate.notified().await;
+        }
+        Ok(CompletionResponse::from_text(half_stated()))
+    }
+    fn model_name(&self) -> &str {
+        "held-fixture"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn parts_tells_of_a_statement_while_another_comparison_is_still_in_flight() -> Result<()> {
+    let references = ReferenceCollection::lexical(&sources())?;
+    let world = world_of(&references, citing(&references)?);
+    let gate = std::sync::Arc::new(tokio::sync::Notify::new());
+    let model = HeldUntil {
+        held: "skips blanks",
+        gate: gate.clone(),
+    };
+    let claims = [
+        (0, claim("Quillet is a lexer that reads characters.")),
+        (0, claim("Quillet is a lexer that skips blanks.")),
+    ];
+    let told = Mutex::new(Vec::new());
+    let record = |ordinal: usize, _: &Read| {
+        told.lock().unwrap().push(ordinal);
+        if ordinal == 0 {
+            gate.notify_one();
+        }
+    };
+
+    let reads = tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        read_observed(Reading::Parts, &model, &world, &claims, &record),
+    )
+    .await
+    .expect("the first statement's reading was told while the second was still held")?;
+
+    assert_eq!(reads.len(), 2);
+    assert_eq!(*told.lock().unwrap(), vec![0, 1]);
+    Ok(())
+}

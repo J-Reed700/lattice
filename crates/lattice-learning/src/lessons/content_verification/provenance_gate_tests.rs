@@ -14,6 +14,7 @@ use lattice_core::domain::provenance::{
     ClaimKind, ClaimSubject, NextStep, StaticBars, SubjectKey, SubjectKind, TemporalValidity,
     POLICY,
 };
+use lattice_core::shared::error::AppError;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn bars() -> EffectiveBars {
@@ -782,5 +783,70 @@ async fn outside_a_trust_scope_an_outline_assertion_is_not_weighed() -> Result<(
     .await?;
     assert!(weighed.is_none(), "no course to weigh it in");
     assert_eq!(checker.calls.load(Ordering::SeqCst), 0, "no model call");
+    Ok(())
+}
+
+/// Answers the claim profile call of "Section 1" and refuses the one of
+/// "Section 2", whatever order they arrive in.
+struct SecondUnitFails;
+
+#[async_trait::async_trait]
+impl LLMPort for SecondUnitFails {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        let prompt: String = request
+            .input
+            .iter()
+            .filter_map(|input| match input {
+                lattice_core::application::ports::llm_port::CompletionInput::Message {
+                    content,
+                    ..
+                } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        if prompt.contains("Section 2") {
+            return Err(AppError::InternalError("the model went away".into()));
+        }
+        Ok(CompletionResponse {
+            text: r#"{"claims":[{"id":"claim-0","kind":"general","subject":null,"temporal":{"scope":"timeless","version":null,"date":null},"measurement_origin":null,"attributed_to":null}]}"#.into(),
+            finish_reason: "stop".into(),
+            ..Default::default()
+        })
+    }
+    fn model_name(&self) -> &str {
+        "profile-model"
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        text.len() / 4
+    }
+    fn max_context_tokens(&self) -> usize {
+        128_000
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_unit_profiled_before_another_unit_fails_keeps_its_profiles() -> Result<()> {
+    let pool = crate::test_support::pool().await?;
+    let mut judgements =
+        context::Judgements::cached(pool.clone(), "program", "profile-model").await?;
+    let claims = [
+        (0, "The first unit states one claim."),
+        (1, "The second unit states another claim."),
+    ];
+    let result = judgements.profiles(&SecondUnitFails, &claims).await;
+    assert!(result.is_err(), "the second unit's call failed");
+    let saved: Vec<String> = sqlx::query_scalar("SELECT input_sha256 FROM claim_profiles")
+        .fetch_all(&pool)
+        .await
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let first = lattice_core::application::services::source_trust::claim_profile_key(
+        claims[0].1,
+        &[],
+        "profile-model",
+    );
+    assert_eq!(saved, vec![first.input_sha256]);
     Ok(())
 }
