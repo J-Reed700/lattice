@@ -16,7 +16,9 @@ import { ReviewCheckbox, SelectionBar } from '@/features/learning/lessons/review
 import { useReviewSelection } from '@/features/learning/lessons/review/useReviewSelection';
 import type { CoursePlanEntryDto, CoursePlanViewDto, LearningProgramDto, PlannedLesson } from '@/lib/bindings';
 
-type Form = { lessonId: string; kind: 'edit' | 'ask' };
+type Form = { lessonId: string; kind: 'edit' | 'ask'; outlineRevision: number; entryRevision: number };
+type Failure = { at: string | 'selection'; error: unknown };
+const SELECTION = 'selection';
 type ListKey = 'ideas' | 'terms' | 'actions';
 
 const LISTS: { key: ListKey; singular: string }[] = [
@@ -27,7 +29,7 @@ const LISTS: { key: ListKey; singular: string }[] = [
 const capital = (word: string) => word.charAt(0).toUpperCase() + word.slice(1);
 const INPUT = 'w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm';
 
-function AskForChange({ busy, onSend, onCancel }: { busy: boolean; onSend: (instruction: string) => Promise<boolean>; onCancel: () => void }) {
+function AskForChange({ busy, error, onSend, onCancel }: { busy: boolean; error: unknown; onSend: (instruction: string) => Promise<boolean>; onCancel: () => void }) {
   const [text, setText] = useState('');
   return (
     <form
@@ -35,6 +37,7 @@ function AskForChange({ busy, onSend, onCancel }: { busy: boolean; onSend: (inst
       onSubmit={(event) => { event.preventDefault(); void onSend(text.trim()); }}
     >
       <textarea aria-label="What should change?" rows={2} autoFocus value={text} onChange={(event) => setText(event.target.value)} className={INPUT} />
+      {error ? <PlainError error={error} className="rounded-xl bg-danger-muted p-3 text-sm text-text-primary" /> : null}
       <div className="flex gap-2">
         <Button type="submit" size="sm" disabled={busy || !text.trim()}>Send</Button>
         <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onCancel}>Cancel</Button>
@@ -81,8 +84,10 @@ function EditForm({ topics, busy, onSave, onCancel }: { topics: PlannedLesson; b
   );
 }
 
-function TopicCard({ title, entry, form, busy, selected, onToggle, onForm, onEdit, onChange, onUndo }: {
+function TopicCard({ title, written, error, entry, form, busy, selected, onToggle, onForm, onEdit, onChange, onUndo }: {
   title: string;
+  written: boolean;
+  error: unknown;
   entry: CoursePlanEntryDto;
   form: Form['kind'] | null;
   busy: boolean;
@@ -104,7 +109,7 @@ function TopicCard({ title, entry, form, busy, selected, onToggle, onForm, onEdi
         ? <EditForm topics={topics} busy={busy} onSave={onEdit} onCancel={() => onForm(null)} />
         : <TopicLists topics={topics} className="mt-2 space-y-2 text-text-secondary" />}
       {previous && <p className="mt-2 text-xs text-text-muted">{`Was: ${previous.ideas.join(IDEAS_SEPARATOR)}`}</p>}
-      {!editable && <p className="mt-3 text-xs text-text-secondary">Being written; its topics are fixed</p>}
+      {!editable && <p className="mt-3 text-xs text-text-secondary">{written ? 'Already written; its topics are fixed' : 'Being written; its topics are fixed'}</p>}
       {editable && form === null && (
         <div className="mt-3 flex flex-wrap gap-2">
           <Button type="button" size="sm" variant="outline" disabled={busy} onClick={() => onForm('edit')}>Edit</Button>
@@ -112,7 +117,8 @@ function TopicCard({ title, entry, form, busy, selected, onToggle, onForm, onEdi
           {previous && <Button type="button" size="sm" variant="ghost" disabled={busy} onClick={onUndo}>Undo</Button>}
         </div>
       )}
-      {editable && form === 'ask' && <AskForChange busy={busy} onSend={onChange} onCancel={() => onForm(null)} />}
+      {editable && form === 'ask' && <AskForChange busy={busy} error={error} onSend={onChange} onCancel={() => onForm(null)} />}
+      {error && form !== 'ask' ? <PlainError error={error} className="mt-3 rounded-xl bg-danger-muted p-3 text-sm text-text-primary" /> : null}
     </article>
   );
 }
@@ -125,41 +131,44 @@ export function TopicsReviewScreen({ program, onBack }: { program: LearningProgr
   const undo = useUndoCoursePlanEntry();
   const [form, setForm] = useState<Form | null>(null);
   const [bulkOpen, setBulkOpen] = useState(false);
-  const [error, setError] = useState<unknown>(null);
+  const [failure, setFailure] = useState<Failure | null>(null);
   const view: CoursePlanViewDto | undefined = planQuery.data;
   const entries = useMemo(() => new Map((view?.entries ?? []).map((entry) => [entry.topics.lessonId, entry])), [view]);
   const lessonKeys = program.modules.flatMap((module) => module.lessons).filter((lesson) => entries.get(lesson.id)?.editable).map((lesson) => lesson.id);
   const selection = useReviewSelection(lessonKeys);
   const busy = edit.isPending || change.isPending || undo.isPending;
 
-  const run = async (action: () => Promise<unknown>) => {
-    setError(null);
+  const run = async (at: string, action: () => Promise<unknown>) => {
+    setFailure(null);
     try {
       await action();
       return true;
     } catch (caught) {
-      setError(caught);
+      setFailure({ at, error: caught });
       return false;
     }
   };
-  const editEntry = (entry: CoursePlanEntryDto, topics: PlannedLesson) => run(async () => {
-    await edit.mutateAsync({ programId, outlineRevision: view!.outlineRevision, expectedEntryRevision: entry.entryRevision, topics });
+  const editEntry = (opened: Form, topics: PlannedLesson) => run(opened.lessonId, async () => {
+    await edit.mutateAsync({ programId, outlineRevision: opened.outlineRevision, expectedEntryRevision: opened.entryRevision, topics });
     setForm(null);
   });
-  const askChange = (lessonIds: string[], instruction: string) => run(async () => {
+  const askChange = (at: string, lessonIds: string[], instruction: string) => run(at, async () => {
     await change.mutateAsync({
       programId, outlineRevision: view!.outlineRevision, instruction,
       lessons: lessonIds.map((lessonId) => ({ lessonId, expectedEntryRevision: entries.get(lessonId)!.entryRevision })),
     });
-    setForm(null);
-    setBulkOpen(false);
-    selection.clear();
+    if (at === SELECTION) {
+      setBulkOpen(false);
+      selection.clear();
+    } else {
+      setForm(null);
+    }
   });
-  const undoEntry = (entry: CoursePlanEntryDto) => run(() => undo.mutateAsync({
+  const undoEntry = (entry: CoursePlanEntryDto) => run(entry.topics.lessonId, () => undo.mutateAsync({
     programId, outlineRevision: view!.outlineRevision, lessonId: entry.topics.lessonId, expectedEntryRevision: entry.entryRevision,
   }));
 
-  const shownError = error ?? planQuery.error;
+  const shownError = planQuery.error;
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-5 py-6 sm:px-8">
       <div className="flex items-center gap-3">
@@ -174,19 +183,20 @@ export function TopicsReviewScreen({ program, onBack }: { program: LearningProgr
           <section key={module.id} className="space-y-3">
             <h2 className="text-sm font-semibold text-text-secondary">{module.title}</h2>
             {lessons.map((lesson) => (
-              <TopicCard key={lesson.id} title={lesson.title} entry={entries.get(lesson.id)!} busy={busy}
+              <TopicCard key={lesson.id} title={lesson.title} written={lesson.preparation !== 'outline'} error={failure?.at === lesson.id ? failure.error : null}
+                entry={entries.get(lesson.id)!} busy={busy}
                 form={form?.lessonId === lesson.id ? form.kind : null} selected={selection.isSelected(lesson.id)}
                 onToggle={(shiftKey) => selection.toggle(lesson.id, { shiftKey })}
-                onForm={(kind) => setForm(kind ? { lessonId: lesson.id, kind } : null)}
-                onEdit={(topics) => editEntry(entries.get(lesson.id)!, topics)}
-                onChange={(instruction) => askChange([lesson.id], instruction)}
+                onForm={(kind) => setForm(kind ? { lessonId: lesson.id, kind, outlineRevision: view!.outlineRevision, entryRevision: entries.get(lesson.id)!.entryRevision } : null)}
+                onEdit={(topics) => editEntry(form!, topics)}
+                onChange={(instruction) => askChange(lesson.id, [lesson.id], instruction)}
                 onUndo={() => void undoEntry(entries.get(lesson.id)!)} />
             ))}
           </section>
         );
       })}
       {bulkOpen && selection.selected.size > 0 && (
-        <AskForChange busy={busy} onSend={(instruction) => askChange([...selection.selected], instruction)} onCancel={() => setBulkOpen(false)} />
+        <AskForChange busy={busy} error={failure?.at === SELECTION ? failure.error : null} onSend={(instruction) => askChange(SELECTION, [...selection.selected], instruction)} onCancel={() => setBulkOpen(false)} />
       )}
       <SelectionBar count={selection.selected.size} noun={['lesson', 'lessons']} busy={busy} onClear={() => { selection.clear(); setBulkOpen(false); }}
         actions={[{ label: 'Ask for a change', onClick: () => setBulkOpen(true) }]} />

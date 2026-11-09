@@ -1,20 +1,23 @@
 import { Button } from '@/components/ui/button';
 import { TopicLists } from '@/features/learning/curriculum/coursePlan/TopicLists';
+import type { CoursePlanEntryDto } from '@/lib/bindings';
 import { useCoursePlan, usePlanCourse } from '@/features/learning/curriculum/coursePlan/useCoursePlan';
 
 export const IDEAS_SEPARATOR = ' · ';
 
-export function LessonTopics({ programId, lessonId }: { programId: string; lessonId: string }) {
-  const plan = useCoursePlan(programId).data;
-  const entry = plan?.state === 'planned' ? plan.entries.find((candidate) => candidate.topics.lessonId === lessonId) : undefined;
+export function LessonTopics({ entry }: { entry: CoursePlanEntryDto | undefined }) {
   if (!entry) return null;
+  const { terms, actions, contrast } = entry.topics;
+  const hasMore = terms.length > 0 || actions.length > 0 || contrast.trim() !== '';
   return (
     <div className="mt-1 text-xs leading-5 text-text-muted">
       <p>{entry.topics.ideas.join(IDEAS_SEPARATOR)}</p>
-      <details className="mt-1">
-        <summary className="cursor-pointer text-text-secondary">More topics</summary>
-        <TopicLists topics={entry.topics} showIdeas={false} className="mt-1 space-y-1" />
-      </details>
+      {hasMore && (
+        <details className="mt-1">
+          <summary className="cursor-pointer text-text-secondary">More topics</summary>
+          <TopicLists topics={entry.topics} showIdeas={false} className="mt-1 space-y-1" />
+        </details>
+      )}
     </div>
   );
 }
@@ -34,7 +37,7 @@ export function CoursePlanStatus({ programId, className = '' }: { programId: str
 function FailedPlan({ message, onRetry, className }: { message: string; onRetry: () => void; className: string }) {
   return (
     <div role="alert" className={`flex flex-wrap items-center gap-2 text-xs text-danger-fg ${className}`}>
-      <span>{`Couldn't plan topics: ${message}`}</span>
+      <span>{message.trim() ? `Couldn't plan topics: ${message}` : "Couldn't plan topics."}</span>
       <Button type="button" size="sm" variant="outline" onClick={onRetry}>Try again</Button>
     </div>
   );
