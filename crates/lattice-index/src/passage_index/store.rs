@@ -262,6 +262,39 @@ async fn other_version(pool: &SqlitePool) -> Result<bool> {
     Ok(version.as_deref() != Some(SCHEMA_VERSION))
 }
 
+/// Creates the tables and records the version in one transaction, so a store
+/// never has tables without the version that vouches for them.
+async fn install_schema(pool: &SqlitePool) -> Result<()> {
+    let mut tx = pool
+        .begin_write()
+        .await
+        .map_err(db_error("create the schema"))?;
+    sqlx::raw_sql(SCHEMA)
+        .execute(&mut *tx)
+        .await
+        .map_err(db_error("create the schema"))?;
+    put_meta(&mut *tx, META_VERSION, SCHEMA_VERSION)
+        .await
+        .map_err(db_error("write meta"))?;
+    tx.commit().await.map_err(db_error("create the schema"))
+}
+
+async fn put_meta(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    key: &str,
+    value: &str,
+) -> std::result::Result<(), sqlx::Error> {
+    sqlx::query(
+        "INSERT INTO meta (key, value) VALUES (?, ?)
+         ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+    )
+    .bind(key)
+    .bind(value)
+    .execute(executor)
+    .await
+    .map(|_| ())
+}
+
 pub struct PassageStore {
     dir: PathBuf,
     pool: SqlitePool,
@@ -287,16 +320,11 @@ impl PassageStore {
             cleared(dir).await?;
             pool = connect_pool(dir).await?;
         }
-        sqlx::raw_sql(SCHEMA)
-            .execute(&pool)
-            .await
-            .map_err(db_error("create the schema"))?;
-        let store = Self {
+        install_schema(&pool).await?;
+        Ok(Self {
             dir: dir.to_path_buf(),
             pool,
-        };
-        store.set_meta(META_VERSION, SCHEMA_VERSION).await?;
-        Ok(store)
+        })
     }
 
     /// A store that lives in memory for as long as it is open: no directory,
@@ -314,16 +342,11 @@ impl PassageStore {
             .connect_with(options)
             .await
             .map_err(db_error("open an in-memory store"))?;
-        sqlx::raw_sql(SCHEMA)
-            .execute(&pool)
-            .await
-            .map_err(db_error("create the schema"))?;
-        let store = Self {
+        install_schema(&pool).await?;
+        Ok(Self {
             dir: PathBuf::new(),
             pool,
-        };
-        store.set_meta(META_VERSION, SCHEMA_VERSION).await?;
-        Ok(store)
+        })
     }
 
     /// The index directory; empty for a [`Self::memory`] store.
@@ -344,16 +367,9 @@ impl PassageStore {
     }
 
     pub async fn set_meta(&self, key: &str, value: &str) -> Result<()> {
-        sqlx::query(
-            "INSERT INTO meta (key, value) VALUES (?, ?)
-             ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-        )
-        .bind(key)
-        .bind(value)
-        .execute(&self.pool)
-        .await
-        .map(|_| ())
-        .map_err(db_error("write meta"))
+        put_meta(&self.pool, key, value)
+            .await
+            .map_err(db_error("write meta"))
     }
 
     pub async fn delete_meta(&self, key: &str) -> Result<()> {
