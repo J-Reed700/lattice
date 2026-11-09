@@ -128,10 +128,72 @@ mod macos {
     }
 }
 
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(test)]
 mod tests {
     use super::*;
 
+    fn assert_send_sync<T: Send + Sync>() {}
+
+    #[test]
+    fn the_guard_can_be_held_across_awaits_on_any_task() {
+        assert_send_sync::<UserActivity>();
+    }
+
+    #[test]
+    fn beginning_and_dropping_never_panics_even_with_an_odd_reason() {
+        drop(UserActivity::begin("Preparing learning material"));
+        drop(UserActivity::begin(""));
+        drop(UserActivity::begin("embedded\0nul and \u{1F600} non-BMP"));
+        let first = UserActivity::begin("first");
+        let second = UserActivity::begin("second");
+        drop(first);
+        drop(second);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn windows_guard_sets_both_power_requests_and_clears_them_on_release() {
+        let mut request = windows_power::Request::begin("Testing power request")
+            .expect("A power request must be creatable on Windows");
+        assert!(request.system_required_set());
+        assert!(request.execution_required_set());
+        request.release().expect("Clearing a set request must succeed");
+        assert!(!request.system_required_set());
+        assert!(!request.execution_required_set());
+        request.release().expect("Releasing twice is a no-op");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    #[allow(clippy::expect_used)]
+    fn windows_requests_are_independent_per_holder() {
+        let mut first = windows_power::Request::begin("first").expect("first request");
+        let mut second = windows_power::Request::begin("second").expect("second request");
+        first.release().expect("release first");
+        assert!(second.system_required_set());
+        second.release().expect("release second");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_public_guard_holds_a_power_request() {
+        let guard = UserActivity::begin("Testing public guard");
+        assert!(guard._power.is_some(), "The guard must hold a power request");
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn macos_options_keep_the_system_awake_but_not_the_display() {
+        const IDLE_SYSTEM_SLEEP_DISABLED: u64 = 1 << 20;
+        const IDLE_DISPLAY_SLEEP_DISABLED: u64 = 1 << 40;
+        let options = macos::ACTIVITY_OPTIONS;
+        assert_ne!(options & IDLE_SYSTEM_SLEEP_DISABLED, 0);
+        assert_eq!(options & IDLE_DISPLAY_SLEEP_DISABLED, 0);
+        assert_ne!(options & 0xFF, 0, "User-initiated bits must stay set");
+    }
+
+    #[cfg(target_os = "macos")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     #[allow(clippy::expect_used)]
     async fn native_activity_is_retained_across_awaits_and_released_on_cancellation() {
