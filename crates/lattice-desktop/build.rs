@@ -638,6 +638,8 @@ fn main() {
                     "get_learning_practice_profile",
                     "save_learning_practice_profile",
                     "start_coding_build",
+                    "finish_coding_session",
+                    "practice_due",
                 ]),
             )
             .plugin(

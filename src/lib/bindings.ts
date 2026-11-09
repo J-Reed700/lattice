@@ -1496,6 +1496,22 @@ async startCodingBuild(request: StartCodingBuildRequestDto) : Promise<Result<Sta
     else return { status: "error", error: e  as any };
 }
 },
+async finishCodingSession(request: FinishCodingSessionRequestDto) : Promise<Result<CodingSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|finish_coding_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async practiceDue(programId: string) : Promise<Result<PracticeDueDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|practice_due", { programId }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async courseDrills(programId: string, language: string | null) : Promise<Result<CourseDrillsDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_drills", { programId, language }) };
@@ -8273,6 +8289,25 @@ export type Setting = "coached" | "mock" | "watched"
 export type Difficulty = "easy" | "medium" | "hard"
 export type StartCodingBuildRequestDto = { programId: string; lessonId: string | null; task: CodingTask; setting: Setting; language: string; difficulty: Difficulty; focus: string | null }
 export type StartedCodingBuildDto = { jobId: string }
+export type FinishCodingSessionRequestDto = { operationId: string; sessionId: string; expectedRevision: number }
+export type DueItemDto = { id: string; kind: string; title: string; subtitle?: string | null; count?: number | null; overdueText?: string | null; isOverdue?: boolean | null }
+export type PracticeDueDto = { items: DueItemDto[]; totalDue: number }
+export type CodingStage = "understand" | "plan" | "code" | "verify"
+export type CodeHintRung = "nudge" | "idea" | "plan" | "point_at_line"
+export type CheckedCodeHint = { rung: CodeHintRung; content: string; reason: string; lines: number[] }
+export type ExampleVerdict = "right" | "wrong" | "invalid"
+export type CodingExampleDto = { ordinal: number; argsJson: string; expectedJson: string; verdict: ExampleVerdict; catches: string[] }
+export type StageTimingDto = { stage: CodingStage; elapsedMs: number }
+export type ScorecardCriterionId = "problem_solving" | "code" | "testing" | "communication"
+export type ScorecardStatus = "observed" | "insufficient_evidence"
+export type EvidenceKind = "quote" | "lines" | "run" | "example" | "hint" | "note"
+export type EvidenceItem = { kind: EvidenceKind; text: string; startLine?: number | null; endLine?: number | null }
+export type ScorecardRow = { criterionId: string; title: string; description: string; status: ScorecardStatus; points: number | null; maxPoints: number; evidence: EvidenceItem[]; feedback: string; nextStep: string }
+export type Scorecard = { sessionId: string; rows: ScorecardRow[]; graderModel: string }
+export type PatternDebriefDto = { patternId: string; name: string; family: string; recognitionCue: string; rating: StudyRating; dueAt: number }
+export type CodingDebriefDto = { sessionId: string; scorecard: Scorecard; patterns: PatternDebriefDto[]; approachSummary: string; targetComplexity: string; referenceSolution: string; uncaughtMisreadings: string[]; stageTimings: StageTimingDto[]; runCount: number; hintsUsed: CodeHintRung[]; setting: Setting }
+export type PublicProblemDto = { title: string; statement: string; signature: any; examples: any[]; constraints: string[]; subgoals: any[]; files: LearningPracticalFileDto[]; workedSolution?: string | null; targetComplexity?: string | null; totalMisreadings: number }
+export type CodingSessionDto = { id: string; programId: string; activityId: string; task: CodingTask; setting: Setting; stage: CodingStage; budgetSeconds: number | null; activeMs: number; openedAt: number | null; finishedAt: number | null; revision: number; problem: PublicProblemDto; draftFiles: LearningLabFile[]; examples: CodingExampleDto[]; hints: CheckedCodeHint[]; availableNextRung: CodeHintRung | null; turns: LearningSimulationTurnDto[]; runs: LearningPracticalRunDto[]; stageTimings: StageTimingDto[]; debrief: CodingDebriefDto | null }
 export type LearningPracticeProfileDto = { programId: string; details: string; language: string | null; interviewAt: number | null; company: string | null; role: string | null; revision: number }
 export type SaveLearningPracticeProfileRequestDto = { programId: string; details: string; language?: string | null; interviewAt?: number | null; company?: string | null; role?: string | null; expectedRevision?: number | null }
 export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null; detail?: CaseCheckDetail | null }
