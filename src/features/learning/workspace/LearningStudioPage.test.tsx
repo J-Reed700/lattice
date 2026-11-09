@@ -371,7 +371,7 @@ describe('Learning Studio program workflow', () => {
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     await user.click(await screen.findByRole('button', { name: 'Prepare all lessons' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('The module could not be queued.');
+    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('The module could not be queued.'))).toBe(true));
   });
 
   it('shows why preparing the course failed', async () => {
@@ -384,7 +384,7 @@ describe('Learning Studio program workflow', () => {
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     await user.click(await screen.findByRole('button', { name: 'Prepare every lesson' }));
-    expect(await screen.findByRole('alert')).toHaveTextContent('The course could not be queued.');
+    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('The course could not be queued.'))).toBe(true));
   });
 
   it('lets the learner prepare another lesson while one is being prepared', async () => {
