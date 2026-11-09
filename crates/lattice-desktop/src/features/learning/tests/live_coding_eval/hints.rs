@@ -2,7 +2,7 @@
 //! problems is a wrong draft. It goes through the app's own Coached session, which runs it on every case and is
 //! asked for Nudge, Idea, Plan and Line in order. Every code block in a stored hint is run against the problem's
 //! cases: a block that passes is a release blocker. Whether a hint is on its rung, and whether a Line hint points at
-//! the wrong line, is read by hand from the Markdown.
+//! the line that is wrong, is read by hand from the Markdown.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -14,8 +14,8 @@ use lattice_core::shared::error::Result;
 use lattice_learning::lab_runtime::LearningLabFile;
 use lattice_learning::practice::coding::dto::{
     AskCodingHintRequestDto, CaseViewDto, CodeHintDto, CodeHintRung, CodingRunScope,
-    CodingSessionDto, DraftObservation, ObserveCodingDraftRequestDto, RunCodingSessionRequestDto,
-    StartCodingSessionRequestDto,
+    CodingSessionDto, CodingStage, DraftObservation, MoveCodingStageRequestDto,
+    ObserveCodingDraftRequestDto, RunCodingSessionRequestDto, StartCodingSessionRequestDto,
 };
 use lattice_learning::practice::coding::observation::{diff_lines, LineChange, LineChangeKind};
 use lattice_learning::practice::coding::problem::{
@@ -26,7 +26,8 @@ use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    count, lab_sessions, numbered, out_dir, percentiles, problems, write_item, EvalLab, Percentiles,
+    count, fenced, lab_sessions, numbered, out_dir, percentiles, problems, write_item, EvalLab,
+    Percentiles,
 };
 
 const RUNGS: [CodeHintRung; 4] = [
@@ -87,6 +88,7 @@ struct DraftRecord {
 /// What the hints of one rung came to.
 #[derive(Debug, Serialize)]
 struct RungSummary {
+    rung: CodeHintRung,
     given: usize,
     errors: usize,
     ms: Percentiles,
@@ -108,7 +110,7 @@ struct Summary {
     drafts_wanted: usize,
     problems_used: usize,
     problems_available: usize,
-    rungs: BTreeMap<String, RungSummary>,
+    rungs: Vec<RungSummary>,
     blocks_checked: usize,
     blocks_not_run: usize,
     blockers: Vec<Blocker>,
@@ -199,14 +201,6 @@ fn marked(draft: &str, lines: &[u32]) -> String {
         .join("\n")
 }
 
-fn fenced(text: &str) -> String {
-    let mut fence = "```".to_owned();
-    while text.contains(&fence) {
-        fence.push('`');
-    }
-    format!("{fence}\n{}\n{fence}\n", text.trim_end_matches('\n'))
-}
-
 fn markdown_of(index: usize, record: &DraftRecord) -> String {
     let mut out = String::new();
     let blockers: Vec<&HintRecord> = record
@@ -223,7 +217,7 @@ fn markdown_of(index: usize, record: &DraftRecord) -> String {
         for hint in blockers {
             let _ = writeln!(out, "- {} hint", rung_name(hint.rung));
             for block in hint.blocks.iter().filter(|block| block.passes_every_case) {
-                let _ = writeln!(out, "\n{}", fenced(&block.code));
+                let _ = writeln!(out, "\n{}", fenced("python", &block.code));
             }
         }
         out.push('\n');
@@ -237,7 +231,7 @@ fn markdown_of(index: usize, record: &DraftRecord) -> String {
         out,
         "## What the draft gets wrong\n\n{}\n\n## Draft\n\n{}",
         record.misreading,
-        fenced(&numbered(&record.draft))
+        fenced("python", &numbered(&record.draft))
     );
     let _ = writeln!(out, "## Cases the draft fails\n");
     if record.failing.is_empty() {
@@ -302,7 +296,7 @@ fn markdown_of(index: usize, record: &DraftRecord) -> String {
                 out,
                 "Points at {path}, lines {:?}. Marked `>>` in the draft:\n\n{}",
                 hint.lines,
-                fenced(&marked(&record.draft, &hint.lines))
+                fenced("python", &marked(&record.draft, &hint.lines))
             );
             let _ = writeln!(out, "Line diff, draft against reference:\n");
             if record.diff.is_empty() {
@@ -348,18 +342,19 @@ fn summary_markdown(summary: &Summary) -> String {
             blocker.draft,
             rung_name(blocker.rung),
             blocker.part,
-            fenced(&blocker.code)
+            fenced("python", &blocker.code)
         );
     }
     let _ = writeln!(
         out,
         "| rung | given | errors | p50 ms | p90 ms |\n|---|---|---|---|---|"
     );
-    for (name, rung) in &summary.rungs {
+    for rung in &summary.rungs {
         let show = |ms: Option<u64>| ms.map_or("-".to_owned(), |ms| ms.to_string());
         let _ = writeln!(
             out,
-            "| {name} | {} | {} | {} | {} |",
+            "| {} | {} | {} | {} | {} |",
+            rung_name(rung.rung),
             rung.given,
             rung.errors,
             show(rung.ms.p50),
@@ -411,6 +406,15 @@ async fn hint_ladder(
         })
         .await?;
     let session_id = started.session_id;
+    sessions
+        .move_stage(&MoveCodingStageRequestDto {
+            operation_id: id(),
+            program_id: lab.program_id.clone(),
+            session_id: session_id.clone(),
+            stage: CodingStage::Code,
+            expected_revision: started.revision,
+        })
+        .await?;
     sessions
         .observe_draft(&ObserveCodingDraftRequestDto {
             program_id: lab.program_id.clone(),
@@ -523,7 +527,7 @@ async fn hint_eval() -> Result<()> {
         all.push((name, record.hints));
     }
 
-    let mut rungs = BTreeMap::new();
+    let mut rungs = Vec::new();
     for rung in RUNGS {
         let of_rung: Vec<&HintRecord> = all
             .iter()
@@ -531,14 +535,12 @@ async fn hint_eval() -> Result<()> {
             .filter(|hint| hint.rung == rung)
             .collect();
         let ms: Vec<u64> = of_rung.iter().map(|hint| hint.ms).collect();
-        rungs.insert(
-            rung_name(rung).to_owned(),
-            RungSummary {
-                given: of_rung.iter().filter(|hint| hint.hint.is_some()).count(),
-                errors: of_rung.iter().filter(|hint| hint.error.is_some()).count(),
-                ms: percentiles(&ms),
-            },
-        );
+        rungs.push(RungSummary {
+            rung,
+            given: of_rung.iter().filter(|hint| hint.hint.is_some()).count(),
+            errors: of_rung.iter().filter(|hint| hint.error.is_some()).count(),
+            ms: percentiles(&ms),
+        });
     }
     let blocks = all.iter().flat_map(|(name, hints)| {
         hints.iter().flat_map(move |hint| {
