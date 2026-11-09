@@ -6,7 +6,6 @@
 //! Runtime-checked `sqlx::query_as` rather than the `query!` macros, so the
 //! offline `.sqlx` cache stays valid (see `features/corpus_shape/repository.rs`).
 
-use futures::FutureExt;
 use sqlx::SqlitePool;
 
 use lattice_core::shared::error::AppError;
@@ -77,7 +76,6 @@ impl ExportRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read conversations for export: {}", e)))
     }
@@ -95,7 +93,6 @@ impl ExportRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read messages for export: {}", e)))
     }
@@ -111,7 +108,6 @@ impl ExportRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read chat images for export: {}", e)))
     }
@@ -126,7 +122,6 @@ impl ExportRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to read journal pages for export: {}", e)))
     }

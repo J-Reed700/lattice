@@ -1,5 +1,4 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
-use futures::FutureExt;
 use lattice_core::domain::entities::model::Model;
 use lattice_core::domain::entities::model_file::ModelFile;
 use lattice_core::domain::value_objects::model_status::{FileStatus, ModelStatus};
@@ -58,7 +57,6 @@ pub async fn find_by_model_id(
     )
     .bind(model_id)
     .fetch_optional(conn)
-    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to find model by model_id");
@@ -86,7 +84,6 @@ pub async fn get_model_files(
     )
     .bind(model_id)
     .fetch_all(conn)
-    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to get model files");
@@ -320,7 +317,6 @@ pub async fn list_all(conn: &mut SqliteConnection) -> Result<Vec<Model>> {
         "#,
     )
     .fetch_all(conn)
-    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, "Failed to list models");
@@ -353,7 +349,6 @@ pub async fn get_active_chat_model(conn: &mut SqliteConnection) -> Result<Option
         "#,
     )
     .fetch_optional(conn)
-    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, "Failed to get active chat model");
@@ -378,7 +373,6 @@ pub async fn get_active_embedding_model(conn: &mut SqliteConnection) -> Result<O
         "#,
     )
     .fetch_optional(conn)
-    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, "Failed to get active embedding model");

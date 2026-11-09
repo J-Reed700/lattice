@@ -1,7 +1,6 @@
 //! The passage check's verdicts: one for each passage of a lesson, kept with the basis it was made on.
 
 use crate::persistence::db;
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
@@ -32,7 +31,7 @@ pub(super) async fn verdicts_on(
     .bind(program_id)
     .bind(lesson_id)
     .bind(basis)
-    .fetch_all(pool).boxed()
+    .fetch_all(pool)
     .await
     .map_err(db)
 }

@@ -4,7 +4,6 @@ use super::checksum::calculate_checksum;
 use super::types::DocumentRecord;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use chrono::Utc;
-use futures::FutureExt;
 use lattice_core::shared::error::ResultExt;
 use lattice_core::shared::fs::path::path_to_string;
 use serde::Deserialize;
@@ -64,7 +63,6 @@ pub async fn document_exists(pool: &SqlitePool, path: &Path) -> Result<bool> {
     )
     .bind(file_path)
     .fetch_one(pool)
-    .boxed()
     .await?;
 
     Ok(count > 0)
@@ -90,7 +88,6 @@ pub async fn get_document_by_path(
     )
     .bind(file_path)
     .fetch_optional(pool)
-    .boxed()
     .await?;
 
     Ok(result.map(|row| {
@@ -259,7 +256,6 @@ pub async fn store_file_metadata_only(
     .bind(&indexed_at)
     .bind(&checksum)
     .fetch_one(pool)
-    .boxed()
     .await?;
 
     Ok(actual_id)

@@ -7,7 +7,6 @@ use crate::{
     dto::LearningSourceDto,
     pack::{decode_learning_pack, sections::SOURCE_LIBRARY_ENTRY},
 };
-use futures::FutureExt;
 
 /// A saved page or document, short enough for the admission gate to refuse.
 fn source(title: &str, url: Option<&str>) -> LearningSourceDto {
@@ -34,7 +33,7 @@ async fn course_with(pool: &sqlx::SqlitePool, sources: Vec<LearningSourceDto>) -
 async fn marks(pool: &sqlx::SqlitePool, program_id: &str) -> Result<Vec<(String, i64)>> {
     Ok(sqlx::query_as("SELECT v.title,s.found_by_search FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? ORDER BY v.title")
         .bind(program_id)
-        .fetch_all(pool).boxed()
+        .fetch_all(pool)
         .await?)
 }
 

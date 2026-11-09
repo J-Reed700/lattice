@@ -9,7 +9,6 @@ use super::{
 use crate::dto::*;
 use crate::persistence::{db, now};
 use crate::quiz_bank_jobs;
-use futures::FutureExt;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -78,7 +77,6 @@ async fn ordinal_of(
     .bind(form_id)
     .bind(item_id)
     .fetch_optional(&mut *connection)
-    .boxed()
     .await
     .map_err(db)?
     .ok_or_else(|| invalid("That question is not part of this quiz."))
@@ -92,7 +90,6 @@ impl LearningAssessmentRepository {
         let rows = sqlx::query("SELECT * FROM learning_assessment_grade_contests WHERE form_id=?")
             .bind(form_id)
             .fetch_all(&mut *connection)
-            .boxed()
             .await
             .map_err(db)?;
         let mut contests = HashMap::new();
@@ -155,7 +152,7 @@ impl LearningAssessmentRepository {
             .bind(&req.form_id)
             .bind(ordinal)
             .bind(&req.program_id)
-            .fetch_optional(&mut *tx).boxed()
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?
             .ok_or_else(|| invalid("This answer has no grade to contest yet."))?;
@@ -170,7 +167,7 @@ impl LearningAssessmentRepository {
         let existing: Option<String> = sqlx::query_scalar("SELECT status FROM learning_assessment_grade_contests WHERE form_id=? AND item_ordinal=?")
             .bind(&req.form_id)
             .bind(ordinal)
-            .fetch_optional(&mut *tx).boxed()
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?;
         let rationale_json: String = result.get("rationale_json");
@@ -207,7 +204,7 @@ impl LearningAssessmentRepository {
                 sqlx::query_scalar("SELECT id FROM learning_assessment_grade_contests WHERE form_id=? AND item_ordinal=?")
                     .bind(&req.form_id)
                     .bind(ordinal)
-                    .fetch_one(&mut *tx).boxed()
+                    .fetch_one(&mut *tx)
                     .await
                     .map_err(db)?
             }
@@ -229,7 +226,7 @@ impl LearningAssessmentRepository {
     pub(crate) async fn contest_input(&self, contest_id: &str) -> Result<Option<ContestInput>> {
         let row = sqlx::query("SELECT form_id,item_ordinal,note FROM learning_assessment_grade_contests WHERE id=? AND status='open'")
             .bind(contest_id)
-            .fetch_optional(&self.pool).boxed()
+            .fetch_optional(&self.pool)
             .await
             .map_err(db)?;
         Ok(row.map(|r| ContestInput {
@@ -250,7 +247,7 @@ impl LearningAssessmentRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let contest = sqlx::query("SELECT form_id,item_ordinal,first_score,program_id FROM learning_assessment_grade_contests WHERE id=? AND status='open'")
             .bind(contest_id)
-            .fetch_optional(&mut *tx).boxed()
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Open contest not found".into()))?;
@@ -402,7 +399,6 @@ impl LearningAssessmentRepository {
         .bind(&req.form_id)
         .bind(ordinal)
         .fetch_one(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?;
         if !parse_format(&format)?.is_keyed() {

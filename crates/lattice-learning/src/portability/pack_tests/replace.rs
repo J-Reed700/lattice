@@ -11,7 +11,6 @@ use crate::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 
 #[tokio::test]
@@ -57,11 +56,10 @@ async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Re
     let source_path = exported.exports[0].destination_path.clone();
     let source_program_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_programs")
         .fetch_one(&pool)
-        .boxed()
         .await?;
     let source_hidden_file_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_practical_files f JOIN learning_practical_activities a ON a.id=f.activity_id WHERE a.program_id=? AND f.role IN ('check','solution')")
         .bind(&program.summary.id)
-        .fetch_one(&pool).boxed()
+        .fetch_one(&pool)
         .await?;
 
     let blocked = packs
@@ -92,20 +90,18 @@ async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Re
         sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
             .bind(&program.summary.id)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     assert_eq!(title_after_block, program.summary.title);
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_programs")
             .fetch_one(&pool)
-            .boxed()
             .await?,
         source_program_count
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_practical_files f JOIN learning_practical_activities a ON a.id=f.activity_id WHERE a.program_id=? AND f.role IN ('check','solution')")
         .bind(&program.summary.id)
-        .fetch_one(&pool).boxed()
+        .fetch_one(&pool)
         .await?,
         source_hidden_file_count
     );
@@ -137,14 +133,13 @@ async fn cancelled_preview_and_blocked_replace_do_not_write_program_rows() -> Re
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_programs")
             .fetch_one(&pool)
-            .boxed()
             .await?,
         source_program_count
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_practical_files f JOIN learning_practical_activities a ON a.id=f.activity_id WHERE a.program_id=? AND f.role IN ('check','solution')")
         .bind(&program.summary.id)
-        .fetch_one(&pool).boxed()
+        .fetch_one(&pool)
         .await?,
         source_hidden_file_count
     );
@@ -234,7 +229,6 @@ async fn successful_replace_returns_a_readable_recovery_backup() -> Result<()> {
         sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
             .bind(&program.summary.id)
             .fetch_one(&pool)
-            .boxed()
             .await
             .expect("replacement program remains available");
     assert_eq!(restored_title, program.summary.title);

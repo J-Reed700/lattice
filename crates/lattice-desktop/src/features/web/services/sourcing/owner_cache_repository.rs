@@ -1,5 +1,4 @@
 //! The persistent half of the owner cache: `sourcing_owner_cache`.
-use futures::FutureExt;
 use sqlx::{Row, SqlitePool};
 
 pub(super) struct CachedOwnerRow {
@@ -16,7 +15,7 @@ pub(super) async fn find(
         "SELECT origins_json, resolved_by, updated_at FROM sourcing_owner_cache WHERE cache_key = ?",
     )
     .bind(cache_key)
-    .fetch_optional(pool).boxed()
+    .fetch_optional(pool)
     .await?;
     Ok(row.map(|row| CachedOwnerRow {
         origins_json: row.get("origins_json"),

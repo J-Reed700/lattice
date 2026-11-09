@@ -17,7 +17,6 @@ use crate::{
     repository::LearningRepository,
     tests::{fixture, pool, prepared, prepared_with_questions},
 };
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
@@ -27,7 +26,6 @@ async fn bank_counts(pool: &SqlitePool, program_id: &str) -> Result<(i64, i64, i
         sqlx::query_scalar::<_, i64>(sql)
             .bind(program_id)
             .fetch_one(pool)
-            .boxed()
             .await
             .map_err(crate::persistence::db)
     };
@@ -224,7 +222,7 @@ async fn a_pack_round_trip_keeps_a_lessons_questions_in_their_order() -> Result<
                 "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND origin='lesson' ORDER BY rowid",
             )
             .bind(program)
-            .fetch_all(&pool).boxed()
+            .fetch_all(&pool)
             .await
             .map_err(crate::persistence::db)
         }

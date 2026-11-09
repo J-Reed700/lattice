@@ -5,7 +5,6 @@ use crate::features::conversation::persistence_mapper::{
     ConversationMessageMapper, ConversationMessageModel,
 };
 use chrono::Utc;
-use futures::FutureExt;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::{AppError, Result};
@@ -42,7 +41,6 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT next_message_sequence FROM conversations WHERE id = ?")
                 .bind(conversation_id)
                 .fetch_one(&mut **tx)
-                .boxed()
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read message sequence: {}", e))
@@ -301,7 +299,6 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT conversation_id FROM conversation_messages WHERE id = ?")
                 .bind(message_id)
                 .fetch_optional(&mut *tx)
-                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to get conversation_id: {}", e)))?;
 
@@ -350,7 +347,6 @@ pub(super) async fn messages_of(
     )
     .bind(conversation_id)
     .fetch_all(connection)
-    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
 

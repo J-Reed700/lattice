@@ -3,7 +3,6 @@
 
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
 use async_trait::async_trait;
-use futures::FutureExt;
 use lattice_core::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
 use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
 use lattice_core::shared::error::{AppError, Result};
@@ -96,7 +95,6 @@ impl ChunkRepository {
         .bind(document_id)
         .bind(limit)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to find chunks by document: {}", e)))?;
 
@@ -127,7 +125,6 @@ impl ChunkRepository {
             sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE document_id = ?")
                 .bind(document_id)
                 .fetch_one(&self.pool)
-                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to count chunks: {}", e)))?;
         Ok(count as usize)
@@ -159,7 +156,6 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
         )
         .bind(id)
         .fetch_optional(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to find chunk by id: {}", e)))?;
 
@@ -212,7 +208,6 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to list all chunks: {}", e)))?;
 
@@ -330,7 +325,6 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
     async fn count(&self) -> Result<usize> {
         let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks")
             .fetch_one(&self.pool)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to count chunks: {}", e)))?;
         Ok(count as usize)
@@ -340,7 +334,6 @@ impl RepositoryPort<ChunkEntity> for ChunkRepository {
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM text_chunks WHERE id = ?)")
             .bind(id)
             .fetch_one(&self.pool)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to check chunk existence: {}", e)))
     }
@@ -421,7 +414,6 @@ impl ChunkRepositoryPort for ChunkRepository {
 
             let db_models = query_builder
                 .fetch_all(&self.pool)
-                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to find chunks by ids: {}", e)))?;
             all.extend(ChunkMapper::to_entities(&db_models)?);
@@ -442,14 +434,9 @@ impl ChunkRepositoryPort for ChunkRepository {
                 separated.push_bind(id);
             }
             query.push(")");
-            let rows = query
-                .build()
-                .fetch_all(&self.pool)
-                .boxed()
-                .await
-                .map_err(|error| {
-                    AppError::Database(format!("Failed to fetch candidate chunk content: {error}"))
-                })?;
+            let rows = query.build().fetch_all(&self.pool).await.map_err(|error| {
+                AppError::Database(format!("Failed to fetch candidate chunk content: {error}"))
+            })?;
             for row in rows {
                 let id: String = row
                     .try_get("id")
@@ -470,7 +457,6 @@ impl ChunkRepositoryPort for ChunkRepository {
              WHERE d.owner_conversation_id IS NOT NULL",
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -487,7 +473,6 @@ impl ChunkRepositoryPort for ChunkRepository {
     async fn count_all(&self) -> Result<i64> {
         sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks")
             .fetch_one(&self.pool)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to count all chunks: {}", e)))
     }
@@ -495,7 +480,6 @@ impl ChunkRepositoryPort for ChunkRepository {
     async fn count_indexed_documents(&self) -> Result<i64> {
         sqlx::query_scalar("SELECT COUNT(DISTINCT document_id) FROM text_chunks")
             .fetch_one(&self.pool)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to count indexed documents: {}", e)))
     }
@@ -504,7 +488,6 @@ impl ChunkRepositoryPort for ChunkRepository {
         sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE document_id = ?")
             .bind(document_id)
             .fetch_one(&self.pool)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to count chunks by document: {}", e)))
     }

@@ -1,6 +1,5 @@
 //! Links between tags and documents: reading, adding, replacing and removing them.
 
-use futures::FutureExt;
 use sqlx::Row;
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
@@ -29,7 +28,7 @@ impl TagRepository {
             "#,
             document_id
         )
-        .fetch_all(&self.pool).boxed()
+        .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to get tags for document: {}", e)))?;
 
@@ -81,7 +80,6 @@ impl TagRepository {
             tag_id
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to find documents by tag: {}", e)))?;
 
@@ -104,7 +102,6 @@ impl TagRepository {
             tag_name
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to find documents by tag name: {}", e)))?;
 
@@ -156,7 +153,6 @@ impl TagRepository {
                 sqlx::query_scalar::<_, String>("SELECT id FROM tags WHERE LOWER(name) = LOWER(?)")
                     .bind(name.as_str())
                     .fetch_optional(&mut *tx)
-                    .boxed()
                     .await?;
             let tag_id = if let Some(id) = existing {
                 id
@@ -218,13 +214,9 @@ impl TagRepository {
                 query_builder = query_builder.bind(id);
             }
 
-            let rows = query_builder
-                .fetch_all(&self.pool)
-                .boxed()
-                .await
-                .map_err(|e| {
-                    AppError::Database(format!("Failed to get tags for documents: {}", e))
-                })?;
+            let rows = query_builder.fetch_all(&self.pool).await.map_err(|e| {
+                AppError::Database(format!("Failed to get tags for documents: {}", e))
+            })?;
 
             for row in rows {
                 let document_id: String = row.get("document_id");
@@ -278,7 +270,6 @@ impl TagRepository {
         )
         .bind(i64::try_from(limit).unwrap_or(i64::MAX))
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|error| AppError::Database(format!("Failed to find untagged documents: {error}")))
     }

@@ -10,7 +10,6 @@
 use crate::infrastructure::persistence::database::query_with_timeout;
 use async_trait::async_trait;
 use chrono::Utc;
-use futures::FutureExt;
 use lattice_core::application::contracts::favorites::FavoriteRecord as FavoriteDto;
 use lattice_core::application::ports::FavoritesRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
@@ -52,7 +51,6 @@ impl FavoritesRepositoryPort for FavoritesRepository {
                 sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM documents WHERE id = ?)")
                     .bind(&document_id)
                     .fetch_one(&mut *tx)
-                    .boxed()
                     .await?;
             if !exists {
                 return Ok(None);
@@ -87,7 +85,6 @@ impl FavoritesRepositoryPort for FavoritesRepository {
             )
             .bind(&document_id)
             .fetch_one(&mut *tx)
-            .boxed()
             .await?;
 
             let favorite = FavoriteDto {
@@ -153,7 +150,6 @@ impl FavoritesRepositoryPort for FavoritesRepository {
                 "#,
             )
             .fetch_all(&pool)
-            .boxed()
             .await?;
 
             results
@@ -183,7 +179,6 @@ impl FavoritesRepositoryPort for FavoritesRepository {
             )
             .bind(document_id)
             .fetch_one(&pool)
-            .boxed()
             .await
         })
         .await

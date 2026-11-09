@@ -1,6 +1,5 @@
 //! Lesson notes, card drafts and the journal and deck behind a program's memory.
 use super::*;
-use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 
 /// The title and first text a lesson's note starts from.
@@ -44,7 +43,6 @@ impl LearningRepository {
         .bind(program_id)
         .bind(lesson_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?
         {
@@ -105,7 +103,7 @@ impl LearningRepository {
         validate_memory_lesson(&mut tx, &request.program_id, &request.lesson_id, true).await?;
         let existing_origin = if let Some(id) = request.draft_id.as_deref() {
             sqlx::query_scalar::<_, String>("SELECT origin FROM learning_card_drafts WHERE id=? AND program_id=? AND lesson_id=? AND status='pending'")
-                .bind(id).bind(&request.program_id).bind(&request.lesson_id).fetch_optional(&mut *tx).boxed().await.map_err(db)?
+                .bind(id).bind(&request.program_id).bind(&request.lesson_id).fetch_optional(&mut *tx).await.map_err(db)?
         } else {
             None
         };
@@ -155,7 +153,6 @@ impl LearningRepository {
             .bind(draft_id)
             .bind(program_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?;
             if status.as_deref() != Some("discarded") {
@@ -171,7 +168,7 @@ impl LearningRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let (_journal_id, deck_id) = ensure_memory_resources(&mut tx, program_id).await?;
         let row = sqlx::query("SELECT d.*,l.title lesson_title FROM learning_card_drafts d JOIN learning_lessons l ON l.id=d.lesson_id WHERE d.id=? AND d.program_id=?")
-            .bind(draft_id).bind(program_id).fetch_optional(&mut *tx).boxed().await.map_err(db)?
+            .bind(draft_id).bind(program_id).fetch_optional(&mut *tx).await.map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning card draft not found.".into()))?;
         let status: String = row.get("status");
         if status == "accepted" {
@@ -199,7 +196,6 @@ impl LearningRepository {
             .bind(program_id)
             .bind(source_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| {
@@ -219,7 +215,6 @@ impl LearningRepository {
                 sqlx::query_scalar::<_, String>("SELECT file_path FROM documents WHERE id=?")
                     .bind(&document_id)
                     .fetch_optional(&mut *tx)
-                    .boxed()
                     .await
                     .map_err(db)?
                     .unwrap_or_default()
@@ -294,7 +289,6 @@ impl LearningRepository {
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_one(&mut *read)
-            .boxed()
             .await
             .map_err(db)?;
         if exists == 0 {
@@ -303,7 +297,6 @@ impl LearningRepository {
         let root = sqlx::query("SELECT journal_id,deck_id FROM learning_memory WHERE program_id=?")
             .bind(program_id)
             .fetch_optional(&mut *read)
-            .boxed()
             .await
             .map_err(db)?;
         let (journal_id, deck_id) = match root {
@@ -314,14 +307,14 @@ impl LearningRepository {
             None => (None, None),
         };
         let lesson_notes = sqlx::query("SELECT lesson_id,note_id FROM learning_lesson_note_links WHERE program_id=? ORDER BY rowid")
-            .bind(program_id).fetch_all(&mut *read).boxed().await.map_err(db)?.into_iter().map(|r| (r.get("lesson_id"),r.get("note_id"))).collect();
+            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.into_iter().map(|r| (r.get("lesson_id"),r.get("note_id"))).collect();
         let drafts = sqlx::query("SELECT * FROM learning_card_drafts WHERE program_id=? AND status='pending' ORDER BY created_at,id")
-            .bind(program_id).fetch_all(&mut *read).boxed().await.map_err(db)?.into_iter().map(|r| Ok(LearningCardDraftDto {
+            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.into_iter().map(|r| Ok(LearningCardDraftDto {
                 id:r.get("id"),lesson_id:r.get("lesson_id"),question:r.get("question"),answer:r.get("answer"),explanation:r.get("explanation"),
                 source_ids:decode(r.get("source_ids_json"))?,origin:parse_draft_origin(r.get("origin"))?,created_at:r.get("created_at"),
             })).collect::<Result<Vec<_>>>()?;
         let accepted_cards = sqlx::query("SELECT card_id,lesson_id,origin,source_ids_json,accepted_at FROM learning_card_origins WHERE program_id=? ORDER BY accepted_at,card_id")
-            .bind(program_id).fetch_all(&mut *read).boxed().await.map_err(db)?.into_iter().map(|r| Ok(LearningCardOriginDto {
+            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.into_iter().map(|r| Ok(LearningCardOriginDto {
                 card_id:r.get("card_id"),lesson_id:r.get("lesson_id"),origin:parse_draft_origin(r.get("origin"))?,source_ids:decode(r.get("source_ids_json"))?,accepted_at:r.get("accepted_at"),
             })).collect::<Result<Vec<_>>>()?;
         read.commit().await.map_err(db)?;
@@ -352,7 +345,7 @@ async fn validate_memory_lesson(
     require_ready: bool,
 ) -> Result<()> {
     let row = sqlx::query("SELECT p.status,l.preparation FROM learning_programs p JOIN learning_lessons l ON l.program_id=p.id WHERE p.id=? AND l.id=?")
-        .bind(program_id).bind(lesson_id).fetch_optional(&mut **tx).boxed().await.map_err(db)?
+        .bind(program_id).bind(lesson_id).fetch_optional(&mut **tx).await.map_err(db)?
         .ok_or_else(|| AppError::NotFound("Lesson does not belong to this learning program.".into()))?;
     if row.get::<String, _>("status") != "active" {
         return Err(AppError::InvalidInput(
@@ -375,7 +368,7 @@ async fn validate_draft_sources(
     generated: bool,
 ) -> Result<()> {
     let cited_blocks: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM learning_blocks WHERE lesson_id=? AND json_array_length(source_ids_json)>0")
-        .bind(lesson_id).fetch_one(&mut **tx).boxed().await.map_err(db)?;
+        .bind(lesson_id).fetch_one(&mut **tx).await.map_err(db)?;
     if generated && source_ids.is_empty() && cited_blocks > 0 {
         return Err(AppError::InvalidInput(
             "Generated card drafts must cite lesson sources.".into(),
@@ -393,7 +386,6 @@ async fn validate_draft_sources(
                 .bind(program_id)
                 .bind(source_id)
                 .fetch_one(&mut **tx)
-                .boxed()
                 .await
                 .map_err(db)?;
         if exists == 0 {
@@ -403,7 +395,7 @@ async fn validate_draft_sources(
         }
         if generated {
             let references: i64 = sqlx::query_scalar("SELECT (SELECT count(*) FROM learning_blocks WHERE lesson_id=? AND EXISTS (SELECT 1 FROM json_each(learning_blocks.source_ids_json) WHERE value=?)) + (SELECT count(*) FROM learning_assessment_candidates WHERE lesson_id=? AND review_status<>'dropped' AND EXISTS (SELECT 1 FROM json_each(learning_assessment_candidates.source_version_ids_json) WHERE value=?))")
-                .bind(lesson_id).bind(source_id).bind(lesson_id).bind(source_id).fetch_one(&mut **tx).boxed().await.map_err(db)?;
+                .bind(lesson_id).bind(source_id).bind(lesson_id).bind(source_id).fetch_one(&mut **tx).await.map_err(db)?;
             if references == 0 {
                 return Err(AppError::InvalidInput(
                     "Generated card sources must be referenced by its lesson.".into(),
@@ -425,7 +417,6 @@ pub(crate) async fn ensure_memory_resources(
         sqlx::query("SELECT title,goal,status,model_name FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut **tx)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found.".into()))?;
@@ -438,7 +429,6 @@ pub(crate) async fn ensure_memory_resources(
     let root = sqlx::query("SELECT journal_id,deck_id FROM learning_memory WHERE program_id=?")
         .bind(program_id)
         .fetch_one(&mut **tx)
-        .boxed()
         .await
         .map_err(db)?;
     let base_title: String = program.get("title");
@@ -464,7 +454,6 @@ pub(crate) async fn ensure_memory_resources(
                     .bind(&id)
                     .bind(&name)
                     .fetch_one(&mut **tx)
-                    .boxed()
                     .await
                     .map_err(db)?;
             sqlx::query("UPDATE learning_memory SET journal_id=? WHERE program_id=?")

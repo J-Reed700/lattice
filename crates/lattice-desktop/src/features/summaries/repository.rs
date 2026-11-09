@@ -5,7 +5,6 @@
 //! has gone (document deleted, identity rotated) is dropped at read time
 //! rather than trusted.
 
-use futures::FutureExt;
 use std::collections::{HashMap, HashSet};
 
 use async_trait::async_trait;
@@ -162,7 +161,6 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
             sqlx::query_scalar("SELECT id FROM document_summaries WHERE document_id = ?")
                 .bind(document_id)
                 .fetch_all(&mut *tx)
-                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("read stale summaries: {e}")))?;
         // Tombstones and row replacement commit together. If indexing later
@@ -228,7 +226,6 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         let rows = query
             .build()
             .fetch_all(&self.pool)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("list summaries: {e}")))?;
         rows.iter().map(Self::row_to_summary).collect()
@@ -248,7 +245,6 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         let rows = query
             .build()
             .fetch_all(&self.pool)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("find summaries: {e}")))?;
         rows.iter().map(Self::row_to_summary).collect()
@@ -270,7 +266,6 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         .bind(document_id)
         .bind(model_identity)
         .fetch_all(&mut *tx)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("read document summaries to delete: {e}")))?;
         if !removed.is_empty() {
@@ -305,7 +300,7 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         )
         .bind(model_identity)
         .bind(i64::from(limit))
-        .fetch_all(&self.pool).boxed()
+        .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("read summary vector cleanup: {e}")))
     }
@@ -349,7 +344,6 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         sqlx::query_scalar("SELECT COUNT(*) FROM document_summaries WHERE model_identity = ?")
             .bind(model_identity)
             .fetch_one(&self.pool)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("count summaries: {e}")))
     }
@@ -366,7 +360,6 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
         .bind(document_id)
         .bind(revision)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("load summary progress: {e}")))?;
         Ok(rows.into_iter().collect())
@@ -416,7 +409,7 @@ pub(crate) async fn enqueue_work(
 pub(crate) async fn next_work(
     pool: &sqlx::SqlitePool,
 ) -> lattice_core::shared::error::Result<Option<(String, String)>> {
-    Ok(sqlx::query_as("SELECT document_id, revision FROM summary_work_queue WHERE retry_at <= unixepoch() ORDER BY requested_at, document_id LIMIT 1").fetch_optional(pool).boxed().await?)
+    Ok(sqlx::query_as("SELECT document_id, revision FROM summary_work_queue WHERE retry_at <= unixepoch() ORDER BY requested_at, document_id LIMIT 1").fetch_optional(pool).await?)
 }
 pub(crate) async fn acknowledge_work(
     pool: &sqlx::SqlitePool,
@@ -448,7 +441,6 @@ pub(crate) async fn document_id_at_path(
         sqlx::query_scalar("SELECT id FROM documents WHERE file_path = ?")
             .bind(path.to_string_lossy().as_ref())
             .fetch_optional(pool)
-            .boxed()
             .await?,
     )
 }
@@ -478,7 +470,6 @@ pub(crate) async fn document_title(pool: &SqlitePool, document_id: &str) -> Resu
     sqlx::query_scalar("SELECT file_name FROM documents WHERE id = ?")
         .bind(document_id)
         .fetch_optional(pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("summary source title: {e}")))
 }
@@ -491,7 +482,7 @@ pub(crate) async fn latest_cluster_label(
         "SELECT c.label FROM cluster_members cm JOIN clusters c ON c.id = cm.cluster_id JOIN cluster_runs r ON r.id = c.run_id WHERE cm.document_id = ? ORDER BY r.ran_at DESC LIMIT 1",
     )
     .bind(document_id)
-    .fetch_optional(pool).boxed()
+    .fetch_optional(pool)
     .await
     .map_err(|e| AppError::Database(format!("summary source cluster label: {e}")))
 }
@@ -505,7 +496,6 @@ pub(crate) async fn document_chunks(
     )
     .bind(document_id)
     .fetch_all(pool)
-    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("summary source chunks: {e}")))
 }

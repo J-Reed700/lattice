@@ -8,7 +8,6 @@ use crate::plan_dto::{
     StartLearningDiagnosticRequestDto, SubmitLearningDiagnosticRequestDto,
 };
 use crate::repository::LearningRepository;
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
@@ -80,7 +79,6 @@ impl LearningCurriculumRepository {
         .bind(diagnostic_id)
         .bind(program_id)
         .fetch_optional(connection)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Diagnostic not found".into()))?;
@@ -119,7 +117,6 @@ impl LearningCurriculumRepository {
         )
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Active learning program not found".into()))?;
@@ -129,7 +126,7 @@ impl LearningCurriculumRepository {
             ));
         }
         let accepted_json: String = sqlx::query_scalar("SELECT snapshot_json FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
-            .bind(&request.program_id).fetch_optional(&mut *tx).boxed().await.map_err(db)?
+            .bind(&request.program_id).fetch_optional(&mut *tx).await.map_err(db)?
             .ok_or_else(|| AppError::NotFound("Accepted curriculum not found".into()))?;
         let accepted: LearningCurriculumRevision = decode(&accepted_json)?;
         let program = LearningRepository::get_on(&mut tx, &request.program_id).await?;
@@ -159,7 +156,6 @@ impl LearningCurriculumRepository {
                 .bind(&request.program_id)
                 .bind(outcome)
                 .fetch_optional(&mut *tx)
-                .boxed()
                 .await
                 .map_err(db)?
                 .ok_or_else(|| {
@@ -248,7 +244,6 @@ impl LearningCurriculumRepository {
         let revision: i64 = sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
             .bind(&request.program_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -257,7 +252,7 @@ impl LearningCurriculumRepository {
                 "Program changed; reload and retry.".into(),
             ));
         }
-        let row=sqlx::query("SELECT prompt_json,status,revision FROM learning_diagnostic_attempts WHERE id=? AND program_id=?").bind(&request.diagnostic_id).bind(&request.program_id).fetch_optional(&mut *tx).boxed().await.map_err(db)?.ok_or_else(||AppError::NotFound("Diagnostic attempt not found".into()))?;
+        let row=sqlx::query("SELECT prompt_json,status,revision FROM learning_diagnostic_attempts WHERE id=? AND program_id=?").bind(&request.diagnostic_id).bind(&request.program_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Diagnostic attempt not found".into()))?;
         if row.get::<String, _>("status") != "active" {
             return Err(AppError::InvalidState(
                 "This diagnostic attempt is already closed.".into(),
@@ -339,7 +334,6 @@ impl LearningCurriculumRepository {
         )
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Active learning program not found".into()))?;
@@ -366,7 +360,6 @@ impl LearningCurriculumRepository {
         let row = sqlx::query("SELECT * FROM learning_diagnostic_attempts WHERE id=?")
             .bind(id)
             .fetch_optional(connection)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Diagnostic attempt not found".into()))?;

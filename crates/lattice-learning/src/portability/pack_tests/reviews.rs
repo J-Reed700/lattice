@@ -10,7 +10,6 @@ use crate::{
     repository::LearningRepository,
     tests::{pool, ready_program},
 };
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
@@ -126,11 +125,7 @@ async fn audit_on(pool: &SqlitePool, program_id: &str) -> Result<()> {
 }
 
 async fn count(pool: &SqlitePool, sql: &str, bind: &str) -> Result<i64> {
-    Ok(sqlx::query_scalar(sql)
-        .bind(bind)
-        .fetch_one(pool)
-        .boxed()
-        .await?)
+    Ok(sqlx::query_scalar(sql).bind(bind).fetch_one(pool).await?)
 }
 
 /// A course with a published lesson's review, a failed lesson's unfinished
@@ -187,14 +182,13 @@ async fn a_published_lessons_review_moves_and_an_unfinished_one_stays_behind() -
     )
     .bind(&course)
     .fetch_one(&fresh)
-    .boxed()
     .await?;
     assert_eq!(review, (lesson.clone(), job.clone(), "ready".into()));
     let notes: Vec<String> = sqlx::query_scalar(
         "SELECT json_extract(payload_json,'$.note') FROM learning_lesson_claim_events WHERE claim_id=? ORDER BY ordinal",
     )
     .bind(&claim)
-    .fetch_all(&fresh).boxed()
+    .fetch_all(&fresh)
     .await?;
     assert_eq!(notes, ["queued", "I checked this one myself"]);
     assert_eq!(
@@ -220,13 +214,12 @@ async fn a_published_lessons_review_moves_and_an_unfinished_one_stays_behind() -
         "SELECT j.status,j.staged_result_json,j.retry_of_job_id,l.content_revision FROM jobs j JOIN learning_jobs l ON l.job_id=j.id WHERE j.id=?",
     )
     .bind(&job)
-    .fetch_one(&fresh).boxed()
+    .fetch_one(&fresh)
     .await?;
     assert_eq!(job_row, ("completed".into(), None, None, None));
     let unfinished_jobs: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status<>'completed'")
             .fetch_one(&fresh)
-            .boxed()
             .await?;
     assert_eq!(unfinished_jobs, 0);
     assert_eq!(
@@ -268,7 +261,6 @@ async fn a_copy_gives_every_review_record_its_own_identity() -> Result<()> {
         sqlx::query_as("SELECT lesson_id,job_id FROM learning_lesson_reviews WHERE program_id=?")
             .bind(&copy)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     assert_ne!(copy_lesson, lesson);
     assert_eq!(count_lesson(&pool, &copy, &copy_lesson).await?, 1);
@@ -277,7 +269,6 @@ async fn a_copy_gives_every_review_record_its_own_identity() -> Result<()> {
         sqlx::query_as("SELECT requested_json,result_ref,operation_id FROM jobs WHERE id=?")
             .bind(&copy_job)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     // The lesson is named inside JSON held in a string; it follows too.
     assert!(requested.contains(&copy_lesson) && requested.contains(&copy));
@@ -286,21 +277,18 @@ async fn a_copy_gives_every_review_record_its_own_identity() -> Result<()> {
     let original_operation: String = sqlx::query_scalar("SELECT operation_id FROM jobs WHERE id=?")
         .bind(&job)
         .fetch_one(&pool)
-        .boxed()
         .await?;
     assert_ne!(operation, original_operation);
     let copy_claim: String =
         sqlx::query_scalar("SELECT claim_id FROM learning_lesson_claims WHERE lesson_id=?")
             .bind(&copy_lesson)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     assert_ne!(copy_claim, claim);
     let state: String =
         sqlx::query_scalar("SELECT state_json FROM learning_lesson_claims WHERE claim_id=?")
             .bind(&copy_claim)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     assert!(state.contains(&copy_claim));
     assert_eq!(
@@ -325,7 +313,6 @@ async fn a_copy_gives_every_review_record_its_own_identity() -> Result<()> {
         sqlx::query_scalar("SELECT batches_json FROM learning_lesson_audits WHERE lesson_id=?")
             .bind(&copy_lesson)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     assert!(batches.contains(&copy_claim));
     // The original's records are untouched.
@@ -356,7 +343,6 @@ async fn count_lesson(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> R
             .bind(program_id)
             .bind(lesson_id)
             .fetch_one(pool)
-            .boxed()
             .await?,
     )
 }
@@ -401,14 +387,12 @@ async fn a_replace_warns_about_unfinished_reviews_and_keeps_what_lives_here() ->
         sqlx::query_scalar("SELECT lesson_id FROM learning_tangents WHERE program_id=?")
             .bind(&course)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     assert_eq!(tangent_lesson, lesson);
     let tutor_lesson: Option<String> =
         sqlx::query_scalar("SELECT lesson_id FROM conversations WHERE program_id=?")
             .bind(&course)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     assert_eq!(
         tutor_lesson.as_deref(),
@@ -419,7 +403,7 @@ async fn a_replace_warns_about_unfinished_reviews_and_keeps_what_lives_here() ->
         "SELECT verifier_audit,verifier_web_search,verifier_consent_at,verifier_consent_provider FROM learning_programs WHERE id=?",
     )
     .bind(&course)
-    .fetch_one(&pool).boxed()
+    .fetch_one(&pool)
     .await?;
     assert_eq!(verifier, ("on".into(), 1, Some(9), Some("provider".into())));
     assert_eq!(
@@ -482,7 +466,6 @@ async fn a_pack_carries_no_job_counters_and_still_imports() -> Result<()> {
     let imported: (i64, i64, i64) =
         sqlx::query_as("SELECT saved_work,recovery_mark,unsaved_starts FROM jobs")
             .fetch_one(&fresh)
-            .boxed()
             .await?;
     assert_eq!(imported, (0, 0, 0), "this computer starts the count itself");
     Ok(())
@@ -525,7 +508,6 @@ async fn a_pack_whose_job_table_has_only_the_portable_columns_imports() -> Resul
     .await?;
     let imported: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM jobs WHERE status='completed'")
         .fetch_one(&fresh)
-        .boxed()
         .await?;
     assert_eq!(imported, 1);
     Ok(())

@@ -8,7 +8,6 @@ use super::attempt::Attempt;
 use super::{Admitted, Backoff, Deferral, JobRecord, JobStatus, NewJob, RecoveryPolicy};
 use crate::shared::error::{AppError, Result};
 use crate::shared::persistence::Transactions;
-use futures::FutureExt;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 
 const SUSPENDED: &str = "Saved; resumes when the app opens";
@@ -137,7 +136,6 @@ impl JobStore {
         sqlx::query("SELECT * FROM jobs WHERE id=?")
             .bind(id)
             .fetch_optional(connection)
-            .boxed()
             .await
             .map_err(db)?
             .as_ref()
@@ -162,7 +160,6 @@ impl JobStore {
         .bind(kind)
         .bind(subject_id)
         .fetch_all(connection)
-        .boxed()
         .await
         .map_err(db)?
         .iter()
@@ -174,7 +171,7 @@ impl JobStore {
     pub async fn live(&self, kind: &str) -> Result<Vec<JobRecord>> {
         sqlx::query("SELECT * FROM jobs WHERE kind=? AND status IN ('pending','running') ORDER BY created_at,rowid")
             .bind(kind)
-            .fetch_all(&self.pool).boxed()
+            .fetch_all(&self.pool)
             .await
             .map_err(db)?
             .iter()
@@ -196,7 +193,7 @@ impl JobStore {
             .bind(kinds)
             .bind(i64::from(limit))
             .bind(i64::from(offset))
-            .fetch_all(&self.pool).boxed()
+            .fetch_all(&self.pool)
             .await
             .map_err(db)?
             .iter()
@@ -215,7 +212,7 @@ impl JobStore {
     pub async fn delete_in(connection: &mut SqliteConnection, id: &str) -> Result<()> {
         let statuses: Vec<String> = sqlx::query_scalar("WITH RECURSIVE chain(id) AS (SELECT id FROM jobs WHERE id=? UNION SELECT jobs.retry_of_job_id FROM jobs JOIN chain ON jobs.id=chain.id WHERE jobs.retry_of_job_id IS NOT NULL) SELECT status FROM jobs WHERE id IN (SELECT id FROM chain)")
         .bind(id)
-        .fetch_all(&mut *connection).boxed()
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)?;
         if statuses.is_empty() {
@@ -242,7 +239,7 @@ impl JobStore {
         sqlx::query("SELECT * FROM jobs WHERE kind=? AND status='pending' AND (retry_not_before IS NULL OR retry_not_before<=?) ORDER BY created_at,rowid")
             .bind(kind)
             .bind(now())
-            .fetch_all(&self.pool).boxed()
+            .fetch_all(&self.pool)
             .await
             .map_err(db)?
             .iter()
@@ -283,7 +280,6 @@ impl JobStore {
         if let Some(row) = sqlx::query("SELECT id,kind,payload_hash FROM jobs WHERE operation_id=?")
             .bind(&job.operation_id)
             .fetch_optional(&mut *connection)
-            .boxed()
             .await
             .map_err(db)?
         {
@@ -403,7 +399,6 @@ impl JobStore {
         if let Some(row) = sqlx::query("SELECT id,retry_of_job_id FROM jobs WHERE operation_id=?")
             .bind(operation_id)
             .fetch_optional(&mut *connection)
-            .boxed()
             .await
             .map_err(db)?
         {
@@ -421,7 +416,7 @@ impl JobStore {
         attempt.admits(old.status)?;
         if let Some(child) = sqlx::query("SELECT id,status FROM jobs WHERE retry_of_job_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1")
             .bind(id)
-            .fetch_optional(&mut *connection).boxed()
+            .fetch_optional(&mut *connection)
             .await
             .map_err(db)?
         {
@@ -583,7 +578,6 @@ impl JobStore {
                 .bind(id)
                 .bind(key)
                 .fetch_optional(&self.pool)
-                .boxed()
                 .await
                 .map_err(db)?;
         saved.as_deref().map(decode).transpose()
@@ -599,7 +593,7 @@ impl JobStore {
             .bind(id)
             .bind(prefix)
             .bind(prefix)
-            .fetch_all(&self.pool).boxed()
+            .fetch_all(&self.pool)
             .await
             .map_err(db)?;
         saved.iter().map(|value| decode(value)).collect()
@@ -849,7 +843,7 @@ impl JobStore {
             "SELECT id,saved_work,recovery_mark,unsaved_starts FROM jobs WHERE kind=? AND status='running' ORDER BY created_at,rowid",
         )
         .bind(kind)
-        .fetch_all(&mut *tx).boxed()
+        .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
         for (id, saved_work, mark, unsaved_starts) in &running {
@@ -909,7 +903,7 @@ impl JobStore {
         let code: Option<Option<String>> = sqlx::query_scalar("SELECT CASE WHEN status='failed' THEN error_code END FROM jobs WHERE kind=? AND subject_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1")
             .bind(kind)
             .bind(subject_id)
-            .fetch_optional(&self.pool).boxed()
+            .fetch_optional(&self.pool)
             .await
             .map_err(db)?;
         Ok(code.flatten().as_deref() == Some(STOPPED_THE_APP))

@@ -5,7 +5,6 @@
 //! the Library can answer "where has this come up?" in one round trip.
 
 use async_trait::async_trait;
-use futures::FutureExt;
 use sqlx::{Row, SqlitePool};
 
 use lattice_core::shared::error::{AppError, Result};
@@ -61,7 +60,6 @@ impl CitingConversationsRepositoryPort for SqliteCitingConversationsRepository {
         .bind(document_id)
         .bind(limit)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("citing conversations: {}", e)))?;
 

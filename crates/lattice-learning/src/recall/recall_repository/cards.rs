@@ -1,6 +1,5 @@
 //! Saving, deduplicating and reviewing versioned recall cards.
 use super::*;
-use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningRecallRepository {
@@ -47,7 +46,6 @@ impl LearningRecallRepository {
             .bind(&req.program_id)
             .bind(version_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?;
             if owned.is_none() {
@@ -59,7 +57,7 @@ impl LearningRecallRepository {
         let prior: Option<sqlx::sqlite::SqliteRow> = sqlx::query("SELECT content_revision FROM learning_recall_card_profiles WHERE card_id=? AND program_id=?")
             .bind(&req.card_id)
             .bind(&req.program_id)
-            .fetch_optional(&mut *tx).boxed()
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?;
         let new_card = prior.is_none();
@@ -79,7 +77,6 @@ impl LearningRecallRepository {
                 sqlx::query_scalar("SELECT 1 FROM study_cards WHERE id=?")
                     .bind(&req.card_id)
                     .fetch_optional(&mut *tx)
-                    .boxed()
                     .await
                     .map_err(db)?;
             if existing_card.is_some() {
@@ -120,7 +117,6 @@ impl LearningRecallRepository {
             let count: i64 = sqlx::query_scalar("SELECT count(*) FROM study_cards WHERE deck_id=?")
                 .bind(&deck_id)
                 .fetch_one(&mut *tx)
-                .boxed()
                 .await
                 .map_err(db)?;
             if count >= MAX_CARDS {
@@ -281,7 +277,7 @@ impl LearningRecallRepository {
         let row = sqlx::query("SELECT c.format,c.options_json,c.correct_index FROM study_cards c JOIN learning_recall_card_profiles p ON p.card_id=c.id WHERE c.id=? AND p.program_id=?")
             .bind(&req.card_id)
             .bind(&req.program_id)
-            .fetch_optional(&mut *tx).boxed()
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Recall card not found in this program.".into()))?;
@@ -342,7 +338,7 @@ impl LearningRecallRepository {
             let row = sqlx::query("SELECT v.id,v.title,v.excerpt,v.resolved_url,v.requested_url,s.id source_id,s.origin,s.kind,d.file_name,d.file_path FROM learning_source_versions v JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id LEFT JOIN documents d ON d.id=s.origin WHERE v.program_id=? AND v.id=?")
                 .bind(program_id)
                 .bind(version_id)
-                .fetch_optional(&mut **tx).boxed()
+                .fetch_optional(&mut **tx)
                 .await
                 .map_err(db)?
                 .ok_or_else(|| invalid("Source version does not belong to this program."))?;
@@ -377,7 +373,7 @@ impl LearningRecallRepository {
         let rows = sqlx::query("SELECT card_id,prompt_json FROM learning_recall_card_profiles WHERE program_id=? AND card_id<>?")
             .bind(program_id)
             .bind(card_id)
-            .fetch_all(&mut **tx).boxed()
+            .fetch_all(&mut **tx)
             .await
             .map_err(db)?;
         for row in rows {
@@ -399,7 +395,7 @@ impl LearningRecallRepository {
                 .bind(program_id)
                 .bind(first)
                 .bind(second)
-                .fetch_optional(&mut **tx).boxed()
+                .fetch_optional(&mut **tx)
                 .await
                 .map_err(db)?;
             if exists.is_some() {

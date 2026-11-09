@@ -14,7 +14,6 @@ doctest = false
 [dependencies]
 lattice-core = { path = "../lattice-core" }
 async-trait = { workspace = true }
-futures = { workspace = true }
 sqlx = { workspace = true }
 tokio = { workspace = true }
 

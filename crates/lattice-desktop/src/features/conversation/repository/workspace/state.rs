@@ -1,5 +1,4 @@
 use super::*;
-use futures::FutureExt;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ConversationStateRow {
@@ -55,7 +54,6 @@ async fn fetch_conversation_state(
     )
     .bind(conversation_id)
     .fetch_optional(pool)
-    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to fetch conversation state: {}", e)))?;
 

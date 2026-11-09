@@ -1,6 +1,5 @@
 //! Bounded semantic transcript recall, fused with lexical and exact matches.
 use super::ConversationRepository;
-use futures::FutureExt;
 use lattice_core::application::contracts::search::{ReciprocalRankFusion, WeightedRanking};
 use lattice_core::application::ports::conversation_memory::{RecallCandidate, RecallCandidates};
 use lattice_core::shared::constants::{
@@ -55,7 +54,7 @@ impl ConversationRepository {
         let mut semantic = Vec::new();
         loop {
             let rows = sqlx::query_as::<_, Row>("SELECT m.id AS message_id, m.sequence, m.role, substr(m.content, 1, 2400) AS content, v.embedding FROM conversation_memory_vectors v JOIN conversation_messages m ON m.id=v.message_id AND m.conversation_id=v.conversation_id WHERE m.conversation_id=? AND v.embedding_model=? AND v.dimension=? AND v.content=m.content AND (m.role='user' OR m.status='completed') AND m.sequence < ? ORDER BY m.sequence DESC LIMIT ?")
-                .bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(before).bind(page as i64).fetch_all(&self.pool).boxed().await;
+                .bind(conversation).bind(embedder.model_identity()).bind(vector.len() as i64).bind(before).bind(page as i64).fetch_all(&self.pool).await;
             let rows = match rows {
                 Ok(rows) => rows,
                 Err(_) => {

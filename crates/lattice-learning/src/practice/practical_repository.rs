@@ -9,7 +9,6 @@ use crate::{
     persistence::db,
     practical_dto::*,
 };
-use futures::FutureExt;
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
@@ -267,7 +266,6 @@ impl LearningPracticalRepository {
         let row = sqlx::query("SELECT status,revision FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut **tx)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;

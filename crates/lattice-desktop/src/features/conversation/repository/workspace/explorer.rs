@@ -1,5 +1,4 @@
 use super::*;
-use futures::FutureExt;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub(super) struct ConversationExplorerRow {
@@ -206,7 +205,6 @@ impl ConversationRepository {
         let rows = qb
             .build_query_as::<ConversationExplorerRow>()
             .fetch_all(&self.pool)
-            .boxed()
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to list explorer conversations: {}", e))

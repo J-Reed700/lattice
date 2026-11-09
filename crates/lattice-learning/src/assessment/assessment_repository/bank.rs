@@ -9,7 +9,6 @@ use crate::assessment_generation::{AuthoringNeed, MaterialPassage, StoredItem};
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
@@ -67,7 +66,6 @@ pub(crate) async fn insert_bank_items_in(
         .bind(program_id)
         .bind(&item.id)
         .fetch_optional(&mut *connection)
-        .boxed()
         .await
         .map_err(db)?;
         if id_taken.is_some() {
@@ -79,7 +77,6 @@ pub(crate) async fn insert_bank_items_in(
         .bind(program_id)
         .bind(&hash)
         .fetch_optional(&mut *connection)
-        .boxed()
         .await
         .map_err(db)?;
         if repeated.is_some() {
@@ -95,7 +92,7 @@ pub(crate) async fn insert_bank_items_in(
         )
         .bind(program_id)
         .bind(outcome)
-        .fetch_all(&mut *connection).boxed()
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)?
         .iter()
@@ -203,7 +200,7 @@ impl LearningAssessmentRepository {
         let outcomes = candidate_outcomes_in(connection, program_id).await?;
         let rows = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.review_status='agreed' ORDER BY c.id"))
             .bind(program_id)
-            .fetch_all(&mut *connection).boxed()
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?;
         rows.iter()
@@ -221,7 +218,7 @@ impl LearningAssessmentRepository {
     ) -> Result<HashSet<String>> {
         Ok(sqlx::query_scalar::<_, String>("SELECT i.candidate_id FROM learning_assessment_form_items i JOIN learning_assessment_forms f ON f.id=i.form_id WHERE f.program_id=? AND f.status IN ('submitted','interrupted')")
             .bind(program_id)
-            .fetch_all(&mut *connection).boxed()
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?
             .into_iter()
@@ -235,7 +232,7 @@ impl LearningAssessmentRepository {
     ) -> Result<Vec<MaterialPassage>> {
         sqlx::query("SELECT b.title,b.body,b.source_ids_json,l.title lesson_title FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE b.lesson_id=? ORDER BY b.ordinal")
             .bind(lesson_id)
-            .fetch_all(&mut *connection).boxed()
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?
             .into_iter()
@@ -260,7 +257,7 @@ impl LearningAssessmentRepository {
         let rows = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin='lesson' AND c.review_status='agreed' ORDER BY c.id"))
             .bind(program_id)
             .bind(lesson_id)
-            .fetch_all(&mut *connection).boxed()
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?;
         rows.iter()
@@ -305,7 +302,7 @@ impl LearningAssessmentRepository {
             let outcome = sqlx::query("SELECT title,description,module_id,lesson_id FROM learning_outcome_definitions WHERE id=? AND program_id=?")
                 .bind(&requirement.outcome_id)
                 .bind(program_id)
-                .fetch_one(&mut *connection).boxed()
+                .fetch_one(&mut *connection)
                 .await
                 .map_err(db)?;
             let lesson_id: Option<String> = outcome.get("lesson_id");
@@ -314,7 +311,7 @@ impl LearningAssessmentRepository {
                 (None, Some(module)) => sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=? AND module_id=? AND preparation='ready' ORDER BY ordinal")
                     .bind(program_id)
                     .bind(module)
-                    .fetch_all(&mut *connection).boxed()
+                    .fetch_all(&mut *connection)
                     .await
                     .map_err(db)?,
                 (None, None) => vec![],

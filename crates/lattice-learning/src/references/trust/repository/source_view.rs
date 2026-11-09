@@ -1,6 +1,5 @@
 use super::rows::from_json;
 use crate::persistence::db;
-use futures::FutureExt;
 use lattice_core::domain::provenance::{
     AddedBy, AuthorityAssessment, ClaimProfile, StandingAssessment,
 };
@@ -82,7 +81,6 @@ async fn latest<T: serde::de::DeserializeOwned>(
     }
     query
         .fetch_optional(pool)
-        .boxed()
         .await
         .map_err(db)?
         .map(|row| from_json(&row.get::<String, _>("judgement"), column))
@@ -98,7 +96,7 @@ pub(in crate::references::trust) async fn active_versions(
          WHERE program_id=? AND deleted_at IS NULL AND active_version_id IS NOT NULL ORDER BY created_at, id",
     )
     .bind(program_id)
-    .fetch_all(pool).boxed()
+    .fetch_all(pool)
     .await
     .map_err(db)?;
     rows.iter().map(version).collect()
@@ -117,7 +115,6 @@ pub(in crate::references::trust) async fn version_of(
     .bind(program_id)
     .bind(version_id)
     .fetch_optional(pool)
-    .boxed()
     .await
     .map_err(db)?
     .as_ref()

@@ -1,5 +1,5 @@
 use super::*;
-use futures::{stream::BoxStream, FutureExt, StreamExt};
+use futures::{stream::BoxStream, StreamExt};
 
 fn summary(r: &sqlx::sqlite::SqliteRow) -> LearningSourceVersionSummaryDto {
     LearningSourceVersionSummaryDto {
@@ -27,7 +27,6 @@ pub(in super::super) async fn workspace_on(
     let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
         .bind(program_id)
         .fetch_optional(&mut *connection)
-        .boxed()
         .await
         .map_err(db)?;
     if exists.is_none() {
@@ -41,7 +40,6 @@ pub(in super::super) async fn workspace_on(
     let rows = sqlx::query(query)
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .boxed()
         .await
         .map_err(db)?;
     let mut sources = Vec::with_capacity(rows.len());
@@ -92,7 +90,7 @@ async fn version_summaries(
     source_id: &str,
 ) -> Result<Vec<LearningSourceVersionSummaryDto>> {
     let rows = sqlx::query("SELECT * FROM learning_source_versions WHERE program_id=? AND source_id=? ORDER BY version_number DESC")
-        .bind(program_id).bind(source_id).fetch_all(&mut *connection).boxed().await.map_err(db)?;
+        .bind(program_id).bind(source_id).fetch_all(&mut *connection).await.map_err(db)?;
     rows.into_iter().map(|r| Ok(summary(&r))).collect()
 }
 
@@ -102,7 +100,7 @@ async fn refresh_checks(
     source_id: &str,
 ) -> Result<Vec<LearningSourceCheckDto>> {
     let rows = sqlx::query("SELECT * FROM learning_source_refresh_checks WHERE program_id=? AND source_id=? ORDER BY checked_at DESC,rowid DESC LIMIT ?")
-        .bind(program_id).bind(source_id).bind(MAX_CHECKS_IN_WORKSPACE).fetch_all(&mut *connection).boxed().await.map_err(db)?;
+        .bind(program_id).bind(source_id).bind(MAX_CHECKS_IN_WORKSPACE).fetch_all(&mut *connection).await.map_err(db)?;
     rows.into_iter()
         .map(|r| {
             Ok(LearningSourceCheckDto {
@@ -136,7 +134,6 @@ pub(in super::super) async fn stored_version(
     .bind(source_id)
     .bind(version_id)
     .fetch_optional(pool)
-    .boxed()
     .await
     .map_err(db)?;
     Ok(row.map(|row| StoredVersion {
@@ -163,7 +160,7 @@ async fn version_usage_on(
 ) -> Result<Vec<LearningSourceUsageDto>> {
     let mut out = Vec::new();
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,b.title ref_title FROM learning_blocks b JOIN learning_lessons l ON l.id=b.lesson_id WHERE l.program_id=? AND EXISTS(SELECT 1 FROM json_each(b.source_ids_json) WHERE value=?) ORDER BY l.ordinal,b.ordinal")
-        .bind(program_id).bind(version_id).fetch_all(&mut *connection).boxed().await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -173,7 +170,7 @@ async fn version_usage_on(
         });
     }
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,c.prompt ref_title FROM learning_assessment_candidates c JOIN learning_lessons l ON l.id=c.lesson_id WHERE c.program_id=? AND c.review_status='agreed' AND EXISTS(SELECT 1 FROM json_each(c.source_version_ids_json) WHERE value=?) ORDER BY l.ordinal,c.rowid")
-        .bind(program_id).bind(version_id).fetch_all(&mut *connection).boxed().await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -183,7 +180,7 @@ async fn version_usage_on(
         });
     }
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,d.question ref_title FROM learning_card_drafts d JOIN learning_lessons l ON l.id=d.lesson_id WHERE d.program_id=? AND d.status='pending' AND EXISTS(SELECT 1 FROM json_each(d.source_ids_json) WHERE value=?) ORDER BY l.ordinal,d.created_at")
-        .bind(program_id).bind(version_id).fetch_all(&mut *connection).boxed().await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -193,7 +190,7 @@ async fn version_usage_on(
         });
     }
     let rows=sqlx::query("SELECT l.id lesson_id,l.title lesson_title,c.question ref_title FROM learning_card_origins o JOIN learning_lessons l ON l.id=o.lesson_id JOIN study_cards c ON c.id=o.card_id WHERE o.program_id=? AND EXISTS(SELECT 1 FROM json_each(o.source_ids_json) WHERE value=?) ORDER BY l.ordinal,o.accepted_at")
-        .bind(program_id).bind(version_id).fetch_all(&mut *connection).boxed().await.map_err(db)?;
+        .bind(program_id).bind(version_id).fetch_all(&mut *connection).await.map_err(db)?;
     for r in rows {
         out.push(LearningSourceUsageDto {
             lesson_id: r.get("lesson_id"),
@@ -250,7 +247,7 @@ pub(in super::super) async fn excerpted_sources(
     program_id: &str,
 ) -> Result<Vec<LearningSourceDto>> {
     let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
-        .bind(program_id).fetch_all(pool).boxed().await.map_err(db)?;
+        .bind(program_id).fetch_all(pool).await.map_err(db)?;
     Ok(rows.iter().map(source_dto).collect())
 }
 
@@ -259,7 +256,7 @@ pub(in super::super) async fn full_text_sources(
     program_id: &str,
 ) -> Result<Vec<LearningSourceDto>> {
     let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.full_text AS excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
-        .bind(program_id).fetch_all(pool).boxed().await.map_err(db)?;
+        .bind(program_id).fetch_all(pool).await.map_err(db)?;
     Ok(rows.iter().map(source_dto).collect())
 }
 
@@ -269,7 +266,7 @@ pub(in super::super) async fn active_versions(
 ) -> Result<Vec<ActiveVersion>> {
     let rows = sqlx::query("SELECT v.id,v.title,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id)
-        .fetch_all(pool).boxed()
+        .fetch_all(pool)
         .await
         .map_err(db)?;
     Ok(rows
@@ -291,7 +288,6 @@ pub(in super::super) async fn version_text(
         .bind(program_id)
         .bind(version_id)
         .fetch_optional(pool)
-        .boxed()
         .await
         .map_err(db)
 }
@@ -303,7 +299,6 @@ pub(in super::super) async fn version_texts(
     let rows = sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
         .bind(program_id)
         .fetch_all(pool)
-        .boxed()
         .await
         .map_err(db)?;
     Ok(rows

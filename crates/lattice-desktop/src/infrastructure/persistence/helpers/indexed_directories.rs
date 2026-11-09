@@ -3,7 +3,6 @@
 //! Queries indexed directories from the documents table to populate
 //! FileAccessConfig allowed_roots at application startup.
 
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::path::PathBuf;
@@ -28,7 +27,6 @@ pub async fn query_indexed_directories(pool: &SqlitePool) -> Result<Vec<PathBuf>
         "#
     )
     .fetch_all(pool)
-    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to query indexed directories: {}", e)))?;
 

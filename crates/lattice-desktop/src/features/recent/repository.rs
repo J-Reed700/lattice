@@ -10,7 +10,6 @@
 use crate::infrastructure::persistence::database::query_with_timeout;
 use async_trait::async_trait;
 use chrono::Utc;
-use futures::FutureExt;
 use lattice_core::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
 use lattice_core::application::ports::RecentDocumentsRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
@@ -47,7 +46,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
         let tracked = query_with_timeout(|| async {
             let mut tx = pool.begin_write().await?;
             let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM documents WHERE id = ?")
-                .bind(&document_id).fetch_one(&mut *tx).boxed().await?;
+                .bind(&document_id).fetch_one(&mut *tx).await?;
             if exists == 0 { return Ok(false); }
             let id = uuid::Uuid::new_v4().to_string();
             sqlx::query(
@@ -100,7 +99,6 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
             )
             .bind(limit)
             .fetch_all(&pool)
-            .boxed()
             .await?;
 
             Ok(results

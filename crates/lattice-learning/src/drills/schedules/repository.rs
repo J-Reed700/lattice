@@ -3,7 +3,6 @@
 
 use crate::persistence::db;
 use crate::recall::schedule::CardSchedule;
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
@@ -67,7 +66,6 @@ pub(super) async fn schedule_in(
     .bind(key.0)
     .bind(key.1)
     .fetch_optional(&mut *connection)
-    .boxed()
     .await
     .map_err(db)?;
     Ok(row.as_ref().map(schedule_of))
@@ -110,7 +108,7 @@ pub(super) async fn scheduled_patterns_in(
         "SELECT pattern_id,due_at FROM learning_drill_pattern_schedules WHERE material=? ORDER BY pattern_id",
     )
     .bind(material)
-    .fetch_all(&mut *connection).boxed()
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)
 }
@@ -127,7 +125,7 @@ pub(super) async fn held_patterns_in(
     )
     .bind(material)
     .bind(language)
-    .fetch_all(&mut *connection).boxed()
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)
 }
@@ -142,7 +140,7 @@ pub(super) async fn lesson_rows_in(
         "SELECT l.id,l.completed,COALESCE(l.id = p.current_lesson_id,0),s.due_at FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id JOIN learning_programs p ON p.id=l.program_id LEFT JOIN learning_drill_lesson_schedules s ON s.program_id=l.program_id AND s.lesson_id=l.id WHERE l.program_id=? AND l.curriculum_state NOT IN ('replaced','skipped') ORDER BY m.ordinal,l.ordinal",
     )
     .bind(program_id)
-    .fetch_all(&mut *connection).boxed()
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)
 }
@@ -156,7 +154,7 @@ pub(super) async fn held_lessons_in(
         "SELECT DISTINCT d.lesson_id FROM learning_drills d WHERE d.program_id=? AND d.lesson_id IS NOT NULL AND (d.status='ready' OR EXISTS(SELECT 1 FROM learning_drill_attempts a WHERE a.drill_id=d.id AND a.status='submitted'))",
     )
     .bind(program_id)
-    .fetch_all(&mut *connection).boxed()
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)
 }
@@ -172,7 +170,7 @@ pub(crate) async fn drills_lesson_in(
     )
     .bind(program_id)
     .bind(lesson_id)
-    .fetch_one(connection).boxed()
+    .fetch_one(connection)
     .await
     .map_err(db)
 }
@@ -190,7 +188,7 @@ pub(super) async fn recorded_fit_in(
     .bind(program_id)
     .bind(lesson_id)
     .bind(material)
-    .fetch_optional(&mut *connection).boxed()
+    .fetch_optional(&mut *connection)
     .await
     .map_err(db)
 }
@@ -206,7 +204,7 @@ pub(super) async fn lesson_facts_in(
     )
     .bind(lesson_id)
     .bind(program_id)
-    .fetch_optional(&mut *connection).boxed()
+    .fetch_optional(&mut *connection)
     .await
     .map_err(db)
 }
@@ -224,7 +222,7 @@ pub(super) async fn code_turned_down_in(
     .bind(program_id)
     .bind(lesson_id)
     .bind(basis)
-    .fetch_one(&mut *connection).boxed()
+    .fetch_one(&mut *connection)
     .await
     .map_err(db)
 }
@@ -238,7 +236,7 @@ pub(super) async fn blocks_in(
         "SELECT ordinal,kind,title,body,source_ids_json FROM learning_blocks WHERE lesson_id=? ORDER BY ordinal",
     )
     .bind(lesson_id)
-    .fetch_all(&mut *connection).boxed()
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)
 }
@@ -252,7 +250,7 @@ pub(super) async fn active_source_versions_in(
         "SELECT s.active_version_id FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.active_version_id",
     )
     .bind(program_id)
-    .fetch_all(&mut *connection).boxed()
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)
 }

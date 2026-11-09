@@ -1,6 +1,5 @@
 //! The verification report and the review's state at publication.
 
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 
@@ -18,7 +17,7 @@ pub(super) async fn active_version_text(
     sqlx::query_scalar("SELECT v.full_text FROM learning_source_versions v JOIN learning_source_library s ON s.active_version_id=v.id AND s.program_id=v.program_id WHERE v.id=? AND v.program_id=? AND s.deleted_at IS NULL")
         .bind(version_id)
         .bind(program_id)
-        .fetch_optional(&mut *connection).boxed()
+        .fetch_optional(&mut *connection)
         .await
         .map_err(failed)
 }

@@ -1,6 +1,5 @@
 //! The `learning_checker_examples` table.
 
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 
@@ -51,7 +50,7 @@ pub(in crate::lessons::claim_reviews) async fn list(
 ) -> Result<Vec<CheckerExample>> {
     let rows = sqlx::query("SELECT * FROM learning_checker_examples WHERE ?1 IS NULL OR program_id=?1 ORDER BY at,rowid")
         .bind(program_id)
-        .fetch_all(pool).boxed()
+        .fetch_all(pool)
         .await
         .map_err(db)?;
     rows.iter()

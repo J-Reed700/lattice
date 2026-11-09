@@ -1,5 +1,4 @@
 use super::*;
-use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -56,7 +55,6 @@ impl ConversationRepository {
         )
         .bind(&scope)
         .fetch_all(&self.pool)
-        .boxed()
         .await?;
         let mut catalog = Vec::new();
         for (id, name, opening, source_context, headings) in rows {
@@ -114,7 +112,6 @@ impl ConversationRepository {
         )
         .bind(scope)
         .fetch_one(&self.pool)
-        .boxed()
         .await?;
         let (Some(chars), Some(chunks)) = (chars, chunks) else {
             return Ok(None);
@@ -154,7 +151,7 @@ impl ConversationRepository {
         )
         .bind(serde_json::to_string(&selected)?)
         .bind(i64::try_from(chunks_per_document).unwrap_or(i64::MAX))
-        .fetch_all(&self.pool).boxed().await?;
+        .fetch_all(&self.pool).await?;
         Ok(rows
             .into_iter()
             .map(
@@ -237,7 +234,7 @@ impl ConversationRepository {
                 .push_bind(&scope)
                 .push("))) WHERE tier = 0 OR body_hit ORDER BY tier, ROW_NUMBER() OVER (PARTITION BY document_id, tier ORDER BY chunk_index, id), document_id LIMIT ")
                 .push_bind(per_identifier as i64);
-            let rows: Vec<PassageRow> = q.build_query_as().fetch_all(&self.pool).boxed().await?;
+            let rows: Vec<PassageRow> = q.build_query_as().fetch_all(&self.pool).await?;
             passages.extend(
                 rows.into_iter()
                     .filter(|row| seen.insert(row.0.clone()))
@@ -274,7 +271,6 @@ impl ConversationRepository {
         )
         .bind(chunk_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await?;
         let Some((doc, index, Some(section))) = anchor else {
             return Ok(Vec::new());
@@ -283,7 +279,7 @@ impl ConversationRepository {
             return Ok(Vec::new());
         }
         let rows: Vec<SectionNeighbourRow> = sqlx::query_as("SELECT c.id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? AND (c.section = ? OR INSTR(c.section, ? || ' > ') = 1) AND c.chunk_index BETWEEN ? AND ? ORDER BY c.chunk_index LIMIT 3")
-            .bind(&doc).bind(&section).bind(&section).bind(index.saturating_sub(1)).bind(index+1).fetch_all(&mut *tx).boxed().await?;
+            .bind(&doc).bind(&section).bind(&section).bind(index.saturating_sub(1)).bind(index+1).fetch_all(&mut *tx).await?;
         tx.commit().await?;
         Ok(rows
             .into_iter()
@@ -327,7 +323,6 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT space_id FROM conversations WHERE id = ?")
                 .bind(conversation_id)
                 .fetch_optional(&mut *conn)
-                .boxed()
                 .await?;
         let Some(space_id) = space_id.filter(|id| !id.trim().is_empty()) else {
             return Ok(None);
@@ -345,7 +340,6 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_all(&mut *conn)
-        .boxed()
         .await?;
         ids.extend(attachments);
         Ok(Some((space_id, ids)))
@@ -381,7 +375,6 @@ impl ConversationRepository {
         .bind(space_id)
         .bind(space_id)
         .fetch_all(connection)
-        .boxed()
         .await?;
         Ok(ids.into_iter().collect())
     }
@@ -447,7 +440,7 @@ impl ConversationRepository {
             // gives a stable order rather than whatever SQLite happens to emit.
             qb.push(" ORDER BY d.modified_at DESC, d.file_name ASC LIMIT ")
                 .push_bind(limit as i64);
-            rows.extend(qb.build_query_as().fetch_all(&mut *tx).boxed().await?);
+            rows.extend(qb.build_query_as().fetch_all(&mut *tx).await?);
         }
         tx.commit().await?;
 
@@ -491,7 +484,7 @@ impl ConversationRepository {
             }
             query.push(")");
             let rows: Vec<(String, Option<String>, Option<i64>, bool)> =
-                query.build_query_as().fetch_all(&self.pool).boxed().await?;
+                query.build_query_as().fetch_all(&self.pool).await?;
             for (id, section, page, from_ocr) in rows {
                 locations.insert(
                     id,

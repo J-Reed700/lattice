@@ -7,7 +7,6 @@
 //! matches words, not meanings, and does not segment CJK.
 
 use super::ConversationRepository;
-use futures::FutureExt;
 use lattice_core::application::ports::conversation_memory::{
     RecallCandidate, RecallCandidates, TermHolders,
 };
@@ -131,7 +130,6 @@ impl ConversationRepository {
             .bind(term)
             .bind(limit as i64)
             .fetch_all(&mut *tx)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to match exact term: {}", e)))?;
 
@@ -172,7 +170,6 @@ impl ConversationRepository {
         .bind(conversation_id)
         .bind(limit as i64)
         .fetch_all(&mut *tx)
-        .boxed()
         .await;
 
         let rows = match rows {
@@ -232,7 +229,6 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_one(&mut *tx)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to count messages: {}", e)))?;
         let mut holders = Vec::with_capacity(terms.len());
@@ -246,7 +242,6 @@ impl ConversationRepository {
             .bind(quote_fts(term))
             .bind(conversation_id)
             .fetch_all(&mut *tx)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to look up a term: {}", e)))?;
             holders.push(ids);
@@ -284,7 +279,6 @@ impl ConversationRepository {
         .bind(needle)
         .bind(limit.clamp(1, 64) as i64)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to search memory labels: {}", e)))?;
 

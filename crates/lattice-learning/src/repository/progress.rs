@@ -1,12 +1,11 @@
 //! Accepting programs and recording prepared and completed lessons.
 use super::*;
-use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningRepository {
     pub async fn accept(&self, req: &AcceptLearningProgramRequestDto) -> Result<()> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
-        let pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_outline_drafts WHERE program_id=? AND json_extract(state_json,'$.review.status') IS NOT 'passed')").bind(&req.program_id).fetch_one(&mut *tx).boxed().await?;
+        let pending: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_outline_drafts WHERE program_id=? AND json_extract(state_json,'$.review.status') IS NOT 'passed')").bind(&req.program_id).fetch_one(&mut *tx).await?;
         if pending {
             return Err(AppError::InvalidInput(
                 "Resolve the saved outline findings before accepting this course.".into(),
@@ -34,7 +33,6 @@ impl LearningRepository {
                 .bind(lesson_id)
                 .bind(program_id)
                 .fetch_optional(&mut *tx)
-                .boxed()
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
@@ -98,7 +96,7 @@ impl LearningRepository {
                 "Only an incomplete, prepared lesson in this program can be completed.".into(),
             ));
         }
-        let next:Option<String>=sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=? AND completed=0 ORDER BY (SELECT ordinal FROM learning_modules WHERE id=module_id),ordinal LIMIT 1").bind(&req.program_id).fetch_optional(&mut *tx).boxed().await.map_err(db)?;
+        let next:Option<String>=sqlx::query_scalar("SELECT id FROM learning_lessons WHERE program_id=? AND completed=0 ORDER BY (SELECT ordinal FROM learning_modules WHERE id=module_id),ordinal LIMIT 1").bind(&req.program_id).fetch_optional(&mut *tx).await.map_err(db)?;
         sqlx::query("UPDATE learning_programs SET current_lesson_id=? WHERE id=?")
             .bind(next)
             .bind(&req.program_id)

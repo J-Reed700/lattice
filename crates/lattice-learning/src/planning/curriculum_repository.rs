@@ -16,7 +16,6 @@ use crate::{
     curriculum::{LearningGenerationJob, LearningGenerationJobKind, LearningGenerationJobStatus},
     repository::LearningRepository,
 };
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 #[cfg(test)]
@@ -132,7 +131,7 @@ impl LearningCurriculumRepository {
 
     async fn accepted_count(conn: &mut sqlx::SqliteConnection, program_id: &str) -> Result<i64> {
         sqlx::query_scalar("SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
-            .bind(program_id).fetch_one(conn).boxed().await.map_err(db)
+            .bind(program_id).fetch_one(conn).await.map_err(db)
     }
 
     async fn seed_on(conn: &mut sqlx::SqliteConnection, program_id: &str) -> Result<()> {
@@ -142,7 +141,6 @@ impl LearningCurriculumRepository {
         let p = sqlx::query("SELECT id,current_lesson_id FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *conn)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -152,7 +150,6 @@ impl LearningCurriculumRepository {
             sqlx::query("SELECT * FROM learning_modules WHERE program_id=? ORDER BY ordinal")
                 .bind(program_id)
                 .fetch_all(&mut *conn)
-                .boxed()
                 .await
                 .map_err(db)?;
         for m in module_rows {
@@ -161,7 +158,7 @@ impl LearningCurriculumRepository {
             let mut outcome_ids = Vec::new();
             for (ordinal, label) in outcome_labels.iter().enumerate() {
                 let existing:Option<String>=sqlx::query_scalar("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND title=? AND lesson_id IS NULL ORDER BY ordinal LIMIT 1")
-                    .bind(program_id).bind(&module_id).bind(label).fetch_optional(&mut *conn).boxed().await.map_err(db)?;
+                    .bind(program_id).bind(&module_id).bind(label).fetch_optional(&mut *conn).await.map_err(db)?;
                 let outcome_id = if let Some(id) = existing {
                     id
                 } else {
@@ -174,12 +171,12 @@ impl LearningCurriculumRepository {
             }
             let mut lessons = Vec::new();
             for l in sqlx::query("SELECT * FROM learning_lessons WHERE program_id=? AND module_id=? ORDER BY ordinal")
-                .bind(program_id).bind(&module_id).fetch_all(&mut *conn).boxed().await.map_err(db)? {
+                .bind(program_id).bind(&module_id).fetch_all(&mut *conn).await.map_err(db)? {
                 let lesson_id: String = l.get("id");
                 let practice_started: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_practice_sessions WHERE program_id=? AND lesson_id=?")
-                    .bind(program_id).bind(&lesson_id).fetch_one(&mut *conn).boxed().await.map_err(db)?;
+                    .bind(program_id).bind(&lesson_id).fetch_one(&mut *conn).await.map_err(db)?;
                 let assessment_started: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_form_item_outcomes fio JOIN learning_assessment_forms f ON f.id=fio.form_id JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE f.program_id=? AND (o.lesson_id=? OR (o.lesson_id IS NULL AND o.module_id=?))")
-                    .bind(program_id).bind(&lesson_id).bind(&module_id).fetch_one(&mut *conn).boxed().await.map_err(db)?;
+                    .bind(program_id).bind(&lesson_id).bind(&module_id).fetch_one(&mut *conn).await.map_err(db)?;
                 let completed = l.get::<i64,_>("completed") != 0;
                 let preparation: String = l.get("preparation");
                 lessons.push(LearningCurriculumLesson {
@@ -244,7 +241,7 @@ impl LearningCurriculumRepository {
         program_id: &str,
     ) -> Result<(String, LearningCurriculumRevision)> {
         let row = sqlx::query("SELECT id,snapshot_json FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
-            .bind(program_id).fetch_optional(&mut **tx).boxed().await.map_err(db)?
+            .bind(program_id).fetch_optional(&mut **tx).await.map_err(db)?
             .ok_or_else(|| AppError::NotFound("Accepted curriculum not found".into()))?;
         let mut snapshot: LearningCurriculumRevision = decode(row.get("snapshot_json"))?;
         for lesson in snapshot
@@ -257,7 +254,6 @@ impl LearningCurriculumRepository {
                     .bind(&lesson.id)
                     .bind(program_id)
                     .fetch_optional(&mut **tx)
-                    .boxed()
                     .await
                     .map_err(db)?;
             if let Some(row) = row {
@@ -265,17 +261,16 @@ impl LearningCurriculumRepository {
                     lesson.state = LearningCurriculumLessonState::Completed;
                 }
             }
-            let practice:i64=sqlx::query_scalar("SELECT count(*) FROM learning_practice_sessions WHERE program_id=? AND lesson_id=?").bind(program_id).bind(&lesson.id).fetch_one(&mut **tx).boxed().await.map_err(db)?;
+            let practice:i64=sqlx::query_scalar("SELECT count(*) FROM learning_practice_sessions WHERE program_id=? AND lesson_id=?").bind(program_id).bind(&lesson.id).fetch_one(&mut **tx).await.map_err(db)?;
             let module_id: String = sqlx::query_scalar(
                 "SELECT module_id FROM learning_lessons WHERE id=? AND program_id=?",
             )
             .bind(&lesson.id)
             .bind(program_id)
             .fetch_one(&mut **tx)
-            .boxed()
             .await
             .map_err(db)?;
-            let forms:i64=sqlx::query_scalar("SELECT count(*) FROM learning_assessment_form_item_outcomes fio JOIN learning_assessment_forms f ON f.id=fio.form_id JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE f.program_id=? AND (o.lesson_id=? OR (o.lesson_id IS NULL AND o.module_id=?))").bind(program_id).bind(&lesson.id).bind(&module_id).fetch_one(&mut **tx).boxed().await.map_err(db)?;
+            let forms:i64=sqlx::query_scalar("SELECT count(*) FROM learning_assessment_form_item_outcomes fio JOIN learning_assessment_forms f ON f.id=fio.form_id JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE f.program_id=? AND (o.lesson_id=? OR (o.lesson_id IS NULL AND o.module_id=?))").bind(program_id).bind(&lesson.id).bind(&module_id).fetch_one(&mut **tx).await.map_err(db)?;
             lesson.assessment_started |= practice > 0 || forms > 0;
         }
         Ok((row.get("id"), snapshot))
@@ -304,18 +299,17 @@ impl LearningCurriculumRepository {
             sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_one(&mut *conn)
-                .boxed()
                 .await
                 .map_err(db)?;
         let accepted_row = sqlx::query("SELECT snapshot_json,required_lesson_count,resume_lesson_id FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
-            .bind(program_id).fetch_one(&mut *conn).boxed().await.map_err(db)?;
+            .bind(program_id).fetch_one(&mut *conn).await.map_err(db)?;
         let accepted: LearningCurriculumRevision = decode(accepted_row.get("snapshot_json"))?;
         let draft_row = sqlx::query("SELECT snapshot_json,required_lesson_count,resume_lesson_id,id FROM learning_curriculum_revisions WHERE program_id=? AND status='draft' ORDER BY created_at DESC LIMIT 1")
-            .bind(program_id).fetch_optional(&mut *conn).boxed().await.map_err(db)?;
+            .bind(program_id).fetch_optional(&mut *conn).await.map_err(db)?;
         let (draft, changes, before, after, resume) = if let Some(row) = draft_row {
             let revision: LearningCurriculumRevision = decode(row.get("snapshot_json"))?;
             let change_rows = sqlx::query("SELECT operation,lesson_id,before_json,after_json,explanation FROM learning_curriculum_changes WHERE revision_id=? ORDER BY ordinal")
-                .bind(row.get::<String,_>("id")).fetch_all(&mut *conn).boxed().await.map_err(db)?;
+                .bind(row.get::<String,_>("id")).fetch_all(&mut *conn).await.map_err(db)?;
             let changes = change_rows
                 .into_iter()
                 .map(|r| {
@@ -367,7 +361,7 @@ impl LearningCurriculumRepository {
         };
         let jobs = Self::jobs_on(&mut *conn, program_id).await?;
         let diagnostic = sqlx::query("SELECT * FROM learning_diagnostic_attempts WHERE program_id=? ORDER BY created_at DESC,id DESC LIMIT 1")
-            .bind(program_id).fetch_optional(&mut *conn).boxed().await.map_err(db)?
+            .bind(program_id).fetch_optional(&mut *conn).await.map_err(db)?
             .map(|r| decode_diagnostic_row(&r)).transpose()?;
         Ok(LearningPlanDto {
             program_id: program_id.into(),
@@ -407,7 +401,6 @@ impl LearningCurriculumRepository {
             sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
                 .bind(&request.program_id)
                 .fetch_optional(&mut *tx)
-                .boxed()
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -435,7 +428,6 @@ impl LearningCurriculumRepository {
         )
         .bind(&request.program_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?;
         if let Some(id) = existing_draft {
@@ -450,7 +442,6 @@ impl LearningCurriculumRepository {
             sqlx::query_scalar("SELECT current_lesson_id FROM learning_programs WHERE id=?")
                 .bind(&request.program_id)
                 .fetch_one(&mut *tx)
-                .boxed()
                 .await
                 .map_err(db)?;
         let resume = curriculum::apply_curriculum_revision(
@@ -508,7 +499,6 @@ impl LearningCurriculumRepository {
         let revision: i64 = sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
             .bind(&request.program_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -517,7 +507,7 @@ impl LearningCurriculumRepository {
                 "Program changed; reload and retry.".into(),
             ));
         }
-        let draft=sqlx::query("SELECT snapshot_json,status FROM learning_curriculum_revisions WHERE id=? AND program_id=?").bind(&request.revision_id).bind(&request.program_id).fetch_optional(&mut *tx).boxed().await.map_err(db)?.ok_or_else(||AppError::NotFound("Draft curriculum revision not found".into()))?;
+        let draft=sqlx::query("SELECT snapshot_json,status FROM learning_curriculum_revisions WHERE id=? AND program_id=?").bind(&request.revision_id).bind(&request.program_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Draft curriculum revision not found".into()))?;
         if draft.get::<String, _>("status") != "draft" {
             return Err(AppError::InvalidState(
                 "Only a draft curriculum can be accepted.".into(),
@@ -528,7 +518,7 @@ impl LearningCurriculumRepository {
         sqlx::query("UPDATE learning_curriculum_revisions SET status='superseded' WHERE program_id=? AND status='accepted'").bind(&request.program_id).execute(&mut *tx).await.map_err(db)?;
         sqlx::query("UPDATE learning_curriculum_revisions SET status='accepted',accepted_at=? WHERE id=? AND status='draft'").bind(now()).bind(&request.revision_id).execute(&mut *tx).await.map_err(db)?;
         materialize(&mut tx, &accepted).await?;
-        sqlx::query("UPDATE learning_programs SET revision=revision+1,current_lesson_id=? WHERE id=? AND revision=?").bind(sqlx::query_scalar::<_,Option<String>>("SELECT resume_lesson_id FROM learning_curriculum_revisions WHERE id=?").bind(&request.revision_id).fetch_one(&mut *tx).boxed().await.map_err(db)?).bind(&request.program_id).bind(request.expected_revision).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("UPDATE learning_programs SET revision=revision+1,current_lesson_id=? WHERE id=? AND revision=?").bind(sqlx::query_scalar::<_,Option<String>>("SELECT resume_lesson_id FROM learning_curriculum_revisions WHERE id=?").bind(&request.revision_id).fetch_one(&mut *tx).await.map_err(db)?).bind(&request.program_id).bind(request.expected_revision).execute(&mut *tx).await.map_err(db)?;
         operation.record(&mut *tx, &request.revision_id).await?;
         let plan = Self::plan_on(&mut tx, &request.program_id).await?;
         tx.commit().await.map_err(db)?;
@@ -558,7 +548,6 @@ impl LearningCurriculumRepository {
         let revision: i64 = sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
             .bind(&request.program_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -600,7 +589,7 @@ async fn materialize(
     for (mi, module) in revision.modules.iter().enumerate() {
         let mut outcome_labels = Vec::new();
         for outcome_id in &module.outcome_ids {
-            let title:Option<String>=sqlx::query_scalar("SELECT title FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND id=?").bind(&revision.program_id).bind(&module.id).bind(outcome_id).fetch_optional(&mut **tx).boxed().await.map_err(db)?;
+            let title:Option<String>=sqlx::query_scalar("SELECT title FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND id=?").bind(&revision.program_id).bind(&module.id).bind(outcome_id).fetch_optional(&mut **tx).await.map_err(db)?;
             let title = title.ok_or_else(|| {
                 AppError::InvalidInput("Curriculum outcome must be a saved program outcome.".into())
             })?;
@@ -613,7 +602,6 @@ async fn materialize(
                 .bind(&lesson.id)
                 .bind(&revision.program_id)
                 .fetch_optional(&mut **tx)
-                .boxed()
                 .await
                 .map_err(db)?;
             if old.is_none() {
@@ -624,7 +612,6 @@ async fn materialize(
                     sqlx::query_scalar("SELECT completed FROM learning_lessons WHERE id=?")
                         .bind(&lesson.id)
                         .fetch_one(&mut **tx)
-                        .boxed()
                         .await
                         .map_err(db)?;
                 if protected == 0 && !lesson.assessment_started {

@@ -3,7 +3,6 @@
 //! This module provides a simple wrapper around sqlx's migration functionality.
 //! Migrations are automatically discovered from the migrations/ directory.
 
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha384};
@@ -46,7 +45,6 @@ pub(crate) async fn reconcile_line_endings(pool: &SqlitePool, migrator: &Migrato
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",
     )
     .fetch_one(&mut *tx)
-    .boxed()
     .await?;
     if has_table == 0 {
         return Ok(());
@@ -55,7 +53,6 @@ pub(crate) async fn reconcile_line_endings(pool: &SqlitePool, migrator: &Migrato
     let stored: HashMap<i64, Vec<u8>> =
         sqlx::query_as::<_, (i64, Vec<u8>)>("SELECT version, checksum FROM _sqlx_migrations")
             .fetch_all(&mut *tx)
-            .boxed()
             .await?
             .into_iter()
             .collect();

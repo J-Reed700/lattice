@@ -1,5 +1,4 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::embedding_encoding;
 use sha2::{Digest, Sha256};
@@ -11,7 +10,7 @@ pub fn content_hash(text: &str) -> String {
 
 pub async fn chunk_page_after(pool: &SqlitePool, cursor: &str) -> Result<Vec<(String, String)>> {
     Ok(sqlx::query_as("SELECT id, COALESCE(NULLIF(contextualized_content, ''), content) FROM text_chunks WHERE id > ? ORDER BY id LIMIT 64")
-        .bind(cursor).fetch_all(pool).boxed().await?)
+        .bind(cursor).fetch_all(pool).await?)
 }
 
 pub async fn is_prepared(
@@ -22,7 +21,7 @@ pub async fn is_prepared(
     dimension: usize,
 ) -> Result<bool> {
     let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embedding_generation_vectors WHERE model_identity = ? AND chunk_id = ? AND content_hash = ? AND dimension = ?")
-        .bind(identity).bind(chunk_id).bind(hash).bind(dimension as i64).fetch_one(pool).boxed().await?;
+        .bind(identity).bind(chunk_id).bind(hash).bind(dimension as i64).fetch_one(pool).await?;
     Ok(exists > 0)
 }
 
@@ -45,7 +44,6 @@ pub async fn count_chunks_with_content(pool: &SqlitePool) -> Result<i64> {
     Ok(
         sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE content != ''")
             .fetch_one(pool)
-            .boxed()
             .await?,
     )
 }
@@ -95,7 +93,7 @@ pub async fn restore_page(
     type RestoredRow = (String, Vec<u8>, String, Option<String>, String);
     let rows: Vec<RestoredRow> = sqlx::query_as(
         "SELECT tc.id, COALESCE(te.embedding, eg.embedding), tc.document_id, CASE WHEN te.embedding IS NULL THEN eg.content_hash ELSE NULL END, COALESCE(NULLIF(tc.contextualized_content, ''), tc.content) FROM text_chunks tc LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? WHERE (te.embedding IS NOT NULL OR eg.embedding IS NOT NULL) AND tc.id > ? ORDER BY tc.id LIMIT ?")
-        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).bind(after_chunk_id).bind(limit).fetch_all(pool).boxed().await?;
+        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).bind(after_chunk_id).bind(limit).fetch_all(pool).await?;
     let cursor = rows.last().map(|row| row.0.clone()).unwrap_or_default();
     let mut result = Vec::with_capacity(rows.len());
     for (id, bytes, doc_id, hash, source) in rows {

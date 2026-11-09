@@ -20,7 +20,6 @@ use crate::{
         LearningPackConflictPolicy,
     },
 };
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::{borrow::Cow, collections::HashSet};
@@ -126,7 +125,6 @@ impl IdClaim {
         let Some(row) = sqlx::query(&self.owner_sql)
             .bind(&self.id)
             .fetch_optional(pool)
-            .boxed()
             .await
             .map_err(db)?
         else {
@@ -163,7 +161,6 @@ pub(super) async fn scan(
         sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
             .bind(id)
             .fetch_optional(pool)
-            .boxed()
             .await
             .map_err(db)?;
     let mut conflicts = Vec::new();

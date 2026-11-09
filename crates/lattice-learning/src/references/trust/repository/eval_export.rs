@@ -1,6 +1,5 @@
 use super::rows::{override_from_row, OVERRIDE_COLUMNS};
 use crate::persistence::db;
-use futures::FutureExt;
 use lattice_core::domain::provenance::TrustOverride;
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqlitePool};
@@ -32,7 +31,7 @@ pub(in crate::references::trust) async fn source_versions(
     )
     .bind(program_id)
     .bind(source_id)
-    .fetch_all(pool).boxed()
+    .fetch_all(pool)
     .await
     .map_err(db)?;
     covered_rows(&rows)
@@ -46,7 +45,7 @@ pub(in crate::references::trust) async fn site_versions(
         "SELECT p.source_version_id AS version_id, l.added_by FROM source_provenance p          JOIN learning_source_versions v ON v.program_id = p.program_id AND v.id = p.source_version_id          JOIN learning_source_library l ON l.program_id = v.program_id AND l.id = v.source_id          WHERE p.site=? ORDER BY p.program_id, p.source_version_id",
     )
     .bind(registrable_domain)
-    .fetch_all(pool).boxed()
+    .fetch_all(pool)
     .await
     .map_err(db)?;
     covered_rows(&rows)
@@ -58,7 +57,7 @@ pub(in crate::references::trust) async fn all_overrides(
     sqlx::query(&format!(
         "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides ORDER BY scope, registrable_domain, class_key, program_id, source_id"
     ))
-    .fetch_all(pool).boxed()
+    .fetch_all(pool)
     .await
     .map_err(db)?
     .iter()

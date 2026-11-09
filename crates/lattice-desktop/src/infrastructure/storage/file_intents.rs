@@ -1,7 +1,6 @@
 //! The records the sweeps delete by: `file_intents` rows. A sweep removes a
 //! file only when a row here names it, never because no other row does.
 
-use futures::FutureExt;
 use std::path::Path;
 use std::sync::OnceLock;
 
@@ -106,7 +105,6 @@ impl FileIntents {
         .bind(name)
         .bind(run_id())
         .fetch_one(&self.pool)
-        .boxed()
         .await?)
     }
 
@@ -117,7 +115,6 @@ impl FileIntents {
         )
         .bind(store.as_str())
         .fetch_all(&self.pool)
-        .boxed()
         .await?;
         Ok(rows
             .into_iter()
@@ -140,7 +137,6 @@ impl FileIntents {
         .bind(store.as_str())
         .bind(name)
         .fetch_all(&self.pool)
-        .boxed()
         .await?)
     }
 
@@ -204,7 +200,6 @@ async fn forget_all(pool: &SqlitePool) -> Result<()> {
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_intents')",
     )
     .fetch_one(&mut *tx)
-    .boxed()
     .await?;
     if exists {
         sqlx::query("DELETE FROM file_intents")

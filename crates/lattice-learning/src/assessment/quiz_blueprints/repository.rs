@@ -3,7 +3,6 @@
 
 use crate::dto::LearningQuizSettingsDto;
 use crate::persistence::db;
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqliteConnection};
 
@@ -64,7 +63,6 @@ pub(super) async fn quiz_settings_in(
     let row = sqlx::query("SELECT * FROM learning_quiz_settings WHERE program_id=?")
         .bind(program_id)
         .fetch_optional(&mut *connection)
-        .boxed()
         .await
         .map_err(db)?;
     Ok(row.map(|row| LearningQuizSettingsDto {
@@ -86,7 +84,7 @@ pub(crate) async fn lesson_outcome_in(
     )
     .bind(program_id)
     .bind(lesson_id)
-    .fetch_optional(&mut *connection).boxed()
+    .fetch_optional(&mut *connection)
     .await
     .map_err(db)
 }
@@ -103,7 +101,6 @@ pub(super) async fn lesson_heading_in(
     .bind(lesson_id)
     .bind(program_id)
     .fetch_optional(&mut *connection)
-    .boxed()
     .await
     .map_err(db)?;
     Ok(row.map(|lesson| {
@@ -153,7 +150,6 @@ pub(super) async fn program_title_in(
     sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
         .bind(program_id)
         .fetch_optional(&mut *connection)
-        .boxed()
         .await
         .map_err(db)
 }
@@ -166,7 +162,6 @@ pub(super) async fn source_version_ids_in(
     sqlx::query_scalar::<_, String>("SELECT id FROM learning_source_versions WHERE program_id=?")
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .boxed()
         .await
         .map_err(db)
 }
@@ -180,7 +175,6 @@ pub(super) async fn modules_in(
         sqlx::query("SELECT id,title FROM learning_modules WHERE program_id=? ORDER BY ordinal")
             .bind(program_id)
             .fetch_all(&mut *connection)
-            .boxed()
             .await
             .map_err(db)?;
     Ok(rows
@@ -198,7 +192,7 @@ pub(super) async fn module_outcome_ids_in(
     sqlx::query_scalar::<_, String>("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND lesson_id IS NULL ORDER BY ordinal,id")
         .bind(program_id)
         .bind(module_id)
-        .fetch_all(&mut *connection).boxed()
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)
 }
@@ -210,7 +204,7 @@ pub(super) async fn lessons_in(
 ) -> Result<Vec<LessonRow>> {
     let rows = sqlx::query("SELECT l.id,l.module_id,l.title,l.objective,l.preparation FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.curriculum_state NOT IN ('replaced','skipped') ORDER BY m.ordinal,l.ordinal")
         .bind(program_id)
-        .fetch_all(&mut *connection).boxed()
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)?;
     Ok(rows
@@ -233,7 +227,6 @@ pub(super) async fn block_source_ids_json_in(
     sqlx::query_scalar::<_, String>("SELECT source_ids_json FROM learning_blocks WHERE lesson_id=?")
         .bind(lesson_id)
         .fetch_all(&mut *connection)
-        .boxed()
         .await
         .map_err(db)
 }
@@ -249,7 +242,7 @@ pub(super) async fn latest_accepted_in(
         .bind(program_id)
         .bind(scope_kind)
         .bind(scope_id)
-        .fetch_optional(&mut *connection).boxed()
+        .fetch_optional(&mut *connection)
         .await
         .map_err(db)?;
     Ok(row.map(|row| (row.get("id"), row.get("revision"))))
@@ -264,7 +257,7 @@ pub(super) async fn stored_blueprint_in(
     let row = sqlx::query("SELECT title,passing_score,expected_minutes FROM learning_assessment_blueprints WHERE id=? AND revision=?")
         .bind(id)
         .bind(revision)
-        .fetch_one(&mut *connection).boxed()
+        .fetch_one(&mut *connection)
         .await
         .map_err(db)?;
     Ok(StoredBlueprint {
@@ -283,7 +276,7 @@ pub(super) async fn stored_slots_in(
     Ok(sqlx::query("SELECT outcome_id,format,difficulty,difficulty_max,points FROM learning_assessment_blueprint_slots WHERE blueprint_id=? AND blueprint_revision=? ORDER BY ordinal")
         .bind(id)
         .bind(revision)
-        .fetch_all(&mut *connection).boxed()
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)?
         .into_iter()
@@ -308,7 +301,7 @@ pub(super) async fn slot_requirements_in(
     let rows = sqlx::query("SELECT outcome_id,format,difficulty,difficulty_max FROM learning_assessment_blueprint_slots WHERE blueprint_id=? AND blueprint_revision=? ORDER BY ordinal")
         .bind(id)
         .bind(revision)
-        .fetch_all(&mut *connection).boxed()
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)?;
     Ok(rows

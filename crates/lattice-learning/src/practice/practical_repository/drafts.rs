@@ -6,7 +6,6 @@ use super::{
 use crate::lab_runtime::LearningLabFile;
 use crate::persistence::{db, now};
 use crate::practical_dto::*;
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
@@ -29,7 +28,6 @@ impl LearningPracticalRepository {
         .bind(&request.program_id)
         .bind(&request.activity_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Practical activity not found".into()))?;
@@ -39,7 +37,7 @@ impl LearningPracticalRepository {
         }
         if let Some(row) = sqlx::query("SELECT draft_revision,files_json,updated_at FROM learning_practical_drafts WHERE program_id=? AND activity_id=? AND activity_revision=?")
             .bind(&request.program_id).bind(&request.activity_id).bind(request.activity_revision)
-            .fetch_optional(&mut *tx).boxed().await.map_err(db)?
+            .fetch_optional(&mut *tx).await.map_err(db)?
         {
             let draft = LearningPracticalDraftDto {
                 program_id: request.program_id.clone(), activity_id: request.activity_id.clone(),
@@ -50,7 +48,7 @@ impl LearningPracticalRepository {
             return Ok(draft);
         }
         let rows = sqlx::query("SELECT path,content FROM learning_practical_files WHERE activity_id=? AND role='starter' AND editable=1 ORDER BY ordinal")
-            .bind(&request.activity_id).fetch_all(&mut *tx).boxed().await.map_err(db)?;
+            .bind(&request.activity_id).fetch_all(&mut *tx).await.map_err(db)?;
         let draft = LearningPracticalDraftDto {
             program_id: request.program_id.clone(),
             activity_id: request.activity_id.clone(),
@@ -149,7 +147,6 @@ impl LearningPracticalRepository {
         .bind(&request.program_id)
         .bind(&request.activity_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Practical activity not found".into()))?;
@@ -157,7 +154,7 @@ impl LearningPracticalRepository {
             return Err(invalid("Practical activity changed; reload and retry."));
         }
         let allowed_rows = sqlx::query("SELECT path FROM learning_practical_files WHERE activity_id=? AND role='starter' AND editable=1 ORDER BY ordinal")
-            .bind(&request.activity_id).fetch_all(&mut *tx).boxed().await.map_err(db)?;
+            .bind(&request.activity_id).fetch_all(&mut *tx).await.map_err(db)?;
         let allowed = allowed_rows
             .into_iter()
             .map(|row| row.get::<String, _>("path"))
@@ -174,7 +171,7 @@ impl LearningPracticalRepository {
         }
         let existing = sqlx::query("SELECT draft_revision FROM learning_practical_drafts WHERE program_id=? AND activity_id=? AND activity_revision=?")
             .bind(&request.program_id).bind(&request.activity_id).bind(request.activity_revision)
-            .fetch_optional(&mut *tx).boxed().await.map_err(db)?;
+            .fetch_optional(&mut *tx).await.map_err(db)?;
         let current_revision = existing
             .map(|row| row.get::<i64, _>("draft_revision"))
             .unwrap_or(0);

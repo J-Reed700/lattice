@@ -1,6 +1,5 @@
 //! Starting practice sessions, saving artifact revisions and changing modes.
 use super::*;
-use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningPracticeRepository {
@@ -31,7 +30,6 @@ impl LearningPracticeRepository {
             sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
                 .bind(&req.program_id)
                 .fetch_optional(&mut *tx)
-                .boxed()
                 .await
                 .map_err(db)?;
         if program_revision != Some(req.expected_program_revision) {
@@ -43,7 +41,6 @@ impl LearningPracticeRepository {
         .bind(&req.program_id)
         .bind(&req.lesson_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Lesson not found in this program".into()))?;
@@ -53,7 +50,7 @@ impl LearningPracticeRepository {
             ));
         }
         let mut source_ids = Vec::<String>::new();
-        for row in sqlx::query("SELECT source_ids_json FROM learning_blocks WHERE lesson_id=? UNION ALL SELECT source_version_ids_json AS source_ids_json FROM learning_assessment_candidates WHERE lesson_id=? AND origin IN ('lesson','migrated') AND review_status<>'dropped'").bind(&req.lesson_id).bind(&req.lesson_id).fetch_all(&mut *tx).boxed().await.map_err(db)? {
+        for row in sqlx::query("SELECT source_ids_json FROM learning_blocks WHERE lesson_id=? UNION ALL SELECT source_version_ids_json AS source_ids_json FROM learning_assessment_candidates WHERE lesson_id=? AND origin IN ('lesson','migrated') AND review_status<>'dropped'").bind(&req.lesson_id).bind(&req.lesson_id).fetch_all(&mut *tx).await.map_err(db)? {
             let ids:Vec<String>=decode(row.get("source_ids_json"))?; source_ids.extend(ids);
         }
         source_ids.sort();
@@ -70,7 +67,6 @@ impl LearningPracticeRepository {
             .bind(&req.program_id)
             .bind(version_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?;
             if owned.is_none() {
@@ -87,7 +83,7 @@ impl LearningPracticeRepository {
             LearningPracticeTaskKind::Independent => "independent_practice",
         };
         let block = sqlx::query("SELECT body,rubric_json FROM learning_blocks WHERE lesson_id=? AND kind=? ORDER BY ordinal LIMIT 1")
-            .bind(&req.lesson_id).bind(block_kind).fetch_optional(&mut *tx).boxed().await.map_err(db)?;
+            .bind(&req.lesson_id).bind(block_kind).fetch_optional(&mut *tx).await.map_err(db)?;
         if req.task_kind == LearningPracticeTaskKind::Guided && block.is_none() {
             return Err(invalid(
                 "This lesson has no guided exercise. Use its independent assignment.",
@@ -115,7 +111,7 @@ impl LearningPracticeRepository {
                 ));
             }
             let parent = sqlx::query("SELECT s.task_prompt,s.task_kind,s.rubric_json,s.source_version_ids_json,sub.artifact_text,sub.criteria_json,sub.assistance_json FROM learning_practice_sessions s JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.id=? AND s.program_id=? AND s.lesson_id=?")
-                .bind(parent_id).bind(&req.program_id).bind(&req.lesson_id).fetch_optional(&mut *tx).boxed().await.map_err(db)?
+                .bind(parent_id).bind(&req.program_id).bind(&req.lesson_id).fetch_optional(&mut *tx).await.map_err(db)?
                 .ok_or_else(||invalid("Only a submitted attempt from this lesson can be revised."))?;
             if parse_task_kind(parent.get("task_kind"))? != req.task_kind {
                 return Err(invalid("A revision must keep the original exercise."));

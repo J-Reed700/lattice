@@ -2,7 +2,6 @@
 //! taken in.
 
 use crate::persistence::db;
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -11,7 +10,6 @@ pub(super) async fn course_exists(pool: &SqlitePool, program_id: &str) -> Result
     sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_programs WHERE id=?)")
         .bind(program_id)
         .fetch_one(pool)
-        .boxed()
         .await
         .map_err(db)
 }
@@ -25,7 +23,7 @@ pub(super) async fn lesson_titles_in(
         "SELECT l.id,l.title,m.id,m.title FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=?",
     )
     .bind(program_id)
-    .fetch_all(&mut *connection).boxed()
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)
 }
@@ -39,7 +37,7 @@ pub(super) async fn course_language_in(
         "SELECT d.language FROM learning_drill_attempts a JOIN learning_drills d ON d.id=a.drill_id WHERE d.program_id=? AND d.material='code' ORDER BY a.started_at DESC,a.rowid DESC LIMIT 1",
     )
     .bind(program_id)
-    .fetch_optional(&mut *connection).boxed()
+    .fetch_optional(&mut *connection)
     .await
     .map_err(db)
 }
@@ -51,7 +49,7 @@ pub(super) async fn latest_language_in(
     sqlx::query_scalar(
         "SELECT d.language FROM learning_drill_attempts a JOIN learning_drills d ON d.id=a.drill_id WHERE d.material='code' ORDER BY a.started_at DESC,a.rowid DESC LIMIT 1",
     )
-    .fetch_optional(&mut *connection).boxed()
+    .fetch_optional(&mut *connection)
     .await
     .map_err(db)
 }

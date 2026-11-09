@@ -1,5 +1,4 @@
 use crate::infrastructure::persistence::database::connection::query_with_timeout;
-use futures::FutureExt;
 use lattice_core::shared::error::AppError;
 use sqlx::{Row, SqlitePool};
 
@@ -59,7 +58,7 @@ pub(super) async fn chunk_metadata(
     }
 
     let rows: Vec<sqlx::sqlite::SqliteRow> =
-        query_with_timeout(|| async { query_builder.fetch_all(pool).boxed().await }).await?;
+        query_with_timeout(|| async { query_builder.fetch_all(pool).await }).await?;
 
     Ok(rows
         .into_iter()

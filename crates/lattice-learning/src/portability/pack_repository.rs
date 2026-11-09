@@ -34,7 +34,6 @@ pub(crate) use files::pack_file_name;
 pub use files::DestinationPicker;
 pub use files::PACK_EXTENSION;
 use files::{chosen_file, managed_path, next_free_path, read_untrusted};
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use records::{pack_operation, replay, PendingPreview};
@@ -244,7 +243,6 @@ impl LearningPackRepository {
             sqlx::query("SELECT program_id,status FROM learning_pack_import_previews WHERE id=?")
                 .bind(&req.preview_id)
                 .fetch_optional(&mut *tx)
-                .boxed()
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Pack preview not found".into()))?;
@@ -354,7 +352,6 @@ impl LearningPackRepository {
             sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
                 .bind(&preview.target_id)
                 .fetch_optional(&mut *connection)
-                .boxed()
                 .await
                 .map_err(db)?;
         if preview.policy.on_existing() == ExistingAction::Block && existing.is_some() {

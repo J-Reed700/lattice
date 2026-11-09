@@ -13,7 +13,6 @@ use crate::plan_dto::{
     StartLearningModuleJobsRequestDto,
 };
 use crate::quiz_bank_jobs::{QUIZ_BANK, QUIZ_GRADING};
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore, NewJob};
@@ -126,7 +125,7 @@ impl LearningCurriculumRepository {
         )
         .bind(&request.program_id)
         .bind(&request.module_id)
-        .fetch_all(&mut *tx).boxed()
+        .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
         if lessons.is_empty() {
@@ -241,7 +240,7 @@ impl LearningCurriculumRepository {
         let content_revision =
             check_program_open(tx, &request.program_id, request.expected_revision).await?;
         let next_lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' ORDER BY m.ordinal,l.ordinal")
-            .bind(&request.program_id).fetch_all(&mut **tx).boxed().await.map_err(db)?;
+            .bind(&request.program_id).fetch_all(&mut **tx).await.map_err(db)?;
         if (lesson_ids.len() == 1
             && lesson_ids
                 .first()
@@ -385,7 +384,6 @@ impl LearningCurriculumRepository {
             sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
                 .bind(&request.program_id)
                 .fetch_optional(&mut **tx)
-                .boxed()
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -479,7 +477,7 @@ impl LearningCurriculumRepository {
 
     pub(crate) async fn job_content_is_current(&self, id: &str) -> Result<bool> {
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_jobs j JOIN learning_programs p ON p.id=j.program_id WHERE j.job_id=? AND j.content_revision=p.content_revision)")
-            .bind(id).fetch_one(&self.pool).boxed().await.map_err(db)
+            .bind(id).fetch_one(&self.pool).await.map_err(db)
     }
 
     pub(super) fn jobs_store(&self) -> JobStore {
@@ -499,7 +497,6 @@ pub(crate) async fn lesson_rank_in(
     )
     .bind(lesson_id)
     .fetch_optional(connection)
-    .boxed()
     .await
     .map_err(db)
 }
@@ -514,7 +511,6 @@ async fn check_program_open(
         sqlx::query("SELECT revision,status,content_revision FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut **tx)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -569,7 +565,6 @@ async fn held_outlines(
         .bind(&lesson_id)
         .bind(program_id)
         .fetch_optional(&mut *connection)
-        .boxed()
         .await
         .map_err(db)?;
         if outline == Some(true) {
@@ -601,7 +596,6 @@ pub(super) async fn job_scope(
     )
     .bind(job_id)
     .fetch_optional(connection)
-    .boxed()
     .await
     .map_err(db)?
     .as_ref()
@@ -614,7 +608,7 @@ async fn job_scopes(
 ) -> Result<std::collections::HashMap<String, JobScope>> {
     Ok(sqlx::query("SELECT job_id,program_id,base_revision_number,content_revision FROM learning_jobs WHERE program_id=?")
         .bind(program_id)
-        .fetch_all(connection).boxed()
+        .fetch_all(connection)
         .await
         .map_err(db)?
         .iter()

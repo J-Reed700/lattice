@@ -1,4 +1,3 @@
-use futures::FutureExt;
 use lattice_core::shared::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
@@ -36,7 +35,6 @@ async fn titles(pool: &SqlitePool, sql: &str, ids: &[String]) -> Result<HashMap<
     let rows = sqlx::query(sql)
         .bind(ids)
         .fetch_all(pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     Ok(rows

@@ -1,6 +1,5 @@
 //! The `learning_lesson_teaching_findings` table.
 
-use futures::FutureExt;
 use std::collections::BTreeSet;
 
 use lattice_core::shared::error::{AppError, Result};
@@ -59,7 +58,7 @@ pub(in crate::lessons::claim_reviews) async fn held_rows(
         "SELECT kind, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=?",
     )
     .bind(lesson_id)
-    .fetch_all(pool).boxed()
+    .fetch_all(pool)
     .await
     .map_err(db)?;
     Ok(rows
@@ -141,7 +140,7 @@ pub(in crate::lessons::claim_reviews) async fn stored_findings(
          ORDER BY CASE site WHEN 'lesson' THEN 0 WHEN 'section' THEN 1 ELSE 2 END, unit_index, kind",
     )
     .bind(lesson_id)
-    .fetch_all(pool).boxed()
+    .fetch_all(pool)
     .await
     .map_err(db)?;
     Ok(rows

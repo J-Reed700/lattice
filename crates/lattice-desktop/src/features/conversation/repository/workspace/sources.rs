@@ -1,5 +1,4 @@
 use super::*;
-use futures::FutureExt;
 use lattice_core::shared::http::normalize_web_source_url;
 use lattice_core::shared::persistence::Transactions;
 
@@ -51,7 +50,7 @@ impl ConversationRepository {
         "#,
         )
         .bind(&conversation_id)
-        .fetch_all(&self.pool).boxed()
+        .fetch_all(&self.pool)
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -91,7 +90,6 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
                 .bind(&conversation_id)
                 .fetch_one(&mut *tx)
-                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify conversation: {}", e)))?;
 
@@ -169,7 +167,6 @@ impl ConversationRepository {
             sqlx::query_scalar("SELECT COUNT(*) FROM conversations WHERE id = ?")
                 .bind(&conversation_id)
                 .fetch_one(&mut *tx)
-                .boxed()
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to verify conversation: {}", e)))?;
 
@@ -247,7 +244,6 @@ impl ConversationRepository {
         )
         .bind(&conversation_id)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to list conversation web sources: {}", e))
@@ -295,7 +291,6 @@ impl ConversationRepository {
         .bind(conversation_id.trim())
         .bind(normalize_web_source_url(url.trim()))
         .fetch_optional(&self.pool)
-        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!(

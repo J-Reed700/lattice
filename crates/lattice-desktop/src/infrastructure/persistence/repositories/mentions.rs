@@ -9,7 +9,6 @@
 
 use async_trait::async_trait;
 use chrono::Utc;
-use futures::FutureExt;
 use lattice_core::application::ports::mention_repository_port::{
     MentionData, MentionRepositoryPort, MentionWithContextData,
 };
@@ -112,7 +111,6 @@ impl MentionRepository {
             created_at
         )
         .fetch_one(connection)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to create mention: {}", e)))?;
 
@@ -217,7 +215,6 @@ impl MentionRepositoryPort for MentionRepository {
             name
         )
         .fetch_optional(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to find mention: {}", e)))?;
 
@@ -253,7 +250,6 @@ impl MentionRepositoryPort for MentionRepository {
         .bind(search_pattern)
         .bind(limit)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to search mentions: {}", e)))?;
 
@@ -295,7 +291,6 @@ impl MentionRepositoryPort for MentionRepository {
             mention_type
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to get mentions: {}", e)))?;
 
@@ -332,7 +327,6 @@ impl MentionRepositoryPort for MentionRepository {
         )
         .bind(document_id)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to get document mentions: {}", e)))?;
 
@@ -363,7 +357,6 @@ impl MentionRepositoryPort for MentionRepository {
             mention_id
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to get backlinks: {}", e)))?;
 
@@ -439,7 +432,6 @@ impl MentionRepositoryPort for MentionRepository {
             id
         )
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch mention: {}", e)))?
         .ok_or_else(|| AppError::NotFound(format!("Mention not found: {}", id)))?;
@@ -459,7 +451,6 @@ impl MentionRepositoryPort for MentionRepository {
             id
         )
         .fetch_one(&mut *tx)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to update mention: {}", e)))?;
         tx.commit()

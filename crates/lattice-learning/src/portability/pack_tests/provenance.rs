@@ -7,7 +7,6 @@ use crate::{
     outline_evidence_view,
     pack::{decode_learning_pack, encode_learning_pack, LearningPackEntry, LearningPackInput},
 };
-use futures::FutureExt;
 use serde_json::{json, Value};
 
 const PROVENANCE: &str = "program/provenance.json";
@@ -176,7 +175,6 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
     )
     .bind(&copy_id)
     .fetch_one(&pool)
-    .boxed()
     .await?;
     assert!(checkpoint.contains(&copy.modules[0].id));
     assert!(!checkpoint.contains(&original.modules[0].id));
@@ -185,7 +183,6 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
     )
     .bind(&copy_id)
     .fetch_one(&pool)
-    .boxed()
     .await?;
     assert!(private_report.contains("PRIVATE assessment finding"));
     Ok(())
@@ -333,14 +330,12 @@ async fn malformed_or_future_provenance_is_rejected_before_an_import_writes() ->
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_programs")
             .fetch_one(&pool)
-            .boxed()
             .await?,
         1
     );
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_pack_import_previews")
             .fetch_one(&pool)
-            .boxed()
             .await?,
         0
     );
@@ -381,13 +376,11 @@ async fn failed_provenance_backup_leaves_the_replacement_target_untouched() -> R
     )
     .bind(&original.summary.id)
     .fetch_one(&pool)
-    .boxed()
     .await?;
     assert_eq!(fingerprint, "mismatched-column");
     assert_eq!(
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_pack_imports")
             .fetch_one(&pool)
-            .boxed()
             .await?,
         0
     );

@@ -5,7 +5,6 @@ use crate::{
     operations::Operation,
     persistence::{db, now},
 };
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
@@ -286,7 +285,7 @@ async fn candidate_outcomes_in(
     let mut map: HashMap<String, Vec<String>> = HashMap::new();
     for row in sqlx::query("SELECT co.candidate_id,co.outcome_id FROM learning_assessment_candidate_outcomes co JOIN learning_assessment_candidates c ON c.id=co.candidate_id WHERE c.program_id=? ORDER BY co.outcome_id")
         .bind(program_id)
-        .fetch_all(&mut *connection).boxed()
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)?
     {
@@ -307,7 +306,7 @@ async fn candidate_in(
     let row = sqlx::query(&format!("SELECT {CANDIDATE_COLUMNS} FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.id=? AND c.program_id=?"))
         .bind(candidate_id)
         .bind(program_id)
-        .fetch_optional(&mut *connection).boxed()
+        .fetch_optional(&mut *connection)
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::InvalidState("This quiz question is no longer available.".into()))?;
@@ -315,7 +314,7 @@ async fn candidate_in(
         "SELECT outcome_id FROM learning_assessment_candidate_outcomes WHERE candidate_id=? ORDER BY outcome_id",
     )
     .bind(candidate_id)
-    .fetch_all(&mut *connection).boxed()
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)?;
     candidate_from_row(&row, outcomes)
@@ -337,7 +336,6 @@ async fn candidates_in(
     .bind(program_id)
     .bind(&scope)
     .fetch_all(&mut *connection)
-    .boxed()
     .await
     .map_err(db)?;
     let links: Vec<(String, String)> = sqlx::query_as(
@@ -346,7 +344,6 @@ async fn candidates_in(
     )
     .bind(&scope)
     .fetch_all(&mut *connection)
-    .boxed()
     .await
     .map_err(db)?;
     let mut outcomes: HashMap<String, Vec<String>> = HashMap::new();
@@ -402,7 +399,6 @@ impl LearningAssessmentRepository {
         .bind(form_id)
         .bind(candidate_id)
         .fetch_optional(&mut *connection)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| invalid("That question is not part of this quiz."))?;
@@ -438,7 +434,6 @@ impl LearningAssessmentRepository {
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_optional(&mut **tx)
-                .boxed()
                 .await
                 .map_err(db)?;
         if status.as_deref() != Some("active") {
@@ -459,7 +454,7 @@ impl LearningAssessmentRepository {
         connection: &mut SqliteConnection,
         program_id: &str,
     ) -> Result<()> {
-        for module in sqlx::query("SELECT id,title,outcomes_json FROM learning_modules WHERE program_id=? ORDER BY ordinal").bind(program_id).fetch_all(&mut *connection).boxed().await.map_err(db)? {
+        for module in sqlx::query("SELECT id,title,outcomes_json FROM learning_modules WHERE program_id=? ORDER BY ordinal").bind(program_id).fetch_all(&mut *connection).await.map_err(db)? {
             let module_id: String = module.get("id");
             let module_title: String = module.get("title");
             let outcomes: Vec<String> = decode(module.get("outcomes_json"))?;
@@ -468,7 +463,7 @@ impl LearningAssessmentRepository {
                 if title.is_empty() {
                     continue;
                 }
-                let existing: Option<String> = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND ordinal=? AND lesson_id IS NULL").bind(program_id).bind(&module_id).bind(ordinal as i64).fetch_optional(&mut *connection).boxed().await.map_err(db)?;
+                let existing: Option<String> = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND ordinal=? AND lesson_id IS NULL").bind(program_id).bind(&module_id).bind(ordinal as i64).fetch_optional(&mut *connection).await.map_err(db)?;
                 if existing.is_none() {
                     sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,?,NULL,?,?,?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(&module_id).bind(title).bind(format!("Outcome for {module_title}: {title}")).bind(ordinal as i64).bind(now()).execute(&mut *connection).await.map_err(db)?;
                 }
@@ -491,7 +486,7 @@ async fn insert_followup(
     action_ref: Option<&str>,
     evidence_ids: &[String],
 ) -> Result<()> {
-    let existing:Option<String>=sqlx::query_scalar("SELECT id FROM learning_follow_up_recommendations WHERE program_id=? AND outcome_id IS ? AND reason_code=? AND status='pending' ORDER BY created_at DESC LIMIT 1").bind(program_id).bind(outcome_id).bind(reason).fetch_optional(&mut *connection).boxed().await.map_err(db)?;
+    let existing:Option<String>=sqlx::query_scalar("SELECT id FROM learning_follow_up_recommendations WHERE program_id=? AND outcome_id IS ? AND reason_code=? AND status='pending' ORDER BY created_at DESC LIMIT 1").bind(program_id).bind(outcome_id).bind(reason).fetch_optional(&mut *connection).await.map_err(db)?;
     if existing.is_some() {
         return Ok(());
     }

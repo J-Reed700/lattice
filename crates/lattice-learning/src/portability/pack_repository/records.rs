@@ -9,7 +9,6 @@ use crate::{
     portability_dto::*,
     source_library::LearningSourceLibraryRepository,
 };
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
@@ -112,7 +111,7 @@ pub(super) async fn replayed_export(
     }
     let row = sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE operation_id=?")
         .bind(&req.operation_id)
-        .fetch_optional(pool).boxed()
+        .fetch_optional(pool)
         .await
         .map_err(db)?;
     row.as_ref().map(export_dto).transpose()
@@ -186,7 +185,6 @@ async fn export_notice(
         let count: i64 = sqlx::query_scalar(sql)
             .bind(program_id)
             .fetch_one(&mut *connection)
-            .boxed()
             .await
             .map_err(db)?;
         if count > 0 {
@@ -226,13 +224,12 @@ pub(super) async fn workspace(
     };
     let mut read = pool.begin_read().await.map_err(db)?;
     let exports = sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE program_id=? ORDER BY created_at DESC")
-            .bind(program_id).fetch_all(&mut *read).boxed().await.map_err(db)?.iter().map(export_dto).collect::<Result<Vec<_>>>()?;
+            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.iter().map(export_dto).collect::<Result<Vec<_>>>()?;
     let import_previews = sqlx::query(
         "SELECT * FROM learning_pack_import_previews WHERE program_id=? ORDER BY created_at DESC",
     )
     .bind(program_id)
     .fetch_all(&mut *read)
-    .boxed()
     .await
     .map_err(db)?
     .into_iter()
@@ -274,7 +271,6 @@ pub(super) async fn workspace(
     )
     .bind(program_id)
     .fetch_all(&mut *read)
-    .boxed()
     .await
     .map_err(db)?
     .into_iter()
@@ -306,7 +302,6 @@ pub(super) async fn preview_program(pool: &SqlitePool, preview_id: &str) -> Resu
     sqlx::query_scalar("SELECT program_id FROM learning_pack_import_previews WHERE id=?")
         .bind(preview_id)
         .fetch_one(pool)
-        .boxed()
         .await
         .map_err(db)
 }
@@ -352,7 +347,6 @@ pub(super) async fn pending_preview(pool: &SqlitePool, preview_id: &str) -> Resu
     let row = sqlx::query("SELECT * FROM learning_pack_import_previews WHERE id=?")
         .bind(preview_id)
         .fetch_optional(pool)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Pack preview not found".into()))?;

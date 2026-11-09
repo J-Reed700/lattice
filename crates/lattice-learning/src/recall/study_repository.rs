@@ -4,7 +4,6 @@ use super::{
     study_dto::*,
 };
 use crate::persistence::db;
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use serde::Deserialize;
@@ -294,7 +293,6 @@ pub(crate) async fn record_review(
     )
     .bind(review.review_id)
     .fetch_optional(&mut **tx)
-    .boxed()
     .await
     .map_err(db)?;
     if let Some(existing) = existing {
@@ -312,7 +310,7 @@ pub(crate) async fn record_review(
     }
     let row = sqlx::query("SELECT c.stability,c.difficulty,c.last_reviewed_at,c.due_at,c.interval_days,c.review_count,c.lapses,t.target_at FROM study_cards c LEFT JOIN study_deck_targets t ON t.deck_id=c.deck_id WHERE c.id=?")
         .bind(review.card_id)
-        .fetch_optional(&mut **tx).boxed()
+        .fetch_optional(&mut **tx)
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;
@@ -429,14 +427,13 @@ impl StudyRepository {
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM conversations WHERE id=?")
             .bind(conversation_id)
             .fetch_one(&mut *read)
-            .boxed()
             .await
             .map_err(db)?;
         if exists == 0 {
             return Err(AppError::NotFound("Conversation no longer exists".into()));
         }
         let rows = sqlx::query("SELECT content, metadata FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' AND metadata IS NOT NULL ORDER BY created_at, id")
-            .bind(conversation_id).fetch_all(&mut *read).boxed().await.map_err(db)?;
+            .bind(conversation_id).fetch_all(&mut *read).await.map_err(db)?;
         read.commit().await.map_err(db)?;
         let mut claims = Vec::new();
         let mut seen_claims = std::collections::HashSet::new();
@@ -522,7 +519,7 @@ impl StudyRepository {
 
     pub async fn list(&self, now: i64) -> Result<Vec<StudyDeckSummaryDto>> {
         let rows = sqlx::query("SELECT d.*, (SELECT count(*) FROM study_cards c WHERE c.deck_id=d.id) card_count, (SELECT count(*) FROM study_cards c WHERE c.deck_id=d.id AND c.due_at<=?) due_count, (SELECT count(*) FROM study_reviews r JOIN study_cards c ON r.card_id=c.id WHERE c.deck_id=d.id AND r.mode='quiz') quiz_attempts, (SELECT count(*) FROM study_reviews r JOIN study_cards c ON r.card_id=c.id WHERE c.deck_id=d.id AND r.mode='quiz' AND r.correct=1) quiz_correct, (SELECT t.target_at FROM study_deck_targets t WHERE t.deck_id=d.id) target_at FROM study_decks d ORDER BY d.created_at DESC, d.id")
-            .bind(now).fetch_all(&self.pool).boxed().await.map_err(db)?;
+            .bind(now).fetch_all(&self.pool).await.map_err(db)?;
         Ok(rows
             .into_iter()
             .map(|r| StudyDeckSummaryDto {
@@ -544,14 +541,13 @@ impl StudyRepository {
         let mut read = self.pool.begin_read().await.map_err(db)?;
         let row = sqlx::query("SELECT d.*,t.target_at FROM study_decks d LEFT JOIN study_deck_targets t ON t.deck_id=d.id WHERE d.id=?")
             .bind(id)
-            .fetch_optional(&mut *read).boxed()
+            .fetch_optional(&mut *read)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Study deck no longer exists".into()))?;
         let rows = sqlx::query("SELECT * FROM study_cards WHERE deck_id=? ORDER BY rowid")
             .bind(id)
             .fetch_all(&mut *read)
-            .boxed()
             .await
             .map_err(db)?;
         read.commit().await.map_err(db)?;
@@ -575,7 +571,6 @@ impl StudyRepository {
         let exists = sqlx::query("SELECT 1 FROM study_decks WHERE id=?")
             .bind(deck_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?;
         if exists.is_none() {
@@ -617,7 +612,6 @@ impl StudyRepository {
         let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
             .bind(&request.card_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;
@@ -661,7 +655,6 @@ impl StudyRepository {
         let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
             .bind(&current.id)
             .fetch_one(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?;
         let result = card(&row)?;
@@ -674,7 +667,6 @@ impl StudyRepository {
         let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
             .bind(&request.card_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;

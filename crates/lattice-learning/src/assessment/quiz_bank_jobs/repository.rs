@@ -2,7 +2,6 @@
 //! waits for, and a lesson's heading.
 
 use crate::persistence::db;
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqliteConnection;
 
@@ -14,7 +13,6 @@ pub(super) async fn program_revision_in(
     sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
         .bind(program_id)
         .fetch_one(&mut *connection)
-        .boxed()
         .await
         .map_err(db)
 }
@@ -43,7 +41,7 @@ pub(super) async fn pending_item_count_in(
 ) -> Result<i64> {
     sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results WHERE form_id=? AND grade_status='pending'")
         .bind(form_id)
-        .fetch_one(&mut *connection).boxed()
+        .fetch_one(&mut *connection)
         .await
         .map_err(db)
 }
@@ -58,7 +56,6 @@ pub(super) async fn lesson_title_objective_in(
         .bind(lesson_id)
         .bind(program_id)
         .fetch_optional(&mut *connection)
-        .boxed()
         .await
         .map_err(db)
 }

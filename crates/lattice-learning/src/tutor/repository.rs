@@ -4,7 +4,7 @@ use super::binding::CourseBinding;
 use super::cards::DueCard;
 use crate::persistence::db;
 use futures::stream::BoxStream;
-use futures::{FutureExt, StreamExt, TryStreamExt};
+use futures::{StreamExt, TryStreamExt};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
@@ -15,7 +15,6 @@ pub(super) async fn program_status(
     sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
         .bind(program_id)
         .fetch_optional(&mut *conn)
-        .boxed()
         .await
         .map_err(db)
 }
@@ -30,7 +29,6 @@ pub(super) async fn lesson_in_program(
             .bind(lesson_id)
             .bind(program_id)
             .fetch_optional(&mut *conn)
-            .boxed()
             .await
             .map_err(db)?;
     Ok(owned.is_some())
@@ -63,7 +61,6 @@ pub(super) async fn conversation_course(
     let row = sqlx::query("SELECT program_id, lesson_id FROM conversations WHERE id=?")
         .bind(conversation_id)
         .fetch_optional(pool)
-        .boxed()
         .await
         .map_err(db)?;
     Ok(row.and_then(|row| {
@@ -95,7 +92,7 @@ pub(super) async fn due_count(pool: &SqlitePool, program_id: &str, at: i64) -> R
     )
     .bind(program_id)
     .bind(at)
-    .fetch_one(pool).boxed()
+    .fetch_one(pool)
     .await
     .map_err(db)
 }
@@ -111,7 +108,7 @@ pub(super) async fn due_cards(
     )
     .bind(program_id)
     .bind(at)
-    .fetch_all(pool).boxed()
+    .fetch_all(pool)
     .await
     .map_err(db)?;
     rows.iter()
@@ -146,7 +143,7 @@ pub(super) async fn card_to_rate(
     )
     .bind(card_id)
     .bind(program_id)
-    .fetch_optional(pool).boxed()
+    .fetch_optional(pool)
     .await
     .map_err(db)?;
     Ok(row.map(|row| CardToRate {
@@ -161,7 +158,6 @@ pub(super) async fn card_due_at(pool: &SqlitePool, card_id: &str) -> Result<i64>
     sqlx::query_scalar("SELECT due_at FROM study_cards WHERE id=?")
         .bind(card_id)
         .fetch_one(pool)
-        .boxed()
         .await
         .map_err(db)
 }
@@ -178,7 +174,6 @@ pub(super) async fn source_text(
     .bind(program_id)
     .bind(version_id)
     .fetch_optional(pool)
-    .boxed()
     .await
     .map_err(db)?;
     Ok(row.map(|row| (row.get("title"), row.get("full_text"))))

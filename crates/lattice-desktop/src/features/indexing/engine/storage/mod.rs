@@ -26,7 +26,6 @@ use crate::features::indexing::engine::chunker::TextChunk;
 use crate::features::indexing::engine::error::Result;
 use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;
-use futures::FutureExt;
 use lattice_core::application::ports::IngestedDocumentStorePort;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::persistence::Transactions;
@@ -229,7 +228,6 @@ impl IndexStorageTrait for IndexStorage {
         )
         .bind(document_id)
         .fetch_all(&self.pool)
-        .boxed()
         .await?)
     }
 

@@ -1,7 +1,6 @@
 //! What Explorer keeps in `lattice.db`: `conversations.explorer_root`, and
 //! the folders list in `explorer_folders`.
 
-use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::{AppError, Result};
 use sqlx::{Row, SqlitePool};
@@ -32,7 +31,6 @@ pub async fn conversation_root(pool: &SqlitePool, conversation_id: &str) -> Resu
     sqlx::query_scalar::<_, Option<String>>("SELECT explorer_root FROM conversations WHERE id = ?")
         .bind(conversation_id)
         .fetch_optional(pool)
-        .boxed()
         .await
         .map(Option::flatten)
         .map_err(|e| AppError::Database(format!("Failed to read the Explorer folder: {e}")))
@@ -118,7 +116,6 @@ pub async fn list_folders(pool: &SqlitePool) -> Result<Vec<FolderRow>> {
          ORDER BY pinned DESC, last_opened_at DESC, root",
     )
     .fetch_all(pool)
-    .boxed()
     .await
     .map_err(folder_error("list the Explorer folders"))?;
     Ok(rows
@@ -237,7 +234,6 @@ pub async fn folder_space(pool: &SqlitePool, root: &str) -> Result<String> {
         sqlx::query_scalar("SELECT space_id FROM explorer_folders WHERE root = ?")
             .bind(root)
             .fetch_optional(pool)
-            .boxed()
             .await
             .map_err(folder_error("read the folder's space"))?;
     Ok(space
@@ -252,7 +248,6 @@ pub async fn space_is_open(pool: &SqlitePool, space_id: &str) -> Result<bool> {
     )
     .bind(space_id)
     .fetch_one(pool)
-    .boxed()
     .await
     .map(|count| count > 0)
     .map_err(folder_error("check the space"))
@@ -295,7 +290,6 @@ pub async fn thread_counts(pool: &SqlitePool) -> Result<HashMap<String, u32>> {
          WHERE explorer_root IS NOT NULL AND tangent_parent_id IS NULL GROUP BY explorer_root",
     )
     .fetch_all(pool)
-    .boxed()
     .await
     .map_err(folder_error("count the Explorer threads"))?;
     Ok(rows
@@ -318,7 +312,6 @@ pub async fn folder_threads(pool: &SqlitePool, root: &str) -> Result<Vec<String>
     )
     .bind(root)
     .fetch_all(pool)
-    .boxed()
     .await
     .map_err(folder_error("list the Explorer threads"))
 }

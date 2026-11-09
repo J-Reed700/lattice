@@ -5,7 +5,6 @@ use super::{
     db, invalid, json_string,
     remap::{remap_id_array, remap_nested_value},
 };
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use sqlx::{Column, Row, SqliteConnection, TypeInfo};
@@ -139,7 +138,6 @@ pub(super) async fn snapshot_table(
     let pragma = format!("PRAGMA table_info({})", spec.table);
     let cols = sqlx::query(&pragma)
         .fetch_all(&mut *connection)
-        .boxed()
         .await
         .map_err(db)?;
     let columns: Vec<String> = cols
@@ -160,7 +158,6 @@ pub(super) async fn snapshot_table(
     let rows = sqlx::query(&query)
         .bind(program_id)
         .fetch_all(&mut *connection)
-        .boxed()
         .await
         .map_err(db)?;
     let mut values = Vec::with_capacity(rows.len());
@@ -222,11 +219,7 @@ pub(super) async fn checked_rows(
         ));
     }
     let pragma = format!("PRAGMA table_info({})", spec.table);
-    let cols = sqlx::query(&pragma)
-        .fetch_all(&mut *tx)
-        .boxed()
-        .await
-        .map_err(db)?;
+    let cols = sqlx::query(&pragma).fetch_all(&mut *tx).await.map_err(db)?;
     let expected: Vec<String> = cols
         .into_iter()
         .map(|row| row.get::<String, _>("name"))

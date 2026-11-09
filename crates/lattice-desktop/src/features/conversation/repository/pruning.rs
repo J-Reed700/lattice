@@ -3,7 +3,6 @@
 use super::ConversationRepository;
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use chrono::Utc;
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 
@@ -105,7 +104,6 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to load last user message: {}", e)))?;
 
@@ -145,7 +143,6 @@ impl ConversationRepository {
         .bind(message_id)
         .bind(conversation_id)
         .fetch_optional(&mut **tx)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to locate message: {}", e)))
     }
@@ -170,7 +167,6 @@ impl ConversationRepository {
         .bind(&anchor.created_at)
         .bind(anchor.rowid)
         .fetch_all(&mut **tx)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to list messages to remove: {}", e)))
     }
@@ -251,7 +247,6 @@ impl ConversationRepository {
         )
         .bind(conversation_id)
         .fetch_one(&mut **tx)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to recount messages: {}", e)))?;
 

@@ -12,7 +12,6 @@ use crate::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 
@@ -35,7 +34,6 @@ fn assert_not_found<T: std::fmt::Debug>(result: Result<T>) {
 async fn programs(pool: &SqlitePool) -> Result<i64> {
     Ok(sqlx::query_scalar("SELECT COUNT(*) FROM learning_programs")
         .fetch_one(pool)
-        .boxed()
         .await?)
 }
 
@@ -168,7 +166,6 @@ async fn only_a_pending_preview_can_be_cancelled_or_applied() -> Result<()> {
         sqlx::query_scalar("SELECT status FROM learning_pack_import_previews WHERE id=?")
             .bind(&pending.id)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     assert_eq!(status, "applied");
     assert_invalid(packs.apply(&apply_request(&pending)).await);
@@ -197,7 +194,6 @@ async fn a_pack_rewritten_after_preview_is_not_applied() -> Result<()> {
         sqlx::query_scalar("SELECT status FROM learning_pack_import_previews WHERE id=?")
             .bind(&previewed.id)
             .fetch_one(&pool)
-            .boxed()
             .await?;
     assert_eq!(
         status, "pending",

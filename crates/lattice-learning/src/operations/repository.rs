@@ -1,6 +1,5 @@
 use super::Operation;
 use crate::persistence::{db, now};
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqliteConnection};
 
@@ -56,7 +55,7 @@ pub(super) async fn find(
 ) -> Result<Option<RecordedOperation>> {
     let row = sqlx::query("SELECT scope,kind,program_id,subject_id,payload_hash,result_json FROM learning_operations WHERE operation_id=?")
         .bind(operation_id)
-        .fetch_optional(connection).boxed()
+        .fetch_optional(connection)
         .await
         .map_err(db)?;
     Ok(row.map(|row| RecordedOperation {

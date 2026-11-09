@@ -1,5 +1,4 @@
 use super::*;
-use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -36,7 +35,6 @@ impl ConversationRepository {
         .bind(&request.message_id)
         .bind(&request.conversation_id)
         .fetch_one(&mut *tx)
-        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to verify message bookmark target: {}", e))
@@ -123,7 +121,6 @@ impl ConversationRepository {
         .bind(&request.message_id)
         .bind(&request.conversation_id)
         .fetch_one(&mut *tx)
-        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to verify message deletion target: {}", e))
@@ -179,7 +176,6 @@ impl ConversationRepository {
         )
         .bind(&request.conversation_id)
         .fetch_one(&mut *tx)
-        .boxed()
         .await
         .map_err(|e| {
             AppError::Database(format!(
@@ -308,7 +304,6 @@ impl ConversationRepository {
         let rows = qb
             .build_query_as::<MessageBookmarkRow>()
             .fetch_all(&self.pool)
-            .boxed()
             .await
             .map_err(|e| AppError::Database(format!("Failed to list message bookmarks: {}", e)))?;
 

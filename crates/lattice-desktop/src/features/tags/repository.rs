@@ -2,7 +2,6 @@
 //! the `TagMapper` layer; DB models stay internal.
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
-use futures::FutureExt;
 use lattice_core::application::ports::{Filter, RepositoryPort};
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
@@ -62,7 +61,7 @@ async fn tag_by_name(connection: &mut SqliteConnection, name: &str) -> Result<Op
             "#,
         name
     )
-    .fetch_optional(connection).boxed()
+    .fetch_optional(connection)
     .await
     .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
 
@@ -139,7 +138,6 @@ impl TagRepository {
             "#,
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to get tags with counts: {}", e)))?;
 

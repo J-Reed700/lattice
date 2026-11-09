@@ -10,7 +10,6 @@ use crate::assessment_engine as engine;
 use crate::dto::*;
 use crate::persistence::{db, now};
 use crate::quiz_bank_jobs;
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
@@ -41,7 +40,7 @@ struct FormFacts {
 async fn form_facts(connection: &mut SqliteConnection, form_id: &str) -> Result<FormFacts> {
     let h = sqlx::query("SELECT program_id,purpose,mode,allowed_aids_json FROM learning_assessment_forms WHERE id=?")
         .bind(form_id)
-        .fetch_optional(&mut *connection).boxed()
+        .fetch_optional(&mut *connection)
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
@@ -69,7 +68,7 @@ async fn record_evidence(
     let item = sqlx::query("SELECT format,difficulty FROM learning_assessment_form_items WHERE form_id=? AND ordinal=?")
         .bind(form_id)
         .bind(ordinal)
-        .fetch_one(&mut *connection).boxed()
+        .fetch_one(&mut *connection)
         .await
         .map_err(db)?;
     let format = parse_format(item.get("format"))?;
@@ -77,7 +76,7 @@ async fn record_evidence(
     let assistance: Option<String> = sqlx::query_scalar("SELECT assistance_json FROM learning_assessment_response_revisions WHERE form_id=? AND item_ordinal=? ORDER BY revision DESC LIMIT 1")
         .bind(form_id)
         .bind(ordinal)
-        .fetch_optional(&mut *connection).boxed()
+        .fetch_optional(&mut *connection)
         .await
         .map_err(db)?;
     let used: Vec<String> = assistance
@@ -87,7 +86,7 @@ async fn record_evidence(
     let outcomes = sqlx::query("SELECT fio.outcome_id,o.lesson_id FROM learning_assessment_form_item_outcomes fio LEFT JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE fio.form_id=? AND fio.item_ordinal=? ORDER BY fio.outcome_id")
         .bind(form_id)
         .bind(ordinal)
-        .fetch_all(&mut *connection).boxed()
+        .fetch_all(&mut *connection)
         .await
         .map_err(db)?;
     let uncertain = overridden
@@ -135,7 +134,7 @@ async fn record_evidence(
                 .bind(&facts.program_id)
                 .bind(&outcome_id)
                 .bind(form_id)
-                .fetch_one(&mut *connection).boxed()
+                .fetch_one(&mut *connection)
                 .await
                 .map_err(db)?;
             if latest.is_some_and(|date| now() - date > STALE_EVIDENCE_MS) {
@@ -208,7 +207,6 @@ impl LearningAssessmentRepository {
         .bind(&req.form_id)
         .bind(&req.program_id)
         .fetch_optional(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Quiz not found".into()))?;
@@ -240,7 +238,6 @@ impl LearningAssessmentRepository {
             .bind(&req.form_id)
             .bind(ordinal)
             .fetch_one(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?;
             let order: Vec<usize> = decode(drawn.get("option_order_json"))?;
@@ -430,14 +427,13 @@ impl LearningAssessmentRepository {
     ) -> Result<()> {
         let rows = sqlx::query("SELECT grade_status,points_earned,points_possible,learner_override FROM learning_assessment_item_results WHERE form_id=?")
             .bind(form_id)
-            .fetch_all(&mut *connection).boxed()
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?;
         let passing: f64 =
             sqlx::query_scalar("SELECT passing_score FROM learning_assessment_forms WHERE id=?")
                 .bind(form_id)
                 .fetch_one(&mut *connection)
-                .boxed()
                 .await
                 .map_err(db)?;
         let mut earned = 0.0;
@@ -516,7 +512,7 @@ impl LearningAssessmentRepository {
         let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results r JOIN learning_assessment_forms f ON f.id=r.form_id WHERE r.form_id=? AND f.program_id=? AND r.grade_status='pending'")
             .bind(&req.form_id)
             .bind(&req.program_id)
-            .fetch_one(&mut *tx).boxed()
+            .fetch_one(&mut *tx)
             .await
             .map_err(db)?;
         if pending == 0 {

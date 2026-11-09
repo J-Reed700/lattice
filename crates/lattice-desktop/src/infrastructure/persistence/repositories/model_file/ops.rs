@@ -1,5 +1,4 @@
 use chrono::{DateTime, NaiveDateTime, Utc};
-use futures::FutureExt;
 use lattice_core::domain::entities::model_file::ModelFile;
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::shared::error::{AppError, Result};
@@ -98,7 +97,6 @@ pub async fn find_by_id(conn: &mut SqliteConnection, file_id: &str) -> Result<Op
     )
     .bind(file_id)
     .fetch_optional(conn)
-    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, file_id = %file_id, "Failed to find model file by id");
@@ -126,7 +124,6 @@ pub async fn find_by_model_id(
     )
     .bind(model_id)
     .fetch_all(conn)
-    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to find model files by model_id");
@@ -215,7 +212,6 @@ pub async fn count_completed_files(conn: &mut SqliteConnection, model_id: &str) 
     .bind(model_id)
     .bind(&completed_status)
     .fetch_one(conn)
-    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, model_id = %model_id, "Failed to count completed files");
@@ -230,7 +226,6 @@ pub async fn count_total_files(conn: &mut SqliteConnection, model_id: &str) -> R
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM model_files WHERE model_id = ?")
             .bind(model_id)
             .fetch_one(conn)
-            .boxed()
             .await
             .map_err(|e| {
                 error!(error = %e, model_id = %model_id, "Failed to count total files");

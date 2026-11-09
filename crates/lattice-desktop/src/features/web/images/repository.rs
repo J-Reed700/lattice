@@ -7,7 +7,6 @@
 //! source or image URL), leased to a composer draft (`draft:<id>`) until the
 //! user message that carries it claims it and its refs become `att-1…`.
 
-use futures::FutureExt;
 use std::collections::{HashMap, HashSet};
 
 use chrono::Utc;
@@ -171,7 +170,6 @@ impl ImageRepository {
         .bind(&row.request_id)
         .bind(prefix)
         .fetch_one(&self.pool)
-        .boxed()
         .await
         .map_err(db)
     }
@@ -204,7 +202,6 @@ impl ImageRepository {
         .bind(Utc::now().to_rfc3339())
         .bind(source_id)
         .fetch_optional(&self.pool)
-        .boxed()
         .await
         .map_err(db)
     }
@@ -235,7 +232,6 @@ impl ImageRepository {
         .bind(source_id)
         .bind(conversation_id)
         .fetch_optional(&self.pool)
-        .boxed()
         .await
         .map_err(db)
     }
@@ -329,7 +325,6 @@ impl ImageRepository {
         sqlx::query_as(&format!("SELECT {COLUMNS} FROM chat_images WHERE id = ?"))
             .bind(id)
             .fetch_optional(&self.pool)
-            .boxed()
             .await
             .map_err(db)
     }
@@ -365,7 +360,6 @@ impl ImageRepository {
         .bind(request_id)
         .bind(message_id)
         .fetch_all(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?;
         tx.commit().await.map_err(db)?;
@@ -379,7 +373,6 @@ impl ImageRepository {
         ))
         .bind(request_id)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(db)
     }
@@ -390,7 +383,6 @@ impl ImageRepository {
         ))
         .bind(message_id)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(db)
     }
@@ -401,7 +393,6 @@ impl ImageRepository {
         ))
         .bind(conversation_id)
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(db)
     }
@@ -464,7 +455,6 @@ impl ImageRepository {
     pub async fn live_files(&self) -> Result<HashSet<(String, String)>> {
         let rows: Vec<(String, String)> = sqlx::query_as("SELECT id, ext FROM chat_images")
             .fetch_all(&self.pool)
-            .boxed()
             .await
             .map_err(db)?;
         Ok(rows.into_iter().collect())
@@ -478,7 +468,6 @@ impl ImageRepository {
             "SELECT {COLUMNS} FROM chat_images WHERE message_id IS NULL"
         ))
         .fetch_all(&self.pool)
-        .boxed()
         .await
         .map_err(db)
     }
@@ -505,7 +494,6 @@ async fn rows_in_conversation(
     let rows: Vec<ImageRow> = select
         .build_query_as()
         .fetch_all(connection)
-        .boxed()
         .await
         .map_err(db)?;
     Ok(in_order(rows, ids))

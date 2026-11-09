@@ -10,7 +10,6 @@ use crate::dto::*;
 use crate::persistence::{db, now};
 use crate::quiz_bank_jobs::QUIZ_BANK;
 use crate::quiz_blueprints;
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
@@ -41,7 +40,7 @@ async fn bank_job(
         .bind(program_id)
         .bind(scope_kind_name(scope.kind))
         .bind(&scope.id)
-        .fetch_optional(&mut *connection).boxed()
+        .fetch_optional(&mut *connection)
         .await
         .map_err(db)?;
     Ok(row.map(|r| (r.get("id"), r.get("status"))))
@@ -70,7 +69,7 @@ impl LearningAssessmentRepository {
             .bind(program_id)
             .bind(scope_kind_name(scope.kind))
             .bind(&scope.id)
-            .fetch_all(&mut *connection).boxed()
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?
             .iter()
@@ -106,7 +105,7 @@ impl LearningAssessmentRepository {
             .bind(program_id)
             .bind(scope_kind_name(scope.kind))
             .bind(&scope.id)
-            .fetch_optional(&mut *connection).boxed()
+            .fetch_optional(&mut *connection)
             .await
             .map_err(db)?;
         let active_form_id: Option<String> = active.as_ref().map(|r| r.get("id"));
@@ -205,7 +204,6 @@ impl LearningAssessmentRepository {
         let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_optional(&mut *tx)
-            .boxed()
             .await
             .map_err(db)?;
         if exists.is_none() {
@@ -373,7 +371,7 @@ impl LearningAssessmentRepository {
     ) -> Result<Vec<LearningOutcomeDefinitionDto>> {
         sqlx::query("SELECT * FROM learning_outcome_definitions WHERE program_id=? ORDER BY module_id,ordinal,id")
             .bind(program_id)
-            .fetch_all(&mut *connection).boxed()
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?
             .into_iter()
@@ -397,7 +395,7 @@ impl LearningAssessmentRepository {
     ) -> Result<Vec<LearningEvidenceEventDto>> {
         sqlx::query("SELECT * FROM learning_evidence_events WHERE program_id=? ORDER BY observed_at DESC,id LIMIT 1000")
             .bind(program_id)
-            .fetch_all(&mut *connection).boxed()
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?
             .into_iter()
@@ -425,7 +423,7 @@ impl LearningAssessmentRepository {
     ) -> Result<Vec<LearningFollowUpRecommendationDto>> {
         sqlx::query("SELECT * FROM learning_follow_up_recommendations WHERE program_id=? ORDER BY created_at DESC,id LIMIT 500")
             .bind(program_id)
-            .fetch_all(&mut *connection).boxed()
+            .fetch_all(&mut *connection)
             .await
             .map_err(db)?
             .into_iter()

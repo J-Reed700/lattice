@@ -3,7 +3,6 @@
 
 use super::{Attempt, AttemptMode, AttemptStatus, Graded, Submission};
 use crate::persistence::{db, decode, encode, now};
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use serde::de::DeserializeOwned;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
@@ -107,7 +106,7 @@ pub(super) async fn recent_ids_in(
     )
     .bind(program_id)
     .bind(i64::from(limit))
-    .fetch_all(&mut *connection).boxed()
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)
 }
@@ -119,7 +118,7 @@ pub(super) async fn find_in(
 ) -> Result<Option<Attempt>> {
     sqlx::query("SELECT id,drill_id,mode,started_at,submitted_at,time_spent_ms,findings_json,fix_files_json,status,assessment_json,score_json,ratings_json,fix_json,grader_model,graded_at,grading_error,regrades FROM learning_drill_attempts WHERE id=?")
         .bind(id)
-        .fetch_optional(connection).boxed()
+        .fetch_optional(connection)
         .await
         .map_err(db)?
         .as_ref()

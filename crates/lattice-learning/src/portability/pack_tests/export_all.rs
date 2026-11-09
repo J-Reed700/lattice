@@ -12,7 +12,6 @@ use crate::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqlitePool;
 use std::path::Path;
@@ -271,7 +270,6 @@ async fn a_retry_rewrites_a_pack_deleted_since_the_first_run() -> Result<()> {
         sqlx::query_scalar("SELECT destination_path FROM learning_pack_exports WHERE program_id=?")
             .bind(&geometry.summary.id)
             .fetch_all(&pool)
-            .boxed()
             .await?;
     assert_eq!(recorded, [deleted]);
     Ok(())

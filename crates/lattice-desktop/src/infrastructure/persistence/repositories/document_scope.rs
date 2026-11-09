@@ -1,6 +1,5 @@
 //! SQLite-backed document scope persistence shared by import workflows.
 
-use futures::FutureExt;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::persistence::Transactions;
@@ -27,7 +26,6 @@ impl DocumentScopePort for SqliteDocumentScope {
         )
         .bind(id)
         .fetch_one(&self.pool)
-        .boxed()
         .await?)
     }
     async fn conversation_exists(&self, id: &str) -> Result<bool> {
@@ -37,7 +35,6 @@ impl DocumentScopePort for SqliteDocumentScope {
             )
             .bind(id)
             .fetch_one(&self.pool)
-            .boxed()
             .await?,
         )
     }
@@ -93,7 +90,6 @@ impl DocumentScopePort for SqliteDocumentScope {
         )
         .bind(document_id)
         .fetch_optional(&self.pool)
-        .boxed()
         .await?
         .flatten())
     }
@@ -104,7 +100,6 @@ impl DocumentScopePort for SqliteDocumentScope {
         )
         .bind(conversation_id)
         .fetch_all(&self.pool)
-        .boxed()
         .await?)
     }
 
@@ -118,7 +113,6 @@ impl DocumentScopePort for SqliteDocumentScope {
              ORDER BY d.rowid",
         )
         .fetch_all(&self.pool)
-        .boxed()
         .await?)
     }
 }

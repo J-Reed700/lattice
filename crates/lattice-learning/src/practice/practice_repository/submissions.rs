@@ -1,6 +1,5 @@
 //! Submitting attempts for grading and deciding tutor proposals.
 use super::*;
-use futures::FutureExt;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningPracticeRepository {
@@ -35,14 +34,13 @@ impl LearningPracticeRepository {
         if s.revision != req.expected_revision {
             return Err(invalid("Practice session changed; reload and retry."));
         }
-        let artifact=sqlx::query("SELECT text FROM learning_practice_artifact_revisions WHERE session_id=? AND revision=?").bind(&req.session_id).bind(ar).fetch_one(&mut *tx).boxed().await.map_err(db)?;
+        let artifact=sqlx::query("SELECT text FROM learning_practice_artifact_revisions WHERE session_id=? AND revision=?").bind(&req.session_id).bind(ar).fetch_one(&mut *tx).await.map_err(db)?;
         let artifact_text: String = artifact.get("text");
         let assistance_rows = sqlx::query(
             "SELECT * FROM learning_practice_assistance WHERE session_id=? ORDER BY created_at,id",
         )
         .bind(&req.session_id)
         .fetch_all(&mut *tx)
-        .boxed()
         .await
         .map_err(db)?;
         let assistance = assistance_rows

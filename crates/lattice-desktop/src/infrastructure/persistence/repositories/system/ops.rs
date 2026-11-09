@@ -1,4 +1,3 @@
-use futures::FutureExt;
 use lattice_core::shared::error::AppError;
 use sqlx::SqliteConnection;
 use tracing::{debug, error, info};
@@ -28,7 +27,6 @@ pub async fn get_database_size(conn: &mut SqliteConnection) -> Result<i64, AppEr
         "SELECT page_count * page_size as size FROM pragma_page_count(), pragma_page_size()",
     )
     .fetch_one(conn)
-    .boxed()
     .await
     .map_err(|e| {
         error!(error = %e, "Failed to get database size");
@@ -42,7 +40,6 @@ pub async fn get_database_size(conn: &mut SqliteConnection) -> Result<i64, AppEr
 pub async fn integrity_check(conn: &mut SqliteConnection) -> Result<bool, AppError> {
     let result: (String,) = sqlx::query_as("PRAGMA integrity_check")
         .fetch_one(conn)
-        .boxed()
         .await
         .map_err(|e| {
             error!(error = %e, "Failed to check database integrity");

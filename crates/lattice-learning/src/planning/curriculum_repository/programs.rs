@@ -6,7 +6,6 @@
 
 use super::LearningCurriculumRepository;
 use crate::persistence::db;
-use futures::FutureExt;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::Row;
 
@@ -30,7 +29,6 @@ impl LearningCurriculumRepository {
         )
         .bind(program_id)
         .fetch_optional(&self.pool)
-        .boxed()
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;

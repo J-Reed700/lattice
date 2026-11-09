@@ -3,7 +3,6 @@
 use super::checksum::calculate_checksum;
 use crate::features::indexing::engine::error::{IndexingError, Result};
 use chrono::Utc;
-use futures::FutureExt;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::fs::path::path_to_string;
@@ -154,7 +153,6 @@ async fn insert_document_metadata(
     .bind(&indexed_at)
     .bind(&checksum)
     .fetch_one(&mut **tx)
-    .boxed()
     .await?;
 
     if actual_id != doc_id {

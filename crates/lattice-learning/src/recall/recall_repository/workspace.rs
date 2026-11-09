@@ -1,6 +1,5 @@
 //! Reading the recall workspace: cards, their versions and schedules, and duplicate suggestions.
 use super::*;
-use futures::FutureExt;
 use sqlx::SqliteConnection;
 
 /// The card's FSRS schedule as the recall workspace reports it.
@@ -24,7 +23,6 @@ impl LearningRecallRepository {
             sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *read)
-                .boxed()
                 .await
                 .map_err(db)?;
         if program_exists.is_none() {
@@ -34,7 +32,6 @@ impl LearningRecallRepository {
             sqlx::query_scalar("SELECT deck_id FROM learning_memory WHERE program_id=?")
                 .bind(program_id)
                 .fetch_optional(&mut *read)
-                .boxed()
                 .await
                 .map_err(db)?
                 .flatten();
@@ -50,7 +47,7 @@ impl LearningRecallRepository {
         let rows = sqlx::query("SELECT p.*,c.deck_id,c.due_at,c.interval_days,c.review_count,c.stability,c.difficulty,c.last_reviewed_at FROM learning_recall_card_profiles p JOIN study_cards c ON c.id=p.card_id WHERE p.program_id=? AND c.deck_id=? ORDER BY p.created_at,c.id")
             .bind(program_id)
             .bind(&deck_id)
-            .fetch_all(&mut *read).boxed()
+            .fetch_all(&mut *read)
             .await
             .map_err(db)?;
         let mut cards = Vec::with_capacity(rows.len());
@@ -98,7 +95,6 @@ impl LearningRecallRepository {
         )
         .bind(card_id)
         .fetch_all(connection)
-        .boxed()
         .await
         .map_err(db)?;
         rows.iter()
@@ -131,7 +127,7 @@ impl LearningRecallRepository {
     ) -> Result<Vec<LearningRecallDuplicateSuggestionDto>> {
         let rows = sqlx::query("SELECT * FROM learning_recall_duplicate_suggestions WHERE program_id=? ORDER BY created_at,id LIMIT 500")
             .bind(program_id)
-            .fetch_all(connection).boxed()
+            .fetch_all(connection)
             .await
             .map_err(db)?;
         rows.iter()

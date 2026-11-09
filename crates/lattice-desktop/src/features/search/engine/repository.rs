@@ -2,7 +2,6 @@ use crate::features::search::engine::fts_query::{self, FtsIndex, FtsQuery};
 use crate::infrastructure::persistence::database::connection::{
     query_with_heavy_timeout, query_with_timeout,
 };
-use futures::FutureExt;
 use lattice_core::application::contracts::search::engine::BM25Result;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -69,7 +68,6 @@ pub(super) async fn bm25_results(
             .bind(match_expression)
             .bind(top_k as i64)
             .fetch_all(&pool)
-            .boxed()
             .await
     })
     .await?;
@@ -154,7 +152,6 @@ pub(super) async fn document_updated_at(
 
     let rows = query_builder
         .fetch_all(pool)
-        .boxed()
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch timestamps: {}", e)))?;
 

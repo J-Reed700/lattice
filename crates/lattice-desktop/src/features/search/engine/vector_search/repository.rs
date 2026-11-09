@@ -1,4 +1,3 @@
-use futures::FutureExt;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
@@ -19,6 +18,6 @@ pub(super) async fn source_stamp_counts(
     .bind(dimension)
     .bind(identity)
     .bind(dimension)
-    .fetch_one(pool).boxed()
+    .fetch_one(pool)
     .await?)
 }

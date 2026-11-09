@@ -1,4 +1,3 @@
-use futures::FutureExt;
 use sqlx::{Row, SqlitePool};
 
 use super::cache_adapter::ModelCatalogStats;
@@ -40,7 +39,6 @@ pub async fn cached_results_json(
     .bind(cache_key)
     .bind(now)
     .fetch_optional(pool)
-    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Cache lookup failed: {}", e)))?;
 
@@ -109,7 +107,6 @@ pub async fn cache_stats(pool: &SqlitePool, now: i64) -> Result<ModelCatalogStat
     .bind(now)
     .bind(now)
     .fetch_one(pool)
-    .boxed()
     .await
     .map_err(|e| AppError::Database(format!("Failed to get cache stats: {}", e)))?;
 
