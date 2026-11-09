@@ -8,6 +8,11 @@ import { codingApi } from '../codingApi';
 import { CodingSession } from '../CodingSession';
 import { caseView, codingRun, codingSession } from './fixtures';
 
+vi.mock('@/lib/api', () => {
+  let count = 0;
+  return { newId: () => `id-${++count}`, unwrap: <T,>(value: T) => value, default: {}, VaultAPI: {} };
+});
+
 vi.mock('../codingApi', () => ({
   codingApi: {
     getSession: vi.fn(),

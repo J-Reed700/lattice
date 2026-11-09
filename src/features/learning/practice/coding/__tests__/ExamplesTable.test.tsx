@@ -50,8 +50,8 @@ describe('ExamplesTable', () => {
     const user = userEvent.setup();
     const { onCheck } = renderTable();
     await user.type(screen.getByLabelText('target'), '6');
-    await user.type(screen.getByLabelText('numbers'), '[3, 3]');
-    await user.type(screen.getByLabelText('expected'), '[0, 1]');
+    await user.type(screen.getByLabelText('numbers'), '[[3, 3]');
+    await user.type(screen.getByLabelText('expected'), '[[0, 1]');
     await user.click(screen.getByRole('button', { name: 'Check' }));
     expect(onCheck).toHaveBeenCalledWith({ ordinal: null, args: ['[3, 3]', '6'], expected: '[0, 1]' });
   });
@@ -105,7 +105,7 @@ describe('ExamplesTable', () => {
     await user.click(screen.getByRole('button', { name: /Edit example 1/ }));
     expect(screen.getByLabelText('numbers')).toHaveValue('[3, 3]');
     await user.clear(screen.getByLabelText('expected'));
-    await user.type(screen.getByLabelText('expected'), '[1, 0]');
+    await user.type(screen.getByLabelText('expected'), '[[1, 0]');
     await user.click(screen.getByRole('button', { name: 'Check' }));
     expect(onCheck).toHaveBeenCalledWith({ ordinal: 4, args: ['[3, 3]', '6'], expected: '[1, 0]' });
   });
@@ -118,9 +118,9 @@ describe('ExamplesTable', () => {
     await user.click(screen.getByRole('button', { name: /Remove example 1/ }));
     expect(screen.getByLabelText('numbers')).toHaveValue('');
 
-    await user.type(screen.getByLabelText('numbers'), '[1]');
+    await user.type(screen.getByLabelText('numbers'), '[[1]');
     await user.type(screen.getByLabelText('target'), '2');
-    await user.type(screen.getByLabelText('expected'), '[0]');
+    await user.type(screen.getByLabelText('expected'), '[[0]');
     await user.click(screen.getByRole('button', { name: 'Check' }));
     expect(onCheck).toHaveBeenCalledWith({ ordinal: null, args: ['[1]', '2'], expected: '[0]' });
   });

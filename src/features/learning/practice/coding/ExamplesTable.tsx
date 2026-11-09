@@ -134,7 +134,7 @@ export function ExamplesTable({ signature, examples, coverage, busy = false, onC
         </div>
       ) : null}
 
-      <form onSubmit={submit} className="mt-3 flex flex-col gap-3">
+      <form onSubmit={(event) => void submit(event)} className="mt-3 flex flex-col gap-3">
         <div className="flex flex-wrap items-end gap-3">
           {signature.params.map((param, index) => (
             <div key={param.name} className="flex min-w-[8rem] flex-1 flex-col gap-1">
