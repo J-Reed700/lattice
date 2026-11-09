@@ -7,8 +7,9 @@ mod evidence;
 mod view;
 
 pub use self::aids::{CodingAids, LiveAids};
+pub use self::evidence::last_draft_seen;
 use self::cases::cases_for;
-use self::evidence::{last_draft_seen, outcome_of, submit_counts};
+use self::evidence::{outcome_of, submit_counts};
 pub use self::view::session_view;
 use super::debrief::Debriefer;
 use super::dto::*;
