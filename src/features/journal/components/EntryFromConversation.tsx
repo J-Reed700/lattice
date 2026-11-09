@@ -100,7 +100,7 @@ export function EntryFromConversation({
 
   const startNewChatFromEntrySources = async () => {
     if (!entry) return;
-    const sources = entrySources.slice(0, 24);
+    const sources = entrySources;
     if (sources.length === 0) {
       onNotify('error', 'No citation sources found for this journal entry yet.');
       return;

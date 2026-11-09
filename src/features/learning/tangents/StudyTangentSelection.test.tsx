@@ -259,8 +259,9 @@ describe('SectionTangentBar', () => {
     renderBar(context, { sectionText: long });
     fireEvent.click(screen.getByTestId('section-tangent-btn-2'));
     const field = screen.getByRole('textbox', { name: 'Passage to explore' });
-    expect(field).toHaveValue('x'.repeat(4000));
-    expect(screen.getByText(`${(4000).toLocaleString()} / 8,000 characters`)).toBeInTheDocument();
+    expect(field).toHaveValue(long);
+    expect(screen.getByText(`${(MAX_STUDY_TANGENT_PASSAGE_LENGTH + 10).toLocaleString()} / 8,000 characters`)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Start tangent' })).toBeDisabled();
 
     fireEvent.change(field, { target: { value: '   ' } });
     expect(screen.getByRole('button', { name: 'Start tangent' })).toBeDisabled();
