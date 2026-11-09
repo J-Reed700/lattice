@@ -73,7 +73,15 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
             ));
         }
         let selected: Vec<_> = requested.iter().filter_map(|i| blinded.get(*i)).collect();
-        let schema = json!({"type":"object","additionalProperties":false,"required":["answers"],"properties":{"answers":{"type":"array","minItems":requested.len(),"maxItems":requested.len(),"items":{"type":"object","additionalProperties":false,"required":["index","correctIndices","reason"],"properties":{"index":{"type":"integer","enum":requested},"correctIndices":{"type":"array","maxItems":4,"uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":3}},"reason":{"type":"string","minLength":1}}}}}});
+        let last_option = requested
+            .iter()
+            .filter_map(|i| questions.get(*i))
+            .filter_map(|q| q.get("options").and_then(Value::as_array))
+            .map(Vec::len)
+            .max()
+            .unwrap_or(1)
+            .saturating_sub(1);
+        let schema = json!({"type":"object","additionalProperties":false,"required":["answers"],"properties":{"answers":{"type":"array","minItems":requested.len(),"maxItems":requested.len(),"items":{"type":"object","additionalProperties":false,"required":["index","correctIndices","reason"],"properties":{"index":{"type":"integer","enum":requested},"correctIndices":{"type":"array","uniqueItems":true,"items":{"type":"integer","minimum":0,"maximum":last_option}},"reason":{"type":"string","minLength":1}}}}}});
         let request =
             json!({"questions":selected,"requestedIndices":requested,"responseErrors":problems})
                 .to_string();
@@ -124,8 +132,7 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
                     .and_then(|q| q.get("options"))
                     .and_then(Value::as_array)
                     .map_or(0, Vec::len);
-                if answer.correct_indices.len() > 4
-                    || answer.correct_indices.iter().any(|i| *i >= options)
+                if answer.correct_indices.iter().any(|i| *i >= options)
                     || answer.correct_indices.iter().collect::<HashSet<_>>().len()
                         != answer.correct_indices.len()
                     || answer.reason.trim().is_empty()
@@ -249,15 +256,15 @@ fn verdict(item: &LearningAssessmentCandidate, solve: &BankSolve) -> KeyVerdict 
     ))
 }
 
-fn bank_schema(indices: &[usize]) -> Value {
+fn bank_schema(indices: &[usize], last_option: usize) -> Value {
     json!({"type":"object","additionalProperties":false,"required":["answers"],"properties":{"answers":{"type":"array","minItems":indices.len(),"maxItems":indices.len(),"items":{"type":"object","additionalProperties":false,"required":["index","reason","correctIndices","answer","blankAnswers","matches","orderedValues"],"properties":{
         "index":{"type":"integer","enum":indices},
         "reason":{"type":"string","minLength":1},
-        "correctIndices":{"type":"array","maxItems":8,"items":{"type":"integer","minimum":0,"maximum":11}},
+        "correctIndices":{"type":"array","items":{"type":"integer","minimum":0,"maximum":last_option}},
         "answer":{"type":"string"},
-        "blankAnswers":{"type":"array","maxItems":8,"items":{"type":"string"}},
-        "matches":{"type":"array","maxItems":8,"items":{"type":"integer","minimum":0,"maximum":11}},
-        "orderedValues":{"type":"array","maxItems":12,"items":{"type":"string"}}
+        "blankAnswers":{"type":"array","items":{"type":"string"}},
+        "matches":{"type":"array","items":{"type":"integer","minimum":0,"maximum":last_option}},
+        "orderedValues":{"type":"array","items":{"type":"string"}}
     }}}}})
 }
 
@@ -282,12 +289,19 @@ pub(crate) async fn review_bank_items(
                 .filter_map(|i| items.get(*i).map(|(c, q)| blinded(*i, c, q)))
                 .collect();
             let prompt = json!({"questions": questions}).to_string();
+            let last_option = indices
+                .iter()
+                .filter_map(|i| items.get(*i))
+                .map(|(c, _)| c.options.len())
+                .max()
+                .unwrap_or(1)
+                .saturating_sub(1);
             (
                 indices.clone(),
                 model_call::structured(
                     BANK_SYSTEM,
                     prompt,
-                    bank_schema(&indices),
+                    bank_schema(&indices, last_option),
                     350 * size + 300,
                     "low",
                 ),
@@ -510,7 +524,7 @@ mod tests {
             Reply::new(json!({"answers":[answer(0, 0), answer(1, 0), answer(2, 0)]}).to_string());
         check(&llm, &candidate()).await?;
         let mut schemas = llm.schemas.lock().unwrap().clone();
-        schemas.push(bank_schema(&[0, 1]));
+        schemas.push(bank_schema(&[0, 1], 3));
         assert!(schemas.len() >= 2);
         for schema in &schemas {
             let rules = text_length_rules(schema);
