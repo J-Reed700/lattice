@@ -96,7 +96,8 @@ full walkthrough.
 ### First launch
 
 On first launch the app shows "Set up AI" with a chat model and an embedding
-model sized to the machine's memory. The dialog shows each model's size and the total before anything downloads. Click Install. The downloads run in the
+model sized to the machine's memory. The dialog shows each model's size and the
+total before anything downloads. Click Install. The downloads run in the
 background and both models are switched on when they finish. To use a cloud
 provider instead, open **Settings > AI > Chat** and save its API key.
 
@@ -256,4 +257,3 @@ with "Set as the latest release" ticked.
 ## License
 
 Lattice is available under the [MIT License](LICENSE).
-

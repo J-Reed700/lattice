@@ -90,6 +90,8 @@ jobs:
             if (-not (Test-Path (Join-Path $nsis $required))) { throw "NSIS tools incomplete: $required is missing" }
           }
       - name: Build the installer
+        env:
+          STATIC_VCRUNTIME: 'true'
         run: npm run tauri -- build --ci --bundles ${{ matrix.bundles }}
       - name: Locate the installer
         id: bundle
@@ -119,6 +121,19 @@ jobs:
           if (-not $installed) { throw 'The installer finished but the Lattice executable was not found.' }
           Write-Host "Installed $($exe.FullName)"
           if (-not (Get-ChildItem $installed -Filter 'llama-server*.exe')) { throw "No llama-server*.exe in $installed" }
+          # No installed binary may import the VC runtime (clean PCs lack it).
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw 'dumpbin.exe was not found.' }
+          foreach ($binary in Get-ChildItem $installed -Filter '*.exe' -Recurse | Where-Object { $_.Name -notmatch '^uninstall' }) {
+            $output = & $dumpbin /nologo /dependents $binary.FullName
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed on $($binary.FullName)" }
+            $output | Write-Host
+            $dlls = $output | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() }
+            foreach ($dll in $dlls) {
+              if ($dll -match '^(vcruntime140(_1)?|msvcp140(_\d+)?|concrt140|vccorlib140)\.dll$') { throw "$($binary.Name) imports $dll, which needs the Visual C++ Redistributable." }
+            }
+          }
       - name: Smoke check the installer (macOS)
         if: runner.os == 'macOS'
         env:
