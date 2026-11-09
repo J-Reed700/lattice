@@ -117,8 +117,13 @@ impl LearningCurriculumRepository {
     }
 
     pub(crate) async fn seed_accepted(&self, program_id: &str) -> Result<()> {
-        let seeded: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
-            .bind(program_id).fetch_one(&self.pool).await.map_err(db)?;
+        let seeded: i64 = {
+            let mut read = self.pool.begin_read().await.map_err(db)?;
+            let seeded = sqlx::query_scalar("SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
+                .bind(program_id).fetch_one(&mut *read).await.map_err(db)?;
+            read.commit().await.map_err(db)?;
+            seeded
+        };
         if seeded > 0 {
             return Ok(());
         }

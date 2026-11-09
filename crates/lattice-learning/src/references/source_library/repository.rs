@@ -48,8 +48,13 @@ where
 
 /// Finalizes SQL-migrated legacy snapshots in one transaction.
 pub(super) async fn backfill_legacy(pool: &SqlitePool, program_id: &str) -> Result<()> {
-    let waiting: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_source_versions WHERE program_id=? AND extraction_version=? AND content_sha256='' LIMIT 1")
-        .bind(program_id).bind(LEGACY_EXTRACTION).fetch_optional(pool).await.map_err(db)?;
+    let waiting: Option<i64> = {
+        let mut read = pool.begin_read().await.map_err(db)?;
+        let waiting = sqlx::query_scalar("SELECT 1 FROM learning_source_versions WHERE program_id=? AND extraction_version=? AND content_sha256='' LIMIT 1")
+            .bind(program_id).bind(LEGACY_EXTRACTION).fetch_optional(&mut *read).await.map_err(db)?;
+        read.commit().await.map_err(db)?;
+        waiting
+    };
     if waiting.is_none() {
         return Ok(());
     }
