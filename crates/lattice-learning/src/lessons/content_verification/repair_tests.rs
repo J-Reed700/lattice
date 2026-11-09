@@ -932,7 +932,7 @@ async fn a_target_whose_correction_was_put_back_goes_to_its_retry_and_the_groups
         for (step, outcome) in [
             (Step::Read(Reading::Parts), Outcome::Unproven),
             (Step::Research, Outcome::FoundNothing),
-            (Step::Read(Reading::Page), Outcome::Unproven),
+            (Step::Read(Reading::Page), Outcome::Refuted),
         ] {
             assert!(ledger.record_step(&policy, id, step, outcome).await?);
         }
@@ -1291,12 +1291,12 @@ async fn at_the_cut(ledger: &mut ClaimLedger, id: &ClaimId) -> Result<()> {
     for (step, outcome) in [
         (Step::Read(Reading::Parts), Outcome::Unproven),
         (Step::Research, Outcome::FoundNothing),
-        (Step::Read(Reading::Page), Outcome::Unproven),
+        (Step::Read(Reading::Page), Outcome::Refuted),
         (
             Step::Rewrite(Goal::WhatThePassageStates),
             Outcome::Rewritten,
         ),
-        (Step::Read(Reading::Parts), Outcome::Unproven),
+        (Step::Read(Reading::Parts), Outcome::Refuted),
     ] {
         assert!(ledger.record_step(&policy, id, step, outcome).await?);
     }

@@ -380,7 +380,7 @@ fn a_rewrite_reached_without_a_refuted_edge_breaks_the_ninth_invariant() {
 
 #[test]
 fn a_cut_reached_without_a_refuted_edge_breaks_the_ninth_invariant() {
-    let found = broken(Class::Reasoning, "r.final", |node| {
+    let found = broken(Class::Reasoning, "r.read", |node| {
         node.on(&[Outcome::NeedsSource], Next::to("r.cut"))
     });
     let cut = Violation::RewriteWithoutRefutation {

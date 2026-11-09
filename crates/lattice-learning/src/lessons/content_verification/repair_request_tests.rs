@@ -29,7 +29,7 @@ const LEFT_AS_IT_WAS: &str = "The repair left the sentence as it was.";
 const AT_REWRITE: [(Step, Outcome); 3] = [
     (Step::Read(Reading::Parts), Outcome::Unproven),
     (Step::Research, Outcome::FoundNothing),
-    (Step::Read(Reading::Page), Outcome::Unproven),
+    (Step::Read(Reading::Page), Outcome::Refuted),
 ];
 
 /// A model that extracts the statements it is given, as `Classes` does, and
