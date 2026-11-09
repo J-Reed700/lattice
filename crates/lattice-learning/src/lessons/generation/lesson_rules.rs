@@ -6,7 +6,9 @@
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text};
-use crate::content_verification::{figures, names_a_source, needs_citation, Givens, CITED_KINDS};
+use crate::content_verification::{
+    figures, names_a_source, needs_citation, quoted_wording, Givens, CITED_KINDS,
+};
 use crate::lessons::repeats;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
@@ -164,10 +166,7 @@ fn specifics(sentence: &str, givens: &Givens) -> Vec<String> {
     let own = figures(sentence)
         .filter(|figure| !givens.holds(figure))
         .map(str::to_owned);
-    let quoted = lazy_regex::regex!(r#"['"‘’“”]([^'"‘’“”]{12,})['"‘’“”]"#)
-        .captures_iter(sentence)
-        .filter_map(|captures| captures.get(1))
-        .map(|found| found.as_str().to_owned());
+    let quoted = quoted_wording(sentence).map(str::to_owned);
     own.chain(quoted).collect()
 }
 

@@ -782,3 +782,30 @@ fn prose_after_a_list_has_ended_is_compared_again() {
     assert_eq!(findings[0].key().site, FindingSite::Section(4));
     assert_eq!(findings[0].passage.as_deref(), Some(SAID));
 }
+
+#[test]
+fn an_apostrophe_is_no_quoted_wording_to_cite() {
+    for sentence in [
+        "Run pwd before ls so you see the shell's folder rather than the window's.",
+        "Don't run rm until you've checked the folder's contents with ls.",
+        "Run pwd before ls so you see the shell\u{2019}s folder rather than the window\u{2019}s.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        assert!(lesson_rules(&candidate).is_empty(), "{sentence}");
+    }
+}
+
+#[test]
+fn a_real_quotation_is_still_quoted_wording_to_cite() {
+    for sentence in [
+        "The manual says 'rm deletes files permanently'.",
+        "Remember \"the shell keeps a working directory\" always.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        let findings = lesson_rules(&candidate);
+        assert_eq!(findings.len(), 1, "{sentence}");
+        assert!(findings[0].note.contains("without citing it"), "{sentence}");
+    }
+}

@@ -155,9 +155,50 @@ pub(crate) fn needs_citation(text: &str, givens: &Givens) -> bool {
     figures(text).any(|figure| !givens.holds(figure)) || quotes_or_attributes(text)
 }
 
+/// The wording between quotation marks, twelve characters or more of it. A
+/// double quote always marks; a single quote does not when a letter or digit
+/// stands on both sides of it, as in "shell's" or "don't": that is an
+/// apostrophe.
+pub(crate) fn quoted_wording(text: &str) -> impl Iterator<Item = &str> {
+    let chars: Vec<(usize, char)> = text.char_indices().collect();
+    let marks: Vec<usize> = chars
+        .iter()
+        .enumerate()
+        .filter(|&(at, &(_, c))| match c {
+            '"' | '\u{201c}' | '\u{201d}' => true,
+            '\'' | '\u{2018}' | '\u{2019}' => {
+                let inside_word = at
+                    .checked_sub(1)
+                    .and_then(|before| chars.get(before))
+                    .zip(chars.get(at + 1))
+                    .is_some_and(|(before, after)| {
+                        before.1.is_alphanumeric() && after.1.is_alphanumeric()
+                    });
+                !inside_word
+            }
+            _ => false,
+        })
+        .map(|(at, _)| at)
+        .collect();
+    let mut spans = Vec::new();
+    let mut next = 0;
+    while let (Some(&open), Some(&close)) = (marks.get(next), marks.get(next + 1)) {
+        let from = chars.get(open + 1).map_or(text.len(), |&(byte, _)| byte);
+        let to = chars.get(close).map_or(text.len(), |&(byte, _)| byte);
+        match text.get(from..to) {
+            Some(span) if close - open > 12 => {
+                spans.push(span);
+                next += 2;
+            }
+            _ => next += 1,
+        }
+    }
+    spans.into_iter()
+}
+
 /// Whether a text quotes wording or attributes something to a source.
 fn quotes_or_attributes(text: &str) -> bool {
-    lazy_regex::regex!(r#"['"‘’“”][^'"‘’“”]{12,}['"‘’“”]"#).is_match(text)
+    quoted_wording(text).next().is_some()
         || lazy_regex::regex!(
             r"(?i)\b(the (study|survey|source|paper|documentation|docs|standard|vendor)|according to)\b"
         )
