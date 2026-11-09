@@ -417,7 +417,13 @@ fn units(candidate: &Value) -> Result<Vec<Value>> {
         return Err(invalid("Invalid verification unit count."));
     }
     Ok(blocks.iter().map(|b| json!({"kind":"teaching", "role":b["kind"], "title":b["title"], "body":b["body"], "rubric":b["rubric"]}))
-        .chain(questions.iter().map(|q| json!({"kind":"assessment", "prompt":q["prompt"], "options":q["options"], "correctIndex":q["correctIndex"], "explanation":q["explanation"]}))).collect())
+        .chain(questions.iter().map(|q| {
+            let mut unit = json!({"kind":"assessment", "prompt":q["prompt"], "options":q["options"], "correctIndex":q["correctIndex"], "explanation":q["explanation"]});
+            if let (Some(reasons), Some(fields)) = (q.get("rationales"), unit.as_object_mut()) {
+                fields.insert("rationales".into(), reasons.clone());
+            }
+            unit
+        })).collect())
 }
 fn contains_text(value: &Value, quote: &str) -> bool {
     match value {

@@ -58,6 +58,7 @@ async fn ready_course(pool: &sqlx::SqlitePool) -> Result<LearningProgramDto> {
             question_id,
             correct_index: 0,
             explanation: "PRIVATE answer explanation".into(),
+            rationales: vec![],
         }],
         verification: None,
     };

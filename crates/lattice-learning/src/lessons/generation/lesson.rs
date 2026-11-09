@@ -75,6 +75,8 @@ struct GeneratedQuestion {
     prompt: String,
     options: Vec<String>,
     correct_index: usize,
+    #[serde(default)]
+    rationales: Vec<String>,
     explanation: String,
     source_index: Option<usize>,
     quote: String,
@@ -109,8 +111,8 @@ pub fn lesson_schema(source_count: usize) -> serde_json::Value {
                 }
             }},
             "questions":{"type":"array","minItems":6,"maxItems":6,"items":{
-                "type":"object","additionalProperties":false,"required":["kind","prompt","options","correctIndex","explanation","sourceIndex","quote","citations"],"properties":{
-                    "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string"},"options":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":3},"explanation":{"type":"string"},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
+                "type":"object","additionalProperties":false,"required":["kind","prompt","options","correctIndex","rationales","explanation","sourceIndex","quote","citations"],"properties":{
+                    "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string"},"options":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":3},"rationales":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"explanation":{"type":"string"},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
             }}
         }
@@ -154,7 +156,7 @@ fn lesson_prompt(
         "task":"Prepare one substantial course lesson with teaching, worked applications, and independent practice",
         "programGoal":program.summary.goal,"priorKnowledge":program.prior_knowledge,
         "courseSequence":course_context(program, &lesson.id),
-        "currentModule":program.modules.iter().find(|module| module.lessons.iter().any(|item| item.id == lesson.id)).map(|module| json!({"title":module.title,"outcomes":module.outcomes,"lessonSequence":module.lessons.iter().map(|item| item.title.as_str()).collect::<Vec<_>>()})),
+        "currentModule":program.modules.iter().find(|module| module.lessons.iter().any(|item| item.id == lesson.id)).map(|module| json!({"title":module.title,"outcomes":module.outcomes,"lessonSequence":module.lessons.iter().map(|item| json!({"title":item.title,"objective":item.objective,"current":item.id == lesson.id})).collect::<Vec<_>>()})),
         "lesson":{"title":lesson.title,"objective":lesson.objective,"estimatedMinutes":lesson.estimated_minutes},
         "sources":source_data,
         "evidenceByTopic":topics,
@@ -174,11 +176,16 @@ fn lesson_prompt(
             lattice_core::shared::markdown_math::MATH_GUIDANCE,
             "For guided_practice and independent_practice supply two to four rubric entries, each with a specific title, dimension and observable description of a successful response. State what distinguishes incomplete, adequate and strong work without disclosing the answer. All other blocks use an empty rubric array.",
             "Reuse the course vocabulary and build on the supplied earlier recaps. When this lesson builds on an earlier idea, open the first explanation with a short question asking the learner to recall it before reading on. Explicitly connect this lesson to the module project milestone; do not re-teach prior explanations.",
-            "Written practice and tutor feedback review submitted text; they do not execute code or run tests. Do not promise automatic execution, external peer review, or expert certification. A learner may separately run code in a lab after choosing and starting a supported runtime.",
+            "Do not describe how practice is reviewed. Never promise automatic code execution, external peer review or expert certification. A learner may run code in a lab after starting a supported runtime.",
+            "Teach for the learner's own situation, systems and tools as programGoal and priorKnowledge describe them. When an excerpt describes another system, version or setting, say which one it describes instead of presenting it as the learner's.",
+            "Within this lesson, teach every action a practice or check asks the learner to perform, unless priorKnowledge or an earlier lesson (courseSequence, recentTeaching) already covers it.",
+            "Teach this lesson's objective. What another lesson's objective in currentModule.lessonSequence names belongs to that lesson: give it at most a one-line pointer.",
+            "Write a worked_example's steps as a numbered Markdown list, one step per item; where a step has the learner type or enter something, put it in a code span or fence and say what they should see after it.",
+            "Spread the questions across the lesson's ideas; no two test the same fact.",
             "For Python or JavaScript code in a worked_example, contrast or check, put each complete independently runnable program in a labeled python or javascript Markdown fence, including imports, inputs and output-producing calls. Use Python's standard library or plain ECMAScript only; no network, host files, input prompts, packages, or browser/Node APIs. Use text, output, csv or json fences only for non-executable data. If demonstrating an exception, catch it and print its type. State the expected observation in the surrounding explanation. Do not silently change versions or language to evade verification.",
             "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.",
-            "Use exactly four distinct choices and one correct index per question.",
-            "Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler, and explain the reasoning and which misconception each wrong choice reflects. An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them.",
+            "Use exactly four distinct choices and one correct index per question; rationales has one entry per choice, in the order of the choices.",
+            "Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler. Each wrong choice's entry in rationales names the misconception it reflects and why it fails, never referring to a choice by its letter or position; the right choice's entry is an empty string. The explanation says why the correct answer is right. An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them.",
             "evidenceByTopic lists the lesson's topics in teaching order with the sourceIndexes whose excerpts cover each. Teach every topic; a topic with no covering sourceIndex has no evidence.",
             grounding_instructions(grounded),
             citation_instructions(grounded),
@@ -594,6 +601,11 @@ fn assemble(
             question_id,
             correct_index: question.correct_index,
             explanation: question.explanation.trim().to_owned(),
+            rationales: question
+                .rationales
+                .iter()
+                .map(|reason| reason.trim().to_owned())
+                .collect(),
         });
     }
     Ok((

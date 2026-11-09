@@ -213,6 +213,13 @@ pub struct PrepareLearningLessonRequestDto {
 }
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
+pub struct PrepareLearningModuleRequestDto {
+    pub program_id: String,
+    pub module_id: String,
+    pub expected_revision: i64,
+}
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
 pub struct CompleteLearningLessonRequestDto {
     pub program_id: String,
     pub lesson_id: String,
@@ -226,6 +233,11 @@ pub struct LessonAnswerKey {
     pub question_id: String,
     pub correct_index: usize,
     pub explanation: String,
+    /// One reason per option, in the writer's order: the right option's is
+    /// empty, each wrong option's says why it fails. Empty when the lesson
+    /// was written without them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rationales: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreparedLearningLesson {

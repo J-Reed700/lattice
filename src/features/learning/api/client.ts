@@ -227,6 +227,11 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningProgramDto>> =>
     learningCall('prepare_learning_lesson', { request }),
 
+  prepareLearningModule: (
+    request: Wire.PrepareLearningModuleRequestDto,
+  ): Promise<ApiResult<Wire.LearningProgramDto>> =>
+    learningCall('prepare_learning_module', { request }),
+
   completeLearningLesson: (
     request: Wire.CompleteLearningLessonRequestDto,
   ): Promise<ApiResult<Wire.LearningProgramDto>> =>
