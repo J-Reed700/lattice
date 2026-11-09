@@ -9,8 +9,14 @@ export async function openStudioSection(page: Page, section: StudioSection) {
   const nav = page.getByRole("navigation", { name: "Module workspace" });
   if (["Written practice", "Code & simulations"].includes(section)) {
     await nav.getByRole("tab", { name: "Practice", exact: true }).click();
-    await page.getByRole("tablist", { name: "Practice activities" })
-      .getByRole("tab", { name: section, exact: true }).click();
+    const activities = page.getByRole("tablist", { name: "Practice activities" });
+    if (await activities.count()) {
+      await activities.getByRole("tab", { name: section, exact: true }).click();
+    } else if (section === "Written practice") {
+      await page.getByTestId("card-explain").getByRole("button", { name: /^Start/ }).click();
+    } else {
+      await page.getByRole("button", { name: "Code labs and simulations" }).click();
+    }
   } else if (["Canvas", "Plan", "Import & export"].includes(section)) {
     const more = nav.getByRole("button", { name: "More", exact: true });
     if (await more.getAttribute("aria-expanded") !== "true") await more.click();
