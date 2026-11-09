@@ -27,33 +27,75 @@ fn is_item(line: &str) -> bool {
             .is_some_and(|rest| rest.starts_with(char::is_whitespace))
 }
 
+/// The marker of the code fence `line` opens, if it does.
+fn fence_marker(line: &str) -> Option<char> {
+    ['`', '~']
+        .into_iter()
+        .find(|marker| line.starts_with(&marker.to_string().repeat(3)))
+}
+
+/// How far `line` is indented; a tab counts as four.
+fn indent(line: &str) -> usize {
+    line.chars()
+        .take_while(|c| c.is_whitespace())
+        .map(|c| if c == '\t' { 4 } else { 1 })
+        .sum()
+}
+
 /// The paragraphs of `text`: its lines outside code fences, headings, table
-/// rows and list items with their continuation lines.
+/// rows and list items. An item holds the lines indented deeper than its
+/// marker, fences and blank lines among them, and an unindented line that
+/// follows its text directly; the list ends at the first other line.
 fn paragraphs(text: &str) -> Vec<String> {
     let mut found = Vec::new();
     let mut current = String::new();
-    let (mut fenced, mut in_item) = (false, false);
-    for line in text.lines() {
-        let line = line.trim();
-        let fence = line.starts_with("```");
-        if fenced && !fence {
+    let mut fence: Option<char> = None;
+    let mut item: Option<usize> = None;
+    let mut lazy = false;
+    for raw in text.lines() {
+        let (line, at) = (raw.trim(), indent(raw));
+        if let Some(marker) = fence {
+            if line.starts_with(&marker.to_string().repeat(3)) {
+                fence = None;
+            }
             continue;
         }
-        if fence || line.is_empty() || is_item(line) || line.starts_with(['#', '|']) {
+        if line.is_empty() {
             if !current.is_empty() {
                 found.push(std::mem::take(&mut current));
             }
-            if fence {
-                fenced = !fenced;
+            lazy = false;
+            continue;
+        }
+        let structural = line.starts_with(['#', '|']) || fence_marker(line).is_some();
+        if let Some(marker) = item {
+            if at > marker {
+                fence = fence_marker(line);
+                lazy = fence.is_none();
+                continue;
             }
-            in_item = is_item(line);
-            continue;
+            if is_item(line) {
+                item = Some(at);
+                lazy = true;
+                continue;
+            }
+            if lazy && !structural {
+                continue;
+            }
+            item = None;
         }
-        if in_item {
-            continue;
+        if !current.is_empty() && (structural || is_item(line)) {
+            found.push(std::mem::take(&mut current));
         }
-        current.push_str(line);
-        current.push('\n');
+        if let Some(marker) = fence_marker(line) {
+            fence = Some(marker);
+        } else if is_item(line) {
+            item = Some(at);
+            lazy = true;
+        } else if !structural {
+            current.push_str(line);
+            current.push('\n');
+        }
     }
     if !current.is_empty() {
         found.push(current);
