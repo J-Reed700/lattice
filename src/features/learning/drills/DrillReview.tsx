@@ -1,17 +1,17 @@
 import { useState, type ReactNode } from 'react';
-import { ArrowLeft } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { Button } from '@/components/ui/button';
 import type { ExplorerLineRange } from '@/features/explorer/stores/explorerStore';
+import { ElapsedClock } from '@/features/learning/practice/shared/ElapsedClock';
 import type { CodeReviewSeverity } from '@/lib/bindings';
 
 import { DrillFailure } from './DrillFailure';
 import { drillMeta, kindOf } from './drillMaterial';
 import { describeSpan, lineCount, type DraftFinding } from './findings';
 import { FindingsList } from './FindingsList';
-import { InterviewClock } from './InterviewClock';
 import { MaterialPane } from './MaterialPane';
+import { plural } from './reveal/revealCopy';
 import { ReviewComposer } from './ReviewComposer';
 
 import type { CodeReviewDrill } from './useCodeReviewDrill';
@@ -21,11 +21,24 @@ interface Picked {
   range: ExplorerLineRange;
 }
 
+function taskLine(passage: boolean, issues: number): string {
+  const thing = passage ? 'error' : 'issue';
+  const material = passage ? 'explanation' : 'code';
+  if (issues === 1) return `Find the ${thing} in this ${material}, and say what is wrong and how to fix it.`;
+  return `Find the ${plural(issues, thing)} in this ${material}, and say what is wrong and how to fix each.`;
+}
+
+/** The time the attempt has run, counted from when it started, against the limit the learner chose. */
+function DrillClock({ startedAt, limitMs }: { startedAt: number; limitMs: number }) {
+  const [elapsedMs] = useState(() => Math.max(0, Date.now() - startedAt));
+  return <ElapsedClock elapsedMs={elapsedMs} running softLimitMs={limitMs} label="Time" />;
+}
+
 /**
  * The review: the drill's files on the left, to read and pick lines from, and on the right the comment being written,
  * the comments so far, the optional fix and the hand-in.
  */
-export function DrillReview({ drill }: { drill: CodeReviewDrill; back?: ReactNode }) {
+export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: ReactNode }) {
   const { session, review, failure, retry } = drill;
   const [activePath, setActivePath] = useState(session?.drill.files[0]?.path ?? '');
   const [picked, setPicked] = useState<Picked | null>(null);
@@ -102,35 +115,21 @@ export function DrillReview({ drill }: { drill: CodeReviewDrill; back?: ReactNod
   return (
     <div className="flex h-full min-h-0 flex-col">
       <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-default px-4 py-3 sm:px-6">
-        <Button
-          type="button"
-          variant="ghost"
-          className="-ml-3 gap-2 text-text-secondary hover:text-text-primary"
-          onClick={drill.toChoices}
-          aria-label="Back to drill setup"
-        >
-          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-          Back to drill setup
-        </Button>
+        {back}
         <div className="min-w-0">
           <h2 className="truncate font-serif text-lg text-text-primary">{session.drill.title}</h2>
           <p className="text-xs text-text-muted">{drillMeta(session.drill, session.mode)}</p>
         </div>
         {session.limitMs !== null && (
           <div className="ml-auto">
-            <InterviewClock startedAt={session.startedAt} limitMs={session.limitMs} />
+            <DrillClock startedAt={session.startedAt} limitMs={session.limitMs} />
           </div>
         )}
       </header>
 
-      {/* P2-14: Task statement line above the panes */}
-      <div className="border-b border-border-subtle bg-surface-sunken px-4 py-2 sm:px-6">
-        <p className="text-xs font-medium text-text-secondary">
-          {passage
-            ? 'Find the issues in this explanation and explain the fix for each'
-            : 'Find the issues in this snippet and explain the fix for each'}
-        </p>
-      </div>
+      <p className="border-b border-border-subtle bg-surface-sunken px-4 py-2 text-xs font-medium text-text-secondary sm:px-6">
+        {taskLine(passage, session.drill.issues)}
+      </p>
 
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
         <div className="h-[32rem] min-h-0 lg:h-full">

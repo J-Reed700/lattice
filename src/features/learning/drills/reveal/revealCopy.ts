@@ -20,7 +20,7 @@ const NOTE = 'border-transparent bg-accent-muted text-accent';
 
 export const MODE_LABEL: Record<AttemptMode, string> = {
   practice: 'Practice',
-  interview: 'Interview',
+  interview: 'Timed',
   rapid: 'Rapid',
 };
 
