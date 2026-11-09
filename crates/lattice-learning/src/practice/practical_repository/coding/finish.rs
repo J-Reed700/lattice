@@ -132,12 +132,10 @@ impl LearningPracticalRepository {
     /// How many evidence events a session left, for tests.
     #[cfg(test)]
     pub(crate) async fn coding_evidence_count(&self, session_id: &str) -> Result<i64> {
-        let row =
-            sqlx::query("SELECT count(*) AS n FROM learning_evidence_events WHERE source_id=?")
-                .bind(session_id)
-                .fetch_one(&self.pool)
-                .await
-                .map_err(db)?;
-        Ok(row.get("n"))
+        sqlx::query_scalar("SELECT count(*) FROM learning_evidence_events WHERE source_id=?")
+            .bind(session_id)
+            .fetch_one(&self.pool)
+            .await
+            .map_err(db)
     }
 }
