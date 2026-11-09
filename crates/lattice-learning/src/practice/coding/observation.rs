@@ -271,7 +271,7 @@ impl WorkspaceObservation {
         line(format!("Target complexity: {}", self.target_complexity));
         if !self.pattern_names.is_empty() {
             line(format!(
-                "Techniques the problem is built around (never name them): {}",
+                "Techniques the problem is built around: {}",
                 self.pattern_names.join(", ")
             ));
         }

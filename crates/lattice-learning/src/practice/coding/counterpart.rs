@@ -50,7 +50,7 @@ fn refuse(reason: impl Into<String>) -> AppError {
 }
 
 /// The schema of a reply on `cue`.
-fn reply_schema(problem: &Problem, _observation: &WorkspaceObservation, cue: &CodingCue) -> Value {
+fn reply_schema(problem: &Problem, cue: &CodingCue) -> Value {
     let mut options: Vec<String> = (0..problem.spec.clarifications.len())
         .map(|index| index.to_string())
         .collect();
@@ -85,8 +85,7 @@ fn accept(
     cue: &CodingCue,
     observation: &WorkspaceObservation,
 ) -> Result<Option<CounterpartReply>> {
-    let reply: RawReply = serde_json::from_str(raw)
-        .map_err(|error| refuse(format!("The answer was not the JSON asked for: {error}.")))?;
+    let reply: RawReply = crate::generation::parse_json(raw)?;
     if reply.speak == Some(false) {
         return if *cue == CodingCue::Checkpoint {
             Ok(None)
@@ -214,7 +213,7 @@ pub async fn respond(
     let mut request = model_call::structured(
         &policy.system(cue, observation),
         observation.render(),
-        reply_schema(problem, observation, cue),
+        reply_schema(problem, cue),
         REPLY_OUTPUT_TOKENS,
         "low",
     );
