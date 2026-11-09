@@ -1387,3 +1387,109 @@ async fn a_job_deferred_on_a_busy_database_records_the_database_as_its_cause() -
     }
     Ok(())
 }
+
+/// Reads the rank in scope at the top of the handler and inside nested
+/// futures, as the lesson pipeline's parallel checks run.
+struct Peek {
+    seen: mpsc::UnboundedSender<(Vec<Option<i64>>, Option<RankTicket>)>,
+}
+
+async fn rank_in_a_nested_future() -> Option<i64> {
+    tokio::task::yield_now().await;
+    current_rank().map(|ticket| ticket.rank())
+}
+
+#[async_trait::async_trait]
+impl JobHandler for Peek {
+    async fn run(&self, _: &JobContext) -> Result<JobOutcome> {
+        let top = current_rank().map(|ticket| ticket.rank());
+        let (first, second) = futures::join!(rank_in_a_nested_future(), rank_in_a_nested_future());
+        self.seen
+            .send((vec![top, first, second], current_rank()))
+            .unwrap();
+        Ok(JobOutcome::Completed {
+            result_ref: "done".into(),
+            message: "Done".into(),
+        })
+    }
+}
+
+/// Runs one job of `config`'s kind saved with `rank`, and returns the ranks its
+/// handler saw and the ticket of its scope.
+async fn ranks_seen_by_a_job(
+    config: JobKindConfig,
+    rank: Option<i64>,
+) -> (Vec<Option<i64>>, Option<RankTicket>) {
+    let runtime = JobRuntime::new(pool().await);
+    let (seen, mut receiver) = mpsc::unbounded_channel();
+    runtime
+        .register(KIND, Arc::new(Peek { seen }), config)
+        .await
+        .unwrap();
+    let job = match rank {
+        Some(rank) => {
+            runtime
+                .store()
+                .submit_ranked(&new_job(KIND, "op-1", Some("subject")), rank)
+                .await
+        }
+        None => {
+            runtime
+                .store()
+                .submit(&new_job(KIND, "op-1", Some("subject")))
+                .await
+        }
+    }
+    .unwrap();
+    runtime.dispatch(&job.id);
+    finished(&runtime, &job.id).await;
+    let seen = receiver.recv().await.unwrap();
+    runtime.close();
+    runtime.drain().await;
+    seen
+}
+
+#[tokio::test]
+async fn a_ranked_kinds_handler_sees_its_jobs_rank_in_every_nested_future() {
+    let config = JobKindConfig::new(RecoveryPolicy::Requeue).ranked();
+    let (ranks, ticket) = ranks_seen_by_a_job(config, Some(7)).await;
+    assert_eq!(ranks, [Some(7), Some(7), Some(7)]);
+    assert!(
+        !ticket.unwrap().is_alive(),
+        "the rank's scope ends with the handler"
+    );
+}
+
+#[tokio::test]
+async fn an_unranked_kinds_handler_sees_no_rank() {
+    let config = JobKindConfig::new(RecoveryPolicy::Requeue);
+    let (ranks, ticket) = ranks_seen_by_a_job(config, Some(7)).await;
+    assert_eq!(ranks, [None, None, None]);
+    assert!(ticket.is_none());
+}
+
+#[tokio::test]
+async fn a_ranked_kinds_job_saved_without_a_rank_sees_none() {
+    let config = JobKindConfig::new(RecoveryPolicy::Requeue).ranked();
+    let (ranks, _) = ranks_seen_by_a_job(config, None).await;
+    assert_eq!(ranks, [None, None, None]);
+}
+
+#[tokio::test]
+async fn a_jobs_rank_is_saved_and_a_retry_keeps_it() -> Result<()> {
+    let store = JobStore::new(pool().await);
+    let admitted = store
+        .submit_ranked(&new_job(KIND, "op-1", Some("subject")), 3)
+        .await?;
+    assert_eq!(store.get(&admitted.id).await?.rank, Some(3));
+    store.claim(&admitted.id).await?.unwrap();
+    store.fail(&admitted.id, "failed", "Failed").await?;
+    let retry = store.retry(&admitted.id, "op-2", "Retry queued").await?;
+    assert_eq!(store.get(&retry.id).await?.rank, Some(3));
+
+    let plain = store
+        .submit(&new_job(KIND, "op-3", Some("subject")))
+        .await?;
+    assert_eq!(store.get(&plain.id).await?.rank, None);
+    Ok(())
+}

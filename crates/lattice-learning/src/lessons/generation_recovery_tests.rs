@@ -43,6 +43,7 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
         let pool = crate::tests::pool().await.unwrap();
         let (repo, job) = repository_tests::queued_job(&pool).await;
         let worker = LessonGenerationWorker {
+            course_setups: Default::default(),
             runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
             pool: pool.clone(),
             load_llm: Arc::new(|| {
@@ -474,6 +475,7 @@ async fn run_with_model(load_llm: super::ModelLoader) -> crate::curriculum::Lear
     let pool = crate::tests::pool().await.unwrap();
     let (repo, job) = repository_tests::queued_job(&pool).await;
     let worker = LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm,
@@ -595,6 +597,7 @@ async fn a_lesson_job_for_a_course_without_sources_asks_for_them_in_plain_words(
     let pool = crate::tests::pool().await.unwrap();
     let (repo, job) = repository_tests::queued_job_without_sources(&pool).await;
     let worker = LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
@@ -620,6 +623,7 @@ async fn a_failed_lesson_job_records_the_code_of_its_error() {
     let pool = crate::tests::pool().await.unwrap();
     let (repo, job) = repository_tests::queued_job_without_sources(&pool).await;
     let worker = LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
@@ -658,6 +662,7 @@ async fn a_lesson_job_waiting_out_an_outage_records_the_code_of_its_cause() {
         let pool = crate::tests::pool().await.unwrap();
         let (repo, job) = repository_tests::queued_job(&pool).await;
         let worker = LessonGenerationWorker {
+            course_setups: Default::default(),
             runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
             pool: pool.clone(),
             load_llm: Arc::new(|| {

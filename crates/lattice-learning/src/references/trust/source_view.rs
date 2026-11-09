@@ -6,8 +6,10 @@
 
 use super::calibration;
 use super::dto_map;
+use super::repository;
+use super::repository::capture::version_text;
+use super::repository::source_view::{latest_claim_profile, Version};
 use super::repository::SqliteSourceTrustStore;
-use super::rows::from_json;
 use crate::dto::{
     GetLearningSourceTrustRequestDto, LearningClaimTrustDto, LearningSourceTrustDto,
     LearningSourceTrustEntryDto, LearningSourceTrustViewDto, LearningTrackRecordDto,
@@ -19,13 +21,13 @@ use lattice_core::application::services::source_trust::{
     claim_profile_key, standing_key, CLAIM_PROFILE_POLICY, OWNERSHIP_POLICY, STANDING_POLICY,
 };
 use lattice_core::domain::provenance::{
-    containment, known_classes, shingles, trust_level, AddedBy, AuthorityAssessment, ClaimProfile,
+    containment, known_classes, shingles, trust_level, AuthorityAssessment, ClaimProfile,
     ClaimSubject, InheritedTrust, LevelInputs, OriginKey, Overrides, ProvenanceRecord,
     RelationEvidence, RelationKind, RelationTarget, SourceRelation, StandingAssessment, SubjectKey,
     TrackRecord, TrustOverride, POLICY,
 };
-use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::error::Result;
+use sqlx::SqlitePool;
 use std::collections::BTreeSet;
 
 /// The relations through which a version inherits a level (§5 step 4), as
@@ -40,14 +42,6 @@ const COPY_RELATIONS: [RelationKind; 4] = [
 /// The reason code of a version whose publisher nobody has judged yet. Not
 /// a rule of the level procedure, so it is not a core `ReasonCode`.
 pub const NOT_ASSESSED: &str = "not_assessed";
-
-/// One version as the view reads it.
-#[derive(Debug, Clone)]
-struct Version {
-    source_id: String,
-    version_id: String,
-    added_by: AddedBy,
-}
 
 /// The course's overrides and relations, read once per request.
 struct Course<'a> {
@@ -87,13 +81,7 @@ pub async fn latest_profile(
 ) -> Result<Option<ClaimProfile>> {
     // The input hash does not depend on the model; any model's key has it.
     let key = claim_profile_key(statement, known_classes, "");
-    latest(
-        pool,
-        "SELECT profile_json AS judgement FROM claim_profiles WHERE input_sha256=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
-        &[&key.input_sha256, CLAIM_PROFILE_POLICY],
-        "profile_json",
-    )
-    .await
+    latest_claim_profile(pool, &key.input_sha256, CLAIM_PROFILE_POLICY).await
 }
 
 /// The latest `source-standing-v2` judgement of `record`'s version, by any
@@ -110,13 +98,7 @@ pub(crate) async fn latest_standing(
     };
     // The input hash does not depend on the model; any model's key has it.
     let key = standing_key(&record.signals, &content, "");
-    latest(
-        pool,
-        "SELECT judgement_json AS judgement FROM source_standing_assessments WHERE signals_sha256=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
-        &[&key.input_sha256, STANDING_POLICY],
-        "judgement_json",
-    )
-    .await
+    repository::source_view::latest_standing(pool, &key.input_sha256, STANDING_POLICY).await
 }
 
 async fn latest_authority(
@@ -125,31 +107,14 @@ async fn latest_authority(
     origin: &OriginKey,
     subject: &SubjectKey,
 ) -> Result<Option<AuthorityAssessment>> {
-    latest(
+    repository::source_view::latest_authority(
         pool,
-        "SELECT judgement_json AS judgement FROM source_subject_authority WHERE program_id=? AND origin_key=? AND subject_key=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
-        &[program_id, &origin.0, &subject.0, OWNERSHIP_POLICY],
-        "judgement_json",
+        program_id,
+        &origin.0,
+        &subject.0,
+        OWNERSHIP_POLICY,
     )
     .await
-}
-
-async fn latest<T: serde::de::DeserializeOwned>(
-    pool: &SqlitePool,
-    sql: &str,
-    binds: &[&str],
-    column: &str,
-) -> Result<Option<T>> {
-    let mut query = sqlx::query(sql);
-    for value in binds {
-        query = query.bind(*value);
-    }
-    query
-        .fetch_optional(pool)
-        .await
-        .map_err(db)?
-        .map(|row| from_json(&row.get::<String, _>("judgement"), column))
-        .transpose()
 }
 
 fn reason(code: &str, text: &str) -> LearningTrustReasonDto {
@@ -165,49 +130,22 @@ impl Course<'_> {
     }
 
     async fn active_versions(&self, source_ids: &[String]) -> Result<Vec<Version>> {
-        let rows = sqlx::query(
-            "SELECT id AS source_id, active_version_id AS version_id, added_by FROM learning_source_library \
-             WHERE program_id=? AND deleted_at IS NULL AND active_version_id IS NOT NULL ORDER BY created_at, id",
+        Ok(
+            repository::source_view::active_versions(self.pool(), self.program_id)
+                .await?
+                .into_iter()
+                .filter(|row| source_ids.is_empty() || source_ids.contains(&row.source_id))
+                .collect(),
         )
-        .bind(self.program_id)
-        .fetch_all(self.pool())
-        .await
-        .map_err(db)?;
-        rows.iter()
-            .map(version)
-            .filter(|row| {
-                row.as_ref().map_or(true, |row| {
-                    source_ids.is_empty() || source_ids.contains(&row.source_id)
-                })
-            })
-            .collect()
     }
 
     async fn version(&self, version_id: &str) -> Result<Option<Version>> {
-        sqlx::query(
-            "SELECT v.source_id, v.id AS version_id, l.added_by FROM learning_source_versions v \
-             JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id \
-             WHERE v.program_id=? AND v.id=?",
-        )
-        .bind(self.program_id)
-        .bind(version_id)
-        .fetch_optional(self.pool())
-        .await
-        .map_err(db)?
-        .as_ref()
-        .map(version)
-        .transpose()
+        repository::source_view::version_of(self.pool(), self.program_id, version_id).await
     }
 
     async fn text(&self, version_id: &str) -> Result<String> {
-        sqlx::query_scalar(
-            "SELECT full_text FROM learning_source_versions WHERE program_id=? AND id=?",
-        )
-        .bind(self.program_id)
-        .bind(version_id)
-        .fetch_one(self.pool())
-        .await
-        .map_err(db)
+        let mut connection = self.pool().acquire().await.map_err(db)?;
+        version_text(&mut connection, self.program_id, version_id).await
     }
 
     async fn claim(&self, claim: &LearningTrustClaimRequestDto) -> Result<LearningClaimTrustDto> {
@@ -403,17 +341,6 @@ impl Course<'_> {
         }
         Ok(inherited)
     }
-}
-
-fn version(row: &sqlx::sqlite::SqliteRow) -> Result<Version> {
-    let added_by: String = row.try_get("added_by").map_err(db)?;
-    Ok(Version {
-        source_id: row.try_get("source_id").map_err(db)?,
-        version_id: row.try_get("version_id").map_err(db)?,
-        added_by: AddedBy::from_column(&added_by).ok_or_else(|| {
-            AppError::InternalError(format!("Unknown source origin \"{added_by}\"."))
-        })?,
-    })
 }
 
 /// A version the level procedure cannot run on yet: Unknown, with why.

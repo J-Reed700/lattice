@@ -196,7 +196,7 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different quiz data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok((self.get_form(&req.form_id).await?, None));
         }
@@ -330,7 +330,7 @@ impl LearningAssessmentRepository {
         } else {
             None
         };
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok((self.get_form(&req.form_id).await?, job))
     }
@@ -549,7 +549,7 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different follow-up data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             return tx.commit().await.map_err(db);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -558,7 +558,7 @@ impl LearningAssessmentRepository {
         if result.rows_affected() != 1 {
             return Err(AppError::NotFound("Pending follow-up not found".into()));
         }
-        operation.record(&mut *tx, &req.follow_up_id).await?;
+        operation.record(&mut tx, &req.follow_up_id).await?;
         tx.commit().await.map_err(db)
     }
 

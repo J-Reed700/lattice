@@ -327,7 +327,10 @@ impl ConversationRepository {
 
     /// Active items by id, with their evidence, as another chat would see them:
     /// sequences zeroed, since they count the source chat's messages.
-    pub(super) async fn memory_items_by_id(&self, ids: &[String]) -> Result<Vec<MemoryItem>> {
+    pub(super) async fn memory_items_by_id_on(
+        conn: &mut sqlx::SqliteConnection,
+        ids: &[String],
+    ) -> Result<Vec<MemoryItem>> {
         if ids.is_empty() {
             return Ok(Vec::new());
         }
@@ -341,7 +344,7 @@ impl ConversationRepository {
              ORDER BY created_at ASC, id ASC",
         )
         .bind(&ids)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|e| AppError::Database(format!("Failed to load shared memory items: {}", e)))?;
         let evidence_rows = sqlx::query_as::<_, EvidenceRow>(
@@ -352,7 +355,7 @@ impl ConversationRepository {
              ORDER BY item_id ASC, ordinal ASC",
         )
         .bind(&ids)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await
         .map_err(|e| AppError::Database(format!("Failed to load shared evidence: {}", e)))?;
         assemble_items(item_rows, evidence_rows)
@@ -406,6 +409,11 @@ impl ConversationRepository {
         limit: i64,
     ) -> Result<Vec<MemoryItem>> {
         let limit = limit.clamp(1, MAX_ACTIVE_ITEMS as i64);
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin history read: {}", e)))?;
         let item_rows = sqlx::query_as::<_, MemoryItemRow>(
             "SELECT id, conversation_id, kind, state, label, created_at_sequence, \
                     changed_at_sequence, superseded_by, revision, review, related_item_ids, \
@@ -417,7 +425,7 @@ impl ConversationRepository {
         .bind(conversation_id)
         .bind(limit)
         .bind(offset.max(0))
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to page inactive items: {}", e)))?;
 
@@ -435,9 +443,13 @@ impl ConversationRepository {
             query = query.bind(&row.id);
         }
         let evidence_rows = query
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to load item evidence: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to finish history read: {}", e)))?;
 
         assemble_items(item_rows, evidence_rows)
     }

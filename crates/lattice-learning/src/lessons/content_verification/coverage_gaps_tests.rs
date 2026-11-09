@@ -110,7 +110,13 @@ impl JudgingModel {
                 for passage in unit["passages"].as_array().unwrap() {
                     if passage["text"] == self.proposed_passage {
                         let id = passage["id"].as_str().unwrap();
-                        response[id]["missingClaims"] =
+                        let entry = response["passages"]
+                            .as_array_mut()
+                            .unwrap()
+                            .iter_mut()
+                            .find(|entry| entry["passageId"] == id)
+                            .unwrap();
+                        entry["missingClaims"] =
                             json!(["The passage's premise is not in the inventory."]);
                     }
                 }

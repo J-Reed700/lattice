@@ -19,7 +19,7 @@ impl LearningPracticeRepository {
             "submit",
             &write.payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -76,7 +76,7 @@ impl LearningPracticeRepository {
             "submit",
             &write.payload_hash,
         )
-        .record(&mut *tx, &())
+        .record(&mut tx, &())
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await
@@ -104,7 +104,7 @@ impl LearningPracticeRepository {
             kind,
             payload_hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             tx.commit().await.map_err(db)?;
@@ -136,7 +136,7 @@ impl LearningPracticeRepository {
             kind,
             payload_hash,
         )
-        .record(&mut *tx, &req.proposal_id)
+        .record(&mut tx, &req.proposal_id)
         .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&req.program_id).await

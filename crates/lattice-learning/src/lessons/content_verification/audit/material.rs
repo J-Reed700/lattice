@@ -11,6 +11,7 @@ use lattice_core::application::ports::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{ClaimId, LessonReviewState};
 use lattice_core::shared::error::{AppError, Result};
 
+use super::repository;
 use super::{AuditPassage, AuditUnit};
 use crate::content_verification::unit_texts;
 use crate::curriculum_repository::LearningCurriculumRepository;
@@ -92,23 +93,7 @@ async fn published(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Resu
         .find(|lesson| lesson.id == lesson_id)
         .ok_or_else(|| AppError::NotFound("This lesson is not in the course.".into()))?;
     // The lesson's own reviewed questions live in its quiz bank.
-    let questions: Vec<Value> = sqlx::query("SELECT c.prompt,c.options_json,k.explanation,k.distractor_rationales_json FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin IN ('lesson','migrated') ORDER BY c.rowid")
-        .bind(program_id)
-        .bind(lesson_id)
-        .fetch_all(pool)
-        .await
-        .map_err(db)?
-        .into_iter()
-        .map(|row| {
-            use sqlx::Row;
-            json!({
-                "prompt": row.get::<String, _>("prompt"),
-                "options": serde_json::from_str::<Value>(&row.get::<String, _>("options_json")).unwrap_or_default(),
-                "explanation": row.get::<String, _>("explanation"),
-                "rationales": serde_json::from_str::<Value>(&row.get::<String, _>("distractor_rationales_json")).unwrap_or_default(),
-            })
-        })
-        .collect();
+    let questions = repository::lesson_questions(pool, program_id, lesson_id).await?;
     Ok(json!({ "blocks": lesson.blocks, "questions": questions }))
 }
 

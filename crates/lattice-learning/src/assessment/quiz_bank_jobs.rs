@@ -10,6 +10,7 @@ use crate::assessment_generation::{
     StoredItem, WrittenAnswer,
 };
 use crate::assessment_repository::{BankItem, ItemGrade, LearningAssessmentRepository};
+use crate::curriculum_repository::lesson_rank_in;
 use crate::dto::{
     LearningAssessmentGradeStatus, LearningQuizScopeDto, LearningQuizScopeKind, LessonAnswerKey,
     LessonQuestion, LessonQuestionKind,
@@ -45,6 +46,7 @@ pub type ModelLoader = Arc<dyn Fn() -> BoxFuture<'static, Result<PinnedModel>> +
 pub fn quiz_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
         .exclusive_per_subject()
+        .ranked()
         .backoff(Backoff::default())
 }
 
@@ -72,8 +74,9 @@ async fn queue_in(
     requested: serde_json::Value,
     total: u32,
     message: &str,
+    rank: Option<i64>,
 ) -> Result<String> {
-    let admitted = JobStore::submit_in(
+    let admitted = JobStore::submit_with_rank_in(
         connection,
         &NewJob {
             kind: kind.into(),
@@ -84,21 +87,13 @@ async fn queue_in(
             progress_total: total.max(1),
             message: message.into(),
         },
+        rank,
     )
     .await?;
     if admitted.created {
-        let revision: i64 = sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
-            .bind(program_id)
-            .fetch_one(&mut *connection)
-            .await
-            .map_err(db)?;
-        sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) VALUES(?,?,?,NULL)")
-            .bind(&admitted.id)
-            .bind(program_id)
-            .bind(revision.max(0))
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+        let revision = repository::program_revision_in(connection, program_id).await?;
+        repository::insert_learning_job_in(connection, &admitted.id, program_id, revision.max(0))
+            .await?;
     }
     Ok(admitted.id)
 }
@@ -112,11 +107,7 @@ pub(crate) async fn queue_grading_in(
     contest_id: Option<&str>,
     seed: &str,
 ) -> Result<String> {
-    let pending: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_assessment_item_results WHERE form_id=? AND grade_status='pending'")
-        .bind(form_id)
-        .fetch_one(&mut *connection)
-        .await
-        .map_err(db)?;
+    let pending = repository::pending_item_count_in(connection, form_id).await?;
     queue_in(
         connection,
         QUIZ_GRADING,
@@ -133,6 +124,7 @@ pub(crate) async fn queue_grading_in(
         } else {
             "Waiting to grade written answers"
         },
+        None,
     )
     .await
 }
@@ -150,6 +142,10 @@ pub async fn queue_bank(
     let mut tx = pool.begin_write().await.map_err(db)?;
     let needs =
         LearningAssessmentRepository::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
+    let rank = match (&scope.kind, &scope.id) {
+        (LearningQuizScopeKind::Lesson, Some(lesson)) => lesson_rank_in(&mut tx, lesson).await?,
+        _ => None,
+    };
     let id = queue_in(
         &mut tx,
         QUIZ_BANK,
@@ -158,6 +154,7 @@ pub async fn queue_bank(
         json!({"programId": program_id, "scope": scope, "topUp": top_up}),
         needs.len() as u32,
         "Waiting to write quiz questions",
+        rank,
     )
     .await?;
     tx.commit().await.map_err(db)?;
@@ -171,6 +168,7 @@ pub(crate) async fn queue_lesson_bank_in(
     program_id: &str,
     lesson_id: &str,
 ) -> Result<String> {
+    let rank = lesson_rank_in(connection, lesson_id).await?;
     queue_in(
         connection,
         QUIZ_BANK,
@@ -184,6 +182,7 @@ pub(crate) async fn queue_lesson_bank_in(
         }),
         1,
         "Waiting to write quiz questions",
+        rank,
     )
     .await
 }
@@ -259,6 +258,8 @@ pub struct QuizBankWorker {
 #[async_trait::async_trait]
 impl JobHandler for QuizBankWorker {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
+        let _activity =
+            lattice_core::shared::runtime::user_activity::UserActivity::begin("Preparing a quiz");
         let job = context.job();
         let program_id = requested_str(job, "programId")?.to_string();
         let scope: LearningQuizScopeDto =
@@ -378,15 +379,12 @@ impl QuizBankWorker {
             None => {
                 let (title, objective, material, seeds) = {
                     let mut tx = self.pool.begin_read().await.map_err(db)?;
-                    let (title, objective): (String, String) = sqlx::query_as(
-                        "SELECT title,objective FROM learning_lessons WHERE id=? AND program_id=?",
-                    )
-                    .bind(lesson_id)
-                    .bind(program_id)
-                    .fetch_optional(&mut *tx)
-                    .await
-                    .map_err(db)?
-                    .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
+                    let (title, objective) =
+                        repository::lesson_title_objective_in(&mut tx, program_id, lesson_id)
+                            .await?
+                            .ok_or_else(|| {
+                                AppError::NotFound("Lesson not found in this course".into())
+                            })?;
                     let material =
                         LearningAssessmentRepository::lesson_material_in(&mut tx, lesson_id)
                             .await?;
@@ -456,6 +454,7 @@ impl QuizBankWorker {
 
 mod grading;
 mod lesson_stage;
+mod repository;
 
 pub use grading::{grade_written_answer, judge_short_answer, QuizGradingWorker};
 pub(crate) use lesson_stage::{lesson_bank_stage, lesson_seed_items, LessonBank};

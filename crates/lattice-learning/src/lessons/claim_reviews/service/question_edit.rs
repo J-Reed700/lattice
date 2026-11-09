@@ -8,6 +8,7 @@ use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::{ClaimLedgerEntry, ClaimState, UnitKind};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
 use super::section_edit::{count, endings, record_edit};
@@ -20,7 +21,9 @@ use crate::assessment_repository::{content_hash, LearningAssessmentRepository};
 use crate::content_verification::Rewritten;
 use crate::lessons::claim_reviews::published_edit::update_report;
 use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan};
-use crate::lessons::claim_reviews::repository::{bump_revision, check_revision};
+use crate::lessons::claim_reviews::repository::{
+    blocks, bump_revision, check_revision, questions, teaching_findings,
+};
 use crate::persistence::{db, now};
 use crate::quiz_blueprints::parse_format;
 
@@ -115,27 +118,13 @@ async fn stored_question(
     lesson_id: &str,
     index: usize,
 ) -> Result<Option<Stored>> {
-    let row = sqlx::query_as::<_, (String, String, String, String, String, String, String)>(
-        "SELECT c.id, c.format, c.prompt, c.options_json, k.key_json, k.explanation, \
-                k.distractor_rationales_json \
-         FROM learning_assessment_candidates c \
-         JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id \
-         WHERE c.program_id=? AND c.lesson_id=? AND c.origin IN ('lesson','migrated') \
-         ORDER BY c.rowid LIMIT 1 OFFSET ?",
-    )
-    .bind(program_id)
-    .bind(lesson_id)
-    .bind(i64::try_from(index).unwrap_or(i64::MAX))
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
-    let Some((id, format, prompt, options, key, explanation, reasons)) = row else {
+    let Some(row) = questions::question_at(connection, program_id, lesson_id, index).await? else {
         return Ok(None);
     };
-    let kind = parse_format(&format)?;
+    let kind = parse_format(&row.format)?;
     let (choices, right) = if has_choices(kind) {
-        let choices: Vec<String> = serde_json::from_str(&options)?;
-        let right = match serde_json::from_str::<LearningAssessmentKey>(&key)? {
+        let choices: Vec<String> = serde_json::from_str(&row.options_json)?;
+        let right = match serde_json::from_str::<LearningAssessmentKey>(&row.key_json)? {
             LearningAssessmentKey::Choice(index) => Some(index),
             _ => None,
         };
@@ -144,35 +133,16 @@ async fn stored_question(
         (Vec::new(), None)
     };
     Ok(Some(Stored {
-        id,
+        id: row.id,
         text: QuestionText {
             kind,
-            prompt,
+            prompt: row.prompt,
             choices,
             right,
-            explanation,
-            rationales: compact(serde_json::from_str(&reasons)?),
+            explanation: row.explanation,
+            rationales: compact(serde_json::from_str(&row.rationales_json)?),
         },
     }))
-}
-
-/// Whether another question of the program has this content token.
-async fn repeats_another(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-    candidate_id: &str,
-    token: &str,
-) -> Result<bool> {
-    let other: Option<i64> = sqlx::query_scalar(
-        "SELECT 1 FROM learning_assessment_candidates WHERE program_id=? AND content_sha256=? AND id<>?",
-    )
-    .bind(program_id)
-    .bind(token)
-    .bind(candidate_id)
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
-    Ok(other.is_some())
 }
 
 fn refuse(text: impl Into<String>) -> Result<()> {
@@ -357,12 +327,7 @@ impl ClaimReviewService {
             &stored.id,
         )
         .await?;
-        let sections: i64 =
-            sqlx::query_scalar("SELECT COUNT(*) FROM learning_blocks WHERE lesson_id=?")
-                .bind(&lesson_id)
-                .fetch_one(&mut *connection)
-                .await
-                .map_err(db)?;
+        let sections = blocks::section_count(&mut connection, &lesson_id).await?;
         drop(connection);
         if stored.text != before {
             return Err(AppError::InvalidInput(QUESTION_CHANGED.into()));
@@ -383,7 +348,9 @@ impl ClaimReviewService {
         engine::validate_candidate(&edited)?;
         let token = content_hash(&StoredItem::from(edited));
         let mut connection = self.pool().acquire().await.map_err(db)?;
-        let repeated = repeats_another(&mut connection, &program_id, &stored.id, &token).await?;
+        let repeated =
+            questions::token_taken_by_another(&mut connection, &program_id, &stored.id, &token)
+                .await?;
         drop(connection);
         if repeated {
             return Err(AppError::InvalidInput(SAME_QUESTION.into()));
@@ -474,11 +441,7 @@ impl ClaimReviewService {
 
         let at = now();
         let user = ledger.review.as_ref().map(provenance);
-        let mut tx = self
-            .pool()
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(db)?;
+        let mut tx = self.pool().begin_write().await.map_err(db)?;
         if ledger.review.is_some() {
             check_revision(&mut tx, &lesson_id, ledger.revision).await?;
         }
@@ -489,7 +452,7 @@ impl ClaimReviewService {
         {
             return Err(AppError::InvalidInput(QUESTION_CHANGED.into()));
         }
-        if repeats_another(&mut tx, &program_id, &stored.id, &token).await? {
+        if questions::token_taken_by_another(&mut tx, &program_id, &stored.id, &token).await? {
             return Err(AppError::InvalidInput(SAME_QUESTION.into()));
         }
         let planned = match &user {
@@ -509,27 +472,16 @@ impl ClaimReviewService {
             _ => None,
         };
         let reasons = serde_json::to_string(&new.rationales)?;
-        sqlx::query(
-            "UPDATE learning_assessment_candidates SET prompt=?, options_json=COALESCE(?, options_json), content_sha256=?, review_status=CASE WHEN review_status='dropped' THEN 'agreed' ELSE review_status END WHERE id=?",
+        questions::write_question(&mut tx, &stored.id, &new.prompt, options.as_deref(), &token)
+            .await?;
+        questions::write_answer_key(
+            &mut tx,
+            &stored.id,
+            &new.explanation,
+            key.as_deref(),
+            &reasons,
         )
-        .bind(&new.prompt)
-        .bind(options)
-        .bind(&token)
-        .bind(&stored.id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        sqlx::query(
-            "UPDATE learning_assessment_answer_keys SET explanation=?, key_json=COALESCE(?, key_json), \
-             distractor_rationales_json=? WHERE candidate_id=?",
-        )
-        .bind(&new.explanation)
-        .bind(key)
-        .bind(reasons)
-        .bind(&stored.id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let ended: HashSet<String> = ending
             .iter()
             .map(|item| item.entry.claim_id().0.clone())
@@ -554,16 +506,8 @@ impl ClaimReviewService {
             })
         })
         .await?;
-        sqlx::query(
-            "UPDATE learning_lesson_teaching_findings SET part_changed_at=? \
-             WHERE lesson_id=? AND site='question' AND unit_index=?",
-        )
-        .bind(at)
-        .bind(&lesson_id)
-        .bind(i64::try_from(question_index).unwrap_or(i64::MAX))
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        teaching_findings::mark_part_changed(&mut tx, &lesson_id, "question", question_index, at)
+            .await?;
         if ledger.review.is_some() {
             bump_revision(&mut tx, &lesson_id).await?;
         }

@@ -18,6 +18,8 @@ pub mod store;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod write_tests;
 
 use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};

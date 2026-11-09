@@ -2,6 +2,7 @@
 //! All table creation is handled by migrations
 
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
 pub const SCHEMA_VERSION: i32 = 18;
@@ -20,8 +21,10 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
 pub async fn rebuild_fts5_index(pool: &SqlitePool) -> Result<()> {
     tracing::info!("Rebuilding FTS5 index...");
 
+    let mut tx = pool.begin_write().await?;
+
     sqlx::query("DELETE FROM documents_fts")
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
     sqlx::query(
@@ -32,8 +35,10 @@ pub async fn rebuild_fts5_index(pool: &SqlitePool) -> Result<()> {
         GROUP BY document_id
         "#,
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     tracing::info!("FTS5 index rebuilt");
     Ok(())

@@ -5,6 +5,7 @@ use crate::infrastructure::persistence::repositories::workspace_notes::{
 use lattice_core::application::contracts::notes::NoteTimestampRecord;
 use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
 /// The notes table the vault mirrors, seen only through its port.
@@ -71,12 +72,14 @@ pub(super) async fn has_pending(pool: &SqlitePool, id: &str) -> Result<bool> {
 pub(super) async fn begin_rescan(pool: &SqlitePool) -> Result<(String, i64)> {
     // Rescans are serialized in the watcher. This clears spill records left
     // by a previous process before allocating a new isolated run id.
+    let mut tx = pool.begin_write().await?;
     sqlx::query("DELETE FROM vault_rescan_seen")
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
     let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM daily_notes_workspace")
-        .fetch_one(pool)
+        .fetch_one(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok((uuid::Uuid::new_v4().to_string(), total))
 }
 

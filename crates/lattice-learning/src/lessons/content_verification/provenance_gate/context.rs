@@ -6,7 +6,7 @@
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §5, §12, §16;
 //! docs/design/2026-10-21-claim-official-sources.md §4.3.
 
-use super::{SavedText, VersionFacts};
+use super::{repository, SavedText, VersionFacts};
 use crate::references::trust::{calibration, SqliteSourceTrustStore};
 use lattice_core::application::ports::{LLMPort, SourceTrustStore, StoredJudgement};
 use lattice_core::application::services::source_trust::{
@@ -21,7 +21,7 @@ use lattice_core::domain::provenance::{
     StandingAssessment, TrustLevel, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -104,10 +104,6 @@ pub(crate) async fn outline_trust<T>(
 
 fn course() -> Option<Course> {
     COURSE.try_with(Clone::clone).ok()
-}
-
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
 }
 
 fn now() -> i64 {
@@ -301,6 +297,68 @@ impl Judgements {
             .collect()
     }
 
+    /// Judges at once the ownership of every distinct (origin, subject) pair
+    /// that weighing `wanted`, each a subject and the versions cited for it,
+    /// will ask for; the store then holds each answer. Waits for all and
+    /// returns the first error.
+    pub(in crate::lessons::content_verification) async fn owners(
+        &mut self,
+        llm: &dyn LLMPort,
+        wanted: &[(Option<ClaimSubject>, Vec<String>)],
+    ) -> Result<()> {
+        let read: Vec<String> = wanted
+            .iter()
+            .flat_map(|(_, versions)| versions)
+            .flat_map(|version| {
+                let originals = self.relations.iter().filter_map(move |relation| {
+                    match (&relation.to, relation.from == *version) {
+                        (RelationTarget::Version(to), true)
+                            if COPY_RELATIONS.contains(&relation.kind) =>
+                        {
+                            Some(to.clone())
+                        }
+                        _ => None,
+                    }
+                });
+                std::iter::once(version.clone()).chain(originals)
+            })
+            .collect();
+        self.load_versions(Some(llm), &read).await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut pairs = Vec::new();
+        for (subject, versions) in wanted {
+            let Some(subject) = subject else {
+                continue;
+            };
+            for version in versions {
+                let record = self.version(Some(llm), version).await?;
+                let Some((provenance, _)) = &record.judged else {
+                    continue;
+                };
+                if provenance.origin.host.is_some()
+                    && seen.insert((provenance.origin.key.0.clone(), subject.key.0.clone()))
+                {
+                    pairs.push((record.clone(), subject));
+                }
+            }
+        }
+        let this = &*self;
+        let tasks = pairs.iter().map(|(record, subject)| async move {
+            match &record.judged {
+                Some((provenance, _)) => this
+                    .authority(Some(llm), provenance, subject)
+                    .await
+                    .map(|_| ()),
+                None => Ok(()),
+            }
+        });
+        futures::future::join_all(tasks)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<()>>>()
+            .map(|_| ())
+    }
+
     /// The facts of each of `versions` for `profile`'s subject: the version's
     /// level from its standing, its ownership of the subject, its copy
     /// relations and the overrides (§5). With no `llm`, only judgements
@@ -481,21 +539,56 @@ impl Judgements {
         if let Some(record) = self.versions.get(version) {
             return Ok(record.clone());
         }
-        let row = sqlx::query(
-            "SELECT v.source_id, v.full_text, v.acquired_at, l.added_by, l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id WHERE v.program_id = ? AND v.id = ?",
-        )
-        .bind(&self.program_id)
-        .bind(version)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db)?;
-        let added_by: String = row.try_get("added_by").map_err(db)?;
-        let added_by = AddedBy::from_column(&added_by).ok_or_else(|| {
-            AppError::InternalError(format!("Unknown source origin \"{added_by}\"."))
+        let record = self.build_version(llm, version).await?;
+        self.versions.insert(version.to_owned(), record.clone());
+        Ok(record)
+    }
+
+    /// Reads at once every one of `versions` this pass has not read yet, so
+    /// the standings they lack are judged together; the first error is
+    /// returned once all have finished.
+    async fn load_versions(
+        &mut self,
+        llm: Option<&dyn LLMPort>,
+        versions: &[String],
+    ) -> Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        let missing: Vec<&String> = versions
+            .iter()
+            .filter(|version| !self.versions.contains_key(*version) && seen.insert(*version))
+            .collect();
+        let this = &*self;
+        let built = futures::future::join_all(missing.iter().map(|version| async move {
+            this.build_version(llm, version)
+                .await
+                .map(|record| ((*version).clone(), record))
+        }))
+        .await;
+        let mut first_error = None;
+        for outcome in built {
+            match outcome {
+                Ok((version, record)) => {
+                    self.versions.insert(version, record);
+                }
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    async fn build_version(
+        &self,
+        llm: Option<&dyn LLMPort>,
+        version: &str,
+    ) -> Result<Arc<VersionRecord>> {
+        let row = repository::version_row(&self.pool, &self.program_id, version).await?;
+        let added_by = AddedBy::from_column(&row.added_by).ok_or_else(|| {
+            AppError::InternalError(format!("Unknown source origin \"{}\".", row.added_by))
         })?;
-        let selection_note: Option<String> = row.try_get("selection_note").map_err(db)?;
-        let text: String = row.try_get("full_text").map_err(db)?;
-        let acquired_at: i64 = row.try_get("acquired_at").map_err(db)?;
+        let selection_note = row.selection_note;
+        let text = row.full_text;
+        let acquired_at = row.acquired_at;
         let provenance = self.store.provenance(version).await?;
         let links = provenance
             .as_ref()
@@ -512,15 +605,13 @@ impl Judgements {
             }
             None => None,
         };
-        let record = Arc::new(VersionRecord {
-            source_id: row.try_get("source_id").map_err(db)?,
+        Ok(Arc::new(VersionRecord {
+            source_id: row.source_id,
             added_by,
             acquired_at: acquired_at / MILLIS_PER_SECOND,
             saved: Arc::new(saved),
             judged,
-        });
-        self.versions.insert(version.to_owned(), record.clone());
-        Ok(record)
+        }))
     }
 
     /// A version's standing (`source-standing-v2`): judged from its signals

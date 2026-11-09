@@ -7,6 +7,7 @@ use super::{
     validate_uuid, Destination, LearningPackRepository,
 };
 use crate::{
+    persistence::db,
     portability_dto::{
         ExportAllLearningPacksRequestDto, ExportAllLearningPacksResultDto,
         ExportLearningPackRequestDto, ExportedLearningPackDto, FailedLearningPackExportDto,
@@ -56,10 +57,12 @@ impl LearningPackRepository {
     ) -> Result<ExportAllLearningPacksResultDto> {
         validate_uuid(&req.operation_id, "operation")?;
         let payload = hash(req)?;
-        if let Some(done) = pack_operation(&req.operation_id, KIND, &payload)
-            .replay(&self.pool)
-            .await?
-        {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let replayed = pack_operation(&req.operation_id, KIND, &payload)
+            .replay(&mut connection)
+            .await?;
+        drop(connection);
+        if let Some(done) = replayed {
             return Ok(done);
         }
         let Some(chosen) = picker.pick_folder().await? else {
@@ -98,8 +101,9 @@ impl LearningPackRepository {
             exported,
             failed,
         };
+        let mut connection = self.pool.acquire().await.map_err(db)?;
         pack_operation(&req.operation_id, KIND, &payload)
-            .record(&self.pool, &result)
+            .record(&mut connection, &result)
             .await?;
         Ok(result)
     }

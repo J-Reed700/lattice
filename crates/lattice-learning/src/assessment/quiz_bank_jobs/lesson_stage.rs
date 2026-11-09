@@ -89,12 +89,9 @@ pub(crate) async fn lesson_bank_stage(
 ) -> Result<LessonBank> {
     let (outcome_id, settings, quiz_formats) = {
         let mut connection = pool.acquire().await.map_err(db)?;
-        let existing: Option<String> = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND lesson_id=? ORDER BY created_at,id LIMIT 1")
-            .bind(program_id)
-            .bind(lesson_id)
-            .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?;
+        let existing =
+            quiz_blueprints::repository::lesson_outcome_in(&mut connection, program_id, lesson_id)
+                .await?;
         (
             existing.unwrap_or_else(|| uuid::Uuid::new_v4().to_string()),
             quiz_blueprints::settings_in(&mut connection, program_id).await?,

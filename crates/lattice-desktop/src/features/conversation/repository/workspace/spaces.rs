@@ -1,5 +1,6 @@
 use super::*;
 use lattice_core::shared::persistence::Transactions;
+use sqlx::SqliteConnection;
 
 fn preferences_declares_journal(raw: Option<&str>) -> bool {
     let Some(raw_json) = raw else {
@@ -38,13 +39,13 @@ fn validate_space_preferences_not_journal(
 }
 
 pub(super) async fn ensure_standard_space(
-    pool: &SqlitePool,
+    connection: &mut SqliteConnection,
     space_id: &str,
 ) -> Result<(), AppError> {
     let exists =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
             .bind(space_id)
-            .fetch_one(pool)
+            .fetch_one(connection)
             .await
             .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
 
@@ -85,6 +86,11 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
         let is_archived: Option<i64> = request.is_archived.map(|v| if v { 1 } else { 0 });
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let result = sqlx::query(
             r#"
         UPDATE conversation_spaces
@@ -111,7 +117,7 @@ impl ConversationRepository {
         .bind(request.sort_order)
         .bind(&now)
         .bind(&request.space_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to update space: {}", e)))?;
 
@@ -132,9 +138,13 @@ impl ConversationRepository {
         "#,
         )
         .bind(&request.space_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch updated space: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(updated)
     }
@@ -182,13 +192,12 @@ impl ConversationRepository {
         &self,
         request: MoveConversationToSpaceRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
-        ensure_standard_space(&self.pool, &request.space_id).await?;
-
         let mut tx = self
             .pool
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_standard_space(&mut tx, &request.space_id).await?;
 
         let _current_space_id = sqlx::query_scalar::<_, String>(
             "SELECT space_id FROM conversations WHERE id = ? LIMIT 1",

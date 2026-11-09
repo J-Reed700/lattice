@@ -31,10 +31,10 @@ use super::dto::{
     RewrittenDto, SourceAddedByDto, SourceRefDto, StopReasonDto,
 };
 use super::put_back::{self, Lesson};
-use super::repository::ShownPassage;
+use super::repository::{blocks, ShownPassage};
 use super::service::ClaimReviewService;
 use super::source_deleted;
-use super::teaching_claims::{name_claims, section_bodies};
+use super::teaching_claims::name_claims;
 use super::teaching_findings::TeachingFindingsRepository;
 use crate::content_verification::{field_text, located};
 use crate::dto::LearningSourceKind;
@@ -180,7 +180,7 @@ impl ClaimReviewService {
             .list(lesson_id)
             .await?;
         if published {
-            let bodies = section_bodies(self.pool(), lesson_id).await?;
+            let bodies = blocks::section_bodies(self.pool(), lesson_id).await?;
             name_claims(&ledger, &bodies, &mut teaching_findings);
         }
         Ok(Some(LessonClaimReviewDto {

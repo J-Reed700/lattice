@@ -36,6 +36,7 @@ struct Model {
     batch_unavailable: bool,
     extracted_sections: Mutex<Vec<Vec<usize>>>,
     audited_sections: Mutex<Vec<Vec<usize>>>,
+    /// Fail the coverage batch that starts at this section.
     fail_coverage_at: Option<usize>,
     coverage_gap_in: Option<usize>,
 }
@@ -337,7 +338,7 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
     }
     if prompt.starts_with("Audit claim coverage independently.") {
         let data = context(prompt);
-        let mut checks = serde_json::Map::new();
+        let mut checks = Vec::new();
         for unit in data["units"].as_array().unwrap() {
             let ids: Vec<_> = unit["claims"]
                 .as_array()
@@ -346,10 +347,10 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
                 .map(|claim| claim["id"].clone())
                 .collect();
             for passage in unit["passages"].as_array().unwrap() {
-                checks.insert(passage["id"].as_str().unwrap().into(), json!({"claimIds":ids,"nonFactualReason":if ids.is_empty() {"The fixture contains only a stipulated instruction."} else {""},"missingClaims":[]}));
+                checks.push(json!({"passageId":passage["id"],"claimIds":ids,"nonFactualReason":if ids.is_empty() {"The fixture contains only a stipulated instruction."} else {""},"missingClaims":[]}));
             }
         }
-        return Some(Value::Object(checks).to_string());
+        return Some(json!({"passages":checks}).to_string());
     }
     None
 }
@@ -392,18 +393,16 @@ impl Model {
                 )?);
         }
         if prompt.starts_with("Audit claim coverage independently.") {
-            let mut audits = self.audited_sections.lock().unwrap();
-            if self.fail_coverage_at == Some(audits.len()) {
+            let batch: Vec<usize> = context(prompt)["units"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|unit| unit["index"].as_u64().unwrap() as usize)
+                .collect();
+            if self.fail_coverage_at.is_some() && self.fail_coverage_at == batch.first().copied() {
                 return Err(invalid("fixture interrupted during coverage"));
             }
-            audits.push(
-                context(prompt)["units"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|unit| unit["index"].as_u64().unwrap() as usize)
-                    .collect(),
-            );
+            self.audited_sections.lock().unwrap().push(batch);
         }
         if prompt.starts_with("Audit claim coverage independently.") && self.incomplete_coverage {
             return Ok(json!({"units":[]}).to_string());
@@ -424,7 +423,13 @@ impl Model {
                 for unit in context(prompt)["units"].as_array().unwrap() {
                     if unit["index"].as_u64() == Some(index as u64) {
                         let id = unit["passages"][0]["id"].as_str().unwrap();
-                        response[id]["missingClaims"] = json!(["An assertion is missing."]);
+                        let entry = response["passages"]
+                            .as_array_mut()
+                            .unwrap()
+                            .iter_mut()
+                            .find(|entry| entry["passageId"].as_str() == Some(id))
+                            .unwrap();
+                        entry["missingClaims"] = json!(["An assertion is missing."]);
                     }
                 }
                 return Ok(response.to_string());
@@ -561,6 +566,8 @@ async fn verify(
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
 
+#[path = "batch_overlap_tests.rs"]
+mod batch_overlap_tests;
 #[path = "coverage_resume_tests.rs"]
 mod coverage_resume_tests;
 

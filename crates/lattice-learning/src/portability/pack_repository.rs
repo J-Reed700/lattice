@@ -38,7 +38,7 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use records::{pack_operation, replay, PendingPreview};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::{collections::HashMap, path::Path};
 use validation::validate_program;
 
@@ -252,7 +252,7 @@ impl LearningPackRepository {
         let program_id: String = row.get("program_id");
         sqlx::query("UPDATE learning_pack_import_previews SET status='cancelled',decided_at=? WHERE id=? AND status='pending'").bind(now).bind(&req.preview_id).execute(&mut *tx).await.map_err(db)?;
         pack_operation(&req.operation_id, "cancel_import", &payload)
-            .record(&mut *tx, &req.preview_id)
+            .record(&mut tx, &req.preview_id)
             .await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&program_id).await
@@ -290,7 +290,6 @@ impl LearningPackRepository {
         let original = program_entry::load_program(&decoded)?;
         validate_program(&original)?;
         entries::check(&decoded, &original)?;
-        let (program, ids) = self.target_program(&decoded, &original, &preview).await?;
         let replaces = preview.policy.on_existing() == ExistingAction::Replace;
         // Lock before capturing the backup, not merely before deleting rows.
         // Background saves either precede that snapshot or wait for completion.
@@ -302,6 +301,7 @@ impl LearningPackRepository {
             replaces,
         )
         .await?;
+        let (program, ids) = Self::target_program(&mut tx, &decoded, &original, &preview).await?;
         let mut local_links = None;
         if replaces {
             local_links =
@@ -343,7 +343,7 @@ impl LearningPackRepository {
     /// gets it there: a copy gets fresh identifiers everywhere; any other
     /// policy imports the course under the preview's target ID.
     async fn target_program(
-        &self,
+        connection: &mut SqliteConnection,
         pack: &DecodedLearningPack,
         original: &LearningProgramDto,
         preview: &PendingPreview,
@@ -351,7 +351,7 @@ impl LearningPackRepository {
         let existing: Option<i64> =
             sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
                 .bind(&preview.target_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *connection)
                 .await
                 .map_err(db)?;
         if preview.policy.on_existing() == ExistingAction::Block && existing.is_some() {

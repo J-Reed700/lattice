@@ -10,6 +10,7 @@ use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::ConversationId;
+use sqlx::SqliteConnection;
 use std::str::FromStr;
 
 impl ConversationRepository {
@@ -267,6 +268,11 @@ impl ConversationRepository {
     pub async fn update_message_status(&self, message_id: &str, status: &str) -> Result<()> {
         let now = Utc::now().to_rfc3339();
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let result = sqlx::query!(
             r#"
             UPDATE conversation_messages
@@ -276,7 +282,7 @@ impl ConversationRepository {
             status,
             message_id
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to update message status: {}", e)))?;
 
@@ -292,7 +298,7 @@ impl ConversationRepository {
         let conversation_id: Option<String> =
             sqlx::query_scalar("SELECT conversation_id FROM conversation_messages WHERE id = ?")
                 .bind(message_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(|e| AppError::Database(format!("Failed to get conversation_id: {}", e)))?;
 
@@ -302,31 +308,47 @@ impl ConversationRepository {
                 now,
                 conv_id
             )
-            .execute(&self.pool)
+            .execute(&mut *tx)
             .await
             .map_err(|e| {
                 AppError::Database(format!("Failed to update conversation timestamp: {}", e))
             })?;
         }
 
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
+
         Ok(())
     }
 
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<ConversationMessage>> {
-        let db_models = sqlx::query_as::<_, ConversationMessageModel>(
-            r#"
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
+        messages_of(&mut connection, conversation_id).await
+    }
+}
+
+pub(super) async fn messages_of(
+    connection: &mut SqliteConnection,
+    conversation_id: &str,
+) -> Result<Vec<ConversationMessage>> {
+    let db_models = sqlx::query_as::<_, ConversationMessageModel>(
+        r#"
             SELECT id, conversation_id, role, content, tokens, created_at,
                    metadata, status
             FROM conversation_messages
             WHERE conversation_id = ?
             ORDER BY sequence ASC, created_at ASC, rowid ASC
             "#,
-        )
-        .bind(conversation_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
+    )
+    .bind(conversation_id)
+    .fetch_all(connection)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
 
-        Ok(ConversationMessageMapper::to_entities(&db_models))
-    }
+    Ok(ConversationMessageMapper::to_entities(&db_models))
 }

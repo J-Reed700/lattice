@@ -8,9 +8,11 @@
 //! dropped mid-transaction.
 mod arrivals;
 mod attempt;
+mod rank;
 mod repository;
 mod runtime;
 
+pub use rank::{current_rank, RankScope, RankTicket, RankWatcher};
 pub use repository::JobStore;
 pub use runtime::{
     JobContext, JobHandler, JobKindRegistration, JobRuntime, RegistrationFailure, REPEATED_FAILURE,
@@ -89,6 +91,9 @@ pub struct JobRecord {
     pub started_at: Option<i64>,
     pub finished_at: Option<i64>,
     pub heartbeat_at: Option<i64>,
+    /// Where the job stands in its course's backlog; lower runs first. Set when
+    /// a ranked kind's job is admitted, and kept by its retries.
+    pub rank: Option<i64>,
 }
 
 /// A request to run work. `operation_id` is the caller's idempotency key;
@@ -250,6 +255,7 @@ impl Default for Backoff {
 pub struct JobKindConfig {
     pub concurrency: usize,
     pub exclusive_per_subject: bool,
+    pub ranked: bool,
     pub recovery: RecoveryPolicy,
     pub backoff: Backoff,
 }
@@ -261,6 +267,7 @@ impl JobKindConfig {
         Self {
             concurrency: tokio::sync::Semaphore::MAX_PERMITS,
             exclusive_per_subject: false,
+            ranked: false,
             recovery,
             backoff: Backoff::default(),
         }
@@ -275,6 +282,14 @@ impl JobKindConfig {
     /// pending, without holding a concurrency slot.
     pub fn exclusive_per_subject(mut self) -> Self {
         self.exclusive_per_subject = true;
+        self
+    }
+
+    /// A job of this kind that was saved with a rank runs its handler inside
+    /// that rank, so the model calls it makes are served in rank order (see
+    /// [`current_rank`]).
+    pub fn ranked(mut self) -> Self {
+        self.ranked = true;
         self
     }
 
