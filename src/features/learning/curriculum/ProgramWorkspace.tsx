@@ -11,6 +11,9 @@ import { learningQuizOverviewKey } from '@/features/learning/api/learningQueryKe
 import { CourseCoach } from '@/features/learning/curriculum/CourseCoach';
 import { CourseNavigator } from '@/features/learning/curriculum/CourseNavigator';
 import { type CourseStep } from '@/features/learning/curriculum/courseProgress';
+import { CoursePlanStatus, LessonTopics } from '@/features/learning/curriculum/coursePlan/PlannedTopics';
+import { TopicsReviewScreen } from '@/features/learning/curriculum/coursePlan/TopicsReviewScreen';
+import { useCoursePlan } from '@/features/learning/curriculum/coursePlan/useCoursePlan';
 import { CourseSyllabus } from '@/features/learning/curriculum/CourseSyllabus';
 import { OutlineCitation, OutlineEvidenceStatus } from '@/features/learning/curriculum/OutlineEvidence';
 import { OutlineReviewPanel, type OutlineOperation } from '@/features/learning/curriculum/OutlineReviewPanel';
@@ -77,6 +80,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const [lastPracticeTab, setLastPracticeTab] = useState<Tab>('workbench');
   const [preparationExpanded, setPreparationExpanded] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [reviewingTopics, setReviewingTopics] = useState(false);
   const [contextVisible, setContextVisible] = useState(true);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
@@ -134,6 +138,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const repair = useRepairLearningOutline(program.summary.id);
   const outlineBlocked = repair.isPending || outlineGeneration?.isPending || Boolean(program.outlineReview && program.outlineReview.status !== 'passed');
   const activeProgram = program.summary.status === 'active';
+  const topicsPlanned = useCoursePlan(program.summary.id).data?.state === 'planned';
+  const hasUnpreparedLessons = program.modules.some((module) => module.lessons.some((lesson) => lesson.preparation === 'outline' && !lesson.completed));
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const outlineEvidence = useLearningOutlineEvidence(
     program.summary.id,
@@ -285,6 +291,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     if (held.length === 1 && openReview) openReview(program.summary.id, held[0]); else selectTab('lessons');
   };
 
+  if (reviewingTopics) return <TopicsReviewScreen program={program} onBack={() => setReviewingTopics(false)} />;
+
   return (
     <ProgramTangents
       program={program}
@@ -317,6 +325,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
             <div className="studio-course-progress">
               <div className="studio-course-progress-row"><span>Lessons complete</span><strong>{completedCount} <span className="font-normal text-text-muted">/ {allLessons.length}</span></strong></div>
               <div className="studio-progress-track" aria-hidden="true"><span style={{ width: `${allLessons.length ? completedCount / allLessons.length * 100 : 0}%` }} /></div>
+              {topicsPlanned && <Button type="button" variant="outline" size="sm" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => setReviewingTopics(true))} className="mt-2">Review topics</Button>}
               {quizzes.data && quizzes.data.quizzesTotal > 0 && <div className="studio-course-progress-row mt-2"><span>Quizzes passed</span><strong>{quizzes.data.quizzesPassed} <span className="font-normal text-text-muted">/ {quizzes.data.quizzesTotal}</span></strong></div>}
             </div>
           </div>
@@ -325,7 +334,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     <OutlineReviewPanel program={program} generation={outlineGeneration} repair={repair} />
 
     {!program.sources.length && <p className="mt-3 text-xs leading-5 text-text-muted">Topic-based course · AI-authored from general knowledge. Add references in Sources to ground future lessons.</p>}
-    {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} />}
+    {!activeProgram && <CoursePlanStatus programId={program.summary.id} className="mt-3" />}
+    {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} renderTopics={(id) => <LessonTopics programId={program.summary.id} lessonId={id} />} />}
     {activeProgram && <StudyHabitsBar className="studio-habits" onSelectFramework={handleSelectFramework} />}
     <div className="grid min-w-0 grid-cols-1 gap-2">
       <CourseNavigator modules={program.modules} moduleId={currentModule?.id ?? ''} lessonId={currentLesson?.id ?? ''} disabled={savingBeforeMove} onModuleChange={openModule} onLessonChange={(id) => void afterNotebookSave(() => setLessonId(id))}>
@@ -357,7 +367,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
           ? <LessonPreparationStatus job={preparationJob} queuedMore={queuedMore} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError?.message} expanded={preparationExpanded} onExpandedChange={setPreparationExpanded} lessonTitles={lessonTitles} onReview={openReview} />
           : <LessonPreparationLine job={preparationJob} queuedMore={queuedMore} pending={preparePending} programId={program.summary.id} error={prepareError?.message} onView={() => selectTab('lessons')} />)}
         {activeProgram && preparationPlan.isError && preparePending && <p role="alert" className="my-3 text-sm text-rose-700">Progress could not be loaded. <button type="button" className="underline" onClick={() => void preparationPlan.refetch()}>Retry progress</button></p>}
-        {tab === 'lessons' && <div className="studio-lessons">{!currentModule?.lessons.length ? <p className="rounded-lg bg-surface p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson, index) => <LessonCard key={lesson.id} lesson={lesson} number={`${program.modules.indexOf(currentModule) + 1}.${index + 1}`} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparePending)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); setWrittenOpened(true); setLastPracticeTab('workbench'); })} onReview={openReview} contextVisible={contextVisible} onSources={() => selectTab('sources')}
+        {tab === 'lessons' && <div className="studio-lessons">{activeProgram && hasUnpreparedLessons && <CoursePlanStatus programId={program.summary.id} />}{!currentModule?.lessons.length ? <p className="rounded-lg bg-surface p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson, index) => <LessonCard key={lesson.id} lesson={lesson} number={`${program.modules.indexOf(currentModule) + 1}.${index + 1}`} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparePending)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); setWrittenOpened(true); setLastPracticeTab('workbench'); })} onReview={openReview} contextVisible={contextVisible} onSources={() => selectTab('sources')} topics={activeProgram ? <LessonTopics programId={program.summary.id} lessonId={lesson.id} /> : undefined}
           notebook={activeProgram && lesson.id === lessonId ? <NotebookPanel compact enabled program={program} lessonId={lesson.id} memory={memoryQuery.data} memoryLoading={memoryQuery.isLoading} memoryError={memoryQuery.error?.message} onRetryMemory={() => void memoryQuery.refetch()} drafts={notebookDrafts} setDraft={(key, draft) => setNotebookDrafts((current) => ({ ...current, [key]: draft }))} onOpenNotebook={() => selectTab('notebook')} /> : undefined}
           quizCallout={activeProgram && lesson.preparation === 'ready' ? <LessonQuizCallout program={program} lesson={lesson} onOpenForm={openQuiz} onViewResult={openQuiz} /> : null} />)}</div>}
         {activeProgram && tab === 'lessons' && <nav aria-label="Module milestones" className="studio-milestones flex flex-wrap items-center gap-1 text-sm"><span className="px-3 text-text-secondary"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">01</span>Learn · {currentModule?.lessons.filter((item) => item.completed).length ?? 0} of {currentModule?.lessons.length ?? 0} complete</span><button type="button" onClick={() => selectTab('workbench')} className="min-h-10 rounded-full px-3 text-left text-text-secondary hover:bg-background hover:text-text-primary disabled:opacity-50"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">02</span>Apply →</button>{currentModule && <ModuleTestCallout program={program} module={currentModule} onOpenForm={openQuiz} onShowTest={() => showModuleTest(currentModule.id)} />}<button type="button" disabled={!currentModule?.lessons.some((item) => item.preparation === 'ready')} onClick={() => void afterNotebookSave(() => {

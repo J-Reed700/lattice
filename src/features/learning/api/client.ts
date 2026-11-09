@@ -232,6 +232,29 @@ export const learningApi = {
   ): Promise<ApiResult<Wire.LearningProgramDto>> =>
     learningCall('prepare_learning_module', { request }),
 
+  getLearningCoursePlan: (programId: string): Promise<ApiResult<Wire.CoursePlanViewDto>> =>
+    learningCall('get_learning_course_plan', { programId }),
+
+  planLearningCourse: (
+    request: Wire.PlanLearningCourseRequestDto,
+  ): Promise<ApiResult<Wire.CoursePlanViewDto>> =>
+    learningCall('plan_learning_course', { request }),
+
+  editLearningCoursePlanEntry: (
+    request: Wire.EditCoursePlanEntryRequestDto,
+  ): Promise<ApiResult<Wire.CoursePlanViewDto>> =>
+    learningCall('edit_learning_course_plan_entry', { request }),
+
+  changeLearningCoursePlanEntries: (
+    request: Wire.ChangeCoursePlanEntriesRequestDto,
+  ): Promise<ApiResult<Wire.CoursePlanViewDto>> =>
+    learningCall('change_learning_course_plan_entries', { request }),
+
+  undoLearningCoursePlanEntry: (
+    request: Wire.UndoCoursePlanEntryRequestDto,
+  ): Promise<ApiResult<Wire.CoursePlanViewDto>> =>
+    learningCall('undo_learning_course_plan_entry', { request }),
+
   completeLearningLesson: (
     request: Wire.CompleteLearningLessonRequestDto,
   ): Promise<ApiResult<Wire.LearningProgramDto>> =>
