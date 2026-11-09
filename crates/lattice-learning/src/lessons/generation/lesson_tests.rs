@@ -3,6 +3,8 @@ use super::*;
 use crate::lessons::course_generation_tests::length_bounds;
 use serde_json::{json, Value};
 
+const STEPS_IN_ORDER: &str = "The learner does the lesson's steps in order, with their own tools and materials, so each step starts from what the steps before it left: a later step uses what an earlier one made or set up, and never has the learner make or set it up again.";
+
 const EXCERPT: &str =
     "Water boils at 99.97 degrees Celsius at one standard atmosphere of pressure.";
 
@@ -826,4 +828,27 @@ fn the_writer_keeps_the_four_choices_close_in_length_and_in_their_own_words() {
         ),
         "{text}"
     );
+}
+
+#[test]
+fn the_writer_and_both_repairs_are_told_a_step_starts_from_what_the_steps_before_it_left() {
+    for sources in [0, 2] {
+        let schema = lesson_schema(sources);
+        for (who, text) in [
+            ("writer", writer_requirements()),
+            (
+                "teaching repair",
+                crate::lessons::text_edits::instructions(&schema),
+            ),
+            (
+                "claim repair",
+                crate::lessons::text_edits::rewrite_instructions(&schema),
+            ),
+        ] {
+            assert!(
+                text.contains(STEPS_IN_ORDER),
+                "{who} with {sources} sources: {text}"
+            );
+        }
+    }
 }
