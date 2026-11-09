@@ -603,3 +603,48 @@ fn a_read_after_the_commit_is_not_flagged() {
 "#;
     assert_eq!(found(REPOSITORY, source), Vec::<String>::new());
 }
+
+#[test]
+fn a_read_after_a_commit_that_returns_early_is_not_flagged() {
+    let source = r#"impl Repo {
+    pub async fn rename(&self, id: &str) {
+        let mut tx = self.pool.begin_write().await.unwrap();
+        if seen(&mut *tx).await {
+            tx.commit().await.unwrap();
+            return self.load(id).await;
+        }
+        sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        self.load(id).await
+    }
+    async fn load(&self, id: &str) {
+        sqlx::query("SELECT a").fetch_one(&self.pool).await.unwrap();
+    }
+}
+"#;
+    assert_eq!(found(REPOSITORY, source), Vec::<String>::new());
+}
+
+#[test]
+fn a_read_on_the_pool_after_an_early_return_but_before_the_last_commit_is_flagged() {
+    let source = r#"impl Repo {
+    pub async fn rename(&self, id: &str) {
+        let mut tx = self.pool.begin_write().await.unwrap();
+        if seen(&mut *tx).await {
+            tx.commit().await.unwrap();
+            return;
+        }
+        self.load(id).await;
+        sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    async fn load(&self, id: &str) {
+        sqlx::query("SELECT a").fetch_one(&self.pool).await.unwrap();
+    }
+}
+"#;
+    assert_eq!(
+        found(REPOSITORY, source),
+        vec![before_commit(REPOSITORY, 2, "rename")]
+    );
+}
