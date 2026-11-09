@@ -42,6 +42,21 @@ pub fn pinned_for_test(llm: Arc<dyn lattice_core::application::ports::LLMPort>) 
     }
 }
 
+/// A verified lesson with the digest of the course plan it was written from,
+/// saved together so a retry never pairs a lesson with a plan it was not
+/// written from.
+#[derive(serde::Serialize, serde::Deserialize)]
+struct PreparedCheckpoint {
+    plan: String,
+    lesson: crate::dto::PreparedLearningLesson,
+}
+
+fn plan_digest(plan: &crate::lessons::course_plan::CoursePlan) -> Result<String> {
+    Ok(crate::content_verification::digest(&serde_json::to_string(
+        plan,
+    )?))
+}
+
 #[derive(Clone)]
 pub struct LessonGenerationWorker {
     pub pool: SqlitePool,
@@ -278,20 +293,29 @@ impl LessonGenerationWorker {
                 crate::lesson_progress::lesson(&lesson.title);
                 let sources = program_repo.verification_sources(&job.program_id).await?;
                 program.sources = sources;
+                let current_plan =
+                    crate::lessons::course_plan::stored(&self.pool, &program, outline_revision)
+                        .await?
+                        .map(|plan| plan_digest(&plan))
+                        .transpose()?;
                 let saved = repo
-                    .lesson_checkpoint(job_id, &lesson.id, "prepared-v1")
+                    .lesson_checkpoint(job_id, &lesson.id, "prepared-v2")
                     .await?
-                    .and_then(|value| {
-                        serde_json::from_value::<crate::dto::PreparedLearningLesson>(value).ok()
-                    })
-                    .filter(|prepared| {
-                        prepared.verification.as_ref().is_some_and(|report| {
-                            report.reusable(&lesson.id, prepared, &program.sources, llm.as_ref())
+                    .and_then(|value| serde_json::from_value::<PreparedCheckpoint>(value).ok())
+                    .filter(|saved| current_plan.as_deref() == Some(saved.plan.as_str()))
+                    .filter(|saved| {
+                        saved.lesson.verification.as_ref().is_some_and(|report| {
+                            report.reusable(
+                                &lesson.id,
+                                &saved.lesson,
+                                &program.sources,
+                                llm.as_ref(),
+                            )
                         })
                     });
-                let generated = if let Some(saved) = saved {
+                let (generated, used_plan) = if let Some(saved) = saved {
                     crate::lesson_progress::stage("Resuming from a verified lesson checkpoint");
-                    saved
+                    (saved.lesson, saved.plan)
                 } else {
                     // Made once for the outline revision and read by every
                     // lesson after it: a lesson never waits on another's output.
@@ -347,7 +371,8 @@ impl LessonGenerationWorker {
                         ),
                     )
                     .await;
-                    match prepared {
+                    let used_plan = plan_digest(&plan)?;
+                    let written = match prepared {
                         Ok(prepared) => prepared,
                         Err(error) => {
                             // A lesson whose claims wait for the user is held,
@@ -365,7 +390,8 @@ impl LessonGenerationWorker {
                             crate::lesson_progress::completed(completed_count);
                             continue;
                         }
-                    }
+                    };
+                    (written, used_plan)
                 };
                 // Research before writing may have saved references this
                 // lesson cites.
@@ -374,8 +400,11 @@ impl LessonGenerationWorker {
                 repo.save_lesson_checkpoint(
                     job_id,
                     &lesson.id,
-                    "prepared-v1",
-                    serde_json::to_value(&generated)?,
+                    "prepared-v2",
+                    serde_json::to_value(PreparedCheckpoint {
+                        plan: used_plan,
+                        lesson: generated.clone(),
+                    })?,
                 )
                 .await?;
                 crate::lesson_progress::checkpoint_saved();

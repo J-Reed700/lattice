@@ -129,7 +129,7 @@ pub async fn ensure(
 /// The saved plan, read fresh on every call so an edit made meanwhile is
 /// seen. A revision is planned when each of its lessons has an entry; an
 /// entry that cannot be read is an error, never a missing one.
-async fn stored(
+pub(crate) async fn stored(
     pool: &SqlitePool,
     program: &LearningProgramDto,
     outline_revision: i64,

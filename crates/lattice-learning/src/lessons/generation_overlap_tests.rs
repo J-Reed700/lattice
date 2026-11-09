@@ -134,6 +134,10 @@ pub(crate) async fn save_verified(
     planner: &dyn LLMPort,
 ) -> Result<String> {
     let program = plan_course(pool, program_id, planner).await?;
+    let revision = crate::lessons::course_plan::outline_revision(pool, program_id).await?;
+    let plan = crate::lessons::course_plan::stored(pool, &program, revision)
+        .await?
+        .unwrap();
     let sources = LearningRepository::new(pool.clone())
         .verification_sources(program_id)
         .await?;
@@ -143,8 +147,11 @@ pub(crate) async fn save_verified(
         .save_lesson_checkpoint(
             job_id,
             &lesson.id,
-            "prepared-v1",
-            serde_json::to_value(&prepared)?,
+            "prepared-v2",
+            serde_json::json!({
+                "plan": crate::content_verification::digest(&serde_json::to_string(&plan)?),
+                "lesson": prepared,
+            }),
         )
         .await?;
     Ok(lesson.id.clone())
