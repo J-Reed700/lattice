@@ -243,9 +243,13 @@ impl LearningPracticalRepository {
             let detail_json: Option<String> = check.get("detail_json");
             let detail = match detail_json {
                 Some(text) if !text.trim().is_empty() => Some(
-                    serde_json::from_str::<CaseCheckDetailDto>(&text).map_err(|error| {
-                        AppError::Database(format!("Saved case check detail is invalid: {error}"))
-                    })?,
+                    serde_json::from_str::<CaseCheckDetailDto>(&text)
+                        .map_err(|error| {
+                            AppError::Database(format!(
+                                "Saved case check detail is invalid: {error}"
+                            ))
+                        })?
+                        .without_hidden_content(),
                 ),
                 _ => None,
             };
