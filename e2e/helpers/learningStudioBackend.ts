@@ -243,6 +243,11 @@ export async function installLearningStudioBackend(page: Page) {
     // The factory runs in the page; the claim review helpers wait there for it.
     const { attachEvidence, clearTrustOverride, recheckWaiting, setTrustOverride, trustImpacts, withReviewFields } =
       (window as unknown as { __LATTICE_CLAIM_REVIEW_BACKEND__: ClaimReviewBackend }).__LATTICE_CLAIM_REVIEW_BACKEND__;
+    let profileState = { programId: "", details: "", language: null as string | null, interviewAt: null as number | null, company: null as string | null, role: null as string | null, revision: 0 };
+    const practiceProfile = (programId: string) => {
+      if (!profileState.programId) profileState = { ...profileState, programId };
+      return structuredClone(profileState);
+    };
     const source = {
       id: "source-version-field-notes-1",
       title: "Public field notes",
@@ -2352,6 +2357,18 @@ export async function installLearningStudioBackend(page: Page) {
       get_learning_practical_draft: (args) => practicalDraft('get_learning_practical_draft', args),
       save_learning_practical_draft: (args) => practicalDraft('save_learning_practical_draft', args),
       get_learning_practical_workspace: () => state.practicalWorkspace,
+      get_learning_practice_profile: (args) => practiceProfile(getRequest<{ programId: string }>(args).programId),
+      save_learning_practice_profile: (args) => {
+        const request = getRequest<{ programId: string; details: string; language: string | null; interviewAt: number | null; company: string | null; role: string | null; expectedRevision: number }>(args);
+        if (request.expectedRevision !== profileState.revision) throw Object.assign(new Error("The profile changed elsewhere."), { code: "CONFLICT" });
+        profileState = { programId: request.programId, details: request.details, language: request.language, interviewAt: request.interviewAt, company: request.company, role: request.role, revision: profileState.revision + 1 };
+        return structuredClone(profileState);
+      },
+      get_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
+      check_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
+      practice_due: () => ({ items: [] }),
+      list_coding_sessions: () => [],
+      course_drills: () => ({ language: "python", nextCode: null, nextPassage: null, hasSources: false, modules: [], recent: [] }),
       get_learning_runtime_catalog: () => {
         return ([
           { id: "csharp", name: "C#", description: "Compile and test a C# project in the .NET SDK.", imageRef: "mcr.microsoft.com/dotnet/sdk:10.0", command: ["dotnet", "run"], entrypointContract: "C# checks project" },

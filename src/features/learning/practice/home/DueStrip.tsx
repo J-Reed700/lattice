@@ -1,101 +1,58 @@
+import { useId } from 'react';
+
 import { Clock, RefreshCw } from 'lucide-react';
 
-import type { DueItemDto } from './practiceHomeApi';
+import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
+import type * as Wire from '@/lib/bindings';
 
 export interface DueStripProps {
-  programId: string;
-  items?: DueItemDto[];
-  onStartMostOverdue?: () => void;
-  className?: string;
+  items: Wire.DueItemDto[] | undefined;
+  loading?: boolean;
+  error?: string | null;
+  onRetry?: () => void;
+  now?: number;
+  /** Starts an item; the most overdue one for the button. */
+  onStart: (item: Wire.DueItemDto) => void;
 }
 
-export function DueStrip({
-  items = [],
-  onStartMostOverdue,
-  className,
-}: DueStripProps) {
-
+/** What is due from drills and coding, most overdue first, with one button for the first. */
+export function DueStrip({ items, loading, error, onRetry, now = Date.now(), onStart }: DueStripProps) {
+  const uid = useId();
+  const list = items ?? [];
+  const first = list[0];
 
   return (
-    <section
-      aria-labelledby="due-heading"
-      className={`flex flex-col gap-3 rounded-xl border border-border-default bg-surface p-5 shadow-xs ${className ?? ''}`}
-    >
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <div
-            id="due-heading-sub"
-            className="text-xs font-semibold uppercase tracking-wider text-text-tertiary"
-          >
-            Due
-          </div>
-          <h2
-            id="due-heading"
-            className="mt-0.5 font-serif text-lg font-medium text-text-primary"
-          >
-            {items.length > 0
-              ? `${items.length} ${items.length === 1 ? 'thing' : 'things'} to come back to`
-              : 'Up to date'}
-          </h2>
-        </div>
-      </div>
-
-      {items.length > 0 ? (
+    <section aria-labelledby={`${uid}-heading`} className="flex flex-col gap-3 rounded-xl border border-border-default bg-surface p-5">
+      <h2 id={`${uid}-heading`} className="text-xs font-semibold uppercase tracking-wider text-text-muted">
+        Due
+      </h2>
+      {loading && <StatusLine state={{ kind: 'busy', label: 'Checking what is due…' }} />}
+      {error && <StatusLine state={{ kind: 'error', message: error, retry: onRetry }} />}
+      {!loading && !error && list.length === 0 && <p className="text-sm text-text-secondary">Nothing is due. Problem patterns and drills come back here when it is time.</p>}
+      {list.length > 0 && (
         <ul className="m-0 list-none divide-y divide-border-subtle p-0">
-          {items.map((item) => (
-            <li
-              key={item.id}
-              className="flex flex-wrap items-center justify-between gap-3 py-3 text-sm"
-            >
-              <div className="min-w-0">
-                <div className="font-semibold text-text-primary">
-                  {item.title}
-                </div>
-                {item.subtitle && (
-                  <div className="text-xs text-text-secondary">
-                    {item.subtitle}
-                  </div>
-                )}
-              </div>
-              <span
-                className={`inline-flex min-h-[28px] items-center gap-1.5 rounded-full px-2.5 text-xs font-medium ${
-                  item.isOverdue
-                    ? 'bg-warning-muted text-warning-fg'
-                    : 'bg-surface-raised text-text-secondary'
-                }`}
-              >
-                {item.isOverdue ? (
-                  <>
-                    <Clock className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Overdue</span>
-                  </>
-                ) : (
-                  <>
-                    <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>Due today</span>
-                  </>
-                )}
-              </span>
-            </li>
-          ))}
+          {list.map((item) => {
+            const overdue = item.dueAt < now;
+            return (
+              <li key={`${item.kind}:${item.lessonId ?? ''}:${item.material ?? ''}`} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+                <span className="font-medium text-text-primary">{item.label}</span>
+                <span
+                  className={`inline-flex min-h-7 items-center gap-1.5 rounded-full px-2.5 text-xs font-medium ${overdue ? 'bg-warning-muted text-warning-fg' : 'bg-surface-raised text-text-secondary'}`}
+                >
+                  {overdue ? <Clock className="h-3.5 w-3.5" aria-hidden="true" /> : <RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />}
+                  {overdue ? 'Overdue' : 'Due today'}
+                </span>
+              </li>
+            );
+          })}
         </ul>
-      ) : (
-        <p className="text-sm text-text-secondary">
-          No problem patterns or drills are due for review right now.
-        </p>
       )}
-
-      <p className="text-xs text-text-tertiary">
-        Patterns stay unnamed until your debrief, so a problem never gives its
-        approach away.
-      </p>
-
-      {items.length > 0 && (
-        <div className="pt-1">
+      {first && (
+        <div>
           <button
             type="button"
-            onClick={onStartMostOverdue}
-            className="inline-flex min-h-[44px] cursor-pointer items-center justify-center rounded-lg bg-accent px-4.5 text-sm font-semibold text-accent-fg transition-opacity hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={() => onStart(first)}
+            className="inline-flex min-h-11 items-center rounded-lg bg-accent px-4 text-sm font-semibold text-accent-fg hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
           >
             Start the most overdue
           </button>
