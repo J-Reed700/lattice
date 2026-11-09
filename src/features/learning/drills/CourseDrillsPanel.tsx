@@ -13,7 +13,7 @@ import { DrillReveal } from './reveal/DrillReveal';
 import { useCodeReviewDrill } from './useCodeReviewDrill';
 
 /** A course's review drills, from the choice of a lesson to the reveal of what was planted in it. */
-export function CourseDrillsPanel({ programId }: { programId: string }) {
+export function CourseDrillsPanel({ programId, attemptId = null }: { programId: string; attemptId?: string | null }) {
   const drill = useCodeReviewDrill(programId);
   const { stage, failure, result, session } = drill;
   const back = (
