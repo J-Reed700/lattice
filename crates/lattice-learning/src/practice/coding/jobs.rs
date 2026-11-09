@@ -14,7 +14,7 @@ use crate::practice::coding::source::{
 };
 use crate::practice::practical_dto::{GenerateLearningPracticalActivityRequestDto, LearningPracticalActivityKind};
 use crate::practice::practical_repository::LearningPracticalRepository;
-use crate::practice_repository::profiles::profile_in;
+use crate::practice_repository::profile_in;
 use crate::quiz_bank_jobs::ModelLoader;
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
