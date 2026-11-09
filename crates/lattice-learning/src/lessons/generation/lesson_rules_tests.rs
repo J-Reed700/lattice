@@ -687,11 +687,19 @@ fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
 }
 
 fn question_case(prompt: &str, options: [&str; 4], key: usize) -> Value {
+    let rationales: Vec<&str> = (0..4)
+        .map(|at| {
+            if at == key {
+                ""
+            } else {
+                "This reflects a plausible misconception and fails."
+            }
+        })
+        .collect();
     let mut candidate = lesson();
     candidate["questions"][0] = json!({"kind":"practice","prompt":prompt,
         "options":options,"correctIndex":key,
-        "rationales":["","Wrong one.","Wrong two.","Wrong three."],"explanation":"Because."});
-    candidate["questions"][0]["rationales"][key] = json!("");
+        "rationales":rationales,"explanation":"Because."});
     candidate
 }
 
