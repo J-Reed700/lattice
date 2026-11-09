@@ -313,11 +313,19 @@ pub(crate) async fn review_bank_items(
         let indices = request_for(size).0;
         let mut solved: BTreeMap<usize, BankSolve> = BTreeMap::new();
         for attempt in 0..2 {
-            let response = model_call::send(
+            let too_large =
+                || model_call::TooLarge::Window("one quiz question with its reference passage");
+            let first = model_call::send(llm, request_for(size).1, None, too_large()).await?;
+            let response = crate::lessons::structured_call::complete_cut_off(
                 llm,
-                request_for(size).1,
-                None,
-                model_call::TooLarge::Window("one quiz question with its reference passage"),
+                first,
+                |output_tokens| {
+                    let mut request = request_for(size).1;
+                    request.output_tokens = output_tokens;
+                    request
+                },
+                350 * size + 300,
+                |larger| model_call::send(llm, larger, None, too_large()),
             )
             .await?;
             if let Ok(parsed) = crate::generation::parse_json::<Value>(&response.text) {
