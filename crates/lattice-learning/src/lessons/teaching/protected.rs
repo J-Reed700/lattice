@@ -94,12 +94,12 @@ pub(super) fn on_protected(
             continue;
         }
         let block = unit < blocks_in(candidate);
-        let editable = targets_of(section, (unit, block), &[finding], &guarded);
         let fixed: Vec<Protected> = guarded
             .iter()
             .filter(|item| !item.released)
             .cloned()
             .collect();
+        let editable = targets_of(section, (unit, block), &[finding], &fixed);
         if overlapping_quote(finding, &fixed) || editable.is_empty() {
             held.push(finding.key());
         }
@@ -135,7 +135,8 @@ fn leaves<'v>(value: &'v Value, path: String, out: &mut Vec<(String, &'v str)>) 
 /// The sentences `sent` names in `section` (`unit`, and whether it is a
 /// block): each finding's passage where any field holds it; for a finding
 /// with no passage, every sentence of the unit's teaching text that no
-/// protected sentence overlaps.
+/// protected sentence overlaps (`protected` holds the sentences that are not
+/// released).
 fn targets_of(
     section: &Value,
     (unit, block): (usize, bool),
@@ -216,7 +217,12 @@ pub(super) fn confine_review(
         };
         let here: Vec<&ReviewFinding> = sent.iter().filter(names).collect();
         let guarded = in_unit(protected, unit);
-        let targets = targets_of(before, (unit, unit < blocks), &here, &guarded);
+        let fixed: Vec<Protected> = guarded
+            .iter()
+            .filter(|item| !item.released)
+            .cloned()
+            .collect();
+        let targets = targets_of(before, (unit, unit < blocks), &here, &fixed);
         let named = |item: &Protected| {
             item.released
                 && targets.iter().any(|target| {

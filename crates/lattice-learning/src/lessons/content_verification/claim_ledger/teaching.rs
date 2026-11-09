@@ -13,9 +13,34 @@ use lattice_core::domain::learning::claim_review::{Actor, ClaimEvent, ClaimState
 const REWRITES_A_CLAIM_GETS: usize = 2;
 
 impl ClaimLedger {
+    /// Records `event` as the user's, which the machine's `append` cannot.
+    #[cfg(test)]
+    pub(in crate::lessons::content_verification) fn record_by_user(
+        &mut self,
+        claim_id: &ClaimId,
+        event: ClaimEvent,
+    ) -> Result<bool> {
+        let provenance = EventProvenance {
+            actor: Actor::User,
+            ..self.provenance()
+        };
+        let Some(entry) = self.probe(claim_id, &provenance, &event)? else {
+            return Ok(false);
+        };
+        if let Some(existing) = self
+            .entries
+            .iter_mut()
+            .find(|existing| existing.claim_id() == claim_id)
+        {
+            *existing = entry;
+        }
+        Ok(true)
+    }
+
     /// The claims, not among `targets`, whose sentences the teaching review may
-    /// repair: statements the machine holds or verified, with no evidence the
-    /// user attached, no edit of the user's in their lineage, no repair waiting
+    /// repair: statements the machine holds, verified, passed as common
+    /// knowledge or published not verified (all the machine's verdicts), with
+    /// no evidence the user attached, no edit of the user's in their lineage, no repair waiting
     /// and a rewrite left.
     pub(in crate::lessons::content_verification) fn releasable(
         &self,
@@ -34,6 +59,8 @@ impl ClaimLedger {
                         | ClaimState::Open { .. }
                         | ClaimState::Consistent { .. }
                         | ClaimState::ResolvedByEvidence { .. }
+                        | ClaimState::GeneralKnowledge { .. }
+                        | ClaimState::Unverified { .. }
                 )
             })
             .filter(|entry| !entry.location().quote.trim().is_empty())
