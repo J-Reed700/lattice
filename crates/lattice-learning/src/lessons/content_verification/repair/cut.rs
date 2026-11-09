@@ -208,11 +208,13 @@ fn ask_narrowing(context: &mut Value, narrowed: &[ClaimId]) {
 /// keeps the sentences left beside each cut for the section's flow repair, and
 /// records the statements' cuts as the policy's step. A statement whose text
 /// cannot be taken out, because it is the whole of its field or sits in a code
-/// block, or whose cut would leave its section with too little to teach, stays
-/// in the lesson and is published not verified (the other cuts are made); only a failed example's
-/// refused cut takes its section out (claim classes design 3.10). Returns how
-/// many claims it dealt with, or the error that stops the lesson when the cuts
-/// leave no claim of it standing.
+/// block, takes its question out of the lesson when it stands in one, and ends
+/// removed with it. In a section, or when the lesson cannot lose the question,
+/// that statement stays in the lesson and is published not verified, as does
+/// one whose cut would leave its section with too little to teach (the other
+/// cuts are made); only a failed example's refused cut takes its section out
+/// (claim classes design 3.10). Returns how many claims it dealt with, or the
+/// error that stops the lesson when the cuts leave no claim of it standing.
 pub(in crate::lessons::content_verification) async fn last_attempts(
     policy: &dyn AcceptancePolicy,
     context: &mut Value,
@@ -233,6 +235,12 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
     // The lesson and its cuts once the examples' cuts are made and the
     // statements' are not.
     let mut after_examples = None;
+    let sections = before
+        .get("blocks")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    // The statements whose refused cut takes their question out.
+    let mut with_question = Vec::new();
     for (key, example) in [("exampleClaims", true), ("failedClaims", false)] {
         for id in last(context, key) {
             let Some(place) = ledger.entry(&id).map(|entry| entry.location().clone()) else {
@@ -244,6 +252,8 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 .and_then(|pointer| lesson.pointer(pointer))
                 .and_then(Value::as_str)
                 .map(str::to_owned);
+            let label = unit_label(&before, place.unit_index);
+            let in_question = place.unit_index >= sections;
             let decision = text
                 .as_deref()
                 .filter(|_| !example)
@@ -253,6 +263,10 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 continue;
             }
             if matches!(decision, Some(CutOf::Whole)) && ledger.is_statement(&id) {
+                if let (true, Some(label)) = (in_question, label) {
+                    ledger.cuts.go(place.unit_index, label);
+                    with_question.push(id.clone());
+                }
                 refused.push(id);
                 continue;
             }
@@ -263,7 +277,6 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 };
                 out(example, text, stated.unwrap_or(&place.quote))
             });
-            let label = unit_label(&before, place.unit_index);
             match cut {
                 Cut::Done(after) => {
                     if let (Some(text), Some(label)) = (text.as_deref(), label) {
@@ -294,8 +307,12 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 }
                 Cut::Absent => taken.push(id),
                 Cut::Refused => {
-                    if let (false, Some(label)) = (ledger.is_statement(&id), label) {
+                    let statement = ledger.is_statement(&id);
+                    if let (true, Some(label)) = (!statement || in_question, label) {
                         ledger.cuts.go(place.unit_index, label);
+                        if statement {
+                            with_question.push(id.clone());
+                        }
                     }
                     refused.push(id);
                 }
@@ -418,7 +435,7 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
     // A statement's cut, taken or refused, is the policy's step, which ends it
     // removed; an example's refused cut ends it removed with its section, and
     // its cut is found by the pass after.
-    let (cut_statements, _): (Vec<ClaimId>, Vec<ClaimId>) = taken
+    let (mut cut_statements, _): (Vec<ClaimId>, Vec<ClaimId>) = taken
         .iter()
         .cloned()
         .partition(|id| ledger.is_statement(id));
@@ -426,6 +443,11 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
         .iter()
         .cloned()
         .partition(|id| ledger.is_statement(id));
+    // A refused statement whose question goes is cut with it.
+    let (with_it, refused_statements): (Vec<ClaimId>, Vec<ClaimId>) = refused_statements
+        .into_iter()
+        .partition(|id| with_question.contains(id));
+    cut_statements.extend(with_it);
     if !examples.is_empty() {
         ledger.remove(&examples).await?;
     }
