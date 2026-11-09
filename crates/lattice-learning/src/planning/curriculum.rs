@@ -151,6 +151,8 @@ pub enum LearningGenerationJobKind {
     QuizBank,
     /// Grades a submitted quiz's written answers and near-miss short answers.
     QuizGrading,
+    /// Plans what each lesson of the outline teaches.
+    CoursePlan,
 }
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, specta::Type, PartialEq, Eq)]

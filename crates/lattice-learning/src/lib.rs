@@ -36,6 +36,7 @@ pub(crate) use assessment::key_review;
 pub use assessment::quiz_bank_jobs;
 pub use assessment::quiz_blueprints;
 pub use canvas::canvas_repository;
+pub use lessons::course_plan;
 pub use lessons::generation;
 pub use lessons::lesson_evidence;
 pub use lessons::reference_collection;
