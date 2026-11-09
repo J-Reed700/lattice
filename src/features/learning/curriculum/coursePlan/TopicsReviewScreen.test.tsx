@@ -49,6 +49,7 @@ describe('Review topics', () => {
   it('shows one card per lesson grouped by module in course order, with every list', async () => {
     show();
     expect(await screen.findByRole('heading', { name: 'Review topics' })).toBeVisible();
+    await screen.findByRole('article', { name: 'The heart' });
     const headings = screen.getAllByRole('heading', { level: 2 }).map((heading) => heading.textContent);
     expect(headings).toEqual(['The pump', 'The pipes']);
     expect(screen.getAllByRole('article').map((item) => item.getAttribute('aria-label'))).toEqual(['The heart', 'Valves', 'Vessels']);
@@ -96,6 +97,7 @@ describe('Review topics', () => {
     })));
     await user.click(within(card('The heart')).getByRole('button', { name: 'Edit' }));
     await user.clear(screen.getByRole('textbox', { name: 'Idea 1' }));
+    await user.clear(screen.getByRole('textbox', { name: 'Idea 2' }));
     expect(screen.getByRole('button', { name: 'Save' })).toBeDisabled();
   });
 

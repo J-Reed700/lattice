@@ -2303,6 +2303,11 @@ export async function installLearningStudioBackend(page: Page) {
         if (programId !== program.summary.id) throw new Error("Learning program not found");
         return { programId, outlineRevision: program.summary.revision, state: "none", error: null, entries: [] };
       },
+      plan_learning_course: (args) => {
+        const { programId } = (args as { request: { programId: string } }).request;
+        if (programId !== program.summary.id) throw new Error("Learning program not found");
+        return { programId, outlineRevision: program.summary.revision, state: "planning", error: null, entries: [] };
+      },
       get_learning_plan: () => {
         state.planWorkspace.programRevision = program.summary.revision;
         // IPC returns a snapshot, not shared references into the backend's state.
