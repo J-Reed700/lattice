@@ -272,3 +272,136 @@ async fn assigning_documents_one_of_which_is_deleted_meanwhile_finds_it_gone() {
     other.await.unwrap();
     assert!(matches!(outcome, Err(AppError::NotFound(_))), "{outcome:?}");
 }
+
+#[tokio::test]
+async fn a_title_is_not_kept_when_the_system_prompt_change_is_refused() {
+    let (_directory, repo) = open().await;
+    let conversation = repo.create("Chat", None).await.unwrap();
+    run(
+        &repo.pool,
+        "CREATE TRIGGER refuse_for_test BEFORE UPDATE OF system_prompt ON conversations BEGIN SELECT RAISE(ABORT, 'refused for the test'); END",
+    )
+    .await;
+
+    let outcome = repo
+        .update(
+            &conversation.id.to_string(),
+            Some("Renamed"),
+            Some(Some("Be brief")),
+            None,
+            None,
+        )
+        .await;
+
+    assert!(outcome.is_err());
+    let title: String = sqlx::query_scalar("SELECT title FROM conversations WHERE id = ?")
+        .bind(conversation.id.to_string())
+        .fetch_one(&repo.pool)
+        .await
+        .unwrap();
+    assert_eq!(title, "Chat");
+}
+
+fn journal_not_found<T>(outcome: &Result<T, AppError>) -> bool {
+    matches!(outcome, Err(AppError::NotFound(message)) if message.starts_with("Journal not found"))
+}
+
+#[tokio::test]
+async fn removing_a_conversation_from_a_journal_deleted_meanwhile_finds_the_journal_gone() {
+    let (_directory, repo) = open().await;
+    let conversation = repo.create("Chat", None).await.unwrap();
+    run(
+        &repo.pool,
+        "INSERT INTO journals (id, name) VALUES ('journal-1', 'Reading')",
+    )
+    .await;
+    let other = another_writer(&repo.pool, "DELETE FROM journals WHERE id = 'journal-1'").await;
+
+    let outcome = repo
+        .remove_conversation_from_journal(RemoveConversationFromJournalRequestDto {
+            journal_space_id: "journal-1".into(),
+            conversation_id: conversation.id.to_string(),
+        })
+        .await;
+
+    other.await.unwrap();
+    assert!(journal_not_found(&outcome), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn pinning_a_journal_entry_in_a_journal_deleted_meanwhile_finds_the_journal_gone() {
+    let (_directory, repo) = open().await;
+    let conversation = repo.create("Chat", None).await.unwrap();
+    run(
+        &repo.pool,
+        "INSERT INTO journals (id, name) VALUES ('journal-1', 'Reading')",
+    )
+    .await;
+    let other = another_writer(&repo.pool, "DELETE FROM journals WHERE id = 'journal-1'").await;
+
+    let outcome = repo
+        .set_journal_entry_pinned(SetJournalEntryPinnedRequestDto {
+            journal_space_id: "journal-1".into(),
+            conversation_id: conversation.id.to_string(),
+            pinned: true,
+        })
+        .await;
+
+    other.await.unwrap();
+    assert!(journal_not_found(&outcome), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn adding_a_member_to_a_space_deleted_meanwhile_finds_it_gone() {
+    let (_directory, repo) = open().await;
+    run(
+        &repo.pool,
+        "INSERT INTO conversation_spaces (id, name) VALUES ('space-1', 'Team')",
+    )
+    .await;
+    let other = another_writer(
+        &repo.pool,
+        "DELETE FROM conversation_spaces WHERE id = 'space-1'",
+    )
+    .await;
+
+    let outcome = repo
+        .upsert_conversation_space_member(UpsertConversationSpaceMemberRequestDto {
+            space_id: "space-1".into(),
+            member_id: "member-1".into(),
+            display_name: None,
+            email: None,
+            avatar_url: None,
+            role: "editor".into(),
+        })
+        .await;
+
+    other.await.unwrap();
+    assert!(matches!(outcome, Err(AppError::NotFound(_))), "{outcome:?}");
+}
+
+#[tokio::test]
+async fn moving_a_conversation_to_a_space_deleted_meanwhile_finds_it_gone() {
+    let (_directory, repo) = open().await;
+    let conversation = repo.create("Chat", None).await.unwrap();
+    run(
+        &repo.pool,
+        "INSERT INTO conversation_spaces (id, name) VALUES ('space-1', 'Team')",
+    )
+    .await;
+    let other = another_writer(
+        &repo.pool,
+        "DELETE FROM conversation_spaces WHERE id = 'space-1'",
+    )
+    .await;
+
+    let outcome = repo
+        .move_conversation_to_space(MoveConversationToSpaceRequestDto {
+            conversation_id: conversation.id.to_string(),
+            space_id: "space-1".into(),
+        })
+        .await;
+
+    other.await.unwrap();
+    assert!(matches!(outcome, Err(AppError::NotFound(_))), "{outcome:?}");
+}
