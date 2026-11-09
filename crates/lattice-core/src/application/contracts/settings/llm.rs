@@ -530,15 +530,8 @@ impl Default for RouterSettingsDto {
     }
 }
 
-/// Shortest silence worth calling a stall. A backend that is ingesting a large
-/// prompt, or loading weights on a cold cache, legitimately emits nothing for
-/// several seconds; below this the retry path kills healthy requests and can
-/// livelock on the re-ingest of the same prompt.
-pub const MIN_LLM_STALL_TIMEOUT_SECONDS: u32 = 15;
-
-/// Longest silence worth waiting through. Past this a hung backend is
-/// indistinguishable from a slow one, which is what stall detection is for.
-pub const MAX_LLM_STALL_TIMEOUT_SECONDS: u32 = 180;
+/// Shortest stall timeout a setting can express: zero seconds is no timeout.
+pub const MIN_LLM_STALL_TIMEOUT_SECONDS: u32 = 1;
 
 /// Long enough to cover prompt ingestion on a local model, short enough that a
 /// dead backend surfaces while the user is still looking at the answer.

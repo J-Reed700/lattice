@@ -81,18 +81,20 @@ describe('TuningTab', () => {
       fireEvent.change(runtimeTemperature, { target: { value: '3' } });
       fireEvent.blur(runtimeTemperature);
       edit('Top P', '-1');
-      edit('Top K', '40.6');
-      edit('Repeat penalty', '0.1');
+      edit('Top K', '900.6');
+      edit('Repeat penalty', '0');
       edit('Presence penalty', '9');
-      edit('Stall timeout', '5');
+      edit('Stall timeout', '0');
+      edit('Stall timeout', '600');
       const saved = h.llm.saveLlmUpdates.mock.calls.map(([update]) => update);
       expect(saved).toEqual([
         { temperature: 2 },
         { topP: 0 },
-        { topK: 41 },
-        { repeatPenalty: 0.5 },
+        { topK: 901 },
+        { repeatPenalty: 0.05 },
         { presencePenalty: 2 },
-        { timeoutSeconds: 15 },
+        { timeoutSeconds: 1 },
+        { timeoutSeconds: 600 },
       ]);
     });
 
@@ -132,15 +134,17 @@ describe('TuningTab', () => {
       render(<TuningTab />);
       edit('Router model', '  gemma-1b  ');
       expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ router: { ...router, model: 'gemma-1b' } });
-      edit('Timeout', '10');
-      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ router: { ...router, timeoutMs: 50 } });
+      edit('Timeout', '0');
+      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ router: { ...router, timeoutMs: 1 } });
+      edit('Timeout', '60000');
+      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ router: { ...router, timeoutMs: 60000 } });
       fireEvent.change(screen.getAllByLabelText('Max tokens')[1], { target: { value: '5000' } });
       fireEvent.blur(screen.getAllByLabelText('Max tokens')[1]);
-      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ router: { ...router, maxTokens: 1024 } });
+      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ router: { ...router, maxTokens: 5000 } });
       const routerTemperature = screen.getAllByLabelText('Temperature')[1];
-      fireEvent.change(routerTemperature, { target: { value: '1.5' } });
+      fireEvent.change(routerTemperature, { target: { value: '3' } });
       fireEvent.blur(routerTemperature);
-      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ router: { ...router, temperature: 1 } });
+      expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ router: { ...router, temperature: 2 } });
       edit('Ambiguity threshold', '0.75');
       expect(h.llm.saveLlmUpdates).toHaveBeenLastCalledWith({ router: { ...router, ambiguityThreshold: 0.75 } });
       edit('Router prompt', 'Classify: {question}');

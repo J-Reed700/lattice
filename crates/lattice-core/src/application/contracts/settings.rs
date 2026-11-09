@@ -27,7 +27,7 @@ pub use llm::{
     CustomToolSettingsDto, LLMPromptSettingsDto, LLMProvider, LLMSettingsDto,
     LLMVerificationSettingsDto, LlamaCppSettingsDto, RouterSettingsDto, ToolOutputSettingsDto,
     ToolOutputTemplatesDto, VisionDeclarationDto, DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
-    DEFAULT_RAG_PROMPT_TEMPLATE, MAX_LLM_STALL_TIMEOUT_SECONDS, MIN_LLM_STALL_TIMEOUT_SECONDS,
+    DEFAULT_RAG_PROMPT_TEMPLATE, MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 pub use model_window::ModelWindowDto;
 

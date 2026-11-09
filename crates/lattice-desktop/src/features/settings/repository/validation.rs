@@ -2,8 +2,7 @@
 use super::SettingsRepository;
 use crate::features::settings::dto::{
     LLMProvider, SettingsDto, ValidationResult, VectorIndexCompressionModeDto,
-    MAX_LLM_STALL_TIMEOUT_SECONDS, MAX_VECTOR_COMPRESSION_DIMS, MIN_LLM_STALL_TIMEOUT_SECONDS,
-    MIN_VECTOR_COMPRESSION_DIMS,
+    MAX_VECTOR_COMPRESSION_DIMS, MIN_LLM_STALL_TIMEOUT_SECONDS, MIN_VECTOR_COMPRESSION_DIMS,
 };
 use url::Url;
 
@@ -230,15 +229,13 @@ impl SettingsRepository {
                 "ollama_auth_header_name and ollama_auth_header_value must both be set".to_string(),
             );
         }
-        if !(MIN_LLM_STALL_TIMEOUT_SECONDS..=MAX_LLM_STALL_TIMEOUT_SECONDS)
-            .contains(&settings.llm.timeout_seconds)
-        {
+        if settings.llm.timeout_seconds < MIN_LLM_STALL_TIMEOUT_SECONDS {
             result.add_error(
                 "llm",
                 format!(
                     "timeout_seconds is the stall timeout — the silence a response may go without \
-                     being declared dead — and must be between {} and {} seconds",
-                    MIN_LLM_STALL_TIMEOUT_SECONDS, MAX_LLM_STALL_TIMEOUT_SECONDS
+                     being declared dead — and must be at least {} second",
+                    MIN_LLM_STALL_TIMEOUT_SECONDS
                 ),
             );
         }
