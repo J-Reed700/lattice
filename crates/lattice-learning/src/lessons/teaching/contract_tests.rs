@@ -702,3 +702,93 @@ fn the_unseen_check_names_the_whole_outline_and_scopes_its_qualifier() {
     assert!(contract::SYSTEM
         .contains("text above or below or a step number that this lesson does not contain"));
 }
+
+const SOFTWARE_WORDS: [&str; 7] = [
+    "command",
+    "option",
+    "key combination",
+    "file operation",
+    "folder",
+    "a file",
+    "path",
+];
+
+fn assert_no_software_words(what: &str, text: &str) {
+    for word in SOFTWARE_WORDS {
+        assert!(!text.contains(word), "{what} mentions \"{word}\": {text}");
+    }
+}
+
+async fn finding_note(planned: Value, used: Value, marker: &str) -> Result<String> {
+    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let found = answer(planned, used, json!([]), json!([]));
+    let model = Routed::new(&scripted, vec![found.clone(), found]);
+    let candidate = lesson([
+        "The first step is shown.",
+        "Apply the second method\nto the first item.",
+        "Read the result.",
+    ]);
+    let result = run(&model, &candidate, &context(&[], &[OPEN_TERMINAL]), &[]).await?;
+    let note = result
+        .set_aside
+        .iter()
+        .map(|waiting| waiting.finding.note.clone())
+        .find(|note| note.contains(marker))
+        .unwrap_or_default();
+    Ok(note
+        .split_once(marker)
+        .map_or(note.clone(), |(_, rest)| format!("{marker}{rest}")))
+}
+
+#[tokio::test]
+async fn the_contract_check_describes_learner_actions_in_no_subjects_terms() -> Result<()> {
+    let system = contract::SYSTEM;
+    let start = system.find("1. planned:").unwrap();
+    let end = system.find("3. contradictions:").unwrap();
+    let checks = &system[start..end];
+    assert_no_software_words("checks 1 and 2", checks);
+    for expected in [
+        "the exact steps, and the result the learner should get",
+        "anything a part asks the learner to do or use that they need to be shown how to do (an action, a technique, a tool, a setting, or a variant of something taught)",
+        "A variant is a new thing: teaching how to do something does not teach doing it another way or with something added.",
+    ] {
+        assert!(checks.contains(expected), "missing {expected:?} in {checks}");
+    }
+
+    let scripted = scripted(vec![reviewed(3)]);
+    let model = Routed::new(&scripted, vec![]);
+    let candidate = lesson(["One.", "Two.", "Three."]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let drafting = model.drafting();
+    let start = drafting[0].find("Go through the lesson part by part in order.");
+    let end = drafting[0].find("say where the lesson, the earlier lessons");
+    assert!(start.is_some() && end.is_some(), "{}", drafting[0]);
+    let brief = &drafting[0][start.unwrap()..end.unwrap()];
+    assert_no_software_words("the brief", brief);
+    assert!(
+        brief.contains("each variant of it"),
+        "the brief never asks about variants: {brief}"
+    );
+
+    let action = finding_note(
+        json!([not_taught("action-0", 1)]),
+        json!([]),
+        "Teach it in the lesson's own words: ",
+    )
+    .await?;
+    assert!(
+        action.contains("the exact steps, and the result the learner should get"),
+        "{action}"
+    );
+    assert_no_software_words("the action note", &action);
+
+    let used_note = finding_note(
+        json!([]),
+        json!([used(1, "Apply the second method", "the second method")]),
+        "Teach it in this step",
+    )
+    .await?;
+    assert!(used_note.contains("exactly how to do it"), "{used_note}");
+    assert_no_software_words("the used-before-taught note", &used_note);
+    Ok(())
+}

@@ -495,3 +495,20 @@ async fn a_written_lesson_is_planned_from_what_it_taught() {
         "the planner is told what taught means: {system}"
     );
 }
+
+#[test]
+fn the_course_plan_names_actions_in_no_subjects_terms() {
+    let start = PLAN_SYSTEM.find("actions, the things").unwrap();
+    let end = PLAN_SYSTEM.find("; and contrast").unwrap();
+    let rule = &PLAN_SYSTEM[start..end];
+    for word in ["command", "option", "folder", "file", "path"] {
+        assert!(
+            !rule.contains(word),
+            "the actions rule mentions \"{word}\": {rule}"
+        );
+    }
+    assert_eq!(
+        rule,
+        "actions, the things the learner does (procedures, techniques, operations) that this lesson teaches"
+    );
+}
