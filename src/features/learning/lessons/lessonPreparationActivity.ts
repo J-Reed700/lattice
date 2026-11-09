@@ -35,7 +35,7 @@ export function shownPhase(activity: LearningGenerationActivity): PreparationPha
 
 export const WAITING_FOR_THE_MODEL = 'Waiting for the model';
 
-/** The stage a preparing lesson shows: that it waits for the model, while every call it has in flight is queued for a slot. */
+/** The stage a preparing lesson shows: that it waits for the model, while its model requests wait for a slot and none holds one. */
 export function stageText(activity: LearningGenerationActivity | null | undefined, stage: string): string {
   return activity?.waitingForModel ? WAITING_FOR_THE_MODEL : stage;
 }

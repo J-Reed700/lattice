@@ -7862,8 +7862,7 @@ export type LearningGenerationActivity = { phase: LearningGenerationPhase;
  */
 reached?: LearningGenerationPhase; phaseStartedAt: number; lastActivityAt: number; lastCheckpointAt: number | null; lessonTitle: string | null; modelName: string | null; modelRunning: boolean; responseCharacters: number; modelAttempt: number;
 /**
- * Set while the lesson has model calls in flight and every one of them is
- * queued behind others for the model's slots.
+ * Set while the lesson has model requests queued for a slot and none holding one.
  */
 waitingForModel?: boolean; verificationPass: number;
 /**

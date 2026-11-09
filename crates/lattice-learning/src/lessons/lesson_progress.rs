@@ -21,8 +21,10 @@ struct State {
     completed: u32,
     activity: LearningGenerationActivity,
     active_model_calls: usize,
-    /// Of the calls in flight, those queued at a scheduler for a slot.
-    queued_calls: usize,
+    /// Requests of the job queued at a scheduler for a slot.
+    queued_requests: usize,
+    /// Slots the job's requests hold at a scheduler.
+    held_slots: usize,
     /// The course this job prepares; its model calls share the course's
     /// sources as a prompt prefix.
     program_id: Option<String>,
@@ -55,27 +57,34 @@ tokio::task_local! {
 
 impl State {
     fn refresh_waiting(&mut self) {
-        self.activity.waiting_for_model =
-            self.active_model_calls > 0 && self.queued_calls >= self.active_model_calls;
+        self.activity.waiting_for_model = self.queued_requests > 0 && self.held_slots == 0;
     }
 }
 
 impl AdmissionObserver for Progress {
     fn queued(&self) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.queued_calls += 1;
+        state.queued_requests += 1;
         state.refresh_waiting();
     }
 
     fn left_queue(&self, _exit: QueueExit) {
         let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.queued_calls = state.queued_calls.saturating_sub(1);
+        state.queued_requests = state.queued_requests.saturating_sub(1);
         state.refresh_waiting();
     }
 
-    fn holding(&self) {}
+    fn holding(&self) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.held_slots += 1;
+        state.refresh_waiting();
+    }
 
-    fn released(&self) {}
+    fn released(&self) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.held_slots = state.held_slots.saturating_sub(1);
+        state.refresh_waiting();
+    }
 }
 
 /// Runs `future` as the current lesson job's work, with `progress` recording it.
@@ -178,7 +187,6 @@ impl Drop for ModelCall {
             let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
             state.active_model_calls = state.active_model_calls.saturating_sub(1);
             state.activity.model_running = state.active_model_calls > 0;
-            state.refresh_waiting();
         }
     }
 }
@@ -232,7 +240,6 @@ pub(crate) fn request() -> ModelCall {
         }
         state.active_model_calls += 1;
         state.activity.model_running = true;
-        state.refresh_waiting();
         state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
     }
     ModelCall(progress)

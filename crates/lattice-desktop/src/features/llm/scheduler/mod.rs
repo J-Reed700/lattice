@@ -38,7 +38,7 @@ use tokio_util::sync::CancellationToken;
 use lattice_core::application::ports::llm_port::{InferencePriority, RequestLoad};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::runtime::jobs::{
-    current_observer, QueuedRequest, RankTicket, RankWatcher,
+    current_observer, HeldSlot, QueuedRequest, RankTicket, RankWatcher,
 };
 use std::sync::Weak;
 use tokio::sync::watch;
@@ -172,6 +172,7 @@ struct Grant {
 pub(crate) struct Permit {
     scheduler: Arc<InferenceScheduler>,
     grant: Grant,
+    _held: Option<HeldSlot>,
 }
 
 impl Permit {
@@ -305,6 +306,7 @@ impl InferenceScheduler {
             None => request.tokens,
         };
         let queued_at = std::time::Instant::now();
+        let observer = current_observer();
         // Outside the lock: if the scope has just ended, this is where that is
         // announced, and the announcement takes the lock.
         if let Some(rank) = &request.rank {
@@ -337,7 +339,8 @@ impl InferenceScheduler {
             (key, woken, granted_at_once)
         };
         self.moved();
-        let queued = current_observer()
+        let queued = observer
+            .clone()
             .filter(|_| !granted_at_once)
             .map(QueuedRequest::new);
         let mut waiting = Waiting {
@@ -355,6 +358,7 @@ impl InferenceScheduler {
         };
         match waiting.settle(admitted) {
             Some(grant) => {
+                let held = observer.map(HeldSlot::new);
                 if let Some(queued) = queued {
                     queued.granted();
                 }
@@ -370,6 +374,7 @@ impl InferenceScheduler {
                 Ok(Permit {
                     scheduler: Arc::clone(self),
                     grant,
+                    _held: held,
                 })
             }
             None => {

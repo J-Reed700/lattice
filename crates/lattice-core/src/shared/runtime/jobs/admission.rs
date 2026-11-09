@@ -70,6 +70,22 @@ impl Drop for QueuedRequest {
     }
 }
 
+/// One slot an observed request holds, reported from creation until drop.
+pub struct HeldSlot(Arc<dyn AdmissionObserver>);
+
+impl HeldSlot {
+    pub fn new(observer: Arc<dyn AdmissionObserver>) -> Self {
+        observer.holding();
+        Self(observer)
+    }
+}
+
+impl Drop for HeldSlot {
+    fn drop(&mut self) {
+        self.0.released();
+    }
+}
+
 #[cfg(test)]
 #[path = "admission_tests.rs"]
 mod tests;
