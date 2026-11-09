@@ -138,7 +138,7 @@ fn a_block_without_a_body_is_a_finding_at_its_place() {
         [
             "Teaching block 2 has no body.",
             "Teaching block 3 has no body.",
-            "Practice block 3 needs two to four observable, task-specific rubric criteria."
+            "Practice block 3 needs observable, task-specific rubric criteria."
         ]
     );
     let sites: Vec<_> = found.iter().map(|finding| finding.key().site).collect();
@@ -168,7 +168,7 @@ fn a_block_without_a_body_or_a_rubric_is_named_in_plain_words() {
         [
             "Section 2 has no text.",
             "Section 3 has no text.",
-            "Section 3 is a practice section and needs two to four clear criteria for judging an answer."
+            "Section 3 is a practice section and needs clear criteria for judging an answer."
         ]
     );
 }

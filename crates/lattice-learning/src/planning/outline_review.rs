@@ -304,7 +304,7 @@ pub(crate) fn verified_assertions(
 }
 
 fn review_schema(open_ids: &[String], allowed: &[String]) -> Value {
-    let new_findings = json!({"type":"array","maxItems":24,"items":{"type":"object","additionalProperties":false,"required":["path","kind","claim","reason"],"properties":{"path":{"enum":allowed},"kind":{"enum":["factual","plan"]},"claim":{"type":"string"},"reason":{"type":"string","minLength":1}}}});
+    let new_findings = json!({"type":"array","items":{"type":"object","additionalProperties":false,"required":["path","kind","claim","reason"],"properties":{"path":{"enum":allowed},"kind":{"enum":["factual","plan"]},"claim":{"type":"string"},"reason":{"type":"string","minLength":1}}}});
     if open_ids.is_empty() {
         return json!({"type":"object","additionalProperties":false,"required":["newFindings"],"properties":{"newFindings":new_findings}});
     }
