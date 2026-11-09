@@ -92,6 +92,8 @@ async fn a_lesson_job_makes_the_course_plan_before_the_lesson_is_written() {
 /// Answers every request but the lesson writer's, which it keeps and refuses,
 /// which ends the job at the writer's request. Only the writer's request
 /// carries the course plan; the evidence plan's carries the catalog alone.
+/// Its evidence plan searches for words of the course's only source, so the
+/// lesson has a passage to be written from.
 struct AnswersEvidenceThenStops {
     asked: Mutex<Vec<String>>,
 }
@@ -102,7 +104,7 @@ impl LLMPort for AnswersEvidenceThenStops {
         let (_, user) = crate::lessons::structured_call::task_messages(request);
         if !user.contains("coursePlan") {
             return Ok(CompletionResponse::from_text(
-                r#"{"topics":[{"topic":"the central idea","queries":["central idea"]}]}"#
+                r#"{"topics":[{"topic":"the bounded passage","queries":["bounded passage"]}]}"#
                     .to_owned(),
             ));
         }
