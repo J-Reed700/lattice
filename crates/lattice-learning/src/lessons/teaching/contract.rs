@@ -292,7 +292,7 @@ fn findings(
                 FindingKind::Teaching,
                 Some(part.site),
                 format!(
-                    "{} asks the learner to use {} (\"{passage}\"), and nothing before this point in the lesson, the earlier lessons or the learner's prior knowledge has taught it. Teach it before this point (what it does, the exact command, and what the learner should see), or change the step to use only what the lesson has taught.",
+                    "{} asks the learner to use {} (\"{passage}\"), and nothing before this point in the lesson, the earlier lessons or the learner's prior knowledge has taught it. Teach it in this step, where it is first used (what it does, the exact command, and what the learner should see), or change the step to use only what the lesson has taught.",
                     label(part.site),
                     used.what
                 ),
