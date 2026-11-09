@@ -6,7 +6,7 @@
 //! one reverted and every protected one byte-identical.
 
 use crate::lessons::content_verification::{confine, unit_fields, Protected};
-use crate::review_findings::{FindingKey, FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::{FindingKey, FindingSite, ReviewFinding};
 use lattice_core::shared::error::Result;
 use serde_json::Value;
 
@@ -189,13 +189,9 @@ fn whole_value(value: &Value, path: String, unit: usize, targets: &mut Vec<Prote
     }
 }
 
-/// Whether `finding` is about the unit's teaching (a quotation finding is
-/// about its source quote only): its site is the unit, or it has none
+/// Whether `finding` is about the unit: its site is the unit, or it has none
 /// and its passage lies in the unit.
 fn about_whole_unit(finding: &ReviewFinding, fields: &[(String, &str)]) -> bool {
-    if finding.kind == FindingKind::Quotation {
-        return false;
-    }
     match finding.site {
         Some(FindingSite::Section(_) | FindingSite::Question(_)) => true,
         Some(FindingSite::Lesson) | None => finding
@@ -228,8 +224,14 @@ fn targets_of(
             if let (false, Some(key)) = (block, section.get("correctIndex")) {
                 whole_value(key, "correctIndex".into(), unit, &mut targets);
             }
-            if let Some(citations) = section.get("citations") {
-                whole_value(citations, "citations".into(), unit, &mut targets);
+            match section.get("citations") {
+                Some(citations) => whole_value(citations, "citations".into(), unit, &mut targets),
+                None => targets.push(Protected {
+                    unit,
+                    field: "citations".into(),
+                    quote: String::new(),
+                    released: false,
+                }),
             }
             continue;
         }
