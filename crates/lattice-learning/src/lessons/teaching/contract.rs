@@ -435,7 +435,7 @@ pub(super) async fn check(
                     subject: "the check against the course plan",
                     brief: BRIEF,
                 }),
-                |raw| crate::generation::parse_json::<Answer>(raw),
+                crate::generation::parse_json::<Answer>,
             )
             .await?;
             crate::lesson_drafts::record_checkpoint(&key, serde_json::to_value(&answer)?).await?;
