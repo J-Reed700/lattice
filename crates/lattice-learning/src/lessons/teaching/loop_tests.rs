@@ -518,9 +518,9 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
 #[tokio::test]
 async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragraph_with_verified_claims(
 ) -> Result<()> {
-    // One paragraph, one inventory passage, two verified claims located to
-    // their sentences; the teaching finding is about a sentence no claim
-    // stands on, in the review's second passage (claim sources design §18.5).
+    // Three paragraphs: two verified claims located to their sentences in the
+    // first; the teaching finding is about a sentence no claim stands on, in
+    // the second (claim sources design §18.5).
     use crate::lessons::content_verification::Protected;
     const V1: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
     const V2: &str = "Their inner membrane folds into cristae that enlarge its surface.";
