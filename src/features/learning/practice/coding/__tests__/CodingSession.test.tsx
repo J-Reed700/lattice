@@ -416,4 +416,74 @@ describe('CodingSession', () => {
     expect(await screen.findByRole('heading', { name: /Debrief/ })).toBeInTheDocument();
     expect(within(document.body).queryByRole('button', { name: /Run examples/ })).not.toBeInTheDocument();
   });
+
+  describe('retries reuse the ids of the action', () => {
+    function ids(mock: { mock: { calls: unknown[][] } }, call: number) {
+      return mock.mock.calls[call][0] as { operationId: string; runId?: string };
+    }
+
+    it('repeats a failed run under the same operation and run ids', async () => {
+      api.run.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession({ stage: 'code' }));
+      const user = userEvent.setup();
+      renderSession(codingSession({ stage: 'code' }));
+
+      await user.click(await screen.findByRole('button', { name: /Run examples/ }));
+      await user.click(await screen.findByRole('button', { name: 'Try again' }));
+
+      await waitFor(() => expect(api.run).toHaveBeenCalledTimes(2));
+      expect(ids(api.run, 1).operationId).toBe(ids(api.run, 0).operationId);
+      expect(ids(api.run, 1).runId).toBe(ids(api.run, 0).runId);
+    });
+
+    it('repeats a failed hint under the same operation id', async () => {
+      api.askHint.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession({ stage: 'code' }));
+      const user = userEvent.setup();
+      renderSession(codingSession({ stage: 'code' }));
+
+      await user.click(await screen.findByRole('button', { name: /Get a nudge/ }));
+      await user.click(await screen.findByRole('button', { name: 'Try again' }));
+
+      await waitFor(() => expect(api.askHint).toHaveBeenCalledTimes(2));
+      expect(ids(api.askHint, 1).operationId).toBe(ids(api.askHint, 0).operationId);
+    });
+
+    it('repeats a failed message under the same operation id', async () => {
+      api.sendTurn.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession());
+      const user = userEvent.setup();
+      renderSession(codingSession());
+
+      await user.click(await screen.findByRole('button', { name: 'Send' }));
+      await user.click(await screen.findByRole('button', { name: 'Try again' }));
+
+      await waitFor(() => expect(api.sendTurn).toHaveBeenCalledTimes(2));
+      expect(ids(api.sendTurn, 1).operationId).toBe(ids(api.sendTurn, 0).operationId);
+    });
+
+    it('repeats a failed finish under the same operation id', async () => {
+      api.finish.mockRejectedValueOnce(new Error('timed out')).mockResolvedValue(codingSession());
+      const user = userEvent.setup();
+      renderSession(codingSession({ stage: 'review' }));
+
+      await user.click(await screen.findByRole('button', { name: /^Finish/ }));
+      await user.click(await screen.findByRole('button', { name: 'Try again' }));
+
+      await waitFor(() => expect(api.finish).toHaveBeenCalledTimes(2));
+      expect(ids(api.finish, 1).operationId).toBe(ids(api.finish, 0).operationId);
+    });
+
+    it('gives each fresh click new ids', async () => {
+      api.run.mockResolvedValue(codingSession({ stage: 'code' }));
+      const user = userEvent.setup();
+      renderSession(codingSession({ stage: 'code' }));
+
+      const button = await screen.findByRole('button', { name: /Run examples/ });
+      await user.click(button);
+      await waitFor(() => expect(api.run).toHaveBeenCalledTimes(1));
+      await user.click(screen.getByRole('button', { name: /Run examples/ }));
+      await waitFor(() => expect(api.run).toHaveBeenCalledTimes(2));
+
+      expect(ids(api.run, 1).operationId).not.toBe(ids(api.run, 0).operationId);
+      expect(ids(api.run, 1).runId).not.toBe(ids(api.run, 0).runId);
+    });
+  });
 });
