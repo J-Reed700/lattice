@@ -18,7 +18,7 @@
  *   console.error(message); // "Actual error message" instead of "[object Object]"
  * }
  */
-export function getErrorMessage(error: unknown): string {
+export function getErrorMessage(error: unknown, _fallback?: string): string {
   try {
     if (typeof error === 'string') return error;
     if (error && typeof error === 'object' && 'message' in error) {

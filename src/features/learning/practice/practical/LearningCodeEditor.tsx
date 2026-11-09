@@ -32,6 +32,8 @@ export interface LearningCodeEditorProps {
   showPath?: boolean;
   /** Runs when the learner presses Mod-Enter (Cmd-Enter on macOS). */
   onRunShortcut?: () => void;
+  /** Alias for onRunShortcut. */
+  onRun?: () => void;
 }
 
 const externalDocumentSync = Annotation.define<boolean>();
