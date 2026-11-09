@@ -559,7 +559,7 @@ fn the_recall_schema_bounds_no_text_but_the_quotes_floor() {
 #[test]
 fn the_writer_is_told_never_to_name_a_source_in_the_text() {
     let instructions = citation_instructions(true);
-    assert!(instructions.contains("Never name a source or an excerpt in the lesson's text"));
+    assert!(instructions.contains("Never say in the lesson's text where a statement comes from"));
     assert!(instructions.contains("cite that sentence in the citations list"));
 }
 
