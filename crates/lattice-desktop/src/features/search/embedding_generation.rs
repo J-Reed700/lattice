@@ -1,6 +1,6 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
 use crate::infrastructure::persistence::repositories::embedding::generation::{
-    chunk_page_after, content_hash, ensure_schema, is_prepared, store_prepared,
+    chunk_page_after, content_hash, is_prepared, store_prepared,
 };
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::{AppError, Result};
@@ -15,7 +15,6 @@ use sqlx::SqlitePool;
 /// chunk, exactly what the indexer embedded — so the prefix never has to be
 /// rebuilt from the document row here.
 pub async fn prepare(pool: &SqlitePool, model: &dyn EmbeddingPort) -> Result<usize> {
-    ensure_schema(pool).await?;
     let identity = model.model_identity();
     let mut cursor = String::new();
     let mut completed = 0;
@@ -152,6 +151,7 @@ mod tests {
             .unwrap();
         sqlx::query("CREATE TABLE text_chunks (id TEXT PRIMARY KEY, content TEXT, contextualized_content TEXT, document_id TEXT)").execute(&pool).await.unwrap();
         sqlx::query("CREATE TABLE text_embeddings (chunk_id TEXT, model_name TEXT, dimension INTEGER, embedding BLOB)").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE embedding_generation_vectors (model_identity TEXT NOT NULL, chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE, content_hash TEXT NOT NULL, embedding BLOB NOT NULL, dimension INTEGER NOT NULL, PRIMARY KEY(model_identity, chunk_id))").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO text_chunks VALUES ('a', 'alpha', NULL, 'doc'), ('b', 'beta', NULL, 'doc')").execute(&pool).await.unwrap();
         pool
     }

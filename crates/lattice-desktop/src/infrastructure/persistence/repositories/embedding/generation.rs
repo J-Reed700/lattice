@@ -1,16 +1,11 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{embedding_encoding, Transactions};
+use lattice_core::shared::persistence::embedding_encoding;
 use sha2::{Digest, Sha256};
-use sqlx::{Executor, Sqlite, SqlitePool};
+use sqlx::SqlitePool;
 
 pub fn content_hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
-}
-
-pub async fn ensure_schema(executor: impl Executor<'_, Database = Sqlite>) -> Result<()> {
-    sqlx::query("CREATE TABLE IF NOT EXISTS embedding_generation_vectors (model_identity TEXT NOT NULL, chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE, content_hash TEXT NOT NULL, embedding BLOB NOT NULL, dimension INTEGER NOT NULL, PRIMARY KEY(model_identity, chunk_id))").execute(executor).await?;
-    Ok(())
 }
 
 pub async fn chunk_page_after(pool: &SqlitePool, cursor: &str) -> Result<Vec<(String, String)>> {
@@ -95,13 +90,10 @@ pub async fn restore_page(
     // LIMIT. Negative LIMIT values in SQLite mean unlimited rows.
     const MAX_RESTORE_PAGE_SIZE: i64 = 128;
     let limit = limit.min(MAX_RESTORE_PAGE_SIZE);
-    let mut tx = pool.begin_write().await?;
-    ensure_schema(&mut *tx).await?;
     type RestoredRow = (String, Vec<u8>, String, Option<String>, String);
     let rows: Vec<RestoredRow> = sqlx::query_as(
         "SELECT tc.id, COALESCE(te.embedding, eg.embedding), tc.document_id, CASE WHEN te.embedding IS NULL THEN eg.content_hash ELSE NULL END, COALESCE(NULLIF(tc.contextualized_content, ''), tc.content) FROM text_chunks tc LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? WHERE (te.embedding IS NOT NULL OR eg.embedding IS NOT NULL) AND tc.id > ? ORDER BY tc.id LIMIT ?")
-        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).bind(after_chunk_id).bind(limit).fetch_all(&mut *tx).await?;
-    tx.commit().await?;
+        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).bind(after_chunk_id).bind(limit).fetch_all(pool).await?;
     let cursor = rows.last().map(|row| row.0.clone()).unwrap_or_default();
     let mut result = Vec::with_capacity(rows.len());
     for (id, bytes, doc_id, hash, source) in rows {
@@ -140,6 +132,7 @@ mod tests {
             .unwrap();
         sqlx::query("CREATE TABLE text_chunks (id TEXT PRIMARY KEY, content TEXT, contextualized_content TEXT, document_id TEXT)").execute(&pool).await.unwrap();
         sqlx::query("CREATE TABLE text_embeddings (chunk_id TEXT, model_name TEXT, dimension INTEGER, embedding BLOB)").execute(&pool).await.unwrap();
+        sqlx::query("CREATE TABLE embedding_generation_vectors (model_identity TEXT NOT NULL, chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE, content_hash TEXT NOT NULL, embedding BLOB NOT NULL, dimension INTEGER NOT NULL, PRIMARY KEY(model_identity, chunk_id))").execute(&pool).await.unwrap();
         sqlx::query("INSERT INTO text_chunks VALUES ('a', 'alpha', NULL, 'doc'), ('b', 'beta', NULL, 'doc')").execute(&pool).await.unwrap();
         pool
     }
@@ -153,7 +146,6 @@ mod tests {
     #[tokio::test]
     async fn oversized_restore_page_limit_stays_bounded_and_cursor_continues() {
         let pool = database().await;
-        ensure_schema(&pool).await.unwrap();
         for index in 0..130 {
             let id = format!("c{index:03}");
             let text = format!("content-{index}");
