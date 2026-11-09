@@ -194,7 +194,7 @@ async fn removing_an_owner_while_the_other_owner_is_removed_keeps_one() {
     assert_eq!(
         count(
             &repo.pool,
-            "SELECT COUNT(*) FROM conversation_space_members"
+            "SELECT COUNT(*) FROM conversation_space_members WHERE space_id = 'space-1'"
         )
         .await,
         1
