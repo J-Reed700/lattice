@@ -180,7 +180,7 @@ pub(crate) async fn queue_lesson_bank_in(
     program_id: &str,
     lesson_id: &str,
 ) -> Result<String> {
-    let rank = lesson_rank_in(&mut *connection, lesson_id).await?;
+    let rank = lesson_rank_in(connection, lesson_id).await?;
     queue_in(
         connection,
         QUIZ_BANK,
