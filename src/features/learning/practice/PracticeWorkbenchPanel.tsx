@@ -19,7 +19,7 @@ import {
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import { usePracticeSession } from '@/features/learning/practice/usePracticeSession';
 import { AssistanceLedger, dateLabel } from '@/features/learning/practice/workbench/AssistanceLedger';
-import { HELP_MODES, helpModeOf, helpWord } from '@/features/learning/practice/workbench/helpModes';
+import { HELP_MODES, helpDescription, helpWord } from '@/features/learning/practice/workbench/helpModes';
 import { NewAttempt } from '@/features/learning/practice/workbench/NewAttempt';
 import { ProposalList } from '@/features/learning/practice/workbench/ProposalList';
 import { ResponseEditor } from '@/features/learning/practice/workbench/ResponseEditor';
@@ -37,12 +37,14 @@ export function PracticeWorkbenchPanel({
   lesson,
   taskKind = 'independent',
   embedded = false,
+  attemptId = null,
   onContinue,
 }: {
   program: LearningProgramDto;
   lesson: LearningLessonDto | undefined;
   taskKind?: LearningPracticeTaskKind;
   embedded?: boolean;
+  attemptId?: string | null;
   onContinue?: () => void;
 }) {
   const showCitations = useCitationDisplayStore((state) => state.visible);
@@ -50,7 +52,7 @@ export function PracticeWorkbenchPanel({
   const lessonId = lesson?.id ?? '';
   const sourceWorkspace = useLearningSourceWorkspace(programId);
 
-  const sessionState = usePracticeSession({ program, lesson, taskKind, embedded });
+  const sessionState = usePracticeSession({ program, lesson, taskKind, embedded, attemptId });
   const {
     sessionId,
     setSessionId,
@@ -254,7 +256,7 @@ export function PracticeWorkbenchPanel({
                   ))}
                 </div>
                 <p className="mt-2 text-xs leading-5 text-text-muted">
-                  {helpModeOf(mode)?.description}
+                  {helpDescription(mode)}
                 </p>
               </section>
 

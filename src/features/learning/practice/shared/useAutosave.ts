@@ -8,6 +8,10 @@ export const AUTOSAVE_DELAY_MS = 650;
 
 export type AutosaveState = 'idle' | 'saving' | 'saved' | 'conflict' | 'error';
 
+/** What the save indicator says: saving, a change still waiting or a failed save, or saved. */
+export const saveStatusOf = (state: AutosaveState, dirty: boolean): 'saving' | 'unsaved' | 'saved' =>
+  state === 'saving' ? 'saving' : dirty || state === 'error' || state === 'conflict' ? 'unsaved' : 'saved';
+
 export interface UseAutosaveOptions<T> {
   value: T;
   /** The revision the next save is made against; each save moves on to the one it returns. */

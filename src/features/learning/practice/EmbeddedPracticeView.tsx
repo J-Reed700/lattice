@@ -11,6 +11,7 @@ import {
   sourceForVersion,
 } from '@/features/learning/practice/PracticeSourceRail';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
+import { saveStatusOf } from '@/features/learning/practice/shared/useAutosave';
 import type { usePracticeSession } from '@/features/learning/practice/usePracticeSession';
 import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
@@ -66,7 +67,7 @@ export function EmbeddedPracticeView({
   const sourceVersion = useLearningSourceVersion(sourceRequest);
 
   const nextHint = HINTS.slice(0, 3).find((hint) => !hintUsed.includes(hint.id));
-  const saveState = autosave.state === 'saving' ? 'saving' : dirty || autosave.state === 'error' || autosave.state === 'conflict' ? 'unsaved' : 'saved';
+  const saveState = saveStatusOf(autosave.state, dirty);
   const saveFailed = autosave.state === 'error' || autosave.state === 'conflict';
   const error = failure
     ? { message: failure.message, retry: failure.retry }
@@ -80,7 +81,7 @@ export function EmbeddedPracticeView({
       {!sessionId ? (
         <div>
           <p className="text-sm leading-6 text-text-secondary">
-            Try the attempt in your own words. Your work saves as you go; request one hint at a time when you need it.
+            Work through it in your own words. Your work saves as you go; request one hint at a time when you need it.
           </p>
           <button
             type="button"
