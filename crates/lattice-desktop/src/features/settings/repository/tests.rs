@@ -1,6 +1,6 @@
 //! Tests for the settings repository.
 use super::*;
-use crate::features::settings::dto::{VectorIndexCompressionModeDto, MAX_VECTOR_COMPRESSION_DIMS};
+use crate::features::settings::dto::VectorIndexCompressionModeDto;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -449,13 +449,13 @@ async fn test_validation_warnings() {
     let (repo, _temp_dir) = create_test_repository().await;
 
     let mut settings = SettingsDto::default();
-    settings.indexing.chunk_size = 15000; // Very large
+    settings.llm.tool_output.highlight_terms_max = 0;
 
     let validation = repo.validate(&settings);
 
     assert!(validation.valid); // Still valid, just has warnings
     assert!(validation.has_warnings());
-    assert!(validation.warnings.contains_key("indexing"));
+    assert!(validation.warnings.contains_key("llm"));
 }
 
 #[tokio::test]
@@ -678,7 +678,7 @@ async fn vector_compression_dims_are_only_checked_when_truncation_is_on() {
 
     let mut settings = SettingsDto::default();
     settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::None;
-    settings.search.vector_index_compression.dims = 1;
+    settings.search.vector_index_compression.dims = 0;
     assert!(repo.validate_settings(&settings).valid);
 
     settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::Truncated;
@@ -693,8 +693,8 @@ async fn vector_compression_dims_are_only_checked_when_truncation_is_on() {
     settings.search.vector_index_compression.dims = 512;
     assert!(repo.validate_settings(&settings).valid);
 
-    settings.search.vector_index_compression.dims = MAX_VECTOR_COMPRESSION_DIMS + 1;
-    assert!(!repo.validate_settings(&settings).valid);
+    settings.search.vector_index_compression.dims = 100_000;
+    assert!(repo.validate_settings(&settings).valid);
 }
 
 /// The page-fetch timeout bounds the pipeline's own page reads. With page

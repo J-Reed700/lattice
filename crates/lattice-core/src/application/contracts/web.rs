@@ -81,11 +81,11 @@ pub struct WebSearchInput {
     #[serde(default)]
     pub include_wikipedia: bool,
 
-    /// Recursive deep-research depth (1-4).
+    /// Recursive deep-research depth, at least 1.
     #[serde(default = "default_research_depth")]
     pub depth: usize,
 
-    /// Maximum follow-up query branches per recursion step (1-4).
+    /// Maximum follow-up query branches per recursion step, at least 1.
     #[serde(default = "default_research_branch_queries")]
     pub branch_queries: usize,
 

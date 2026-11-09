@@ -2,7 +2,7 @@
 use super::SettingsRepository;
 use crate::features::settings::dto::{
     LLMProvider, SettingsDto, ValidationResult, VectorIndexCompressionModeDto,
-    MAX_VECTOR_COMPRESSION_DIMS, MIN_LLM_STALL_TIMEOUT_SECONDS, MIN_VECTOR_COMPRESSION_DIMS,
+    MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 use url::Url;
 
@@ -15,9 +15,6 @@ impl SettingsRepository {
 
         if settings.indexing.chunk_size == 0 {
             result.add_error("indexing", "chunk_size must be greater than 0".to_string());
-        }
-        if settings.indexing.chunk_size > 10000 {
-            result.add_warning("indexing", "chunk_size is very large".to_string());
         }
         if settings.indexing.chunk_overlap >= settings.indexing.chunk_size {
             result.add_error(
@@ -49,17 +46,12 @@ impl SettingsRepository {
         // the mode is `none`, and rejecting a remembered value the index never
         // reads would make the whole settings document unsaveable.
         if settings.search.vector_index_compression.mode == VectorIndexCompressionModeDto::Truncated
+            && settings.search.vector_index_compression.dims == 0
         {
-            let dims = settings.search.vector_index_compression.dims;
-            if !(MIN_VECTOR_COMPRESSION_DIMS..=MAX_VECTOR_COMPRESSION_DIMS).contains(&dims) {
-                result.add_error(
-                    "search",
-                    format!(
-                        "vector_index_compression.dims must be between {} and {}",
-                        MIN_VECTOR_COMPRESSION_DIMS, MAX_VECTOR_COMPRESSION_DIMS
-                    ),
-                );
-            }
+            result.add_error(
+                "search",
+                "vector_index_compression.dims must be greater than 0".to_string(),
+            );
         }
         let tuning = &settings.search.retrieval_tuning;
         if tuning.doc_shortlist_candidate_min == 0
@@ -100,16 +92,16 @@ impl SettingsRepository {
                 "web_page_fetch_timeout_secs must be greater than 0".to_string(),
             );
         }
-        if tuning.deep_research_depth == 0 || tuning.deep_research_depth > 4 {
+        if tuning.deep_research_depth == 0 {
             result.add_error(
                 "search",
-                "deep_research_depth must be between 1 and 4".to_string(),
+                "deep_research_depth must be greater than 0".to_string(),
             );
         }
-        if tuning.deep_research_branch_queries == 0 || tuning.deep_research_branch_queries > 4 {
+        if tuning.deep_research_branch_queries == 0 {
             result.add_error(
                 "search",
-                "deep_research_branch_queries must be between 1 and 4".to_string(),
+                "deep_research_branch_queries must be greater than 0".to_string(),
             );
         }
         if tuning.external_search_query_max_chars == 0 || tuning.rerank_query_max_chars == 0 {

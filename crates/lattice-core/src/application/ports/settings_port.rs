@@ -320,9 +320,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
         if settings.indexing.chunk_size == 0 {
             result.add_error("indexing", "chunk_size must be greater than 0".to_string());
         }
-        if settings.indexing.chunk_size > 10000 {
-            result.add_warning("indexing", "chunk_size is very large".to_string());
-        }
         if settings.indexing.chunk_overlap >= settings.indexing.chunk_size {
             result.add_error(
                 "indexing",

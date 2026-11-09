@@ -13,14 +13,15 @@ describe('retrievalTuningFields', () => {
   it('groups every knob with sane bounds', () => {
     expect(TUNING_GROUPS.map((group) => group.title)).toContain('Candidates and shortlist');
     for (const field of TUNING_GROUPS.flatMap((group) => group.fields)) {
-      expect(field.min).toBeLessThanOrEqual(field.max);
+      expect(field.min).toBeLessThanOrEqual(field.max ?? Infinity);
     }
   });
 
-  it('clamps and rounds whole-number fields, and keeps two decimals for ratios', () => {
-    const whole = { key: 'docShortlistDocMin', label: '', min: 1, max: 128, step: 1 } as const;
+  it('rounds whole-number fields without a ceiling, and clamps and keeps two decimals for ratios', () => {
+    const whole = { key: 'docShortlistDocMin', label: '', min: 1, step: 1 } as const;
     const ratio = { key: 'docSupportMultiHitRatioMin', label: '', min: 0, max: 1, step: 0.01 } as const;
-    expect(normalizeFieldValue(whole as never, 300)).toBe(128);
+    expect(normalizeFieldValue(whole as never, 300)).toBe(300);
+    expect(normalizeFieldValue(whole as never, 0)).toBe(1);
     expect(normalizeFieldValue(whole as never, 2.6)).toBe(3);
     expect(normalizeFieldValue(ratio as never, 0.12345)).toBe(0.12);
     expect(normalizeFieldValue(ratio as never, -1)).toBe(0);
