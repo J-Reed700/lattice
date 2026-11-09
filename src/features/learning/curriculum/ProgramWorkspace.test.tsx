@@ -395,3 +395,159 @@ describe('Course page', () => {
     });
   });
 });
+
+describe('The course progress line', () => {
+  const MINUTE = 60_000;
+  const lessonJob = (lessonId: string, overrides: Partial<LearningGenerationJob> = {}) => job({ id: `job-${lessonId}`, lessonIds: [lessonId], ...overrides });
+  const finished = (lessonId: string, minutes: number, overrides: Partial<LearningGenerationJob> = {}) => lessonJob(lessonId, {
+    status: 'completed', resultId: lessonId, createdAt: 1_000_000, startedAt: 1_000_000, finishedAt: 1_000_000 + minutes * MINUTE, ...overrides,
+  });
+  const showCourse = (course: LearningProgramDto, jobs: LearningGenerationJob[], onLessonOpened = vi.fn()) => {
+    api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs } });
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const page = (current: LearningProgramDto) => <QueryClientProvider client={client}>
+      <ProgramWorkspace program={current} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
+        onPrepare={vi.fn()} preparePending={false} onLessonOpened={onLessonOpened} onComplete={vi.fn()} completePending={false} />
+    </QueryClientProvider>;
+    const view = render(page(course));
+    return { onLessonOpened, update: (current: LearningProgramDto) => view.rerender(page(current)) };
+  };
+  /** Four lessons across two modules: lesson-3 ready, the rest outline. Each call returns lessons of its own, so a test may change them. */
+  const course = () => {
+    const base = twoModules();
+    base.modules = base.modules.map((module) => ({ ...module, lessons: module.lessons.map((lesson) => ({ ...lesson })) }));
+    base.modules[1].lessons[0] = { ...gas, preparation: 'ready' } as LearningLessonDto;
+    return base;
+  };
+
+  beforeEach(() => {
+    vi.resetAllMocks();
+    api.review.mockResolvedValue({ ok: true, data: null });
+  });
+
+  it('counts the lessons ready, preparing, waiting and needing attention', async () => {
+    showCourse(course(), [lessonJob('lesson-1'), lessonJob('lesson-2', { status: 'pending' }), lessonJob('lesson-4', { status: 'failed', error: 'The model stopped.' })]);
+    expect(await screen.findByText('1 of 4 lessons ready · 1 preparing · 1 waiting · 1 needs attention')).toBeVisible();
+  });
+
+  it('counts a lesson held for review as needing attention, and says need for several', async () => {
+    showCourse(course(), [
+      lessonJob('lesson-1', { status: 'completed', resultId: 'needs_review:lesson-1', finishedAt: 5 }),
+      lessonJob('lesson-2', { status: 'failed', error: 'The model stopped.' }),
+    ]);
+    expect(await screen.findByText('1 of 4 lessons ready · 2 need attention')).toBeVisible();
+  });
+
+  it('leaves out the parts that are zero but the first', async () => {
+    showCourse(course(), [lessonJob('lesson-1', { status: 'pending' }), lessonJob('lesson-2', { status: 'pending' })]);
+    expect(await screen.findByText('1 of 4 lessons ready · 2 waiting')).toBeVisible();
+  });
+
+  it('shows no progress line when nothing is in flight', async () => {
+    showCourse(course(), []);
+    expect(await screen.findByText('Lessons complete')).toBeVisible();
+    expect(screen.queryByText(/lessons ready/)).not.toBeInTheDocument();
+  });
+
+  it('shows the median gap between finished lessons as the pace', async () => {
+    showCourse(course(), [
+      finished('lesson-1', 0), finished('lesson-2', 4), finished('lesson-3', 10), finished('lesson-5', 12),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText('About one lesson every 4 min so far')).toBeVisible();
+  });
+
+  it('leaves the idle time before a batch out of the pace', async () => {
+    const DAY = 24 * 60;
+    showCourse(course(), [
+      finished('lesson-1', 0),
+      finished('lesson-2', DAY + 10, { createdAt: 1_000_000 + DAY * MINUTE }),
+      finished('lesson-3', DAY + 14, { createdAt: 1_000_000 + DAY * MINUTE }),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText('About one lesson every 4 min so far')).toBeVisible();
+  });
+
+  it('shows no pace when the lessons finished apart because nothing was waiting between them', async () => {
+    showCourse(course(), [
+      finished('lesson-1', 0),
+      finished('lesson-2', 60, { createdAt: 1_000_000 + MINUTE }),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText(/lessons ready/)).toBeVisible();
+    expect(screen.queryByText(/About one lesson every/)).not.toBeInTheDocument();
+  });
+
+  it('shows no pace before two lessons have finished, or when a finished job only held its lesson for review', async () => {
+    showCourse(course(), [
+      finished('lesson-1', 0), finished('lesson-2', 4, { resultId: 'needs_review:lesson-2' }),
+      lessonJob('lesson-4', { status: 'pending' }),
+    ]);
+    expect(await screen.findByText(/lessons ready/)).toBeVisible();
+    expect(screen.queryByText(/About one lesson every/)).not.toBeInTheDocument();
+  });
+
+  it('shows each running lesson its own progress', async () => {
+    const running = (checksCompleted: number, checksTotal: number) => ({
+      phase: 'evidence', phaseStartedAt: 1, lastActivityAt: 1, lastCheckpointAt: null, lessonTitle: '', modelName: 'Test model',
+      modelRunning: true, responseCharacters: 0, modelAttempt: 1, verificationPass: 1, checksCompleted, checksTotal, checksReused: 0,
+      newReferences: null, claims: null, recentSteps: [],
+    }) as unknown as LearningGenerationJob['activity'];
+    showCourse(course(), [
+      lessonJob('lesson-1', { activity: running(3, 10) }),
+      lessonJob('lesson-2', { activity: running(7, 20), createdAt: Date.now() }),
+    ]);
+    const inCard = (lessonId: string) => within(document.getElementById(`lesson-${lessonId}`) as HTMLElement);
+    expect(await inCard('lesson-1').findByText('Preparing · 3 of 10 checked')).toBeVisible();
+    expect(await inCard('lesson-2').findByText('Preparing · 7 of 20 checked')).toBeVisible();
+  });
+
+  describe('preparing ahead of the learner', () => {
+    beforeEach(() => {
+      Element.prototype.scrollIntoView = vi.fn();
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(Element.prototype, 'scrollIntoView');
+    });
+
+    const withLessonOneReady = () => {
+      const base = course();
+      base.modules[0].lessons[0].preparation = 'ready';
+      return base;
+    };
+
+    it('asks once for the prepared lesson that is open', async () => {
+      const { onLessonOpened } = showCourse(withLessonOneReady(), []);
+      await waitFor(() => expect(onLessonOpened).toHaveBeenCalledWith('lesson-1'));
+      expect(onLessonOpened).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks for a prepared lesson the learner selects, and not for one that is not prepared', async () => {
+      const user = userEvent.setup();
+      const { onLessonOpened } = showCourse(withLessonOneReady(), []);
+      await waitFor(() => expect(onLessonOpened).toHaveBeenCalledTimes(1));
+      await user.click(screen.getByRole('button', { name: 'Journey: Blood vessels' }));
+      await user.click(screen.getByRole('button', { name: 'Journey: Airway defenses' }));
+      await user.click(screen.getByRole('button', { name: 'Journey: Gas exchange' }));
+      await waitFor(() => expect(onLessonOpened).toHaveBeenLastCalledWith('lesson-3'));
+      expect(onLessonOpened.mock.calls).toEqual([['lesson-1'], ['lesson-3']]);
+    });
+
+    it('asks when the open lesson becomes prepared', async () => {
+      const { onLessonOpened, update } = showCourse(course(), []);
+      expect(await screen.findByText('Lessons complete')).toBeVisible();
+      expect(onLessonOpened).not.toHaveBeenCalled();
+      update(withLessonOneReady());
+      await waitFor(() => expect(onLessonOpened).toHaveBeenCalledWith('lesson-1'));
+      expect(onLessonOpened).toHaveBeenCalledTimes(1);
+    });
+
+    it('never asks for a draft course', async () => {
+      const draft = withLessonOneReady();
+      draft.summary.status = 'draft';
+      const { onLessonOpened } = showCourse(draft, []);
+      expect(await screen.findByRole('button', { name: 'Start this course' })).toBeVisible();
+      expect(onLessonOpened).not.toHaveBeenCalled();
+    });
+  });
+});

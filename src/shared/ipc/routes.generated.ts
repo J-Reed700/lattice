@@ -305,6 +305,7 @@ export const COMMAND_PLUGINS = {
   plugin_rotate_recovery_code: 'backup',
   plugin_set_archive_keep_count: 'backup',
   plugin_set_archive_passphrase: 'backup',
+  prepare_learning_ahead: 'learning',
   prepare_learning_lesson: 'learning',
   prepare_learning_module: 'learning',
   prepare_learning_quiz_bank: 'learning',

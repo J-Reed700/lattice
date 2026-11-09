@@ -10,6 +10,7 @@ import type {
   LearningProgramSummaryDto,
   GenerateLearningProgramRequestDto,
   AcceptLearningProgramRequestDto,
+  PrepareLearningAheadRequestDto,
   PrepareLearningLessonRequestDto,
   PrepareLearningModuleRequestDto,
   CompleteLearningLessonRequestDto,
@@ -149,6 +150,10 @@ export function usePrepareLearningLesson() {
 export function usePrepareLearningModule() {
   const api = useApi();
   return useProgramMutation<PrepareLearningModuleRequestDto>(api.prepareLearningModule);
+}
+export function usePrepareLearningAhead() {
+  const api = useApi();
+  return useProgramMutation<PrepareLearningAheadRequestDto>(api.prepareLearningAhead);
 }
 export function useCompleteLearningLesson() {
   const api = useApi();
