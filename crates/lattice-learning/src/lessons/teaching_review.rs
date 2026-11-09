@@ -375,6 +375,8 @@ async fn review_sections(
 pub mod test_support;
 
 #[cfg(test)]
+mod passage_tests;
+#[cfg(test)]
 mod section_list_tests;
 
 #[cfg(test)]
