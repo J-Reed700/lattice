@@ -66,7 +66,7 @@ pub fn harness_for(language: &str) -> Option<Box<dyn CaseHarness>> {
 
 /// A fresh random nonce for one run (128 bits, hex).
 pub fn new_nonce() -> String {
-    String::new()
+    hex::encode(rand::random::<[u8; 16]>())
 }
 
 /// Runs `code` as `solution.py` against `cases` under a fresh nonce. Cases run in the order given.

@@ -136,8 +136,7 @@ impl LearningPracticalRepository {
         if let Some(session_id) = request.practice_session_id.as_deref() {
             uuid(session_id, "practice session")?;
         }
-        let evaluator: Option<(PreparedHarness, Vec<LearningLabFile>)> = None;
-        let _ = coding.map(coding_harness);
+        let evaluator = coding.map(coding_harness).transpose()?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
@@ -339,7 +338,10 @@ impl LearningPracticalRepository {
             }
             _ => "The evaluator did not complete.",
         };
-        let cased: Option<&PreparedHarness> = None;
+        let cased = prepared
+            .harness
+            .as_ref()
+            .filter(|harness| !harness.cases.is_empty());
         let (checks, stdout) = match cased {
             Some(harness) => (
                 case_checks(harness, &execution),

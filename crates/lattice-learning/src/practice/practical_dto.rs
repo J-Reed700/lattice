@@ -147,7 +147,14 @@ pub struct CaseCheckDetailDto {
 
 impl CaseCheckDetailDto {
     /// What a reader without the setting's leave may see of a hidden case: its category and status.
-    pub(crate) fn without_hidden_content(self) -> Self {
+    pub(crate) fn without_hidden_content(mut self) -> Self {
+        if self.visibility == crate::practice::coding::problem::CaseVisibility::Hidden {
+            self.args = None;
+            self.expected = None;
+            self.actual = None;
+            self.printed = None;
+            self.error = None;
+        }
         self
     }
 }
