@@ -595,19 +595,11 @@ impl SyncRepository for PgSyncRepository {
         .execute(tx.as_mut())
         .await?;
 
-        tx.commit().await?;
+        let high_watermark_seq = Self::high_watermark_tx(&mut tx, user_id)
+            .await?
+            .max(max_seq);
 
-        let high_watermark_seq = sqlx::query_scalar::<_, Option<i64>>(
-            r#"
-            SELECT MAX(seq)
-            FROM document_ops
-            WHERE user_id = $1
-            "#,
-        )
-        .bind(user_id)
-        .fetch_one(&self.pool)
-        .await?
-        .unwrap_or(max_seq);
+        tx.commit().await?;
 
         Ok(PushBatchResult {
             accepted_paths,
@@ -622,7 +614,8 @@ impl SyncRepository for PgSyncRepository {
         device_id: Uuid,
         ack_seq: i64,
     ) -> AppResult<AckResult> {
-        let device = self.get_device(user_id, device_id).await?;
+        let mut tx = self.pool.begin().await?;
+        let device = Self::get_device_tx(&mut tx, user_id, device_id).await?;
 
         let last_acked_seq = sqlx::query_scalar::<_, i64>(
             r#"
@@ -638,8 +631,9 @@ impl SyncRepository for PgSyncRepository {
         .bind(user_id)
         .bind(device.id)
         .bind(ack_seq)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await?;
+        tx.commit().await?;
 
         Ok(AckResult { last_acked_seq })
     }
@@ -678,7 +672,11 @@ impl SyncRepository for PgSyncRepository {
     }
 
     async fn get_status(&self, user_id: i64, device_id: Uuid) -> AppResult<SyncStatusResponse> {
-        let device = self.get_device(user_id, device_id).await?;
+        let mut tx = self.pool.begin().await?;
+        sqlx::query("SET TRANSACTION ISOLATION LEVEL REPEATABLE READ")
+            .execute(tx.as_mut())
+            .await?;
+        let device = Self::get_device_tx(&mut tx, user_id, device_id).await?;
 
         let last_acked_seq = sqlx::query_scalar::<_, Option<i64>>(
             r#"
@@ -689,7 +687,7 @@ impl SyncRepository for PgSyncRepository {
         )
         .bind(user_id)
         .bind(device.id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(tx.as_mut())
         .await?
         .flatten()
         .unwrap_or(0);
@@ -702,7 +700,7 @@ impl SyncRepository for PgSyncRepository {
             "#,
         )
         .bind(user_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await?;
 
         let synced_documents = sqlx::query_scalar::<_, i64>(
@@ -713,7 +711,7 @@ impl SyncRepository for PgSyncRepository {
             "#,
         )
         .bind(user_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await?;
 
         let server_high_watermark_seq = sqlx::query_scalar::<_, Option<i64>>(
@@ -724,9 +722,10 @@ impl SyncRepository for PgSyncRepository {
             "#,
         )
         .bind(user_id)
-        .fetch_one(&self.pool)
+        .fetch_one(tx.as_mut())
         .await?
         .unwrap_or(0);
+        tx.commit().await?;
 
         Ok(SyncStatusResponse {
             device_id: device.device_uuid,
