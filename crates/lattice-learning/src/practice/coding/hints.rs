@@ -1,682 +1,465 @@
-//! Graded coding hint ladder and validation checks.
-//! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 4.5).
+//! Coding hints: a ladder of four rungs, each written with the reference in view and checked before the learner
+//! sees it.
 
-use serde::{Deserialize, Serialize};
+use async_trait::async_trait;
+use lattice_core::application::ports::LLMPort;
+use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::shared::error::{AppError, Result};
 use tokio_util::sync::CancellationToken;
 
 use crate::drills::runner::CodeRunner;
-use crate::practice::coding::harness::{run_cases, CaseHarness};
-use crate::practice::coding::problem::{CaseStatus, Problem};
-use crate::practice::coding::session::CodingExampleDto;
-use crate::practice::practical_dto::LearningPracticalRunDto;
-use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
-use lattice_core::shared::error::AppError;
+use crate::lab_runtime::LearningLabFile;
+use crate::model_call;
+use crate::practice::coding::dto::{CodeHintDto, CodeHintRung};
+use crate::practice::coding::harness::CaseHarness;
+use crate::practice::coding::observation::WorkspaceObservation;
+use crate::practice::coding::problem::{CodingSetting, Problem};
 
-/// The four rungs of the coding hint ladder.
-#[derive(
-    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, specta::Type,
-)]
-#[serde(rename_all = "snake_case")]
-pub enum CodeHintRung {
-    /// Rung 1: A question about what to look at. Never gives code.
-    Nudge,
-    /// Rung 2: The idea or structure that fits, and why. Never gives code.
-    Idea,
-    /// Rung 3: Steps in pseudo-code, each with its reason. Never gives runnable Python.
-    Plan,
-    /// Rung 4: The lines in your code that are wrong, and why. Never gives the fixed line.
-    PointAtLine,
-}
-
-impl CodeHintRung {
-    /// The next rung in sequence, or `None` if already at the top rung.
-    pub fn next(self) -> Option<Self> {
-        match self {
-            Self::Nudge => Some(Self::Idea),
-            Self::Idea => Some(Self::Plan),
-            Self::Plan => Some(Self::PointAtLine),
-            Self::PointAtLine => None,
-        }
-    }
-}
-
-/// The level of assistance permitted in the current setting.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum HelpLevel {
-    FullHelp,
-    HintsOnly,
-    NoHelp,
-}
-
-/// A kind of help that may be requested.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum Help {
-    CodeHint(CodeHintRung),
-    WorkedSolution,
-}
-
-/// What help a surface allows for a given help level.
-pub trait AssistancePolicy: Send + Sync {
-    fn allows(&self, help: Help, level: HelpLevel) -> bool;
-}
-
-/// Assistance policy for coding sessions.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CodingAssistancePolicy;
-
-impl AssistancePolicy for CodingAssistancePolicy {
-    fn allows(&self, help: Help, level: HelpLevel) -> bool {
-        match level {
-            HelpLevel::FullHelp => true,
-            HelpLevel::HintsOnly => matches!(help, Help::CodeHint(_)),
-            HelpLevel::NoHelp => false,
-        }
-    }
-}
-
-/// A validated hint safe to display to the learner.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct CheckedCodeHint {
+/// A hint that passed its checks, ready to be stored as a `CodeHintDto`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CodeHint {
     pub rung: CodeHintRung,
-    pub content: String,
+    pub text: String,
     pub reason: String,
-    #[serde(default)]
     pub lines: Vec<u32>,
+    pub path: Option<String>,
 }
 
-fn is_non_trivial_reference_line(line: &str, starter: &str) -> bool {
-    if line.len() <= 3 {
-        return false;
-    }
-    for starter_line in starter.lines() {
-        if starter_line.trim() == line {
-            return false;
-        }
-    }
-    let trivial = [
-        "pass", "return", "return []", "return None", "return True", "return False",
-        "else:", "try:", "finally:", "except:", "break", "continue",
-    ];
-    if trivial.contains(&line) {
-        return false;
-    }
-    true
+/// The rung after the highest one given: Nudge first, and Line stays Line.
+pub fn next_rung(_given: &[CodeHintDto]) -> CodeHintRung {
+    CodeHintRung::Nudge
 }
 
-fn contains_code_or_statements(content: &str) -> bool {
-    if content.contains("```") {
-        return true;
-    }
-    if content.contains("def ") || content.contains("return ") {
-        return true;
-    }
-    let parts: Vec<&str> = content.split('`').collect();
-    for (idx, part) in parts.iter().enumerate() {
-        if idx % 2 == 1 && (part.contains('=') || part.contains("def ") || part.contains("return"))
-        {
-            return true;
-        }
-    }
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.contains(" = ") || trimmed.starts_with("return") {
-            return true;
-        }
-    }
-    false
+/// Writes the hint for `rung`, checks it, and asks once more with the reason when a check refuses it.
+pub async fn write_hint(
+    _llm: &dyn LLMPort,
+    _runner: &dyn CodeRunner,
+    _harness: &dyn CaseHarness,
+    _problem: &Problem,
+    _observation: &WorkspaceObservation,
+    _rung: CodeHintRung,
+    _in_role: bool,
+    _cancel: CancellationToken,
+) -> Result<CodeHint> {
+    Err(AppError::InvalidState("not built yet".into()))
 }
 
-fn contains_runnable_python(content: &str) -> bool {
-    if content.contains("```python") || content.contains("```\ndef ") {
-        return true;
-    }
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with("def ") && trimmed.ends_with(':') {
-            return true;
-        }
-    }
-    false
+/// What the checks read of the problem and the session.
+struct Hinting<'a> {
+    reference: &'a str,
+    starter: &'a str,
+    patterns: &'a [String],
+    setting: CodingSetting,
+    draft: &'a [LearningLabFile],
 }
 
-fn extract_code_block(content: &str, function_name: &str) -> Option<String> {
-    if let Some(start_idx) = content.find("```") {
-        if let Some(remainder) = content.get(start_idx + 3..) {
-            let code_start = if let Some(newline_idx) = remainder.find('\n') {
-                remainder.get(newline_idx + 1..).unwrap_or(remainder)
-            } else {
-                remainder
-            };
-            if let Some(end_idx) = code_start.find("```") {
-                if let Some(code) = code_start.get(..end_idx) {
-                    return Some(code.to_string());
-                }
-            }
-        }
-    }
-    let def_fn = format!("def {function_name}");
-    if content.contains(&def_fn) || content.contains("def ") {
-        if let Some(pos) = content.find("def ") {
-            if let Some(code) = content.get(pos..) {
-                return Some(code.to_string());
-            }
-        }
-    }
-    None
+/// The two things a check runs: code as the solution, and code as a parse.
+#[async_trait]
+trait Proof: Send + Sync {
+    async fn parses(&self, code: &str) -> Result<bool>;
+    async fn passes(&self, code: &str) -> Result<bool>;
 }
 
-/// Validates that a generated hint obeys the constraints for its rung and does not leak solutions.
-pub async fn check_code_hint(
-    hint: &CheckedCodeHint,
-    draft: &str,
-    problem: &Problem,
-    runner: &dyn CodeRunner,
-    harness: &dyn CaseHarness,
-) -> Result<(), AppError> {
-    if hint.reason.trim().is_empty() {
-        return Err(AppError::InvalidInput("Hint must have a non-empty reason".into()));
-    }
-
-    for line in problem.reference.lines() {
-        let trimmed = line.trim();
-        if is_non_trivial_reference_line(trimmed, &problem.spec.starter)
-            && hint.content.contains(trimmed)
-        {
-            return Err(AppError::InvalidInput(
-                "Hint contains a verbatim reference line from the reference solution".into(),
-            ));
-        }
-    }
-
-    match hint.rung {
-        CodeHintRung::Nudge | CodeHintRung::Idea => {
-            if contains_code_or_statements(&hint.content) {
-                return Err(AppError::InvalidInput(
-                    "Rungs 1 and 2 cannot contain code or statements".into(),
-                ));
-            }
-        }
-        CodeHintRung::Plan => {
-            if contains_runnable_python(&hint.content) {
-                return Err(AppError::InvalidInput(
-                    "Rung 3 (Plan) cannot contain runnable Python".into(),
-                ));
-            }
-        }
-        CodeHintRung::PointAtLine => {
-            if hint.lines.is_empty() {
-                return Err(AppError::InvalidInput("Rung 4 requires non-empty lines".into()));
-            }
-            let draft_line_count = draft.lines().count().max(1) as u32;
-            for &line in &hint.lines {
-                if line == 0 || line > draft_line_count {
-                    return Err(AppError::InvalidInput(format!(
-                        "Line {line} is outside 1..=draft_line_count ({draft_line_count})"
-                    )));
-                }
-            }
-        }
-    }
-
-    if let Some(code) = extract_code_block(&hint.content, &problem.spec.signature.function) {
-        let cancel = CancellationToken::new();
-        if let Ok((_outcome, results)) =
-            run_cases(runner, harness, &problem.spec, &code, &problem.cases, cancel).await
-        {
-            if !results.is_empty() && results.iter().all(|r| r.status == CaseStatus::Passed) {
-                return Err(AppError::InvalidInput(
-                    "Hint contains code that passes all cases".into(),
-                ));
-            }
-        }
-    }
-
-    Ok(())
+/// Why a check refuses `hint`, or None when every check accepts it.
+async fn refusal(_hinting: &Hinting<'_>, _proof: &dyn Proof, _hint: &CodeHint) -> Result<Option<String>> {
+    Ok(None)
 }
 
-/// Generates and validates the next hint for the learner's current draft and progress.
-pub async fn generate_code_hint(
-    llm: &dyn LLMPort,
-    runner: &dyn CodeRunner,
-    harness: &dyn CaseHarness,
-    rung: CodeHintRung,
-    problem: &Problem,
-    draft: &str,
-    _last_run: Option<&LearningPracticalRunDto>,
-    _examples: &[CodingExampleDto],
-) -> Result<CheckedCodeHint, AppError> {
-    let rung_instructions = match rung {
-        CodeHintRung::Nudge => "Provide a gentle question about what to look at. NEVER give code.",
-        CodeHintRung::Idea => {
-            "Explain the core idea or data structure that fits and why. NEVER give code."
-        }
-        CodeHintRung::Plan => {
-            "Provide algorithmic steps in pseudo-code with reasons. NEVER provide runnable Python."
-        }
-        CodeHintRung::PointAtLine => {
-            "Identify the line numbers in the draft that need attention and explain why."
-        }
-    };
+/// The request that asks for a hint of `rung`.
+fn ask(
+    _reference: &str,
+    _observation: &str,
+    _rung: CodeHintRung,
+    _in_role: bool,
+    _setting: CodingSetting,
+) -> GroundedRequest {
+    model_call::structured("", String::new(), serde_json::json!({}), 0, "low")
+}
 
-    let prompt = format!(
-        concat!(
-            "Problem: {}\nStatement: {}\nStarter:\n{}\nCurrent draft:\n{}\n\n",
-            "Hint level requested: {:?}\nRule: {}\n\n",
-            "Respond with JSON: {{\"content\": \"...\", \"reason\": \"...\", \"lines\": [..]}}"
-        ),
-        problem.spec.title,
-        problem.spec.statement,
-        problem.spec.starter,
-        draft,
-        rung,
-        rung_instructions
-    );
-
-    let req = CompletionRequest {
-        input: vec![CompletionInput::Message {
-            role: "user".into(),
-            content: prompt,
-        }],
-        ..Default::default()
-    };
-
-    let resp = llm.complete(&req).await?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&resp.text).unwrap_or_else(|_| serde_json::json!({
-            "content": resp.text,
-            "reason": "Generated hint",
-            "lines": []
-        }));
-
-    let content = parsed
-        .get("content")
-        .and_then(|v| v.as_str())
-        .unwrap_or(&resp.text)
-        .to_string();
-    let reason = parsed
-        .get("reason")
-        .and_then(|v| v.as_str())
-        .unwrap_or("Generated hint")
-        .to_string();
-    let lines: Vec<u32> = parsed
-        .get("lines")
-        .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect())
-        .unwrap_or_default();
-
-    let checked = CheckedCodeHint {
-        rung,
-        content,
-        reason,
-        lines,
-    };
-
-    check_code_hint(&checked, draft, problem, runner, harness).await?;
-    Ok(checked)
+/// Asks for `request`, checks the answer, and asks once more with the reason when a check refuses it.
+async fn write_checked(
+    _llm: &dyn LLMPort,
+    _hinting: &Hinting<'_>,
+    _proof: &dyn Proof,
+    _request: GroundedRequest,
+    _rung: CodeHintRung,
+) -> Result<CodeHint> {
+    Err(AppError::InvalidState("not built yet".into()))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drills::runner::{CodeRunner, RunOutcome};
-    use crate::lab_runtime::LearningLabFile;
-    use crate::practice::coding::harness::python::PythonHarness;
-    use crate::practice::coding::problem::{
-        Case, Compare, Difficulty, Misreading, Param, Problem, ProblemSpec, Signature, Visibility,
+    use crate::practice::coding::dto::CodingStage;
+    use lattice_core::application::ports::llm_port::{
+        CompletionRequest, CompletionResponse,
     };
-    use async_trait::async_trait;
-    use std::collections::BTreeMap;
-    use tokio_util::sync::CancellationToken;
+    use lattice_core::domain::learning::practice::PROBLEM_PATTERNS;
+    use std::collections::VecDeque;
+    use std::sync::Mutex;
 
-    struct TestRunner {
-        outcome: RunOutcome,
-        output: String,
-    }
+    struct Fake;
 
     #[async_trait]
-    impl CodeRunner for TestRunner {
-        fn name(&self) -> &str {
-            "test-runner"
+    impl Proof for Fake {
+        async fn parses(&self, code: &str) -> Result<bool> {
+            Ok(code.contains("PARSES"))
         }
-        fn entrypoint(&self) -> &str {
-            "checks.py"
-        }
-        fn contract(&self) -> &str {
-            "test"
-        }
-        fn running(&self, _path: &str) -> String {
-            String::new()
-        }
-        async fn run(
-            &self,
-            _files: &[lattice_core::domain::learning::drills::DrillFile],
-            _test: &str,
-            _cancel: CancellationToken,
-        ) -> lattice_core::shared::error::Result<RunOutcome> {
-            Ok(self.outcome.clone())
-        }
-        async fn run_capturing(
-            &self,
-            _files: &[LearningLabFile],
-            _read_only_paths: &[String],
-            _cancel: CancellationToken,
-        ) -> lattice_core::shared::error::Result<(RunOutcome, String)> {
-            Ok((self.outcome.clone(), self.output.clone()))
+        async fn passes(&self, code: &str) -> Result<bool> {
+            Ok(code.contains("PASSES"))
         }
     }
 
-    fn sample_problem() -> Problem {
-        let starter = concat!(
-            "def two_sum(numbers: list[int], target: int) -> list[int]:\n",
-            "    pass\n"
-        );
-        let reference = concat!(
-            "def two_sum(numbers: list[int], target: int) -> list[int]:\n",
-            "    seen = {}\n",
-            "    for i, num in enumerate(numbers):\n",
-            "        diff = target - num\n",
-            "        if diff in seen:\n",
-            "            return [seen[diff], i]\n",
-            "        seen[num] = i\n",
-            "    return []\n"
-        );
+    struct Fixture {
+        reference: String,
+        starter: String,
+        patterns: Vec<String>,
+        draft: Vec<LearningLabFile>,
+    }
 
-        let spec = ProblemSpec {
-            title: "Two Sum".into(),
-            statement: "Find indices of two numbers that add up to target.".into(),
-            signature: Signature {
-                function: "two_sum".into(),
-                params: vec![
-                    Param {
-                        name: "numbers".into(),
-                        annotation: "list[int]".into(),
-                    },
-                    Param {
-                        name: "target".into(),
-                        annotation: "int".into(),
-                    },
-                ],
-                returns: "list[int]".into(),
-            },
-            constraints: vec!["2 <= len(numbers) <= 1000".into()],
-            clarifications: vec![],
-            language: "python".into(),
-            difficulty: Difficulty::Easy,
-            target_complexity: "O(n) time, O(n) space".into(),
-            patterns: vec!["hash_lookup".into()],
-            starter: starter.into(),
+    impl Fixture {
+        fn new() -> Self {
+            Self {
+                reference: concat!(
+                    "def two_sum(numbers, target):\n",
+                    "    seen = {}\n",
+                    "    for i, n in enumerate(numbers):\n",
+                    "        if target - n in seen:\n",
+                    "            return [seen[target - n], i]\n",
+                    "        seen[n] = i\n",
+                    "    return []\n"
+                )
+                .into(),
+                starter: "def two_sum(numbers, target):\n    pass\n".into(),
+                patterns: PROBLEM_PATTERNS
+                    .first()
+                    .map(|pattern| vec![pattern.id.to_owned()])
+                    .unwrap_or_default(),
+                draft: vec![LearningLabFile {
+                    path: "solution.py".into(),
+                    content: concat!(
+                        "def two_sum(numbers, target):\n",
+                        "    for i in numbers:\n",
+                        "        return [0]\n",
+                        "    return []\n"
+                    )
+                    .into(),
+                }],
+            }
+        }
+
+        fn hinting(&self, setting: CodingSetting) -> Hinting<'_> {
+            Hinting {
+                reference: &self.reference,
+                starter: &self.starter,
+                patterns: &self.patterns,
+                setting,
+                draft: &self.draft,
+            }
+        }
+
+        fn pattern_name(&self) -> &'static str {
+            PROBLEM_PATTERNS.first().map_or("", |pattern| pattern.name)
+        }
+    }
+
+    fn hint(rung: CodeHintRung, text: &str) -> CodeHint {
+        CodeHint {
+            rung,
+            text: text.into(),
+            reason: "It points at what the code does not yet do.".into(),
+            lines: Vec::new(),
+            path: None,
+        }
+    }
+
+    fn line_hint(lines: Vec<u32>, path: Option<&str>) -> CodeHint {
+        CodeHint {
+            lines,
+            path: path.map(str::to_owned),
+            ..hint(CodeHintRung::Line, "This return ends the loop on the first pass.")
+        }
+    }
+
+    async fn refused(fixture: &Fixture, setting: CodingSetting, hint: &CodeHint) -> Option<String> {
+        refusal(&fixture.hinting(setting), &Fake, hint)
+            .await
+            .expect("the checks run")
+    }
+
+    const CLEAN: &str = "Think about what you need to remember while you walk the list once.";
+
+    #[tokio::test]
+    async fn a_clean_hint_of_every_rung_is_accepted() {
+        let fixture = Fixture::new();
+        for rung in [CodeHintRung::Nudge, CodeHintRung::Idea, CodeHintRung::Plan] {
+            assert_eq!(refused(&fixture, CodingSetting::Mock, &hint(rung, CLEAN)).await, None);
+        }
+        let line = line_hint(vec![3], Some("solution.py"));
+        assert_eq!(refused(&fixture, CodingSetting::Mock, &line).await, None);
+    }
+
+    #[tokio::test]
+    async fn blank_text_or_a_blank_reason_is_refused() {
+        let fixture = Fixture::new();
+        let blank_text = hint(CodeHintRung::Nudge, "  \n ");
+        assert!(refused(&fixture, CodingSetting::Mock, &blank_text).await.is_some());
+        let blank_reason = CodeHint {
+            reason: " ".into(),
+            ..hint(CodeHintRung::Nudge, CLEAN)
         };
+        assert!(refused(&fixture, CodingSetting::Mock, &blank_reason).await.is_some());
+    }
 
-        Problem {
-            spec,
-            reference: reference.into(),
-            misreadings: vec![Misreading {
-                id: "mis-1".into(),
-                description: "Reusing same element".into(),
-                code: "def two_sum(numbers, target):\n    return [0, 0]\n".into(),
-                killed_by: vec!["case-1".into()],
-            }],
-            cases: vec![Case {
-                id: "case-1".into(),
-                category: "basic".into(),
-                args: vec!["[2, 7, 11, 15]".into(), "9".into()],
-                expected: Some("[0, 1]".into()),
-                compare: Compare::Exact,
-                visibility: Visibility::Example,
-                scale: false,
-            }],
-            reference_ms: BTreeMap::new(),
+    #[tokio::test]
+    async fn nudge_and_idea_hold_no_fenced_block() {
+        let fixture = Fixture::new();
+        let fenced = "Remember them:\n```python\nx\n```";
+        for rung in [CodeHintRung::Nudge, CodeHintRung::Idea] {
+            assert!(refused(&fixture, CodingSetting::Mock, &hint(rung, fenced)).await.is_some());
+            assert_eq!(refused(&fixture, CodingSetting::Mock, &hint(rung, CLEAN)).await, None);
         }
     }
 
     #[tokio::test]
-    async fn test_nudge_rejects_fenced_code_or_python_statements() {
-        let runner = TestRunner {
-            outcome: RunOutcome::Passed,
-            output: String::new(),
-        };
-        let harness = PythonHarness::new();
-        let problem = sample_problem();
-        let draft = "def two_sum(numbers, target):\n    pass\n";
-
-        let bad_nudge_fenced = CheckedCodeHint {
-            rung: CodeHintRung::Nudge,
-            content: "Why not try:\n```python\nseen = {}\n```".into(),
-            reason: "Encouraging a dict".into(),
-            lines: vec![],
-        };
-        let err = check_code_hint(&bad_nudge_fenced, draft, &problem, &runner, &harness)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("cannot contain code"), "got {err}");
-
-        let bad_nudge_statement = CheckedCodeHint {
-            rung: CodeHintRung::Nudge,
-            content: "Consider using return [0, 1]".into(),
-            reason: "Pointing at return".into(),
-            lines: vec![],
-        };
-        let err2 = check_code_hint(&bad_nudge_statement, draft, &problem, &runner, &harness)
-            .await
-            .unwrap_err();
-        assert!(err2.to_string().contains("cannot contain code"), "got {err2}");
-
-        let good_nudge = CheckedCodeHint {
-            rung: CodeHintRung::Nudge,
-            content: "What data structure allows O(1) lookups for seen numbers?".into(),
-            reason: "Guiding toward hash map".into(),
-            lines: vec![],
-        };
-        assert!(check_code_hint(&good_nudge, draft, &problem, &runner, &harness).await.is_ok());
+    async fn a_plan_block_that_parses_as_python_is_refused() {
+        let fixture = Fixture::new();
+        let runnable = hint(CodeHintRung::Plan, "Steps:\n```\nPARSES\n```");
+        assert!(refused(&fixture, CodingSetting::Mock, &runnable).await.is_some());
+        let steps = hint(CodeHintRung::Plan, "Steps:\n```\n1. remember each number\n```");
+        assert_eq!(refused(&fixture, CodingSetting::Mock, &steps).await, None);
     }
 
     #[tokio::test]
-    async fn test_idea_rejects_fenced_code_or_python_statements() {
-        let runner = TestRunner {
-            outcome: RunOutcome::Passed,
-            output: String::new(),
-        };
-        let harness = PythonHarness::new();
-        let problem = sample_problem();
-        let draft = "def two_sum(numbers, target):\n    pass\n";
-
-        let bad_idea = CheckedCodeHint {
-            rung: CodeHintRung::Idea,
-            content: "Store complements: `diff = target - num`".into(),
-            reason: "Showing the equation".into(),
-            lines: vec![],
-        };
-        let err = check_code_hint(&bad_idea, draft, &problem, &runner, &harness)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("cannot contain code"), "got {err}");
-
-        let good_idea = CheckedCodeHint {
-            rung: CodeHintRung::Idea,
-            content: concat!(
-                "As you iterate through the list, keep track of each number and its index in a ",
-                "hash map so you can check if the complement was already seen."
-            )
-            .into(),
-            reason: "Explaining single-pass hash map strategy".into(),
-            lines: vec![],
-        };
-        assert!(check_code_hint(&good_idea, draft, &problem, &runner, &harness).await.is_ok());
+    async fn a_line_hint_names_lines_that_exist_in_a_file_of_the_draft() {
+        let fixture = Fixture::new();
+        let cases = [
+            line_hint(Vec::new(), Some("solution.py")),
+            line_hint(vec![0], Some("solution.py")),
+            line_hint(vec![5], Some("solution.py")),
+            line_hint(vec![2, 9], Some("solution.py")),
+            line_hint(vec![2], None),
+            line_hint(vec![2], Some("other.py")),
+        ];
+        for refused_hint in cases {
+            assert!(
+                refused(&fixture, CodingSetting::Mock, &refused_hint).await.is_some(),
+                "{refused_hint:?}"
+            );
+        }
+        let last = line_hint(vec![1, 4], Some("solution.py"));
+        assert_eq!(refused(&fixture, CodingSetting::Mock, &last).await, None);
     }
 
     #[tokio::test]
-    async fn test_plan_rejects_runnable_python() {
-        let runner = TestRunner {
-            outcome: RunOutcome::Passed,
-            output: String::new(),
+    async fn a_block_that_solves_the_problem_is_refused_on_any_rung_that_allows_blocks() {
+        let fixture = Fixture::new();
+        let solving = CodeHint {
+            text: "Try this:\n```python\nPASSES\n```".into(),
+            ..line_hint(vec![2], Some("solution.py"))
         };
-        let harness = PythonHarness::new();
-        let problem = sample_problem();
-        let draft = "def two_sum(numbers, target):\n    pass\n";
-
-        let bad_plan = CheckedCodeHint {
-            rung: CodeHintRung::Plan,
-            content: concat!(
-                "```python\n",
-                "def solve():\n",
-                "    seen = {}\n",
-                "    for i, x in enumerate(nums):\n",
-                "        if target - x in seen:\n",
-                "            return [seen[target - x], i]\n",
-                "        seen[x] = i\n",
-                "```"
-            )
-            .into(),
-            reason: "Complete runnable solution".into(),
-            lines: vec![],
+        assert!(refused(&fixture, CodingSetting::Mock, &solving).await.is_some());
+        let fragment = CodeHint {
+            text: "Try this:\n```python\nfragment\n```".into(),
+            ..line_hint(vec![2], Some("solution.py"))
         };
-        let err = check_code_hint(&bad_plan, draft, &problem, &runner, &harness)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("runnable Python"), "got {err}");
-
-        let good_plan = CheckedCodeHint {
-            rung: CodeHintRung::Plan,
-            content: concat!(
-                "1. Initialize an empty dictionary mapping numbers to their indices.\n",
-                "2. Iterate through numbers with their index:\n",
-                "   - Compute complement = target - current number\n",
-                "   - If complement is in the dictionary, return indices\n",
-                "   - Otherwise, record current number and its index.\n",
-                "3. Return empty list if no pair is found."
-            )
-            .into(),
-            reason: "Algorithmic steps in pseudo-code".into(),
-            lines: vec![],
-        };
-        assert!(check_code_hint(&good_plan, draft, &problem, &runner, &harness).await.is_ok());
+        assert_eq!(refused(&fixture, CodingSetting::Mock, &fragment).await, None);
     }
 
     #[tokio::test]
-    async fn test_point_at_line_requires_non_empty_lines_within_draft() {
-        let runner = TestRunner {
-            outcome: RunOutcome::Passed,
-            output: String::new(),
+    async fn a_line_of_the_reference_is_refused_word_for_word() {
+        let fixture = Fixture::new();
+        let verbatim = hint(CodeHintRung::Plan, "Then store it with `seen[n] = i` each time.");
+        let why = refused(&fixture, CodingSetting::Mock, &verbatim).await;
+        assert!(why.is_some_and(|why| !why.contains("seen[n] = i")));
+        let in_reason = CodeHint {
+            reason: "Because `if target - n in seen:` is the test.".into(),
+            ..hint(CodeHintRung::Nudge, CLEAN)
         };
-        let harness = PythonHarness::new();
-        let problem = sample_problem();
-        let draft = concat!(
-            "def two_sum(numbers, target):\n",
-            "    seen = {}\n",
-            "    for i in numbers:\n",
-            "        return [0]\n"
-        );
-
-        let empty_lines = CheckedCodeHint {
-            rung: CodeHintRung::PointAtLine,
-            content: "Look at the return statement".into(),
-            reason: "Wrong return".into(),
-            lines: vec![],
-        };
-        let err = check_code_hint(&empty_lines, draft, &problem, &runner, &harness)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("non-empty lines"), "got {err}");
-
-        let line_zero = CheckedCodeHint {
-            rung: CodeHintRung::PointAtLine,
-            content: "Look at the definition".into(),
-            reason: "Zero line".into(),
-            lines: vec![0],
-        };
-        let err2 = check_code_hint(&line_zero, draft, &problem, &runner, &harness)
-            .await
-            .unwrap_err();
-        assert!(err2.to_string().contains("1..=draft_line_count"), "got {err2}");
-
-        let line_out_of_bounds = CheckedCodeHint {
-            rung: CodeHintRung::PointAtLine,
-            content: "Look past the end".into(),
-            reason: "Line 10 does not exist".into(),
-            lines: vec![10],
-        };
-        let err3 = check_code_hint(&line_out_of_bounds, draft, &problem, &runner, &harness)
-            .await
-            .unwrap_err();
-        assert!(err3.to_string().contains("1..=draft_line_count"), "got {err3}");
-
-        let valid_line = CheckedCodeHint {
-            rung: CodeHintRung::PointAtLine,
-            content: "Returning too early inside the loop without checking the complement.".into(),
-            reason: "Premature return on line 4".into(),
-            lines: vec![4],
-        };
-        assert!(check_code_hint(&valid_line, draft, &problem, &runner, &harness).await.is_ok());
+        assert!(refused(&fixture, CodingSetting::Mock, &in_reason).await.is_some());
     }
 
     #[tokio::test]
-    async fn test_hint_rejects_code_passing_all_problem_cases() {
-        let runner = TestRunner {
-            outcome: RunOutcome::Passed,
-            output: concat!(
-                "__LATTICE_CASE__:{\"case_id\":\"case-1\",\"status\":\"passed\",",
-                "\"actual\":\"[0, 1]\",\"printed\":\"\",\"elapsed_ms\":1}\n"
-            )
-            .into(),
-        };
-        let harness = PythonHarness::new();
-        let problem = sample_problem();
-        let draft = "def two_sum(numbers, target):\n    pass\n";
-
-        let passing_code_hint = CheckedCodeHint {
-            rung: CodeHintRung::Plan,
-            content: "Try writing:\ndef two_sum(numbers, target):\n    return [0, 1]".into(),
-            reason: "Passing solution snippet".into(),
-            lines: vec![],
-        };
-        let err = check_code_hint(&passing_code_hint, draft, &problem, &runner, &harness)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("passes all cases"), "got {err}");
+    async fn a_starter_line_or_keywords_alone_are_not_a_reference_line() {
+        let fixture = Fixture::new();
+        for text in [
+            "Keep `def two_sum(numbers, target):` as it is.",
+            "Think about what to return, and when.",
+            "An empty case can return [] early.",
+            "Does the loop need an else:?",
+        ] {
+            assert_eq!(
+                refused(&fixture, CodingSetting::Mock, &hint(CodeHintRung::Plan, text)).await,
+                None,
+                "{text}"
+            );
+        }
     }
 
     #[tokio::test]
-    async fn test_hint_rejects_verbatim_reference_line() {
-        let runner = TestRunner {
-            outcome: RunOutcome::Failed { output: String::new() },
-            output: String::new(),
-        };
-        let harness = PythonHarness::new();
-        let problem = sample_problem();
-        let draft = "def two_sum(numbers, target):\n    pass\n";
+    async fn the_pattern_name_is_allowed_only_on_a_coached_idea() {
+        let fixture = Fixture::new();
+        let text = format!("This is a case for {}.", fixture.pattern_name());
+        for setting in [CodingSetting::Coached, CodingSetting::Mock, CodingSetting::Watched] {
+            for rung in [
+                CodeHintRung::Nudge,
+                CodeHintRung::Idea,
+                CodeHintRung::Plan,
+                CodeHintRung::Line,
+            ] {
+                let mut named = hint(rung, &text);
+                if rung == CodeHintRung::Line {
+                    named.lines = vec![2];
+                    named.path = Some("solution.py".into());
+                }
+                let allowed = setting == CodingSetting::Coached && rung == CodeHintRung::Idea;
+                assert_eq!(
+                    refused(&fixture, setting, &named).await.is_none(),
+                    allowed,
+                    "{setting:?} {rung:?}"
+                );
+            }
+        }
+    }
 
-        let verbatim_hint = CheckedCodeHint {
-            rung: CodeHintRung::Plan,
-            content: "You should use `seen[num] = i` in your loop.".into(),
-            reason: "Verbatim line from reference".into(),
-            lines: vec![],
-        };
-        let err = check_code_hint(&verbatim_hint, draft, &problem, &runner, &harness)
-            .await
-            .unwrap_err();
-        assert!(err.to_string().contains("verbatim reference line"), "got {err}");
+    fn given(rungs: &[CodeHintRung]) -> Vec<CodeHintDto> {
+        rungs
+            .iter()
+            .enumerate()
+            .map(|(ordinal, rung)| CodeHintDto {
+                ordinal: ordinal as u32,
+                rung: *rung,
+                text: String::new(),
+                reason: String::new(),
+                lines: Vec::new(),
+                path: None,
+                stage: CodingStage::Code,
+                run_id: None,
+                in_role: false,
+                at: 0,
+            })
+            .collect()
     }
 
     #[test]
-    fn test_coding_assistance_policy_allows() {
-        let policy = CodingAssistancePolicy;
+    fn the_rungs_come_in_order_and_the_top_one_stays() {
+        assert_eq!(next_rung(&[]), CodeHintRung::Nudge);
+        assert_eq!(next_rung(&given(&[CodeHintRung::Nudge])), CodeHintRung::Idea);
+        assert_eq!(
+            next_rung(&given(&[CodeHintRung::Nudge, CodeHintRung::Idea])),
+            CodeHintRung::Plan
+        );
+        assert_eq!(next_rung(&given(&[CodeHintRung::Plan])), CodeHintRung::Line);
+        assert_eq!(next_rung(&given(&[CodeHintRung::Line])), CodeHintRung::Line);
+        assert_eq!(
+            next_rung(&given(&[CodeHintRung::Idea, CodeHintRung::Nudge])),
+            CodeHintRung::Plan
+        );
+    }
 
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::Nudge), HelpLevel::FullHelp));
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::Idea), HelpLevel::FullHelp));
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::Plan), HelpLevel::FullHelp));
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::PointAtLine), HelpLevel::FullHelp));
-        assert!(policy.allows(Help::WorkedSolution, HelpLevel::FullHelp));
+    struct Scripted {
+        answers: Mutex<VecDeque<String>>,
+        requests: Mutex<Vec<CompletionRequest>>,
+    }
 
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::Nudge), HelpLevel::HintsOnly));
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::Idea), HelpLevel::HintsOnly));
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::Plan), HelpLevel::HintsOnly));
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::PointAtLine), HelpLevel::HintsOnly));
-        assert!(!policy.allows(Help::WorkedSolution, HelpLevel::HintsOnly));
+    impl Scripted {
+        fn new(answers: &[&str]) -> Self {
+            Self {
+                answers: Mutex::new(answers.iter().map(|answer| (*answer).to_owned()).collect()),
+                requests: Mutex::new(Vec::new()),
+            }
+        }
 
-        assert!(!policy.allows(Help::CodeHint(CodeHintRung::Nudge), HelpLevel::NoHelp));
-        assert!(!policy.allows(Help::WorkedSolution, HelpLevel::NoHelp));
+        fn requests(&self) -> Vec<CompletionRequest> {
+            self.requests.lock().map(|r| r.clone()).unwrap_or_default()
+        }
+    }
+
+    #[async_trait]
+    impl LLMPort for Scripted {
+        async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+            if let Ok(mut requests) = self.requests.lock() {
+                requests.push(request.clone());
+            }
+            let next = self.answers.lock().ok().and_then(|mut a| a.pop_front());
+            next.map(CompletionResponse::from_text)
+                .ok_or_else(|| AppError::InternalError("Unexpected extra model call".into()))
+        }
+        fn model_name(&self) -> &str {
+            "scripted"
+        }
+        fn max_context_tokens(&self) -> usize {
+            128_000
+        }
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
+    }
+
+    fn answer(text: &str) -> String {
+        serde_json::json!({
+            "text": text,
+            "reason": "It points at what the code does not yet do.",
+            "lines": [],
+            "path": null
+        })
+        .to_string()
+    }
+
+    const BAD: &str = "Then store it with `seen[n] = i` each time.";
+
+    async fn written(llm: &Scripted, fixture: &Fixture, rung: CodeHintRung) -> Result<CodeHint> {
+        let hinting = fixture.hinting(CodingSetting::Mock);
+        let request = ask(&fixture.reference, "{}", rung, false, CodingSetting::Mock);
+        write_checked(llm, &hinting, &Fake, request, rung).await
+    }
+
+    #[tokio::test]
+    async fn a_refused_hint_is_asked_for_again_with_the_reason() {
+        let fixture = Fixture::new();
+        let llm = Scripted::new(&[&answer(BAD), &answer(CLEAN)]);
+        let hint = written(&llm, &fixture, CodeHintRung::Plan).await.expect("second answer is clean");
+        assert_eq!(hint.text, CLEAN);
+        let why = refused(&fixture, CodingSetting::Mock, &self::hint(CodeHintRung::Plan, BAD))
+            .await
+            .expect("the first answer is refused");
+        let requests = llm.requests();
+        assert_eq!(requests.len(), 2);
+        assert!(format!("{:?}", requests[1]).contains(&why));
+    }
+
+    #[tokio::test]
+    async fn two_refused_answers_fail_as_an_unusable_model_answer() {
+        let fixture = Fixture::new();
+        let llm = Scripted::new(&[&answer(BAD), &answer(BAD), &answer(CLEAN)]);
+        let error = written(&llm, &fixture, CodeHintRung::Plan).await.unwrap_err();
+        assert!(matches!(error, AppError::ModelAnswerUnusable(_)), "{error:?}");
+        assert_eq!(llm.requests().len(), 2);
+    }
+
+    #[tokio::test]
+    async fn a_clean_first_answer_is_the_only_call() {
+        let fixture = Fixture::new();
+        let llm = Scripted::new(&[&answer(CLEAN)]);
+        written(&llm, &fixture, CodeHintRung::Nudge).await.expect("clean");
+        assert_eq!(llm.requests().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn only_a_line_hint_keeps_lines_and_a_path() {
+        let fixture = Fixture::new();
+        let with_lines = serde_json::json!({
+            "text": CLEAN,
+            "reason": "It points at what the code does not yet do.",
+            "lines": [3],
+            "path": "solution.py"
+        })
+        .to_string();
+        let llm = Scripted::new(&[&with_lines, &with_lines]);
+        let nudge = written(&llm, &fixture, CodeHintRung::Nudge).await.expect("clean");
+        assert!(nudge.lines.is_empty() && nudge.path.is_none());
+        let line = written(&llm, &fixture, CodeHintRung::Line).await.expect("clean");
+        assert_eq!(line.lines, vec![3]);
+        assert_eq!(line.path.as_deref(), Some("solution.py"));
     }
 }
