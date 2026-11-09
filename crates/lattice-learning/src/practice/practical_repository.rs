@@ -8,6 +8,7 @@ use crate::{
     operations::Operation,
     persistence::db,
     practical_dto::*,
+    practice::coding::{harness::CaseHarness, problem::ProblemCase},
 };
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
@@ -16,6 +17,7 @@ use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
 
 mod activities;
+mod coding;
 mod drafts;
 mod reads;
 #[cfg(test)]
@@ -230,6 +232,16 @@ pub(crate) enum PreparedExecution {
     },
 }
 
+/// What a coding run needs to read its own output: the cases it ran and the nonce its harness lines carry. Held in
+/// memory for the length of the run, never stored.
+pub(crate) struct PreparedHarness {
+    pub(crate) harness: Box<dyn CaseHarness>,
+    pub(crate) nonce: String,
+    pub(crate) cases: Vec<ProblemCase>,
+    pub(crate) mine_ids: Vec<String>,
+    pub(crate) coding_session_id: String,
+}
+
 pub(crate) struct PreparedRun {
     pub(crate) dto: LearningPracticalRunDto,
     pub(crate) execution: PreparedExecution,
@@ -237,6 +249,7 @@ pub(crate) struct PreparedRun {
     pub(crate) practice_mode: LearningPracticeMode,
     pub(crate) allowed_aids: Vec<String>,
     pub(crate) workspace_owner_token: Option<String>,
+    pub(crate) harness: Option<PreparedHarness>,
 }
 
 #[derive(Debug, Clone, Serialize)]

@@ -65,36 +65,14 @@ pub trait CodeRunner: Send + Sync {
         cancel: CancellationToken,
     ) -> Result<RunOutcome>;
 
-    /// Runs `files` capturing stdout and stderr.
+    /// Runs `files` as they are, `read_only_paths` unwritable to the run, and returns how it ended with what it
+    /// wrote to standard output.
     async fn run_capturing(
         &self,
         files: &[LearningLabFile],
-        _read_only_paths: &[String],
+        read_only_paths: &[String],
         cancel: CancellationToken,
-    ) -> Result<(RunOutcome, String)> {
-        let entrypoint = self.entrypoint();
-        let test = files
-            .iter()
-            .find(|file| file.path == entrypoint)
-            .map(|file| file.content.as_str())
-            .unwrap_or("");
-        let drill_files: Vec<DrillFile> = files
-            .iter()
-            .filter(|file| file.path != entrypoint)
-            .map(|file| DrillFile {
-                path: file.path.clone(),
-                text: file.content.clone(),
-            })
-            .collect();
-        let outcome = self.run(&drill_files, test, cancel).await?;
-        let output = match &outcome {
-            RunOutcome::Passed => String::new(),
-            RunOutcome::Failed { output } | RunOutcome::TimedOut { output } => output.clone(),
-            RunOutcome::Unavailable { why } => why.clone(),
-            RunOutcome::Cancelled => String::new(),
-        };
-        Ok((outcome, output))
-    }
+    ) -> Result<(RunOutcome, String)>;
 }
 
 const PYTHON_CONTRACT: &str = "Programs run on CPython 3.14 in a sandbox: the standard library only, no packages, no network, no threads or subprocesses, and no writing to the file system. Files import each other from the project root: src/limiter.py is imported as `from src.limiter import RateLimiter`, and no __init__.py is needed. A test fails by raising an exception, as `assert` does.";
@@ -193,7 +171,7 @@ impl CodeRunner for BuiltinRunner {
             limits: LearningLabLimits::default(),
         };
         let result = self.runtimes.execute(spec, cancel).await?;
-        Ok((outcome_of(&result), output_of(&result)))
+        Ok((outcome_of(&result), result.stdout))
     }
 }
 
