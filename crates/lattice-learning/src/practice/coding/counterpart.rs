@@ -3,7 +3,7 @@
 use std::future::Future;
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::drills::runner::CodeRunner;
@@ -11,7 +11,11 @@ use crate::practice::coding::harness::CaseHarness;
 use crate::practice::coding::observation::WorkspaceObservation;
 use crate::practice::coding::policy::{CodingCue, CodingPolicy};
 use crate::practice::coding::problem::Problem;
+use crate::practice::coding::solution_check::{code_blocks, passes_every_case};
+use crate::lessons::structured_call::{complete_checked_request, reask};
+use crate::model_call;
 use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::learning::practice::problem_patterns::named_in;
 use lattice_core::shared::error::{AppError, Result};
 
 /// What the model is asked to reserve for one reply, schema fields included.
@@ -38,10 +42,39 @@ struct RawReply {
     speak: Option<bool>,
 }
 
+/// What a reply says when it answers with the problem's own "your call" line.
+const YOUR_CALL: &str = "Your call: state your assumption";
+
+fn refuse(reason: impl Into<String>) -> AppError {
+    AppError::InvalidInput(reason.into())
+}
+
 /// The schema of a reply on `cue`.
-fn reply_schema(problem: &Problem, observation: &WorkspaceObservation, cue: &CodingCue) -> Value {
-    let _ = (problem, observation, cue);
-    Value::Null
+fn reply_schema(problem: &Problem, _observation: &WorkspaceObservation, cue: &CodingCue) -> Value {
+    let mut options: Vec<String> = (0..problem.spec.clarifications.len())
+        .map(|index| index.to_string())
+        .collect();
+    options.push("your_call".to_owned());
+    options.push("none".to_owned());
+    let mut properties = json!({
+        "content": {"type": "string"},
+        "lines": {"type": "array", "items": {"type": "integer"}},
+        "path": {"type": ["string", "null"]},
+        "clarification": {"type": "string", "enum": options},
+    });
+    let mut required = vec!["content", "lines", "path", "clarification"];
+    if *cue == CodingCue::Checkpoint {
+        if let Some(properties) = properties.as_object_mut() {
+            properties.insert("speak".to_owned(), json!({"type": "boolean"}));
+        }
+        required.push("speak");
+    }
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "required": required,
+        "properties": properties,
+    })
 }
 
 /// Reads and checks a reply, apart from running the code in it. None is silence.
@@ -52,8 +85,103 @@ fn accept(
     cue: &CodingCue,
     observation: &WorkspaceObservation,
 ) -> Result<Option<CounterpartReply>> {
-    let _ = (raw, problem, policy, cue, observation);
-    Err(AppError::InvalidState("not built yet".into()))
+    let reply: RawReply = serde_json::from_str(raw)
+        .map_err(|error| refuse(format!("The answer was not the JSON asked for: {error}.")))?;
+    if reply.speak == Some(false) {
+        return if *cue == CodingCue::Checkpoint {
+            Ok(None)
+        } else {
+            Err(refuse(
+                "Only a checkpoint may stay silent. Answer the learner.",
+            ))
+        };
+    }
+    let content = reply.content;
+    if content.trim().is_empty() {
+        return Err(refuse("The reply is blank. Say something."));
+    }
+
+    let path = if reply.lines.is_empty() {
+        None
+    } else {
+        Some(
+            reply
+                .path
+                .unwrap_or_else(|| crate::practice::coding::problem::SOLUTION_PATH.to_owned()),
+        )
+    };
+    if let Some(path) = &path {
+        let count = observation
+            .line_count(path)
+            .ok_or_else(|| refuse(format!("{path} is not one of the learner's files.")))?;
+        for line in &reply.lines {
+            let exists = *line >= 1 && usize::try_from(*line).is_ok_and(|line| line <= count);
+            if !exists {
+                return Err(refuse(format!(
+                    "Line {line} is not in {path}, which has {count} lines. Refer only to lines that exist."
+                )));
+            }
+        }
+    }
+
+    let internal = problem
+        .cases
+        .iter()
+        .map(|case| case.id.clone())
+        .chain(problem.misreadings.iter().map(|misreading| misreading.id.clone()))
+        .chain(observation.internal_ids());
+    for id in internal.filter(|id| !id.is_empty()) {
+        if content.contains(&id) {
+            return Err(refuse(format!(
+                "The reply contains the internal id {id}. Never write an id; describe a case by what it is about."
+            )));
+        }
+    }
+
+    if let Some(pattern) = named_in(&content, &problem.spec.patterns) {
+        return Err(refuse(format!(
+            "The reply names the technique \"{}\". Do not name it; ask about the idea instead.",
+            pattern.name
+        )));
+    }
+
+    match reply.clarification.as_deref() {
+        None | Some("none") => {}
+        Some("your_call") => {
+            if !content.contains(YOUR_CALL) {
+                return Err(refuse(format!(
+                    "With clarification your_call the reply must contain \"{YOUR_CALL}\"."
+                )));
+            }
+        }
+        Some(index) => {
+            let clarification = index
+                .parse::<usize>()
+                .ok()
+                .and_then(|index| problem.spec.clarifications.get(index));
+            match clarification {
+                None => {
+                    return Err(refuse(format!(
+                        "{index} is not a clarification of this problem. Use a clarification's number, your_call or none."
+                    )))
+                }
+                Some(clarification) if !content.contains(&clarification.answer) => {
+                    return Err(refuse(format!(
+                        "The reply must contain the answer to clarification {index} word for word: {}",
+                        clarification.answer
+                    )))
+                }
+                Some(_) => {}
+            }
+        }
+    }
+
+    policy.check(&content, cue, observation)?;
+    Ok(Some(CounterpartReply {
+        content,
+        lines: reply.lines,
+        path,
+    }))
 }
 
 /// Refuses `content` when a fenced block in it passes every case. `passes` runs one block.
@@ -62,8 +190,14 @@ where
     F: Fn(String) -> Fut,
     Fut: Future<Output = Result<bool>>,
 {
-    let _ = (content, &passes);
-    Err(AppError::InvalidState("not built yet".into()))
+    for block in code_blocks(content) {
+        if passes(block).await? {
+            return Err(refuse(
+                "A code block in the reply passes every case, so it solves the problem. Do not write a working solution; describe the step in words, or show a fragment that leaves the problem unsolved.",
+            ));
+        }
+    }
+    Ok(())
 }
 
 /// The counterpart's checked reply on `cue`, or None when it chose silence (only on Checkpoint).
@@ -77,18 +211,37 @@ pub async fn respond(
     observation: &WorkspaceObservation,
     cancel: CancellationToken,
 ) -> Result<Option<CounterpartReply>> {
-    let _ = (
-        llm,
-        runner,
-        harness,
-        problem,
-        policy,
-        cue,
-        observation,
-        cancel,
+    let mut request = model_call::structured(
+        &policy.system(cue, observation),
+        observation.render(),
+        reply_schema(problem, observation, cue),
         REPLY_OUTPUT_TOKENS,
+        "low",
     );
-    Err(AppError::InvalidState("not built yet".into()))
+    let mut again = false;
+    loop {
+        let (raw, reply) = complete_checked_request(llm, request.clone(), None, None, |raw| {
+            accept(raw, problem, policy, cue, observation).map(|reply| (raw.to_owned(), reply))
+        })
+        .await?;
+        let Some(reply) = reply else {
+            return Ok(None);
+        };
+        let ran = refuse_passing_blocks(&reply.content, |code| {
+            passes_every_case(runner, harness, problem, &code, cancel.clone())
+        })
+        .await;
+        let why = match ran {
+            Ok(()) => return Ok(Some(reply)),
+            Err(AppError::InvalidInput(why)) => why,
+            Err(error) => return Err(error),
+        };
+        if again {
+            return Err(AppError::ModelAnswerUnusable(why));
+        }
+        request = reask(request, &raw, &why);
+        again = true;
+    }
 }
 
 #[cfg(test)]

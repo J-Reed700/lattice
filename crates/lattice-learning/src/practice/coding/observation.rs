@@ -10,7 +10,7 @@ use crate::practice::coding::dto::{
 use crate::practice::coding::problem::{
     CodingSetting, CodingTask, Problem, ProblemClarification, ProblemSignature,
 };
-use crate::practice::practical_dto::LearningSimulationTurnDto;
+use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
 use lattice_core::domain::learning::practice::problem_patterns::problem_pattern;
 
 /// Whether a line was added to a file or removed from it.
@@ -52,7 +52,7 @@ pub struct WorkspaceObservation {
     pub target_complexity: String,
     pub pattern_names: Vec<String>,
     pub clock: ClockDto,
-    pub draft: Vec<LearningLabFile>,
+    pub files: Vec<LearningLabFile>,
     /// Whether the draft the counterpart last saw is known; `changes` is empty otherwise.
     pub has_baseline: bool,
     pub changes: Vec<LineChange>,
@@ -65,8 +65,104 @@ pub struct WorkspaceObservation {
 
 /// The lines added to and removed from `new` against `old`, by longest common subsequence of lines.
 pub fn diff_lines(path: &str, old: &str, new: &str) -> Vec<LineChange> {
-    let _ = (path, old, new);
-    Vec::new()
+    let old: Vec<&str> = old.lines().collect();
+    let new: Vec<&str> = new.lines().collect();
+    let prefix = old
+        .iter()
+        .zip(&new)
+        .take_while(|(before, after)| before == after)
+        .count();
+    let suffix = old
+        .iter()
+        .skip(prefix)
+        .rev()
+        .zip(new.iter().skip(prefix).rev())
+        .take_while(|(before, after)| before == after)
+        .count();
+    let old_mid: Vec<&str> = old
+        .iter()
+        .skip(prefix)
+        .take(old.len().saturating_sub(prefix + suffix))
+        .copied()
+        .collect();
+    let new_mid: Vec<&str> = new
+        .iter()
+        .skip(prefix)
+        .take(new.len().saturating_sub(prefix + suffix))
+        .copied()
+        .collect();
+
+    // lcs[i][j] is the length of the longest common subsequence of old_mid[i..] and new_mid[j..], flattened.
+    let width = new_mid.len() + 1;
+    let mut lcs = vec![0u32; (old_mid.len() + 1) * width];
+    let at = |lcs: &[u32], i: usize, j: usize| lcs.get(i * width + j).copied().unwrap_or(0);
+    for (i, before) in old_mid.iter().enumerate().rev() {
+        for (j, after) in new_mid.iter().enumerate().rev() {
+            let value = if before == after {
+                at(&lcs, i + 1, j + 1) + 1
+            } else {
+                at(&lcs, i + 1, j).max(at(&lcs, i, j + 1))
+            };
+            if let Some(slot) = lcs.get_mut(i * width + j) {
+                *slot = value;
+            }
+        }
+    }
+
+    let number = |offset: usize| u32::try_from(prefix + offset + 1).unwrap_or(u32::MAX);
+    let change = |kind: LineChangeKind, offset: usize, text: &str| LineChange {
+        path: path.to_owned(),
+        kind,
+        line: number(offset),
+        text: text.to_owned(),
+    };
+    let mut changes = Vec::new();
+    let (mut i, mut j) = (0, 0);
+    loop {
+        match (old_mid.get(i), new_mid.get(j)) {
+            (Some(before), Some(after)) if before == after => {
+                i += 1;
+                j += 1;
+            }
+            (Some(before), Some(after)) => {
+                if at(&lcs, i + 1, j) >= at(&lcs, i, j + 1) {
+                    changes.push(change(LineChangeKind::Removed, i, before));
+                    i += 1;
+                } else {
+                    changes.push(change(LineChangeKind::Added, j, after));
+                    j += 1;
+                }
+            }
+            (Some(before), None) => {
+                changes.push(change(LineChangeKind::Removed, i, before));
+                i += 1;
+            }
+            (None, Some(after)) => {
+                changes.push(change(LineChangeKind::Added, j, after));
+                j += 1;
+            }
+            (None, None) => break,
+        }
+    }
+    changes
+}
+
+fn changes_since(draft: &[LearningLabFile], seen: &[LearningLabFile]) -> Vec<LineChange> {
+    let mut changes = Vec::new();
+    for file in draft {
+        let before = seen
+            .iter()
+            .find(|earlier| earlier.path == file.path)
+            .map_or("", |earlier| earlier.content.as_str());
+        changes.extend(diff_lines(&file.path, before, &file.content));
+    }
+    for gone in seen
+        .iter()
+        .filter(|earlier| !draft.iter().any(|file| file.path == earlier.path))
+    {
+        changes.extend(diff_lines(&gone.path, &gone.content, ""));
+    }
+    changes
 }
 
 /// What the counterpart may read: what the learner sees in `session` (already cut by the setting), plus the
@@ -76,17 +172,19 @@ pub fn observe(
     session: &CodingSessionDto,
     seen: Option<&[LearningLabFile]>,
 ) -> WorkspaceObservation {
-    let _ = seen;
+    let mut stages_reached = Vec::new();
+    for stage in stages_of(session.task) {
+        stages_reached.push(*stage);
+        if *stage == session.stage {
+            break;
+        }
+    }
     WorkspaceObservation {
         session_id: session.session_id.clone(),
         task: session.task,
         setting: session.setting,
         stage: session.stage,
-        stages_reached: stages_of(session.task)
-            .iter()
-            .copied()
-            .take(1)
-            .collect(),
+        stages_reached,
         title: session.problem.title.clone(),
         statement: session.problem.statement.clone(),
         signature: session.problem.signature.clone(),
@@ -102,9 +200,11 @@ pub fn observe(
             .map(|pattern| pattern.name.to_owned())
             .collect(),
         clock: session.clock.clone(),
-        draft: session.draft.clone(),
-        has_baseline: false,
-        changes: Vec::new(),
+        files: session.draft.clone(),
+        has_baseline: seen.is_some(),
+        changes: seen
+            .map(|seen| changes_since(&session.draft, seen))
+            .unwrap_or_default(),
         last_run: session.runs.last().cloned(),
         learner_examples: session.examples.clone(),
         coverage: session.coverage.clone(),
@@ -116,7 +216,7 @@ pub fn observe(
 impl WorkspaceObservation {
     /// The number of lines of the draft file at `path`, or None when the draft has no such file.
     pub fn line_count(&self, path: &str) -> Option<usize> {
-        self.draft
+        self.files
             .iter()
             .find(|file| file.path == path)
             .map(|file| file.content.lines().count())
@@ -138,8 +238,144 @@ impl WorkspaceObservation {
 
     /// The observation as the model reads it: text, with the draft numbered by line.
     pub fn render(&self) -> String {
-        String::new()
+        let mut out = String::new();
+        let mut line = |text: String| {
+            out.push_str(&text);
+            out.push('\n');
+        };
+        line(format!("Problem: {}", self.title));
+        line(self.statement.clone());
+        let params = self
+            .signature
+            .params
+            .iter()
+            .map(|param| format!("{}: {}", param.name, param.annotation))
+            .collect::<Vec<_>>()
+            .join(", ");
+        line(format!(
+            "Signature: def {}({}) -> {}",
+            self.signature.function, params, self.signature.returns
+        ));
+        for constraint in &self.constraints {
+            line(format!("Constraint: {constraint}"));
+        }
+        for case in &self.problem_examples {
+            line(format!("Example in the statement: {}", case_text(case)));
+        }
+        for (index, clarification) in self.clarifications.iter().enumerate() {
+            line(format!(
+                "Clarification {index}: asked \"{}\", answered \"{}\"",
+                clarification.question, clarification.answer
+            ));
+        }
+        line(format!("Target complexity: {}", self.target_complexity));
+        if !self.pattern_names.is_empty() {
+            line(format!(
+                "Techniques the problem is built around (never name them): {}",
+                self.pattern_names.join(", ")
+            ));
+        }
+        let reached = self
+            .stages_reached
+            .iter()
+            .map(|stage| format!("{stage:?}"))
+            .collect::<Vec<_>>()
+            .join(", ");
+        line(format!(
+            "Task: {:?}. Setting: {:?}. Stage: {:?}. Stages reached: {reached}.",
+            self.task, self.setting, self.stage
+        ));
+        let spent = format!("{} s active", self.clock.active_ms / 1000);
+        match self.clock.budget_seconds {
+            Some(budget) => line(format!("Clock: {spent} of a {budget} s budget.")),
+            None => line(format!("Clock: {spent}, no budget.")),
+        }
+        line("Draft:".to_owned());
+        for file in &self.files {
+            line(format!("=== {} ===", file.path));
+            for (index, text) in file.content.lines().enumerate() {
+                line(format!("{} | {text}", index + 1));
+            }
+        }
+        if !self.has_baseline {
+            line("Changes since you last looked: you have not looked at the draft before.".to_owned());
+        } else if self.changes.is_empty() {
+            line("Changes since you last looked: none.".to_owned());
+        } else {
+            line("Changes since you last looked:".to_owned());
+            for change in &self.changes {
+                let mark = match change.kind {
+                    LineChangeKind::Added => "added",
+                    LineChangeKind::Removed => "removed",
+                };
+                line(format!("{mark} {} line {}: {}", change.path, change.line, change.text));
+            }
+        }
+        match &self.last_run {
+            None => line("Last run: none yet.".to_owned()),
+            Some(run) => {
+                line(format!("Last run: {:?}, {:?}.", run.scope, run.status));
+                for case in &run.cases {
+                    line(format!("- {:?}: {}", case.status, case_text(case)));
+                }
+                if !run.stdout.is_empty() {
+                    line(format!("Printed outside any case: {}", run.stdout));
+                }
+                if !run.stderr.is_empty() {
+                    line(format!("Error output: {}", run.stderr));
+                }
+            }
+        }
+        for example in &self.learner_examples {
+            line(format!(
+                "Learner's example {}: ({}) expects {} - {:?}",
+                example.ordinal,
+                example.args.join(", "),
+                example.expected,
+                example.verdict
+            ));
+        }
+        line(format!(
+            "Examples catch {} of {} common mistakes.",
+            self.coverage.caught, self.coverage.total
+        ));
+        if let Some(uncaught) = &self.coverage.uncaught {
+            line(format!("One mistake they do not catch yet: {uncaught}"));
+        }
+        for hint in &self.hints {
+            line(format!("Hint given ({:?}): {}", hint.rung, hint.text));
+        }
+        line("Transcript:".to_owned());
+        for turn in &self.turns {
+            let speaker = match turn.speaker {
+                LearningSimulationSpeaker::Learner => "Learner",
+                LearningSimulationSpeaker::Counterpart | LearningSimulationSpeaker::Coach => "You",
+            };
+            line(format!("{speaker}: {}", turn.content));
+        }
+        out
     }
+}
+
+/// A case as the learner sees it: its category, then whatever the setting shows of its input and results.
+fn case_text(case: &CaseViewDto) -> String {
+    let mut parts = vec![case.category.clone()];
+    if let Some(args) = &case.args {
+        parts.push(format!("input ({})", args.join(", ")));
+    }
+    if let Some(expected) = &case.expected {
+        parts.push(format!("expected {expected}"));
+    }
+    if let Some(actual) = &case.actual {
+        parts.push(format!("got {actual}"));
+    }
+    if let Some(printed) = case.printed.as_ref().filter(|printed| !printed.is_empty()) {
+        parts.push(format!("printed {printed}"));
+    }
+    if let Some(error) = &case.error {
+        parts.push(format!("raised {error}"));
+    }
+    parts.join("; ")
 }
 
 #[cfg(test)]
@@ -164,7 +400,7 @@ pub(crate) mod test_support {
     pub fn case(id: &str, visibility: CaseVisibility, args: &str) -> ProblemCase {
         ProblemCase {
             id: id.to_owned(),
-            category: format!("category of {id}"),
+            category: "an ordinary list".to_owned(),
             args: vec![args.to_owned()],
             expected: Some("0".to_owned()),
             compare: CaseCompare::Exact,
@@ -246,7 +482,7 @@ pub(crate) mod test_support {
                 language: problem.spec.language.clone(),
                 examples: vec![CaseViewDto {
                     case_id: "case-example-1".to_owned(),
-                    category: "category of case-example-1".to_owned(),
+                    category: "an ordinary list".to_owned(),
                     visibility: CaseVisibility::Example,
                     mine: false,
                     scale: false,
@@ -330,7 +566,6 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::*;
     use super::*;
-    use crate::practice::practical_dto::LearningSimulationSpeaker;
 
     fn file(content: &str) -> LearningLabFile {
         LearningLabFile {

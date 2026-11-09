@@ -46,8 +46,20 @@ pub enum CodingCue {
 impl CodingCue {
     /// Which of two pending cues to keep: true when `self` ranks strictly above `other`.
     pub fn outranks(&self, other: &CodingCue) -> bool {
-        let _ = other;
-        false
+        self.rank() > other.rank()
+    }
+
+    fn rank(&self) -> u8 {
+        match self {
+            Self::Opening => 7,
+            Self::Reply => 6,
+            Self::Submitted => 5,
+            Self::AskForSkipped(_) => 4,
+            Self::StageOpened(_) => 3,
+            Self::RunReview(_) => 2,
+            Self::Checkpoint => 1,
+            Self::Idle => 0,
+        }
     }
 }
 
@@ -55,8 +67,22 @@ pub type CodingPolicy = dyn TurnPolicy<WorkspaceObservation, Event = CodingEvent
 
 /// The one-line instruction a stage opens with.
 pub fn stage_instruction(stage: CodingStage) -> &'static str {
-    let _ = stage;
-    ""
+    match stage {
+        CodingStage::Understand => {
+            "Say what the function takes and returns, and ask about anything the statement leaves open."
+        }
+        CodingStage::Examples => {
+            "Write examples, edge cases included, and check each one against the problem."
+        }
+        CodingStage::Plan => "Say how you will solve it, and what that costs, before you write code.",
+        CodingStage::Code => "Write the function, one small step at a time, and run it as you go.",
+        CodingStage::Test => "Run your examples, then submit to run every case.",
+        CodingStage::Review => "State the time and space cost, and look for anything to simplify.",
+        CodingStage::Reproduce => "Run the code and see the failure for yourself.",
+        CodingStage::Locate => "Find the line, or the idea, that is wrong.",
+        CodingStage::Fix => "Change the code so that the failure goes away and nothing else does.",
+        CodingStage::Verify => "Run every case and say why the code is right now.",
+    }
 }
 
 /// The coach of the Coached setting: teaches, and speaks on every message, stage and run.
@@ -75,22 +101,134 @@ pub struct WatchingInterviewer {
 }
 
 fn cue_for(setting: CodingSetting, task: CodingTask, event: &CodingEvent) -> Option<CodingCue> {
-    let _ = (setting, task, event, asked_for);
-    None
+    let coached = setting == CodingSetting::Coached;
+    let watched = setting == CodingSetting::Watched;
+    match event {
+        CodingEvent::Started => Some(CodingCue::Opening),
+        CodingEvent::LearnerMessage { spoken } => Some(if *spoken && watched {
+            CodingCue::Checkpoint
+        } else {
+            CodingCue::Reply
+        }),
+        CodingEvent::StageMoved { to, skipped, .. } => {
+            if coached {
+                return Some(CodingCue::StageOpened(*to));
+            }
+            let asked: Vec<CodingStage> = skipped
+                .iter()
+                .filter(|stage| asked_for(task).contains(stage))
+                .copied()
+                .collect();
+            (!asked.is_empty()).then_some(CodingCue::AskForSkipped(asked))
+        }
+        CodingEvent::RunFinished { scope } => match (setting, scope) {
+            (CodingSetting::Coached, scope) => Some(CodingCue::RunReview(*scope)),
+            (_, CodingRunScope::All) => Some(CodingCue::Submitted),
+            (CodingSetting::Watched, _) => Some(CodingCue::Checkpoint),
+            (CodingSetting::Mock, _) => None,
+        },
+        CodingEvent::DraftPaused { changed } => (watched && *changed).then_some(CodingCue::Checkpoint),
+        CodingEvent::Idle => coached.then_some(CodingCue::Idle),
+    }
+}
+
+/// The text of `content` outside fenced code blocks.
+fn outside_code(content: &str) -> String {
+    let mut inside = false;
+    let mut kept = Vec::new();
+    for line in content.lines() {
+        if line.trim_start().starts_with("```") {
+            inside = !inside;
+        } else if !inside {
+            kept.push(line);
+        }
+    }
+    kept.join("\n")
 }
 
 fn check_for(setting: CodingSetting, content: &str) -> Result<()> {
-    let _ = (setting, content, AppError::InvalidState(String::new()));
+    if setting != CodingSetting::Coached && outside_code(content).matches('?').count() > 1 {
+        return Err(AppError::InvalidInput(
+            "An interviewer asks one question at a time. Ask only one question, with one question mark outside any code."
+                .into(),
+        ));
+    }
     Ok(())
 }
 
-fn system_for(
-    setting: CodingSetting,
-    cue: &CodingCue,
-    state: &WorkspaceObservation,
-) -> String {
-    let _ = (setting, cue, state);
-    String::new()
+const COACH_ROLE: &str = "You are the coach in a coding practice session. You teach: you explain, ask the question that moves the learner on, and say what they did well. You never write their solution for them.";
+
+const INTERVIEWER_ROLE: &str = "You are the interviewer in a mock coding interview. Stay in role: you hold a problem for the candidate and are not a tutor. Do not teach, praise or grade; ask, listen and probe. Ask at most one question per turn, with one question mark outside any code.";
+
+const WATCHING_ROLE: &str = " You are watching the candidate's code change as they work. Mostly stay quiet. Speak only when a question about what they are doing is worth asking.";
+
+const RULES: &str = "Speak about the learner's code, runs and examples only from what you are given; never invent a result. Refer to code by line number. Do not show a complete solution: any code you write must leave the problem unsolved. Never name the technique or pattern that solves the problem; ask about the idea instead. Never write an id. Keep it short, and in the words a person would say aloud. When the learner asks a question the statement leaves open, answer it from the clarifications you are given, word for word, and set clarification to that clarification's number; when none covers it, write \"Your call: state your assumption.\" and set clarification to your_call; otherwise set clarification to none.";
+
+const FORMAT: &str = "Answer as JSON: content is what you say; lines are the line numbers of the learner's code that you refer to, or none; path is the file those lines are in, or null; clarification is as described above.";
+
+const SPEAK: &str = " Also set \"speak\" to false to stay silent, in which case content may be empty.";
+
+fn stage_names(stages: &[CodingStage]) -> String {
+    stages
+        .iter()
+        .map(|stage| format!("{stage:?}"))
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+fn cue_instruction(setting: CodingSetting, cue: &CodingCue, state: &WorkspaceObservation) -> String {
+    let coached = setting == CodingSetting::Coached;
+    match cue {
+        CodingCue::Opening if coached => format!(
+            "Open the session: greet the learner in a sentence, then give the instruction of the {:?} stage in your own words: {}",
+            state.stage,
+            stage_instruction(state.stage)
+        ),
+        CodingCue::Opening => {
+            "Open the interview: introduce yourself in a sentence, say the problem is on screen, and ask the candidate to read it and say what they would like to clarify.".to_owned()
+        }
+        CodingCue::Reply => "Answer the learner's last message in the transcript.".to_owned(),
+        CodingCue::StageOpened(stage) => format!(
+            "The learner has moved to the {stage:?} stage. Open it with its instruction, in your own words: {}",
+            stage_instruction(*stage)
+        ),
+        CodingCue::AskForSkipped(stages) => format!(
+            "The candidate skipped {}. As an interviewer would, ask for it in one question: what they would have done there.",
+            stage_names(stages)
+        ),
+        CodingCue::RunReview(scope) => format!(
+            "The learner ran {scope:?}. Read the last run. Say what it shows, point at what to look at without fixing it, and ask what they make of it."
+        ),
+        CodingCue::Submitted if coached => {
+            "The learner submitted every case. Say how it went from the last run, what to look at in a failing case, and what comes next.".to_owned()
+        }
+        CodingCue::Submitted => {
+            "The candidate submitted. React as an interviewer: acknowledge the result without hinting at the cases you cannot see, and ask one question, about the cost of the code, an edge, or why they chose something.".to_owned()
+        }
+        CodingCue::Checkpoint => {
+            "This is a checkpoint. Speak only if a question is worth asking now: why they chose something, what a line costs, or an edge they have not mentioned. If nothing is worth saying, stay silent.".to_owned()
+        }
+        CodingCue::Idle => {
+            "The learner has been quiet for a while, with no edit, run or message. Check in kindly: ask what they are thinking about, and say they can ask for a hint.".to_owned()
+        }
+    }
+}
+
+fn system_for(setting: CodingSetting, cue: &CodingCue, state: &WorkspaceObservation) -> String {
+    let role = match setting {
+        CodingSetting::Coached => COACH_ROLE.to_owned(),
+        CodingSetting::Mock => INTERVIEWER_ROLE.to_owned(),
+        CodingSetting::Watched => format!("{INTERVIEWER_ROLE}{WATCHING_ROLE}"),
+    };
+    let speak = if setting == CodingSetting::Watched && *cue == CodingCue::Checkpoint {
+        SPEAK
+    } else {
+        ""
+    };
+    format!(
+        "{role}\n\n{RULES}\n\n{}\n\n{FORMAT}{speak}",
+        cue_instruction(setting, cue, state)
+    )
 }
 
 macro_rules! policy {
