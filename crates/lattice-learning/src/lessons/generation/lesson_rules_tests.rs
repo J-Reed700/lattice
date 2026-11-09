@@ -99,7 +99,7 @@ fn a_check_holds_its_answer_back_under_one_reveal_line() {
         format!("{CASE} {REVEAL}"),
         format!("{CASE}\n{CHECK_REVEAL}\n  "),
         format!("  \n{CHECK_REVEAL}\n{REVEAL}"),
-        format!("{CASE}\n{CHECK_REVEAL}\n{REVEAL}\n{CHECK_REVEAL}\n{REVEAL}"),
+        format!("{CASE}\n{CHECK_REVEAL}\n{REVEAL}\n{CHECK_REVEAL}\nA second answer, worded apart."),
     ] {
         let mut candidate = lesson();
         candidate["blocks"][3]["body"] = json!(body);
@@ -575,8 +575,16 @@ fn an_answer_choice_longer_than_500_characters_or_of_two_letters_is_no_finding()
 #[test]
 fn a_section_longer_than_5000_characters_is_no_finding() {
     let mut candidate = lesson();
-    candidate["blocks"][0]["body"] =
-        json!("A long explanation of the idea, with no figures in it. ".repeat(120));
+    candidate["blocks"][0]["body"] = json!((0..120u8)
+        .map(|n| {
+            let (high, low) = (n / 26, n % 26);
+            format!(
+                "A long explanation of the idea {}{}, with no figures in it. ",
+                char::from(b'a' + high),
+                char::from(b'a' + low)
+            )
+        })
+        .collect::<String>());
     assert!(lesson_rules(&candidate).is_empty());
 }
 
@@ -702,9 +710,9 @@ fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
 #[test]
 fn labels_that_open_paragraphs_are_no_repeated_sentences() {
     let mut candidate = lesson();
-    for index in [0, 4] {
+    for (index, name) in [(0, "first"), (4, "fifth")] {
         candidate["blocks"][index]["body"] = json!(format!(
-            "**Predict first.** Opening of section {index}.\n\n**The model.** Model of section {index}."
+            "**Predict first.** Opening of the {name} section.\n\n**The model.** Model of the {name} section."
         ));
     }
     let findings = lesson_rules(&candidate);
