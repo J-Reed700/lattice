@@ -337,7 +337,7 @@ impl Course {
                 self.revision().await?,
                 &[(first.to_string(), prepared(first))],
                 &[held],
-                &[],
+                None,
             )
             .await?;
         Ok(job)
