@@ -193,6 +193,16 @@ fn a_conflict_error_serializes_with_conflict_code() {
 }
 
 #[test]
+fn a_conflict_reaches_the_frontend_as_an_error_with_code_conflict() {
+    let api_err: ApiError = AppError::Conflict("Practice profile changed".into()).into();
+    let sent = serde_json::to_value(&api_err).unwrap();
+    assert_eq!(sent["code"], "CONFLICT");
+    assert_eq!(sent["message"], "Practice profile changed");
+    assert_eq!(AppError::Conflict(String::new()).error_code(), "CONFLICT");
+    assert_eq!(AppError::Conflict(String::new()).http_status_code(), 409);
+}
+
+#[test]
 fn an_unset_learning_model_has_a_code_of_its_own() {
     let sentence = "No Learning model is set. Choose one in Settings → Downloaded.";
     let api_err: ApiError = AppError::LearningModelNotSet(sentence.into()).into();
