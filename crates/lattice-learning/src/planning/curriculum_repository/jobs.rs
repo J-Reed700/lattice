@@ -108,29 +108,61 @@ impl LearningCurriculumRepository {
         &self,
         request: &StartLearningModuleJobsRequestDto,
     ) -> Result<Vec<LearningGenerationJob>> {
-        validate_operation_id(&request.operation_id)?;
+        self.start_lesson_jobs(
+            &request.operation_id,
+            &request.program_id,
+            Some(&request.module_id),
+            request.expected_revision,
+        )
+        .await
+    }
+
+    /// Saves a job for each unprepared lesson of the course, in course order.
+    /// The caller dispatches them.
+    pub async fn start_course_jobs(
+        &self,
+        request: &StartLearningCourseJobsRequestDto,
+    ) -> Result<Vec<LearningGenerationJob>> {
+        self.start_lesson_jobs(
+            &request.operation_id,
+            &request.program_id,
+            None,
+            request.expected_revision,
+        )
+        .await
+    }
+
+    async fn start_lesson_jobs(
+        &self,
+        operation_id: &str,
+        program_id: &str,
+        module_id: Option<&str>,
+        expected_revision: i64,
+    ) -> Result<Vec<LearningGenerationJob>> {
+        validate_operation_id(operation_id)?;
         let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
         let lessons: Vec<String> = sqlx::query_scalar(
-            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.module_id=? AND l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' AND NOT EXISTS (SELECT 1 FROM learning_lesson_reviews r WHERE r.lesson_id=l.id AND r.state IN ('needs_review','stopped')) ORDER BY m.ordinal,l.ordinal",
+            "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND (? IS NULL OR l.module_id=?) AND l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' AND NOT EXISTS (SELECT 1 FROM learning_lesson_reviews r WHERE r.lesson_id=l.id AND r.state IN ('needs_review','stopped')) ORDER BY m.ordinal,l.ordinal",
         )
-        .bind(&request.program_id)
-        .bind(&request.module_id)
+        .bind(program_id)
+        .bind(module_id)
+        .bind(module_id)
         .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
         if lessons.is_empty() {
-            check_program_open(&mut tx, &request.program_id, request.expected_revision).await?;
+            check_program_open(&mut tx, program_id, expected_revision).await?;
         }
         let mut ids = Vec::new();
         for lesson in &lessons {
             let single = StartLearningGenerationJobRequestDto {
                 operation_id: stable_job_operation_id(
-                    &request.program_id,
-                    &format!("{}:{lesson}", request.operation_id),
-                    request.expected_revision,
+                    program_id,
+                    &format!("{operation_id}:{lesson}"),
+                    expected_revision,
                 ),
-                program_id: request.program_id.clone(),
-                expected_revision: request.expected_revision,
+                program_id: program_id.to_string(),
+                expected_revision,
                 kind: LearningGenerationJobKind::LessonPreparation,
                 request_json: serde_json::json!({ "lessonIds": [lesson] }).to_string(),
                 progress_total: 1,
@@ -142,20 +174,11 @@ impl LearningCurriculumRepository {
         for id in &ids {
             let job = self.job(id).await?;
             let job = self
-                .retry_replayed_job_if_stopped(&request.program_id, request.expected_revision, job)
+                .retry_replayed_job_if_stopped(program_id, expected_revision, job)
                 .await?;
             jobs.push(job);
         }
         Ok(jobs)
-    }
-
-    /// Saves a job for each unprepared lesson of the course, in course order.
-    /// The caller dispatches them.
-    pub async fn start_course_jobs(
-        &self,
-        _request: &StartLearningCourseJobsRequestDto,
-    ) -> Result<Vec<LearningGenerationJob>> {
-        Err(AppError::InvalidState("not built".into()))
     }
 
     /// Saves a lesson job for the runtime to run. The caller dispatches it.
