@@ -72,6 +72,10 @@ impl AdmissionObserver for Progress {
         state.queued_calls = state.queued_calls.saturating_sub(1);
         state.refresh_waiting();
     }
+
+    fn holding(&self) {}
+
+    fn released(&self) {}
 }
 
 /// Runs `future` as the current lesson job's work, with `progress` recording it.

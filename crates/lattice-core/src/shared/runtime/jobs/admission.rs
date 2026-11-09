@@ -25,6 +25,10 @@ pub trait AdmissionObserver: Send + Sync {
     fn queued(&self);
     /// A request that was reported queued is no longer.
     fn left_queue(&self, exit: QueueExit);
+    /// A request of the observed scope holds a slot, granted at once or after waiting.
+    fn holding(&self);
+    /// A slot the observed scope held was given back.
+    fn released(&self);
 }
 
 /// The observer of the job whose handler is running this future, if any.
