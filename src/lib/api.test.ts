@@ -1,6 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { isConflict, newId, unwrap } from './api';
+import { isConflict, newId, unwrap } from './apiResult';
 
 describe('unwrap', () => {
   it('returns the data of a successful result', () => {
@@ -43,6 +43,17 @@ describe('newId', () => {
     const first = newId();
     expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
     expect(newId()).not.toBe(first);
+  });
+
+  describe('with no crypto', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('still returns a UUID-shaped id, different each time', () => {
+      vi.stubGlobal('crypto', undefined);
+      const first = newId();
+      expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      expect(newId()).not.toBe(first);
+    });
   });
 });
 

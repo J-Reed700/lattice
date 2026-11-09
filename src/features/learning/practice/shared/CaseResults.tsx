@@ -15,7 +15,8 @@ export interface CaseResultView {
 }
 
 const FAILING = new Set<CaseResultView['status']>(['failed', 'error', 'timed_out']);
-const ORDER: CaseResultView['status'][] = ['failed', 'error', 'timed_out', 'not_run', 'ran', 'passed'];
+const REST: CaseResultView['status'][] = ['not_run', 'ran', 'passed'];
+const rank = (status: CaseResultView['status']) => (FAILING.has(status) ? -1 : REST.indexOf(status));
 
 export function caseSummary(cases: CaseResultView[]): string {
   if (cases.length === 0) return '';
@@ -93,7 +94,7 @@ export function CaseResults({
   title?: string;
   emptyText?: string;
 }) {
-  const sorted = [...cases].sort((a, b) => ORDER.indexOf(a.status) - ORDER.indexOf(b.status));
+  const sorted = [...cases].sort((a, b) => rank(a.status) - rank(b.status));
   return (
     <section className="space-y-3">
       <h3 className="text-sm font-semibold text-text-primary">{title}</h3>
