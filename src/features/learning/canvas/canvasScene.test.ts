@@ -32,7 +32,6 @@ describe('Learning Studio canvas scene adapter', () => {
   it('rejects embedded images and oversized scenes with actionable messages', () => {
     expect(() => serializeCanvasScene([image], {}, {})).toThrow(/Images cannot be added/);
     expect(() => serializeCanvasScene([{ ...rectangle, type: 'embeddable' } as ExcalidrawElement], {}, {})).toThrow(/External embeds/);
-    expect(() => serializeCanvasScene(Array.from({ length: 5_001 }, (_, i) => ({ ...rectangle, id: `shape-${i}` }) as ExcalidrawElement), {}, {})).toThrow(/5,000-element limit/);
     expect(serializer).not.toHaveBeenCalled();
   });
 

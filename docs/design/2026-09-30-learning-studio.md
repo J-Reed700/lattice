@@ -990,8 +990,7 @@ Lattice persists an editable scene, not a flattened screenshot. The stored value
 must be an Excalidraw object with a positive integer version, an element array, an
 application-state object, and an empty files object. The renderer keeps durable
 canvas preferences while removing selection, cursor, viewport, and deleted-element
-state. Both renderer and service enforce a 5 MB serialized limit and a 5,000-element
-limit. The service derives the live element count from the scene instead of trusting
+state. Both renderer and service enforce a 5 MB serialized limit. The service derives the live element count from the scene instead of trusting
 a client-supplied count.
 
 Embedded image elements and binary files are excluded from this increment. Durable

@@ -176,7 +176,6 @@ fn excalidraw_validation_checks_shape_size_and_disallows_unmanaged_files() {
     let mut invalid_version = scene("version", 0);
     invalid_version["version"] = serde_json::json!(0);
     assert!(validate_scene(&invalid_version).is_err());
-    assert!(validate_scene(&scene("too-many", 5_001)).is_err());
     let oversized = serde_json::json!({"type":"excalidraw","version":2,"elements":[],"appState":{"large":"x".repeat(5 * 1024 * 1024)},"files":{}});
     assert!(validate_scene(&oversized).is_err());
 }

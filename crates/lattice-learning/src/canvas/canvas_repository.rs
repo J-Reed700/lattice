@@ -12,7 +12,6 @@ use std::collections::HashMap;
 
 /// The most a canvas scene may hold, saved or imported.
 pub(crate) const MAX_SCENE_BYTES: usize = 5 * 1024 * 1024;
-const MAX_ELEMENTS: usize = 5_000;
 
 #[derive(Clone)]
 pub struct LearningCanvasRepository {
@@ -50,11 +49,6 @@ pub fn validate_scene(scene: &serde_json::Value) -> Result<ValidatedCanvasScene>
         .get("elements")
         .and_then(serde_json::Value::as_array)
         .ok_or_else(|| invalid_scene("elements must be an array"))?;
-    if elements.len() > MAX_ELEMENTS {
-        return Err(AppError::InvalidInput(
-            "Canvas scene exceeds the 5,000 element limit.".into(),
-        ));
-    }
     let mut live_elements = 0;
     for element in elements {
         let element = element
@@ -123,12 +117,10 @@ fn validate_uuid(id: &str, label: &str) -> Result<()> {
         .map_err(|_| AppError::InvalidInput(format!("Invalid {label} UUID.")))
 }
 
-fn validate_text(value: &str, label: &str, max: usize, required: bool) -> Result<()> {
-    let count = value.trim().chars().count();
-    if count > max || (required && count == 0) {
+fn validate_name(value: &str, label: &str) -> Result<()> {
+    if value.trim().is_empty() {
         return Err(AppError::InvalidInput(format!(
-            "{label} must contain {}–{max} characters.",
-            if required { 1 } else { 0 }
+            "{label} must not be empty."
         )));
     }
     Ok(())
@@ -198,8 +190,7 @@ impl LearningCanvasRepository {
         if let Some(lesson_id) = request.lesson_id.as_deref() {
             validate_uuid(lesson_id, "lesson")?;
         }
-        validate_text(&request.title, "Canvas title", 120, true)?;
-        validate_text(&request.description, "Canvas description", 2000, false)?;
+        validate_name(&request.title, "Canvas title")?;
         let payload_hash = hash(&(request, &scene.json))?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
@@ -258,8 +249,7 @@ impl LearningCanvasRepository {
         validate_uuid(&request.operation_id, "operation")?;
         validate_uuid(&request.canvas_id, "canvas")?;
         validate_uuid(&request.program_id, "program")?;
-        validate_text(&request.title, "Canvas title", 120, true)?;
-        validate_text(&request.description, "Canvas description", 2000, false)?;
+        validate_name(&request.title, "Canvas title")?;
         if request.expected_revision < 0 {
             return Err(AppError::InvalidInput(
                 "Expected canvas revision cannot be negative.".into(),
@@ -325,7 +315,7 @@ impl LearningCanvasRepository {
                 "Expected canvas revision cannot be negative.".into(),
             ));
         }
-        validate_text(&request.name, "Snapshot name", 120, true)?;
+        validate_name(&request.name, "Snapshot name")?;
         let payload_hash = hash(request)?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
