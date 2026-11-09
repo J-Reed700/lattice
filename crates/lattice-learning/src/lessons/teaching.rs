@@ -801,6 +801,8 @@ mod citation_tests;
 mod contract_tests;
 #[cfg(test)]
 mod loop_tests;
+#[cfg(test)]
+mod question_tests;
 
 #[cfg(test)]
 mod tests;
