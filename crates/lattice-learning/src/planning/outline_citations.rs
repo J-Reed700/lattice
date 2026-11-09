@@ -6,9 +6,14 @@ fn typography(character: char) -> char {
     match character {
         '\u{2018}' | '\u{2019}' => '\'',
         '\u{201c}' | '\u{201d}' => '"',
+        '\u{2013}' | '\u{2014}' => '-',
         c if c.is_whitespace() => ' ',
         c => c,
     }
+}
+
+fn markdown_marker(character: char) -> bool {
+    matches!(character, '*' | '`')
 }
 
 struct SourceText {
@@ -18,15 +23,17 @@ struct SourceText {
 }
 impl SourceText {
     fn new(text: &str) -> Self {
-        Self::folded(text, typography)
+        Self::folded(text, |c| (!markdown_marker(c)).then(|| typography(c)))
     }
 
-    fn folded(text: &str, fold: impl Fn(char) -> char) -> Self {
+    fn folded(text: &str, fold: impl Fn(char) -> Option<char>) -> Self {
         let mut comparable = String::new();
         let mut spans: Vec<(usize, usize)> = Vec::new();
         for (start, character) in text.char_indices() {
             let end = start + character.len_utf8();
-            let folded = fold(character);
+            let Some(folded) = fold(character) else {
+                continue;
+            };
             if folded == ' ' && comparable.ends_with(' ') {
                 if let Some(span) = spans.last_mut() {
                     span.1 = end;
@@ -60,7 +67,7 @@ pub(crate) fn caseless_quote_span(
 ) -> Option<(usize, usize)> {
     let caseless = |character: char| {
         let folded = typography(character);
-        folded.to_lowercase().next().unwrap_or(folded)
+        Some(folded.to_lowercase().next().unwrap_or(folded))
     };
     let text = SourceText::folded(source, caseless);
     let needle = SourceText::folded(quote.trim(), caseless).comparable;
