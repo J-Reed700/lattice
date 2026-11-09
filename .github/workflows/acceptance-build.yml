@@ -1,0 +1,147 @@
+name: Acceptance build
+
+# Never merges. Builds a Lattice Test installer of this pull request's head for the
+# scripted three-course run. Lattice Test has the e2e build's WebDriver plugin.
+on:
+  pull_request:
+
+concurrency:
+  group: acceptance-build-${{ github.event.pull_request.head.sha }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  installer:
+    name: ${{ matrix.product }} installer
+    runs-on: windows-2025
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - product: Lattice Test
+            identifier: tech.lattice.compatibility.test
+            exe: lattice-test
+            home: .lattice-test
+            features: desktop-e2e
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Fetch verified published sidecars
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
+      - run: npm ci
+      - name: Cache Tauri's bundling tools
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: tauri-tools-${{ runner.os }}-
+      # The pinned values come from the tauri-cli version's nsis/mod.rs, as in #376.
+      - name: Fetch Tauri's NSIS tools through the GitHub API
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tools = Join-Path $env:LOCALAPPDATA 'tauri'
+          $nsis = Join-Path $tools 'NSIS'
+          $dll = Join-Path $nsis 'Plugins\x86-unicode\additional\nsis_tauri_utils.dll'
+          if ((Test-Path (Join-Path $nsis 'makensis.exe')) -and (Test-Path $dll)) {
+            Write-Host 'NSIS tools already present'
+            return
+          }
+          function Get-Asset($tag, $repo, $pattern, $sha1) {
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              gh release download $tag --repo $repo --pattern $pattern --dir $env:RUNNER_TEMP --clobber | Out-Host
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 5) { throw "gh release download $tag failed after $attempt attempts" }
+              Start-Sleep -Seconds 15
+            }
+            $file = Join-Path $env:RUNNER_TEMP $pattern
+            $actual = (Get-FileHash -Algorithm SHA1 $file).Hash
+            if ($actual -ine $sha1) { throw "$pattern SHA1 $actual does not match $sha1" }
+            return $file
+          }
+          if (Test-Path $nsis) { Remove-Item -Recurse -Force $nsis }
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          $zip = Get-Asset 'nsis-3.11' 'tauri-apps/binary-releases' 'nsis-3.11.zip' 'EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D'
+          Expand-Archive -Path $zip -DestinationPath $tools -Force
+          Rename-Item (Join-Path $tools 'nsis-3.11') 'NSIS'
+          $utils = Get-Asset 'nsis_tauri_utils-v0.5.3' 'tauri-apps/nsis-tauri-utils' 'nsis_tauri_utils.dll' '75197FEE3C6A814FE035788D1C34EAD39349B860'
+          New-Item -ItemType Directory -Force (Split-Path $dll) | Out-Null
+          Copy-Item $utils $dll
+          foreach ($required in 'makensis.exe', 'Bin\makensis.exe', 'Include\MUI2.nsh') {
+            if (-not (Test-Path (Join-Path $nsis $required))) { throw "NSIS tools incomplete: $required is missing" }
+          }
+      # The library, its default vault and its logs all follow this home.
+      - name: Give the build a home folder of its own
+        shell: bash
+        env:
+          HOME_FOLDER: ${{ matrix.home }}
+        run: |
+          python - <<'PYCODE'
+          import os, pathlib, re
+          path = pathlib.Path("crates/lattice-core/src/shared/fs/roots.rs")
+          text = path.read_bytes().decode("utf-8")
+          pattern = re.compile(
+              r"(fn lattice_home_override\(\) -> Option<PathBuf> \{\s*"
+              r"std::env::var_os\(LATTICE_HOME_ENV\)\s*"
+              r"\.filter\(\|value\| !value\.is_empty\(\)\)\s*"
+              r"\.map\(PathBuf::from\))"
+          )
+          newline = "\r\n" if "\r\n" in text else "\n"
+          home = os.environ["HOME_FOLDER"]
+          fallback = newline + f'        .or_else(|| dirs::home_dir().map(|home| home.join("{home}")))'
+          text, count = pattern.subn(lambda match: match.group(1) + fallback, text)
+          if count != 1:
+              raise SystemExit(f"Expected lattice_home_override once, found {count}: the build would use the real library")
+          path.write_bytes(text.encode("utf-8"))
+          PYCODE
+          git diff -- crates/lattice-core/src/shared/fs/roots.rs
+      - name: Write the build's Tauri config
+        shell: bash
+        env:
+          IDENTIFIER: ${{ matrix.identifier }}
+          PRODUCT: ${{ matrix.product }}
+          EXE: ${{ matrix.exe }}
+          FEATURES: ${{ matrix.features }}
+        run: |
+          python - <<'PYCODE'
+          import json, os, pathlib
+          config = {"identifier": os.environ["IDENTIFIER"], "productName": os.environ["PRODUCT"], "mainBinaryName": os.environ["EXE"]}
+          # The WebDriver plugin needs the e2e build's global Tauri object and capability.
+          if "desktop-e2e" in os.environ["FEATURES"].split(","):
+              e2e = json.loads(pathlib.Path("crates/lattice-desktop/tauri.e2e.conf.json").read_text(encoding="utf-8"))
+              config["app"] = e2e["app"]
+          out = pathlib.Path(os.environ["RUNNER_TEMP"]) / "build.json"
+          out.write_text(json.dumps(config, indent=2), encoding="utf-8")
+          print(out.read_text(encoding="utf-8"))
+          PYCODE
+      - name: Build the installer
+        shell: bash
+        env:
+          CARGO_TARGET_DIR: ${{ github.workspace }}\target\desktop-e2e
+          FEATURES: ${{ matrix.features }}
+        run: |
+          features=()
+          [ -z "$FEATURES" ] || features=(--features "$FEATURES")
+          npx tauri build --ci "${features[@]}" --config "$RUNNER_TEMP/build.json" --bundles nsis
+      - uses: actions/upload-artifact@v4
+        with:
+          name: lattice-test-${{ github.event.pull_request.head.sha }}
+          path: target/desktop-e2e/release/bundle/nsis/*.exe
+          if-no-files-found: error
+          retention-days: 14
