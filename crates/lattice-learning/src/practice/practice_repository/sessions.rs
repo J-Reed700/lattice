@@ -77,7 +77,13 @@ impl LearningPracticeRepository {
         }
         let title: String = lesson.get("title");
         let objective: String = lesson.get("objective");
-        let fallback_prompt=format!("{}\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.",objective.trim());
+        let details = profile_in(&mut tx, &req.program_id)
+            .await?
+            .map(|profile| profile.details);
+        let fallback_prompt = crate::practice_generation::fallback_task_prompt(
+            &objective,
+            details.as_deref(),
+        );
         let block_kind = match req.task_kind {
             LearningPracticeTaskKind::Guided => "guided_practice",
             LearningPracticeTaskKind::Independent => "independent_practice",
