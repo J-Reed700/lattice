@@ -1,3 +1,6 @@
+import { useRef } from 'react';
+
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { CriteriaList, type CriterionView } from '@/features/learning/practice/shared/CriteriaList';
 import type { LearningPracticeSessionDto } from '@/lib/bindings';
 
@@ -111,9 +114,6 @@ export function ResultPanel({ result }: { result: NonNullable<LearningPracticeSe
     </section>
   );
 }
-
-import { useRef } from 'react';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 
 export function ConfirmDialog({
   title,
