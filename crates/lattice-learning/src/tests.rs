@@ -433,6 +433,37 @@ async fn completion_advances_resume_to_first_incomplete_lesson() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn a_program_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()> {
+    let pool = pool().await?;
+    let repo = LearningRepository::new(pool);
+    let draft = fixture();
+    repo.create(&draft).await?;
+    let accept = |expected_revision: i64| AcceptLearningProgramRequestDto {
+        program_id: draft.summary.id.clone(),
+        expected_revision,
+        title: draft.summary.title.clone(),
+    };
+    assert_conflict(repo.accept(&accept(5)).await);
+    repo.accept(&accept(0)).await?;
+    let p = repo.get(&draft.summary.id).await?;
+    let lesson = p.modules[0].lessons[0].id.clone();
+    let stale = p.summary.revision + 1;
+    assert_conflict(
+        repo.prepare(&p.summary.id, &lesson, stale, &prepared(&lesson))
+            .await,
+    );
+    assert_conflict(
+        repo.complete(&CompleteLearningLessonRequestDto {
+            program_id: p.summary.id.clone(),
+            lesson_id: lesson,
+            expected_revision: stale,
+        })
+        .await,
+    );
+    Ok(())
+}
+
 fn source_capture(title: &str, text: &str) -> super::source_library::CapturedLearningSource {
     super::source_library::CapturedLearningSource {
         title: title.into(),

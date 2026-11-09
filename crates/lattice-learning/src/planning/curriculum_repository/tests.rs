@@ -96,7 +96,7 @@ async fn real_migration_seeds_uuid_outcomes_and_preview_is_replayable_and_cas_gu
     let mut stale = request;
     stale.operation_id = op_id();
     stale.expected_revision -= 1;
-    assert!(repo.preview(&stale).await.is_err());
+    crate::tests::assert_conflict(repo.preview(&stale).await);
 
     let accept = LearningCurriculumRevisionActionRequestDto {
         operation_id: op_id(),
@@ -106,6 +106,13 @@ async fn real_migration_seeds_uuid_outcomes_and_preview_is_replayable_and_cas_gu
     };
     let accepted_plan = repo.accept_revision(&accept).await?;
     assert_eq!(accepted_plan.accepted_revision.unwrap().id, draft.id);
+    crate::tests::assert_conflict(
+        repo.accept_revision(&LearningCurriculumRevisionActionRequestDto {
+            operation_id: op_id(),
+            ..accept.clone()
+        })
+        .await,
+    );
     let revision_after_accept: i64 =
         sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
             .bind(&program.summary.id)
@@ -219,6 +226,45 @@ async fn diagnostic_lifecycle_is_idempotent_complete_and_does_not_claim_mastery(
         })
         .await?;
     assert_eq!(skipped.status, LearningDiagnosticStatus::Skipped);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_course_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()> {
+    let pool = pool().await?;
+    let program = active_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let stale = program.summary.revision + 1;
+    crate::tests::assert_conflict(
+        repo.discard_revision(&DiscardLearningCurriculumRevisionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            revision_id: op_id(),
+            expected_revision: stale,
+        })
+        .await,
+    );
+    let target = program.modules[1].lessons[1].id.clone();
+    crate::tests::assert_conflict(
+        repo.start_job(&StartLearningGenerationJobRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            expected_revision: stale,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: serde_json::json!({"lessonIds":[target]}).to_string(),
+            progress_total: 1,
+        })
+        .await,
+    );
+    crate::tests::assert_conflict(
+        repo.cancel_job(&LearningGenerationJobActionRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            job_id: op_id(),
+            expected_revision: stale,
+        })
+        .await,
+    );
     Ok(())
 }
 
