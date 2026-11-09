@@ -17,6 +17,8 @@ pub mod repository;
 pub mod store;
 
 #[cfg(test)]
+mod queue_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod write_tests;

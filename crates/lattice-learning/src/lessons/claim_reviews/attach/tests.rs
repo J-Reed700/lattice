@@ -1194,3 +1194,6 @@ async fn a_lesson_with_no_open_claims_saves_the_source_and_checks_nothing() {
         .all(|stage| !matches!(stage, ClaimAttachProgressDto::Checking { .. })));
     assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
 }
+
+#[path = "write_tests.rs"]
+mod write;

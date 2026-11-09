@@ -817,3 +817,46 @@ async fn reindex_refreshes_stale_octet_stream_mime_type_and_marks_yaml_chunks_as
     assert_eq!(persisted.mime_type(), "text/x-yaml");
     assert!(persisted.chunks().iter().all(|c| c.has_code()));
 }
+
+async fn empty_pool() -> sqlx::SqlitePool {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    pool
+}
+
+async fn count(pool: &sqlx::SqlitePool, table: &str) -> i64 {
+    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn reindex_does_not_resurrect_a_document_deleted_meanwhile() {
+    let repo = Arc::new(MockDocumentRepo::new());
+    let (aggregate, _temp_dir) = create_test_aggregate();
+    let doc_id = aggregate.id().to_string();
+    let pool = empty_pool().await;
+    repo.set_document(aggregate);
+    let use_case = ReindexDocumentUseCase::new(
+        Arc::new(MockFileStorage::updated()),
+        Arc::new(MockEmbedder),
+        repo,
+        Arc::new(
+            crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory::new(
+                pool.clone(),
+            ),
+        ),
+        Arc::new(MockVectorSearch::default()),
+    );
+
+    let error = use_case.execute(doc_id).await.unwrap_err();
+
+    assert!(matches!(error, AppError::NotFound(_)), "{error:?}");
+    assert_eq!(count(&pool, "documents").await, 0);
+    assert_eq!(count(&pool, "text_embeddings").await, 0);
+}

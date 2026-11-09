@@ -1554,3 +1554,25 @@ async fn a_statement_on_a_choices_reason_ends_when_the_reason_is_rewritten_and_i
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_save_whose_example_cannot_be_recorded_writes_nothing() -> Result<()> {
+    let course = published().await?;
+    course.flag_locally(P0).await?;
+    let before = snapshot(&course).await?;
+    sqlx::query(
+        "CREATE TRIGGER refuse_for_test BEFORE INSERT ON learning_checker_examples BEGIN SELECT RAISE(ABORT, 'refused for the test'); END",
+    )
+    .execute(&course.pool)
+    .await?;
+    let after = QuestionText {
+        prompt: NEW_PROMPT.into(),
+        ..q0()
+    };
+
+    let result = edit(&course, 0, q0(), after, false).await;
+
+    assert!(result.is_err());
+    assert_eq!(snapshot(&course).await?, before);
+    Ok(())
+}

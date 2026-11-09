@@ -484,3 +484,42 @@ async fn a_folder_remembers_its_last_thread_until_the_thread_is_deleted() {
         .unwrap();
     assert_eq!(last_thread(&pool, root).await, None);
 }
+
+struct RefusesToDelete;
+
+#[async_trait::async_trait]
+impl folders::FolderThreads for RefusesToDelete {
+    async fn delete_thread(&self, _conversation_id: &str) -> lattice_core::shared::Result<()> {
+        Err(AppError::Database("injected".into()))
+    }
+}
+
+/// Crash point of a removal: the index is gone, a thread cannot be deleted.
+/// The folder stays listed, so the removal can be asked for again.
+#[tokio::test(flavor = "multi_thread")]
+async fn a_thread_that_cannot_be_deleted_leaves_the_folder_listed_for_another_try() {
+    let pool = database().await;
+    let rig = Rig::new();
+    let embedder = FakeEmbedder::new("model-a");
+    let manager = rig.manager(&embedder).await;
+    let root = rig.project("music", &[("synth.rs", "pub fn voice() {}\n")]);
+    open_settled(&manager, &root).await;
+    folders::record_open(&pool, &text(&root)).await.unwrap();
+    thread(&pool, Some(root.as_path()), "voices").await;
+
+    let failed = folders::remove(&pool, &RefusesToDelete, &manager, &text(&root), true).await;
+
+    assert!(failed.is_err());
+    assert_eq!(
+        folders::list(&pool, &manager).await.unwrap().folders.len(),
+        1
+    );
+    folders::remove(&pool, &RefusesToDelete, &manager, &text(&root), false)
+        .await
+        .unwrap();
+    assert!(folders::list(&pool, &manager)
+        .await
+        .unwrap()
+        .folders
+        .is_empty());
+}

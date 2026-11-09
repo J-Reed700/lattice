@@ -691,6 +691,8 @@ pub async fn retry_journal_synthesis_impl(
 
 #[cfg(test)]
 mod job_tests;
+#[cfg(test)]
+mod scratch_tests;
 
 #[cfg(test)]
 mod week_scope_tests;

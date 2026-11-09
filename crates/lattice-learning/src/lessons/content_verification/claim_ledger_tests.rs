@@ -2281,6 +2281,43 @@ pub(super) struct Shown {
 }
 
 impl Course {
+    /// Records a local checker's failed check on the claim that states
+    /// `statement`, as a flag the user's verdict then labels.
+    pub(super) async fn flag_locally(&self, statement: &str) -> Result<()> {
+        let store = ClaimReviewRepository::new(self.pool.clone());
+        let ledger = store.load(&self.lesson_id).await?;
+        let claim = ledger
+            .claims
+            .iter()
+            .find(|entry| entry.statement() == statement)
+            .map(|entry| entry.claim_id().clone())
+            .expect("a claim states it");
+        let check = local_check(
+            CheckResult::Failed {
+                kind: VerdictKind::Unsupported,
+            },
+            "No passage says it.",
+            Vec::new(),
+        );
+        let provenance = EventProvenance {
+            actor: Actor::Machine,
+            at: chrono::Utc::now().timestamp_millis(),
+            job_id: None,
+            app_version: "test".into(),
+            checker_model: Some("fixture".into()),
+        };
+        store
+            .append(
+                &self.lesson_id,
+                &claim,
+                provenance,
+                ClaimEvent::Checked(check),
+                ledger.revision,
+            )
+            .await?;
+        Ok(())
+    }
+
     pub(super) async fn new() -> Result<Self> {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;

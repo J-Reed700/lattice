@@ -8,7 +8,7 @@ use tokio::sync::Notify;
 
 const WAIT: Duration = Duration::from_secs(10);
 
-async fn pool() -> sqlx::SqlitePool {
+pub(super) async fn pool() -> sqlx::SqlitePool {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .idle_timeout(None)
@@ -127,7 +127,7 @@ impl SynthesisWork for FakeWork {
     }
 }
 
-async fn finished(jobs: &JobRuntime, id: &str) -> JobRecord {
+pub(super) async fn finished(jobs: &JobRuntime, id: &str) -> JobRecord {
     tokio::time::timeout(WAIT, async {
         loop {
             let job = jobs.store().get(id).await.unwrap();

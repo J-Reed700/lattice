@@ -33,4 +33,8 @@ mod tests;
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod pause_resume_tests;
 
+#[cfg(test)]
+#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
+mod write_tests;
+
 pub use state::DownloadManagerService;

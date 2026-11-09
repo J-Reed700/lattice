@@ -1040,6 +1040,62 @@ async fn attaching_an_already_indexed_file_follows_the_owner_rule() -> anyhow::R
 }
 
 #[tokio::test]
+async fn a_refused_space_assignment_leaves_the_owner_unstamped_and_the_retry_files_both(
+) -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let harness = ImportHarness::new(dir.path()).await?;
+    let pool = harness.db.pool().clone();
+    sqlx::query("INSERT INTO conversations (id, title) VALUES ('chat-a', 'A')")
+        .execute(&pool)
+        .await?;
+    sqlx::query("CREATE TRIGGER refuse_space BEFORE INSERT ON document_space_memberships BEGIN SELECT RAISE(ABORT, 'injected space failure'); END")
+        .execute(&pool)
+        .await?;
+    let file = dir.path().join("attached.txt");
+    std::fs::write(&file, "a file attached to a chat and filed in a space")?;
+    let import = || {
+        harness.imports.start_files(FileImport {
+            file_paths: vec![file.to_string_lossy().into_owned()],
+            space_id: Some("space_general".to_owned()),
+            owner_conversation_id: Some("chat-a".to_owned()),
+            indexing: None,
+        })
+    };
+    let owner = || {
+        sqlx::query_scalar::<_, Option<String>>(
+            "SELECT owner_conversation_id FROM documents WHERE file_name = 'attached.txt'",
+        )
+        .fetch_one(&pool)
+    };
+
+    let job_id = import().await?;
+    let status = harness.wait(&job_id).await?;
+    assert_eq!(status.failed_items, 1);
+    assert_eq!(owner().await?, None, "the owner stamp must not land alone");
+    assert_eq!(
+        harness
+            .count("SELECT count(*) FROM document_space_memberships")
+            .await?,
+        0
+    );
+
+    sqlx::query("DROP TRIGGER refuse_space")
+        .execute(&pool)
+        .await?;
+    let (attempt, _) = harness.imports.retry(&job_id, None, None).await?;
+    let status = harness.wait(&attempt).await?;
+    assert_eq!(status.completed_items, 1);
+    assert_eq!(owner().await?.as_deref(), Some("chat-a"));
+    assert_eq!(
+        harness
+            .count("SELECT count(*) FROM document_space_memberships")
+            .await?,
+        1
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_url_import_ingests_each_url_and_records_the_one_that_failed() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let harness = ImportHarness::new(dir.path()).await?;
