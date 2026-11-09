@@ -283,7 +283,7 @@ impl LearningSourceLibraryRepository {
             .bind(&req.program_id).bind(&req.source_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Learning source not found".into()))?;
         let revision: i64 = src.get("revision");
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if src.get::<String, _>("kind") != "web" {
             return Err(invalid("Only web sources can be refreshed"));
@@ -412,7 +412,7 @@ impl LearningSourceLibraryRepository {
             let result=sqlx::query("UPDATE learning_source_library SET pending_version_id=?,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
                 .bind(&pending_id).bind(next_revision).bind(checked).bind(&req.program_id).bind(&req.source_id).bind(revision).execute(&mut *tx).await.map_err(db)?;
             if result.rows_affected() != 1 {
-                return Err(invalid("Source changed; reload and retry."));
+                return Err(conflict("Source changed; reload and retry."));
             }
         }
         let result_version = pending_id.as_deref();

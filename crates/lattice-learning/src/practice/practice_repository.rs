@@ -20,6 +20,9 @@ mod workbench_tests;
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
+fn conflict(message: impl Into<String>) -> AppError {
+    AppError::Conflict(message.into())
+}
 fn json<T: Serialize + ?Sized>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|e| AppError::Serialization(e.to_string()))
 }
