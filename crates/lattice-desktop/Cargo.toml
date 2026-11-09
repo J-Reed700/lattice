@@ -75,6 +75,7 @@ chrono = { workspace = true }
 # run pretrained tokenizers for inference.
 tokenizers = { version = "0.15", default-features = false, features = ["progressbar", "onig"] }
 ndarray = "0.16.1"
+aho-corasick = "1.1"
 anyhow = { workspace = true }
 thiserror = { workspace = true }
 rayon = "1.10"

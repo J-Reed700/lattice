@@ -378,6 +378,7 @@ impl ConversationRepository {
             offset += PROMPT_PAGE as i64;
         }
         let terms = informative_terms(query);
+        let finder = aho_corasick::AhoCorasick::new(&terms).ok();
         let semantic = self.knowledge_semantic_scores(conversation, query).await;
         let mut prepared =
             lattice_core::application::ports::conversation_memory::PreparedMemory::default();
@@ -401,10 +402,7 @@ impl ConversationRepository {
                         .join(" ")
                 )
                 .to_lowercase();
-                let matches = terms
-                    .iter()
-                    .filter(|term| haystack.contains(term.as_str()))
-                    .count();
+                let matches = terms_contained(finder.as_ref(), &terms, &haystack);
                 let meaning = semantic.get(&item.id).copied().unwrap_or(0.0);
                 if own || words_shared(&terms, &haystack) > 0 || meaning >= SHARED_RELEVANCE_FLOOR {
                     optional.push((matches as f32 + meaning, item.label.to_lowercase(), text));
@@ -428,6 +426,28 @@ impl ConversationRepository {
         prepared.revisions = Some(revisions);
         Ok(prepared)
     }
+}
+
+/// How many distinct `terms` the lowercased `text` contains as substrings, in
+/// one pass over `text` whatever the number of terms.
+fn terms_contained(
+    finder: Option<&aho_corasick::AhoCorasick>,
+    terms: &[String],
+    text: &str,
+) -> usize {
+    let Some(finder) = finder else {
+        return terms
+            .iter()
+            .filter(|term| text.contains(term.as_str()))
+            .count();
+    };
+    let mut found = vec![false; terms.len()];
+    for hit in finder.find_overlapping_iter(text) {
+        if let Some(slot) = found.get_mut(hit.pattern().as_usize()) {
+            *slot = true;
+        }
+    }
+    found.into_iter().filter(|seen| *seen).count()
 }
 
 /// How many of `terms` are whole words of the lowercased `text`.
