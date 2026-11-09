@@ -42,7 +42,6 @@ vi.mock('@/features/learning/practice/shared/SaveAsReviewCard', () => ({
     return <div data-testid="review-card" />;
   },
 }));
-const conflictError = (message: string) => Object.assign(new Error(message), { details: { code: 'CONFLICT' } });
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const fail = (error: string) => ({ ok: false as const, error });
@@ -392,7 +391,7 @@ describe('Learning Studio grounded practice workbench', () => {
 
   it('offers a conflict reload while retaining locally edited response text', async () => {
     const user = userEvent.setup();
-    mocks.save.mockImplementationOnce(async () => ({ ok: false as const, error: conflictError('Revision changed; reload and retry.') }));
+    mocks.save.mockImplementationOnce(async () => ({ ok: false as const, error: 'Revision changed; reload and retry.', details: { code: 'CONFLICT', message: 'Revision changed; reload and retry.' } }));
     renderWorkbench();
     const editor = await screen.findByRole('textbox', { name: 'Your response' });
     await user.type(editor, 'Keep this draft after reload.');
