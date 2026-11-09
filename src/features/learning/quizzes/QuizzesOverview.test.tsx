@@ -17,7 +17,7 @@ const shown = (score: number) => percent(score).replace('\u00a0', ' ');
 vi.mock('@/components/TiptapEditor', () => ({ TiptapViewer: ({ content }: { content: string }) => <div>{content}</div> }));
 
 const api = vi.hoisted(() => ({ overview: vi.fn(), start: vi.fn(), prepare: vi.fn(), plan: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningQuizOverview: api.overview, startLearningQuiz: api.start, prepareLearningQuizBank: api.prepare, getLearningPlan: api.plan,
 } }));
 

@@ -204,10 +204,10 @@ export function usePracticeSession({
   const runAction = async (kind: PracticeBusyState, invoke: () => Promise<unknown>) => (await actions.run(kind, invoke)) === true;
 
   const reloadAttempt = async () => {
-    await Promise.all([sessionQuery.refetch(), workspace.refetch()]);
+    const [refetched] = await Promise.all([sessionQuery.refetch(), workspace.refetch()]);
     actions.clear();
     setFailedKind(null);
-    await autosave.flush();
+    await autosave.flush(refetched.data?.summary.revision);
   };
 
   const startSession = async () => {

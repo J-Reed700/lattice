@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   sourceWorkspace: vi.fn(), sourceVersion: vi.fn(), saveDraft: vi.fn(),
 }));
 
+vi.mock('@/features/voice/hooks/useVoiceConversation', () => ({ useVoiceConversation: () => ({ phase: 'off', toggle: vi.fn() }) }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningPracticeWorkspace: mocks.getWorkspace,
   getLearningPracticeSession: mocks.getSession,
