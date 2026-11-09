@@ -56,6 +56,8 @@ pub struct LessonGenerationWorker {
     /// The Verifier, for courses that opted into its audit (§14.3); `None`
     /// publishes every lesson without the audit gate.
     pub verifier: Option<Arc<dyn crate::lessons::verifier_audit::lesson::VerifierAccess>>,
+    /// Shared by every lesson job this worker runs.
+    pub course_setups: crate::lessons::course_setup::CourseSetups,
 }
 
 #[async_trait::async_trait]
@@ -140,7 +142,7 @@ impl LessonGenerationWorker {
         repo: &LearningCurriculumRepository,
         program_id: &str,
     ) -> Result<()> {
-        let _setup = crate::lessons::course_setup::enter(program_id).await;
+        let _setup = self.course_setups.enter(program_id).await;
         // Publication needs an accepted snapshot even when the renderer never
         // opened the plan view (including recovered background-only work).
         // This snapshots the already accepted outline; it approves no content.
@@ -563,6 +565,7 @@ mod repository_tests {
             let entered = Arc::new(tokio::sync::Notify::new());
             let notification = entered.clone();
             let worker = LessonGenerationWorker {
+                course_setups: Default::default(),
                 runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
                 research_web: None,
                 verifier: None,
