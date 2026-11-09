@@ -150,13 +150,30 @@ async fn batched(
         while size > 1 && !model_call::fits(llm, &request_for(size)).await {
             size = size.div_ceil(2);
         }
-        let response = model_call::send(
-            llm,
-            request_for(size),
-            None,
-            model_call::TooLarge::Window("one answer with its rubric"),
-        )
-        .await?;
+        let too_large = model_call::TooLarge::Window("one answer with its rubric");
+        let mut response = model_call::send(llm, request_for(size), None, too_large).await?;
+        if size == 1 {
+            let one = |output_tokens: usize| {
+                let mut request = request_for(1);
+                request.output_tokens = output_tokens;
+                request
+            };
+            response = crate::lessons::structured_call::complete_cut_off(
+                llm,
+                response,
+                one,
+                tokens_per_item + 300,
+                |larger| {
+                    model_call::send(
+                        llm,
+                        larger,
+                        None,
+                        model_call::TooLarge::Window("one answer with its rubric"),
+                    )
+                },
+            )
+            .await?;
+        }
         let cut_off = ["length", "max_tokens", "incomplete", "content_filter"]
             .iter()
             .any(|s| response.finish_reason.to_ascii_lowercase().contains(s));

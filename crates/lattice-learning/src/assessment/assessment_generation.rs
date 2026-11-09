@@ -257,15 +257,28 @@ impl Batch<'_> {
                         return Ok(None);
                     }
                     let prompt = request.task.clone();
-                    let response = model_call::send(
-                        llm,
-                        request,
-                        None,
+                    let too_large = || {
                         model_call::TooLarge::Window(
                             "One quiz question with its lesson passage does not fit",
-                        ),
-                    )
-                    .await?;
+                        )
+                    };
+                    let output_tokens = request.output_tokens;
+                    let mut response =
+                        model_call::send(llm, request.clone(), None, too_large()).await?;
+                    if self.count == 1 {
+                        response = crate::lessons::structured_call::complete_cut_off(
+                            llm,
+                            response,
+                            |output_tokens| {
+                                let mut request = request.clone();
+                                request.output_tokens = output_tokens;
+                                request
+                            },
+                            output_tokens,
+                            |larger| model_call::send(llm, larger, None, too_large()),
+                        )
+                        .await?;
+                    }
                     Ok(Some((prompt, response, chosen)))
                 }
             },

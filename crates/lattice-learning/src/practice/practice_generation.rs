@@ -32,11 +32,20 @@ async fn complete_json(
     schema: serde_json::Value,
     max_tokens: usize,
 ) -> Result<String> {
-    let response = model_call::send(
+    let request = |output_tokens: usize| {
+        let mut request =
+            model_call::structured(system, prompt.clone(), schema.clone(), max_tokens, "low");
+        request.output_tokens = output_tokens;
+        request
+    };
+    let too_large = "Practice request exceeds this model's context window.";
+    let first = model_call::send(llm, request(max_tokens), None, too_large).await?;
+    let response = crate::lessons::structured_call::complete_cut_off(
         llm,
-        model_call::structured(system, prompt, schema, max_tokens, "low"),
-        None,
-        "Practice request exceeds this model's context window.",
+        first,
+        request,
+        max_tokens,
+        |larger| model_call::send(llm, larger, None, too_large),
     )
     .await?;
     complete_reason(&response.finish_reason)?;
