@@ -34,8 +34,6 @@ pub async fn store_document(
         )));
     }
 
-    let mut tx = pool.begin_write().await?;
-
     let doc_id = Uuid::new_v4().to_string();
     let file_name = path
         .file_name()
@@ -63,6 +61,8 @@ pub async fn store_document(
         .unwrap_or(0);
 
     let checksum = calculate_checksum(path).await?;
+
+    let mut tx = pool.begin_write().await?;
 
     let indexed_at = Utc::now().to_rfc3339();
     let modified_at_str = chrono::DateTime::from_timestamp(modified_at as i64, 0)
