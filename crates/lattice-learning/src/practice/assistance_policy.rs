@@ -1,5 +1,7 @@
 //! What help a surface allows at a help level.
 
+use crate::dto::{LearningPracticeHintLevel, LearningPracticeMode, LearningTutorRequestKind};
+
 /// How much help a surface gives.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum HelpLevel {
@@ -39,6 +41,19 @@ impl AssistancePolicy for WrittenAssistance {
     }
 }
 
+/// The help level of a written-practice mode: Explore gives full help, Practice hints only, Demonstrate none.
+pub fn written_level(_mode: &LearningPracticeMode) -> HelpLevel {
+    HelpLevel::FullHelp
+}
+
+/// The kind of help a tutor request asks for: a worked explanation is a worked solution.
+pub fn written_help(
+    _kind: &LearningTutorRequestKind,
+    _level: Option<&LearningPracticeHintLevel>,
+) -> Help {
+    Help::Tutor
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -67,11 +82,35 @@ mod tests {
     }
 
     #[test]
-    fn written_practice_gives_every_kind_of_help_unless_there_is_none() {
+    fn written_practice_table() {
         for help in HELPS {
             assert!(WrittenAssistance.allows(help, HelpLevel::FullHelp), "{help:?}");
-            assert!(WrittenAssistance.allows(help, HelpLevel::HintsOnly), "{help:?}");
             assert!(!WrittenAssistance.allows(help, HelpLevel::NoHelp), "{help:?}");
+        }
+        assert!(WrittenAssistance.allows(Help::Hint, HelpLevel::HintsOnly));
+        assert!(WrittenAssistance.allows(Help::Tutor, HelpLevel::HintsOnly));
+        assert!(!WrittenAssistance.allows(Help::WorkedSolution, HelpLevel::HintsOnly));
+    }
+
+    #[test]
+    fn a_written_mode_has_its_level() {
+        assert_eq!(written_level(&LearningPracticeMode::Explore), HelpLevel::FullHelp);
+        assert_eq!(written_level(&LearningPracticeMode::Practice), HelpLevel::HintsOnly);
+        assert_eq!(written_level(&LearningPracticeMode::Demonstrate), HelpLevel::NoHelp);
+    }
+
+    #[test]
+    fn a_tutor_request_asks_for_the_help_it_gives() {
+        use LearningPracticeHintLevel::*;
+        let hint = LearningTutorRequestKind::Hint;
+        assert_eq!(written_help(&hint, Some(&WorkedExplanation)), Help::WorkedSolution);
+        for level in [OrientingQuestion, ConceptOrSource, PartialStrategy] {
+            assert_eq!(written_help(&hint, Some(&level)), Help::Hint, "{level:?}");
+        }
+        assert_eq!(written_help(&hint, None), Help::Hint);
+        for kind in [LearningTutorRequestKind::Question, LearningTutorRequestKind::Critique] {
+            assert_eq!(written_help(&kind, None), Help::Tutor);
+            assert_eq!(written_help(&kind, Some(&PartialStrategy)), Help::Tutor);
         }
     }
 }

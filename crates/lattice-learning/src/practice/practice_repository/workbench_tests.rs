@@ -767,3 +767,48 @@ async fn sources_and_solutions_are_aids_for_live_assisted_attempts_only() -> Res
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn in_practice_mode_hints_and_questions_are_given_but_worked_help_is_not() -> Result<()> {
+    let pool = fk_pool().await?;
+    let (program, lesson) = setup(&pool).await?;
+    let repo = LearningPracticeRepository::new(pool.clone());
+    let (_, version_id) = add_version(&pool, &program.summary.id).await?;
+    add_block(
+        &pool,
+        &lesson,
+        0,
+        "explanation",
+        "Gluten basics",
+        std::slice::from_ref(&version_id),
+        &[],
+    )
+    .await?;
+    let start = start_request(&program, &lesson, LearningPracticeMode::Practice);
+    repo.start(&start, "start").await?;
+    let (pid, sid) = (program.summary.id.clone(), start.session_id.clone());
+
+    let reveal = RevealLearningPracticeSolutionRequestDto {
+        operation_id: id(),
+        program_id: pid.clone(),
+        session_id: sid.clone(),
+        expected_revision: 0,
+    };
+    assert_invalid(
+        repo.commit_solution(&reveal, "reveal", "Knead until smooth.", &[])
+            .await,
+    );
+    let mut worked = turn(LearningTutorRequestKind::Hint, vec![]);
+    worked.hint_level = Some(LearningPracticeHintLevel::WorkedExplanation);
+    assert_invalid(repo.commit_tutor_turn(&pid, &sid, 0, worked).await);
+    assert_eq!(repo.get_session(&sid).await?.summary.revision, 0);
+
+    let mut nudge = turn(LearningTutorRequestKind::Hint, vec![]);
+    nudge.hint_level = Some(LearningPracticeHintLevel::OrientingQuestion);
+    repo.commit_tutor_turn(&pid, &sid, 0, nudge).await?;
+    let mut question = turn(LearningTutorRequestKind::Question, vec![]);
+    question.hint_level = None;
+    repo.commit_tutor_turn(&pid, &sid, 1, question).await?;
+    assert_eq!(repo.get_session(&sid).await?.summary.revision, 2);
+    Ok(())
+}

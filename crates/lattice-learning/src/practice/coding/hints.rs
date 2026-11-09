@@ -44,6 +44,17 @@ pub async fn write_hint(
     Err(AppError::InvalidState("not built yet".into()))
 }
 
+/// The request for a hint of `rung` on what `observation` shows.
+fn request_for(
+    problem: &Problem,
+    observation: &WorkspaceObservation,
+    rung: CodeHintRung,
+    in_role: bool,
+) -> GroundedRequest {
+    let shown = serde_json::to_string_pretty(observation).unwrap_or_default();
+    ask(&problem.reference, &shown, rung, in_role, observation.setting)
+}
+
 /// What the checks read of the problem and the session.
 struct Hinting<'a> {
     reference: &'a str,
@@ -461,5 +472,37 @@ mod tests {
         let line = written(&llm, &fixture, CodeHintRung::Line).await.expect("clean");
         assert_eq!(line.lines, vec![3]);
         assert_eq!(line.path.as_deref(), Some("solution.py"));
+    }
+    const NEVER_NAME: &str = "Never name the technique or pattern that solves the problem.";
+
+    #[test]
+    fn the_naming_rule_is_in_every_request_that_does_not_allow_a_name() {
+        for setting in [CodingSetting::Coached, CodingSetting::Mock, CodingSetting::Watched] {
+            for rung in [
+                CodeHintRung::Nudge,
+                CodeHintRung::Idea,
+                CodeHintRung::Plan,
+                CodeHintRung::Line,
+            ] {
+                let request = ask("ref", "obs", rung, false, setting);
+                let allowed = setting == CodingSetting::Coached && rung == CodeHintRung::Idea;
+                assert_eq!(
+                    request.instructions.contains(NEVER_NAME),
+                    !allowed,
+                    "{setting:?} {rung:?}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_request_shows_the_draft_with_its_lines_numbered() {
+        use crate::practice::coding::observation::{observe, test_support};
+        let problem = test_support::problem();
+        let session = test_support::session(&problem, CodingSetting::Mock, CodingStage::Code);
+        let observation = observe(&problem, &session, None);
+        let request = request_for(&problem, &observation, CodeHintRung::Line, false);
+        assert!(request.task.contains("1 | "), "{}", request.task);
+        assert!(!request.task.contains("sessionId"));
     }
 }
