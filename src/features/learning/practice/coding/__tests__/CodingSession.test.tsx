@@ -486,4 +486,15 @@ describe('CodingSession', () => {
       expect(ids(api.run, 1).runId).not.toBe(ids(api.run, 0).runId);
     });
   });
+
+  it('sends one stage move while the first is pending', async () => {
+    api.moveStage.mockImplementation(() => new Promise(() => undefined));
+    const user = userEvent.setup();
+    renderSession(codingSession());
+
+    const next = await screen.findByRole('button', { name: /^Next/ });
+    await user.click(next);
+    await user.click(next);
+    expect(api.moveStage).toHaveBeenCalledTimes(1);
+  });
 });

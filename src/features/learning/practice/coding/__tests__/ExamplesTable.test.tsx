@@ -109,4 +109,19 @@ describe('ExamplesTable', () => {
     await user.click(screen.getByRole('button', { name: 'Check' }));
     expect(onCheck).toHaveBeenCalledWith({ ordinal: 4, args: ['[3, 3]', '6'], expected: '[1, 0]' });
   });
+
+  it('clears the form when the row being edited is removed', async () => {
+    const user = userEvent.setup();
+    const { onCheck } = renderTable({ examples: [example({ ordinal: 4 })] });
+    await user.click(screen.getByRole('button', { name: /Edit example 1/ }));
+    expect(screen.getByLabelText('numbers')).toHaveValue('[3, 3]');
+    await user.click(screen.getByRole('button', { name: /Remove example 1/ }));
+    expect(screen.getByLabelText('numbers')).toHaveValue('');
+
+    await user.type(screen.getByLabelText('numbers'), '[1]');
+    await user.type(screen.getByLabelText('target'), '2');
+    await user.type(screen.getByLabelText('expected'), '[0]');
+    await user.click(screen.getByRole('button', { name: 'Check' }));
+    expect(onCheck).toHaveBeenCalledWith({ ordinal: null, args: ['[1]', '2'], expected: '[0]' });
+  });
 });
