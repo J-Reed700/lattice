@@ -137,13 +137,6 @@ impl ConversationRepository {
             AppError::Database(format!("Failed to upsert conversation space member: {}", e))
         })?;
 
-        tx.commit().await.map_err(|e| {
-            AppError::Database(format!(
-                "Failed to commit conversation space member transaction: {}",
-                e
-            ))
-        })?;
-
         let member = sqlx::query_as::<_, ConversationSpaceMemberDto>(
             r#"
         SELECT
@@ -163,11 +156,18 @@ impl ConversationRepository {
         )
         .bind(&request.space_id)
         .bind(&request.member_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!(
                 "Failed to fetch upserted conversation space member: {}",
+                e
+            ))
+        })?;
+
+        tx.commit().await.map_err(|e| {
+            AppError::Database(format!(
+                "Failed to commit conversation space member transaction: {}",
                 e
             ))
         })?;
