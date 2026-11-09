@@ -1367,11 +1367,35 @@ async fn refuted_at(
     (unit, kind, field): (usize, UnitKind, &str),
     text: &str,
 ) -> Result<(claim_ledger::ClaimLedger, ClaimId, Value)> {
-    let policy = StandardPolicy::new();
     let mut ledger = open().await?;
-    let id = ClaimId("refuted".into());
+    claim(&mut ledger, "other", (HEADER, HEADER), HEADER, SOURCED).await?;
+    let mut context = json!({
+        "candidate": lesson, "requirements": {}, "evidence": [],
+        "executions": [], "repairHistory": [], "failedClaims": [],
+    });
+    let id = add_refuted(
+        (&mut ledger, &mut context),
+        "refuted",
+        (unit, kind, field),
+        text,
+    )
+    .await?;
+    Ok((ledger, id, context))
+}
+
+/// Another Reasoning statement at `r.cut` on its last attempt, sent in
+/// `context`, whose sentence is `text` of `field` of `unit`.
+async fn add_refuted(
+    (ledger, context): (&mut claim_ledger::ClaimLedger, &mut Value),
+    name: &str,
+    (unit, kind, field): (usize, UnitKind, &str),
+    text: &str,
+) -> Result<ClaimId> {
+    let id = ClaimId(name.into());
+    let lesson = context["candidate"].clone();
+    let body = claim_ledger::field_text(&lesson, unit, field).unwrap_or_default();
     let extracted = ClaimEvent::Extracted {
-        location: ClaimLocation::locate(unit, kind, field, text, text),
+        location: ClaimLocation::locate(unit, kind, field, text, &body),
         statement: text.into(),
     };
     ledger.append(&id, extracted).await?;
@@ -1379,18 +1403,17 @@ async fn refuted_at(
     ledger
         .append(&id, ClaimEvent::Classified { class, by })
         .await?;
-    claim(&mut ledger, "other", (HEADER, HEADER), HEADER, SOURCED).await?;
-    walk(&mut ledger, &id, Class::Reasoning, &CORRECTIONS_REJECTED).await?;
-    assert_eq!(node_of(&ledger, &id), Some("r.cut"));
+    walk(ledger, &id, Class::Reasoning, &CORRECTIONS_REJECTED).await?;
+    assert_eq!(node_of(ledger, &id), Some("r.cut"));
     ledger
-        .begin_repairs(&policy, lesson, std::slice::from_ref(&id))
+        .begin_repairs(&StandardPolicy::new(), &lesson, std::slice::from_ref(&id))
         .await?;
-    let context = json!({
-        "candidate": lesson, "requirements": {}, "evidence": [],
-        "executions": [], "repairHistory": [],
-        "failedClaims": [{"unit":unit,"claimId":"refuted","sentence":text,"evidence":[],"lastAttempt":true}],
-    });
-    Ok((ledger, id, context))
+    if let Some(sent) = context["failedClaims"].as_array_mut() {
+        sent.push(
+            json!({"unit":unit,"claimId":name,"sentence":text,"evidence":[],"lastAttempt":true}),
+        );
+    }
+    Ok(id)
 }
 
 #[tokio::test]
@@ -1489,6 +1512,106 @@ async fn a_refuted_rationale_in_the_last_question_of_its_kind_stays_and_is_publi
         "{:?}",
         entry.state()
     );
+    Ok(())
+}
+
+/// The second section holds two sentences a refuted statement can be cut
+/// out of, beside the one the guard of the questions is about.
+fn cuttable() -> String {
+    format!("{SENTENCE} {HEADER} {MORE}")
+}
+
+#[tokio::test]
+async fn a_refused_statement_in_the_last_question_of_its_kind_does_not_hold_back_the_cuts_beside_it(
+) -> Result<()> {
+    let body = cuttable();
+    let lesson = lesson_asking(
+        &body,
+        &[
+            question_of("practice", "Practise?", "Fine."),
+            question_of("quiz", "Which?", WINDOW),
+            question_of("test", "Tested?", "Fine."),
+        ],
+    );
+    let (mut ledger, rationale, mut context) =
+        refuted_at(&lesson, (4, UnitKind::AnswerKey, "rationales/2"), WINDOW).await?;
+    let sentence = add_refuted(
+        (&mut ledger, &mut context),
+        "sentence",
+        (1, UnitKind::Block, "body"),
+        SENTENCE,
+    )
+    .await?;
+
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    assert_eq!(
+        context["candidate"]["blocks"][1]["body"],
+        format!("{HEADER} {MORE}")
+    );
+    assert!(matches!(
+        ledger.entry(&sentence).unwrap().state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert_eq!(context["candidate"]["questions"], lesson["questions"]);
+    let state = ledger.entry(&rationale).unwrap().state();
+    assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn questions_that_together_would_leave_no_question_of_a_kind_all_stay_and_the_cuts_beside_them_are_made(
+) -> Result<()> {
+    let body = cuttable();
+    let lesson = lesson_asking(
+        &body,
+        &[
+            question_of("practice", "Practise?", "Fine."),
+            question_of("quiz", "Which?", WINDOW),
+            question_of("quiz", "Another?", "The window is not the shell."),
+            question_of("test", "Tested?", "Fine."),
+        ],
+    );
+    let (mut ledger, first, mut context) =
+        refuted_at(&lesson, (4, UnitKind::AnswerKey, "rationales/2"), WINDOW).await?;
+    let second = add_refuted(
+        (&mut ledger, &mut context),
+        "second",
+        (5, UnitKind::AnswerKey, "rationales/2"),
+        "The window is not the shell.",
+    )
+    .await?;
+    let sentence = add_refuted(
+        (&mut ledger, &mut context),
+        "sentence",
+        (1, UnitKind::Block, "body"),
+        SENTENCE,
+    )
+    .await?;
+
+    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+
+    assert_eq!(
+        context["candidate"]["blocks"][1]["body"],
+        format!("{HEADER} {MORE}")
+    );
+    assert!(matches!(
+        ledger.entry(&sentence).unwrap().state(),
+        ClaimState::Removed {
+            by: Actor::Machine,
+            ..
+        }
+    ));
+    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
+    assert_eq!(context["candidate"]["questions"], lesson["questions"]);
+    for id in [first, second] {
+        let state = ledger.entry(&id).unwrap().state();
+        assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
+    }
     Ok(())
 }
 
