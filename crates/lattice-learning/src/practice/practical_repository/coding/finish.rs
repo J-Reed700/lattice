@@ -71,13 +71,14 @@ impl LearningPracticalRepository {
                 .bind(json(&each.evidence)?).bind(&each.feedback).bind(&each.next_step)
                 .execute(&mut *tx).await.map_err(db)?;
         }
-        let target: Option<i64> =
-            sqlx::query_scalar("SELECT interview_at FROM learning_practice_profiles WHERE program_id=?")
-                .bind(program_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
-                .flatten();
+        let target: Option<i64> = sqlx::query_scalar(
+            "SELECT interview_at FROM learning_practice_profiles WHERE program_id=?",
+        )
+        .bind(program_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?
+        .flatten();
         let ratings = patterns::record_ratings_in(
             &mut tx,
             program_id,
@@ -132,11 +133,12 @@ impl LearningPracticalRepository {
     /// How many evidence events a session left, for tests.
     #[cfg(test)]
     pub(crate) async fn coding_evidence_count(&self, session_id: &str) -> Result<i64> {
-        let row = sqlx::query("SELECT count(*) AS n FROM learning_evidence_events WHERE source_id=?")
-            .bind(session_id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(db)?;
+        let row =
+            sqlx::query("SELECT count(*) AS n FROM learning_evidence_events WHERE source_id=?")
+                .bind(session_id)
+                .fetch_one(&self.pool)
+                .await
+                .map_err(db)?;
         Ok(row.get("n"))
     }
 }

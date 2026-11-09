@@ -6,9 +6,9 @@ mod cases;
 mod evidence;
 mod view;
 
+pub use self::aids::{CodingAids, LiveAids};
 use self::cases::cases_for;
 use self::evidence::{last_draft_seen, outcome_of, submit_counts};
-pub use self::aids::{CodingAids, LiveAids};
 pub use self::view::session_view;
 use super::debrief::Debriefer;
 use super::dto::*;
@@ -120,7 +120,9 @@ impl CodingSessions<'_> {
         let observation = observe(&bundle.problem, &session_view(&bundle)?, None);
         let policy = policy_for(bundle.row.setting, bundle.row.task);
         if let Some(cue) = policy.cue(&event, &observation) {
-            self.repo.offer_coding_cue(program_id, session_id, &cue).await?;
+            self.repo
+                .offer_coding_cue(program_id, session_id, &cue)
+                .await?;
         }
         Ok(())
     }
@@ -159,7 +161,10 @@ impl CodingSessions<'_> {
         self.repo.list_coding_sessions(&request.program_id).await
     }
 
-    pub async fn move_stage(&self, request: &MoveCodingStageRequestDto) -> Result<CodingSessionDto> {
+    pub async fn move_stage(
+        &self,
+        request: &MoveCodingStageRequestDto,
+    ) -> Result<CodingSessionDto> {
         let payload_hash = hash(request)?;
         let applied = self
             .repo
@@ -548,7 +553,10 @@ impl CodingSessions<'_> {
 
     /// Debriefs the session and writes its scorecard, ratings and evidence once; a session already finished is
     /// returned as it is stored.
-    pub async fn finish(&self, request: &FinishCodingSessionRequestDto) -> Result<CodingSessionDto> {
+    pub async fn finish(
+        &self,
+        request: &FinishCodingSessionRequestDto,
+    ) -> Result<CodingSessionDto> {
         let bundle = self
             .repo
             .coding_session(&request.program_id, &request.session_id)

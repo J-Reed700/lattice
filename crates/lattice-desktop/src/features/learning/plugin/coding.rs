@@ -16,7 +16,9 @@ use lattice_learning::embedded_runtime::BuiltinRuntimes;
 use lattice_learning::practical_dto::LearningPracticalRunDto;
 use lattice_learning::practical_runs::CodingRunStart;
 use lattice_learning::practice::coding::counterpart::CounterpartReply;
-use lattice_learning::practice::coding::debrief::{CodingDebriefer, Debrief, Debriefer, SessionEvidence};
+use lattice_learning::practice::coding::debrief::{
+    CodingDebriefer, Debrief, Debriefer, SessionEvidence,
+};
 use lattice_learning::practice::coding::dto::*;
 use lattice_learning::practice::coding::examples::ExampleCheck;
 use lattice_learning::practice::coding::hints::CodeHint;
@@ -165,8 +167,13 @@ macro_rules! plain_sessions {
 /// Binds `$sessions` and the aids for a command that asks the model and runs code.
 macro_rules! live_sessions {
     ($sessions:ident, $request:expr, $container:expr, $runtimes:expr, $repo:expr, $debriefer:expr) => {
-        let runner =
-            runner_of(&$repo, &$request.program_id, &$request.session_id, &$runtimes).await?;
+        let runner = runner_of(
+            &$repo,
+            &$request.program_id,
+            &$request.session_id,
+            &$runtimes,
+        )
+        .await?;
         let pin = $container
             .learning_llm(Default::default())
             .await
@@ -268,7 +275,10 @@ pub async fn check_coding_example(
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
     live_sessions!(sessions, request, container, runtimes, repo, &NoDebrief);
-    sessions.check_example(&request).await.map_err(ApiError::from)
+    sessions
+        .check_example(&request)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -280,7 +290,10 @@ pub async fn remove_coding_example(
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, repo);
-    sessions.remove_example(&request).await.map_err(ApiError::from)
+    sessions
+        .remove_example(&request)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -340,7 +353,10 @@ pub async fn observe_coding_draft(
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, repo);
-    sessions.observe_draft(&request).await.map_err(ApiError::from)
+    sessions
+        .observe_draft(&request)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]
@@ -376,7 +392,10 @@ pub async fn reveal_coding_solution(
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, repo);
-    sessions.reveal_solution(&request).await.map_err(ApiError::from)
+    sessions
+        .reveal_solution(&request)
+        .await
+        .map_err(ApiError::from)
 }
 
 #[tauri::command]

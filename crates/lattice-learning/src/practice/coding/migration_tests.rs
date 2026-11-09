@@ -189,11 +189,17 @@ async fn problem_pattern_schedules_are_accepted_beside_the_drills_and_other_mate
 
     migrator().run(&pool).await.unwrap();
 
-    assert_eq!(count(&pool, "learning_drill_pattern_schedules").await, before);
+    assert_eq!(
+        count(&pool, "learning_drill_pattern_schedules").await,
+        before
+    );
     exec(&pool, &[schedule("problem:python")]).await;
     for refused in ["bogus", "problem:", "problem", "code:"] {
         assert!(
-            sqlx::query(&schedule(refused)).execute(&pool).await.is_err(),
+            sqlx::query(&schedule(refused))
+                .execute(&pool)
+                .await
+                .is_err(),
             "{refused}"
         );
     }
@@ -233,7 +239,11 @@ async fn deleting_a_session_removes_its_events_and_examples_and_keeps_its_runs()
         assert!(sqlx::query(refused).execute(&pool).await.is_err(), "{refused}");
     }
 
-    exec(&pool, &["DELETE FROM learning_coding_sessions WHERE id = 's1'".into()]).await;
+    exec(
+        &pool,
+        &["DELETE FROM learning_coding_sessions WHERE id = 's1'".into()],
+    )
+    .await;
 
     assert_eq!(count(&pool, "learning_coding_events").await, 0);
     assert_eq!(count(&pool, "learning_coding_examples").await, 0);

@@ -4,8 +4,10 @@ use super::{
     decode, invalid, json, practical_operation, uuid, InternalActivitySnapshot,
     LearningPracticalRepository,
 };
+use crate::lab_runtime::LearningLabFile;
 use crate::operations::Operation;
 use crate::persistence::db;
+use crate::practical_dto::LearningPracticalActivityKind;
 use crate::practice::coding::dto::{
     stages_of, ClockDto, CodeHintDto, CodingRunScope, CodingStage, ExampleVerdict,
 };
@@ -15,8 +17,6 @@ use crate::practice::coding::problem::{CodingSetting, CodingTask, Hidden, Proble
 use crate::practice::coding::records::{
     Applied, CodingOp, CodingRow, NewCodingSession, NewHint, RunFinished, StageMove,
 };
-use crate::practical_dto::LearningPracticalActivityKind;
-use crate::lab_runtime::LearningLabFile;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use serde::{de::DeserializeOwned, Serialize};
@@ -329,8 +329,9 @@ impl LearningPracticalRepository {
         let stages = stages_of(row.task);
         let position = |stage: CodingStage| stages.iter().position(|each| *each == stage);
         let target = position(to).ok_or_else(|| invalid("That stage is not part of this task."))?;
-        let current = position(row.stage)
-            .ok_or_else(|| AppError::Database("The session is in a stage its task lacks.".into()))?;
+        let current = position(row.stage).ok_or_else(|| {
+            AppError::Database("The session is in a stage its task lacks.".into())
+        })?;
         let skipped = if target > current + 1 {
             stages
                 .iter()
@@ -450,12 +451,13 @@ impl LearningPracticalRepository {
             return Ok(Applied::Replayed);
         }
         open_row_on(&mut tx, program_id, session_id).await?;
-        let removed = sqlx::query("DELETE FROM learning_coding_examples WHERE session_id=? AND ordinal=?")
-            .bind(session_id)
-            .bind(i64::from(ordinal))
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        let removed =
+            sqlx::query("DELETE FROM learning_coding_examples WHERE session_id=? AND ordinal=?")
+                .bind(session_id)
+                .bind(i64::from(ordinal))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
         if removed.rows_affected() == 1 {
             add_event(
                 &mut tx,
@@ -519,7 +521,8 @@ impl LearningPracticalRepository {
                 "passed": finished.passed,
                 "total": finished.total,
             });
-            if let (Some(actual), Some(map)) = (finished.reference_actual, payload.as_object_mut()) {
+            if let (Some(actual), Some(map)) = (finished.reference_actual, payload.as_object_mut())
+            {
                 map.insert("referenceActual".into(), actual.into());
             }
             add_event(&mut tx, session_id, "run", &payload, at).await?;
@@ -624,7 +627,16 @@ impl LearningPracticalRepository {
                 CodingSetting::Coached => "coach",
                 CodingSetting::Mock | CodingSetting::Watched => "counterpart",
             };
-            add_turn(&mut tx, program_id, session_id, speaker, content, Some(model), at).await?;
+            add_turn(
+                &mut tx,
+                program_id,
+                session_id,
+                speaker,
+                content,
+                Some(model),
+                at,
+            )
+            .await?;
         }
         add_event(
             &mut tx,
@@ -659,7 +671,10 @@ impl LearningPracticalRepository {
         }
         let row = open_row_on(&mut tx, program_id, session_id).await?;
         check_revision(&row, expected_revision)?;
-        add_turn(&mut tx, program_id, session_id, "learner", content, None, at).await?;
+        add_turn(
+            &mut tx, program_id, session_id, "learner", content, None, at,
+        )
+        .await?;
         sqlx::query("UPDATE learning_coding_sessions SET draft_json=? WHERE id=?")
             .bind(json(files)?)
             .bind(session_id)
@@ -729,8 +744,16 @@ impl LearningPracticalRepository {
         )
         .await?;
         if hint.in_role {
-            add_turn(&mut tx, program_id, session_id, "counterpart", hint.text, Some(hint.model), at)
-                .await?;
+            add_turn(
+                &mut tx,
+                program_id,
+                session_id,
+                "counterpart",
+                hint.text,
+                Some(hint.model),
+                at,
+            )
+            .await?;
         }
         sqlx::query("UPDATE learning_coding_sessions SET draft_json=? WHERE id=?")
             .bind(json(files)?)
@@ -823,13 +846,15 @@ impl LearningPracticalRepository {
                 (_, None) => Some(default_budget_seconds),
                 (_, budget) => budget,
             };
-            sqlx::query("UPDATE learning_coding_sessions SET setting=?,budget_seconds=? WHERE id=?")
-                .bind(name_of(&setting)?)
-                .bind(budget.map(i64::from))
-                .bind(session_id)
-                .execute(&mut *tx)
-                .await
-                .map_err(db)?;
+            sqlx::query(
+                "UPDATE learning_coding_sessions SET setting=?,budget_seconds=? WHERE id=?",
+            )
+            .bind(name_of(&setting)?)
+            .bind(budget.map(i64::from))
+            .bind(session_id)
+            .execute(&mut *tx)
+            .await
+            .map_err(db)?;
             let counterpart = match setting {
                 CodingSetting::Coached => "Coach",
                 CodingSetting::Mock | CodingSetting::Watched => "Interviewer",
@@ -887,7 +912,14 @@ impl LearningPracticalRepository {
                 .execute(&mut *tx)
                 .await
                 .map_err(db)?;
-            add_event(&mut tx, session_id, "solution_seen", &serde_json::json!({}), at).await?;
+            add_event(
+                &mut tx,
+                session_id,
+                "solution_seen",
+                &serde_json::json!({}),
+                at,
+            )
+            .await?;
             bump_revision(&mut tx, session_id).await?;
         }
         operation.record(&mut *tx, &()).await?;
