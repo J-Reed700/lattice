@@ -36,26 +36,40 @@ impl AssistancePolicy for CodingAssistance {
     }
 }
 
-/// Written practice: every kind of help unless the level is no help.
+/// Written practice: full help gives everything, hints-only everything but a worked solution, no help nothing.
 pub struct WrittenAssistance;
 
 impl AssistancePolicy for WrittenAssistance {
-    fn allows(&self, _help: Help, level: HelpLevel) -> bool {
-        level != HelpLevel::NoHelp
+    fn allows(&self, help: Help, level: HelpLevel) -> bool {
+        match level {
+            HelpLevel::FullHelp => true,
+            HelpLevel::HintsOnly => help != Help::WorkedSolution,
+            HelpLevel::NoHelp => false,
+        }
     }
 }
 
 /// The help level of a written-practice mode: Explore gives full help, Practice hints only, Demonstrate none.
-pub fn written_level(_mode: &LearningPracticeMode) -> HelpLevel {
-    HelpLevel::FullHelp
+pub fn written_level(mode: &LearningPracticeMode) -> HelpLevel {
+    match mode {
+        LearningPracticeMode::Explore => HelpLevel::FullHelp,
+        LearningPracticeMode::Practice => HelpLevel::HintsOnly,
+        LearningPracticeMode::Demonstrate => HelpLevel::NoHelp,
+    }
 }
 
 /// The kind of help a tutor request asks for: a worked explanation is a worked solution.
 pub fn written_help(
-    _kind: &LearningTutorRequestKind,
-    _level: Option<&LearningPracticeHintLevel>,
+    kind: &LearningTutorRequestKind,
+    level: Option<&LearningPracticeHintLevel>,
 ) -> Help {
-    Help::Tutor
+    match (kind, level) {
+        (LearningTutorRequestKind::Hint, Some(LearningPracticeHintLevel::WorkedExplanation)) => {
+            Help::WorkedSolution
+        }
+        (LearningTutorRequestKind::Hint, _) => Help::Hint,
+        (LearningTutorRequestKind::Question | LearningTutorRequestKind::Critique, _) => Help::Tutor,
+    }
 }
 
 #[cfg(test)]

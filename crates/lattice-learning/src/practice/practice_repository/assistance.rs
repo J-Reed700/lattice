@@ -1,17 +1,23 @@
 //! Recording assistance: opened sources, tutor turns and revealed solutions.
 use super::*;
-use crate::practice::assistance_policy::{AssistancePolicy, Help, HelpLevel, WrittenAssistance};
+use crate::practice::assistance_policy::{
+    written_help, written_level, AssistancePolicy, Help, HelpLevel, WrittenAssistance,
+};
 use lattice_core::shared::persistence::Transactions;
 
-fn require(help: Help, mode: &LearningPracticeMode, unavailable: &str) -> Result<()> {
-    let level = match mode {
-        LearningPracticeMode::Demonstrate => HelpLevel::NoHelp,
-        LearningPracticeMode::Explore | LearningPracticeMode::Practice => HelpLevel::FullHelp,
-    };
+fn require(
+    help: Help,
+    mode: &LearningPracticeMode,
+    unavailable: &str,
+    restricted: &str,
+) -> Result<()> {
+    let level = written_level(mode);
     if WrittenAssistance.allows(help, level) {
         Ok(())
-    } else {
+    } else if level == HelpLevel::NoHelp {
         Err(invalid(unavailable))
+    } else {
+        Err(invalid(restricted))
     }
 }
 
@@ -61,6 +67,7 @@ impl LearningPracticeRepository {
         require(
             Help::Tutor,
             &s.mode,
+            "Source access is unavailable in Demonstrate mode.",
             "Source access is unavailable in Demonstrate mode.",
         )?;
         if !s.source_version_ids.iter().any(|id| id == &req.version_id) {
@@ -143,15 +150,11 @@ impl LearningPracticeRepository {
         if s.revision != expected_revision {
             return Err(invalid("Practice session changed; reload and retry."));
         }
-        let help = if turn.request_kind == LearningTutorRequestKind::Hint {
-            Help::Hint
-        } else {
-            Help::Tutor
-        };
         require(
-            help,
+            written_help(&turn.request_kind, turn.hint_level.as_ref()),
             &s.mode,
             "Tutor assistance is unavailable in Demonstrate mode.",
+            "Worked explanations are available only in Explore mode.",
         )?;
         let t = now();
         let upd=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(t).bind(program_id).bind(session_id).bind(expected_revision).execute(&mut *tx).await.map_err(db)?;
@@ -232,6 +235,7 @@ impl LearningPracticeRepository {
             Help::WorkedSolution,
             &s.mode,
             "Solution reveal is unavailable in Demonstrate mode.",
+            "Worked solutions are available only in Explore mode.",
         )?;
         let t = now();
         let upd=sqlx::query("UPDATE learning_practice_sessions SET revealed_solution=?,revealed_solution_citations_json=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(solution).bind(json(citations)?).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;

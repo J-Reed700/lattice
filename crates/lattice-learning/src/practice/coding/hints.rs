@@ -98,8 +98,13 @@ fn request_for(
     rung: CodeHintRung,
     in_role: bool,
 ) -> GroundedRequest {
-    let shown = serde_json::to_string_pretty(observation).unwrap_or_default();
-    ask(&problem.reference, &shown, rung, in_role, observation.setting)
+    ask(
+        &problem.reference,
+        &observation.render(),
+        rung,
+        in_role,
+        observation.setting,
+    )
 }
 
 /// What the checks read of the problem and the session.
@@ -196,6 +201,11 @@ fn bad_lines(hinting: &Hinting<'_>, hint: &CodeHint) -> Option<String> {
         .map(|line| format!("Line {line} does not exist in {path}, which has {count} lines."))
 }
 
+/// Only a coach's Idea hint may name the technique.
+fn may_name_technique(setting: CodingSetting, rung: CodeHintRung) -> bool {
+    setting == CodingSetting::Coached && rung == CodeHintRung::Idea
+}
+
 /// Why a check refuses `hint`, or None when every check accepts it. Errors are runs that could not be made.
 async fn refusal(
     hinting: &Hinting<'_>,
@@ -223,8 +233,7 @@ async fn refusal(
             "The hint repeats line {number} of the reference solution word for word. Say it in other words."
         )));
     }
-    let allowed = hinting.setting == CodingSetting::Coached && hint.rung == CodeHintRung::Idea;
-    if !allowed {
+    if !may_name_technique(hinting.setting, hint.rung) {
         let named = shown
             .iter()
             .find_map(|text| named_in(text, hinting.patterns));
@@ -301,8 +310,13 @@ fn ask(
     } else {
         "You give a candidate one hint on a coding problem."
     };
+    let naming = if may_name_technique(setting, rung) {
+        ""
+    } else {
+        " Never name the technique or pattern that solves the problem."
+    };
     let system = format!(
-        "{voice} The reference solution is private: it is there so that your hint is right, never to be quoted. Never write a line of it, and never write code that solves the problem. Speak about the candidate's code only from what they have written and run. Fill `path` and `lines` only for a Line hint; otherwise give `lines` as an empty list and `path` as null."
+        "{voice} The reference solution is private: it is there so that your hint is right, never to be quoted. Never write a line of it, and never write code that solves the problem.{naming} Speak about the candidate's code only from what they have written and run. Fill `path` and `lines` only for a Line hint; otherwise give `lines` as an empty list and `path` as null."
     );
     let prompt = format!(
         "Reference solution (private):\n{reference}\n\nWhat the candidate sees and has done:\n{observation}\n\nWrite a {} hint. {}",
