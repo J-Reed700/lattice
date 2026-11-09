@@ -61,7 +61,7 @@ async fn a_machine_claim_with_attempts_left_is_released_and_its_successor_is_rea
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
     let id = verified(&mut ledger, "reader", FIRST).await?;
-    assert_eq!(ledger.releasable(&policy, &[]), [id.clone()]);
+    assert_eq!(ledger.releasable(&policy, &[]), std::slice::from_ref(&id));
 
     let successor = taught(&mut ledger, &id, (FIRST, SECOND)).await?;
 
@@ -79,7 +79,7 @@ async fn a_sentence_the_teaching_review_left_as_it_was_costs_its_claim_nothing()
     let policy = StandardPolicy::new();
     let mut ledger = open().await?;
     let id = verified(&mut ledger, "reader", FIRST).await?;
-    assert_eq!(ledger.releasable(&policy, &[]), [id.clone()]);
+    assert_eq!(ledger.releasable(&policy, &[]), std::slice::from_ref(&id));
 
     let kept = taught(&mut ledger, &id, (FIRST, FIRST)).await?;
 
@@ -111,7 +111,7 @@ async fn a_machines_general_knowledge_and_published_not_verified_claims_are_rele
     let unverified = claim(&mut ledger, "unsettled", (FIRST, FIRST), FIRST, REASONED).await?;
     assert_eq!(
         ledger
-            .publish_unverified(&[unverified.clone()], None)
+            .publish_unverified(std::slice::from_ref(&unverified), None)
             .await?,
         1
     );
@@ -138,7 +138,7 @@ async fn the_claims_the_user_decided_and_the_claims_a_repair_is_for_are_not_rele
     // Confirmed by the user.
     let confirmed = claim(&mut ledger, "confirmed", (SECOND, SECOND), SECOND, REASONED).await?;
     ledger
-        .publish_unverified(&[confirmed.clone()], None)
+        .publish_unverified(std::slice::from_ref(&confirmed), None)
         .await?;
     let confirm = UserAction::Confirm {
         bound: HumanBinding::new(SECOND, vec![]),
@@ -155,7 +155,9 @@ async fn the_claims_the_user_decided_and_the_claims_a_repair_is_for_are_not_rele
 
     // Checked against evidence the user attached.
     let attached = claim(&mut ledger, "attached", (THIRD, THIRD), THIRD, REASONED).await?;
-    ledger.publish_unverified(&[attached.clone()], None).await?;
+    ledger
+        .publish_unverified(std::slice::from_ref(&attached), None)
+        .await?;
     let check = Check {
         checker: Checker::Local { model: "m".into() },
         result: CheckResult::Supported {
@@ -187,7 +189,10 @@ async fn the_claims_the_user_decided_and_the_claims_a_repair_is_for_are_not_rele
     };
     assert!(ledger.append(&before, edit).await?);
 
-    assert_eq!(ledger.releasable(&policy, &[]), [machine.clone()]);
+    assert_eq!(
+        ledger.releasable(&policy, &[]),
+        std::slice::from_ref(&machine)
+    );
     assert!(ledger.releasable(&policy, &[machine]).is_empty());
     Ok(())
 }
