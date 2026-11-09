@@ -186,7 +186,7 @@ pub(crate) fn quoted_wording(text: &str) -> impl Iterator<Item = &str> {
         let from = chars.get(open + 1).map_or(text.len(), |&(byte, _)| byte);
         let to = chars.get(close).map_or(text.len(), |&(byte, _)| byte);
         match text.get(from..to) {
-            Some(span) if close - open - 1 >= 12 => {
+            Some(span) if close - open > 12 => {
                 spans.push(span);
                 next += 2;
             }
