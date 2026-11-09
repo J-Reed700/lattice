@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type * as Wire from '@/lib/bindings';
 
-import { defaultLanguage, fitState, isCodingRound, languageOptions, MOCK_DIFFICULTY, mockRoundOptions, startAction, suggestsInterview, visibleCards } from './practiceChoices';
+import { fitState, isCodingRound, MOCK_DIFFICULTY, mockRoundOptions, startAction, suggestsInterview, visibleCards } from './practiceChoices';
 
 const profile = (patch: Partial<Wire.LearningPracticeProfileDto> = {}): Wire.LearningPracticeProfileDto => ({
   programId: 'course',
@@ -40,18 +40,6 @@ describe('the Mock interview badge', () => {
   });
 });
 
-describe('languages', () => {
-  it("keeps the learner's own words as the label and normalizes only the value", () => {
-    expect(languageOptions('JavaScript')).toEqual([{ value: 'javascript', label: 'JavaScript' }, { value: 'python', label: 'Python' }]);
-    expect(defaultLanguage(' JavaScript ')).toBe('javascript');
-  });
-
-  it('offers Python once', () => {
-    expect(languageOptions('python')).toEqual([{ value: 'python', label: 'Python' }]);
-    expect(languageOptions(null)).toEqual([{ value: 'python', label: 'Python' }]);
-  });
-});
-
 describe('what Start does', () => {
   const context = { lessonId: 'lesson-1', profile: profile({ language: 'Go', company: 'Acme', role: 'Engineer' }) };
 
@@ -59,8 +47,20 @@ describe('what Start does', () => {
     const action = startAction('code', { difficulty: 'hard', language: 'go', task: 'bug_fix' }, context);
     expect(action).toMatchObject({
       kind: 'coding-build',
-      choice: { lessonId: 'lesson-1', task: 'bug_fix', setting: 'coached', language: 'go', difficulty: 'hard' },
+      choice: { lessonId: 'lesson-1', task: 'bug_fix', setting: 'coached', language: 'python', difficulty: 'hard' },
     });
+  });
+
+  it('builds code in Python whatever the profile or the sentence says', () => {
+    const js = { lessonId: 'lesson-1', profile: profile({ language: 'JavaScript' }) };
+    expect(startAction('code', { task: 'problem' }, js)).toMatchObject({ choice: { language: 'python' } });
+    expect(startAction('code', { task: 'bug_fix', language: 'javascript' }, js)).toMatchObject({ choice: { language: 'python' } });
+  });
+
+  it('builds a live coding round of the Mock card in Python', () => {
+    const js = { lessonId: 'lesson-1', profile: profile({ language: 'JavaScript' }) };
+    expect(startAction('mock', { round: 'live_coding' }, js)).toMatchObject({ kind: 'coding-build', choice: { language: 'python' } });
+    expect(startAction('mock', { round: 'debugging' }, js)).toMatchObject({ kind: 'coding-build', choice: { language: 'python' } });
   });
 
   it('opens a code lab composer for a project', () => {
