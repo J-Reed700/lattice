@@ -50,6 +50,7 @@ async fn a_lesson_job_makes_the_course_plan_before_the_lesson_is_written() {
     });
     let llm: Arc<dyn LLMPort> = model.clone();
     let worker = LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
@@ -159,6 +160,7 @@ async fn a_lesson_job_writes_from_the_entry_the_learner_edited() {
     });
     let llm: Arc<dyn LLMPort> = model.clone();
     let worker = LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
@@ -191,6 +193,7 @@ async fn a_lesson_job_writes_from_the_entry_the_learner_edited() {
 
 fn worker_on(pool: &SqlitePool, llm: Arc<dyn LLMPort>) -> LessonGenerationWorker {
     LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
