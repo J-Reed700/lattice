@@ -2,7 +2,7 @@ import { expect, it } from 'vitest';
 
 import { RetrievalTraceSchema } from '../conversation';
 
-it('keeps the trace and clips an over-long unavailable reason', () => {
+it('keeps the trace with an over-long unavailable reason whole', () => {
   const parsed = RetrievalTraceSchema.safeParse({
     searchedDocuments: 0,
     passages: 0,
@@ -11,5 +11,5 @@ it('keeps the trace and clips an over-long unavailable reason', () => {
     unavailableReason: 'x'.repeat(2000),
   });
   expect(parsed.success).toBe(true);
-  expect(parsed.success && parsed.data.unavailableReason).toHaveLength(400);
+  expect(parsed.success && parsed.data.unavailableReason).toHaveLength(2000);
 });
