@@ -396,3 +396,65 @@ async fn an_unreadable_entry_is_an_error_naming_its_lesson_and_costs_no_call() {
     assert!(error.to_string().contains(&target), "{error}");
     assert_eq!(llm.calls(), 1, "no new plan is paid for");
 }
+
+#[tokio::test]
+async fn a_written_lesson_is_planned_from_what_it_taught() {
+    use crate::dto::{LearningBlockDto, LearningBlockKind};
+    let pool = crate::tests::pool().await.unwrap();
+    let mut program = saved_program(&pool).await;
+    let block = |kind, title: &str, body: &str| LearningBlockDto {
+        kind,
+        title: title.into(),
+        body: body.into(),
+        source_ids: Vec::new(),
+        rubric: Vec::new(),
+    };
+    {
+        let lessons = &mut program.modules[0].lessons;
+        lessons[0].blocks = vec![
+            block(
+                LearningBlockKind::Explanation,
+                "Flashing the card",
+                "Body one.",
+            ),
+            block(
+                LearningBlockKind::WorkedExample,
+                "Writing the image",
+                "Body two.",
+            ),
+            block(LearningBlockKind::Check, "Check yourself", "Body three."),
+            block(
+                LearningBlockKind::Recap,
+                "Recap",
+                "Takeaway: the card holds the system.",
+            ),
+        ];
+        lessons[1].blocks = Vec::new();
+    }
+    let llm = Planner::new();
+
+    ensure(&pool, &llm, &program, 1).await.unwrap();
+
+    let sent = llm.request(0);
+    let (system, user) = crate::lessons::structured_call::task_messages(&sent);
+    let task: Value = serde_json::from_str(user).unwrap();
+    let lessons = task["modules"][0]["lessons"].as_array().unwrap();
+    assert_eq!(
+        lessons[0]["taught"]["sections"],
+        json!(["Flashing the card", "Writing the image"]),
+        "the written lesson's section titles reach the planner"
+    );
+    assert_eq!(
+        lessons[0]["taught"]["recap"],
+        json!(["Takeaway: the card holds the system."]),
+        "the written lesson's recap reaches the planner"
+    );
+    assert!(
+        lessons[1].get("taught").is_none(),
+        "a lesson never written has no taught key"
+    );
+    assert!(
+        system.contains("A lesson with taught is already written"),
+        "the planner is told what taught means: {system}"
+    );
+}
