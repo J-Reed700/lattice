@@ -235,6 +235,15 @@ impl SidecarRegistry {
         gpu_bytes_where(&self.running_servers(), |running| running != config)
     }
 
+    /// The configuration of the running server a role asking for `config` is
+    /// handed: the one that differs from it in nothing but its fitted windows.
+    /// Fitting again reads available RAM live, and other models load and
+    /// unload, so it can pick another window: a new key, and a second copy of
+    /// the model.
+    pub fn running_alike(&self, config: &SidecarConfig) -> Option<SidecarConfig> {
+        running_alike(&self.running_servers(), config)
+    }
+
     /// Whether a server for `config` fits beside the servers running now. See
     /// [`admission`].
     pub fn admission(
@@ -274,6 +283,30 @@ pub(super) struct RunningServer {
     pub(super) config: SidecarConfig,
     pub(super) n_gpu_layers: u32,
     pub(super) context_size: u32,
+}
+
+/// The configuration among `servers` that is `config` but for its windows,
+/// when the user saved neither's.
+pub(super) fn running_alike(
+    servers: &[RunningServer],
+    config: &SidecarConfig,
+) -> Option<SidecarConfig> {
+    if !config.auto_window {
+        return None;
+    }
+    servers
+        .iter()
+        .map(|server| &server.config)
+        .filter(|running| running.auto_window)
+        .find(|running| {
+            let windows = SidecarConfig {
+                context_size: running.context_size,
+                cpu_context_size: running.cpu_context_size,
+                ..config.clone()
+            };
+            windows == **running
+        })
+        .cloned()
 }
 
 /// GPU memory held by the GPU-offloaded servers among `servers` whose

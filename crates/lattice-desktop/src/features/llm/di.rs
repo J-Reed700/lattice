@@ -294,7 +294,7 @@ impl Container {
 
     /// The largest window the local model at `path` fits this machine's
     /// memory at now, beside the models loaded. A hint shown next to its
-    /// context setting; the window is never set from it.
+    /// context setting; a saved window is never changed from it.
     pub(crate) async fn context_fit(&self, path: &std::path::Path) -> ContextFit {
         SidecarBudget::new(self.app_handle(), self.llm_runtime.clone())
             .context_fit(path)
