@@ -17,13 +17,10 @@ function show(ui: ReactNode) {
 }
 
 describe("a lesson's planned topics", () => {
-  beforeEach(() => vi.resetAllMocks());
-
-  it('shows the ideas as one line and keeps terms, actions and contrast behind a disclosure', async () => {
+  it('shows the ideas as one line and keeps terms, actions and contrast behind a disclosure', () => {
     const planned = topics('lesson-1', { ideas: ['The cardiac cycle', 'Valves'], terms: ['Systole'], actions: ['Trace a beat'], contrast: 'Pulse is not pressure' });
-    api.get.mockResolvedValue(ok(planView([entry('lesson-1', { topics: planned })])));
-    show(<LessonTopics programId="program-1" lessonId="lesson-1" />);
-    expect(await screen.findByText('The cardiac cycle · Valves')).toBeVisible();
+    show(<LessonTopics entry={entry('lesson-1', { topics: planned })} />);
+    expect(screen.getByText('The cardiac cycle · Valves')).toBeVisible();
     const disclosure = screen.getByRole('group');
     expect(disclosure.tagName).toBe('DETAILS');
     expect(within(disclosure).getByText('Systole')).toBeInTheDocument();
@@ -32,10 +29,15 @@ describe("a lesson's planned topics", () => {
     expect(disclosure).not.toHaveAttribute('open');
   });
 
-  it('shows nothing for a lesson the plan does not list', async () => {
-    api.get.mockResolvedValue(ok(planView([entry('lesson-1')])));
-    const { container } = show(<LessonTopics programId="program-1" lessonId="lesson-9" />);
-    await waitFor(() => expect(api.get).toHaveBeenCalled());
+  it('offers no disclosure when there are only ideas to show', () => {
+    show(<LessonTopics entry={entry('lesson-1', { topics: topics('lesson-1', { ideas: ['Only ideas'], terms: [], actions: [], contrast: '  ' }) })} />);
+    expect(screen.getByText('Only ideas')).toBeVisible();
+    expect(screen.queryByText('More topics')).not.toBeInTheDocument();
+    expect(screen.queryByRole('group')).not.toBeInTheDocument();
+  });
+
+  it('shows nothing for a lesson the plan does not list', () => {
+    const { container } = show(<LessonTopics entry={undefined} />);
     expect(container).toBeEmptyDOMElement();
   });
 });
@@ -57,6 +59,12 @@ describe('the course plan status', () => {
     expect(await screen.findByText("Couldn't plan topics: The model stopped.")).toBeVisible();
     await user.click(screen.getByRole('button', { name: 'Try again' }));
     await waitFor(() => expect(api.plan).toHaveBeenCalledWith({ programId: 'program-1' }));
+  });
+
+  it('ends the sentence with no colon when the failure has no message', async () => {
+    api.get.mockResolvedValue(ok(emptyPlan('failed')));
+    show(<CoursePlanStatus programId="program-1" />);
+    expect(await screen.findByText("Couldn't plan topics.")).toBeVisible();
   });
 
   it('offers to plan topics when there is no plan, and plans on click', async () => {

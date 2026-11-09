@@ -5,6 +5,7 @@ import { render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { learningCoursePlanKey } from '@/features/learning/api/learningQueryKeys';
 import { emptyPlan, entry, ok, planView, topics } from '@/features/learning/curriculum/coursePlan/coursePlanFixtures';
 import { ProgramWorkspace } from '@/features/learning/curriculum/ProgramWorkspace';
 import { quizOverview } from '@/features/learning/quizzes/quizTestData';
@@ -56,6 +57,8 @@ function course(status: 'draft' | 'active'): LearningProgramDto {
   } as unknown as LearningProgramDto;
 }
 
+let lastClient: QueryClient;
+
 const planned = () => planView([
   entry('lesson-1', { topics: topics('lesson-1', { ideas: ['Beat cycle', 'Chambers'], terms: ['Systole'] }) }),
   entry('lesson-2', { topics: topics('lesson-2', { ideas: ['Valve ideas'] }) }),
@@ -70,6 +73,7 @@ const job = (overrides: Partial<LearningGenerationJob>): LearningGenerationJob =
 
 function show(program: LearningProgramDto) {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false }, mutations: { retry: false } } });
+  lastClient = client;
   render(<QueryClientProvider client={client}>
     <ProgramWorkspace program={program} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
       onPrepare={vi.fn()} preparePending={false} onPrepareModule={vi.fn()} onComplete={vi.fn()} completePending={false} />
@@ -111,6 +115,15 @@ describe('planned topics on the course page', () => {
     show(course('draft'));
     await user.click(await screen.findByRole('button', { name: 'Plan topics' }));
     await waitFor(() => expect(api.planCourse).toHaveBeenCalledWith({ programId: 'program-1' }));
+  });
+
+  it('watches the plan with a handful of observers however many lessons the outline lists', async () => {
+    const base = course('draft');
+    const many = ['lesson-1', 'lesson-2', 'lesson-3', 'lesson-4', 'lesson-5', 'lesson-6'].map((id) => lessonOf(id, `Lesson ${id}`, 'outline'));
+    api.coursePlan.mockResolvedValue(ok(planView(many.map((lesson) => entry(lesson.id, { topics: topics(lesson.id, { ideas: [`Ideas of ${lesson.id}`] }) })))));
+    show({ ...base, modules: [{ ...base.modules[0], lessons: many }] });
+    expect(await screen.findByText('Ideas of lesson-6')).toBeVisible();
+    expect(lastClient.getQueryCache().find({ queryKey: learningCoursePlanKey('program-1') })?.getObserversCount()).toBeLessThanOrEqual(2);
   });
 
   it('opens the Review topics screen from the course header once the topics are planned', async () => {
