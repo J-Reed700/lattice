@@ -134,6 +134,7 @@ pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> R
     store.suspend(&job.id).await?;
     let llm: Arc<dyn LLMPort> = model;
     let worker = LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
@@ -295,6 +296,106 @@ async fn a_publication_that_fails_leaves_no_quiz_job_behind() -> Result<()> {
         1
     );
     assert!(quiz_jobs(&pool, &job.program_id).await?.is_empty());
+    Ok(())
+}
+
+/// Two lessons of one course publish together, as lesson jobs that no longer
+/// wait for each other do: both succeed on the one accepted outline, each
+/// keeps its own blocks, and each queues its own quiz job.
+#[tokio::test]
+async fn two_lessons_of_one_course_publish_at_the_same_time() -> Result<()> {
+    use crate::curriculum::LearningGenerationJobKind;
+    use crate::plan_dto::StartLearningGenerationJobRequestDto;
+    let pool = crate::tests::pool().await?;
+    let (repo, first) = repository_tests::queued_job(&pool).await;
+    let program = LearningRepository::new(pool.clone())
+        .get(&first.program_id)
+        .await?;
+    let sources = LearningRepository::new(pool.clone())
+        .verification_sources(&first.program_id)
+        .await?;
+    let lessons = [
+        &program.modules[0].lessons[0],
+        &program.modules[0].lessons[1],
+    ];
+    let second = repo
+        .start_lesson_job(&StartLearningGenerationJobRequestDto {
+            operation_id: uuid::Uuid::new_v4().to_string(),
+            program_id: first.program_id.clone(),
+            expected_revision: program.summary.revision,
+            kind: LearningGenerationJobKind::LessonPreparation,
+            request_json: serde_json::json!({"lessonIds": [lessons[1].id]}).to_string(),
+            progress_total: 1,
+        })
+        .await?;
+    repo.seed_accepted(&first.program_id).await?;
+    let store = JobStore::new(pool.clone());
+    for job in [&first, &second] {
+        store.claim(&job.id).await?.unwrap();
+    }
+    let jobs = [&first, &second];
+
+    let staged = [
+        [(lessons[0].id.clone(), prepared(lessons[0], &sources[0].id))],
+        [(lessons[1].id.clone(), prepared(lessons[1], &sources[0].id))],
+    ];
+    let (one, other) = tokio::join!(
+        repo.publish_prepared(
+            &jobs[0].id,
+            i64::from(jobs[0].base_revision_number),
+            &staged[0],
+            &[],
+            Some("persistence-fixture"),
+        ),
+        repo.publish_prepared(
+            &jobs[1].id,
+            i64::from(jobs[1].base_revision_number),
+            &staged[1],
+            &[],
+            Some("persistence-fixture"),
+        ),
+    );
+    one?;
+    other?;
+
+    for (job, lesson) in jobs.iter().zip(lessons) {
+        assert_eq!(repo.job(&job.id).await?.status, Status::Completed);
+        assert_eq!(
+            count(
+                &pool,
+                "SELECT count(*) FROM learning_lessons WHERE id=? AND preparation='ready'",
+                &[&lesson.id]
+            )
+            .await,
+            1
+        );
+        let bodies: Vec<String> =
+            sqlx::query_scalar("SELECT body FROM learning_blocks WHERE lesson_id=?")
+                .bind(&lesson.id)
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        assert_eq!(bodies.len(), 1);
+        assert!(bodies[0].contains(&lesson.title) && bodies[0].contains(BODY_MARK));
+    }
+    let queued = quiz_jobs(&pool, &first.program_id).await?;
+    let mut scoped: Vec<String> = queued
+        .iter()
+        .map(|job| job.requested["scope"]["id"].as_str().unwrap().to_owned())
+        .collect();
+    scoped.sort();
+    let mut expected = vec![lessons[0].id.clone(), lessons[1].id.clone()];
+    expected.sort();
+    assert_eq!(scoped, expected, "each lesson queues its own quiz job");
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'",
+            &[&first.program_id]
+        )
+        .await,
+        1
+    );
     Ok(())
 }
 
