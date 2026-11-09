@@ -5,6 +5,7 @@ use super::{
 };
 use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use serde::Deserialize;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
@@ -495,7 +496,7 @@ impl StudyRepository {
     }
 
     pub async fn save(&self, deck: &StudyDeckDto) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         sqlx::query(
             "INSERT INTO study_decks (id,title,focus,study_goal,model_name,created_at) VALUES (?,?,?,?,?,?)",
         )
@@ -562,7 +563,7 @@ impl StudyRepository {
     /// makes every card that would next come up after it due now, so each is
     /// recalled at least once before the target.
     pub async fn set_target(&self, deck_id: &str, target_at: Option<i64>, now: i64) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let exists = sqlx::query("SELECT 1 FROM study_decks WHERE id=?")
             .bind(deck_id)
             .fetch_optional(&mut *tx)
@@ -603,7 +604,7 @@ impl StudyRepository {
         request: &ReviewStudyCardRequestDto,
         now: i64,
     ) -> Result<StudyCardDto> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
             .bind(&request.card_id)
             .fetch_optional(&mut *tx)
@@ -658,7 +659,7 @@ impl StudyRepository {
     }
 
     pub async fn update_card(&self, request: &UpdateStudyCardRequestDto) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let row = sqlx::query("SELECT * FROM study_cards WHERE id=?")
             .bind(&request.card_id)
             .fetch_optional(&mut *tx)

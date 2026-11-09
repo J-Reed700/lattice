@@ -10,6 +10,7 @@ use super::rows::{delete_override, write_override};
 use crate::persistence::db;
 use lattice_core::domain::provenance::{OverrideScope, TrustOverride};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 
 /// One source version an override covers.
@@ -34,7 +35,7 @@ pub async fn set(
 ) -> Result<TrustChange> {
     let scope = trust_override.scope();
     validate(&scope)?;
-    let mut tx = store.pool().begin().await.map_err(db)?;
+    let mut tx = store.pool().begin_write().await.map_err(db)?;
     write_override(&mut tx, trust_override).await?;
     let versions = covered(&mut tx, &scope).await?;
     tx.commit().await.map_err(db)?;
@@ -47,7 +48,7 @@ pub async fn clear(
     store: &SqliteSourceTrustStore,
     scope: &OverrideScope,
 ) -> Result<Option<TrustChange>> {
-    let mut tx = store.pool().begin().await.map_err(db)?;
+    let mut tx = store.pool().begin_write().await.map_err(db)?;
     if !delete_override(&mut tx, scope).await? {
         return Ok(None);
     }

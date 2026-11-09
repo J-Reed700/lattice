@@ -1,6 +1,7 @@
 //! Adopting versions, changing freshness policy, deleting and reimporting sources.
 use super::*;
 use crate::references::trust;
+use lattice_core::shared::persistence::Transactions;
 
 impl LearningSourceLibraryRepository {
     pub async fn adopt(&self, req: &AdoptLearningSourceVersionRequestDto) -> Result<()> {
@@ -17,7 +18,7 @@ impl LearningSourceLibraryRepository {
             }
         }
         let hash = hash(req)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -85,7 +86,7 @@ impl LearningSourceLibraryRepository {
             }
         }
         let hash = hash(req)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -158,7 +159,7 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Deletion reason must contain 1–500 characters."));
         }
         let hash = hash(req)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
             .seen(&mut *tx)
@@ -253,7 +254,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
             .seen(&mut *tx)

@@ -7,6 +7,7 @@ use crate::lab_runtime::LearningLabFile;
 use crate::persistence::{db, now};
 use crate::practical_dto::*;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 use std::collections::HashSet;
 
@@ -20,7 +21,7 @@ impl LearningPracticalRepository {
         if request.activity_revision < 0 {
             return Err(invalid("Invalid practical activity revision."));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let activity = sqlx::query(
             "SELECT revision FROM learning_practical_activities WHERE program_id=? AND id=?",
         )
@@ -113,7 +114,7 @@ impl LearningPracticalRepository {
             return Err(invalid("Practical draft exceeds the 2 MiB total limit."));
         }
 
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "practical_draft",

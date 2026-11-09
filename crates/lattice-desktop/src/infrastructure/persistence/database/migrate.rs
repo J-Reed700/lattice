@@ -4,6 +4,7 @@
 //! Migrations are automatically discovered from the migrations/ directory.
 
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha384};
 use sqlx::migrate::Migrator;
 use sqlx::SqlitePool;
@@ -38,7 +39,7 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 /// checksum of the same SQL with the other line endings. Any other difference is left for sqlx
 /// to refuse. Does nothing before `_sqlx_migrations` exists.
 pub(crate) async fn reconcile_line_endings(pool: &SqlitePool, migrator: &Migrator) -> Result<()> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_write().await?;
 
     let has_table: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = '_sqlx_migrations'",

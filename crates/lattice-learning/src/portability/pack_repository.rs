@@ -35,6 +35,7 @@ pub use files::DestinationPicker;
 pub use files::PACK_EXTENSION;
 use files::{chosen_file, managed_path, next_free_path, read_untrusted};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use records::{pack_operation, replay, PendingPreview};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqlitePool};
@@ -237,7 +238,7 @@ impl LearningPackRepository {
             return self.workspace_for_preview(&req.preview_id).await;
         }
         let now = now();
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let row =
             sqlx::query("SELECT program_id,status FROM learning_pack_import_previews WHERE id=?")
                 .bind(&req.preview_id)

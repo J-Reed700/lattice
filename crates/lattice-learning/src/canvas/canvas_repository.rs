@@ -5,6 +5,7 @@ use crate::{
     persistence::{db, hash, now},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use serde::Serialize;
 use sqlx::{Row, Sqlite, SqlitePool, Transaction};
 use std::collections::HashMap;
@@ -140,7 +141,7 @@ impl LearningCanvasRepository {
 
     pub async fn workspace(&self, program_id: &str) -> Result<LearningCanvasWorkspaceDto> {
         validate_uuid(program_id, "program")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_programs WHERE id=?")
             .bind(program_id)
             .fetch_one(&mut *tx)
@@ -200,7 +201,7 @@ impl LearningCanvasRepository {
         validate_text(&request.title, "Canvas title", 120, true)?;
         validate_text(&request.description, "Canvas description", 2000, false)?;
         let payload_hash = hash(&(request, &scene.json))?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -265,7 +266,7 @@ impl LearningCanvasRepository {
             ));
         }
         let payload_hash = hash(&(request, &scene.json))?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -326,7 +327,7 @@ impl LearningCanvasRepository {
         }
         validate_text(&request.name, "Snapshot name", 120, true)?;
         let payload_hash = hash(request)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,
@@ -404,7 +405,7 @@ impl LearningCanvasRepository {
             ));
         }
         let payload_hash = hash(request)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &request.program_id).await?;
         if operation(
             &request.operation_id,

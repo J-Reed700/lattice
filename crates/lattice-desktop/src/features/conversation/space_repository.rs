@@ -11,6 +11,7 @@ use crate::features::conversation::space_dto::{
     ConversationSpaceDto, CreateConversationSpaceRequestDto,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 /// Synthetic single-user owner. Spaces always have an "owner" membership
 /// pointing at this profile so the per-space membership table has a
@@ -44,7 +45,7 @@ impl ConversationSpaceRepository {
         let id = format!("space_{}", uuid::Uuid::new_v4().simple());
         let now = Utc::now().to_rfc3339();
 
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to open tx for space create: {}", e))
         })?;
 
