@@ -446,7 +446,7 @@ impl<'ast> Visit<'ast> for Collect {
     }
 }
 
-enum Item {
+enum Step {
     Statement { target: Target, via: Vec<String> },
     Begin(Kind),
     Commit { kind: Kind, early: bool },
@@ -499,24 +499,24 @@ impl<'a> Resolver<'a> {
         bound: Option<&HashMap<String, Target>>,
         stack: &mut Vec<usize>,
         via: &mut Vec<String>,
-        out: &mut Vec<Item>,
+        out: &mut Vec<Step>,
     ) {
         let Some(def) = self.defs.get(at) else {
             return;
         };
         for event in &def.body.events {
             match event {
-                Event::Statement { arg, .. } => out.push(Item::Statement {
+                Event::Statement { arg, .. } => out.push(Step::Statement {
                     target: Self::target(def, bound, arg),
                     via: via.clone(),
                 }),
-                Event::Begin { kind, .. } => out.push(Item::Begin(*kind)),
+                Event::Begin { kind, .. } => out.push(Step::Begin(*kind)),
                 Event::Commit {
                     kind,
                     block,
                     nested,
                     ..
-                } => out.push(Item::Commit {
+                } => out.push(Step::Commit {
                     kind: *kind,
                     early: *nested && def.body.returning.contains(block),
                 }),
@@ -581,7 +581,7 @@ pub fn violations(
         );
         let statements = items
             .iter()
-            .filter(|item| matches!(item, Item::Statement { .. }))
+            .filter(|item| matches!(item, Step::Statement { .. }))
             .count();
         if statements < 2 {
             continue;
@@ -599,7 +599,7 @@ pub fn violations(
         let mut on_pool = 0;
         let mut helpers: Vec<&str> = Vec::new();
         for item in &items {
-            if let Item::Statement {
+            if let Step::Statement {
                 target: Target::Pool,
                 via,
             } = item
@@ -627,7 +627,7 @@ pub fn violations(
         let begun = |wanted: Kind| {
             items
                 .iter()
-                .filter(|item| matches!(item, Item::Begin(kind) if *kind == wanted))
+                .filter(|item| matches!(item, Step::Begin(kind) if *kind == wanted))
                 .count()
         };
         let (writes, reads) = (begun(Kind::Write), begun(Kind::Read));
@@ -640,12 +640,12 @@ pub fn violations(
 
         let begin_write = items
             .iter()
-            .position(|item| matches!(item, Item::Begin(Kind::Write)));
+            .position(|item| matches!(item, Step::Begin(Kind::Write)));
         let read_after_begin = begin_write.is_some_and(|begin| {
             items.iter().skip(begin).any(|item| {
                 matches!(
                     item,
-                    Item::Statement {
+                    Step::Statement {
                         target: Target::Transaction(Kind::Read),
                         ..
                     }
@@ -664,7 +664,7 @@ pub fn violations(
                 .iter()
                 .enumerate()
                 .filter_map(|(at, item)| match item {
-                    Item::Commit {
+                    Step::Commit {
                         kind: Kind::Write,
                         early: skipped,
                     } if early || !*skipped => Some(at),
@@ -676,7 +676,7 @@ pub fn violations(
             let after = items
                 .iter()
                 .skip(last + 1)
-                .any(|item| matches!(item, Item::Statement { .. }));
+                .any(|item| matches!(item, Step::Statement { .. }));
             if after {
                 add(format!(
                     "{name} runs a statement after committing its write transaction; \
