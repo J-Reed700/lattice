@@ -71,6 +71,14 @@ describe('InterviewDrill', () => {
     expect(screen.getByText(/Add your interview date/)).toBeVisible();
   });
 
+  it('shows the message the backend gave when it refuses', async () => {
+    const user = userEvent.setup();
+    mocks.create.mockResolvedValue({ ok: false, error: 'failed', details: { details: 'The interview has no questions yet.' } });
+    show();
+    await user.click(screen.getByRole('button', { name: 'Make drill deck' }));
+    await waitFor(() => expect(screen.getByRole('alert')).toHaveTextContent('The interview has no questions yet.'));
+  });
+
   it('shows why a deck could not be made and opens no drawer', async () => {
     const user = userEvent.setup();
     mocks.create.mockResolvedValue({ ok: false, error: 'This interview is not ready yet.' });
