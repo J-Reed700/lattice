@@ -4,7 +4,7 @@ use serde_json::json;
 
 fn block(kind: &str, title: &str) -> Value {
     let body = if kind == "check" {
-        format!("{title}: {CASE}\n\n{CHECK_REVEAL}\n\n{title}: {REVEAL}")
+        format!("Case for {title}: what happens to the lid?\n\n{CHECK_REVEAL}\n\nAnswer for {title}: it bulges.")
     } else {
         format!("Body of {title}.")
     };
