@@ -223,6 +223,55 @@ async fn diagnostic_lifecycle_is_idempotent_complete_and_does_not_claim_mastery(
 }
 
 #[tokio::test]
+async fn a_starting_point_that_changed_since_it_was_loaded_is_reported_as_a_conflict() -> Result<()>
+{
+    let pool = pool().await?;
+    let program = active_program(&pool).await?;
+    let repo = LearningCurriculumRepository::new(pool.clone());
+    let stale = program.summary.revision + 1;
+    crate::tests::assert_conflict(
+        repo.start_diagnostic(&StartLearningDiagnosticRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            expected_revision: stale,
+        })
+        .await,
+    );
+    crate::tests::assert_conflict(
+        repo.skip_diagnostic(&SkipLearningDiagnosticRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            expected_revision: stale,
+        })
+        .await,
+    );
+    let active = repo
+        .start_diagnostic(&StartLearningDiagnosticRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            expected_revision: program.summary.revision,
+        })
+        .await?;
+    let submit = |expected_revision: i64, expected_diagnostic_revision: Option<i64>| {
+        SubmitLearningDiagnosticRequestDto {
+            operation_id: op_id(),
+            program_id: program.summary.id.clone(),
+            diagnostic_id: active.id.clone(),
+            expected_revision,
+            responses: vec![],
+            save_only: true,
+            expected_diagnostic_revision,
+        }
+    };
+    crate::tests::assert_conflict(repo.submit_diagnostic(&submit(stale, None)).await);
+    crate::tests::assert_conflict(
+        repo.submit_diagnostic(&submit(program.summary.revision, Some(99)))
+            .await,
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn completed_and_assessed_lessons_are_protected_by_current_outcome_joins() -> Result<()> {
     let pool = pool().await?;
     let program = active_program(&pool).await?;
