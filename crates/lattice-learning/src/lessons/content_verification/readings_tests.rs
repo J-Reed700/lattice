@@ -1753,18 +1753,21 @@ async fn parts_tells_of_a_statement_while_another_comparison_is_still_in_flight(
 }
 
 /// Wraps a model and records the most of its calls that were in flight
-/// together; each call yields a few times before it is answered, so a
-/// concurrent caller gets in.
+/// together; each call is held until `overlap` are in flight, at most 10 s.
 struct Overlap<'m> {
     inner: &'m dyn LLMPort,
+    overlap: usize,
+    peak: tokio::sync::watch::Sender<usize>,
     now: std::sync::atomic::AtomicUsize,
     most: std::sync::atomic::AtomicUsize,
 }
 
 impl<'m> Overlap<'m> {
-    fn new(inner: &'m dyn LLMPort) -> Self {
+    fn new(inner: &'m dyn LLMPort, overlap: usize) -> Self {
         Self {
             inner,
+            overlap,
+            peak: tokio::sync::watch::channel(0).0,
             now: Default::default(),
             most: Default::default(),
         }
@@ -1781,9 +1784,12 @@ impl LLMPort for Overlap<'_> {
         use std::sync::atomic::Ordering::SeqCst;
         let now = self.now.fetch_add(1, SeqCst) + 1;
         self.most.fetch_max(now, SeqCst);
-        for _ in 0..5 {
-            tokio::task::yield_now().await;
-        }
+        self.peak.send_modify(|peak| *peak = (*peak).max(now));
+        let _ = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            self.peak.subscribe().wait_for(|peak| *peak >= self.overlap),
+        )
+        .await;
         let answer = self.inner.complete(request).await;
         self.now.fetch_sub(1, SeqCst);
         answer
@@ -1807,7 +1813,7 @@ async fn ground_asks_two_statements_that_both_need_a_call_at_once() -> Result<()
     let references = ReferenceCollection::lexical(&sources())?;
     let world = world_of(&references, citing(&references)?);
     let scripted = ScriptedBridge::new(vec![half_stated(), half_stated()]);
-    let model = Overlap::new(&scripted);
+    let model = Overlap::new(&scripted, 2);
     let claims = [
         (0, claim("Quillet is a lexer that reads characters.")),
         (0, claim("Quillet is a lexer that skips blanks.")),
@@ -1825,7 +1831,7 @@ async fn consistency_asks_two_statements_that_both_need_a_call_at_once() -> Resu
     let references = ReferenceCollection::lexical(&sources())?;
     let world = world_of(&references, citing(&references)?);
     let classes = Classes::new(&[]);
-    let model = Overlap::new(&classes);
+    let model = Overlap::new(&classes, 2);
     let claims = [(0, claim(CONSISTENT)), (0, claim(CONTRADICTED))];
 
     let reads = read_all(Reading::Consistency, &model, &world, &claims).await?;
@@ -1840,7 +1846,7 @@ async fn knowledge_asks_two_statements_that_both_need_a_call_at_once() -> Result
     let references = ReferenceCollection::lexical(&sources())?;
     let world = world_of(&references, Citations::default());
     let classes = closed_book();
-    let model = Overlap::new(&classes);
+    let model = Overlap::new(&classes, 2);
     let claims = [(0, claim(TRUE_COMMON)), (0, claim(WANTS_A_SOURCE))];
 
     let reads = read_all(Reading::Knowledge, &model, &world, &claims).await?;
