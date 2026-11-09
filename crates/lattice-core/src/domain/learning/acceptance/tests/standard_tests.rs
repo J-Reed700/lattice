@@ -10,9 +10,9 @@ fn the_standard_policy_breaks_no_invariant() {
 }
 
 #[test]
-fn the_standard_policy_is_acceptance_v2() {
-    assert_eq!(StandardPolicy::new().version(), "acceptance-v2");
-    assert_eq!(STANDARD_POLICY, "acceptance-v2");
+fn the_standard_policy_is_acceptance_v1() {
+    assert_eq!(StandardPolicy::new().version(), "acceptance-v1");
+    assert_eq!(STANDARD_POLICY, "acceptance-v1");
 }
 
 #[test]

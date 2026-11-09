@@ -1298,177 +1298,25 @@ async fn a_cut_that_takes_the_sentence_out_ends_the_statement_removed() -> Resul
 }
 
 #[tokio::test]
-async fn a_refused_cut_keeps_its_section_and_publishes_the_statement_not_verified() -> Result<()> {
+async fn a_refused_cut_ends_removed_and_its_section_goes() -> Result<()> {
     // The sentence is the whole of its field: it cannot be taken out.
     let (mut ledger, id, mut context) = cut_sent(SENTENCE, SENTENCE).await?;
 
     repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
     let entry = ledger.entry(&id).unwrap();
-    assert_eq!(entry.decided(), Some(&Then::End(End::Unverified)));
-    assert!(
-        matches!(entry.state(), ClaimState::Unverified { .. }),
-        "{:?}",
-        entry.state()
-    );
-    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
-    assert_eq!(context["candidate"]["blocks"][1]["body"], SENTENCE);
-    Ok(())
-}
-
-const MORE: &str = "A comma separates each value from the next.";
-
-#[tokio::test]
-async fn a_statement_whose_narrowing_was_not_applied_keeps_the_sentence_it_shares_with_a_resolved_one(
-) -> Result<()> {
-    let policy = StandardPolicy::new();
-    let body = format!("{SENTENCE} {HEADER} {MORE}");
-    let mut ledger = open().await?;
-    let target = claim_in(
-        &mut ledger,
-        "target",
-        1,
-        (SENTENCE, SENTENCE),
-        &body,
-        Some(SOURCED),
-    )
-    .await?;
-    claim(&mut ledger, "other", (HEADER, HEADER), HEADER, SOURCED).await?;
-    walk(&mut ledger, &target, Class::Sourced, &CUTTING).await?;
-    let mate = claim_in(
-        &mut ledger,
-        "mate",
-        1,
-        (SENTENCE, MORE),
-        &body,
-        Some(REASONED),
-    )
-    .await?;
-    walk(&mut ledger, &mate, Class::Reasoning, &CONSISTENT).await?;
-    ledger
-        .begin_repairs(&policy, &around(&body), std::slice::from_ref(&target))
-        .await?;
-    ledger
-        .reject(
-            &policy,
-            std::slice::from_ref(&target),
-            "The edit was unusable.",
-        )
-        .await?;
-    ledger
-        .begin_repairs(&policy, &around(&body), std::slice::from_ref(&target))
-        .await?;
-    let mut context = json!({
-        "candidate": around(&body), "requirements": {}, "evidence": [],
-        "executions": [], "repairHistory": [],
-        "failedClaims": [{"unit":1,"claimId":"target","sentence":SENTENCE,"evidence":[],"lastAttempt":true}],
-    });
-
-    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
-
-    assert_eq!(context["candidate"]["blocks"][1]["body"], body);
-    let entry = ledger.entry(&target).unwrap();
-    assert_eq!(entry.decided(), Some(&Then::End(End::Unverified)));
-    assert!(
-        matches!(entry.state(), ClaimState::Unverified { .. }),
-        "{:?}",
-        entry.state()
-    );
-    assert!(
-        matches!(
-            ledger.entry(&mate).unwrap().state(),
-            ClaimState::Consistent { .. }
-        ),
-        "{:?}",
-        ledger.entry(&mate).unwrap().state()
-    );
-    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_cut_that_would_leave_a_section_fewer_than_two_teaching_sentences_is_not_made(
-) -> Result<()> {
-    let body = format!("{SENTENCE} {HEADER}");
-    let (mut ledger, id, mut context) = cut_sent(SENTENCE, &body).await?;
-
-    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
-
-    assert_eq!(context["candidate"]["blocks"][1]["body"], body);
-    assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
-    assert!(ledger.cuts.taken.is_empty(), "{:?}", ledger.cuts.taken);
-    let state = ledger.entry(&id).unwrap().state();
-    assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
-    Ok(())
-}
-
-const WIDE_A: &str = "A table lists its rows in order.";
-const WIDE_B: &str = "A table names each column once.";
-const WIDE_C: &str = "A table keeps one value in each cell.";
-const WIDE_D: &str = "A table may hold many rows.";
-
-#[tokio::test]
-async fn a_cut_that_thins_one_section_is_held_back_while_a_cut_in_another_is_made() -> Result<()> {
-    let policy = StandardPolicy::new();
-    let thin = format!("{WIDE_A} {WIDE_B}");
-    let wide = format!("{WIDE_C} {WIDE_D} {MORE}");
-    let lesson = json!({"blocks":[
-        {"kind":"explanation","title":"First","body":"The first section stands. It says two things.","rubric":[]},
-        {"kind":"explanation","title":"Thin","body":thin,"rubric":[]},
-        {"kind":"explanation","title":"Wide","body":wide,"rubric":[]}
-    ],"questions":[]});
-    let mut ledger = open().await?;
-    let held = claim_in(
-        &mut ledger,
-        "held",
-        1,
-        (WIDE_A, WIDE_A),
-        &thin,
-        Some(SOURCED),
-    )
-    .await?;
-    let made = claim_in(
-        &mut ledger,
-        "made",
-        2,
-        (WIDE_C, WIDE_C),
-        &wide,
-        Some(SOURCED),
-    )
-    .await?;
-    claim(&mut ledger, "other", (HEADER, HEADER), HEADER, SOURCED).await?;
-    for id in [&held, &made] {
-        walk(&mut ledger, id, Class::Sourced, &CUTTING).await?;
-        assert_eq!(node_of(&ledger, id), Some("s.cut"));
-    }
-    ledger
-        .begin_repairs(&policy, &lesson, &[held.clone(), made.clone()])
-        .await?;
-    let mut context = json!({
-        "candidate": lesson, "requirements": {}, "evidence": [],
-        "executions": [], "repairHistory": [],
-        "failedClaims": [
-            {"unit":1,"claimId":"held","sentence":WIDE_A,"evidence":[],"lastAttempt":true},
-            {"unit":2,"claimId":"made","sentence":WIDE_C,"evidence":[],"lastAttempt":true},
-        ],
-    });
-
-    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
-
-    assert_eq!(context["candidate"]["blocks"][1]["body"], thin);
-    let state = ledger.entry(&held).unwrap().state();
-    assert!(matches!(state, ClaimState::Unverified { .. }), "{state:?}");
     assert_eq!(
-        context["candidate"]["blocks"][2]["body"],
-        format!("{WIDE_D} {MORE}")
+        entry.decided(),
+        Some(&Then::End(End::Removed { section_goes: true }))
     );
     assert!(matches!(
-        ledger.entry(&made).unwrap().state(),
+        entry.state(),
         ClaimState::Removed {
-            section_goes: false,
+            by: Actor::Machine,
             ..
         }
     ));
+    assert!(ledger.cuts.going.contains_key(&1));
     Ok(())
 }
 

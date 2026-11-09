@@ -50,9 +50,6 @@ pub enum Violation {
     /// 8: a rewrite's successor can be rewritten again, or can change class
     /// into an entry.
     RewrittenTwice { class: Class, node: NodeId },
-    /// 9: a rewrite or a cut is reachable from an entry without crossing an
-    /// edge on `Refuted`.
-    RewriteWithoutRefutation { class: Class, node: NodeId },
 }
 
 /// Every invariant of §2.5 that `policy` breaks, each once. The ceiling is
