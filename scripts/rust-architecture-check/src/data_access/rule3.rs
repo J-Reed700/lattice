@@ -73,7 +73,11 @@ enum Event {
         at: Position,
     },
     Begin(Position),
-    Commit(Position),
+    /// A commit, and where the block it sits in ends.
+    Commit {
+        at: Position,
+        until: Position,
+    },
 }
 
 impl Event {
@@ -82,7 +86,7 @@ impl Event {
             Event::Statement { at, .. }
             | Event::Helper { at, .. }
             | Event::Begin(at)
-            | Event::Commit(at) => *at,
+            | Event::Commit { at, .. } => *at,
         }
     }
 }
@@ -126,6 +130,7 @@ fn split_arguments(stream: TokenStream) -> Vec<Arg> {
 struct Body {
     acquired: HashSet<String>,
     events: Vec<Event>,
+    blocks: Vec<Position>,
 }
 
 impl Body {
@@ -139,7 +144,14 @@ impl Body {
         }
         match method {
             "begin_write" => self.events.push(Event::Begin(at)),
-            "commit" => self.events.push(Event::Commit(at)),
+            "commit" => {
+                let until = self
+                    .blocks
+                    .last()
+                    .copied()
+                    .unwrap_or((usize::MAX, usize::MAX));
+                self.events.push(Event::Commit { at, until });
+            }
             _ => {}
         }
     }
@@ -156,6 +168,11 @@ impl<'ast> Visit<'ast> for Body {
         if !item_attrs(item).is_some_and(test_only) {
             visit::visit_item(self, item);
         }
+    }
+    fn visit_block(&mut self, block: &'ast syn::Block) {
+        self.blocks.push(position(block.brace_token.span.close()));
+        visit::visit_block(self, block);
+        self.blocks.pop();
     }
     fn visit_local(&mut self, local: &'ast syn::Local) {
         if test_only(&local.attrs) {
@@ -449,7 +466,7 @@ impl<'a> Resolver<'a> {
                     via.pop();
                     stack.pop();
                 }
-                Event::Statement { .. } | Event::Begin(_) | Event::Commit(_) => {}
+                Event::Statement { .. } | Event::Begin(_) | Event::Commit { .. } => {}
             }
         }
     }
@@ -513,17 +530,24 @@ pub fn violations(
             .events
             .iter()
             .any(|event| matches!(event, Event::Begin(_)));
-        let last_commit = def
+        let commits: Vec<(Position, Position)> = def
             .body
             .events
             .iter()
             .filter_map(|event| match event {
-                Event::Commit(at) => Some(*at),
+                Event::Commit { at, until } => Some((*at, *until)),
                 _ => None,
             })
-            .max();
-        if let (true, Some(commit)) = (begins, last_commit) {
-            if counted.iter().any(|call| call.at < commit) {
+            .collect();
+        let last_commit = commits.iter().map(|(at, _)| *at).max();
+        if let (true, Some(last)) = (begins, last_commit) {
+            let inside = |call: &Counted| {
+                call.at < last
+                    && !commits
+                        .iter()
+                        .any(|(at, until)| *at < call.at && call.at <= *until)
+            };
+            if counted.iter().any(inside) {
                 add(format!(
                     "{} runs a statement on the pool before committing its write \
                      transaction; run it in the transaction",
