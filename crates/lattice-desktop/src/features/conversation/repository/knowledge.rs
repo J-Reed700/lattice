@@ -377,7 +377,7 @@ impl ConversationRepository {
             }
             offset += PROMPT_PAGE as i64;
         }
-        let terms: Vec<_> = informative_terms(query).into_iter().take(32).collect();
+        let terms = informative_terms(query);
         let semantic = self.knowledge_semantic_scores(conversation, query).await;
         let mut prepared =
             lattice_core::application::ports::conversation_memory::PreparedMemory::default();
@@ -494,11 +494,7 @@ impl ConversationRepository {
         history: bool,
         max_bytes: usize,
     ) -> Result<serde_json::Value> {
-        let terms: Vec<_> = query
-            .split_whitespace()
-            .take(32)
-            .map(str::to_lowercase)
-            .collect();
+        let terms: Vec<_> = query.split_whitespace().map(str::to_lowercase).collect();
         let mut ranked = Vec::new();
         let mut more = false;
         for page in 0..20 {
