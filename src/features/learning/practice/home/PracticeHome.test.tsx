@@ -1,275 +1,139 @@
-import type { ReactNode } from 'react';
-import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, within } from '@testing-library/react';
-import { beforeEach, describe, expect, it } from 'vitest';
+import userEvent from '@testing-library/user-event';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
-import type { LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
-import type { DueItemDto, LearningPracticeProfileDto } from './practiceHomeApi';
-import type { HistoryItem } from './History';
-import { type OpenPracticeTarget, PracticeHome } from './PracticeHome';
+import type * as Wire from '@/lib/bindings';
 
-const mockProgram: LearningProgramDto = {
-  summary: {
-    id: 'program-1',
-    title: 'Problem Solving and Interview Preparation',
-    goal: 'Master algorithmic problem solving and interview communication',
-    status: 'active',
-    revision: 1,
-    moduleCount: 1,
-    lessonCount: 2,
-    completedLessons: 0,
-    currentLessonId: 'lesson-1',
-    createdAt: 1_790_000_000_000,
-  },
-  priorKnowledge: '',
-  minutesPerSession: 30,
-  modelName: 'standard',
-  modules: [],
-  sources: [],
-};
+import { PracticeHome, type PracticeHomeProps } from './PracticeHome';
+import type { HistoryItem } from './historyItems';
 
-const mockLesson: LearningLessonDto = {
-  id: 'lesson-1',
-  title: 'Strings and arrays',
-  preparation: 'ready',
-  objective: 'Master linear scanning and two pointers',
-} as LearningLessonDto;
+const data = vi.hoisted(() => ({
+  profile: undefined as unknown,
+  fit: undefined as unknown,
+  due: [] as unknown[],
+  history: { items: [] as unknown[], continueItem: null as unknown },
+}));
 
-const renderWithClient = (ui: ReactNode) => {
-  const client = new QueryClient({
-    defaultOptions: {
-      queries: { retry: false, gcTime: Infinity },
-      mutations: { retry: false },
-    },
-  });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
-};
+vi.mock('./usePracticeData', () => ({
+  usePracticeProfile: () => ({ profile: data.profile, loading: false, error: null, retry: vi.fn(), reload: vi.fn(), set: vi.fn() }),
+  usePracticeFit: () => ({ fit: data.fit, checking: false, error: null, retry: vi.fn() }),
+  usePracticeDue: () => ({ items: data.due, loading: false, error: null, retry: vi.fn() }),
+  usePracticeHistory: () => ({ ...data.history, loading: false, error: null, retry: vi.fn() }),
+}));
+
+const profile = (patch: Partial<Wire.LearningPracticeProfileDto> = {}): Wire.LearningPracticeProfileDto => ({
+  programId: 'course-1',
+  details: '',
+  language: null,
+  interviewAt: null,
+  company: null,
+  role: null,
+  revision: 1,
+  ...patch,
+});
+
+function show(overrides: Partial<PracticeHomeProps> = {}) {
+  const props: PracticeHomeProps = {
+    programId: 'course-1',
+    goal: 'Learn to code',
+    lessonId: 'lesson-1',
+    onStart: vi.fn(),
+    onOpenTarget: vi.fn(),
+    onStartDue: vi.fn(),
+    onOpenWorkbench: vi.fn(),
+    ...overrides,
+  };
+  render(<PracticeHome {...props} />);
+  return props;
+}
+
+const cardTitles = () => screen.getAllByRole('heading', { level: 3 }).map((heading) => heading.textContent?.trim());
+
+beforeEach(() => {
+  data.profile = profile();
+  data.fit = { code: 'fits', reason: null };
+  data.due = [];
+  data.history = { items: [], continueItem: null };
+});
+
+afterEach(() => localStorage.clear());
 
 describe('PracticeHome', () => {
-  beforeEach(() => {
-    localStorage.clear();
+  it('shows the five cards in a fixed order when the course teaches code', () => {
+    show();
+    expect(cardTitles()).toEqual(['Explain', 'Spot the mistakes', 'Code', 'Mock interview', 'Role-play']);
+    expect(screen.getAllByRole('button', { name: /^Start (Explain|Spot|Code|Mock|Role)/ })).toHaveLength(5);
   });
 
-  it('renders the five cards in fixed order (Explain, Spot the mistakes, Code, Mock interview, Role-play), each with one Start button', () => {
-    renderWithClient(<PracticeHome program={mockProgram} currentLesson={mockLesson} />);
-
-    const headings = screen.getAllByRole('heading', { level: 3 });
-    const titles = headings.map((h) => h.textContent?.trim());
-    expect(titles).toEqual([
-      'Explain',
-      'Spot the mistakes',
-      'Code',
-      'Mock interview',
-      'Role-play',
-    ]);
-
-    const startButtons = screen.getAllByRole('button', { name: /^start$/i });
-    expect(startButtons).toHaveLength(5);
+  it('leaves out Code when the course does not teach code', () => {
+    data.fit = { code: 'does_not_fit', reason: null };
+    show();
+    expect(cardTitles()).toEqual(['Explain', 'Spot the mistakes', 'Mock interview', 'Role-play']);
   });
 
-  it('shows "Fits what you\'re preparing for" badge on Mock interview when profile has interviewAt without reordering cards', () => {
-    const profileWithDate: LearningPracticeProfileDto = {
-      programId: 'program-1',
-      details: 'Practicing algorithmic questions',
-      language: 'python',
-      interviewAt: Date.now() + 10 * 86_400_000,
-      company: null,
-      role: null,
-      revision: 1,
-    };
-
-    renderWithClient(
-      <PracticeHome
-        program={mockProgram}
-        currentLesson={mockLesson}
-        profile={profileWithDate}
-      />,
-    );
-
-    expect(screen.getByText("Fits what you're preparing for")).toBeInTheDocument();
-
-    const headings = screen.getAllByRole('heading', { level: 3 });
-    const titles = headings.map((h) => h.textContent?.trim());
-    expect(titles).toEqual([
-      'Explain',
-      'Spot the mistakes',
-      'Code',
-      'Mock interview',
-      'Role-play',
-    ]);
+  it('badges Mock interview when there is an interview date, without moving a card', () => {
+    data.profile = profile({ interviewAt: Date.now() + 10 * 86_400_000 });
+    show();
+    const mock = screen.getByTestId('card-mock');
+    expect(within(mock).getByText("Fits what you're preparing for")).toBeVisible();
+    expect(screen.getAllByText("Fits what you're preparing for")).toHaveLength(1);
+    expect(cardTitles()).toEqual(['Explain', 'Spot the mistakes', 'Code', 'Mock interview', 'Role-play']);
   });
 
-  it('shows "Fits what you\'re preparing for" badge on Mock interview when profile details mention "interview" case-insensitively', () => {
-    const profileWithMention: LearningPracticeProfileDto = {
-      programId: 'program-1',
-      details: 'Preparing for technical INTERVIEW rounds with a live coach',
-      language: 'python',
-      interviewAt: null,
-      company: null,
-      role: null,
-      revision: 1,
-    };
-
-    renderWithClient(
-      <PracticeHome
-        program={mockProgram}
-        currentLesson={mockLesson}
-        profile={profileWithMention}
-      />,
-    );
-
-    expect(screen.getByText("Fits what you're preparing for")).toBeInTheDocument();
-
-    const headings = screen.getAllByRole('heading', { level: 3 });
-    const titles = headings.map((h) => h.textContent?.trim());
-    expect(titles).toEqual([
-      'Explain',
-      'Spot the mistakes',
-      'Code',
-      'Mock interview',
-      'Role-play',
-    ]);
+  it('badges Mock interview when the details mention an interview, in any case', () => {
+    data.profile = profile({ details: 'Ready for the INTERVIEW loop' });
+    show();
+    expect(within(screen.getByTestId('card-mock')).getByText("Fits what you're preparing for")).toBeVisible();
   });
 
-  it('does not show the badge on Mock interview when profile has no interview date and details do not mention interview', () => {
-    const profileGeneral: LearningPracticeProfileDto = {
-      programId: 'program-1',
-      details: 'General practice on basic data structures',
-      language: 'python',
-      interviewAt: null,
-      company: null,
-      role: null,
-      revision: 1,
-    };
-
-    renderWithClient(
-      <PracticeHome
-        program={mockProgram}
-        currentLesson={mockLesson}
-        profile={profileGeneral}
-      />,
-    );
-
-    expect(screen.getByRole('heading', { name: 'Mock interview' })).toBeInTheDocument();
+  it('shows no badge when the profile mentions nothing of the kind', () => {
+    show();
     expect(screen.queryByText("Fits what you're preparing for")).not.toBeInTheDocument();
   });
 
-  it('renders the Continue card when an open session, attempt, or drill exists', () => {
-    const openTarget: OpenPracticeTarget = {
-      id: 'session-1',
-      title: 'First repeated word',
-      kind: 'code',
-      settingOrHelp: 'Code · Coached · 12 min in',
-      stoppedAt: 'Stopped at Examples, stage 2 of 6',
-      stageInfo: 'stage 2 of 6',
+  it('reads the Code card as a sentence and starts a coached build from it', async () => {
+    const user = userEvent.setup();
+    const props = show();
+    const card = screen.getByTestId('card-code');
+    expect(within(card).getByRole('combobox', { name: 'Difficulty' })).toHaveValue('easy');
+    await user.click(within(card).getByRole('button', { name: /^Start/ }));
+    expect(props.onStart).toHaveBeenCalledWith(
+      expect.objectContaining({ kind: 'coding-build', choice: expect.objectContaining({ lessonId: 'lesson-1', setting: 'coached', difficulty: 'easy', task: 'problem' }) }),
+    );
+  });
+
+  it('continues the work left open', async () => {
+    const user = userEvent.setup();
+    const open: HistoryItem = {
+      id: 'coding:s1',
+      card: 'code',
+      title: 'Two sum',
+      when: 1,
+      detail: 'Coached · Problem',
+      result: 'In progress',
+      resumable: true,
+      stoppedAt: 'At the code stage',
+      target: { kind: 'coding', sessionId: 's1' },
     };
-
-    renderWithClient(
-      <PracticeHome
-        program={mockProgram}
-        currentLesson={mockLesson}
-        openTarget={openTarget}
-      />,
-    );
-
-    expect(screen.getByText('Continue')).toBeInTheDocument();
-    expect(screen.getByText('First repeated word')).toBeInTheDocument();
-    expect(screen.getByText('Stopped at Examples, stage 2 of 6')).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^continue$/i })).toBeInTheDocument();
+    data.history = { items: [open], continueItem: open };
+    const props = show();
+    await user.click(screen.getByRole('button', { name: /^Continue/ }));
+    expect(props.onOpenTarget).toHaveBeenCalledWith({ kind: 'coding', sessionId: 's1' });
   });
 
-  it('does not render the Continue card when no open target exists', () => {
-    renderWithClient(
-      <PracticeHome
-        program={mockProgram}
-        currentLesson={mockLesson}
-        openTarget={null}
-      />,
-    );
-
-    expect(screen.getByRole('heading', { name: 'Code' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /^continue$/i })).not.toBeInTheDocument();
+  it('starts the most overdue item that is due', async () => {
+    const user = userEvent.setup();
+    const item: Wire.DueItemDto = { kind: 'drill_lesson', label: 'Strings', count: 1, dueAt: 1, lessonId: 'lesson-1', material: null };
+    data.due = [item];
+    const props = show();
+    await user.click(screen.getByRole('button', { name: 'Start the most overdue' }));
+    expect(props.onStartDue).toHaveBeenCalledWith(item);
   });
 
-  it('renders DueStrip and History with filters', () => {
-    const dueItems: DueItemDto[] = [
-      {
-        id: 'due-1',
-        kind: 'pattern',
-        title: '3 problem patterns',
-        subtitle: '1 overdue by 2 days, 2 due today',
-        isOverdue: true,
-      },
-    ];
-
-    const historyItems: HistoryItem[] = [
-      {
-        id: 'hist-1',
-        when: 'Yesterday',
-        what: 'Count distinct words',
-        kind: 'code',
-        settingOrHelp: 'Coached',
-        result: 'All 8 cases pass',
-      },
-    ];
-
-    renderWithClient(
-      <PracticeHome
-        program={mockProgram}
-        currentLesson={mockLesson}
-        dueItems={dueItems}
-        historyItems={historyItems}
-      />,
-    );
-
-    expect(screen.getByRole('heading', { name: /due/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /start the most overdue/i })).toBeInTheDocument();
-
-    expect(screen.getByRole('heading', { name: /history/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^all$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^explain$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^spot the mistakes$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^code$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^mock interview$/i })).toBeInTheDocument();
-    expect(screen.getByRole('button', { name: /^role-play$/i })).toBeInTheDocument();
-  });
-
-  it('ensures Mock interview offers Mock and Watched settings only, while Coached stays on Code', () => {
-    renderWithClient(<PracticeHome program={mockProgram} currentLesson={mockLesson} />);
-
-    const mockCard = screen.getByTestId('card-mock');
-    expect(within(mockCard).queryByText(/coached/i)).not.toBeInTheDocument();
-    expect(within(mockCard).getByText(/watched|mock/i)).toBeInTheDocument();
-
-    const codeCard = screen.getByTestId('card-code');
-    expect(within(codeCard).getByText(/coached/i)).toBeInTheDocument();
-  });
-
-  it('adapts default practice modes to non-coding courses (e.g. a biology course on mitochondria)', () => {
-    const biologyProgram: LearningProgramDto = {
-      ...mockProgram,
-      summary: {
-        ...mockProgram.summary,
-        id: 'program-bio-1',
-        title: 'Cellular Biology',
-        goal: 'Understand organelle structure and how mitochondria generate ATP',
-      },
-    };
-    const mitochondriaLesson: LearningLessonDto = {
-      id: 'lesson-mito',
-      title: 'Mitochondria and cellular respiration',
-      preparation: 'ready',
-      objective: 'Explain the electron transport chain and ATP synthesis',
-    } as LearningLessonDto;
-
-    renderWithClient(
-      <PracticeHome program={biologyProgram} currentLesson={mitochondriaLesson} />,
-    );
-
-    const spotCard = screen.getByTestId('card-spot');
-    expect(within(spotCard).getByText('explanation')).toBeInTheDocument();
-
-    const mockCard = screen.getByTestId('card-mock');
-    expect(within(mockCard).getByText('technical questions')).toBeInTheDocument();
+  it('opens the practical workbench from History', async () => {
+    const user = userEvent.setup();
+    const props = show();
+    await user.click(screen.getByRole('button', { name: 'Code labs and simulations' }));
+    expect(props.onOpenWorkbench).toHaveBeenCalled();
   });
 });
