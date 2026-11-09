@@ -2636,7 +2636,7 @@ fn with_questions(questions: Vec<Value>) -> Value {
 }
 
 #[tokio::test]
-async fn a_lesson_whose_cuts_would_take_more_than_a_third_of_its_sections_is_published_with_those_statements_not_verified(
+async fn statements_alone_in_their_sections_are_published_not_verified_instead_of_taking_the_sections_out(
 ) -> Result<()> {
     let course = Course::new().await?;
     let (first, second) = (figure(5), figure(6));
