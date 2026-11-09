@@ -107,6 +107,10 @@ export function formatContextLabel(
 
 type FitHint = Pick<DownloadedModel, 'fits_context_length' | 'fits_context_length_with_kv_quantization'>;
 
+/** Said when not even the smallest window fits: the weights are the problem. */
+export const NO_WINDOW_FITS_WARNING =
+  "This model may not fit in this machine's memory at any context window.";
+
 /**
  * The warning beside a context setting larger than what fits this machine's
  * memory now, saying how much does. Only a hint: nothing applies it.
@@ -118,6 +122,7 @@ export function contextFitWarning(
 ): string | null {
   const fits = tokensThatFit(model, window, kvCacheQuantization);
   if (fits == null) return null;
+  if (fits === 0) return NO_WINDOW_FITS_WARNING;
   return `May not fit in this machine's memory — about ${fits.toLocaleString('en-US')} tokens fit`;
 }
 

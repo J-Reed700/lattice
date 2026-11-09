@@ -22,7 +22,7 @@ import { useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import type { RoleWarmupState, WarmupRole } from '@/features/model/stores/modelWarmupStore';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
-import { fittedLaunchWindow, modelRefForRow, tokensThatFit } from '@/utils/chatModelSelection';
+import { NO_WINDOW_FITS_WARNING, fittedLaunchWindow, modelRefForRow, tokensThatFit } from '@/utils/chatModelSelection';
 import { formatFileSize, formatRelativeDate } from '@/utils/formatters';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
@@ -178,8 +178,9 @@ export function LocalModelRow({ model }: Props) {
           <div className="mt-1.5 text-xs leading-relaxed tabular-nums text-text-muted">{meta}</div>
           {launchWindow && fits != null ? (
             <div role="status" className="mt-0.5 text-xs text-warning-fg">
-              Loads at {launchWindow.toLocaleString('en-US')} tokens, which may not fit in this
-              machine&apos;s memory — about {fits.toLocaleString('en-US')} tokens fit.
+              {fits === 0
+                ? NO_WINDOW_FITS_WARNING
+                : `Loads at ${launchWindow.toLocaleString('en-US')} tokens, which may not fit in this machine's memory — about ${fits.toLocaleString('en-US')} tokens fit.`}
             </div>
           ) : null}
           {fittedWindow !== null ? (

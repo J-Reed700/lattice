@@ -18,9 +18,10 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
     || CEILING_WHEN_UNREPORTED;
   const { data: settings } = useSettingsQuery();
   const { mutateAsync: updateSettings } = useUpdateSettingsMutation();
-  // What the user is typing, from when they untick "Longest trained window"
-  // (the most a model was trained for, not the window it loads with) until
-  // they leave the field. It starts empty: leaving it empty saves no default.
+  // What the user is typing, from when they untick "Fit each model to this
+  // machine" until they leave the field. It starts empty: leaving it empty
+  // saves no default, so each model loads at the largest window that fits
+  // this machine, up to its trained maximum.
   const [entry, setEntry] = useState<string | null>(null);
   const saved = settings?.llm?.localContextWindow ?? null;
   const [shown, setShown] = useState<number | null>(saved);
@@ -69,7 +70,7 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
               if (shown !== null) void save(null);
             }}
           />
-          Longest trained window
+          Fit each model to this machine
         </label>
         <input
           id="local-context-window"
