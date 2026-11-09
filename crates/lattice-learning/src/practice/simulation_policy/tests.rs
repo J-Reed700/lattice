@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::error::AppError;
 use serde_json::json;
 
 const MAIN_INTERVIEW_CLOSING: &str =
