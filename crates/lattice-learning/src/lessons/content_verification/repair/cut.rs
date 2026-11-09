@@ -252,7 +252,7 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 narrowed.push(id);
                 continue;
             }
-            if matches!(decision, Some(CutOf::Whole)) {
+            if matches!(decision, Some(CutOf::Whole)) && ledger.is_statement(&id) {
                 refused.push(id);
                 continue;
             }
@@ -294,7 +294,7 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
                 }
                 Cut::Absent => taken.push(id),
                 Cut::Refused => {
-                    if let (true, Some(label)) = (example, label) {
+                    if let (false, Some(label)) = (ledger.is_statement(&id), label) {
                         ledger.cuts.go(place.unit_index, label);
                     }
                     refused.push(id);

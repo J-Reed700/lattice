@@ -144,9 +144,15 @@ fn counts_of_text(text: &str) -> Counts {
 }
 
 /// Whether `name` holds text a lesson teaches: not its kind, and not the
-/// citations, which quote sentences the part holds.
+/// citations and quotes, which copy sentences of a source or of the part.
 fn teaches(name: &str) -> bool {
-    name != "kind" && name != "citations"
+    !["kind", "citations", "quote"].contains(&name)
+}
+
+/// Whether the text at `path`, a JSON pointer or a `/`-joined path, is
+/// taught: no segment of it names a field [`teaches`] leaves out.
+pub(crate) fn teaches_path(path: &str) -> bool {
+    path.split('/').all(teaches)
 }
 
 fn collect(value: &Value, counts: &mut Counts) {

@@ -187,7 +187,7 @@ A remedy is one existing mechanism behind one step:
 - `Recite`: `repair::cite_where_supported`, writing the sentence's own `citations` entry: it moves the entry the sentence has, and adds one where the sentence has none or where its entry is another live statement's citation too. It never overwrites the section's quote, which other statements are read against (§1 #10), and it cites one claim of a sentence per call, so that two cannot write one entry.
 - `Uncite`: removes the sentence's own `citations` entry (new, beside it); a sentence that carries none has nothing to remove.
 - `Rewrite`: `repair::candidate` for a section's targets, each told its goal and the reading that failed it; the history it may not reintroduce is the statements that failed a reading and were rewritten or cut, nothing unjudged (§1 #14). Confinement is per target: a hunk that touches a protected sentence is put back and only the targets in that hunk are `NotApplied`; the section's other targets keep their rewrites and nothing else is charged (§1 #7). No repair writes a new statement: what a rewrite wrote is extracted again, and a statement there that continues neither a target nor a statement that shared its sentence takes that target's rewrite back (`NotApplied`), the rule the flow repair already keeps (classes design §3.10). So a rewrite has one successor per statement it touched, born of nothing, and the ceiling counts every check a rewrite can cause; today's children of a split sentence (`BornOfRepair`) cost checks no ceiling counted.
-- `Cut`: `repair/cut.rs`, on the sentence that states the claim. A quote that spans a passage is first narrowed to that sentence (`shared::text::claim_sentence`), so its other sentences stay (§1 #8); every copy of the sentence in the field still goes, each asserting what failed (`every_place_a_sentence_is_written_goes_with_it` stays true). A statement that draws on several sentences, which `claim_sentence` declines to name, and a sentence that carries other live statements are narrowed by the rewrite of §2.3 instead, and cut whole only when that rewrite cannot be applied.
+- `Cut`: `repair/cut.rs`, on the sentence that states the claim. A quote that spans a passage is first narrowed to that sentence (`shared::text::claim_sentence`), so its other sentences stay (§1 #8); every copy of the sentence in the field still goes, each asserting what failed (`every_place_a_sentence_is_written_goes_with_it` stays true). A statement that draws on several sentences, which `claim_sentence` declines to name, and a sentence that carries other live statements are narrowed by the rewrite of §2.3 instead; when that rewrite cannot be applied the cut is refused, nothing is taken out and the statement ends `Unverified`.
 
 ### 2.7 The round (Template Method)
 
@@ -270,7 +270,7 @@ All ten go in one step. A half-switched loop strands statements: one the policy 
     - A target whose sentence changed → `Rewritten`.
     - A target whose quote is still in its field → `NotApplied`.
     - A sentence the cut took out, or that was out already → `Cut`.
-    - A refused cut, its section going → `CannotCut`.
+    - A refused cut → `CannotCut`, ending the statement `Unverified`; only a failed example's refused cut takes its section out.
 
 **A user's hint.** A claim the user holds may carry a hint, what to search for (`ResearchWithHint`). The claim is the user's, so the policy does not walk it. The hint is the user's request for one research round and one reading of what that round found:
 - The hint goes to `research::expand` with the round's other targets and records `Researched`. The claim it names is looked for whatever its latest check found, since a reopened claim's last check may have passed, and what the round saves is in its scope. The claim takes no `Stepped` for it: a step is the machine's decision, and the claim is not the machine's.
@@ -322,7 +322,7 @@ Both are recorded at identification, from the claim's quote and the active sourc
   - a refused hunk refuses its section's targets;
   - the cut takes every sentence its quote touches;
   - the goal is recorded but not yet in the prompt.
-- **For step 7b:** a sentence that carries other live statements, and a statement no single sentence states, are cut whole; a rewrite may write a new statement.
+- **For step 7b:** a sentence that carries other live statements, and a statement no single sentence states, are narrowed (v1 cut them whole; v2 refuses the cut once the narrowing is not applied); a rewrite may write a new statement.
 - **For step 8:**
   - a rewritten sentence is extracted with its saved statements;
   - a claim no extraction continues is Removed.
@@ -362,7 +362,7 @@ pub enum Outcome {
     Stands, StandsElsewhere, AllCommon, Unproven, Refuted, NeedsSource, Unjudged,
     Done, Saved, FoundNothing, Rewritten, NotApplied, Cut, CannotCut,
 }
-pub enum End { Resolved, Consistent, GeneralKnowledge, NotAClaim, Removed { section_goes: bool } }
+pub enum End { Resolved, Consistent, GeneralKnowledge, NotAClaim, Removed { section_goes: bool }, Unverified }
 pub enum Target {
     Node(NodeId),
     /// Another class's graph, at its entry: the statement changes class by evidence.

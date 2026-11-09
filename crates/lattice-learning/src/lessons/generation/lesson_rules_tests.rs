@@ -4,7 +4,7 @@ use serde_json::json;
 
 fn block(kind: &str, title: &str) -> Value {
     let body = if kind == "check" {
-        format!("{title}: {CASE}\n\n{CHECK_REVEAL}\n\n{title}: {REVEAL}")
+        format!("Case for {title}: what happens to the lid?\n\n{CHECK_REVEAL}\n\nAnswer for {title}: it bulges.")
     } else {
         format!("Body of {title}.")
     };
@@ -99,7 +99,7 @@ fn a_check_holds_its_answer_back_under_one_reveal_line() {
         format!("{CASE} {REVEAL}"),
         format!("{CASE}\n{CHECK_REVEAL}\n  "),
         format!("  \n{CHECK_REVEAL}\n{REVEAL}"),
-        format!("{CASE}\n{CHECK_REVEAL}\n{REVEAL}\n{CHECK_REVEAL}\n{REVEAL}"),
+        format!("{CASE}\n{CHECK_REVEAL}\n{REVEAL}\n{CHECK_REVEAL}\nA second answer, worded apart."),
     ] {
         let mut candidate = lesson();
         candidate["blocks"][3]["body"] = json!(body);
@@ -575,8 +575,16 @@ fn an_answer_choice_longer_than_500_characters_or_of_two_letters_is_no_finding()
 #[test]
 fn a_section_longer_than_5000_characters_is_no_finding() {
     let mut candidate = lesson();
-    candidate["blocks"][0]["body"] =
-        json!("A long explanation of the idea, with no figures in it. ".repeat(120));
+    candidate["blocks"][0]["body"] = json!((0..120u8)
+        .map(|n| {
+            let (high, low) = (n / 26, n % 26);
+            format!(
+                "A long explanation of the idea {}{}, with no figures in it. ",
+                char::from(b'a' + high),
+                char::from(b'a' + low)
+            )
+        })
+        .collect::<String>());
     assert!(lesson_rules(&candidate).is_empty());
 }
 
@@ -702,9 +710,9 @@ fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
 #[test]
 fn labels_that_open_paragraphs_are_no_repeated_sentences() {
     let mut candidate = lesson();
-    for index in [0, 4] {
+    for (index, name) in [(0, "first"), (4, "fifth")] {
         candidate["blocks"][index]["body"] = json!(format!(
-            "**Predict first.** Opening of section {index}.\n\n**The model.** Model of section {index}."
+            "**Predict first.** Opening of the {name} section.\n\n**The model.** Model of the {name} section."
         ));
     }
     let findings = lesson_rules(&candidate);
@@ -714,7 +722,7 @@ fn labels_that_open_paragraphs_are_no_repeated_sentences() {
 #[test]
 fn the_steps_of_two_methods_are_no_repeated_sentences() {
     let mut candidate = lesson();
-    candidate["blocks"][1]["body"] = json!("Method A\n\n1. Type `pwd`.\n2. Expected output: `/home/pi/Music`.\n\nMethod B\n\n1. Type `pwd`.\n2. Expected output: `/home/pi/Music`.");
+    candidate["blocks"][1]["body"] = json!("Method A\n\n1. Type `pwd`.\n2. Expected output: `/home/learner/Music`.\n\nMethod B\n\n1. Type `pwd`.\n2. Expected output: `/home/learner/Music`.");
     let findings = lesson_rules(&candidate);
     assert!(findings.is_empty(), "{findings:?}");
 }
@@ -734,7 +742,9 @@ fn a_prose_sentence_after_a_label_is_still_compared() {
 #[test]
 fn what_stands_under_a_step_after_its_fence_is_no_repeated_sentence() {
     let method = |name: &str| {
-        format!("{name}\n\n1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/pi/Music`.")
+        format!(
+            "{name}\n\n1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`."
+        )
     };
     let mut candidate = lesson();
     candidate["blocks"][1]["body"] =
@@ -761,7 +771,8 @@ fn lines_inside_tilde_fences_are_no_repeated_sentences() {
 
 #[test]
 fn prose_after_a_list_has_ended_is_compared_again() {
-    const STEP: &str = "1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/pi/Music`.";
+    const STEP: &str =
+        "1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`.";
     const SAID: &str = "Say this once here.";
     let mut candidate = lesson();
     candidate["blocks"][1]["body"] = json!(format!("{SAID}\n\n{STEP}"));

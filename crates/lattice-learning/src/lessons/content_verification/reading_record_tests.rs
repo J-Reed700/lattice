@@ -169,7 +169,7 @@ fn stepped(
     rewrite_ahead: bool,
 ) -> ClaimEvent {
     ClaimEvent::Stepped {
-        policy: "acceptance-v1".into(),
+        policy: "acceptance-v2".into(),
         step,
         outcome,
         then,
