@@ -7,7 +7,6 @@
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 
-const MAX_EXACT_CHARS: usize = 2_000;
 const CONTEXT_CHARS: usize = 64;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
@@ -72,10 +71,10 @@ pub fn create_quote_selector(
     let exact = source_text.get(start_byte..end_byte).ok_or_else(|| {
         AppError::InvalidInput("Quote bounds are outside the saved source.".into())
     })?;
-    if exact.trim().is_empty() || exact.chars().count() > MAX_EXACT_CHARS {
-        return Err(AppError::InvalidInput(format!(
-            "A source quote must contain 1–{MAX_EXACT_CHARS} characters."
-        )));
+    if exact.trim().is_empty() {
+        return Err(AppError::InvalidInput(
+            "A source quote must not be empty.".into(),
+        ));
     }
     Ok(LearningTextQuoteSelector {
         exact: exact.into(),
@@ -94,7 +93,7 @@ pub fn match_quote_selector(
     source_text: &str,
     selector: &LearningTextQuoteSelector,
 ) -> Result<LearningQuoteMatch> {
-    if selector.exact.trim().is_empty() || selector.exact.chars().count() > MAX_EXACT_CHARS {
+    if selector.exact.trim().is_empty() {
         return Err(AppError::InvalidInput(
             "The quote selector has invalid exact text.".into(),
         ));
