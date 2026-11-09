@@ -13,6 +13,8 @@ pub(super) const NEVER_SAY_WHERE: &str = "Never say in the lesson's text where a
 pub(super) const QUOTED_WORDING: &str =
     "Wording quoted from a source goes in double quotation marks, and only in a cited sentence; never put wording in single quotation marks.";
 pub(super) const UNQUOTED_REMARKS: &str = "A misconception, a learner's thought, something a friend says or an example remark is written in the lesson's own sentence without quotation marks. Commands and their output go in code formatting.";
+/// Told to the writer and the repairs alike, so a step a repair adds starts where the lesson has left the learner.
+pub(super) const STEPS_IN_ORDER: &str = "The learner does the lesson's steps in order, with their own tools and materials, so each step starts from what the steps before it left: a later step uses what an earlier one made or set up, and never has the learner make or set it up again.";
 
 /// What the teaching repair is told besides [`INSTRUCTIONS`] when a lesson's
 /// parts list the sentences they cite (claim classes design §3.5).
@@ -67,7 +69,7 @@ pub(super) fn schema(candidate: &Value) -> Value {
 /// to append.
 pub(super) fn instructions(lesson: &Value) -> String {
     if lesson.pointer(CITATION).is_some() {
-        format!("{INSTRUCTIONS} {CITING} {NEVER_SAY_WHERE} {QUOTED_WORDING} {UNQUOTED_REMARKS}")
+        format!("{INSTRUCTIONS} {CITING} {NEVER_SAY_WHERE} {QUOTED_WORDING} {UNQUOTED_REMARKS} {STEPS_IN_ORDER}")
     } else {
         INSTRUCTIONS.to_owned()
     }
@@ -77,7 +79,7 @@ pub(super) fn instructions(lesson: &Value) -> String {
 pub(super) fn rewrite_instructions(lesson: &Value) -> String {
     if lesson.pointer(CITATION).is_some() {
         format!(
-            "{INSTRUCTIONS} {CITING_REWRITE} {NEVER_SAY_WHERE} {QUOTED_WORDING} {UNQUOTED_REMARKS}"
+            "{INSTRUCTIONS} {CITING_REWRITE} {NEVER_SAY_WHERE} {QUOTED_WORDING} {UNQUOTED_REMARKS} {STEPS_IN_ORDER}"
         )
     } else {
         INSTRUCTIONS.to_owned()
