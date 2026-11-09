@@ -102,7 +102,7 @@ fn context(ideas: &[&str], actions: &[&str]) -> String {
         "sources":[{"sourceIndex":0,"excerpt":EXCERPT}],
         "priorKnowledge":"The learner has used a graphical file manager.",
         "currentModule":{"title":"Shell basics","lessonSequence":[{"title":"Looking around","current":false},{"title":"Working in the terminal","current":true},{"title":"Making files","current":false}]},
-        "courseSequence":{"curriculum":[{"title":"Shell basics","milestone":"A logbook of daily shell habits"}],"coursePlan":[
+        "courseSequence":{"curriculum":[{"title":"Shell basics","outcomes":["Run commands"],"milestone":"A logbook of daily shell habits","lessons":[{"title":"Looking around"},{"title":"Working in the terminal"},{"title":"Making files"}]},{"title":"Secure remote access","outcomes":["Connect to another machine"],"milestone":"A tidy list of saved connections","lessons":[{"title":"Keys and logins"}]}],"coursePlan":[
             {"title":"Looking around","position":"earlier","ideas":["A folder holds files"],"terms":["folder"],"actions":["Listing the files in a folder"],"contrast":""},
             {"title":"Working in the terminal","position":"this","ideas":ideas,"terms":[],"actions":actions,"contrast":""},
             {"title":"Making files","position":"later","ideas":[],"terms":[],"actions":["Creating a file"],"contrast":""}
@@ -664,6 +664,18 @@ async fn the_request_carries_the_modules_title_and_milestone() -> Result<()> {
         asked[0]
     );
     assert!(asked[0].contains("Making files"), "{}", asked[0]);
+    assert!(asked[0].contains("Secure remote access"), "{}", asked[0]);
+    assert!(
+        asked[0].contains("A tidy list of saved connections"),
+        "{}",
+        asked[0]
+    );
+    assert!(
+        asked[0].contains("Connect to another machine"),
+        "{}",
+        asked[0]
+    );
+    assert!(asked[0].contains("Keys and logins"), "{}", asked[0]);
     Ok(())
 }
 
@@ -671,4 +683,11 @@ async fn the_request_carries_the_modules_title_and_milestone() -> Result<()> {
 fn pointing_at_the_outline_or_an_earlier_lesson_is_not_unseen() {
     assert!(contract::SYSTEM
         .contains("Pointing at the course outline or at an earlier lesson is not unseen"));
+}
+
+#[test]
+fn the_unseen_check_names_the_whole_outline_and_scopes_its_qualifier() {
+    assert!(contract::SYSTEM.contains("courseOutline"));
+    assert!(contract::SYSTEM
+        .contains("text above or below or a step number that this lesson does not contain"));
 }
