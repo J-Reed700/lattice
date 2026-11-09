@@ -469,13 +469,12 @@ mod repository_tests {
     };
     use lattice_core::shared::runtime::jobs::{JobRuntime, JobStore, RecoveryPolicy};
 
-    /// Model use is the inference scheduler's to limit; the runtime's per-subject
-    /// lock keeps two preparations of one course off the same sources and
-    /// snapshot.
+    /// Model use is the inference scheduler's to limit; the course's setup
+    /// lock keeps two lessons of one course off the same sources and snapshot.
     #[test]
-    fn lesson_jobs_run_one_per_course_and_resume_after_a_restart() {
+    fn lesson_jobs_of_a_course_run_side_by_side_and_resume_after_a_restart() {
         let config = lesson_job_config();
-        assert!(config.exclusive_per_subject);
+        assert!(!config.exclusive_per_subject);
         assert_eq!(config.recovery, RecoveryPolicy::Requeue);
         assert_eq!(config.concurrency, tokio::sync::Semaphore::MAX_PERMITS);
     }
