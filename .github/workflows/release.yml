@@ -141,7 +141,8 @@ jobs:
         if: runner.os == 'Windows'
         env:
           STATIC_VCRUNTIME: 'true'
-        run: npm run tauri -- build --ci --bundles nsis --config tauri.release.conf.json
+        shell: pwsh
+        run: npm run tauri -- build --ci --bundles nsis --config (Resolve-Path crates/lattice-desktop/tauri.release.conf.json).Path
       - name: Locate the installer
         id: bundle
         shell: bash
