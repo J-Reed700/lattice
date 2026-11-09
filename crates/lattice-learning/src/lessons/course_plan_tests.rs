@@ -468,7 +468,9 @@ async fn a_written_lesson_is_planned_from_what_it_taught() {
     }
     let llm = Planner::new();
 
-    ensure(&pool, &llm, &program, 1).await.unwrap();
+    ensure(&pool, &llm, &program, 1, &Default::default())
+        .await
+        .unwrap();
 
     let sent = llm.request(0);
     let (system, user) = crate::lessons::structured_call::task_messages(&sent);
