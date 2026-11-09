@@ -45,6 +45,7 @@ const descriptions: Record<string, TaskDescription> = {
   apply_learning_pack_import: { title: 'Importing your study pack', tab: 'portability', quickStart: true, detail: 'Saving the selected material into your library.', involves: ['Import the selected material', 'Record the import result'] },
   save_learning_pack_as: { withdrawsOn: 'cancelled', title: 'Saving your course to a file', tab: 'portability', quickStart: true, detail: 'Choose where to save the file. Larger courses take longer to package.', involves: ['Choose where to save the course file', 'Collect the course and your progress', 'Write the file to the chosen location'] },
   export_all_learning_packs: { withdrawsOn: 'cancelled', title: 'Exporting all your courses', tab: 'portability', quickStart: true, detail: 'Each course is saved as its own file in the folder you choose. A large library takes a while.', involves: ['Choose a folder', 'Save each course to its own file', 'Report any course that could not be exported'] },
+  change_learning_course_plan_entries: model('Changing the planned topics', 'lessons', 'Read your request and the planned topics', "Rewrite the chosen lessons' topics"),
   attach_learning_claim_evidence: model('Checking statements against your source', 'lessons', 'Save the source to the course', 'Check the waiting statements against it'),
   attach_learning_lesson_source: model('Checking the lesson against your source', 'lessons', 'Save the source to the course', 'Check every open statement of the lesson against it'),
   generate_study_deck: { ...model('Creating your flashcard deck', 'recall', 'Read the selected documents', 'Generate cited questions and answers', 'Save your deck'), tab: undefined },
@@ -57,7 +58,7 @@ const dedicatedProgress = new Set([
   'generate_learning_program', 'repair_learning_outline', 'cancel_learning_outline',
   'prepare_learning_lesson', 'prepare_learning_module', 'prepare_learning_ahead', 'start_learning_generation_job', 'retry_learning_generation_job',
   'cancel_learning_generation_job', 'start_learning_practical_run', 'cancel_learning_practical_run',
-  'prepare_learning_quiz_bank', 'resume_learning_quiz_grading',
+  'prepare_learning_quiz_bank', 'resume_learning_quiz_grading', 'plan_learning_course',
 ]);
 
 function describe(command: string): TaskDescription {
@@ -67,7 +68,7 @@ function describe(command: string): TaskDescription {
     : command.includes('canvas') ? 'canvas' : command.includes('recall') || command.includes('card') ? 'recall'
       : command.includes('practical') || command.includes('runtime') || command.includes('simulation') ? 'practical'
         : command.includes('assessment') || command.includes('quiz') ? 'quizzes' : command.includes('practice') ? 'workbench'
-          : command.includes('diagnostic') ? 'starting_point' : command.includes('curriculum') || command.includes('plan') ? 'plan'
+          : command.includes('diagnostic') ? 'starting_point' : command.includes('course_plan') ? 'lessons' : command.includes('curriculum') || command.includes('plan') ? 'plan'
             : command.includes('pack') || command.includes('portability') ? 'portability'
               : command.includes('memory') || command.includes('note') ? 'notebook' : 'lessons';
   const names: Record<StudyTab, string> = { study: 'study guide', sources: 'references', canvas: 'canvas', recall: 'recall cards', practical: 'practice environment', quizzes: 'quizzes', workbench: 'practice session', starting_point: 'starting-point check', plan: 'learning plan', portability: 'study packs', notebook: 'notebook', lessons: 'course', tutor: 'tutor', drills: 'review drills' };
