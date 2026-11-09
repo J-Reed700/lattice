@@ -1412,7 +1412,7 @@ async fn a_statement_narrowed_is_still_sent_and_nothing_is_decided_for_it_yet() 
 }
 
 #[tokio::test]
-async fn a_statement_whose_narrowing_was_not_applied_is_cut_whole_and_its_neighbour_goes_with_it(
+async fn a_statement_whose_narrowing_was_not_applied_keeps_its_sentence_and_is_published_not_verified(
 ) -> Result<()> {
     let body = format!("Intro line. {GLAZE} Closing line.");
     let llm = SmallWindow {
@@ -1452,29 +1452,22 @@ async fn a_statement_whose_narrowing_was_not_applied_is_cut_whole_and_its_neighb
 
     cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
 
-    // Everything its quote touches goes, the words of the neighbour with them.
-    assert_eq!(
-        context["candidate"]["blocks"][0]["body"],
-        "Intro line. Closing line."
-    );
-    let events = ledger.entry(&cut).unwrap().events();
+    // The sentence stays with its neighbour's words; the statement is published
+    // not verified.
+    assert_eq!(context["candidate"]["blocks"][0]["body"], body);
+    let entry = ledger.entry(&cut).unwrap();
     assert!(
-        events.iter().any(|record| matches!(
-            &record.event,
-            ClaimEvent::RepairAttempted {
-                outcome: RepairOutcome::Removed,
-                goal: None,
-                ..
-            }
-        )),
-        "{events:?}"
+        matches!(entry.state(), ClaimState::Unverified { .. }),
+        "{:?}",
+        entry.state()
     );
+    let events = entry.events();
     assert!(
         events.iter().any(|record| matches!(
             &record.event,
             ClaimEvent::Stepped {
                 step: Step::Cut,
-                outcome: Outcome::Cut,
+                outcome: Outcome::CannotCut,
                 ..
             }
         )),
