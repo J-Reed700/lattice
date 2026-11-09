@@ -241,10 +241,14 @@ async fn connect_pool(dir: &Path) -> Result<SqlitePool> {
 
 /// Whether the store in `pool` holds tables of another shape than this one.
 async fn other_version(pool: &SqlitePool) -> Result<bool> {
+    let mut tx = pool
+        .begin_read()
+        .await
+        .map_err(db_error("read the schema"))?;
     let tables: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await
     .map_err(db_error("read the schema"))?;
     if tables == 0 {
@@ -252,7 +256,7 @@ async fn other_version(pool: &SqlitePool) -> Result<bool> {
     }
     let version: Option<String> = sqlx::query_scalar("SELECT value FROM meta WHERE key = ?")
         .bind(META_VERSION)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *tx)
         .await
         .unwrap_or(None);
     Ok(version.as_deref() != Some(SCHEMA_VERSION))
