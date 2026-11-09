@@ -21,6 +21,7 @@ use std::sync::Arc;
 
 mod context;
 mod relevel;
+mod repository;
 mod strongest;
 pub(super) use context::passage_labels;
 pub use context::with_outline_trust;

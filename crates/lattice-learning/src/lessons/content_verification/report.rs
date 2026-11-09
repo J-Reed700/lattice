@@ -2,6 +2,8 @@
 use super::resolution::Resolution;
 use super::*;
 
+mod repository;
+
 pub(super) fn content_hash(lesson: &PreparedLearningLesson) -> Result<String> {
     Ok(digest(&serde_json::to_string(&(
         &lesson.blocks,
@@ -522,22 +524,32 @@ pub(crate) async fn persist_report(
     lesson_id: &str,
     lesson: &PreparedLearningLesson,
 ) -> Result<()> {
-    use sqlx::Row;
     let report = lesson.verification.as_ref().ok_or_else(|| {
         invalid("This lesson has no verification report. Prepare it again before publication.")
     })?;
     report.validate(lesson_id, lesson)?;
     for source in &report.sources {
-        let row = sqlx::query("SELECT v.full_text FROM learning_source_versions v JOIN learning_source_library s ON s.active_version_id=v.id AND s.program_id=v.program_id WHERE v.id=? AND v.program_id=? AND s.deleted_at IS NULL")
-            .bind(&source.id).bind(program_id).fetch_optional(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?.ok_or_else(|| invalid(SOURCE_INACTIVE))?;
-        if digest(&row.get::<String, _>("full_text")) != source.sha256 {
+        let text = repository::active_version_text(&mut **tx, program_id, &source.id)
+            .await?
+            .ok_or_else(|| invalid(SOURCE_INACTIVE))?;
+        if digest(&text) != source.sha256 {
             return Err(invalid(SOURCE_CONTENT_CHANGED));
         }
     }
-    sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)")
-        .bind(lesson_id).bind(program_id).bind(&report.policy).bind(&report.content_sha256).bind(serde_json::to_string(report)?).bind(report.checked_at).execute(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?;
+    repository::insert_report(
+        &mut **tx,
+        &repository::StoredReport {
+            lesson_id,
+            program_id,
+            policy: &report.policy,
+            content_sha256: &report.content_sha256,
+            report_json: &serde_json::to_string(report)?,
+            checked_at: report.checked_at,
+        },
+    )
+    .await?;
     // The lesson's claim review, when it has one, ends with the publication.
-    sqlx::query("UPDATE learning_lesson_reviews SET state='ready',revision=revision+1,updated_at=? WHERE lesson_id=?")
-        .bind(chrono::Utc::now().timestamp_millis()).bind(lesson_id).execute(&mut **tx).await.map_err(|e| AppError::Database(e.to_string()))?;
+    repository::mark_review_ready(&mut **tx, lesson_id, chrono::Utc::now().timestamp_millis())
+        .await?;
     Ok(())
 }

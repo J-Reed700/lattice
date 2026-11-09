@@ -16,9 +16,9 @@ use lattice_core::shared::error::{AppError, Result};
 use sqlx::SqliteConnection;
 
 use super::actions::{in_section_body, ONLY_SECTION};
+use super::repository::blocks;
 use super::repository::{append_in, load_in};
 use crate::content_verification::{located, LessonVerificationReport, WrittenOver};
-use crate::persistence::db;
 
 pub(super) const CHANGED: &str =
     "This statement changed since you opened it; reload and try again.";
@@ -57,29 +57,9 @@ pub(super) async fn section_body(
     lesson_id: &str,
     unit: usize,
 ) -> Result<String> {
-    sqlx::query_scalar("SELECT body FROM learning_blocks WHERE lesson_id=? AND ordinal=?")
-        .bind(lesson_id)
-        .bind(i64::try_from(unit).unwrap_or(i64::MAX))
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?
+    blocks::section_body(connection, lesson_id, unit)
+        .await?
         .ok_or_else(|| AppError::InvalidInput(CHANGED.into()))
-}
-
-pub(super) async fn write_section_body(
-    connection: &mut SqliteConnection,
-    lesson_id: &str,
-    unit: usize,
-    body: &str,
-) -> Result<()> {
-    sqlx::query("UPDATE learning_blocks SET body=? WHERE lesson_id=? AND ordinal=?")
-        .bind(body)
-        .bind(lesson_id)
-        .bind(i64::try_from(unit).unwrap_or(i64::MAX))
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
-    Ok(())
 }
 
 /// Lets `change` rewrite the lesson's stored verification report and stores
@@ -91,30 +71,19 @@ pub(super) async fn update_report(
     lesson_id: &str,
     change: impl FnOnce(&mut LessonVerificationReport),
 ) -> Result<()> {
-    let stored: Option<String> = sqlx::query_scalar(
-        "SELECT report_json FROM learning_lesson_verifications WHERE program_id=? AND lesson_id=?",
-    )
-    .bind(program_id)
-    .bind(lesson_id)
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
-    let Some(stored) = stored else {
+    let Some(stored) = blocks::verification_report(connection, program_id, lesson_id).await? else {
         return Ok(());
     };
     let mut report: LessonVerificationReport = serde_json::from_str(&stored)?;
     change(&mut report);
-    sqlx::query(
-        "UPDATE learning_lesson_verifications SET content_sha256=?,report_json=? WHERE program_id=? AND lesson_id=?",
+    blocks::write_verification_report(
+        connection,
+        program_id,
+        lesson_id,
+        &report.content_sha256(),
+        &serde_json::to_string(&report)?,
     )
-    .bind(report.content_sha256())
-    .bind(serde_json::to_string(&report)?)
-    .bind(program_id)
-    .bind(lesson_id)
-    .execute(&mut *connection)
     .await
-    .map_err(db)?;
-    Ok(())
 }
 
 /// Writes the edit on `connection`; the claims that stood on the replaced
@@ -235,7 +204,7 @@ pub(super) async fn apply_in(
         }
     }
 
-    write_section_body(connection, lesson_id, unit, &new_body).await?;
+    blocks::write_section_body(connection, lesson_id, unit, &new_body).await?;
     let ids: HashSet<String> = replaced
         .iter()
         .map(|entry| entry.claim_id().0.clone())
