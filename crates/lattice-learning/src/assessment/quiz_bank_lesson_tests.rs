@@ -348,7 +348,10 @@ async fn a_lesson_quiz_job_keeps_what_its_checks_left_out() -> Result<()> {
         .await?
         .unwrap();
     let dropped = saved["dropped"].as_array().map_or(0, Vec::len);
-    assert!(dropped > 0, "the stage kept no reason for its refusals: {saved}");
+    assert!(
+        dropped > 0,
+        "the stage kept no reason for its refusals: {saved}"
+    );
     let JobOutcome::Completed { message, .. } = outcome else {
         panic!("{outcome:?}");
     };
@@ -385,10 +388,17 @@ async fn lesson_stage_report_reads_a_completed_jobs_numbers() -> Result<()> {
             .await?
     );
     let outcome = worker(&pool, Recorder::new()).run(&context).await?;
-    let JobOutcome::Completed { result_ref, message } = outcome else {
+    let JobOutcome::Completed {
+        result_ref,
+        message,
+    } = outcome
+    else {
         panic!("{outcome:?}");
     };
-    assert_eq!(message, "1 questions written; 2 failed the checks and were left out.");
+    assert_eq!(
+        message,
+        "1 questions written; 2 failed the checks and were left out."
+    );
     JobStore::new(pool.clone())
         .complete(&job_id, &result_ref, &message)
         .await?;
