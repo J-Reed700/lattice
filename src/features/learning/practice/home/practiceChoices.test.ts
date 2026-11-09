@@ -41,7 +41,7 @@ describe('the Mock interview badge', () => {
 });
 
 describe('languages', () => {
-  it('keeps the learner's own words as the label and normalizes only the value', () => {
+  it("keeps the learner's own words as the label and normalizes only the value", () => {
     expect(languageOptions('JavaScript')).toEqual([{ value: 'javascript', label: 'JavaScript' }, { value: 'python', label: 'Python' }]);
     expect(defaultLanguage(' JavaScript ')).toBe('javascript');
   });
