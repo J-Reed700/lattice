@@ -4,16 +4,34 @@
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::domain::learning::practice::named_in;
 use lattice_core::shared::error::{AppError, Result};
+use serde::Deserialize;
+use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
 
 use crate::drills::runner::CodeRunner;
+use crate::generation::parse_json;
 use crate::lab_runtime::LearningLabFile;
+use crate::lessons::structured_call::{complete_checked_request, reask};
 use crate::model_call;
 use crate::practice::coding::dto::{CodeHintDto, CodeHintRung};
 use crate::practice::coding::harness::CaseHarness;
 use crate::practice::coding::observation::WorkspaceObservation;
 use crate::practice::coding::problem::{CodingSetting, Problem};
+use crate::practice::coding::solution_check::{code_blocks, parses_as_python, passes_every_case};
+
+/// What a hint's answer reserves: a few paragraphs, a short fenced block, and the frame around them. A
+/// reservation sizes the request; it never limits what the model writes.
+const HINT_TOKENS: usize = 1_600;
+
+/// Python's `keyword.kwlist`.
+const PYTHON_KEYWORDS: &[&str] = &[
+    "False", "None", "True", "and", "as", "assert", "async", "await", "break", "class", "continue",
+    "def", "del", "elif", "else", "except", "finally", "for", "from", "global", "if", "import",
+    "in", "is", "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try", "while",
+    "with", "yield",
+];
 
 /// A hint that passed its checks, ready to be stored as a `CodeHintDto`.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -25,23 +43,54 @@ pub struct CodeHint {
     pub path: Option<String>,
 }
 
-/// The rung after the highest one given: Nudge first, and Line stays Line.
-pub fn next_rung(_given: &[CodeHintDto]) -> CodeHintRung {
-    CodeHintRung::Nudge
+#[derive(Deserialize)]
+struct Written {
+    text: String,
+    reason: String,
+    lines: Vec<u32>,
+    path: Option<String>,
 }
 
-/// Writes the hint for `rung`, checks it, and asks once more with the reason when a check refuses it.
+/// The rung after the highest one given: Nudge first, and Line stays Line.
+pub fn next_rung(given: &[CodeHintDto]) -> CodeHintRung {
+    match given.iter().map(|hint| hint.rung).max() {
+        None => CodeHintRung::Nudge,
+        Some(CodeHintRung::Nudge) => CodeHintRung::Idea,
+        Some(CodeHintRung::Idea) => CodeHintRung::Plan,
+        Some(CodeHintRung::Plan | CodeHintRung::Line) => CodeHintRung::Line,
+    }
+}
+
+/// Writes the hint for `rung`, checks it, and asks once more with the reason when a check refuses it. A second
+/// refusal fails with `AppError::ModelAnswerUnusable`.
+#[allow(clippy::too_many_arguments)]
 pub async fn write_hint(
-    _llm: &dyn LLMPort,
-    _runner: &dyn CodeRunner,
-    _harness: &dyn CaseHarness,
-    _problem: &Problem,
-    _observation: &WorkspaceObservation,
-    _rung: CodeHintRung,
-    _in_role: bool,
-    _cancel: CancellationToken,
+    llm: &dyn LLMPort,
+    runner: &dyn CodeRunner,
+    harness: &dyn CaseHarness,
+    problem: &Problem,
+    observation: &WorkspaceObservation,
+    rung: CodeHintRung,
+    in_role: bool,
+    cancel: CancellationToken,
 ) -> Result<CodeHint> {
-    Err(AppError::InvalidState("not built yet".into()))
+    let hinting = Hinting {
+        reference: &problem.reference,
+        starter: &problem.spec.starter,
+        patterns: &problem.spec.patterns,
+        setting: observation.setting,
+        draft: &observation.files,
+    };
+    let proof = Sandbox {
+        runner,
+        harness,
+        problem,
+        cancel: &cancel,
+    };
+    let shown = serde_json::to_string_pretty(observation)
+        .map_err(|error| AppError::InternalError(error.to_string()))?;
+    let request = ask(&problem.reference, &shown, rung, in_role, observation.setting);
+    write_checked(llm, &hinting, &proof, request, rung).await
 }
 
 /// What the checks read of the problem and the session.
@@ -53,38 +102,248 @@ struct Hinting<'a> {
     draft: &'a [LearningLabFile],
 }
 
-/// The two things a check runs: code as the solution, and code as a parse.
+/// The two things a check runs: code as a parse, and code as the solution.
 #[async_trait]
 trait Proof: Send + Sync {
     async fn parses(&self, code: &str) -> Result<bool>;
     async fn passes(&self, code: &str) -> Result<bool>;
 }
 
-/// Why a check refuses `hint`, or None when every check accepts it.
-async fn refusal(_hinting: &Hinting<'_>, _proof: &dyn Proof, _hint: &CodeHint) -> Result<Option<String>> {
+struct Sandbox<'a> {
+    runner: &'a dyn CodeRunner,
+    harness: &'a dyn CaseHarness,
+    problem: &'a Problem,
+    cancel: &'a CancellationToken,
+}
+
+#[async_trait]
+impl Proof for Sandbox<'_> {
+    async fn parses(&self, code: &str) -> Result<bool> {
+        parses_as_python(self.runner, code, self.cancel.clone()).await
+    }
+
+    async fn passes(&self, code: &str) -> Result<bool> {
+        passes_every_case(
+            self.runner,
+            self.harness,
+            self.problem,
+            code,
+            self.cancel.clone(),
+        )
+        .await
+    }
+}
+
+fn rung_name(rung: CodeHintRung) -> &'static str {
+    match rung {
+        CodeHintRung::Nudge => "Nudge",
+        CodeHintRung::Idea => "Idea",
+        CodeHintRung::Plan => "Plan",
+        CodeHintRung::Line => "Line",
+    }
+}
+
+/// Whether a reference line says anything beyond Python's own words and punctuation.
+fn says_something(line: &str) -> bool {
+    line.split(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .filter(|word| !word.is_empty())
+        .any(|word| !PYTHON_KEYWORDS.contains(&word))
+}
+
+/// The first reference line the hint repeats word for word, as a 1-based line number. Lines also in the starter
+/// and lines of Python keywords and punctuation alone do not count.
+fn repeated_reference_line(hinting: &Hinting<'_>, shown: &[&str]) -> Option<usize> {
+    hinting
+        .reference
+        .lines()
+        .enumerate()
+        .map(|(index, line)| (index + 1, line.trim()))
+        .filter(|(_, line)| says_something(line))
+        .filter(|(_, line)| !hinting.starter.lines().any(|kept| kept.trim() == *line))
+        .find(|(_, line)| shown.iter().any(|text| text.contains(line)))
+        .map(|(number, _)| number)
+}
+
+/// What is wrong with the lines a Line hint names, if anything.
+fn bad_lines(hinting: &Hinting<'_>, hint: &CodeHint) -> Option<String> {
+    if hint.lines.is_empty() {
+        return Some("A Line hint names at least one line of the candidate's code.".into());
+    }
+    let Some(path) = hint.path.as_deref() else {
+        return Some("A Line hint names the file its lines are in, in `path`.".into());
+    };
+    let Some(file) = hinting.draft.iter().find(|file| file.path == path) else {
+        return Some(format!("`path` {path} is not one of the candidate's files."));
+    };
+    let count = file.content.lines().count();
+    hint.lines
+        .iter()
+        .find(|line| {
+            usize::try_from(**line)
+                .ok()
+                .filter(|line| (1..=count).contains(line))
+                .is_none()
+        })
+        .map(|line| format!("Line {line} does not exist in {path}, which has {count} lines."))
+}
+
+/// Why a check refuses `hint`, or None when every check accepts it. Errors are runs that could not be made.
+async fn refusal(
+    hinting: &Hinting<'_>,
+    proof: &dyn Proof,
+    hint: &CodeHint,
+) -> Result<Option<String>> {
+    if hint.text.trim().is_empty() || hint.reason.trim().is_empty() {
+        return Ok(Some("The hint needs both its text and its reason.".into()));
+    }
+    let blocks = code_blocks(&hint.text);
+    if matches!(hint.rung, CodeHintRung::Nudge | CodeHintRung::Idea) && !blocks.is_empty() {
+        return Ok(Some(format!(
+            "A {} hint holds no fenced code block. Say it in words.",
+            rung_name(hint.rung)
+        )));
+    }
+    if hint.rung == CodeHintRung::Line {
+        if let Some(why) = bad_lines(hinting, hint) {
+            return Ok(Some(why));
+        }
+    }
+    let shown = [hint.text.as_str(), hint.reason.as_str()];
+    if let Some(number) = repeated_reference_line(hinting, &shown) {
+        return Ok(Some(format!(
+            "The hint repeats line {number} of the reference solution word for word. Say it in other words."
+        )));
+    }
+    let allowed = hinting.setting == CodingSetting::Coached && hint.rung == CodeHintRung::Idea;
+    if !allowed {
+        let named = shown
+            .iter()
+            .find_map(|text| named_in(text, hinting.patterns));
+        if let Some(pattern) = named {
+            return Ok(Some(format!(
+                "The hint names the pattern \"{}\". Describe what to do without naming the technique.",
+                pattern.name
+            )));
+        }
+    }
+    for block in &blocks {
+        if hint.rung == CodeHintRung::Plan {
+            if proof.parses(block).await? {
+                return Ok(Some(
+                    "A block in a Plan hint parses as Python. Write the steps as pseudo-code, or without a block."
+                        .into(),
+                ));
+            }
+        } else if proof.passes(block).await? {
+            return Ok(Some(
+                "A block in the hint solves the problem. Show a fragment at most, or none.".into(),
+            ));
+        }
+    }
     Ok(None)
+}
+
+fn schema() -> Value {
+    json!({
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+            "text": {"type": "string", "minLength": 1},
+            "reason": {"type": "string", "minLength": 1},
+            "lines": {"type": "array", "items": {"type": "integer", "minimum": 1}},
+            "path": {"type": ["string", "null"]}
+        },
+        "required": ["text", "reason", "lines", "path"]
+    })
+}
+
+fn rung_instruction(rung: CodeHintRung, setting: CodingSetting) -> &'static str {
+    match rung {
+        CodeHintRung::Nudge => {
+            "Ask one question that points at what to look at. Give no code and no fenced block."
+        }
+        CodeHintRung::Idea if setting == CodingSetting::Coached => {
+            "Give the idea or structure that fits, and why. You may name the technique. Give no fenced block."
+        }
+        CodeHintRung::Idea => {
+            "Give the idea or structure that fits, and why, without naming the technique. Give no fenced block."
+        }
+        CodeHintRung::Plan => {
+            "Give numbered steps in plain language, each with its reason. A fenced block, if any, is pseudo-code that is not valid Python."
+        }
+        CodeHintRung::Line => {
+            "Point at the lines of the candidate's code that are wrong, and say why. Set `path` to the file and `lines` to its 1-based line numbers. Never write the corrected line."
+        }
+    }
 }
 
 /// The request that asks for a hint of `rung`.
 fn ask(
-    _reference: &str,
-    _observation: &str,
-    _rung: CodeHintRung,
-    _in_role: bool,
-    _setting: CodingSetting,
+    reference: &str,
+    observation: &str,
+    rung: CodeHintRung,
+    in_role: bool,
+    setting: CodingSetting,
 ) -> GroundedRequest {
-    model_call::structured("", String::new(), serde_json::json!({}), 0, "low")
+    let voice = if in_role {
+        "You are the interviewer in a coding interview. Write the hint as the words you say to the candidate, in your own voice, staying in role."
+    } else if setting == CodingSetting::Coached {
+        "You are a coach helping a learner through a coding problem."
+    } else {
+        "You give a candidate one hint on a coding problem."
+    };
+    let system = format!(
+        "{voice} The reference solution is private: it is there so that your hint is right, never to be quoted. Never write a line of it, and never write code that solves the problem. Speak about the candidate's code only from what they have written and run. Fill `path` and `lines` only for a Line hint; otherwise give `lines` as an empty list and `path` as null."
+    );
+    let prompt = format!(
+        "Reference solution (private):\n{reference}\n\nWhat the candidate sees and has done:\n{observation}\n\nWrite a {} hint. {}",
+        rung_name(rung),
+        rung_instruction(rung, setting)
+    );
+    model_call::structured(&system, prompt, schema(), HINT_TOKENS, "low")
 }
 
 /// Asks for `request`, checks the answer, and asks once more with the reason when a check refuses it.
 async fn write_checked(
-    _llm: &dyn LLMPort,
-    _hinting: &Hinting<'_>,
-    _proof: &dyn Proof,
-    _request: GroundedRequest,
-    _rung: CodeHintRung,
+    llm: &dyn LLMPort,
+    hinting: &Hinting<'_>,
+    proof: &dyn Proof,
+    request: GroundedRequest,
+    rung: CodeHintRung,
 ) -> Result<CodeHint> {
-    Err(AppError::InvalidState("not built yet".into()))
+    let mut request = request;
+    let mut again = false;
+    loop {
+        let (raw, written) = complete_checked_request(llm, request.clone(), None, None, |raw| {
+            parse_json::<Written>(raw).map(|written| (raw.to_owned(), written))
+        })
+        .await?;
+        let hint = if rung == CodeHintRung::Line {
+            CodeHint {
+                rung,
+                text: written.text,
+                reason: written.reason,
+                lines: written.lines,
+                path: written.path,
+            }
+        } else {
+            CodeHint {
+                rung,
+                text: written.text,
+                reason: written.reason,
+                lines: Vec::new(),
+                path: None,
+            }
+        };
+        let Some(why) = refusal(hinting, proof, &hint).await? else {
+            return Ok(hint);
+        };
+        if again {
+            return Err(AppError::ModelAnswerUnusable(why));
+        }
+        request = reask(request, &raw, &why);
+        again = true;
+    }
 }
 
 #[cfg(test)]

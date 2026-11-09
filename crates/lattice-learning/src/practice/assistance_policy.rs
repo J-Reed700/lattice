@@ -25,8 +25,12 @@ pub trait AssistancePolicy: Send + Sync {
 pub struct CodingAssistance;
 
 impl AssistancePolicy for CodingAssistance {
-    fn allows(&self, _help: Help, _level: HelpLevel) -> bool {
-        false
+    fn allows(&self, help: Help, level: HelpLevel) -> bool {
+        match level {
+            HelpLevel::FullHelp => true,
+            HelpLevel::HintsOnly => help == Help::Hint,
+            HelpLevel::NoHelp => false,
+        }
     }
 }
 
@@ -34,8 +38,8 @@ impl AssistancePolicy for CodingAssistance {
 pub struct WrittenAssistance;
 
 impl AssistancePolicy for WrittenAssistance {
-    fn allows(&self, _help: Help, _level: HelpLevel) -> bool {
-        false
+    fn allows(&self, _help: Help, level: HelpLevel) -> bool {
+        level != HelpLevel::NoHelp
     }
 }
 
