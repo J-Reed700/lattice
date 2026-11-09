@@ -1,11 +1,14 @@
-//! Counterpart workspace observation builder (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 4.6).
+//! Counterpart workspace observation builder.
+//! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 4.6).
 
 use serde::{Deserialize, Serialize};
 
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::coding::hints::CheckedCodeHint;
-use crate::practice::coding::problem::{Clarification, CodingTask, Problem, Setting};
-use crate::practice::coding::session::{CodingExampleDto, CodingSessionDto, CodingStage, PublicProblemDto};
+use crate::practice::coding::problem::{Clarification, CodingTask, Problem, Setting, Visibility};
+use crate::practice::coding::session::{
+    CodingExampleDto, CodingSessionDto, CodingStage, PublicProblemDto,
+};
 use crate::practice::practical_dto::{LearningPracticalRunDto, LearningSimulationTurnDto};
 use lattice_core::shared::error::AppError;
 
@@ -35,28 +38,95 @@ pub struct WorkspaceObservation {
 }
 
 /// Formats code with 1-based line numbers for counterpart reference.
-pub fn build_numbered_solution(_solution_code: &str) -> String {
-    String::new()
+pub fn build_numbered_solution(solution_code: &str) -> String {
+    let mut result = String::new();
+    for (i, line) in solution_code.lines().enumerate() {
+        result.push_str(&format!("{} | {}\n", i + 1, line));
+    }
+    result
 }
 
-/// Computes a human-readable diff or summary of changes since the counterpart last inspected the draft.
+/// Computes a human-readable diff or summary of changes since the counterpart last inspected draft.
 pub fn compute_changed_since_last_seen(
-    _previous_draft: Option<&str>,
-    _current_draft: &str,
+    previous_draft: Option<&str>,
+    current_draft: &str,
 ) -> Option<String> {
-    None
+    match previous_draft {
+        None => Some("Initial draft".into()),
+        Some(prev) if prev == current_draft => None,
+        Some(prev) => {
+            let mut changes = Vec::new();
+            let prev_lines: Vec<&str> = prev.lines().collect();
+            let curr_lines: Vec<&str> = current_draft.lines().collect();
+            for (i, line) in curr_lines.iter().enumerate() {
+                if prev_lines.get(i) != Some(line) {
+                    changes.push(format!("line {}: {}", i + 1, line));
+                }
+            }
+            if changes.is_empty() {
+                Some("Whitespace or length change".into())
+            } else {
+                Some(format!("Changes: {}", changes.join("; ")))
+            }
+        }
+    }
 }
 
 impl WorkspaceObservation {
     /// Builds a workspace observation from the session, draft, and problem.
     /// Strictly excludes any reference solution or misreadings.
     pub fn build(
-        _session: &CodingSessionDto,
-        _problem: &Problem,
-        _draft_files: &[LearningLabFile],
-        _last_seen_solution: Option<&str>,
+        session: &CodingSessionDto,
+        problem: &Problem,
+        draft_files: &[LearningLabFile],
+        last_seen_solution: Option<&str>,
     ) -> Result<Self, AppError> {
-        Err(AppError::InvalidInput("not implemented".into()))
+        let solution_content = draft_files
+            .iter()
+            .find(|f| f.path == crate::practice::coding::problem::SOLUTION_PATH)
+            .map(|f| f.content.as_str())
+            .unwrap_or("");
+
+        let numbered_solution = build_numbered_solution(solution_content);
+        let changed_since_last_seen =
+            compute_changed_since_last_seen(last_seen_solution, solution_content);
+
+        let public_problem = PublicProblemDto {
+            title: problem.spec.title.clone(),
+            statement: problem.spec.statement.clone(),
+            signature: problem.spec.signature.clone(),
+            examples: problem
+                .cases
+                .iter()
+                .filter(|c| c.visibility == Visibility::Example)
+                .cloned()
+                .collect(),
+            constraints: problem.spec.constraints.clone(),
+            subgoals: session.problem.subgoals.clone(),
+            files: session.problem.files.clone(),
+            worked_solution: None,
+            target_complexity: Some(problem.spec.target_complexity.clone()),
+            total_misreadings: problem.misreadings.len() as u32,
+        };
+
+        Ok(Self {
+            task: session.task,
+            setting: session.setting,
+            stage: session.stage,
+            public_problem,
+            clarifications: problem.spec.clarifications.clone(),
+            target_complexity: problem.spec.target_complexity.clone(),
+            patterns: problem.spec.patterns.clone(),
+            active_ms: session.active_ms,
+            budget_seconds: session.budget_seconds,
+            files: draft_files.to_vec(),
+            numbered_solution,
+            changed_since_last_seen,
+            last_run: session.runs.last().cloned(),
+            examples: session.examples.clone(),
+            hints_given: session.hints.clone(),
+            turns: session.turns.clone(),
+        })
     }
 }
 
@@ -71,6 +141,10 @@ mod tests {
     use std::collections::BTreeMap;
 
     fn sample_problem_with_secrets() -> Problem {
+        let starter = concat!(
+            "def two_sum(numbers: list[int], target: int) -> list[int]:\n",
+            "    pass\n"
+        );
         let spec = ProblemSpec {
             title: "Two Sum".into(),
             statement: "Find indices of two numbers that add up to target.".into(),
@@ -97,7 +171,7 @@ mod tests {
             difficulty: Difficulty::Easy,
             target_complexity: "O(n) time, O(n) space".into(),
             patterns: vec!["hash_lookup".into()],
-            starter: "def two_sum(numbers: list[int], target: int) -> list[int]:\n    pass\n".into(),
+            starter: starter.into(),
         };
 
         Problem {
@@ -127,7 +201,12 @@ mod tests {
             title: problem.spec.title.clone(),
             statement: problem.spec.statement.clone(),
             signature: problem.spec.signature.clone(),
-            examples: problem.cases.iter().filter(|c| c.visibility == Visibility::Example).cloned().collect(),
+            examples: problem
+                .cases
+                .iter()
+                .filter(|c| c.visibility == Visibility::Example)
+                .cloned()
+                .collect(),
             constraints: problem.spec.constraints.clone(),
             subgoals: vec![],
             files: vec![],
@@ -135,6 +214,12 @@ mod tests {
             target_complexity: Some(problem.spec.target_complexity.clone()),
             total_misreadings: problem.misreadings.len() as u32,
         };
+
+        let starter_code = concat!(
+            "def two_sum(numbers, target):\n",
+            "    # TODO\n",
+            "    return []\n"
+        );
 
         CodingSessionDto {
             id: "session-123".into(),
@@ -151,7 +236,7 @@ mod tests {
             problem: public_problem,
             draft_files: vec![LearningLabFile {
                 path: "solution.py".into(),
-                content: "def two_sum(numbers, target):\n    # TODO\n    return []\n".into(),
+                content: starter_code.into(),
             }],
             examples: vec![],
             hints: vec![],
@@ -193,7 +278,8 @@ mod tests {
         let obs = WorkspaceObservation::build(&session, &problem, &draft_files, None)
             .expect("WorkspaceObservation::build should succeed");
 
-        let json = serde_json::to_string(&obs).expect("WorkspaceObservation should serialize to JSON");
+        let json =
+            serde_json::to_string(&obs).expect("WorkspaceObservation should serialize to JSON");
 
         assert!(
             !json.contains("SECRET_REFERENCE_CODE_HASHMAP_SOLVE_XYZ123"),

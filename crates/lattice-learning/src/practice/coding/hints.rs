@@ -1,17 +1,21 @@
-//! Graded coding hint ladder and validation checks (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 4.5).
+//! Graded coding hint ladder and validation checks.
+//! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 4.5).
 
 use serde::{Deserialize, Serialize};
+use tokio_util::sync::CancellationToken;
 
 use crate::drills::runner::CodeRunner;
-use crate::practice::coding::harness::CaseHarness;
-use crate::practice::coding::problem::Problem;
+use crate::practice::coding::harness::{run_cases, CaseHarness};
+use crate::practice::coding::problem::{CaseStatus, Problem};
 use crate::practice::coding::session::CodingExampleDto;
 use crate::practice::practical_dto::LearningPracticalRunDto;
-use lattice_core::application::ports::llm_port::LLMPort;
+use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
 use lattice_core::shared::error::AppError;
 
 /// The four rungs of the coding hint ladder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, specta::Type)]
+#[derive(
+    Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize, specta::Type,
+)]
 #[serde(rename_all = "snake_case")]
 pub enum CodeHintRung {
     /// Rung 1: A question about what to look at. Never gives code.
@@ -63,8 +67,12 @@ pub trait AssistancePolicy: Send + Sync {
 pub struct CodingAssistancePolicy;
 
 impl AssistancePolicy for CodingAssistancePolicy {
-    fn allows(&self, _help: Help, _level: HelpLevel) -> bool {
-        false
+    fn allows(&self, help: Help, level: HelpLevel) -> bool {
+        match level {
+            HelpLevel::FullHelp => true,
+            HelpLevel::HintsOnly => matches!(help, Help::CodeHint(_)),
+            HelpLevel::NoHelp => false,
+        }
     }
 }
 
@@ -79,29 +87,235 @@ pub struct CheckedCodeHint {
     pub lines: Vec<u32>,
 }
 
+fn is_non_trivial_reference_line(line: &str, starter: &str) -> bool {
+    if line.len() <= 3 {
+        return false;
+    }
+    for starter_line in starter.lines() {
+        if starter_line.trim() == line {
+            return false;
+        }
+    }
+    let trivial = [
+        "pass", "return", "return []", "return None", "return True", "return False",
+        "else:", "try:", "finally:", "except:", "break", "continue",
+    ];
+    if trivial.contains(&line) {
+        return false;
+    }
+    true
+}
+
+fn contains_code_or_statements(content: &str) -> bool {
+    if content.contains("```") {
+        return true;
+    }
+    if content.contains("def ") || content.contains("return ") {
+        return true;
+    }
+    let parts: Vec<&str> = content.split('`').collect();
+    for (idx, part) in parts.iter().enumerate() {
+        if idx % 2 == 1 && (part.contains('=') || part.contains("def ") || part.contains("return"))
+        {
+            return true;
+        }
+    }
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.contains(" = ") || trimmed.starts_with("return") {
+            return true;
+        }
+    }
+    false
+}
+
+fn contains_runnable_python(content: &str) -> bool {
+    if content.contains("```python") || content.contains("```\ndef ") {
+        return true;
+    }
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("def ") && trimmed.ends_with(':') {
+            return true;
+        }
+    }
+    false
+}
+
+fn extract_code_block(content: &str, function_name: &str) -> Option<String> {
+    if let Some(start_idx) = content.find("```") {
+        if let Some(remainder) = content.get(start_idx + 3..) {
+            let code_start = if let Some(newline_idx) = remainder.find('\n') {
+                remainder.get(newline_idx + 1..).unwrap_or(remainder)
+            } else {
+                remainder
+            };
+            if let Some(end_idx) = code_start.find("```") {
+                if let Some(code) = code_start.get(..end_idx) {
+                    return Some(code.to_string());
+                }
+            }
+        }
+    }
+    let def_fn = format!("def {function_name}");
+    if content.contains(&def_fn) || content.contains("def ") {
+        if let Some(pos) = content.find("def ") {
+            if let Some(code) = content.get(pos..) {
+                return Some(code.to_string());
+            }
+        }
+    }
+    None
+}
+
 /// Validates that a generated hint obeys the constraints for its rung and does not leak solutions.
 pub async fn check_code_hint(
-    _hint: &CheckedCodeHint,
-    _draft: &str,
-    _problem: &Problem,
-    _runner: &dyn CodeRunner,
-    _harness: &dyn CaseHarness,
+    hint: &CheckedCodeHint,
+    draft: &str,
+    problem: &Problem,
+    runner: &dyn CodeRunner,
+    harness: &dyn CaseHarness,
 ) -> Result<(), AppError> {
-    Err(AppError::InvalidInput("not implemented".into()))
+    if hint.reason.trim().is_empty() {
+        return Err(AppError::InvalidInput("Hint must have a non-empty reason".into()));
+    }
+
+    for line in problem.reference.lines() {
+        let trimmed = line.trim();
+        if is_non_trivial_reference_line(trimmed, &problem.spec.starter)
+            && hint.content.contains(trimmed)
+        {
+            return Err(AppError::InvalidInput(
+                "Hint contains a verbatim reference line from the reference solution".into(),
+            ));
+        }
+    }
+
+    match hint.rung {
+        CodeHintRung::Nudge | CodeHintRung::Idea => {
+            if contains_code_or_statements(&hint.content) {
+                return Err(AppError::InvalidInput(
+                    "Rungs 1 and 2 cannot contain code or statements".into(),
+                ));
+            }
+        }
+        CodeHintRung::Plan => {
+            if contains_runnable_python(&hint.content) {
+                return Err(AppError::InvalidInput(
+                    "Rung 3 (Plan) cannot contain runnable Python".into(),
+                ));
+            }
+        }
+        CodeHintRung::PointAtLine => {
+            if hint.lines.is_empty() {
+                return Err(AppError::InvalidInput("Rung 4 requires non-empty lines".into()));
+            }
+            let draft_line_count = draft.lines().count().max(1) as u32;
+            for &line in &hint.lines {
+                if line == 0 || line > draft_line_count {
+                    return Err(AppError::InvalidInput(format!(
+                        "Line {line} is outside 1..=draft_line_count ({draft_line_count})"
+                    )));
+                }
+            }
+        }
+    }
+
+    if let Some(code) = extract_code_block(&hint.content, &problem.spec.signature.function) {
+        let cancel = CancellationToken::new();
+        if let Ok((_outcome, results)) =
+            run_cases(runner, harness, &problem.spec, &code, &problem.cases, cancel).await
+        {
+            if !results.is_empty() && results.iter().all(|r| r.status == CaseStatus::Passed) {
+                return Err(AppError::InvalidInput(
+                    "Hint contains code that passes all cases".into(),
+                ));
+            }
+        }
+    }
+
+    Ok(())
 }
 
 /// Generates and validates the next hint for the learner's current draft and progress.
 pub async fn generate_code_hint(
-    _llm: &dyn LLMPort,
-    _runner: &dyn CodeRunner,
-    _harness: &dyn CaseHarness,
-    _rung: CodeHintRung,
-    _problem: &Problem,
-    _draft: &str,
+    llm: &dyn LLMPort,
+    runner: &dyn CodeRunner,
+    harness: &dyn CaseHarness,
+    rung: CodeHintRung,
+    problem: &Problem,
+    draft: &str,
     _last_run: Option<&LearningPracticalRunDto>,
     _examples: &[CodingExampleDto],
 ) -> Result<CheckedCodeHint, AppError> {
-    Err(AppError::InvalidInput("not implemented".into()))
+    let rung_instructions = match rung {
+        CodeHintRung::Nudge => "Provide a gentle question about what to look at. NEVER give code.",
+        CodeHintRung::Idea => {
+            "Explain the core idea or data structure that fits and why. NEVER give code."
+        }
+        CodeHintRung::Plan => {
+            "Provide algorithmic steps in pseudo-code with reasons. NEVER provide runnable Python."
+        }
+        CodeHintRung::PointAtLine => {
+            "Identify the line numbers in the draft that need attention and explain why."
+        }
+    };
+
+    let prompt = format!(
+        concat!(
+            "Problem: {}\nStatement: {}\nStarter:\n{}\nCurrent draft:\n{}\n\n",
+            "Hint level requested: {:?}\nRule: {}\n\n",
+            "Respond with JSON: {{\"content\": \"...\", \"reason\": \"...\", \"lines\": [..]}}"
+        ),
+        problem.spec.title,
+        problem.spec.statement,
+        problem.spec.starter,
+        draft,
+        rung,
+        rung_instructions
+    );
+
+    let req = CompletionRequest {
+        input: vec![CompletionInput::Message {
+            role: "user".into(),
+            content: prompt,
+        }],
+        ..Default::default()
+    };
+
+    let resp = llm.complete(&req).await?;
+    let parsed: serde_json::Value =
+        serde_json::from_str(&resp.text).unwrap_or_else(|_| serde_json::json!({
+            "content": resp.text,
+            "reason": "Generated hint",
+            "lines": []
+        }));
+
+    let content = parsed
+        .get("content")
+        .and_then(|v| v.as_str())
+        .unwrap_or(&resp.text)
+        .to_string();
+    let reason = parsed
+        .get("reason")
+        .and_then(|v| v.as_str())
+        .unwrap_or("Generated hint")
+        .to_string();
+    let lines: Vec<u32> = parsed
+        .get("lines")
+        .and_then(|v| v.as_array())
+        .map(|arr| arr.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect())
+        .unwrap_or_default();
+
+    let checked = CheckedCodeHint {
+        rung,
+        content,
+        reason,
+        lines,
+    };
+
+    check_code_hint(&checked, draft, problem, runner, harness).await?;
+    Ok(checked)
 }
 
 #[cfg(test)]
@@ -155,6 +369,21 @@ mod tests {
     }
 
     fn sample_problem() -> Problem {
+        let starter = concat!(
+            "def two_sum(numbers: list[int], target: int) -> list[int]:\n",
+            "    pass\n"
+        );
+        let reference = concat!(
+            "def two_sum(numbers: list[int], target: int) -> list[int]:\n",
+            "    seen = {}\n",
+            "    for i, num in enumerate(numbers):\n",
+            "        diff = target - num\n",
+            "        if diff in seen:\n",
+            "            return [seen[diff], i]\n",
+            "        seen[num] = i\n",
+            "    return []\n"
+        );
+
         let spec = ProblemSpec {
             title: "Two Sum".into(),
             statement: "Find indices of two numbers that add up to target.".into(),
@@ -178,12 +407,12 @@ mod tests {
             difficulty: Difficulty::Easy,
             target_complexity: "O(n) time, O(n) space".into(),
             patterns: vec!["hash_lookup".into()],
-            starter: "def two_sum(numbers: list[int], target: int) -> list[int]:\n    pass\n".into(),
+            starter: starter.into(),
         };
 
         Problem {
             spec,
-            reference: "def two_sum(numbers: list[int], target: int) -> list[int]:\n    seen = {}\n    for i, num in enumerate(numbers):\n        diff = target - num\n        if diff in seen:\n            return [seen[diff], i]\n        seen[num] = i\n    return []\n".into(),
+            reference: reference.into(),
             misreadings: vec![Misreading {
                 id: "mis-1".into(),
                 description: "Reusing same element".into(),
@@ -237,7 +466,7 @@ mod tests {
 
         let good_nudge = CheckedCodeHint {
             rung: CodeHintRung::Nudge,
-            content: "What data structure allows you to look up previously seen values in O(1) time?".into(),
+            content: "What data structure allows O(1) lookups for seen numbers?".into(),
             reason: "Guiding toward hash map".into(),
             lines: vec![],
         };
@@ -267,7 +496,11 @@ mod tests {
 
         let good_idea = CheckedCodeHint {
             rung: CodeHintRung::Idea,
-            content: "As you iterate through the list, keep track of each number and its index in a hash map so you can check if the complement was already seen.".into(),
+            content: concat!(
+                "As you iterate through the list, keep track of each number and its index in a ",
+                "hash map so you can check if the complement was already seen."
+            )
+            .into(),
             reason: "Explaining single-pass hash map strategy".into(),
             lines: vec![],
         };
@@ -286,7 +519,17 @@ mod tests {
 
         let bad_plan = CheckedCodeHint {
             rung: CodeHintRung::Plan,
-            content: "```python\ndef solve():\n    seen = {}\n    for i, x in enumerate(nums):\n        if target - x in seen:\n            return [seen[target - x], i]\n        seen[x] = i\n```".into(),
+            content: concat!(
+                "```python\n",
+                "def solve():\n",
+                "    seen = {}\n",
+                "    for i, x in enumerate(nums):\n",
+                "        if target - x in seen:\n",
+                "            return [seen[target - x], i]\n",
+                "        seen[x] = i\n",
+                "```"
+            )
+            .into(),
             reason: "Complete runnable solution".into(),
             lines: vec![],
         };
@@ -297,7 +540,15 @@ mod tests {
 
         let good_plan = CheckedCodeHint {
             rung: CodeHintRung::Plan,
-            content: "1. Initialize an empty dictionary mapping numbers to their indices.\n2. Iterate through numbers with their index:\n   - Compute complement = target - current number\n   - If complement is in the dictionary, return [complement_index, current_index]\n   - Otherwise, record current number and its index in the dictionary.\n3. Return empty list if no pair is found.".into(),
+            content: concat!(
+                "1. Initialize an empty dictionary mapping numbers to their indices.\n",
+                "2. Iterate through numbers with their index:\n",
+                "   - Compute complement = target - current number\n",
+                "   - If complement is in the dictionary, return indices\n",
+                "   - Otherwise, record current number and its index.\n",
+                "3. Return empty list if no pair is found."
+            )
+            .into(),
             reason: "Algorithmic steps in pseudo-code".into(),
             lines: vec![],
         };
@@ -312,7 +563,12 @@ mod tests {
         };
         let harness = PythonHarness::new();
         let problem = sample_problem();
-        let draft = "def two_sum(numbers, target):\n    seen = {}\n    for i in numbers:\n        return [0]\n"; // 4 lines
+        let draft = concat!(
+            "def two_sum(numbers, target):\n",
+            "    seen = {}\n",
+            "    for i in numbers:\n",
+            "        return [0]\n"
+        );
 
         let empty_lines = CheckedCodeHint {
             rung: CodeHintRung::PointAtLine,
@@ -349,7 +605,7 @@ mod tests {
 
         let valid_line = CheckedCodeHint {
             rung: CodeHintRung::PointAtLine,
-            content: "You are returning too early inside the loop without checking the complement.".into(),
+            content: "Returning too early inside the loop without checking the complement.".into(),
             reason: "Premature return on line 4".into(),
             lines: vec![4],
         };
@@ -360,7 +616,11 @@ mod tests {
     async fn test_hint_rejects_code_passing_all_problem_cases() {
         let runner = TestRunner {
             outcome: RunOutcome::Passed,
-            output: "__LATTICE_CASE__:{\"case_id\":\"case-1\",\"status\":\"passed\",\"actual\":\"[0, 1]\",\"printed\":\"\",\"elapsed_ms\":1}\n".into(),
+            output: concat!(
+                "__LATTICE_CASE__:{\"case_id\":\"case-1\",\"status\":\"passed\",",
+                "\"actual\":\"[0, 1]\",\"printed\":\"\",\"elapsed_ms\":1}\n"
+            )
+            .into(),
         };
         let harness = PythonHarness::new();
         let problem = sample_problem();

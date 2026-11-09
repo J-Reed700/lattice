@@ -1,17 +1,68 @@
-//! Tauri IPC commands for coding sessions (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 7.5).
+//! Tauri IPC commands for coding sessions
+//! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 7.5).
 
-use crate::interfaces::di::Container;
-use lattice_core::shared::error::AppError;
-use lattice_core::shared::ipc::ApiError;
-use lattice_learning::lab_runtime::LearningLabFile;
-use lattice_learning::practice::coding::jobs::{CODING_BUILD, CODING_BUILD_STEPS};
-use lattice_learning::practice::coding::problem::{CodingTask, Difficulty, Setting};
-use lattice_learning::practice::coding::session::{
-    CodingExampleDto, CodingSessionDto, CodingStage, RunScope,
-};
+use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
 use sha2::Digest;
 use tauri::State;
+use tokio_util::sync::CancellationToken;
+
+use crate::interfaces::di::Container;
+use lattice_core::shared::error::Result as CoreResult;
+use lattice_core::shared::ipc::ApiError;
+use lattice_learning::drills::runner::{runner_for, CodeRunner, RunOutcome};
+use lattice_learning::embedded_runtime::BuiltinRuntimes;
+use lattice_learning::lab_runtime::LearningLabFile;
+use lattice_learning::practice::coding::harness::python::PythonHarness;
+use lattice_learning::practice::coding::jobs::{CODING_BUILD, CODING_BUILD_STEPS};
+use lattice_learning::practice::coding::problem::{CodingTask, Difficulty, Setting};
+use lattice_learning::practice::coding::session::{
+    self, CodingExampleDto, CodingSessionDto, CodingStage, RunScope,
+};
+
+/// Fallback runner when no built-in Python bundle is available.
+struct FallbackRunner;
+
+#[async_trait]
+impl CodeRunner for FallbackRunner {
+    fn name(&self) -> &str {
+        "fallback"
+    }
+    fn entrypoint(&self) -> &str {
+        "checks.py"
+    }
+    fn contract(&self) -> &str {
+        "fallback"
+    }
+    fn running(&self, _path: &str) -> String {
+        String::new()
+    }
+    async fn run(
+        &self,
+        _files: &[lattice_core::domain::learning::drills::DrillFile],
+        _test: &str,
+        _cancel: CancellationToken,
+    ) -> CoreResult<RunOutcome> {
+        Ok(RunOutcome::Failed {
+            failed: 1,
+            passed: 0,
+        })
+    }
+    async fn run_capturing(
+        &self,
+        _files: &[LearningLabFile],
+        _read_only_paths: &[String],
+        _cancel: CancellationToken,
+    ) -> CoreResult<(RunOutcome, String)> {
+        Ok((
+            RunOutcome::Failed {
+                failed: 1,
+                passed: 0,
+            },
+            String::new(),
+        ))
+    }
+}
 
 /// Request payload to queue a coding problem build job.
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -80,20 +131,31 @@ pub struct StartCodingSessionRequestDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn start_coding_session(
-    _request: StartCodingSessionRequestDto,
-    _container: State<'_, Container>,
+    request: StartCodingSessionRequestDto,
+    container: State<'_, Container>,
 ) -> Result<CodingSessionDto, ApiError> {
-    Err(ApiError::from(AppError::InvalidInput("not implemented".into())))
+    session::start_coding_session(
+        container.db_pool(),
+        &request.session_id,
+        &request.program_id,
+        &request.activity_id,
+        request.setting,
+        request.budget_seconds,
+    )
+    .await
+    .map_err(ApiError::from)
 }
 
 /// Retrieves the current state of a coding session, redacted by setting and stage.
 #[tauri::command]
 #[specta::specta]
 pub async fn get_coding_session(
-    _session_id: String,
-    _container: State<'_, Container>,
+    session_id: String,
+    container: State<'_, Container>,
 ) -> Result<CodingSessionDto, ApiError> {
-    Err(ApiError::from(AppError::InvalidInput("not implemented".into())))
+    session::get_coding_session(container.db_pool(), &session_id)
+        .await
+        .map_err(ApiError::from)
 }
 
 /// Request to advance a coding session to a new stage.
@@ -110,10 +172,17 @@ pub struct MoveCodingStageRequestDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn move_coding_stage(
-    _request: MoveCodingStageRequestDto,
-    _container: State<'_, Container>,
+    request: MoveCodingStageRequestDto,
+    container: State<'_, Container>,
 ) -> Result<CodingSessionDto, ApiError> {
-    Err(ApiError::from(AppError::InvalidInput("not implemented".into())))
+    session::move_coding_stage(
+        container.db_pool(),
+        &request.session_id,
+        request.stage,
+        request.expected_revision,
+    )
+    .await
+    .map_err(ApiError::from)
 }
 
 /// Request to verify a learner-provided example.
@@ -130,10 +199,22 @@ pub struct CheckCodingExampleRequestDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn check_coding_example(
-    _request: CheckCodingExampleRequestDto,
-    _container: State<'_, Container>,
+    request: CheckCodingExampleRequestDto,
+    container: State<'_, Container>,
 ) -> Result<CodingExampleDto, ApiError> {
-    Err(ApiError::from(AppError::InvalidInput("not implemented".into())))
+    let runtimes = BuiltinRuntimes::new(None);
+    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
+    let harness = PythonHarness::new();
+    session::check_coding_example(
+        container.db_pool(),
+        runner.as_ref(),
+        &harness,
+        &request.session_id,
+        &request.args_json,
+        &request.expected_json,
+    )
+    .await
+    .map_err(ApiError::from)
 }
 
 /// Request to execute code under a specified test scope.
@@ -151,10 +232,23 @@ pub struct RunCodingSessionRequestDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn run_coding_session(
-    _request: RunCodingSessionRequestDto,
-    _container: State<'_, Container>,
+    request: RunCodingSessionRequestDto,
+    container: State<'_, Container>,
 ) -> Result<CodingSessionDto, ApiError> {
-    Err(ApiError::from(AppError::InvalidInput("not implemented".into())))
+    let runtimes = BuiltinRuntimes::new(None);
+    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
+    let harness = PythonHarness::new();
+    session::run_coding_session(
+        container.db_pool(),
+        runner.as_ref(),
+        &harness,
+        &request.session_id,
+        request.scope,
+        request.files,
+        request.custom_input_json,
+    )
+    .await
+    .map_err(ApiError::from)
 }
 
 /// Request to unlock the next rung of help on the hint ladder.
@@ -170,10 +264,26 @@ pub struct AskCodingHintRequestDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn ask_coding_hint(
-    _request: AskCodingHintRequestDto,
-    _container: State<'_, Container>,
+    request: AskCodingHintRequestDto,
+    container: State<'_, Container>,
 ) -> Result<CodingSessionDto, ApiError> {
-    Err(ApiError::from(AppError::InvalidInput("not implemented".into())))
+    let pin = container
+        .learning_llm(Default::default())
+        .await
+        .map_err(ApiError::from)?;
+    let runtimes = BuiltinRuntimes::new(None);
+    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
+    let harness = PythonHarness::new();
+    session::ask_coding_hint(
+        container.db_pool(),
+        pin.llm.as_ref(),
+        runner.as_ref(),
+        &harness,
+        &request.session_id,
+        request.expected_revision,
+    )
+    .await
+    .map_err(ApiError::from)
 }
 
 /// Request to send a learner message in the conversation thread.
@@ -191,10 +301,28 @@ pub struct SendCodingTurnRequestDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn send_coding_turn(
-    _request: SendCodingTurnRequestDto,
-    _container: State<'_, Container>,
+    request: SendCodingTurnRequestDto,
+    container: State<'_, Container>,
 ) -> Result<CodingSessionDto, ApiError> {
-    Err(ApiError::from(AppError::InvalidInput("not implemented".into())))
+    let pin = container
+        .learning_llm(Default::default())
+        .await
+        .map_err(ApiError::from)?;
+    let runtimes = BuiltinRuntimes::new(None);
+    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
+    let harness = PythonHarness::new();
+    session::send_coding_turn(
+        container.db_pool(),
+        pin.llm.as_ref(),
+        runner.as_ref(),
+        &harness,
+        &request.session_id,
+        &request.content,
+        request.spoken,
+        request.expected_revision,
+    )
+    .await
+    .map_err(ApiError::from)
 }
 
 /// Request to register a draft checkpoint after typing pauses in Watched setting.
@@ -209,10 +337,26 @@ pub struct ObserveCodingDraftRequestDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn observe_coding_draft(
-    _request: ObserveCodingDraftRequestDto,
-    _container: State<'_, Container>,
+    request: ObserveCodingDraftRequestDto,
+    container: State<'_, Container>,
 ) -> Result<CodingSessionDto, ApiError> {
-    Err(ApiError::from(AppError::InvalidInput("not implemented".into())))
+    let pin = container
+        .learning_llm(Default::default())
+        .await
+        .map_err(ApiError::from)?;
+    let runtimes = BuiltinRuntimes::new(None);
+    let runner = runner_for("python", &runtimes).unwrap_or_else(|| Box::new(FallbackRunner));
+    let harness = PythonHarness::new();
+    session::observe_coding_draft(
+        container.db_pool(),
+        pin.llm.as_ref(),
+        runner.as_ref(),
+        &harness,
+        &request.session_id,
+        request.files,
+    )
+    .await
+    .map_err(ApiError::from)
 }
 
 /// Request to update active clock accounting.
@@ -227,8 +371,10 @@ pub struct SetCodingClockRequestDto {
 #[tauri::command]
 #[specta::specta]
 pub async fn set_coding_clock(
-    _request: SetCodingClockRequestDto,
-    _container: State<'_, Container>,
+    request: SetCodingClockRequestDto,
+    container: State<'_, Container>,
 ) -> Result<CodingSessionDto, ApiError> {
-    Err(ApiError::from(AppError::InvalidInput("not implemented".into())))
+    session::set_coding_clock(container.db_pool(), &request.session_id, request.open)
+        .await
+        .map_err(ApiError::from)
 }
