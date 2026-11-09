@@ -557,6 +557,7 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
     let rank_at_load = Arc::new(Mutex::new(None));
     let entered = Arc::new(tokio::sync::Notify::new());
     let worker = LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: {
@@ -577,7 +578,6 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
         research_web: None,
         verifier: None,
-        course_setups: Default::default(),
     };
     let runtime = JobRuntime::new(pool.clone());
     runtime
