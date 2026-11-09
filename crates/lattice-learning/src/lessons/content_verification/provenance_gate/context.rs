@@ -301,6 +301,50 @@ impl Judgements {
             .collect()
     }
 
+    /// Judges at once the ownership of every distinct (origin, subject) pair
+    /// that weighing `wanted`, each a subject and the versions cited for it,
+    /// will ask for; the store then holds each answer. Waits for all and
+    /// returns the first error.
+    pub(in crate::lessons::content_verification) async fn owners(
+        &mut self,
+        llm: &dyn LLMPort,
+        wanted: &[(Option<ClaimSubject>, Vec<String>)],
+    ) -> Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        let mut pairs = Vec::new();
+        for (subject, versions) in wanted {
+            let Some(subject) = subject else {
+                continue;
+            };
+            for version in versions {
+                let record = self.version(Some(llm), version).await?;
+                let Some((provenance, _)) = &record.judged else {
+                    continue;
+                };
+                if provenance.origin.host.is_some()
+                    && seen.insert((provenance.origin.key.0.clone(), subject.key.0.clone()))
+                {
+                    pairs.push((record.clone(), subject));
+                }
+            }
+        }
+        let this = &*self;
+        let tasks = pairs.iter().map(|(record, subject)| async move {
+            match &record.judged {
+                Some((provenance, _)) => this
+                    .authority(Some(llm), provenance, subject)
+                    .await
+                    .map(|_| ()),
+                None => Ok(()),
+            }
+        });
+        futures::future::join_all(tasks)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<()>>>()
+            .map(|_| ())
+    }
+
     /// The facts of each of `versions` for `profile`'s subject: the version's
     /// level from its standing, its ownership of the subject, its copy
     /// relations and the overrides (§5). With no `llm`, only judgements
