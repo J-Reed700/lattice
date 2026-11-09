@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   sourceWorkspace: vi.fn(), sourceVersion: vi.fn(), saveDraft: vi.fn(),
 }));
 
+vi.mock('@/features/voice/hooks/useVoiceConversation', () => ({ useVoiceConversation: () => ({ phase: 'off', toggle: vi.fn() }) }));
 vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningPracticeWorkspace: mocks.getWorkspace,
   getLearningPracticeSession: mocks.getSession,
@@ -239,6 +240,13 @@ describe('Learning Studio grounded practice workbench', () => {
     currentSession = null; currentWorkspace.sessions = [];
     renderWorkbench(lesson, true);
     expect(await screen.findByText(/Work through it in your own words\./)).toBeVisible();
+  });
+
+  it('has one response box and a tutor box with its own name during an attempt', async () => {
+    renderWorkbench();
+    await screen.findByRole('textbox', { name: 'Your response' });
+    expect(screen.getAllByRole('textbox', { name: 'Your response' })).toHaveLength(1);
+    expect(screen.getAllByRole('textbox', { name: 'Ask a question or request critique' })).toHaveLength(1);
   });
 
   it('names the help in the learner words, not the mode names', async () => {

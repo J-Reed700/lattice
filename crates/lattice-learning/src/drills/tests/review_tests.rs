@@ -248,7 +248,10 @@ async fn the_learners_view_of_a_drill_holds_nothing_of_its_key() -> Result<()> {
         .map(String::as_str)
         .collect();
     drill_keys.sort_unstable();
-    assert_eq!(drill_keys, ["files", "issues", "lesson", "material", "title"]);
+    assert_eq!(
+        drill_keys,
+        ["files", "issues", "lesson", "material", "title"]
+    );
     assert_eq!(object["drill"]["issues"], planted);
     assert_eq!(
         object["drill"]["material"],

@@ -27,6 +27,8 @@ export interface PracticeThreadProps {
   busy?: string | null;
   error?: { message: string; retry?: () => void; reload?: { label: string; run: () => void } } | null;
   placeholder?: string;
+  /** The composer's accessible name. */
+  inputLabel?: string;
   draftKey?: string;
   voice?: boolean;
   suggestion?: string | null;
@@ -158,6 +160,7 @@ export function PracticeThread({
   busy = null,
   error = null,
   placeholder,
+  inputLabel = 'Your response',
   draftKey,
   voice = true,
   suggestion = null,
@@ -228,7 +231,7 @@ export function PracticeThread({
       {composerTop}
       <textarea
         ref={box}
-        aria-label="Your response"
+        aria-label={inputLabel}
         value={text}
         onChange={(event) => setText(event.target.value)}
         onKeyDown={onKeyDown}

@@ -14,7 +14,7 @@ export function caseResultViews(cases: Wire.CaseViewDto[]): CaseResultView[] {
     printed: item.printed,
     error: item.error,
     elapsedMs: item.elapsedMs,
-    hidden: item.visibility === 'hidden',
+    hidden: item.visibility === 'hidden' && !item.args && !item.expected && !item.actual,
     mine: item.mine,
   }));
 }

@@ -432,15 +432,16 @@ describe("Learning Studio Labs & simulations", () => {
     });
   });
 
-  it("opens a course project with its outcome-based brief already filled in", async () => {
+  it("opens a course project as a code lab with its outcome-based brief already filled in", async () => {
     const user = userEvent.setup();
     const brief = "Build a comparison study. Deliver a design and justify its limitations.";
     renderPractical(lesson, { composer: { id: "project-request", kind: "project", brief } });
-    expect(await screen.findByLabelText("Activity type")).toHaveValue("project");
+    expect(await screen.findByLabelText("Activity type")).toHaveValue("code_lab");
     expect(screen.getByLabelText("Your focus for this activity")).toHaveValue(brief);
+    await user.selectOptions(screen.getByLabelText("Execution environment"), "builtin:python");
     await user.click(screen.getByRole("button", { name: "Generate activity" }));
     await waitFor(() => expect(mocks.generate).toHaveBeenCalledOnce());
-    expect(mocks.generate.mock.calls[0][0]).toMatchObject({ kind: "project", learnerBrief: brief, lessonId: lesson.id, runtimeProfileId: null, builtinRuntime: null });
+    expect(mocks.generate.mock.calls[0][0]).toMatchObject({ kind: "code_lab", learnerBrief: brief, lessonId: lesson.id, runtimeProfileId: null, builtinRuntime: "python" });
   });
 
   it("opens the composer on the kind it is asked for, and again only for a new request", async () => {
@@ -464,14 +465,13 @@ describe("Learning Studio Labs & simulations", () => {
     expect(screen.getByRole("button", { name: /Another activity/ })).toHaveAttribute("aria-pressed", "false");
   });
 
-  it("keeps container selection available for optional project activities", async () => {
+  it("keeps container selection available for code labs", async () => {
     const user = userEvent.setup();
     renderPractical();
 
     await user.click(
       await screen.findByRole("button", { name: "New activity" }),
     );
-    await user.selectOptions(screen.getByLabelText("Activity type"), "project");
     await user.selectOptions(
       screen.getByLabelText("Execution environment"),
       "profile-1",
@@ -484,7 +484,7 @@ describe("Learning Studio Labs & simulations", () => {
 
     await waitFor(() => expect(mocks.generate).toHaveBeenCalledTimes(1));
     expect(mocks.generate.mock.calls[0][0]).toMatchObject({
-      kind: "project",
+      kind: "code_lab",
       runtimeProfileId: "profile-1",
       builtinRuntime: null,
     });
@@ -552,7 +552,7 @@ describe("Learning Studio Labs & simulations", () => {
     await waitFor(() => expect(opener).toHaveFocus());
   });
 
-  it("requires a runnable language for code labs while allowing an explicit review project", async () => {
+  it("requires a runnable language for code labs", async () => {
     const user = userEvent.setup();
     renderPractical();
     await user.click(await screen.findByRole("button", { name: "New activity" }));
@@ -560,10 +560,8 @@ describe("Learning Studio Labs & simulations", () => {
     expect(screen.getByRole("button", { name: "Generate activity" })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText("Execution environment"), "builtin:python");
     expect(screen.getByRole("button", { name: "Generate activity" })).toBeEnabled();
-    await user.selectOptions(screen.getByLabelText("Activity type"), "project");
     await user.selectOptions(screen.getByLabelText("Execution environment"), "");
-    await user.click(screen.getByRole("button", { name: "Generate activity" }));
-    await waitFor(() => expect(mocks.generate).toHaveBeenCalledWith(expect.objectContaining({ kind: "project", runtimeProfileId: null, builtinRuntime: null })));
+    expect(screen.getByRole("button", { name: "Generate activity" })).toBeDisabled();
   });
 
   it("restores a draft after leaving the lab without running it", async () => {
