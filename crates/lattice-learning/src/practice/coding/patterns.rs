@@ -170,6 +170,7 @@ pub async fn practice_due_in(
     connection: &mut SqliteConnection,
     program_id: &str,
     now: i64,
+    code_fits: bool,
 ) -> Result<PracticeDueDto> {
     let mut items: Vec<DueItemDto> = Vec::new();
 
