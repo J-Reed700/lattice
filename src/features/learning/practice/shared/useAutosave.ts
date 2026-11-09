@@ -25,8 +25,8 @@ export interface UseAutosaveOptions<T> {
 export interface UseAutosaveResult {
   state: AutosaveState;
   error: string | null;
-  /** Saves now if the value differs from the last saved one, and resolves once the attempt ends. */
-  flush: () => Promise<void>;
+  /** Saves now if the value differs from the last saved one, and resolves once the attempt ends. `atRevision` replaces the revision to save against. */
+  flush: (atRevision?: number) => Promise<void>;
 }
 
 /**
@@ -86,8 +86,9 @@ export function useAutosave<T>({
     }
   }, [report]);
 
-  const flush = useCallback(() => {
+  const flush = useCallback((atRevision?: number) => {
     clearTimer();
+    if (atRevision !== undefined) revisionRef.current = atRevision;
     chainRef.current = chainRef.current.then(saveIfChanged);
     return chainRef.current;
   }, [clearTimer, saveIfChanged]);
