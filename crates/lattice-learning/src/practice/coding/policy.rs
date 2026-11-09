@@ -136,9 +136,7 @@ impl TurnPolicy<WorkspaceObservation> for WatchingInterviewerPolicy {
         match event {
             SessionEvent::Started => Some(Cue::Opening),
             SessionEvent::StageChanged(CodingStage::Code) => Some(Cue::StageAdvance),
-            SessionEvent::RunFinished(RunScope::All | RunScope::Examples) => {
-                Some(Cue::RunFeedback)
-            }
+            SessionEvent::RunFinished(RunScope::All | RunScope::Examples) => Some(Cue::RunFeedback),
             SessionEvent::LearnerTurn(_) => Some(Cue::FollowUp),
             SessionEvent::DraftPaused => Some(Cue::DraftCheckpoint),
             SessionEvent::ExampleChecked
@@ -231,8 +229,10 @@ pub async fn check_counterpart_reply(
     for (i, word) in words.iter().enumerate() {
         if *word == "line" || *word == "lines" {
             if let Some(next_word) = words.get(i + 1) {
-                let clean_num: String =
-                    next_word.chars().take_while(|c| c.is_ascii_digit()).collect();
+                let clean_num: String = next_word
+                    .chars()
+                    .take_while(|c| c.is_ascii_digit())
+                    .collect();
                 if let Ok(line_num) = clean_num.parse::<u32>() {
                     if line_num == 0 || line_num > draft_line_count {
                         return Err(AppError::InvalidInput(format!(
@@ -250,8 +250,10 @@ pub async fn check_counterpart_reply(
     }
 
     for word in reply.split_whitespace() {
-        let clean_word: String =
-            word.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
+        let clean_word: String = word
+            .chars()
+            .filter(|c| c.is_ascii_alphanumeric() || *c == '-')
+            .collect();
         if clean_word.len() == 36 && uuid::Uuid::parse_str(&clean_word).is_ok() {
             return Err(AppError::InvalidInput("Reply leaked internal UUID".into()));
         }
@@ -460,16 +462,25 @@ mod tests {
             policy.cue(&SessionEvent::StageChanged(CodingStage::Plan), &obs),
             Some(Cue::StageAdvance)
         );
-        assert_eq!(policy.cue(&SessionEvent::ExampleChecked, &obs), Some(Cue::ExampleFeedback));
+        assert_eq!(
+            policy.cue(&SessionEvent::ExampleChecked, &obs),
+            Some(Cue::ExampleFeedback)
+        );
         assert_eq!(
             policy.cue(&SessionEvent::RunFinished(RunScope::Examples), &obs),
             Some(Cue::RunFeedback)
         );
         assert_eq!(
-            policy.cue(&SessionEvent::LearnerTurn("How should I start?".into()), &obs),
+            policy.cue(
+                &SessionEvent::LearnerTurn("How should I start?".into()),
+                &obs
+            ),
             Some(Cue::FollowUp)
         );
-        assert_eq!(policy.cue(&SessionEvent::HintRequested, &obs), Some(Cue::HintProvided));
+        assert_eq!(
+            policy.cue(&SessionEvent::HintRequested, &obs),
+            Some(Cue::HintProvided)
+        );
         assert_eq!(policy.cue(&SessionEvent::DraftPaused, &obs), None);
     }
 
@@ -488,13 +499,19 @@ mod tests {
             Some(Cue::RunFeedback)
         );
         assert_eq!(
-            policy.cue(&SessionEvent::LearnerTurn("I have an approach in mind.".into()), &obs),
+            policy.cue(
+                &SessionEvent::LearnerTurn("I have an approach in mind.".into()),
+                &obs
+            ),
             Some(Cue::FollowUp)
         );
 
         assert_eq!(policy.cue(&SessionEvent::DraftPaused, &obs), None);
         assert_eq!(policy.cue(&SessionEvent::ExampleChecked, &obs), None);
-        assert_eq!(policy.cue(&SessionEvent::RunFinished(RunScope::Examples), &obs), None);
+        assert_eq!(
+            policy.cue(&SessionEvent::RunFinished(RunScope::Examples), &obs),
+            None
+        );
     }
 
     #[test]
@@ -507,7 +524,10 @@ mod tests {
             policy.cue(&SessionEvent::RunFinished(RunScope::Examples), &obs),
             Some(Cue::RunFeedback)
         );
-        assert_eq!(policy.cue(&SessionEvent::DraftPaused, &obs), Some(Cue::DraftCheckpoint));
+        assert_eq!(
+            policy.cue(&SessionEvent::DraftPaused, &obs),
+            Some(Cue::DraftCheckpoint)
+        );
     }
 
     #[test]
@@ -523,7 +543,10 @@ mod tests {
 
         let two_q = "What is the time complexity? Can we do it with less space?";
         let err = policy.check(two_q, &Cue::FollowUp, &obs).unwrap_err();
-        assert!(err.to_string().contains("at most one question"), "got {err}");
+        assert!(
+            err.to_string().contains("at most one question"),
+            "got {err}"
+        );
     }
 
     #[tokio::test]
@@ -538,13 +561,17 @@ mod tests {
         let harness = PythonHarness::new();
 
         let valid_line = "Notice what happens on line 3.";
-        assert!(
-            check_counterpart_reply(
-                valid_line, &policy, &Cue::FollowUp, &obs, &problem, &runner, &harness
-            )
-            .await
-            .is_ok()
-        );
+        assert!(check_counterpart_reply(
+            valid_line,
+            &policy,
+            &Cue::FollowUp,
+            &obs,
+            &problem,
+            &runner,
+            &harness
+        )
+        .await
+        .is_ok());
 
         let invalid_line = "Look at line 12 where the loop terminates.";
         let err = check_counterpart_reply(
@@ -632,6 +659,9 @@ mod tests {
 
         let spoken_raw = r#"{"speak": true, "content": "How are you handling duplicate values?"}"#;
         let parsed_spoken = parse_watched_reply(spoken_raw).expect("should parse spoken reply");
-        assert_eq!(parsed_spoken, Some("How are you handling duplicate values?".into()));
+        assert_eq!(
+            parsed_spoken,
+            Some("How are you handling duplicate values?".into())
+        );
     }
 }

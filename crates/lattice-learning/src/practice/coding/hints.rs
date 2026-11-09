@@ -97,8 +97,18 @@ fn is_non_trivial_reference_line(line: &str, starter: &str) -> bool {
         }
     }
     let trivial = [
-        "pass", "return", "return []", "return None", "return True", "return False",
-        "else:", "try:", "finally:", "except:", "break", "continue",
+        "pass",
+        "return",
+        "return []",
+        "return None",
+        "return True",
+        "return False",
+        "else:",
+        "try:",
+        "finally:",
+        "except:",
+        "break",
+        "continue",
     ];
     if trivial.contains(&line) {
         return false;
@@ -177,7 +187,9 @@ pub async fn check_code_hint(
     harness: &dyn CaseHarness,
 ) -> Result<(), AppError> {
     if hint.reason.trim().is_empty() {
-        return Err(AppError::InvalidInput("Hint must have a non-empty reason".into()));
+        return Err(AppError::InvalidInput(
+            "Hint must have a non-empty reason".into(),
+        ));
     }
 
     for line in problem.reference.lines() {
@@ -208,7 +220,9 @@ pub async fn check_code_hint(
         }
         CodeHintRung::PointAtLine => {
             if hint.lines.is_empty() {
-                return Err(AppError::InvalidInput("Rung 4 requires non-empty lines".into()));
+                return Err(AppError::InvalidInput(
+                    "Rung 4 requires non-empty lines".into(),
+                ));
             }
             let draft_line_count = draft.lines().count().max(1) as u32;
             for &line in &hint.lines {
@@ -223,8 +237,15 @@ pub async fn check_code_hint(
 
     if let Some(code) = extract_code_block(&hint.content, &problem.spec.signature.function) {
         let cancel = CancellationToken::new();
-        if let Ok((_outcome, results)) =
-            run_cases(runner, harness, &problem.spec, &code, &problem.cases, cancel).await
+        if let Ok((_outcome, results)) = run_cases(
+            runner,
+            harness,
+            &problem.spec,
+            &code,
+            &problem.cases,
+            cancel,
+        )
+        .await
         {
             if !results.is_empty() && results.iter().all(|r| r.status == CaseStatus::Passed) {
                 return Err(AppError::InvalidInput(
@@ -284,12 +305,13 @@ pub async fn generate_code_hint(
     };
 
     let resp = llm.complete(&req).await?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(&resp.text).unwrap_or_else(|_| serde_json::json!({
+    let parsed: serde_json::Value = serde_json::from_str(&resp.text).unwrap_or_else(|_| {
+        serde_json::json!({
             "content": resp.text,
             "reason": "Generated hint",
             "lines": []
-        }));
+        })
+    });
 
     let content = parsed
         .get("content")
@@ -304,7 +326,11 @@ pub async fn generate_code_hint(
     let lines: Vec<u32> = parsed
         .get("lines")
         .and_then(|v| v.as_array())
-        .map(|arr| arr.iter().filter_map(|x| x.as_u64().map(|n| n as u32)).collect())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|x| x.as_u64().map(|n| n as u32))
+                .collect()
+        })
         .unwrap_or_default();
 
     let checked = CheckedCodeHint {
@@ -462,7 +488,10 @@ mod tests {
         let err2 = check_code_hint(&bad_nudge_statement, draft, &problem, &runner, &harness)
             .await
             .unwrap_err();
-        assert!(err2.to_string().contains("cannot contain code"), "got {err2}");
+        assert!(
+            err2.to_string().contains("cannot contain code"),
+            "got {err2}"
+        );
 
         let good_nudge = CheckedCodeHint {
             rung: CodeHintRung::Nudge,
@@ -470,7 +499,11 @@ mod tests {
             reason: "Guiding toward hash map".into(),
             lines: vec![],
         };
-        assert!(check_code_hint(&good_nudge, draft, &problem, &runner, &harness).await.is_ok());
+        assert!(
+            check_code_hint(&good_nudge, draft, &problem, &runner, &harness)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -504,7 +537,11 @@ mod tests {
             reason: "Explaining single-pass hash map strategy".into(),
             lines: vec![],
         };
-        assert!(check_code_hint(&good_idea, draft, &problem, &runner, &harness).await.is_ok());
+        assert!(
+            check_code_hint(&good_idea, draft, &problem, &runner, &harness)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -552,7 +589,11 @@ mod tests {
             reason: "Algorithmic steps in pseudo-code".into(),
             lines: vec![],
         };
-        assert!(check_code_hint(&good_plan, draft, &problem, &runner, &harness).await.is_ok());
+        assert!(
+            check_code_hint(&good_plan, draft, &problem, &runner, &harness)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -590,7 +631,10 @@ mod tests {
         let err2 = check_code_hint(&line_zero, draft, &problem, &runner, &harness)
             .await
             .unwrap_err();
-        assert!(err2.to_string().contains("1..=draft_line_count"), "got {err2}");
+        assert!(
+            err2.to_string().contains("1..=draft_line_count"),
+            "got {err2}"
+        );
 
         let line_out_of_bounds = CheckedCodeHint {
             rung: CodeHintRung::PointAtLine,
@@ -601,7 +645,10 @@ mod tests {
         let err3 = check_code_hint(&line_out_of_bounds, draft, &problem, &runner, &harness)
             .await
             .unwrap_err();
-        assert!(err3.to_string().contains("1..=draft_line_count"), "got {err3}");
+        assert!(
+            err3.to_string().contains("1..=draft_line_count"),
+            "got {err3}"
+        );
 
         let valid_line = CheckedCodeHint {
             rung: CodeHintRung::PointAtLine,
@@ -609,7 +656,11 @@ mod tests {
             reason: "Premature return on line 4".into(),
             lines: vec![4],
         };
-        assert!(check_code_hint(&valid_line, draft, &problem, &runner, &harness).await.is_ok());
+        assert!(
+            check_code_hint(&valid_line, draft, &problem, &runner, &harness)
+                .await
+                .is_ok()
+        );
     }
 
     #[tokio::test]
@@ -641,7 +692,9 @@ mod tests {
     #[tokio::test]
     async fn test_hint_rejects_verbatim_reference_line() {
         let runner = TestRunner {
-            outcome: RunOutcome::Failed { output: String::new() },
+            outcome: RunOutcome::Failed {
+                output: String::new(),
+            },
             output: String::new(),
         };
         let harness = PythonHarness::new();
@@ -657,7 +710,10 @@ mod tests {
         let err = check_code_hint(&verbatim_hint, draft, &problem, &runner, &harness)
             .await
             .unwrap_err();
-        assert!(err.to_string().contains("verbatim reference line"), "got {err}");
+        assert!(
+            err.to_string().contains("verbatim reference line"),
+            "got {err}"
+        );
     }
 
     #[test]
@@ -667,13 +723,19 @@ mod tests {
         assert!(policy.allows(Help::CodeHint(CodeHintRung::Nudge), HelpLevel::FullHelp));
         assert!(policy.allows(Help::CodeHint(CodeHintRung::Idea), HelpLevel::FullHelp));
         assert!(policy.allows(Help::CodeHint(CodeHintRung::Plan), HelpLevel::FullHelp));
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::PointAtLine), HelpLevel::FullHelp));
+        assert!(policy.allows(
+            Help::CodeHint(CodeHintRung::PointAtLine),
+            HelpLevel::FullHelp
+        ));
         assert!(policy.allows(Help::WorkedSolution, HelpLevel::FullHelp));
 
         assert!(policy.allows(Help::CodeHint(CodeHintRung::Nudge), HelpLevel::HintsOnly));
         assert!(policy.allows(Help::CodeHint(CodeHintRung::Idea), HelpLevel::HintsOnly));
         assert!(policy.allows(Help::CodeHint(CodeHintRung::Plan), HelpLevel::HintsOnly));
-        assert!(policy.allows(Help::CodeHint(CodeHintRung::PointAtLine), HelpLevel::HintsOnly));
+        assert!(policy.allows(
+            Help::CodeHint(CodeHintRung::PointAtLine),
+            HelpLevel::HintsOnly
+        ));
         assert!(!policy.allows(Help::WorkedSolution, HelpLevel::HintsOnly));
 
         assert!(!policy.allows(Help::CodeHint(CodeHintRung::Nudge), HelpLevel::NoHelp));

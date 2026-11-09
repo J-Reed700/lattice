@@ -117,25 +117,45 @@ mod tests {
 
     #[test]
     fn test_criterion_id_as_str_and_metadata() {
-        assert_eq!(ScorecardCriterionId::ProblemSolving.as_str(), "problem_solving");
-        assert_eq!(ScorecardCriterionId::ProblemSolving.title(), "Problem solving");
-        assert_eq!(ScorecardCriterionId::ProblemSolving.label(), "Problem solving");
-        assert!(ScorecardCriterionId::ProblemSolving.description().contains("clarified"));
+        assert_eq!(
+            ScorecardCriterionId::ProblemSolving.as_str(),
+            "problem_solving"
+        );
+        assert_eq!(
+            ScorecardCriterionId::ProblemSolving.title(),
+            "Problem solving"
+        );
+        assert_eq!(
+            ScorecardCriterionId::ProblemSolving.label(),
+            "Problem solving"
+        );
+        assert!(ScorecardCriterionId::ProblemSolving
+            .description()
+            .contains("clarified"));
 
         assert_eq!(ScorecardCriterionId::Code.as_str(), "code");
         assert_eq!(ScorecardCriterionId::Code.title(), "Code");
         assert_eq!(ScorecardCriterionId::Code.label(), "Code");
-        assert!(ScorecardCriterionId::Code.description().contains("idiomatic"));
+        assert!(ScorecardCriterionId::Code
+            .description()
+            .contains("idiomatic"));
 
         assert_eq!(ScorecardCriterionId::Testing.as_str(), "testing");
         assert_eq!(ScorecardCriterionId::Testing.title(), "Testing");
         assert_eq!(ScorecardCriterionId::Testing.label(), "Testing");
-        assert!(ScorecardCriterionId::Testing.description().contains("Examples before code"));
+        assert!(ScorecardCriterionId::Testing
+            .description()
+            .contains("Examples before code"));
 
-        assert_eq!(ScorecardCriterionId::Communication.as_str(), "communication");
+        assert_eq!(
+            ScorecardCriterionId::Communication.as_str(),
+            "communication"
+        );
         assert_eq!(ScorecardCriterionId::Communication.title(), "Communication");
         assert_eq!(ScorecardCriterionId::Communication.label(), "Communication");
-        assert!(ScorecardCriterionId::Communication.description().contains("hints well"));
+        assert!(ScorecardCriterionId::Communication
+            .description()
+            .contains("hints well"));
     }
 
     #[test]

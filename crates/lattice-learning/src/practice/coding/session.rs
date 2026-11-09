@@ -294,8 +294,11 @@ pub async fn evaluate_example(
         });
     }
 
-    let ref_actual =
-        ref_results.first().and_then(|r| r.actual.as_deref()).unwrap_or("").trim();
+    let ref_actual = ref_results
+        .first()
+        .and_then(|r| r.actual.as_deref())
+        .unwrap_or("")
+        .trim();
 
     let clean_expected = expected_json.trim();
     if ref_actual != clean_expected {
@@ -321,8 +324,11 @@ pub async fn evaluate_example(
         .await;
 
         if let Ok((_outcome, results)) = mis_run {
-            let mis_actual =
-                results.first().and_then(|r| r.actual.as_deref()).unwrap_or("").trim();
+            let mis_actual = results
+                .first()
+                .and_then(|r| r.actual.as_deref())
+                .unwrap_or("")
+                .trim();
             if mis_actual != ref_actual {
                 catches.push(mis.description.clone());
             }
@@ -562,8 +568,9 @@ pub async fn get_coding_session(
     };
     let stage = CodingStage::parse(&stage_str).unwrap_or(CodingStage::Understand);
 
-    let problem = load_problem_for_activity(pool, &activity_id).await.unwrap_or_else(|_| {
-        Problem {
+    let problem = load_problem_for_activity(pool, &activity_id)
+        .await
+        .unwrap_or_else(|_| Problem {
             spec: ProblemSpec {
                 title: "Practice Problem".into(),
                 statement: String::new(),
@@ -584,16 +591,18 @@ pub async fn get_coding_session(
             misreadings: vec![],
             cases: vec![],
             reference_ms: std::collections::BTreeMap::new(),
-        }
-    });
+        });
 
     let ex_sql = concat!(
         "SELECT ordinal, args_json, expected_json, verdict, catches_json ",
         "FROM learning_coding_examples WHERE session_id = ? ORDER BY ordinal"
     );
 
-    let example_rows: Vec<(u32, String, String, String, String)> =
-        sqlx::query_as(ex_sql).bind(session_id).fetch_all(pool).await.unwrap_or_default();
+    let example_rows: Vec<(u32, String, String, String, String)> = sqlx::query_as(ex_sql)
+        .bind(session_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
 
     let examples: Vec<CodingExampleDto> = example_rows
         .into_iter()
@@ -611,8 +620,11 @@ pub async fn get_coding_session(
         "WHERE session_id = ? ORDER BY ordinal"
     );
 
-    let event_rows: Vec<(String, String, i64)> =
-        sqlx::query_as(ev_sql).bind(session_id).fetch_all(pool).await.unwrap_or_default();
+    let event_rows: Vec<(String, String, i64)> = sqlx::query_as(ev_sql)
+        .bind(session_id)
+        .fetch_all(pool)
+        .await
+        .unwrap_or_default();
 
     let mut stage_events = Vec::new();
     let mut hints = Vec::new();
@@ -716,13 +728,18 @@ pub async fn move_coding_stage(
         .rows_affected();
 
     if rows_affected == 0 {
-        return Err(AppError::InvalidInput("Concurrent modification or invalid revision".into()));
+        return Err(AppError::InvalidInput(
+            "Concurrent modification or invalid revision".into(),
+        ));
     }
 
     let ord_sql =
         "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM learning_coding_events WHERE session_id = ?";
-    let next_ord: i64 =
-        sqlx::query_scalar(ord_sql).bind(session_id).fetch_one(pool).await.unwrap_or(0);
+    let next_ord: i64 = sqlx::query_scalar(ord_sql)
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     let payload = format!("{{\"stage\":\"{}\"}}", stage.as_str());
     let ins_sql = concat!(
@@ -757,8 +774,11 @@ pub async fn check_coding_example(
 
     let ord_sql =
         "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM learning_coding_examples WHERE session_id = ?";
-    let next_ord: i64 =
-        sqlx::query_scalar(ord_sql).bind(session_id).fetch_one(pool).await.unwrap_or(0);
+    let next_ord: i64 = sqlx::query_scalar(ord_sql)
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     let catches_json = serde_json::to_string(&dto.catches).unwrap_or_else(|_| "[]".into());
 
@@ -782,8 +802,11 @@ pub async fn check_coding_example(
     let now = crate::persistence::now();
     let ev_ord_sql =
         "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM learning_coding_events WHERE session_id = ?";
-    let next_event_ord: i64 =
-        sqlx::query_scalar(ev_ord_sql).bind(session_id).fetch_one(pool).await.unwrap_or(0);
+    let next_event_ord: i64 = sqlx::query_scalar(ev_ord_sql)
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     let ins_ev_sql = concat!(
         "INSERT INTO learning_coding_events (session_id, ordinal, kind, payload_json, at) ",
@@ -844,13 +867,24 @@ pub async fn run_coding_session(
     };
 
     let cancel = CancellationToken::new();
-    let _ = run_cases(runner, harness, &problem.spec, solution_code, &cases_to_run, cancel).await;
+    let _ = run_cases(
+        runner,
+        harness,
+        &problem.spec,
+        solution_code,
+        &cases_to_run,
+        cancel,
+    )
+    .await;
 
     let now = crate::persistence::now();
     let ord_sql =
         "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM learning_coding_events WHERE session_id = ?";
-    let next_event_ord: i64 =
-        sqlx::query_scalar(ord_sql).bind(session_id).fetch_one(pool).await.unwrap_or(0);
+    let next_event_ord: i64 = sqlx::query_scalar(ord_sql)
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     let payload = format!("{{\"scope\":\"{}\"}}", scope.as_str());
     let ins_sql = concat!(
@@ -907,8 +941,11 @@ pub async fn ask_coding_hint(
     let now = crate::persistence::now();
     let ord_sql =
         "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM learning_coding_events WHERE session_id = ?";
-    let next_ord: i64 =
-        sqlx::query_scalar(ord_sql).bind(session_id).fetch_one(pool).await.unwrap_or(0);
+    let next_ord: i64 = sqlx::query_scalar(ord_sql)
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     let payload = serde_json::to_string(&hint).unwrap_or_else(|_| "{}".into());
     let ins_sql = concat!(
@@ -941,8 +978,7 @@ pub async fn send_coding_turn(
 ) -> Result<CodingSessionDto, AppError> {
     let session = get_coding_session(pool, session_id).await?;
     let problem = load_problem_for_activity(pool, &session.activity_id).await?;
-    let observation =
-        WorkspaceObservation::build(&session, &problem, &session.draft_files, None)?;
+    let observation = WorkspaceObservation::build(&session, &problem, &session.draft_files, None)?;
 
     let coach_policy = CoachPolicy;
     let interviewer_policy = InterviewerPolicy;
@@ -1067,8 +1103,11 @@ pub async fn set_coding_clock(
 
     let ord_sql =
         "SELECT COALESCE(MAX(ordinal), -1) + 1 FROM learning_coding_events WHERE session_id = ?";
-    let next_ord: i64 =
-        sqlx::query_scalar(ord_sql).bind(session_id).fetch_one(pool).await.unwrap_or(0);
+    let next_ord: i64 = sqlx::query_scalar(ord_sql)
+        .bind(session_id)
+        .fetch_one(pool)
+        .await
+        .unwrap_or(0);
 
     let kind = if open { "opened" } else { "closed" };
     let ins_sql = concat!(
@@ -1199,29 +1238,124 @@ mod tests {
     #[test]
     fn test_setting_discloses_all_variants_across_settings() {
         // FailingCaseInput
-        assert!(discloses(Setting::Coached, Hidden::FailingCaseInput, false, false));
-        assert!(discloses(Setting::Coached, Hidden::FailingCaseInput, true, false));
-        assert!(!discloses(Setting::Mock, Hidden::FailingCaseInput, true, false));
-        assert!(discloses(Setting::Mock, Hidden::FailingCaseInput, true, true));
-        assert!(!discloses(Setting::Watched, Hidden::FailingCaseInput, true, false));
-        assert!(discloses(Setting::Watched, Hidden::FailingCaseInput, true, true));
+        assert!(discloses(
+            Setting::Coached,
+            Hidden::FailingCaseInput,
+            false,
+            false
+        ));
+        assert!(discloses(
+            Setting::Coached,
+            Hidden::FailingCaseInput,
+            true,
+            false
+        ));
+        assert!(!discloses(
+            Setting::Mock,
+            Hidden::FailingCaseInput,
+            true,
+            false
+        ));
+        assert!(discloses(
+            Setting::Mock,
+            Hidden::FailingCaseInput,
+            true,
+            true
+        ));
+        assert!(!discloses(
+            Setting::Watched,
+            Hidden::FailingCaseInput,
+            true,
+            false
+        ));
+        assert!(discloses(
+            Setting::Watched,
+            Hidden::FailingCaseInput,
+            true,
+            true
+        ));
 
         // UncaughtMisreading
-        assert!(!discloses(Setting::Coached, Hidden::UncaughtMisreading, false, false));
-        assert!(discloses(Setting::Coached, Hidden::UncaughtMisreading, true, false));
-        assert!(discloses(Setting::Coached, Hidden::UncaughtMisreading, false, true));
-        assert!(!discloses(Setting::Mock, Hidden::UncaughtMisreading, true, false));
-        assert!(discloses(Setting::Mock, Hidden::UncaughtMisreading, true, true));
-        assert!(!discloses(Setting::Watched, Hidden::UncaughtMisreading, true, false));
-        assert!(discloses(Setting::Watched, Hidden::UncaughtMisreading, true, true));
+        assert!(!discloses(
+            Setting::Coached,
+            Hidden::UncaughtMisreading,
+            false,
+            false
+        ));
+        assert!(discloses(
+            Setting::Coached,
+            Hidden::UncaughtMisreading,
+            true,
+            false
+        ));
+        assert!(discloses(
+            Setting::Coached,
+            Hidden::UncaughtMisreading,
+            false,
+            true
+        ));
+        assert!(!discloses(
+            Setting::Mock,
+            Hidden::UncaughtMisreading,
+            true,
+            false
+        ));
+        assert!(discloses(
+            Setting::Mock,
+            Hidden::UncaughtMisreading,
+            true,
+            true
+        ));
+        assert!(!discloses(
+            Setting::Watched,
+            Hidden::UncaughtMisreading,
+            true,
+            false
+        ));
+        assert!(discloses(
+            Setting::Watched,
+            Hidden::UncaughtMisreading,
+            true,
+            true
+        ));
 
         // WorkedSolution
-        assert!(!discloses(Setting::Coached, Hidden::WorkedSolution, false, false));
-        assert!(discloses(Setting::Coached, Hidden::WorkedSolution, true, false));
-        assert!(!discloses(Setting::Mock, Hidden::WorkedSolution, true, false));
-        assert!(discloses(Setting::Mock, Hidden::WorkedSolution, false, true));
-        assert!(!discloses(Setting::Watched, Hidden::WorkedSolution, true, false));
-        assert!(discloses(Setting::Watched, Hidden::WorkedSolution, false, true));
+        assert!(!discloses(
+            Setting::Coached,
+            Hidden::WorkedSolution,
+            false,
+            false
+        ));
+        assert!(discloses(
+            Setting::Coached,
+            Hidden::WorkedSolution,
+            true,
+            false
+        ));
+        assert!(!discloses(
+            Setting::Mock,
+            Hidden::WorkedSolution,
+            true,
+            false
+        ));
+        assert!(discloses(
+            Setting::Mock,
+            Hidden::WorkedSolution,
+            false,
+            true
+        ));
+        assert!(!discloses(
+            Setting::Watched,
+            Hidden::WorkedSolution,
+            true,
+            false
+        ));
+        assert!(discloses(
+            Setting::Watched,
+            Hidden::WorkedSolution,
+            false,
+            true
+        ));
     }
 
     #[tokio::test]
@@ -1248,7 +1382,10 @@ mod tests {
         .expect("Right example should evaluate");
         assert_eq!(right_ex.verdict, ExampleVerdict::Right);
         assert!(
-            right_ex.catches.iter().any(|c| c.contains("Reusing same index")),
+            right_ex
+                .catches
+                .iter()
+                .any(|c| c.contains("Reusing same index")),
             "Expected caught misreading"
         );
 
@@ -1273,7 +1410,9 @@ mod tests {
         assert!(wrong_ex.catches.is_empty());
 
         let runner_inv = TestRunner {
-            outcome: RunOutcome::Failed { output: String::new() },
+            outcome: RunOutcome::Failed {
+                output: String::new(),
+            },
             output: String::new(),
         };
         let invalid_ex = evaluate_example(

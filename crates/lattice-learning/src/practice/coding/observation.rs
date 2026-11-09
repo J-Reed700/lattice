@@ -263,10 +263,16 @@ mod tests {
         let diff = compute_changed_since_last_seen(Some(prev), curr);
         assert!(diff.is_some(), "Expected diff when solution changed");
         let diff_text = diff.unwrap();
-        assert!(diff_text.contains("seen = {}"), "Diff should mention added lines");
+        assert!(
+            diff_text.contains("seen = {}"),
+            "Diff should mention added lines"
+        );
 
         let identical = compute_changed_since_last_seen(Some(curr), curr);
-        assert!(identical.is_none(), "Expected no diff for identical content");
+        assert!(
+            identical.is_none(),
+            "Expected no diff for identical content"
+        );
     }
 
     #[test]

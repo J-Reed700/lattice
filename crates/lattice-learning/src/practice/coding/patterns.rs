@@ -182,8 +182,7 @@ pub async fn targets(
     .await
     .map_err(db_err)?;
 
-    let mut schedule_map: std::collections::HashMap<String, i64> =
-        std::collections::HashMap::new();
+    let mut schedule_map: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for (pat, due) in rows {
         schedule_map.insert(pat, due);
     }
@@ -262,10 +261,7 @@ pub struct PracticeDueDto {
 
 /// Aggregates due items for practice home. Problem patterns that are due are grouped
 /// under `"Problem patterns"`, hiding individual pattern names until the debrief.
-pub async fn load_practice_due(
-    pool: &SqlitePool,
-    _program_id: &str,
-) -> Result<PracticeDueDto> {
+pub async fn load_practice_due(pool: &SqlitePool, _program_id: &str) -> Result<PracticeDueDto> {
     let now = chrono::Utc::now().timestamp_millis();
     let due_count: i64 = sqlx::query_scalar(
         "SELECT COUNT(*) FROM learning_drill_pattern_schedules \
@@ -366,7 +362,10 @@ mod tests {
             highest_hint_rung: None,
             solution_seen_before_pass: true,
         };
-        assert_eq!(rate_problem_pattern(&input_solution_seen), StudyRating::Again);
+        assert_eq!(
+            rate_problem_pattern(&input_solution_seen),
+            StudyRating::Again
+        );
     }
 
     #[tokio::test]

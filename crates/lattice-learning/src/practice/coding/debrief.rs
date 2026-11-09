@@ -69,7 +69,10 @@ fn db_err(e: sqlx::Error) -> AppError {
 }
 
 fn normalize(s: &str) -> String {
-    s.split_whitespace().collect::<Vec<_>>().join(" ").to_lowercase()
+    s.split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .to_lowercase()
 }
 
 impl CodingDebriefer {
@@ -106,17 +109,11 @@ impl CodingDebriefer {
                         (Some(start), Some(end)) => {
                             start >= 1 && end <= evidence.draft_line_count && start <= end
                         }
-                        (Some(start), None) => {
-                            start >= 1 && start <= evidence.draft_line_count
-                        }
-                        (None, Some(end)) => {
-                            end >= 1 && end <= evidence.draft_line_count
-                        }
+                        (Some(start), None) => start >= 1 && start <= evidence.draft_line_count,
+                        (None, Some(end)) => end >= 1 && end <= evidence.draft_line_count,
                         (None, None) => evidence.draft_line_count > 0,
                     },
-                    EvidenceKind::Run => {
-                        evidence.runs.iter().any(|r| r.id == item.text)
-                    }
+                    EvidenceKind::Run => evidence.runs.iter().any(|r| r.id == item.text),
                     EvidenceKind::Example => evidence.examples.iter().any(|ex| {
                         ex.args_json == item.text
                             || ex.expected_json == item.text
@@ -169,7 +166,9 @@ impl Debriefer for CodingDebriefer {
                 ScorecardRow {
                     criterion_id: ScorecardCriterionId::ProblemSolving.as_str().to_string(),
                     title: ScorecardCriterionId::ProblemSolving.title().to_string(),
-                    description: ScorecardCriterionId::ProblemSolving.description().to_string(),
+                    description: ScorecardCriterionId::ProblemSolving
+                        .description()
+                        .to_string(),
                     status: ScorecardStatus::Observed,
                     points: Some(3),
                     max_points: 4,
@@ -210,7 +209,9 @@ impl Debriefer for CodingDebriefer {
                 ScorecardRow {
                     criterion_id: ScorecardCriterionId::Communication.as_str().to_string(),
                     title: ScorecardCriterionId::Communication.title().to_string(),
-                    description: ScorecardCriterionId::Communication.description().to_string(),
+                    description: ScorecardCriterionId::Communication
+                        .description()
+                        .to_string(),
                     status: ScorecardStatus::Observed,
                     points: Some(3),
                     max_points: 4,
@@ -226,10 +227,7 @@ impl Debriefer for CodingDebriefer {
 }
 
 /// Saves a scorecard to `learning_scorecards`.
-pub async fn save_scorecard(
-    pool: &SqlitePool,
-    scorecard: &Scorecard,
-) -> Result<()> {
+pub async fn save_scorecard(pool: &SqlitePool, scorecard: &Scorecard) -> Result<()> {
     for (ordinal, row) in scorecard.rows.iter().enumerate() {
         let status_str = match row.status {
             ScorecardStatus::Observed => "observed",
@@ -288,19 +286,20 @@ fn criterion_title(id: &str) -> String {
 
 fn criterion_desc(id: &str) -> String {
     match id {
-        "problem_solving" => ScorecardCriterionId::ProblemSolving.description().to_string(),
+        "problem_solving" => ScorecardCriterionId::ProblemSolving
+            .description()
+            .to_string(),
         "code" => ScorecardCriterionId::Code.description().to_string(),
         "testing" => ScorecardCriterionId::Testing.description().to_string(),
-        "communication" => ScorecardCriterionId::Communication.description().to_string(),
+        "communication" => ScorecardCriterionId::Communication
+            .description()
+            .to_string(),
         _ => String::new(),
     }
 }
 
 /// Loads a scorecard from `learning_scorecards` for `session_id`.
-pub async fn load_scorecard(
-    pool: &SqlitePool,
-    session_id: &str,
-) -> Result<Option<Scorecard>> {
+pub async fn load_scorecard(pool: &SqlitePool, session_id: &str) -> Result<Option<Scorecard>> {
     let rows = sqlx::query(
         "SELECT criterion_id, ordinal, status, points, max_points, \
          evidence_json, feedback, next_step \
@@ -369,8 +368,9 @@ pub async fn emit_evidence_events(
             ScorecardStatus::Observed => "observed",
             ScorecardStatus::InsufficientEvidence => "not_assessed",
         };
-        let score: Option<f64> =
-            row.points.map(|p| (p as f64) / (row.max_points.max(1) as f64));
+        let score: Option<f64> = row
+            .points
+            .map(|p| (p as f64) / (row.max_points.max(1) as f64));
         let quote = row
             .evidence
             .iter()
@@ -736,13 +736,12 @@ mod tests {
             .await
             .expect("emit events");
 
-        let count: i64 = sqlx::query_scalar(
-            "SELECT COUNT(*) FROM learning_evidence_events WHERE source_id = ?",
-        )
-        .bind(&session_id)
-        .fetch_one(&pool)
-        .await
-        .expect("count events");
+        let count: i64 =
+            sqlx::query_scalar("SELECT COUNT(*) FROM learning_evidence_events WHERE source_id = ?")
+                .bind(&session_id)
+                .fetch_one(&pool)
+                .await
+                .expect("count events");
 
         assert_eq!(count, 1);
     }

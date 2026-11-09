@@ -197,7 +197,9 @@ impl<'a> ProblemSource for GeneratedProblems<'a> {
                     ));
                     continue;
                 }
-                Err(ProofError::Cancelled) => return Err(AppError::InvalidState("Cancelled".into())),
+                Err(ProofError::Cancelled) => {
+                    return Err(AppError::InvalidState("Cancelled".into()))
+                }
                 Err(e) => {
                     last_feedback = Some(format!("Proof error on reference: {:?}", e));
                     continue;
@@ -227,7 +229,9 @@ impl<'a> ProblemSource for GeneratedProblems<'a> {
                     ));
                     continue;
                 }
-                Err(ProofError::Cancelled) => return Err(AppError::InvalidState("Cancelled".into())),
+                Err(ProofError::Cancelled) => {
+                    return Err(AppError::InvalidState("Cancelled".into()))
+                }
                 Err(e) => {
                     last_feedback = Some(format!("Proof error on misreadings: {:?}", e));
                     continue;
