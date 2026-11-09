@@ -465,6 +465,21 @@ mod tests {
     }
 
     #[test]
+    fn a_list_item_step_another_item_has_may_be_added() {
+        let original = json!({"blocks":[
+            {"kind":"explanation","body":"Intro line.\n\n- Type `pwd`.\n- Read the output."},
+            {"kind":"explanation","body":"Other text.\n\n- Open a terminal."}
+        ],"questions":[]});
+        let edit = json!({"path":"/blocks/1/body","before":"- Open a terminal.","after":"- Open a terminal.\n- Type `pwd`."});
+        let repaired = apply(&original, &json!({"edits":[edit]}).to_string());
+        assert!(repaired.is_ok(), "a step is not a sentence of the prose");
+        assert_eq!(
+            repaired.unwrap()["blocks"][1]["body"],
+            "Other text.\n\n- Open a terminal.\n- Type `pwd`."
+        );
+    }
+
+    #[test]
     fn an_edit_adding_a_sentence_its_own_field_has_is_rejected() {
         let original = two_sections();
         let repeat = json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta is second. Alpha is first."});

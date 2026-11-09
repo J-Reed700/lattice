@@ -698,3 +698,35 @@ fn scaffolding_inside_a_code_fence_or_ordinary_prose_is_no_finding() {
         json!("The second option is wrong. Two sources agree that the shell replies.");
     assert!(lesson_rules(&candidate).is_empty());
 }
+
+#[test]
+fn labels_that_open_paragraphs_are_no_repeated_sentences() {
+    let mut candidate = lesson();
+    for index in [0, 4] {
+        candidate["blocks"][index]["body"] = json!(format!(
+            "**Predict first.** Opening of section {index}.\n\n**The model.** Model of section {index}."
+        ));
+    }
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn the_steps_of_two_methods_are_no_repeated_sentences() {
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!("Method A\n\n1. Type `pwd`.\n2. Expected output: `/home/pi/Music`.\n\nMethod B\n\n1. Type `pwd`.\n2. Expected output: `/home/pi/Music`.");
+    let findings = lesson_rules(&candidate);
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+#[test]
+fn a_prose_sentence_after_a_label_is_still_compared() {
+    const SHARED: &str = "You change the location with cd and check it with pwd.";
+    let mut candidate = lesson();
+    candidate["blocks"][1]["body"] = json!(format!("**Case.** Opening. {SHARED}"));
+    candidate["blocks"][4]["body"] = json!(format!("**Case.** Fresh start here. {SHARED}"));
+    let findings = lesson_rules(&candidate);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].passage.as_deref(), Some(SHARED));
+}
