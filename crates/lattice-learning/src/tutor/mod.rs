@@ -19,6 +19,8 @@ pub(crate) mod prompt;
 mod tools;
 
 #[cfg(test)]
+mod binding_tests;
+#[cfg(test)]
 mod tests;
 
 pub use binding::{bind_conversation, SetConversationCourseRequestDto};

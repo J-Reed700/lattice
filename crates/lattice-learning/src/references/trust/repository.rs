@@ -39,6 +39,13 @@ impl SqliteSourceTrustStore {
     pub(crate) fn pool(&self) -> &SqlitePool {
         &self.pool
     }
+
+    pub(crate) async fn record_outcomes(&self, outcomes: &[OutcomeRecord]) -> Result<()> {
+        for outcome in outcomes {
+            self.record_outcome(outcome).await?;
+        }
+        Ok(())
+    }
 }
 
 fn judgement<T: serde::de::DeserializeOwned>(
