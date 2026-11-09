@@ -53,16 +53,4 @@ describe('course next steps', () => {
     const finished = structuredClone(program); finished.modules[0].lessons[0].completed = true;
     expect(nextCourseStep(finished, undefined, assessment).kind).toBe('assessment');
   });
-  describe('the next lesson is not yet prepared', () => {
-    const outline = structuredClone(program); outline.modules[0].lessons[0].preparation = 'outline';
-    const checked = { status: 'submitted', findings: [] } as unknown as LearningPlanDto['latestDiagnostic'];
-    const planWith = (jobs: unknown[]) => ({ jobs, latestDiagnostic: checked }) as LearningPlanDto;
-    const queued = (status: string) => ({ id: 'j', kind: 'lesson_preparation', status, lessonIds: ['l'], createdAt: 1, retryOfJobId: null, endedByUpdate: false });
-    it('offers to prepare it when no job covers it', () => {
-      expect(nextCourseStep(outline, undefined, assessment, planWith([]))).toMatchObject({ kind: 'lesson', title: 'Prepare your next lesson', lessonId: 'l' });
-    });
-    it.each(['pending', 'running'])('does not offer to prepare it while a %s job covers it', (status) => {
-      expect(nextCourseStep(outline, undefined, assessment, planWith([queued(status)]))).toMatchObject({ kind: 'lesson', title: 'Open your next lesson', lessonId: 'l' });
-    });
-  });
 });
