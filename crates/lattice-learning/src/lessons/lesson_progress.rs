@@ -55,6 +55,10 @@ impl AdmissionObserver for Progress {
     fn queued(&self) {}
 
     fn left_queue(&self, _exit: QueueExit) {}
+
+    fn holding(&self) {}
+
+    fn released(&self) {}
 }
 
 /// Runs `future` as the current lesson job's work, with `progress` recording it.

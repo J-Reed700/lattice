@@ -2,7 +2,7 @@
 use super::*;
 use crate::lessons::call_plan::PlannedAt;
 use lattice_core::domain::learning::acceptance::StandardPolicy;
-use lattice_core::shared::runtime::jobs::{current_observer, AdmissionObserver, QueueExit};
+use lattice_core::shared::runtime::jobs::{current_observer, QueueExit};
 
 #[tokio::test]
 async fn structured_progress_tracks_repeated_phases_and_concurrent_model_requests() {
@@ -435,89 +435,102 @@ fn waiting(progress: &Progress) -> bool {
 }
 
 #[tokio::test]
-async fn a_lesson_waits_for_the_model_only_while_all_its_calls_are_queued() {
+async fn a_lesson_waits_for_the_model_only_while_none_of_its_requests_holds_a_slot() {
     let progress = Progress::default();
     scoped(&progress, async {
         let observer = current_observer().expect("a lesson job's scope has an observer");
-        let first = model_call(Term::Reading);
-        let second = model_call(Term::Reading);
-        assert!(
-            !waiting(&progress),
-            "calls in flight that none has queued are not waiting"
-        );
-        observer.queued();
-        assert!(
-            !waiting(&progress),
-            "one queued call of two in flight: the other is running, so the lesson is not waiting"
-        );
         observer.queued();
         assert!(
             waiting(&progress),
-            "every call in flight is queued, so the lesson is waiting for the model"
+            "a request is queued and none holds a slot, so the lesson is waiting for the model"
         );
-        observer.left_queue(QueueExit::Granted);
+        observer.holding();
         assert!(
             !waiting(&progress),
-            "one call granted a slot: the lesson is no longer waiting"
+            "a request holds a slot, so the lesson is working and not waiting"
         );
-        drop(first);
+        observer.released();
         assert!(
             waiting(&progress),
-            "the granted call finished and the only call left is queued"
+            "the slot was given back and the queued request remains, so the lesson waits again"
         );
         observer.left_queue(QueueExit::Granted);
-        assert!(!waiting(&progress), "the last call was granted");
-        drop(second);
+        observer.holding();
         assert!(
             !waiting(&progress),
-            "a lesson with no call in flight is not waiting"
+            "the queued request was granted and holds a slot"
+        );
+        observer.released();
+        assert!(
+            !waiting(&progress),
+            "nothing is queued, so a lesson that gave its last slot back is not waiting"
         );
     })
     .await;
 }
 
 #[tokio::test]
-async fn a_queued_call_that_is_abandoned_stops_the_lesson_waiting() {
+async fn a_queued_request_that_is_abandoned_stops_the_lesson_waiting() {
     let progress = Progress::default();
     scoped(&progress, async {
         let observer = current_observer().expect("a lesson job's scope has an observer");
-        let call = model_call(Term::Reading);
         observer.queued();
-        assert!(waiting(&progress), "its only call is queued");
+        assert!(waiting(&progress), "its only request is queued");
         observer.left_queue(QueueExit::Abandoned);
         assert!(
             !waiting(&progress),
-            "a call cancelled while queued is no longer queued"
+            "a request cancelled while queued is no longer queued"
         );
-        drop(call);
     })
     .await;
 }
 
 #[tokio::test]
-async fn a_lesson_is_not_waiting_when_it_has_no_call_in_flight() {
+async fn a_lesson_with_nothing_queued_is_not_waiting() {
     let progress = Progress::default();
     scoped(&progress, async {
         let observer = current_observer().expect("a lesson job's scope has an observer");
-        observer.queued();
         assert!(
             !waiting(&progress),
-            "queued with no call in flight is not a lesson waiting for the model"
+            "a lesson that has made no request is not waiting"
+        );
+        observer.holding();
+        assert!(
+            !waiting(&progress),
+            "a request that holds a slot and nothing queued is not a lesson waiting for the model"
         );
     })
     .await;
 }
 
 #[tokio::test]
-async fn a_call_made_inside_the_lesson_scope_reaches_its_own_progress_and_no_other() {
+async fn a_call_counted_twice_still_shows_the_lesson_waiting() {
+    let progress = Progress::default();
+    scoped(&progress, async {
+        let observer = current_observer().expect("a lesson job's scope has an observer");
+        let _sort = model_call(Term::Sort);
+        let _send = request();
+        observer.queued();
+        assert!(
+            waiting(&progress),
+            "one request registered by two layers and queued at the scheduler holds no slot, so the lesson is waiting"
+        );
+    })
+    .await;
+}
+
+#[tokio::test]
+async fn a_request_made_inside_the_lesson_scope_reaches_its_own_progress_and_no_other() {
     let ours = Progress::default();
     let other = Progress::default();
     scoped(&ours, async {
-        let _call = model_call(Term::Reading);
         current_observer()
             .expect("the lesson scope has an observer")
             .queued();
-        assert!(waiting(&ours), "the call reached its own lesson's progress");
+        assert!(
+            waiting(&ours),
+            "the request reached its own lesson's progress"
+        );
         assert!(!waiting(&other), "another lesson's progress is untouched");
     })
     .await;

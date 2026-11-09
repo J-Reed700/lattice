@@ -15,6 +15,12 @@ impl AdmissionObserver for Recorder {
             QueueExit::Abandoned => "abandoned",
         });
     }
+    fn holding(&self) {
+        self.0.lock().unwrap().push("holding");
+    }
+    fn released(&self) {
+        self.0.lock().unwrap().push("released");
+    }
 }
 
 #[tokio::test]
