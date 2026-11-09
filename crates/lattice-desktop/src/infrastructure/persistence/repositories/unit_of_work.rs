@@ -45,6 +45,7 @@ use lattice_core::application::ports::{
 use lattice_core::domain::repositories::SystemRepository;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 
 use super::chunk::SqliteChunkRepositoryTx;
 use super::document::SqliteDocumentRepositoryTx;
@@ -192,7 +193,7 @@ impl UnitOfWorkFactoryTrait for SqliteUnitOfWorkFactory {
     async fn create(&self) -> Result<Box<dyn UnitOfWorkTrait + Send>> {
         let transaction: Transaction<'static, Sqlite> = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 

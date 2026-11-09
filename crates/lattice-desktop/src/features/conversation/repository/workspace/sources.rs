@@ -1,5 +1,6 @@
 use super::*;
 use lattice_core::shared::http::normalize_web_source_url;
+use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct ConversationLinkedDocumentRow {
@@ -81,7 +82,7 @@ impl ConversationRepository {
     ) -> Result<RenameConversationResponseDto, AppError> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
@@ -158,7 +159,7 @@ impl ConversationRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
@@ -396,7 +397,7 @@ impl ConversationRepository {
     ) -> Result<RenameConversationResponseDto, AppError> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 

@@ -6,6 +6,7 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
 #[derive(sqlx::FromRow)]
@@ -31,7 +32,7 @@ pub(super) async fn read(
     program_id: &str,
     lesson_id: &str,
 ) -> Result<EvidenceSnapshot> {
-    let mut tx = pool.begin().await?;
+    let mut tx = pool.begin_read().await?;
     let program = LearningRepository::get_on(&mut tx, program_id).await?;
     let lesson = program
         .modules

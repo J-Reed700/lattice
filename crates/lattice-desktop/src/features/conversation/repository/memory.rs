@@ -15,6 +15,7 @@ use lattice_core::domain::conversation::memory::{
     MAX_ACTIVE_ITEMS, MAX_RELATED_ITEMS,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use std::str::FromStr;
 
 mod source_reads;
@@ -215,7 +216,7 @@ const SOURCE_COLUMNS: &str =
 impl ConversationRepository {
     /// One consistent read of everything the memory layer needs.
     pub async fn load_memory_snapshot(&self, conversation_id: &str) -> Result<MemorySnapshot> {
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let mut tx = self.pool.begin_read().await.map_err(|e| {
             AppError::Database(format!("Failed to begin memory snapshot read: {}", e))
         })?;
 
@@ -364,7 +365,7 @@ impl ConversationRepository {
     ) -> Result<ConversationMemoryState> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_read()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin state read: {}", e)))?;
         let state = Self::load_memory_state_tx(&mut tx, conversation_id).await?;

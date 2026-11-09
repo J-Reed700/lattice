@@ -10,6 +10,7 @@ use lattice_core::domain::conversation::memory::{
     compute_digest, MemoryId, MemoryItem, MemoryKind, MEMORY_SCHEMA_VERSION,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use std::str::FromStr;
 
 impl ConversationRepository {
@@ -46,7 +47,7 @@ impl ConversationRepository {
         let now = Utc::now().to_rfc3339();
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin invalidation: {}", e)))?;
         for statement in [

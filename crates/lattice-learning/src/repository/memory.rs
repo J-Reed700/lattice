@@ -1,5 +1,6 @@
 //! Lesson notes, card drafts and the journal and deck behind a program's memory.
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 /// The title and first text a lesson's note starts from.
 pub fn lesson_note_draft(
@@ -33,7 +34,7 @@ impl LearningRepository {
         title: &str,
         content: &str,
     ) -> Result<(String, bool)> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let (journal_id, _) = ensure_memory_resources(&mut tx, program_id).await?;
         validate_memory_lesson(&mut tx, program_id, lesson_id, false).await?;
         if let Some(note_id) = sqlx::query_scalar::<_, String>(
@@ -80,7 +81,7 @@ impl LearningRepository {
         lesson_id: &str,
         drafts: &[crate::generation::GeneratedLearningCardDraft],
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         ensure_memory_resources(&mut tx, program_id).await?;
         validate_memory_lesson(&mut tx, program_id, lesson_id, true).await?;
         let now = chrono::Utc::now().timestamp_millis();
@@ -97,7 +98,7 @@ impl LearningRepository {
         &self,
         request: &SaveLearningCardDraftRequestDto,
     ) -> Result<String> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         ensure_memory_resources(&mut tx, &request.program_id).await?;
         validate_memory_lesson(&mut tx, &request.program_id, &request.lesson_id, true).await?;
         let existing_origin = if let Some(id) = request.draft_id.as_deref() {
@@ -163,7 +164,7 @@ impl LearningRepository {
     }
 
     pub async fn accept_card_draft(&self, program_id: &str, draft_id: &str) -> Result<String> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let (_journal_id, deck_id) = ensure_memory_resources(&mut tx, program_id).await?;
         let row = sqlx::query("SELECT d.*,l.title lesson_title FROM learning_card_drafts d JOIN learning_lessons l ON l.id=d.lesson_id WHERE d.id=? AND d.program_id=?")
             .bind(draft_id).bind(program_id).fetch_optional(&mut *tx).await.map_err(db)?

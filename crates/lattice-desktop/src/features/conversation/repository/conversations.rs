@@ -11,6 +11,7 @@ use lattice_core::domain::conversation::{
     ChatModelChoice, CompactionRecord, Conversation, ConversationAggregate,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::ConversationId;
 
 impl ConversationRepository {
@@ -285,7 +286,7 @@ impl ConversationRepository {
     pub async fn delete(&self, id: &str) -> Result<()> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 

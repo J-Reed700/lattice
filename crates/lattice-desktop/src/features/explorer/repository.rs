@@ -1,6 +1,7 @@
 //! What Explorer keeps in `lattice.db`: `conversations.explorer_root`, and
 //! the folders list in `explorer_folders`.
 
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
@@ -193,7 +194,7 @@ pub async fn set_folder_settings(
     now: &str,
 ) -> Result<u64> {
     let mut tx = pool
-        .begin()
+        .begin_write()
         .await
         .map_err(folder_error("save the folder's settings"))?;
     let result =

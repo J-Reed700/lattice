@@ -7,6 +7,7 @@ use crate::infrastructure::persistence::repositories::mentions::MentionRepositor
 use chrono::Utc;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::shared::fs::path::path_to_string;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
@@ -32,8 +33,6 @@ pub async fn store_document(
             embeddings.len()
         )));
     }
-
-    let mut tx = pool.begin().await?;
 
     let doc_id = Uuid::new_v4().to_string();
     let file_name = path
@@ -62,6 +61,8 @@ pub async fn store_document(
         .unwrap_or(0);
 
     let checksum = calculate_checksum(path).await?;
+
+    let mut tx = pool.begin_write().await?;
 
     let indexed_at = Utc::now().to_rfc3339();
     let modified_at_str = chrono::DateTime::from_timestamp(modified_at as i64, 0)

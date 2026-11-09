@@ -17,6 +17,7 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 #[cfg(test)]
 use lattice_core::shared::runtime::jobs::JobStore;
 use sqlx::{Row, SqlitePool};
@@ -270,7 +271,7 @@ impl LearningCurriculumRepository {
 
     pub async fn plan(&self, program_id: &str) -> Result<LearningPlanDto> {
         self.seed_accepted(program_id).await?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let program_revision =
             sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
                 .bind(program_id)
@@ -361,7 +362,7 @@ impl LearningCurriculumRepository {
         validate_operation_id(&request.operation_id)?;
         self.seed_accepted(&request.program_id).await?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation = curriculum_operation(
             &request.operation_id,
             &request.program_id,
@@ -466,7 +467,7 @@ impl LearningCurriculumRepository {
     ) -> Result<()> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation = curriculum_operation(
             &request.operation_id,
             &request.program_id,
@@ -511,7 +512,7 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningPlanDto> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation = curriculum_operation(
             &request.operation_id,
             &request.program_id,

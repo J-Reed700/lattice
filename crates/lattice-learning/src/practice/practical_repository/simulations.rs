@@ -7,6 +7,7 @@ use super::{
 use crate::persistence::{db, hash, now};
 use crate::practical_dto::*;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 
 impl LearningPracticalRepository {
@@ -65,7 +66,7 @@ impl LearningPracticalRepository {
     )> {
         uuid(program_id, "program")?;
         uuid(activity_id, "activity")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let activity = Self::internal_activity(&mut tx, program_id, activity_id).await?;
         tx.commit().await.map_err(db)?;
         Ok((
@@ -133,7 +134,7 @@ impl LearningPracticalRepository {
                 return Err(invalid(format!("{label} must contain 1–100 characters.")));
             }
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "simulation",
@@ -205,7 +206,7 @@ impl LearningPracticalRepository {
         if reply.content.trim().is_empty() {
             return Err(invalid("Simulation reply must not be blank."));
         }
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "simulation",
@@ -274,7 +275,7 @@ impl LearningPracticalRepository {
         uuid(&request.operation_id, "operation")?;
         uuid(&request.program_id, "program")?;
         uuid(&request.session_id, "simulation")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, &request.program_id).await?;
         let operation = practical_operation(
             "simulation",

@@ -8,6 +8,7 @@ use chrono::Utc;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::domain::conversation::{ConversationMessage, MessageRole};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::ConversationId;
 use std::str::FromStr;
 
@@ -64,7 +65,7 @@ impl ConversationRepository {
         let parsed_id = ConversationId::from_str(conversation_id)?;
         let id = uuid::Uuid::new_v4().to_string();
         let now = Utc::now();
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         let updated = sqlx::query("UPDATE conversation_messages SET status='completed' WHERE id=? AND conversation_id=? AND role='user' AND status='pending'")
             .bind(user_message_id).bind(conversation_id).execute(&mut *tx).await?;
         if updated.rows_affected() != 1 {
@@ -124,7 +125,7 @@ impl ConversationRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 
@@ -200,7 +201,7 @@ impl ConversationRepository {
 
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
 

@@ -14,6 +14,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use crate::features::summaries::entity::DocumentSummary;
 use lattice_core::application::ports::summary_search::SummaryLevel;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 /// Port for persisting and reading document/section summaries.
 ///
@@ -153,7 +154,7 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
     ) -> Result<Vec<String>> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("begin summary tx: {e}")))?;
         let removed: Vec<String> =
@@ -256,7 +257,7 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
     ) -> Result<Vec<String>> {
         let mut tx = self
             .pool
-            .begin()
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("begin summary delete tx: {e}")))?;
         let removed: Vec<String> = sqlx::query_scalar(

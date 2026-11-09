@@ -2,6 +2,7 @@
 
 use lattice_core::application::ports::document_scope::DocumentScopePort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
 // Bound JSON encoding and SQLite's per-statement work without one worker
@@ -41,7 +42,7 @@ impl DocumentScopePort for SqliteDocumentScope {
         if document_ids.is_empty() {
             return Ok(());
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         let now = chrono::Utc::now().to_rfc3339();
         for ids in document_ids.chunks(SCOPE_BATCH_SIZE) {
             let scope = serde_json::to_string(ids)?;
@@ -67,7 +68,7 @@ impl DocumentScopePort for SqliteDocumentScope {
         if document_ids.is_empty() {
             return Ok(());
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         for ids in document_ids.chunks(SCOPE_BATCH_SIZE) {
             let scope = serde_json::to_string(ids)?;
             sqlx::query(

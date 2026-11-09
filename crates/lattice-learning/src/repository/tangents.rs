@@ -2,6 +2,7 @@
 
 use super::*;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 impl LearningRepository {
     pub async fn create_tangent(
@@ -16,7 +17,7 @@ impl LearningRepository {
             ));
         }
 
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
 
         #[derive(sqlx::FromRow)]
         struct ProgramRow {

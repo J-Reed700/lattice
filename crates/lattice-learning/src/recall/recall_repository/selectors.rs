@@ -1,5 +1,6 @@
 //! Source selectors: creating, reading and re-matching them, and searching program sources.
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone)]
 struct SourceSelectorRecord {
@@ -40,7 +41,7 @@ impl LearningRecallRepository {
         validate_owned_id(&req.source_id, "source")?;
         validate_owned_id(&req.source_version_id, "source version")?;
         let hash = payload_hash(req)?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         lock_active_program(&mut tx, &req.program_id).await?;
         let operation = Operation {
             id: &req.operation_id,

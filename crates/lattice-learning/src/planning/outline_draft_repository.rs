@@ -5,6 +5,7 @@ use crate::{
     repository::{compare_sources, insert_source, reference_of, LearningRepository},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 impl LearningRepository {
     pub async fn outline_draft(&self, id: &str) -> Result<Option<OutlineDraft>> {
@@ -37,7 +38,7 @@ impl LearningRepository {
         let state = serde_json::to_string(draft)?;
         let comparisons =
             compare_sources(&self.pool, &program.summary.id, sources, references).await?;
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         let changed = sqlx::query("UPDATE learning_programs SET revision=revision+1,current_lesson_id=? WHERE id=? AND revision=? AND status='draft'")
             .bind(program.modules.first().and_then(|m|m.lessons.first()).map(|l|&l.id)).bind(&program.summary.id).bind(program.summary.revision).execute(&mut *tx).await?;
         if changed.rows_affected() != 1 {

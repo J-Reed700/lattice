@@ -13,6 +13,7 @@ use chrono::Utc;
 use lattice_core::application::contracts::favorites::FavoriteRecord as FavoriteDto;
 use lattice_core::application::ports::FavoritesRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
@@ -45,7 +46,7 @@ impl FavoritesRepositoryPort for FavoritesRepository {
         let added_at = Utc::now().to_rfc3339();
 
         let favorite = query_with_timeout(|| async {
-            let mut tx = pool.begin().await?;
+            let mut tx = pool.begin_write().await?;
             let exists: bool =
                 sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM documents WHERE id = ?)")
                     .bind(&document_id)

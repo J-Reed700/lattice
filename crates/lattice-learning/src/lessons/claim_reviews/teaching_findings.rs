@@ -10,6 +10,7 @@
 use std::collections::{BTreeSet, HashMap};
 
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sqlx::{Row, SqlitePool};
@@ -200,7 +201,7 @@ impl TeachingFindingsRepository {
         findings: &[SetAside],
         replace: bool,
     ) -> Result<()> {
-        let mut tx = self.pool.begin().await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let at = now();
         let keys: Vec<String> = findings.iter().map(|f| f.finding.key().id()).collect();
         if replace {

@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 struct DocumentSpaceMembershipRow {
@@ -86,7 +87,7 @@ impl ConversationRepository {
             .clone()
             .unwrap_or_else(|| request.member_id.clone());
 
-        let mut tx = self.pool.begin().await.map_err(|e| {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
             AppError::Database(format!(
                 "Failed to begin transaction while upserting space member: {}",
                 e

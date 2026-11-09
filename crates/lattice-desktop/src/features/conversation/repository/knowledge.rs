@@ -8,6 +8,7 @@ use crate::features::conversation::memory_dto::MemoryEvidenceDto;
 use lattice_core::application::ports::conversation_memory::SHARED_RELEVANCE_FLOOR;
 use lattice_core::domain::conversation::memory::compute_digest;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::text::informative_terms;
 use std::collections::HashMap;
 
@@ -46,7 +47,7 @@ impl ConversationRepository {
         offset: i64,
         for_prompt: bool,
     ) -> Result<KnowledgeResponseDto> {
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_read().await?;
         let chat_pool = Self::chat_pool(&mut tx, conversation).await?;
         let page_size = if for_prompt { PROMPT_PAGE } else { 50 };
         let sql = format!(
@@ -191,7 +192,7 @@ impl ConversationRepository {
                 ));
             }
         }
-        let mut tx = self.pool.begin().await?;
+        let mut tx = self.pool.begin_write().await?;
         let chat_pool = Self::chat_pool(&mut tx, &r.conversation_id).await?;
         let mut source = r.conversation_id.clone();
         let (scope_kind, scope_key) = match r.scope.as_deref() {
