@@ -562,3 +562,18 @@ fn the_writer_is_told_never_to_name_a_source_in_the_text() {
     assert!(instructions.contains("Never name a source or an excerpt in the lesson's text"));
     assert!(instructions.contains("cite that sentence in the citations list"));
 }
+
+#[test]
+fn the_writer_is_told_quotation_marks_are_for_quoted_wording() {
+    for has_sources in [true, false] {
+        let instructions = citation_instructions(has_sources);
+        assert!(
+            instructions.contains("Quotation marks mark wording quoted from a source"),
+            "{has_sources}"
+        );
+        assert!(
+            instructions.contains("without quotation marks"),
+            "{has_sources}"
+        );
+    }
+}

@@ -712,3 +712,40 @@ fn a_real_quotation_is_still_quoted_wording_to_cite() {
         assert!(findings[0].note.contains("without citing it"), "{sentence}");
     }
 }
+
+const MISCONCEPTION: &str =
+    "Tempting wrong guess: 'the projects folder is where notes.txt always lives'.";
+
+#[test]
+fn a_misconception_in_quotation_marks_is_told_to_drop_them() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] = json!(MISCONCEPTION);
+
+    let findings = lesson_rules(&candidate);
+
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].note.contains("without citing it"));
+    assert!(findings[0]
+        .note
+        .contains("remove the quotation marks and write it as the lesson's own sentence"));
+}
+
+#[test]
+fn a_misconception_without_quotation_marks_is_no_finding() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] =
+        json!("Tempting wrong guess: the projects folder is where notes.txt always lives.");
+    assert!(lesson_rules(&candidate).is_empty());
+}
+
+#[test]
+fn an_uncited_figure_keeps_the_note_without_the_quotation_mark_direction() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(format!("{TIMEOUT} It is set for each request."));
+
+    let findings = lesson_rules(&candidate);
+
+    assert_eq!(findings.len(), 1);
+    assert!(findings[0].note.contains("without citing it"));
+    assert!(!findings[0].note.contains("quotation marks"));
+}
