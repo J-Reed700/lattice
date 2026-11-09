@@ -197,7 +197,7 @@ fn a_question_citing_a_numbered_source_the_program_does_not_own_is_refused() {
 #[test]
 fn the_schema_asks_for_a_citation_list_per_part_and_none_without_sources() {
     let pointer = "/properties/blocks/items/properties/citations/maxItems";
-    assert_eq!(lesson_schema(2).pointer(pointer), Some(&json!(24)));
+    assert_eq!(lesson_schema(2).pointer(pointer), None);
     assert_eq!(lesson_schema(0).pointer(pointer), Some(&json!(0)));
     for part in ["blocks", "questions"] {
         let required = lesson_schema(2)

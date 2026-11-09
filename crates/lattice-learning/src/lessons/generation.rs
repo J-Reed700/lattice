@@ -21,7 +21,6 @@ mod lesson_rules;
 mod outline;
 mod recall;
 
-pub(crate) use lesson::MAX_CITATIONS;
 pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
 pub use lesson_rules::lesson_rule_notes;
 pub(crate) use lesson_rules::{
