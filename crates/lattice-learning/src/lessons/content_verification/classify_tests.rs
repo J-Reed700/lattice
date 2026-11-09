@@ -12,7 +12,7 @@ const PLANTED: [(&str, Option<Class>); 17] = [
     ("The survey reports that modular document parsing pipelines were introduced by Google in 2019.", Some(Class::Sourced)),
     ("Microsoft's grounding feature returns bounding box coordinates in millimetres.", None),
     ("Donut is an OCR-free model that goes from image to output with a single Transformer.", None),
-    ("The survey states that 'the deployment and inference costs associated with VLMs cannot be ignored.'", Some(Class::Sourced)),
+    ("The survey states that \"the deployment and inference costs associated with VLMs cannot be ignored.\"", Some(Class::Sourced)),
     ("In a modular pipeline, an early OCR error cannot reach later stages because each later stage re-reads the page image.", None),
     ("Because Tesseract 5.3 switched to an LSTM recogniser, a text-only parser can recover misread digits.", Some(Class::Sourced)),
     ("In a modular pipeline, each stage hands an intermediate representation to the next, so an early error travels forward.", None),
@@ -381,11 +381,64 @@ fn an_apostrophe_is_not_a_quotation_mark() {
 #[test]
 fn a_real_quotation_still_needs_a_citation() {
     for sentence in [
-        "The manual says 'rm deletes files permanently'.",
+        "The manual says \"rm deletes files permanently\".",
         "Remember \"the shell keeps a working directory\" always.",
         "Remember \u{201c}the shell keeps a working directory\u{201d} always.",
-        "Remember \u{2018}the shell keeps a working directory\u{2019} always.",
     ] {
         assert!(needs_citation(sentence, &Givens::NONE), "{sentence}");
     }
+}
+
+const SINGLE_QUOTED: [&str; 4] = [
+    "The users' files and the admins' settings stay apart.",
+    "The page reads 'a quick way to see every entry' at the top.",
+    "The page reads \u{2018}a quick way to see every entry\u{2019} at the top.",
+    "The page reads \u{2018}a quick way to see every entry' at the top.",
+];
+
+#[test]
+fn a_single_quotation_mark_never_marks_quoted_wording() {
+    for sentence in SINGLE_QUOTED {
+        assert_eq!(quoted_wording(sentence).next(), None, "{sentence}");
+        assert!(!needs_citation(sentence, &Givens::NONE), "{sentence}");
+    }
+}
+
+#[test]
+fn double_quotation_marks_mark_quoted_wording() {
+    for sentence in [
+        "The page reads \"a quick way to see every entry\" at the top.",
+        "The page reads \u{201c}a quick way to see every entry\u{201d} at the top.",
+    ] {
+        assert_eq!(
+            quoted_wording(sentence).collect::<Vec<_>>(),
+            ["a quick way to see every entry"],
+            "{sentence}"
+        );
+    }
+}
+
+#[test]
+fn a_statement_whose_only_cue_is_single_quoted_wording_is_left_to_the_model() {
+    let stated = Case::Stated(Givens::NONE);
+    for statement in [
+        "The page reads 'Total due on receipt of goods' at the foot.",
+        "The page reads \u{2018}Total due on receipt of goods\u{2019} at the foot.",
+        "The users' files and the admins' settings stay apart.",
+    ] {
+        assert_eq!(rule_class(statement, "body", &stated), None, "{statement}");
+        assert_eq!(
+            rule_class(statement, "body", &Case::Hypothetical),
+            None,
+            "{statement}"
+        );
+    }
+    assert_eq!(
+        rule_class(
+            "The page reads \"Total due on receipt of goods\" at the foot.",
+            "body",
+            &stated
+        ),
+        Some(Class::Sourced)
+    );
 }

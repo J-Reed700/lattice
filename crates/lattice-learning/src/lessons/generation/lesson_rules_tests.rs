@@ -797,9 +797,22 @@ fn an_apostrophe_is_no_quoted_wording_to_cite() {
 }
 
 #[test]
+fn a_plural_possessive_is_no_quoted_wording_to_cite() {
+    for sentence in [
+        "The users' files and the admins' settings stay apart.",
+        "The users\u{2019} files and the admins\u{2019} settings stay apart.",
+        "The manual says 'rm deletes files permanently'.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        assert!(lesson_rules(&candidate).is_empty(), "{sentence}");
+    }
+}
+
+#[test]
 fn a_real_quotation_is_still_quoted_wording_to_cite() {
     for sentence in [
-        "The manual says 'rm deletes files permanently'.",
+        "The manual says \"rm deletes files permanently\".",
         "Remember \"the shell keeps a working directory\" always.",
     ] {
         let mut candidate = lesson();
@@ -811,7 +824,7 @@ fn a_real_quotation_is_still_quoted_wording_to_cite() {
 }
 
 const MISCONCEPTION: &str =
-    "Tempting wrong guess: 'the projects folder is where notes.txt always lives'.";
+    "Tempting wrong guess: \"the projects folder is where notes.txt always lives\".";
 
 #[test]
 fn a_misconception_in_quotation_marks_is_told_to_drop_them() {
