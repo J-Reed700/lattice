@@ -544,7 +544,9 @@ impl LearningAssessmentRepository {
             return Err(invalid("A submitted quiz cannot be changed."));
         }
         if h.get::<i64, _>("revision") != req.expected_revision {
-            return Err(invalid("This quiz changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "This quiz changed; reload and retry.".into(),
+            ));
         }
         let item = sqlx::query("SELECT ordinal,format,options_json,left_items_json FROM learning_assessment_form_items WHERE form_id=? AND candidate_id=?")
             .bind(&req.form_id)
@@ -570,7 +572,9 @@ impl LearningAssessmentRepository {
         let t = now();
         let updated = sqlx::query("UPDATE learning_assessment_forms SET status='active',revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status IN ('active','interrupted')").bind(t).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() != 1 {
-            return Err(invalid("This quiz changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "This quiz changed; reload and retry.".into(),
+            ));
         }
         sqlx::query("INSERT INTO learning_assessment_response_revisions(form_id,item_ordinal,revision,operation_id,payload_hash,selected_indices_json,text_response,blank_responses_json,matches_json,ordered_values_json,artifact_json,assistance_json,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
             .bind(&req.form_id)
@@ -620,8 +624,8 @@ impl LearningAssessmentRepository {
         let t = now();
         let updated = sqlx::query("UPDATE learning_assessment_forms SET status='interrupted',revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'").bind(t).bind(&req.form_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() != 1 {
-            return Err(invalid(
-                "This quiz changed or is not open; reload and retry.",
+            return Err(AppError::Conflict(
+                "This quiz changed or is not open; reload and retry.".into(),
             ));
         }
         operation.record(&mut *tx, &()).await?;

@@ -1,11 +1,9 @@
-import { newId, unwrap } from '@/lib/api';
-import { getErrorMessage } from '@/lib/errorUtils';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
 import { useApi } from '@/contexts/ApiContext';
+import { isConflict, newId, unwrap } from '@/lib/api';
 import type { LearningLabFile, LearningPracticalDraftDto, SaveLearningPracticalDraftRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
-import { isConflictError } from '../shared/useAutosave';
 
 const AUTOSAVE_DELAY_MS = 550;
 type LoadState = 'idle' | 'loading' | 'ready' | 'error';
@@ -32,9 +30,8 @@ type DraftContext = {
   timer: number | null;
 };
 
-function isConflict(error: unknown) {
-  if (isConflictError(error)) return true;
-  return /revision|conflict|changed|stale/i.test(getErrorMessage(error));
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : 'The lab draft could not be saved.';
 }
 function sameFiles(a: LearningLabFile[] | null, b: LearningLabFile[]) {
   return Boolean(a?.length === b.length && a?.every((file, index) => file.path === b[index]?.path && file.content === b[index]?.content));
@@ -108,7 +105,7 @@ export function useLearningLabDraft({
           context.error = null;
         }
       } catch (error) {
-        if (context.loadToken === token) { context.loadState = 'error'; context.saveState = 'error'; context.error = getErrorMessage(error); }
+        if (context.loadToken === token) { context.loadState = 'error'; context.saveState = 'error'; context.error = errorMessage(error); }
       } finally {
         if (context.loadToken === token) context.loadPromise = null;
         refresh();
@@ -163,7 +160,7 @@ export function useLearningLabDraft({
           context.saveState = 'saved'; context.error = null; refresh(); return true;
         } catch (error) {
           context.saveState = isConflict(error) ? 'conflict' : 'error';
-          context.error = getErrorMessage(error); refresh(); return false;
+          context.error = errorMessage(error); refresh(); return false;
         }
       }
     })();
@@ -265,7 +262,7 @@ export function useLearningLabDraft({
       current.error = null; refresh();
       return true;
     } catch (error) {
-      current.saveState = 'conflict'; current.error = getErrorMessage(error); refresh();
+      current.saveState = 'conflict'; current.error = errorMessage(error); refresh();
       return false;
     }
   }, [current, fetchLatest, refresh]);
@@ -287,7 +284,7 @@ export function useLearningLabDraft({
       current.error = null; refresh();
       return true;
     } catch (error) {
-      current.saveState = 'conflict'; current.error = getErrorMessage(error); refresh();
+      current.saveState = 'conflict'; current.error = errorMessage(error); refresh();
       return false;
     }
   }, [current, fetchLatest, refresh]);

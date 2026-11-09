@@ -285,7 +285,7 @@ export function gradedResult(patch: Partial<CodeReviewResultDto> = {}): CodeRevi
     startedAt: GRADED_AT - 600_000,
     submittedAt: GRADED_AT - 60_000,
     timeSpentMs: 90_000,
-    drill: { title: 'A sliding-window rate limiter', material: { kind: 'code', language: 'python' }, files: REVIEWED_FILES, lesson: null },
+    drill: { title: 'A sliding-window rate limiter', material: { kind: 'code', language: 'python' }, files: REVIEWED_FILES, lesson: null, issues: 3 },
     findings: FINDINGS.map(({ span, text: said, severity }) => ({ span, text: said, severity })),
     fixFiles: null,
     error: null,

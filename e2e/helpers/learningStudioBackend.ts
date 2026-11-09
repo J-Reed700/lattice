@@ -243,6 +243,11 @@ export async function installLearningStudioBackend(page: Page) {
     // The factory runs in the page; the claim review helpers wait there for it.
     const { attachEvidence, clearTrustOverride, recheckWaiting, setTrustOverride, trustImpacts, withReviewFields } =
       (window as unknown as { __LATTICE_CLAIM_REVIEW_BACKEND__: ClaimReviewBackend }).__LATTICE_CLAIM_REVIEW_BACKEND__;
+    let profileState = { programId: "", details: "", language: null as string | null, interviewAt: null as number | null, company: null as string | null, role: null as string | null, revision: 0 };
+    const practiceProfile = (programId: string) => {
+      if (!profileState.programId) profileState = { ...profileState, programId };
+      return structuredClone(profileState);
+    };
     const source = {
       id: "source-version-field-notes-1",
       title: "Public field notes",
@@ -840,7 +845,7 @@ export async function installLearningStudioBackend(page: Page) {
       if (session.summary.status !== "active")
         throw new Error("Submitted practice attempts are immutable.");
       if (request.expectedRevision !== session.summary.revision)
-        throw new Error("Practice session changed; reload and retry.");
+        throw { code: "CONFLICT", message: "Practice session changed; reload and retry." };
     };
     const syncPracticeSummary = (session: PracticeSession) => {
       const index = practiceWorkspace.sessions.findIndex(
@@ -1032,7 +1037,7 @@ export async function installLearningStudioBackend(page: Page) {
     const changeGenerationJob = (command: string, args: MockArgs) => {
         const request = getRequest<LearningGenerationJobActionRequestDto>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
-          throw new Error("Program changed; reload and retry.");
+          throw { code: "CONFLICT", message: "Program changed; reload and retry." };
         const job = state.planWorkspace.jobs.find((job) => job.id === request.jobId);
         if (!job) throw new Error("Job not found");
         if (command === "cancel_learning_generation_job") {
@@ -1049,8 +1054,10 @@ export async function installLearningStudioBackend(page: Page) {
     const practicalDraft = async (command: string, args: MockArgs) => {
         const request = getRequest<LabDraft & { operationId: string; expectedDraftRevision: number }>(args);
         const activity = state.practicalWorkspace.activities.find((item) => item.id === request.activityId);
-        if (request.programId !== program.summary.id || !activity || activity.revision !== request.activityRevision)
-          throw new Error("The lab activity changed. Reopen it before editing.");
+        if (request.programId !== program.summary.id || !activity)
+          throw { code: "NOT_FOUND", message: "Practical activity not found" };
+        if (activity.revision !== request.activityRevision)
+          throw { code: "CONFLICT", message: "The lab activity changed. Reopen it before editing." };
         const key = `${request.programId}:${request.activityId}:${request.activityRevision}`;
         const initial: LabDraft = { programId: request.programId, activityId: request.activityId, activityRevision: request.activityRevision, draftRevision: 0, files: activity.files.filter((file) => file.role === "starter" && file.editable).map(({ path, content }) => ({ path, content })), updatedAt: null };
         const current = state.labDrafts.get(key) ?? initial;
@@ -1066,7 +1073,7 @@ export async function installLearningStudioBackend(page: Page) {
           state.labDraftFailuresBeforeSave -= 1;
           throw new Error("The draft could not be saved to this device.");
         }
-        if (request.expectedDraftRevision !== current.draftRevision) throw new Error("Draft changed; reload before saving.");
+        if (request.expectedDraftRevision !== current.draftRevision) throw { code: "CONFLICT", message: "Draft changed; reload before saving." };
         if (!Array.isArray(request.files) || request.files.some((file) => !initial.files.some((starter) => starter.path === file.path)))
           throw new Error("Only editable starter files can be saved.");
         const next = { ...current, draftRevision: current.draftRevision + 1, files: structuredClone(request.files), updatedAt: Date.now() };
@@ -1140,7 +1147,7 @@ export async function installLearningStudioBackend(page: Page) {
       },
       repair_learning_outline: (args) => {
         const request = getArg<{ programId: string; expectedRevision: number }>(args, "request");
-        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw new Error("Draft changed");
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw { code: "CONFLICT", message: "Draft changed" };
         program.summary.revision += 1;
         program.modules[0].lessons[0].objective = "Compare observations and explain why they alone do not establish causality.";
         program.outlineReview = { status: "passed", repairPasses: 2, updatedAt: Date.now(), contentHash: "repaired-fixture", issues: [], note: "Outline checks passed for this revision. Lesson content is checked separately.", citationsVerified: 0, citationsRemoved: 0, referencesGathered: 0 };
@@ -1283,7 +1290,7 @@ export async function installLearningStudioBackend(page: Page) {
           if (lesson.preparation !== "ready")
             throw new Error("Prepare this lesson before starting practice.");
           if (request.expectedProgramRevision !== program.summary.revision)
-            throw new Error("Program changed; reload and retry.");
+            throw { code: "CONFLICT", message: "Program changed; reload and retry." };
           if (practiceSessions.has(String(request.sessionId)))
             throw new Error("Practice session ID is already in use.");
           const timestamp = Date.now();
@@ -1618,7 +1625,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (!operation.replayed) {
           const canvas = canvasById(String(request.canvasId));
           if (request.expectedRevision !== canvas.revision)
-            throw new Error("Canvas changed; reload and retry.");
+            throw { code: "CONFLICT", message: "Canvas changed; reload and retry." };
           if (program.summary.status !== "active")
             throw new Error(
               "Accept the learning program before editing canvases.",
@@ -1652,7 +1659,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (!operation.replayed) {
           const canvas = canvasById(String(request.canvasId));
           if (request.expectedRevision !== canvas.revision)
-            throw new Error("Canvas changed; reload and retry.");
+            throw { code: "CONFLICT", message: "Canvas changed; reload and retry." };
           if (canvas.snapshots.some((item) => item.id === request.snapshotId))
             throw new Error("Snapshot ID is already in use.");
           canvas.snapshots.push(
@@ -1679,7 +1686,7 @@ export async function installLearningStudioBackend(page: Page) {
         if (!operation.replayed) {
           const canvas = canvasById(String(request.canvasId));
           if (request.expectedRevision !== canvas.revision)
-            throw new Error("Canvas changed; reload and retry.");
+            throw { code: "CONFLICT", message: "Canvas changed; reload and retry." };
           const target = canvas.snapshots.find(
             (item) => item.id === request.snapshotId,
           );
@@ -1948,9 +1955,10 @@ export async function installLearningStudioBackend(page: Page) {
             throw new Error("Learning program not found");
           const item = sourceById(String(request.sourceId));
           if (request.expectedRevision !== item.revision)
-            throw new Error(
-              "Source revision changed elsewhere; reload and retry.",
-            );
+            throw {
+              code: "CONFLICT",
+              message: "Source revision changed elsewhere; reload and retry.",
+            };
           if (item.kind !== "web")
             throw new Error("Only web sources can be refreshed.");
           const checkedAt = Date.now();
@@ -2039,9 +2047,10 @@ export async function installLearningStudioBackend(page: Page) {
             throw new Error("Learning program not found");
           const item = sourceById(String(request.sourceId));
           if (request.expectedRevision !== item.revision)
-            throw new Error(
-              "Source revision changed elsewhere; reload and retry.",
-            );
+            throw {
+              code: "CONFLICT",
+              message: "Source revision changed elsewhere; reload and retry.",
+            };
           const version = sourceVersionById(item, String(request.versionId));
           item.activeVersionId = version.id;
           item.activeVersion = version;
@@ -2065,9 +2074,10 @@ export async function installLearningStudioBackend(page: Page) {
             throw new Error("Learning program not found");
           const item = sourceById(String(request.sourceId));
           if (request.expectedRevision !== item.revision)
-            throw new Error(
-              "Source revision changed elsewhere; reload and retry.",
-            );
+            throw {
+              code: "CONFLICT",
+              message: "Source revision changed elsewhere; reload and retry.",
+            };
           const policy = String(request.freshnessPolicy) as SourcePolicy;
           if (policy !== item.freshnessPolicy) {
             item.freshnessPolicy = policy;
@@ -2265,7 +2275,7 @@ export async function installLearningStudioBackend(page: Page) {
       ...quiz.handlers,
       complete_learning_lesson: (args) => {
         const request = getRequest<{ programId: string; lessonId: string; expectedRevision: number }>(args);
-        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw new Error("Program changed; reload and retry.");
+        if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision) throw { code: "CONFLICT", message: "Program changed; reload and retry." };
         const target = program.modules.flatMap((module) => module.lessons).find((entry) => entry.id === request.lessonId);
         if (!target) throw new Error("Lesson not found.");
         if (!target.completed) program.summary.completedLessons += 1;
@@ -2285,7 +2295,7 @@ export async function installLearningStudioBackend(page: Page) {
       submit_learning_diagnostic: (args) => {
         const request = getRequest<{ diagnosticId: string; expectedDiagnosticRevision: number; responses: LearningDiagnosticAttemptDto["responses"]; saveOnly?: boolean }>(args);
         const diagnostic = state.planWorkspace.latestDiagnostic;
-        if (!diagnostic || diagnostic.id !== request.diagnosticId || diagnostic.revision !== request.expectedDiagnosticRevision) throw new Error("The starting-point answers changed elsewhere. Reload before saving.");
+        if (!diagnostic || diagnostic.id !== request.diagnosticId || diagnostic.revision !== request.expectedDiagnosticRevision) throw { code: "CONFLICT", message: "The starting-point answers changed elsewhere. Reload before saving." };
         diagnostic.responses = request.responses;
         diagnostic.revision = Number(diagnostic.revision) + 1;
         if (!request.saveOnly) {
@@ -2308,7 +2318,7 @@ export async function installLearningStudioBackend(page: Page) {
       preview_learning_curriculum_revision: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
-          throw new Error("Program changed; reload and retry.");
+          throw { code: "CONFLICT", message: "Program changed; reload and retry." };
         state.planWorkspace.programRevision = program.summary.revision;
         const planState = state.planWorkspace as unknown as Record<string, unknown>;
         const revision = planState.acceptedRevision as Record<string, unknown>;
@@ -2330,7 +2340,7 @@ export async function installLearningStudioBackend(page: Page) {
       accept_learning_curriculum_revision: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         if (request.programId !== program.summary.id || request.expectedRevision !== program.summary.revision)
-          throw new Error("Program changed; reload and retry.");
+          throw { code: "CONFLICT", message: "Program changed; reload and retry." };
         state.planWorkspace.programRevision = program.summary.revision;
         const planState = state.planWorkspace as unknown as Record<string, unknown>;
         const draft = planState.draftRevision as Record<string, unknown> | null;
@@ -2352,6 +2362,18 @@ export async function installLearningStudioBackend(page: Page) {
       get_learning_practical_draft: (args) => practicalDraft('get_learning_practical_draft', args),
       save_learning_practical_draft: (args) => practicalDraft('save_learning_practical_draft', args),
       get_learning_practical_workspace: () => state.practicalWorkspace,
+      get_learning_practice_profile: (args) => practiceProfile(getRequest<{ programId: string }>(args).programId),
+      save_learning_practice_profile: (args) => {
+        const request = getRequest<{ programId: string; details: string; language: string | null; interviewAt: number | null; company: string | null; role: string | null; expectedRevision: number }>(args);
+        if (request.expectedRevision !== profileState.revision) throw Object.assign(new Error("The profile changed elsewhere."), { code: "CONFLICT" });
+        profileState = { programId: request.programId, details: request.details, language: request.language, interviewAt: request.interviewAt, company: request.company, role: request.role, revision: profileState.revision + 1 };
+        return structuredClone(profileState);
+      },
+      get_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
+      check_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
+      practice_due: () => ({ items: [] }),
+      list_coding_sessions: () => [],
+      course_drills: () => ({ language: "python", nextCode: null, nextPassage: null, hasSources: false, modules: [], recent: [] }),
       get_learning_runtime_catalog: () => {
         return ([
           { id: "csharp", name: "C#", description: "Compile and test a C# project in the .NET SDK.", imageRef: "mcr.microsoft.com/dotnet/sdk:10.0", command: ["dotnet", "run"], entrypointContract: "C# checks project" },
@@ -2382,7 +2404,7 @@ export async function installLearningStudioBackend(page: Page) {
         const request = getRequest<Record<string, unknown>>(args);
         const cards = state.recallV2Workspace.cards as Array<Record<string, unknown>>;
         const existing = cards.find((item) => item.id === request.cardId);
-        if (existing && existing.contentRevision !== request.expectedContentRevision) throw new Error("Card changed; reload and retry.");
+        if (existing && existing.contentRevision !== request.expectedContentRevision) throw { code: "CONFLICT", message: "Card changed; reload and retry." };
         const content = request.content as Record<string, unknown>;
         if (existing) {
           const versions = existing.versions as Array<Record<string, unknown>>;
@@ -2408,7 +2430,7 @@ export async function installLearningStudioBackend(page: Page) {
         const card = (state.recallV2Workspace.cards as Array<Record<string, unknown>>).find((item) => item.id === request.cardId);
         if (!card) throw new Error("Recall card not found.");
         const scheduler = card.scheduler as Record<string, unknown>;
-        if (scheduler.reviewCount !== request.expectedReviewCount) throw new Error("Review state changed.");
+        if (scheduler.reviewCount !== request.expectedReviewCount) throw { code: "CONFLICT", message: "Review state changed." };
         const timestamp = Date.now();
         const intervalDays = request.rating === "good" ? 1 : request.rating === "easy" ? 2 : 0;
         Object.assign(scheduler, { reviewCount: Number(scheduler.reviewCount) + 1, intervalDays, dueAt: timestamp + intervalDays * 86_400_000, lastReviewedAt: timestamp });
@@ -2493,7 +2515,7 @@ export async function installLearningStudioBackend(page: Page) {
       delete_learning_source: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const item = sourceById(String(request.sourceId));
-        if (item.revision !== request.expectedRevision) throw new Error("Source changed; reload and retry.");
+        if (item.revision !== request.expectedRevision) throw { code: "CONFLICT", message: "Source changed; reload and retry." };
         item.deletedAt = Date.now();
         item.deletionReason = String(request.reason);
         item.activeVersionId = null;
@@ -2506,7 +2528,7 @@ export async function installLearningStudioBackend(page: Page) {
       reimport_learning_source: (args) => {
         const request = getRequest<Record<string, unknown>>(args);
         const item = sourceById(String(request.sourceId));
-        if (item.revision !== request.expectedRevision) throw new Error("Source changed; reload and retry.");
+        if (item.revision !== request.expectedRevision) throw { code: "CONFLICT", message: "Source changed; reload and retry." };
         const selected = sourceVersionById(item, String(request.versionId));
         item.activeVersionId = selected.id;
         item.activeVersion = selected;

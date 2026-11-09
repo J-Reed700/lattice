@@ -1,271 +1,217 @@
-import { type FormEvent, useState } from 'react';
-import { Calendar, Code, Edit3, LoaderCircle } from 'lucide-react';
+import { useId, useState } from 'react';
 
-import {
-  type LearningPracticeProfileDto,
-  practiceHomeApi,
-} from './practiceHomeApi';
+import { CalendarClock, Pencil, TriangleAlert } from 'lucide-react';
+
+import { StatusLine, type StatusState } from '@/features/learning/practice/shared/StatusLine';
+import { isConflict } from '@/lib/api';
+import type * as Wire from '@/lib/bindings';
+import { getErrorMessage } from '@/lib/errorUtils';
+
+import { practiceHomeApi } from './practiceHomeApi';
+
+export function toLocalInput(timestamp: number | null | undefined): string {
+  if (!timestamp) return '';
+  const date = new Date(timestamp);
+  return new Date(date.getTime() - date.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
+}
+
+function fromLocalInput(value: string): number | null {
+  if (!value) return null;
+  const time = new Date(value).getTime();
+  return Number.isFinite(time) ? time : null;
+}
+
+const blankToNull = (value: string) => value.trim() || null;
+
+interface Form {
+  details: string;
+  language: string;
+  interviewAt: string;
+  company: string;
+  role: string;
+}
+
+function formOf(profile: Wire.LearningPracticeProfileDto | null | undefined): Form {
+  return {
+    details: profile?.details ?? '',
+    language: profile?.language ?? '',
+    interviewAt: toLocalInput(profile?.interviewAt),
+    company: profile?.company ?? '',
+    role: profile?.role ?? '',
+  };
+}
 
 export interface PreparingForProps {
   programId: string;
-  courseGoal?: string;
-  profile?: LearningPracticeProfileDto | null;
-  onProfileChange?: (profile: LearningPracticeProfileDto) => void;
-  className?: string;
+  goal: string;
+  profile: Wire.LearningPracticeProfileDto | null | undefined;
+  loading?: boolean;
+  loadError?: string | null;
+  onRetryLoad?: () => void;
+  onSaved: (profile: Wire.LearningPracticeProfileDto) => void;
+  /** The profile as it is saved now, for when an edit finds it changed elsewhere. */
+  onReload: () => Promise<Wire.LearningPracticeProfileDto | null | undefined>;
 }
 
-export function PreparingFor({
-  programId,
-  courseGoal,
-  profile,
-  onProfileChange,
-  className,
-}: PreparingForProps) {
-  const [isEditing, setIsEditing] = useState(false);
+/** What the learner is preparing for: the course goal, plus the details, date, language, company and role they add. */
+export function PreparingFor({ programId, goal, profile, loading, loadError, onRetryLoad, onSaved, onReload }: PreparingForProps) {
+  const uid = useId();
+  const [editing, setEditing] = useState(false);
+  const [form, setForm] = useState<Form>(() => formOf(profile));
   const [saving, setSaving] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [conflict, setConflict] = useState(false);
+  const [status, setStatus] = useState<StatusState>({ kind: 'idle' });
 
-  const [details, setDetails] = useState(profile?.details ?? '');
-  const [language, setLanguage] = useState(profile?.language ?? '');
-  const [interviewDate, setInterviewDate] = useState(() => {
-    if (!profile?.interviewAt) return '';
-    return new Date(profile.interviewAt).toISOString().slice(0, 10);
-  });
-  const [company, setCompany] = useState(profile?.company ?? '');
-  const [role, setRole] = useState(profile?.role ?? '');
+  const set = (field: keyof Form) => (value: string) => setForm((current) => ({ ...current, [field]: value }));
 
-  const handleEditOpen = () => {
-    setDetails(profile?.details ?? '');
-    setLanguage(profile?.language ?? '');
-    setInterviewDate(
-      profile?.interviewAt
-        ? new Date(profile.interviewAt).toISOString().slice(0, 10)
-        : '',
-    );
-    setCompany(profile?.company ?? '');
-    setRole(profile?.role ?? '');
-    setError(null);
-    setIsEditing(true);
+  const open = () => {
+    setForm(formOf(profile));
+    setConflict(false);
+    setStatus({ kind: 'idle' });
+    setEditing(true);
   };
 
-  const handleSave = async (e: FormEvent) => {
-    e.preventDefault();
+  const save = async () => {
+    if (saving) return;
     setSaving(true);
-    setError(null);
+    setConflict(false);
+    setStatus({ kind: 'busy', label: 'Saving…' });
     try {
-      const interviewTimestamp = interviewDate
-        ? new Date(interviewDate).getTime()
-        : null;
-
       const saved = await practiceHomeApi.saveProfile({
         programId,
-        details,
-        language: language.trim() || null,
-        interviewAt: interviewTimestamp,
-        company: company.trim() || null,
-        role: role.trim() || null,
-        expectedRevision: profile?.revision,
+        details: form.details.trim(),
+        language: blankToNull(form.language),
+        interviewAt: fromLocalInput(form.interviewAt),
+        company: blankToNull(form.company),
+        role: blankToNull(form.role),
+        expectedRevision: profile?.revision ?? 0,
       });
-
-      onProfileChange?.(saved);
-      setIsEditing(false);
-    } catch (err) {
-      setError(
-        err instanceof Error ? err.message : 'Failed to save practice profile',
-      );
+      onSaved(saved);
+      setStatus({ kind: 'idle' });
+      setEditing(false);
+    } catch (error) {
+      if (isConflict(error)) {
+        setConflict(true);
+        setStatus({ kind: 'idle' });
+      } else {
+        setStatus({ kind: 'error', message: getErrorMessage(error), retry: () => void save() });
+      }
     } finally {
       setSaving(false);
     }
   };
 
-  const formattedInterview = profile?.interviewAt
-    ? `Interview ${new Intl.DateTimeFormat(undefined, {
-        weekday: 'short',
-        day: 'numeric',
-        month: 'short',
-        year: 'numeric',
-      }).format(new Date(profile.interviewAt))}`
-    : null;
+  const loadLatest = async () => {
+    try {
+      const latest = await onReload();
+      setForm(formOf(latest));
+      setConflict(false);
+    } catch (error) {
+      setStatus({ kind: 'error', message: getErrorMessage(error), retry: () => void loadLatest() });
+    }
+  };
+
+  const details = profile?.details.trim();
+  const interviewAt = profile?.interviewAt ?? null;
+  const field = 'mt-1 block w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring';
 
   return (
-    <section
-      aria-labelledby="prep-heading"
-      className={`rounded-xl border border-border-default bg-surface p-5 shadow-xs ${className ?? ''}`}
-    >
-      <div className="flex flex-wrap items-start justify-between gap-4">
-        <div className="min-w-0 flex-1 space-y-3">
-          <div
-            id="prep-heading"
-            className="text-xs font-semibold uppercase tracking-wider text-text-tertiary"
-          >
+    <section aria-labelledby={`${uid}-heading`} className="rounded-xl border border-border-default bg-surface p-5">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          <h2 id={`${uid}-heading`} className="text-xs font-semibold uppercase tracking-wider text-text-muted">
             Preparing for
-          </div>
-
-          {!isEditing ? (
-            <>
-              {courseGoal && (
-                <div className="font-serif text-lg font-medium text-text-primary">
-                  {courseGoal}
-                </div>
-              )}
-              {profile?.details && (
-                <div className="text-sm leading-relaxed text-text-secondary">
-                  {profile.details}
-                </div>
-              )}
-              <div className="flex flex-wrap items-center gap-2">
-                {profile?.language && (
-                  <span className="inline-flex min-h-[28px] items-center gap-1.5 rounded-full bg-surface-raised px-2.5 text-xs font-medium text-text-secondary">
-                    <Code className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>{profile.language}</span>
-                  </span>
-                )}
-                {formattedInterview && (
-                  <span className="inline-flex min-h-[28px] items-center gap-1.5 rounded-full bg-accent-muted px-2.5 text-xs font-medium text-accent">
-                    <Calendar className="h-3.5 w-3.5" aria-hidden="true" />
-                    <span>{formattedInterview}</span>
-                  </span>
-                )}
-                {profile?.role && (
-                  <span className="inline-flex min-h-[28px] items-center rounded-full bg-surface-raised px-2.5 text-xs font-medium text-text-secondary">
-                    {profile.role}
-                  </span>
-                )}
-              </div>
-              <p className="text-xs text-text-tertiary">
-                Suggestions on this page follow this.
-              </p>
-            </>
-          ) : (
-            <form onSubmit={handleSave} className="space-y-4 pt-1">
-              <div>
-                <label
-                  htmlFor="prep-details"
-                  className="block text-xs font-semibold text-text-primary"
-                >
-                  Details
-                </label>
-                <textarea
-                  id="prep-details"
-                  aria-label="Details"
-                  rows={3}
-                  value={details}
-                  onChange={(e) => setDetails(e.target.value)}
-                  placeholder="What are you preparing for? (e.g. Easy problems in Python, live with a coach)"
-                  className="mt-1.5 w-full rounded-lg border border-border-default bg-surface-sunken p-2.5 text-sm text-text-primary placeholder:text-text-muted focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                />
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label
-                    htmlFor="prep-language"
-                    className="block text-xs font-semibold text-text-primary"
-                  >
-                    Language
-                  </label>
-                  <input
-                    id="prep-language"
-                    type="text"
-                    value={language}
-                    onChange={(e) => setLanguage(e.target.value)}
-                    placeholder="e.g. Python, Rust"
-                    className="mt-1 w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="prep-date"
-                    className="block text-xs font-semibold text-text-primary"
-                  >
-                    Interview date
-                  </label>
-                  <input
-                    id="prep-date"
-                    type="date"
-                    value={interviewDate}
-                    onChange={(e) => setInterviewDate(e.target.value)}
-                    className="mt-1 w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                </div>
-              </div>
-
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                <div>
-                  <label
-                    htmlFor="prep-role"
-                    className="block text-xs font-semibold text-text-primary"
-                  >
-                    Target role
-                  </label>
-                  <input
-                    id="prep-role"
-                    type="text"
-                    value={role}
-                    onChange={(e) => setRole(e.target.value)}
-                    placeholder="e.g. Software Engineer"
-                    className="mt-1 w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                </div>
-                <div>
-                  <label
-                    htmlFor="prep-company"
-                    className="block text-xs font-semibold text-text-primary"
-                  >
-                    Target organization
-                  </label>
-                  <input
-                    id="prep-company"
-                    type="text"
-                    value={company}
-                    onChange={(e) => setCompany(e.target.value)}
-                    placeholder="Optional target organization"
-                    className="mt-1 w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary placeholder:text-text-muted focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                  />
-                </div>
-              </div>
-
-              {error && (
-                <p role="alert" className="text-xs text-danger-fg">
-                  {error}
-                </p>
-              )}
-
-              <div className="flex items-center gap-2 pt-2">
-                <button
-                  type="submit"
-                  disabled={saving}
-                  className="inline-flex min-h-[44px] cursor-pointer items-center justify-center rounded-lg bg-accent px-5 text-sm font-semibold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-50"
-                >
-                  {saving && (
-                    <LoaderCircle className="mr-2 h-4 w-4 animate-spin" />
-                  )}
-                  Save
-                </button>
-                <button
-                  type="button"
-                  disabled={saving}
-                  onClick={() => setIsEditing(false)}
-                  className="inline-flex min-h-[44px] cursor-pointer items-center justify-center rounded-lg border border-border-default bg-surface px-4 text-sm font-medium text-text-primary hover:bg-surface-raised disabled:opacity-50"
-                >
-                  Cancel
-                </button>
-              </div>
-            </form>
+          </h2>
+          <p className="mt-1 text-base font-medium text-text-primary">{goal}</p>
+          {details && <p className="mt-1 whitespace-pre-line text-sm text-text-secondary">{details}</p>}
+          {interviewAt !== null && (
+            <p className="mt-2 inline-flex items-center gap-1.5 text-sm text-text-secondary">
+              <CalendarClock className="h-4 w-4" aria-hidden="true" />
+              <span>Interview on {new Date(interviewAt).toLocaleDateString(undefined, { dateStyle: 'long' })}</span>
+            </p>
           )}
+          {loading && <StatusLine state={{ kind: 'busy', label: 'Loading what you added…' }} />}
+          {loadError && <StatusLine state={{ kind: 'error', message: loadError, retry: onRetryLoad }} />}
         </div>
-
-        {!isEditing && (
+        {!editing && (
           <button
             type="button"
-            onClick={handleEditOpen}
-            className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-lg border border-border-default bg-surface px-4 text-sm font-semibold text-text-primary transition-colors hover:bg-surface-raised focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            onClick={open}
+            disabled={loading || Boolean(loadError)}
+            className="inline-flex min-h-11 items-center gap-1.5 rounded-lg border border-border-default px-3 text-sm font-medium text-text-primary hover:bg-surface-raised focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
           >
-            <Edit3 className="h-4 w-4" aria-hidden="true" />
-            <span>Edit</span>
+            <Pencil className="h-4 w-4" aria-hidden="true" />
+            Edit
           </button>
         )}
       </div>
+
+      {editing && (
+        <form
+          className="mt-4 space-y-3"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void save();
+          }}
+        >
+          <label className="block text-sm font-medium text-text-secondary">
+            What you are preparing for
+            <textarea
+              value={form.details}
+              onChange={(event) => set('details')(event.target.value)}
+              rows={3}
+              placeholder="For example: easy problems, solved while someone watches."
+              className={field}
+            />
+          </label>
+          <div className="grid gap-3 sm:grid-cols-2">
+            <label className="block text-sm font-medium text-text-secondary">
+              Language
+              <input type="text" value={form.language} onChange={(event) => set('language')(event.target.value)} className={field} />
+            </label>
+            <label className="block text-sm font-medium text-text-secondary">
+              Interview date
+              <input type="datetime-local" value={form.interviewAt} onChange={(event) => set('interviewAt')(event.target.value)} className={field} />
+            </label>
+            <label className="block text-sm font-medium text-text-secondary">
+              Company
+              <input type="text" value={form.company} onChange={(event) => set('company')(event.target.value)} className={field} />
+            </label>
+            <label className="block text-sm font-medium text-text-secondary">
+              Role
+              <input type="text" value={form.role} onChange={(event) => set('role')(event.target.value)} className={field} />
+            </label>
+          </div>
+          {conflict && (
+            <div role="alert" className="flex flex-wrap items-center gap-3 rounded-lg bg-warning-muted px-3 py-2 text-sm text-warning-fg">
+              <TriangleAlert className="h-4 w-4 shrink-0" aria-hidden="true" />
+              <span>This changed somewhere else since you opened it. Load the latest to see it.</span>
+              <button type="button" onClick={() => void loadLatest()} className="min-h-11 font-semibold underline">
+                Load the latest
+              </button>
+            </div>
+          )}
+          <StatusLine state={status} />
+          <div className="flex flex-wrap gap-2">
+            <button
+              type="submit"
+              disabled={saving || conflict}
+              className="inline-flex min-h-11 items-center rounded-lg bg-accent px-4 text-sm font-semibold text-accent-fg hover:opacity-90 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring disabled:opacity-50"
+            >
+              Save
+            </button>
+            <button
+              type="button"
+              onClick={() => setEditing(false)}
+              disabled={saving}
+              className="inline-flex min-h-11 items-center rounded-lg border border-border-default px-4 text-sm font-medium text-text-primary hover:bg-surface-raised focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+            >
+              Cancel
+            </button>
+          </div>
+          {conflict && <p className="text-sm text-text-secondary">Save is off until you load the latest, so nothing newer is overwritten.</p>}
+        </form>
+      )}
     </section>
   );
 }

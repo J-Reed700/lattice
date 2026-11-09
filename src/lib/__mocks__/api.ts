@@ -4,6 +4,8 @@
  */
 import { createVaultAPIMock } from '../../tests/mocks/latticeApiMock';
 
+export { isConflict, newId, unwrap } from '../apiResult';
+
 const vaultApiMock = createVaultAPIMock();
 export const VaultAPI = vaultApiMock;
 export default vaultApiMock;

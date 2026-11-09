@@ -1,4 +1,5 @@
 import { TiptapViewer } from '@/components/TiptapEditor';
+import { SaveStatus } from '@/components/ui/SaveStatus';
 import { LEARNER_TEXT_MAX_CHARS } from '@/features/learning/model/learnerTextLimit';
 import {
   PreviousFeedback,
@@ -10,39 +11,25 @@ import {
   sourceForVersion,
 } from '@/features/learning/practice/PracticeSourceRail';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
+import { saveStatusOf } from '@/features/learning/practice/shared/useAutosave';
 import type { usePracticeSession } from '@/features/learning/practice/usePracticeSession';
+import { HINTS } from '@/features/learning/practice/workbench/helpModes';
 import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
-import type {
-  LearningLessonDto,
-  LearningPracticeHintLevel,
-  LearningProgramDto,
-} from '@/lib/bindings';
+import type { LearningLessonDto, LearningProgramDto } from '@/lib/bindings';
 
 export interface EmbeddedPracticeViewProps {
   program: LearningProgramDto;
   lesson: LearningLessonDto | undefined;
   sessionState: ReturnType<typeof usePracticeSession>;
-  text: string;
-  savedText: string;
-  setText: (value: string) => void;
-  textRef: React.MutableRefObject<string>;
-  saveNow: () => Promise<boolean>;
   onContinue?: () => void;
-  hints: { id: LearningPracticeHintLevel; title: string; prompt: string }[];
 }
 
 export function EmbeddedPracticeView({
   program,
   lesson,
   sessionState,
-  text,
-  savedText,
-  setText,
-  textRef,
-  saveNow,
   onContinue,
-  hints,
 }: EmbeddedPracticeViewProps) {
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const programId = program.summary.id;
@@ -55,10 +42,15 @@ export function EmbeddedPracticeView({
     session,
     active,
     busyState,
-    busyLabel,
-    actionError,
+    busy,
+    text,
+    setText,
+    dirty,
+    autosave,
+    saveNow,
+    reloadAttempt,
+    failure,
     conflict,
-    retryAction,
     selectedSource,
     setSelectedSource,
     hintUsed,
@@ -74,16 +66,22 @@ export function EmbeddedPracticeView({
     : null;
   const sourceVersion = useLearningSourceVersion(sourceRequest);
 
-  const nextHint = hints.slice(0, 3).find((hint) => !hintUsed.includes(hint.id));
-  const busy = Boolean(busyLabel);
-  const locked = busy && busyState !== 'saving';
+  const nextHint = HINTS.slice(0, 3).find((hint) => !hintUsed.includes(hint.id));
+  const saveState = saveStatusOf(autosave.state, dirty);
+  const saveFailed = autosave.state === 'error' || autosave.state === 'conflict';
+  const error = failure
+    ? { message: failure.message, retry: failure.retry }
+    : saveFailed
+      ? { message: autosave.error ?? 'Your work could not be saved.', retry: autosave.state === 'error' ? () => void autosave.flush() : undefined }
+      : null;
+  const submitReason = !text.trim() ? 'Write your working first.' : busy && busyState !== 'submitting' ? 'Another action is in progress.' : null;
 
   return (
-    <div className="mt-5 space-y-4 border-t border-border-default pt-5">
+    <section aria-label="Guided attempt" className="mt-5 space-y-4 border-t border-border-default pt-5">
       {!sessionId ? (
         <div>
           <p className="text-sm leading-6 text-text-secondary">
-            Try the exercise in your own words. Your work saves as you go; request one hint at a time when you need it.
+            Work through it in your own words. Your work saves as you go; request one hint at a time when you need it.
           </p>
           <button
             type="button"
@@ -91,38 +89,28 @@ export function EmbeddedPracticeView({
             onClick={() => void startSession()}
             className="mt-3 min-h-11 rounded-full bg-accent px-5 text-sm font-semibold text-accent-fg disabled:opacity-50"
           >
-            {busy ? 'Starting…' : 'Start guided exercise'}
+            {busyState === 'starting' ? 'Starting…' : 'Start guided attempt'}
           </button>
         </div>
       ) : sessionQuery.isError ? (
-        <StatusLine
-          error={sessionQuery.error.message}
-          onRetry={() => void sessionQuery.refetch()}
-          retryLabel="Retry exercise"
-          retryAriaLabel="Retry exercise"
-        />
+        <StatusLine state={{ kind: 'error', message: sessionQuery.error.message, retry: () => void sessionQuery.refetch() }} />
       ) : !session ? (
-        <p role="status" className="text-xs text-text-muted">Opening your saved exercise…</p>
+        <p role="status" className="text-xs text-text-muted">Opening your saved attempt…</p>
       ) : (
         <>
           <div className="flex flex-wrap items-center justify-between gap-2">
             <label htmlFor={`guided-answer-${lessonId}`} className="text-sm font-semibold text-text-primary">
               Your working
             </label>
-            <span role="status" className="text-xs text-text-muted">
-              {busyLabel || (text === savedText ? 'Saved' : 'Saving…')}
-            </span>
+            <SaveStatus state={saveState} />
           </div>
           <textarea
             id={`guided-answer-${lessonId}`}
             rows={6}
             value={text}
             maxLength={LEARNER_TEXT_MAX_CHARS}
-            disabled={!active || locked}
-            onChange={(event) => {
-              setText(event.target.value);
-              textRef.current = event.target.value;
-            }}
+            disabled={!active || busy}
+            onChange={(event) => setText(event.target.value)}
             placeholder="Show your first step, explain your reasoning, or paste your code…"
             className="w-full rounded-xl border border-border-default bg-surface p-4 text-sm leading-6 text-text-primary outline-hidden focus:border-accent disabled:opacity-70"
           />
@@ -161,6 +149,7 @@ export function EmbeddedPracticeView({
               >
                 Submit guided response
               </button>
+              {submitReason && <p className="w-full text-xs text-text-muted">{submitReason}</p>}
             </div>
           )}
           {session.tutorTurns.length > 0 && (
@@ -169,7 +158,7 @@ export function EmbeddedPracticeView({
                 <article key={turn.id} className="rounded-xl bg-accent-muted p-4">
                   <p className="mb-2 text-xs font-semibold text-accent">
                     {turn.requestKind === 'hint'
-                      ? `Hint · ${hints.find((hint) => hint.id === turn.hintLevel)?.title ?? index + 1}`
+                      ? `Hint · ${HINTS.find((hint) => hint.id === turn.hintLevel)?.title ?? index + 1}`
                       : 'Feedback on your reasoning'}
                   </p>
                   <div className="text-sm leading-6 text-text-primary">
@@ -226,30 +215,12 @@ export function EmbeddedPracticeView({
           {session.summary.revisesSessionId && <PreviousFeedback session={session} />}
         </>
       )}
-      {actionError && (
-        <div role="alert" className="rounded-xl bg-danger-muted p-3 text-sm text-danger-fg">
-          <p>{actionError}</p>
-          {retryAction && (
-            <button
-              type="button"
-              disabled={busy}
-              onClick={() => void retryAction.run()}
-              className="mt-2 font-semibold underline"
-            >
-              {retryAction.label}
-            </button>
-          )}
-          {conflict && (
-            <button
-              type="button"
-              onClick={() => void sessionQuery.refetch()}
-              className="mt-2 font-semibold underline"
-            >
-              Reload saved exercise
-            </button>
-          )}
-        </div>
+      {error && <StatusLine state={{ kind: 'error', message: error.message, retry: error.retry }} />}
+      {conflict && (
+        <button type="button" onClick={() => void reloadAttempt()} className="text-sm font-semibold underline">
+          Reload the saved attempt · keep my text
+        </button>
       )}
-    </div>
+    </section>
   );
 }

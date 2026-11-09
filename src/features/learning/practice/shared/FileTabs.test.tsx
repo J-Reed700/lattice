@@ -1,99 +1,47 @@
 import { fireEvent, render, screen } from '@testing-library/react';
-import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
-import { FileTabs, type FileTabItem } from './FileTabs';
+import { FileTabs } from './FileTabs';
+
+const files = [
+  { path: 'solution.py' },
+  { path: 'notes.md', label: 'Notes', modified: true },
+  { path: 'helpers.py' },
+];
 
 describe('FileTabs', () => {
-  it('renders file tabs with labels or fallback paths', () => {
-    const files: FileTabItem[] = [
-      { path: 'solution.py' },
-      { path: 'tests/test_solution.py', label: 'Test Suite' },
-    ];
-
-    render(<FileTabs files={files} activePath="solution.py" onSelect={vi.fn()} />);
-
-    expect(screen.getByRole('tablist', { name: /files/i })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /solution\.py/ })).toBeInTheDocument();
-    expect(screen.getByRole('tab', { name: /Test Suite/ })).toBeInTheDocument();
+  it('is a labelled tablist with the active tab selected and the others out of the tab order', () => {
+    render(<FileTabs files={files} active="notes.md" onSelect={vi.fn()} label="Files" />);
+    expect(screen.getByRole('tablist', { name: 'Files' })).toBeInTheDocument();
+    const active = screen.getByRole('tab', { name: /Notes/ });
+    expect(active).toHaveAttribute('aria-selected', 'true');
+    expect(active).toHaveAttribute('tabindex', '0');
+    expect(screen.getByRole('tab', { name: 'solution.py' })).toHaveAttribute('tabindex', '-1');
   });
 
-  it('marks active tab aria-selected="true" and others aria-selected="false"', () => {
-    const files: FileTabItem[] = [
-      { path: 'solution.py' },
-      { path: 'tests.py' },
-    ];
-
-    render(<FileTabs files={files} activePath="solution.py" onSelect={vi.fn()} />);
-
-    const activeTab = screen.getByRole('tab', { name: /solution\.py/ });
-    const inactiveTab = screen.getByRole('tab', { name: /tests\.py/ });
-
-    expect(activeTab).toHaveAttribute('aria-selected', 'true');
-    expect(activeTab).toHaveAttribute('tabIndex', '0');
-    expect(inactiveTab).toHaveAttribute('aria-selected', 'false');
-    expect(inactiveTab).toHaveAttribute('tabIndex', '-1');
+  it('says in text that a file was edited', () => {
+    render(<FileTabs files={files} active="solution.py" onSelect={vi.fn()} label="Files" />);
+    expect(screen.getByRole('tab', { name: /Notes/ })).toHaveTextContent('Edited');
   });
 
-  it('calls onSelect when another tab is clicked', async () => {
+  it('moves with the arrow keys, wrapping, and with Home and End', () => {
     const onSelect = vi.fn();
-    const files: FileTabItem[] = [
-      { path: 'solution.py' },
-      { path: 'tests.py' },
-    ];
-
-    render(<FileTabs files={files} activePath="solution.py" onSelect={onSelect} />);
-
-    const inactiveTab = screen.getByRole('tab', { name: /tests\.py/ });
-    await userEvent.click(inactiveTab);
-
-    expect(onSelect).toHaveBeenCalledTimes(1);
-    expect(onSelect).toHaveBeenCalledWith('tests.py');
+    render(<FileTabs files={files} active="solution.py" onSelect={onSelect} label="Files" />);
+    const first = screen.getByRole('tab', { name: 'solution.py' });
+    fireEvent.keyDown(first, { key: 'ArrowRight' });
+    expect(onSelect).toHaveBeenLastCalledWith('notes.md');
+    fireEvent.keyDown(first, { key: 'ArrowLeft' });
+    expect(onSelect).toHaveBeenLastCalledWith('helpers.py');
+    fireEvent.keyDown(first, { key: 'End' });
+    expect(onSelect).toHaveBeenLastCalledWith('helpers.py');
+    fireEvent.keyDown(screen.getByRole('tab', { name: 'helpers.py' }), { key: 'Home' });
+    expect(onSelect).toHaveBeenLastCalledWith('solution.py');
   });
 
-  it('supports arrow key navigation across tabs', () => {
+  it('selects on click', () => {
     const onSelect = vi.fn();
-    const files: FileTabItem[] = [
-      { path: 'file1.py' },
-      { path: 'file2.py' },
-      { path: 'file3.py' },
-    ];
-
-    render(<FileTabs files={files} activePath="file1.py" onSelect={onSelect} />);
-
-    const firstTab = screen.getByRole('tab', { name: /file1\.py/ });
-    fireEvent.keyDown(firstTab, { key: 'ArrowRight' });
-
-    expect(onSelect).toHaveBeenCalledWith('file2.py');
-
-    fireEvent.keyDown(firstTab, { key: 'End' });
-    expect(onSelect).toHaveBeenCalledWith('file3.py');
-  });
-
-  it('renders read-only indicator and badges', () => {
-    const files: FileTabItem[] = [
-      { path: 'reference.py', readOnly: true },
-      { path: 'draft.py', badge: 'Draft' },
-    ];
-
-    render(<FileTabs files={files} activePath="draft.py" onSelect={vi.fn()} />);
-
-    expect(screen.getByText(/read-only|locked/i)).toBeInTheDocument();
-    expect(screen.getByText('Draft')).toBeInTheDocument();
-  });
-
-  it('renders optional actions node', () => {
-    const files: FileTabItem[] = [{ path: 'solution.py' }];
-
-    render(
-      <FileTabs
-        files={files}
-        activePath="solution.py"
-        onSelect={vi.fn()}
-        actions={<button type="button">Reset Files</button>}
-      />,
-    );
-
-    expect(screen.getByRole('button', { name: 'Reset Files' })).toBeInTheDocument();
+    render(<FileTabs files={files} active="solution.py" onSelect={onSelect} label="Files" />);
+    fireEvent.click(screen.getByRole('tab', { name: 'helpers.py' }));
+    expect(onSelect).toHaveBeenCalledWith('helpers.py');
   });
 });

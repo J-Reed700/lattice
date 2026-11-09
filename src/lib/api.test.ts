@@ -1,62 +1,76 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
-import { newId, unwrap } from './api';
+import { isConflict, newId, unwrap } from './apiResult';
 
 describe('unwrap', () => {
-  it('unwraps a successful CommandResult with { ok: true, data }', () => {
-    const data = { id: 'item-1', name: 'Test' };
-    const result = unwrap({ ok: true, data });
-    expect(result).toBe(data);
+  it('returns the data of a successful result', () => {
+    const data = { id: 'item-1' };
+    expect(unwrap({ ok: true, data })).toBe(data);
   });
 
-  it('throws when CommandResult has { ok: false, error }', () => {
-    expect(() => unwrap({ ok: false, error: 'Database connection failed' })).toThrow(
-      'Database connection failed',
-    );
+  it('throws the message of a failed result and keeps its details', () => {
+    const details = { code: 'CONFLICT' } as never;
+    let thrown: unknown;
+    try {
+      unwrap({ ok: false, error: 'Changed elsewhere.', details });
+    } catch (error) {
+      thrown = error;
+    }
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toBe('Changed elsewhere.');
+    expect(isConflict(thrown)).toBe(true);
   });
 
-  it('preserves Error instance when CommandResult error is an Error', () => {
-    const error = new Error('Custom error message');
-    expect(() => unwrap({ ok: false, error })).toThrow('Custom error message');
+  it('reads the Specta result shape too', () => {
+    expect(unwrap({ status: 'ok', data: [1, 2] })).toEqual([1, 2]);
+    expect(() => unwrap({ status: 'error', error: { message: 'Not found' } })).toThrow('Not found');
   });
 
-  it('unwraps a successful Specta Result with { status: "ok", data }', () => {
-    const data = [1, 2, 3];
-    const result = unwrap({ status: 'ok', data });
-    expect(result).toBe(data);
-  });
-
-  it('throws when Specta Result has { status: "error", error }', () => {
-    expect(() => unwrap({ status: 'error', error: 'Record not found' })).toThrow(
-      'Record not found',
-    );
-  });
-
-  it('throws readable error when Specta Result error is a structured object with message', () => {
-    expect(() =>
-      unwrap({ status: 'error', error: { message: 'Validation failed' } }),
-    ).toThrow('Validation failed');
+  it('keeps the code of a failed Wire.Result so a conflict is recognised', () => {
+    let thrown: unknown;
+    try {
+      unwrap({ status: 'error', error: { code: 'CONFLICT', message: 'Stale.' } });
+    } catch (cause) {
+      thrown = cause;
+    }
+    expect((thrown as Error).message).toBe('Stale.');
+    expect(isConflict(thrown)).toBe(true);
   });
 });
 
 describe('newId', () => {
-  it('returns a valid RFC4122 v4 UUID string', () => {
-    const id = newId();
-    expect(id).toMatch(
-      /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-    );
+  it('returns a UUID, different each time', () => {
+    const first = newId();
+    expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
+    expect(newId()).not.toBe(first);
   });
 
-  it('generates distinct IDs on consecutive calls', () => {
-    const id1 = newId();
-    const id2 = newId();
-    expect(id1).not.toBe(id2);
+  describe('with no crypto', () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    it('still returns a UUID-shaped id, different each time', () => {
+      vi.stubGlobal('crypto', undefined);
+      const first = newId();
+      expect(first).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      expect(newId()).not.toBe(first);
+    });
+  });
+});
+
+describe('isConflict', () => {
+  it('is true only for the CONFLICT code in the error details', () => {
+    expect(isConflict({ details: { code: 'CONFLICT' } })).toBe(true);
+    expect(isConflict({ details: { code: 'NOT_FOUND' } })).toBe(false);
   });
 
-  it('supports prefix when provided', () => {
-    const id = newId('item');
-    expect(id).toMatch(
-      /^item-[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i,
-    );
+  it('is true for an error that carries the code itself', () => {
+    expect(isConflict(Object.assign(new Error('Stale.'), { code: 'CONFLICT' }))).toBe(true);
+    expect(isConflict(Object.assign(new Error('Gone.'), { code: 'NOT_FOUND' }))).toBe(false);
+  });
+
+  it('does not read the message', () => {
+    expect(isConflict(new Error('conflict: revision changed'))).toBe(false);
+    expect(isConflict(null)).toBe(false);
+    expect(isConflict('CONFLICT')).toBe(false);
   });
 });

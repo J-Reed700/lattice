@@ -428,7 +428,16 @@ pub async fn practice_due(
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
 ) -> Result<PracticeDueDto, ApiError> {
+    let code_fits = crate::features::learning::practice_fit::code_fits(
+        &super::practice::practice_repo(&container),
+        &request.program_id,
+    )
+    .await
+    .map_err(ApiError::from)?;
     let repo = repo_of(&container);
     plain_sessions!(sessions, container, runtimes, repo);
-    sessions.due(&request).await.map_err(ApiError::from)
+    sessions
+        .due(&request, code_fits)
+        .await
+        .map_err(ApiError::from)
 }

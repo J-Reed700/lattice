@@ -31,7 +31,8 @@ use super::interview_answers::{
     generate_answer_guides, InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH,
 };
 use super::simulation_policy::{
-    Cue, InterviewQuestionsPolicy, Reply, ScenarioPolicy, SessionEvent, SessionState, TurnPolicy,
+    InterviewQuestionsPolicy, ScenarioPolicy, SimulationCue, SimulationEvent, SimulationState,
+    TurnPolicy,
 };
 pub use interview_generation::generate_interview_plan;
 use interview_generation::public_interview_activity;
@@ -531,25 +532,7 @@ pub async fn generate_simulation_turn(
     sources: &[LearningSourceVersionDto],
     final_feedback: bool,
 ) -> Result<GeneratedSimulationTurn> {
-    let policy: &dyn TurnPolicy = if activity.interview_plan.is_some() {
-        &InterviewQuestionsPolicy
-    } else {
-        &ScenarioPolicy
-    };
-    generate_simulation_turn_with_policy(llm, activity, session, sources, final_feedback, policy)
-        .await
-}
-
-pub async fn generate_simulation_turn_with_policy(
-    llm: &dyn LLMPort,
-    activity: &SimulationActivityContext,
-    session: &LearningSimulationSessionDto,
-    sources: &[LearningSourceVersionDto],
-    final_feedback: bool,
-    policy: &dyn TurnPolicy,
-) -> Result<GeneratedSimulationTurn> {
-    let state = SessionState::from_context(activity, session, sources, final_feedback);
-    let reviewed_interview = state.reviewed_interview;
+    let reviewed_interview = final_feedback && activity.interview_answers.is_some();
     let transcript = session
         .turns
         .iter()
@@ -603,7 +586,13 @@ pub async fn generate_simulation_turn_with_policy(
             return Ok(feedback);
         }
     }
-    let citation_limit = state.citation_limit();
+    let citation_limit = if sources.is_empty() {
+        0
+    } else if reviewed_interview {
+        12
+    } else {
+        5
+    };
     let output_tokens = if reviewed_interview { 3_500 } else { 1_500 };
     let schema = serde_json::json!({
         "type":"object","additionalProperties":false,"required":["content","citations"],
@@ -622,24 +611,25 @@ pub async fn generate_simulation_turn_with_policy(
     let schema = closing_evidence
         .as_ref()
         .map_or(schema, |evidence| evidence.schema());
-    let event = if final_feedback {
-        SessionEvent::Finish
-    } else if !state.has_counterpart_turn() && !state.has_learner_turn() {
-        SessionEvent::Start
-    } else {
-        SessionEvent::LearnerTurn(
-            session
-                .turns
-                .last()
-                .map_or_else(String::new, |turn| turn.content.clone()),
-        )
+    let policy: &dyn TurnPolicy<SimulationState<'_>, Event = SimulationEvent, Cue = SimulationCue> =
+        if activity.interview_plan.is_some() {
+            &InterviewQuestionsPolicy
+        } else {
+            &ScenarioPolicy
+        };
+    let state = SimulationState {
+        session,
+        interview_plan: activity.interview_plan.as_ref(),
     };
-    let cue = policy.cue(&event, &state).unwrap_or(if final_feedback {
-        Cue::Closing
+    let event = if final_feedback {
+        SimulationEvent::Finish
     } else {
-        Cue::FollowUp
-    });
-    let system = policy.system(&cue);
+        SimulationEvent::Turn
+    };
+    let cue = policy
+        .cue(&event, &state)
+        .ok_or_else(|| invalid("The simulation has nothing to say."))?;
+    let system = policy.system(&cue, &state);
     let feedback_boundary = if final_feedback {
         " Make the next practice step a retry: name the one or two weakest answers or decisions, say what a stronger one adds, and ask the learner to answer them again from memory now and once more on a later day. Describe only what this attempt demonstrated. Report missing or unattempted answers as insufficient evidence without assigning zero points; reserve zero for demonstrated errors under the rubric. Do not infer a learner's enduring capability or inability from a non-answer. Credit verification steps the learner already described; ask for additional detail without claiming that no verification was offered."
     } else {
@@ -679,31 +669,30 @@ pub async fn generate_simulation_turn_with_policy(
     let prompt =
         with_snapshots(llm, &system, prompt, prompt_sources, &query, output_tokens).await?;
     crate::generation::complete_checked(
-        llm,
-        &system,
-        prompt,
-        schema,
-        output_tokens,
-        None,
-        None,
-        |raw| {
+        llm, &system, prompt, schema, output_tokens, None, None, |raw| {
             let parsed = if let Some(evidence) = &closing_evidence {
                 evidence.read(raw, session)?
             } else {
                 serde_json::from_str::<SimulationJson>(raw)
                     .map_err(|_| invalid("The simulation returned malformed structured output."))?
             };
-            let reply = Reply {
-                content: parsed.content.clone(),
-                citations: parsed.citations.clone(),
-                evaluated_question_ids: parsed.evaluated_question_ids.clone(),
-            };
-            policy.check(&reply, &state)?;
-            Ok(GeneratedSimulationTurn {
-                content: parsed.content,
-                citations: parsed.citations,
-            })
+            present(&parsed.content, "Simulation turn")?;
+            let content = parsed.content.to_ascii_lowercase();
+            let internal_ids = activity.rubric.iter().map(|criterion| criterion.id.as_str())
+                .chain(activity.interview_plan.iter().flat_map(|plan| plan.questions.iter().map(|question| question.id.as_str())))
+                .chain(sources.iter().flat_map(|source| [source.source_id.as_str(), source.version.id.as_str()]));
+            if internal_ids.filter(|id| uuid::Uuid::parse_str(id).is_ok()).any(|id| content.contains(&id.to_ascii_lowercase())) {
+                return Err(invalid("Keep internal identifiers out of the learner-facing content. Use question numbers or summaries; evaluatedQuestionIds and citation IDs belong only in their structured fields."));
+            }
+            policy.check(&parsed.content, &cue, &state)?;
+            if parsed.citations.len() > citation_limit {
+                return Err(invalid("Citations must reference supplied source passages and must be empty when no sources are provided."));
+            }
+            crate::practice_generation::validate_citations(&parsed.citations, sources)?;
+            if !reviewed_interview && parsed.evaluated_question_ids.is_some() {
+                return Err(invalid("Only a reviewed interview debrief can return evaluated question IDs."));
+            }
+            Ok(GeneratedSimulationTurn { content: parsed.content, citations: parsed.citations })
         },
-    )
-    .await
+    ).await
 }

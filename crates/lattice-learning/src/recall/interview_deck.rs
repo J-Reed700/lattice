@@ -269,6 +269,27 @@ fn deck_id(material: &InterviewMaterial) -> String {
     uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_OID, name.as_bytes()).to_string()
 }
 
+/// The IDs of the decks the course's ready interviews make, whether or not the drill was made yet. An interview that
+/// cannot become a drill makes none.
+pub(crate) async fn deck_ids(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
+    let activity_ids: Vec<String> = sqlx::query_scalar(
+        "SELECT id FROM learning_practical_activities WHERE program_id=? AND kind='interview' AND status='ready' ORDER BY created_at,id",
+    )
+    .bind(program_id)
+    .fetch_all(pool)
+    .await
+    .map_err(db)?;
+    let mut ids = Vec::new();
+    for activity_id in activity_ids {
+        match load(pool, program_id, &activity_id).await {
+            Ok(material) => ids.push(deck_id(&material)),
+            Err(error @ AppError::Database(_)) => return Err(error),
+            Err(_) => {}
+        }
+    }
+    Ok(ids)
+}
+
 /// The deck for `material`, every card due now.
 pub(crate) fn deck(material: &InterviewMaterial, now: i64) -> StudyDeckDto {
     let id = deck_id(material);

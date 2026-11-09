@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { SaveAsReviewCard } from './SaveAsReviewCard';
 
-const mockMutation = {
+const mutation = {
   mutate: vi.fn(),
   isSuccess: false,
   isPending: false,
@@ -12,90 +12,79 @@ const mockMutation = {
 };
 
 vi.mock('@/features/learning/memory/useLearningMemory', () => ({
-  useSaveLearningCardDraft: () => mockMutation,
+  useSaveLearningCardDraft: () => mutation,
+}));
+vi.mock('@/features/learning/workspace/useLearningStudio', () => ({
+  useLearningProgram: () => ({ data: { summary: { currentLessonId: 'lesson-current' }, modules: [] } }),
 }));
 
 describe('SaveAsReviewCard', () => {
   beforeEach(() => {
-    mockMutation.mutate.mockReset();
-    mockMutation.isSuccess = false;
-    mockMutation.isPending = false;
-    mockMutation.isError = false;
-    mockMutation.error = null;
+    mutation.mutate.mockReset();
+    mutation.isSuccess = false;
+    mutation.isPending = false;
+    mutation.isError = false;
+    mutation.error = null;
   });
 
-  it('renders prompt text and textarea without arbitrary maxLength', () => {
-    render(
-      <SaveAsReviewCard
-        programId="prog-1"
-        lessonId="lesson-1"
-        promptText="Binary search requires a sorted array."
-        promptLabel="What is right instead?"
-      />,
-    );
-
-    expect(screen.getByText('Binary search requires a sorted array.')).toBeInTheDocument();
-    expect(screen.getByText('What is right instead?')).toBeInTheDocument();
-
-    const textarea = screen.getByRole('textbox');
-    // Rule: no arbitrary limits / no maxLength on learner answers
-    expect(textarea).not.toHaveAttribute('maxLength');
+  it('shows the front and a back the learner can edit', () => {
+    render(<SaveAsReviewCard programId="p1" lessonId="l1" front="Why sort first?" back="So equal items sit together." />);
+    expect(screen.getByText('Why sort first?')).toBeInTheDocument();
+    expect(screen.getByRole('textbox')).toHaveValue('So equal items sit together.');
   });
 
-  it('saves a recall card draft on button click', () => {
+  it('saves the card as a draft with the edited back', () => {
     render(
-      <SaveAsReviewCard
-        programId="prog-1"
-        lessonId="lesson-1"
-        promptText="Hash tables provide O(1) worst-case lookups."
-        explanation="Drafted from misconception in coding practice"
-        initialAnswer="Hash tables provide O(1) average-case lookups, but O(n) worst-case."
-      />,
+      <SaveAsReviewCard programId="p1" lessonId="l1" front="Why sort first?" back="x" sourceLabel="A coding session" />,
     );
-
-    const button = screen.getByRole('button', { name: /recall card/i });
-    fireEvent.click(button);
-
-    expect(mockMutation.mutate).toHaveBeenCalledWith({
-      draftId: null,
-      programId: 'prog-1',
-      lessonId: 'lesson-1',
-      question: 'Hash tables provide O(1) worst-case lookups.',
-      answer: 'Hash tables provide O(1) average-case lookups, but O(n) worst-case.',
-      explanation: 'Drafted from misconception in coding practice',
-      sourceIds: [],
-    });
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'Equal items sit together.' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Make a recall card' }));
+    expect(mutation.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        draftId: null,
+        programId: 'p1',
+        lessonId: 'l1',
+        question: 'Why sort first?',
+        answer: 'Equal items sit together.',
+        explanation: 'A coding session',
+      }),
+      expect.anything(),
+    );
   });
 
-  it('announces confirmation via role="status" when saved', () => {
-    mockMutation.isSuccess = true;
-
-    render(
-      <SaveAsReviewCard
-        programId="prog-1"
-        lessonId="lesson-1"
-        promptText="Misconception text"
-      />,
+  it("files the card under the course's current lesson when none is given", () => {
+    render(<SaveAsReviewCard programId="p1" front="Q" back="A" />);
+    fireEvent.click(screen.getByRole('button', { name: 'Make a recall card' }));
+    expect(mutation.mutate).toHaveBeenCalledWith(
+      expect.objectContaining({ lessonId: 'lesson-current' }),
+      expect.anything(),
     );
-
-    const status = screen.getByRole('status');
-    expect(status).toHaveTextContent(/saved as a recall card draft/i);
-    expect(screen.queryByRole('textbox')).not.toBeInTheDocument();
   });
 
-  it('announces error via role="alert" when saving fails', () => {
-    mockMutation.isError = true;
-    mockMutation.error = new Error('Database write failed');
+  it('confirms once saved', () => {
+    mutation.isSuccess = true;
+    render(<SaveAsReviewCard programId="p1" lessonId="l1" front="Q" back="A" />);
+    expect(screen.getByRole('status')).toHaveTextContent(/saved/i);
+  });
 
-    render(
-      <SaveAsReviewCard
-        programId="prog-1"
-        lessonId="lesson-1"
-        promptText="Misconception text"
-      />,
-    );
+  it('shows a failure with Try again', () => {
+    mutation.isError = true;
+    mutation.error = new Error('Prepare this lesson first.');
+    render(<SaveAsReviewCard programId="p1" lessonId="l1" front="Q" back="A" />);
+    expect(screen.getByRole('alert')).toHaveTextContent('Prepare this lesson first.');
+    fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
+    expect(mutation.mutate).toHaveBeenCalled();
+  });
 
-    const alert = screen.getByRole('alert');
-    expect(alert).toHaveTextContent('Database write failed');
+  it('will not save a blank answer and says why', () => {
+    render(<SaveAsReviewCard programId="p1" lessonId="l1" front="Q" back="" />);
+    const button = screen.getByRole('button', { name: 'Make a recall card' });
+    expect(button).toBeDisabled();
+    expect(screen.getByText('Write the answer first.')).toBeInTheDocument();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: '   ' } });
+    expect(button).toBeDisabled();
+    fireEvent.change(screen.getByRole('textbox'), { target: { value: 'An answer.' } });
+    expect(button).toBeEnabled();
+    expect(screen.queryByText('Write the answer first.')).not.toBeInTheDocument();
   });
 });

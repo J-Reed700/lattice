@@ -1,11 +1,10 @@
-import { newId } from '@/lib/api';
-import { getErrorMessage } from '@/lib/errorUtils';
 import { useRef, useState, type RefObject } from "react";
 
 import { LoaderCircle, Plus } from "lucide-react";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
+import { newId } from '@/lib/api';
 import type {
   GenerateLearningPracticalActivityRequestDto,
   LearningBuiltinRuntimeCapability,
@@ -17,6 +16,7 @@ import type {
   LearningPracticeMode,
   LearningProgramDto,
 } from "@/lib/bindings";
+import { getErrorMessage } from '@/lib/errorUtils';
 
 export const INTERVIEW_ROUND_LABELS: Record<LearningInterviewRoundKind, string> = {
   full_loop: "Full interview loop",
@@ -41,11 +41,6 @@ const kinds: {
     description: "Build and run a small, contained program.",
   },
   {
-    id: "project",
-    label: "Project",
-    description: "Make a small artifact against a brief.",
-  },
-  {
     id: "incident",
     label: "Incident",
     description: "Triage evidence and communicate decisions.",
@@ -64,6 +59,11 @@ const kinds: {
     id: "conversation",
     label: "Conversation",
     description: "Respond to a realistic counterpart.",
+  },
+  {
+    id: "writing_revision",
+    label: "Writing revision",
+    description: "Revise a piece of technical writing.",
   },
 ];
 
@@ -88,9 +88,15 @@ export function ActivityComposer({
   onRequestRuntimeSetup,
   initialBrief,
   initialKind,
+  initialInterview,
 }: {
   initialBrief?: string;
   initialKind?: LearningPracticalActivityKind;
+  initialInterview?: {
+    companyName: string | null;
+    targetRole: string | null;
+    roundKind: LearningInterviewRoundKind;
+  };
   program: LearningProgramDto;
   lesson: LearningLessonDto | null;
   profiles: LearningPracticalWorkspaceDto["runtimeProfiles"];
@@ -102,17 +108,19 @@ export function ActivityComposer({
   ) => Promise<void>;
   onRequestRuntimeSetup: () => void;
 }) {
-  const [kind, setKind] = useState<LearningPracticalActivityKind>(initialKind ?? "code_lab");
+  const [kind, setKind] = useState<LearningPracticalActivityKind>(
+    kinds.some((entry) => entry.id === initialKind) && initialKind ? initialKind : "code_lab",
+  );
   const [brief, setBrief] = useState(initialBrief ?? "");
   const [runtimeSelection, setRuntimeSelection] = useState("");
   const [mode, setMode] = useState<LearningPracticeMode>("practice");
   const [aids, setAids] = useState<string[]>(["Saved sources"]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [companyName, setCompanyName] = useState("");
+  const [companyName, setCompanyName] = useState(initialInterview?.companyName ?? "");
   const [companyUrl, setCompanyUrl] = useState("");
-  const [targetRole, setTargetRole] = useState("");
-  const [roundKind, setRoundKind] = useState<LearningInterviewRoundKind>("full_loop");
+  const [targetRole, setTargetRole] = useState(initialInterview?.targetRole ?? "");
+  const [roundKind, setRoundKind] = useState<LearningInterviewRoundKind>(initialInterview?.roundKind ?? "full_loop");
   const [companyContext, setCompanyContext] = useState("");
   const openingSetup = useRef(false);
   const submittingRef = useRef(false);
@@ -124,8 +132,8 @@ export function ActivityComposer({
   const supportedBuiltins = builtinRuntimes.filter(
     (runtime) => runtime.available,
   );
-  const needsExecution = kind === "code_lab" || kind === "debugging";
-  const offersExecution = needsExecution || kind === "project";
+  const needsExecution = kind === "code_lab";
+  const offersExecution = needsExecution;
   const hasInterviewTarget =
     kind === "interview" &&
     Boolean(
@@ -169,8 +177,7 @@ export function ActivityComposer({
     submittingRef.current = true;
     setSubmitting(true);
     setError(null);
-    const supportsRuntime =
-      kind === "code_lab" || kind === "debugging" || kind === "project";
+    const supportsRuntime = kind === "code_lab";
     const builtinRuntime =
       supportsRuntime && runtimeSelection.startsWith("builtin:")
         ? (runtimeSelection.slice("builtin:".length) as "javascript" | "python")
@@ -220,7 +227,7 @@ export function ActivityComposer({
       >
         <div className="flex items-start justify-between gap-4">
           <div>
-            <div className="text-xxs font-semibold uppercase tracking-[.15em] text-accent">
+            <div className="text-xs font-semibold uppercase tracking-[.15em] text-accent">
               New practical activity
             </div>
             <DialogTitle className="mt-1 pr-6 font-serif text-2xl text-text-primary">

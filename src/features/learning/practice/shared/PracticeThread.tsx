@@ -1,337 +1,268 @@
-import React, { useCallback, useEffect, useMemo, useRef } from 'react';
-import { ArrowUp } from 'lucide-react';
+import type React from 'react';
+import { useEffect, useRef } from 'react';
+
+import { Send } from 'lucide-react';
 
 import { VOICE_STATUS, VoiceButton } from '@/features/voice/components/VoiceButton';
 import { useVoiceConversation } from '@/features/voice/hooks/useVoiceConversation';
 import { cn } from '@/lib/utils';
-import { useDraft } from '@/shared/drafts/drafts';
+import { setDraft, useDraft } from '@/shared/drafts/drafts';
 
-import { StatusLine, type VoicePhase } from './StatusLine';
-
-export type ThreadSpeaker = 'learner' | 'counterpart' | 'coach';
+import { StatusLine } from './StatusLine';
 
 export interface ThreadMessage {
   id: string;
-  speaker: ThreadSpeaker;
-  /** The speaker's name as shown: "Interviewer", "Coach", "You". */
-  name: string;
-  /** Markdown. */
+  speaker: 'learner' | 'counterpart' | 'coach';
   content: string;
-  /** Anything the host adds under a message: citations, a hint's rung. */
-  footer?: React.ReactNode;
-}
-
-export interface PracticeThreadTurn {
-  id: string;
-  speaker: ThreadSpeaker;
-  speakerLabel?: string;
+  /** Lines of the learner's code the message is about. */
+  lines?: number[];
+  /** Overrides the default speaker name. */
   name?: string;
-  content: string;
-  createdAt?: string | number | null;
-  badge?: string | null;
-  extra?: React.ReactNode;
-  footer?: React.ReactNode;
 }
 
 export interface PracticeThreadProps {
-  heading?: string;
-  conversationId?: string | null;
-  turns?: PracticeThreadTurn[];
-  messages?: ThreadMessage[];
-  draftKey: string | null;
-  placeholder?: string;
-  sendLabel?: string;
+  label: string;
+  messages: ThreadMessage[];
+  onSend: (content: string, spoken: boolean) => Promise<void>;
   busy?: string | null;
-  busyLabel?: string | null;
-  error?: string | null;
-  onRetry?: () => void;
-  disabled?: boolean;
-  disabledReason?: string | null;
-  closedReason?: string | null;
-  onSend: (content: string, spoken: boolean) => Promise<void> | void;
-  clearOnSend?: boolean;
-  emptyText?: string;
-  header?: React.ReactNode;
-  footerActions?: React.ReactNode;
-  hint?: React.ReactNode;
-  voice?: { phase: VoicePhase; onToggle: () => void };
-  onPhaseChange?: (phase: VoicePhase) => void;
-  logRef?: React.Ref<HTMLDivElement>;
-  logLabel?: string;
-  label?: string;
-  inputLabel?: string;
-  sendAriaLabel?: string;
-  retryAriaLabel?: string;
-  maxLength?: number;
-  renderTurnContent?: (turn: PracticeThreadTurn) => React.ReactNode;
-  renderTurnExtra?: (turn: PracticeThreadTurn) => React.ReactNode;
+  error?: { message: string; retry?: () => void; reload?: { label: string; run: () => void } } | null;
+  placeholder?: string;
+  draftKey?: string;
+  voice?: boolean;
+  suggestion?: string | null;
+  disabled?: { reason: string } | null;
+  renderMessage?: (message: ThreadMessage) => React.ReactNode;
+  /** Shown above the box: quick prompts, a clock. */
   composerTop?: React.ReactNode;
-  className?: string;
+  /** The longest reply the backend accepts. */
+  maxLength?: number;
 }
 
-/**
- * Unified conversation thread for practice, role-play simulations, and coaching.
- *
- * Provides transcript history, accessible busy line, mic input via VoiceButton,
- * persistent unsent draft, and keyboard submission (Ctrl+Enter).
- */
-export function PracticeThread({
-  heading,
-  conversationId,
-  turns,
-  messages,
-  draftKey,
-  placeholder = 'Type your response, reasoning, or question…',
-  sendLabel = 'Send',
-  busy = null,
-  busyLabel = null,
-  error = null,
-  onRetry,
-  disabled = false,
-  disabledReason = null,
-  closedReason = null,
-  onSend,
-  clearOnSend = true,
-  emptyText = 'No messages yet.',
-  header,
-  footerActions,
-  hint,
-  voice: externalVoice,
-  logRef,
-  logLabel,
-  label,
-  inputLabel = 'Your message',
-  sendAriaLabel,
-  retryAriaLabel,
-  maxLength,
-  renderTurnContent,
-  renderTurnExtra,
-  composerTop,
-  className,
-  onPhaseChange,
-}: PracticeThreadProps) {
-  const [draft, setDraft] = useDraft(draftKey);
-  const textareaRef = useRef<HTMLTextAreaElement>(null);
-  const lastTurnRef = useRef<HTMLElement>(null);
-  const effectiveBusy = busy ?? busyLabel;
-  const isBusy = Boolean(effectiveBusy);
-  const effectiveClosedReason = closedReason ?? disabledReason;
-  const isClosed = disabled || Boolean(closedReason);
-  const effectiveInputLabel = label ?? inputLabel;
-  const effectiveLogLabel = logLabel ?? heading ?? 'Practice conversation turns';
+const SPEAKER_NAME: Record<ThreadMessage['speaker'], string> = {
+  learner: 'You',
+  counterpart: 'Counterpart',
+  coach: 'Coach',
+};
 
-  const normalizedTurns: PracticeThreadTurn[] = useMemo(() => {
-    if (turns) return turns;
-    if (messages) {
-      return messages.map((m) => ({
-        id: m.id,
-        speaker: m.speaker,
-        speakerLabel: m.name,
-        name: m.name,
-        content: m.content,
-        extra: m.footer,
-        footer: m.footer,
-      }));
+const SPEAKER_STYLE: Record<ThreadMessage['speaker'], string> = {
+  learner: 'ml-auto bg-accent-muted text-text-primary',
+  counterpart: 'bg-surface-raised text-text-primary',
+  coach: 'bg-surface-sunken text-text-primary',
+};
+
+function lineRange(lines: number[]): string {
+  const first = Math.min(...lines);
+  const last = Math.max(...lines);
+  return first === last ? `line ${first}` : `lines ${first}–${last}`;
+}
+
+function Message({ message, render }: { message: ThreadMessage; render?: PracticeThreadProps['renderMessage'] }) {
+  return (
+    <article className={cn('max-w-[85%] rounded-2xl px-4 py-3 text-sm', SPEAKER_STYLE[message.speaker])}>
+      <p className="mb-1 text-xs font-semibold text-text-secondary">{message.name ?? SPEAKER_NAME[message.speaker]}</p>
+      {message.lines && message.lines.length > 0 && (
+        <p className="mb-1 inline-block rounded-full bg-surface px-2 py-0.5 text-xs text-text-secondary">
+          About {lineRange(message.lines)}
+        </p>
+      )}
+      {render ? render(message) : <p className="whitespace-pre-wrap">{message.content}</p>}
+    </article>
+  );
+}
+
+interface FooterProps {
+  messages: ThreadMessage[];
+  error: PracticeThreadProps['error'];
+  onSend: PracticeThreadProps['onSend'];
+  setText: (value: string) => void;
+  disabled: boolean;
+}
+
+function Hint({ children }: { children: React.ReactNode }) {
+  return <span className="text-xs text-text-muted">{children}</span>;
+}
+
+interface ReplyWait {
+  after: string | null;
+  /** True once no error is showing, so the next one is new. */
+  clear: boolean;
+  resolve: (outcome: 'answered' | 'failed') => void;
+}
+
+function newerReply(messages: ThreadMessage[], after: string | null): ThreadMessage | undefined {
+  const last = messages[messages.length - 1];
+  return last && last.id !== after && last.speaker !== 'learner' ? last : undefined;
+}
+
+function VoiceControls({ messages, error, onSend, setText, disabled }: FooterProps) {
+  const current = useRef({ messages, error });
+  const waiting = useRef<ReplyWait | null>(null);
+  const answer = useRef('');
+
+  useEffect(() => {
+    current.current = { messages, error };
+    const wait = waiting.current;
+    if (!wait) return;
+    const reply = newerReply(messages, wait.after);
+    if (reply) {
+      answer.current = reply.content;
+      waiting.current = null;
+      wait.resolve('answered');
+    } else if (!error) {
+      wait.clear = true;
+    } else if (wait.clear) {
+      waiting.current = null;
+      wait.resolve('failed');
     }
-    return [];
-  }, [turns, messages]);
+  }, [messages, error]);
 
-  const internalVoice = useVoiceConversation({
-    conversationId: conversationId ?? null,
-    send: async (text: string) => {
-      await onSend(text, true);
-      return undefined;
+  const { phase, toggle } = useVoiceConversation({
+    conversationId: null,
+    send: async (text) => {
+      const after = current.current.messages[current.current.messages.length - 1]?.id ?? null;
+      const outcome = new Promise<'answered' | 'failed'>((resolve) => {
+        waiting.current = { after, clear: !current.current.error, resolve };
+      });
+      try {
+        await onSend(text, true);
+      } catch {
+        waiting.current = null;
+        setText(text);
+        return 'failed';
+      }
+      const reply = newerReply(current.current.messages, after);
+      if (reply && waiting.current) {
+        answer.current = reply.content;
+        waiting.current = null;
+        return 'answered';
+      }
+      return outcome;
     },
-    fill: (text: string) => {
-      setDraft(text);
-    },
+    reply: () => answer.current,
+    fill: setText,
   });
 
-  const voicePhase = externalVoice ? externalVoice.phase : internalVoice.phase;
-  const onVoiceToggle = externalVoice ? externalVoice.onToggle : internalVoice.toggle;
+  return (
+    <>
+      {phase === 'off' ? <Hint>Ctrl+Enter to send</Hint> : <Hint>{VOICE_STATUS[phase]}</Hint>}
+      {!disabled && <VoiceButton phase={phase} onToggle={toggle} />}
+    </>
+  );
+}
+
+/** A conversation transcript with a composer, an optional mic, and its busy and error lines. */
+export function PracticeThread({
+  label,
+  messages,
+  onSend,
+  busy = null,
+  error = null,
+  placeholder,
+  draftKey,
+  voice = true,
+  suggestion = null,
+  disabled = null,
+  renderMessage,
+  composerTop,
+  maxLength,
+}: PracticeThreadProps) {
+  const [text, setText] = useDraft(draftKey ?? null);
+  const box = useRef<HTMLTextAreaElement>(null);
+  const log = useRef<HTMLDivElement>(null);
+  const wasBusy = useRef(Boolean(busy));
+  const lastId = messages[messages.length - 1]?.id ?? null;
 
   useEffect(() => {
-    onPhaseChange?.(voicePhase);
-  }, [onPhaseChange, voicePhase]);
+    if (wasBusy.current && !busy) box.current?.focus();
+    wasBusy.current = Boolean(busy);
+  }, [busy]);
 
-  // P2-9: Restore focus to textarea when a turn / reply completes
-  const wasBusyRef = useRef(isBusy);
   useEffect(() => {
-    if (wasBusyRef.current && !isBusy) {
-      textareaRef.current?.focus();
-    }
-    wasBusyRef.current = isBusy;
-  }, [isBusy]);
+    const container = log.current;
+    const newest = container?.querySelector('article:last-of-type');
+    if (!container || !newest) return;
+    container.scrollTop += newest.getBoundingClientRect().top - container.getBoundingClientRect().top - 12;
+  }, [lastId]);
 
-  // Scroll to bottom when turns change or reply lands
-  useEffect(() => {
-    lastTurnRef.current?.scrollIntoView?.({ behavior: 'smooth' });
-  }, [normalizedTurns.length, effectiveBusy]);
-
-  const handleSend = useCallback(async (spoken = false) => {
-    const trimmed = draft.trim();
-    if (!trimmed || isBusy || isClosed) return;
-    if (clearOnSend) {
-      setDraft('');
-    }
-    await onSend(trimmed, spoken);
-  }, [draft, isBusy, isClosed, clearOnSend, onSend, setDraft]);
-
-  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
-      event.preventDefault();
-      void handleSend(false);
+  const send = async () => {
+    const content = text.trim();
+    if (!content || busy || disabled) return;
+    try {
+      await onSend(content, false);
+      if (draftKey) setDraft(draftKey, '');
+      else setText('');
+    } catch {
+      return;
+    } finally {
+      box.current?.focus();
     }
   };
 
+  const onKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === 'Enter' && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      void send();
+    }
+  };
+
+  const status = busy
+    ? ({ kind: 'busy', label: busy } as const)
+    : error
+      ? ({ kind: 'error', message: error.message, retry: error.retry, reload: error.reload } as const)
+      : ({ kind: 'idle' } as const);
+
   return (
-    <div className={cn('flex h-full flex-col overflow-hidden rounded-2xl border border-border-default bg-surface', className)}>
-      {(header || heading) && (
-        <div className="border-b border-border-subtle p-3 sm:px-4">
-          {header ?? <h3 className="font-serif text-base text-text-primary">{heading}</h3>}
-        </div>
-      )}
-
-      {/* Transcript list */}
+    <div className="flex min-h-0 flex-col gap-3">
       <div
-        ref={logRef}
+        ref={log}
         role="log"
-        aria-label={effectiveLogLabel}
-        aria-live="polite"
-        className="flex-1 space-y-3 overflow-y-auto p-3 sm:p-4"
+        aria-label={label}
+        className="flex max-h-[28rem] min-h-24 flex-col gap-3 overflow-y-auto rounded-2xl border border-border-subtle bg-surface p-3"
       >
-        {normalizedTurns.length === 0 ? (
-          <div className="grid min-h-[140px] place-items-center text-center text-xs text-text-muted">
-            <p>{emptyText}</p>
-          </div>
+        {messages.map((message) => (
+          <Message key={message.id} message={message} render={renderMessage} />
+        ))}
+      </div>
+      <StatusLine state={status} />
+      {suggestion && <p className="text-xs text-text-secondary">{suggestion}</p>}
+      {composerTop}
+      <textarea
+        ref={box}
+        aria-label="Your response"
+        value={text}
+        onChange={(event) => setText(event.target.value)}
+        onKeyDown={onKeyDown}
+        placeholder={placeholder}
+        readOnly={Boolean(busy)}
+        aria-busy={busy ? true : undefined}
+        disabled={Boolean(disabled)}
+        rows={3}
+        maxLength={maxLength}
+        className="w-full resize-y rounded-xl border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60"
+      />
+      <div className="flex flex-wrap items-center justify-end gap-3">
+        {voice ? (
+          <VoiceControls
+            messages={messages}
+            error={error}
+            onSend={onSend}
+            setText={setText}
+            disabled={Boolean(disabled)}
+          />
         ) : (
-          normalizedTurns.map((turn, index) => {
-            const isLearner = turn.speaker === 'learner';
-            const isCoach = turn.speaker === 'coach';
-            const isLast = index === normalizedTurns.length - 1;
-
-            return (
-              <article
-                key={turn.id}
-                ref={isLast ? lastTurnRef : undefined}
-                className={cn(
-                  'max-w-[88%] rounded-2xl p-3 sm:p-3.5',
-                  isLearner
-                    ? 'ml-auto bg-surface-raised text-text-primary'
-                    : isCoach
-                      ? 'border-l-2 border-accent bg-accent-muted text-text-primary'
-                      : 'bg-surface-sunken text-text-primary',
-                )}
-              >
-                <div className="flex items-center justify-between gap-2">
-                  <span className="text-xs font-semibold uppercase tracking-wider text-text-secondary">
-                    {turn.speakerLabel ?? turn.name}
-                  </span>
-                  {turn.badge && (
-                    <span className="rounded-full bg-surface px-2 py-0.5 text-xs text-text-tertiary">
-                      {turn.badge}
-                    </span>
-                  )}
-                </div>
-                {renderTurnContent ? (
-                  renderTurnContent(turn)
-                ) : (
-                  <p className="mt-1.5 whitespace-pre-wrap text-sm leading-6 text-text-primary">
-                    {turn.content}
-                  </p>
-                )}
-                {turn.extra ?? turn.footer}
-                {renderTurnExtra && renderTurnExtra(turn)}
-              </article>
-            );
-          })
+          <Hint>Ctrl+Enter to send</Hint>
         )}
+        <button
+          type="button"
+          onClick={() => void send()}
+          disabled={Boolean(disabled) || Boolean(busy) || text.trim() === ''}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60"
+        >
+          <Send size={14} aria-hidden="true" />
+          Send
+        </button>
       </div>
-
-      {/* StatusLine in aria-live container (P1-1) */}
-      <div className="px-3 sm:px-4">
-        <StatusLine
-          busy={effectiveBusy}
-          error={error}
-          onRetry={onRetry}
-          retryAriaLabel={retryAriaLabel}
-        />
-      </div>
-
-      {/* Message box composer */}
-      <div className="border-t border-border-subtle bg-surface-sunken/40 p-3 sm:p-4">
-        {composerTop && (
-          <div className="mb-2">
-            {composerTop}
-          </div>
-        )}
-        <label htmlFor="practice-thread-input" className="sr-only">
-          {effectiveInputLabel}
-        </label>
-        <textarea
-          ref={textareaRef}
-          id="practice-thread-input"
-          rows={3}
-          value={draft}
-          disabled={isClosed}
-          readOnly={isBusy}
-          aria-busy={isBusy ? 'true' : 'false'}
-          maxLength={maxLength}
-          onChange={(event) => setDraft(event.target.value)}
-          onKeyDown={handleKeyDown}
-          placeholder={placeholder}
-          className={cn(
-            'w-full resize-y rounded-xl border border-border-default bg-surface px-3 py-2 text-sm leading-6 text-text-primary placeholder:text-text-muted outline-hidden transition-colors',
-            'focus:border-accent focus:ring-1 focus:ring-ring',
-            isBusy && 'bg-surface-sunken cursor-not-allowed text-text-secondary',
-          )}
-        />
-
-        {hint && (
-          <div className="mt-1.5 text-xs text-text-muted">
-            {hint}
-          </div>
-        )}
-
-        <div className="mt-2.5 flex flex-wrap items-center justify-between gap-2">
-          <div className="flex items-center gap-2">
-            {footerActions}
-            {effectiveClosedReason && (
-              <span className="text-xs text-text-muted">
-                {effectiveClosedReason}
-              </span>
-            )}
-          </div>
-
-          <div className="flex items-center gap-2">
-            {/* Shortcut hint or voice status */}
-            <span
-              role={voicePhase === 'off' ? undefined : 'status'}
-              className="text-xs text-text-muted"
-            >
-              {voicePhase !== 'off'
-                ? VOICE_STATUS[voicePhase]
-                : 'Ctrl+Enter'}
-            </span>
-
-            {/* Voice microphone button */}
-            <VoiceButton phase={voicePhase} onToggle={onVoiceToggle} />
-
-            {/* Send button */}
-            <button
-              type="button"
-              disabled={isClosed || isBusy || !draft.trim()}
-              onClick={() => void handleSend(false)}
-              aria-label={sendAriaLabel ?? sendLabel}
-              title={isClosed && effectiveClosedReason ? effectiveClosedReason : `${sendLabel} · Ctrl+Enter`}
-              className="pressable inline-flex h-8 items-center gap-1.5 rounded-full bg-accent px-3.5 text-xs font-semibold text-accent-fg transition-opacity duration-fast disabled:cursor-not-allowed disabled:opacity-40"
-            >
-              <span>{sendLabel}</span>
-              <ArrowUp className="h-3.5 w-3.5" strokeWidth={2.2} aria-hidden="true" />
-            </button>
-          </div>
-        </div>
-      </div>
+      {disabled && <p className="text-xs text-text-secondary">{disabled.reason}</p>}
     </div>
   );
 }

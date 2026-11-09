@@ -1,5 +1,3 @@
-import { newId, unwrap } from '@/lib/api';
-import { getErrorMessage } from '@/lib/errorUtils';
 import { useEffect, useRef, useState } from "react";
 
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -15,12 +13,14 @@ import {
 
 import { useApi } from '@/contexts/ApiContext';
 import { learningPracticalWorkspaceKey as workspaceKey } from "@/features/learning/api/learningQueryKeys";
+import { newId, unwrap } from '@/lib/api';
 import type {
   LearningContainerEngine,
   LearningBuiltinRuntimeCapability,
   LearningPracticalWorkspaceDto,
   LearningRuntimePresetDto,
 } from "@/lib/bindings";
+import { getErrorMessage } from '@/lib/errorUtils';
 
 const catalogKey = ["learning-runtime-catalog"] as const;
 const presetOrder = ["csharp", "rust", "node", "python"] as const;
@@ -228,7 +228,7 @@ export function RuntimeSetupPanel({
                         {runtime?.name ?? label}
                       </h3>
                       <span
-                        className={`text-xs ${runtime?.available ? "text-emerald-700 dark:text-emerald-300" : "text-text-muted"}`}
+                        className={`text-xs ${runtime?.available ? "text-success-fg" : "text-text-muted"}`}
                       >
                         {runtime?.available ? "Ready" : "Unavailable"}
                       </span>
@@ -286,7 +286,7 @@ export function RuntimeSetupPanel({
                       <span
                         className={
                           capability.available
-                            ? "text-emerald-700 dark:text-emerald-300"
+                            ? "text-success-fg"
                             : "text-text-muted"
                         }
                       >
@@ -347,7 +347,7 @@ export function RuntimeSetupPanel({
                     className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2"
                   >
                     <span
-                      className={`grid h-6 w-6 place-items-center rounded-full ${profile.enabled ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/10 text-amber-700"}`}
+                      className={`grid h-6 w-6 place-items-center rounded-full ${profile.enabled ? "bg-success-muted text-success-fg" : "bg-warning-muted text-warning-fg"}`}
                     >
                       {profile.enabled ? (
                         <Check size={12} />
@@ -362,7 +362,7 @@ export function RuntimeSetupPanel({
                       {profile.engine}
                     </span>
                     <span
-                      className={`text-xs ${profile.enabled ? "text-emerald-700 dark:text-emerald-300" : "text-text-muted"}`}
+                      className={`text-xs ${profile.enabled ? "text-success-fg" : "text-text-muted"}`}
                     >
                       {profile.enabled ? "Ready" : "Disabled"}
                     </span>
@@ -379,8 +379,8 @@ export function RuntimeSetupPanel({
             </p>
           )}
           {catalog.isError && (
-            <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3">
-              <p role="alert" className="text-xs leading-5 text-rose-700 dark:text-rose-300">
+            <div className="rounded-lg border border-danger-muted bg-danger-muted p-3">
+              <p role="alert" className="text-xs leading-5 text-danger-fg">
                 {getErrorMessage(catalog.error)}
               </p>
               <button
@@ -442,7 +442,7 @@ export function RuntimeSetupPanel({
                         {preset.description}
                       </p>
                       {matchingProfile ? (
-                        <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                        <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-success-fg">
                           <Check size={12} /> Environment ready
                         </div>
                       ) : (
@@ -469,7 +469,7 @@ export function RuntimeSetupPanel({
           {setupError && (
             <p
               role="alert"
-              className="rounded-lg bg-rose-500/10 p-3 text-xs leading-5 text-rose-700 dark:text-rose-300"
+              className="rounded-lg bg-danger-muted p-3 text-xs leading-5 text-danger-fg"
             >
               {setupError}{" "}
               <button
@@ -486,12 +486,12 @@ export function RuntimeSetupPanel({
             </p>
           )}
           {refreshAvailability.error && (
-            <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">
+            <p role="alert" className="text-xs text-danger-fg">
               {getErrorMessage(refreshAvailability.error)}
             </p>
           )}
           {!availableEngines.length && catalog.isSuccess && (
-            <p className="rounded-lg bg-amber-500/10 p-3 text-xs leading-4 text-text-secondary">
+            <p className="rounded-lg bg-warning-muted p-3 text-xs leading-4 text-text-secondary">
               Start Docker Desktop or another supported local container engine
               to prepare these environments.
             </p>

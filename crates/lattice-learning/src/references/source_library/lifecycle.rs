@@ -36,7 +36,7 @@ impl LearningSourceLibraryRepository {
             .bind(&req.program_id).bind(&req.source_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Learning source not found".into()))?;
         let revision: i64 = row.get("revision");
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         let pending: Option<String> = row.get("pending_version_id");
         if pending.as_deref() != Some(&req.version_id) {
@@ -52,7 +52,7 @@ impl LearningSourceLibraryRepository {
             let result=sqlx::query("UPDATE learning_source_library SET active_version_id=?,pending_version_id=NULL,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
             .bind(&req.version_id).bind(next_revision).bind(now()).bind(&req.program_id).bind(&req.source_id).bind(revision).execute(&mut *tx).await.map_err(db)?;
             if result.rows_affected() != 1 {
-                return Err(invalid("Source changed; reload and retry."));
+                return Err(conflict("Source changed; reload and retry."));
             }
         }
         source_operation(
@@ -104,7 +104,7 @@ impl LearningSourceLibraryRepository {
             .bind(&req.program_id).bind(&req.source_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Learning source not found".into()))?;
         let revision: i64 = row.get("revision");
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if row.get::<String, _>("kind") != "web"
             && req.freshness_policy != LearningSourcePolicy::Fixed
@@ -121,7 +121,7 @@ impl LearningSourceLibraryRepository {
             let result=sqlx::query("UPDATE learning_source_library SET freshness_policy=?,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
             .bind(policy(&req.freshness_policy)).bind(next).bind(now()).bind(&req.program_id).bind(&req.source_id).bind(revision).execute(&mut *tx).await.map_err(db)?;
             if result.rows_affected() != 1 {
-                return Err(invalid("Source changed; reload and retry."));
+                return Err(conflict("Source changed; reload and retry."));
             }
         }
         source_operation(
@@ -179,7 +179,7 @@ impl LearningSourceLibraryRepository {
         .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision: i64 = row.get("revision");
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if row.get::<Option<i64>, _>("deleted_at").is_some() {
             return Err(invalid("This source is already removed."));
@@ -196,7 +196,7 @@ impl LearningSourceLibraryRepository {
             .await
             .map_err(db)?;
         if updated.rows_affected() != 1 {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         crate::lessons::claim_reviews::source_deleted::reopen_for_deleted_source(
             &mut tx,
@@ -273,7 +273,7 @@ impl LearningSourceLibraryRepository {
                 .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision: i64 = source.get("revision");
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if source.get::<Option<i64>, _>("deleted_at").is_none() {
             return Err(invalid("Only a removed source can be re-imported."));
@@ -398,7 +398,7 @@ impl LearningSourceLibraryRepository {
             .await
             .map_err(db)?;
         if updated.rows_affected() != 1 {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
             .record(&mut *tx, &Some(&active_version))

@@ -1,4 +1,5 @@
 import { useMemo, useState } from 'react';
+
 import {
   AlertCircle,
   Check,
@@ -15,37 +16,17 @@ import {
 } from 'lucide-react';
 
 import { CardText } from '@/features/learning/recall/CardText';
-import type { LearningLessonDto, LearningModuleDto, LearningProgramDto } from '@/lib/bindings';
-import { readDraft, setDraft, useDraft } from '@/shared/drafts/drafts';
+import type * as Wire from '@/lib/bindings';
+import { useDraft } from '@/shared/drafts/drafts';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
-import {
-  analyzeFeynmanExplanation,
-  lessonPoints,
-  type FeynmanAnalysis,
-  type FeynmanRating,
-  type LessonPoint,
-} from './feynmanAnalysis';
+import { analyzeFeynmanExplanation, lessonPoints } from './feynmanAnalysis';
 import { SaveAsReviewCard } from './shared/SaveAsReviewCard';
 
-export type { FeynmanAnalysis, FeynmanRating, LessonPoint };
-export { analyzeFeynmanExplanation, lessonPoints };
-
 export interface FeynmanTechniquePanelProps {
-  program: LearningProgramDto;
-  lesson?: LearningLessonDto;
-  module?: LearningModuleDto;
-  /** Saves a point the explanation missed as a recall card draft, as the brain dump does. */
-  onDraftMissedConcept?: (question: string, answer: string) => void;
-}
-
-function readStored(key: string): { explanation?: string; analogy?: string; readAloud?: boolean; concept?: string } | null {
-  try {
-    const raw = localStorage.getItem(key);
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
+  program: Wire.LearningProgramDto;
+  lesson?: Wire.LearningLessonDto;
+  module?: Wire.LearningModuleDto;
 }
 
 /**
@@ -56,47 +37,25 @@ export function FeynmanTechniquePanel(props: FeynmanTechniquePanelProps) {
   return <FeynmanWorkbench key={`${props.program.summary.id}:${props.lesson?.id ?? 'general'}`} {...props} />;
 }
 
-function FeynmanWorkbench({ program, lesson, module, onDraftMissedConcept }: FeynmanTechniquePanelProps) {
+function FeynmanWorkbench({ program, lesson, module }: FeynmanTechniquePanelProps) {
   const defaultConcept = lesson?.title ?? module?.title ?? program.summary.title;
-  const storageKey = `feynman_workbench_${program.summary.id}_${lesson?.id ?? 'general'}`;
   const draftKey = `feynman:${program.summary.id}:${lesson?.id ?? 'general'}`;
 
-  const initialStored = useMemo(() => readStored(storageKey), [storageKey]);
-
-  const [selectedConcept, setSelectedConcept] = useState<string>(() => initialStored?.concept ?? defaultConcept);
+  const [storedConcept, setSelectedConcept] = useDraft(`${draftKey}:concept`);
+  const selectedConcept = storedConcept || defaultConcept;
   const [customConcept, setCustomConcept] = useState('');
   const [isCustom, setIsCustom] = useState(false);
 
   const activeConcept = isCustom ? customConcept : selectedConcept;
 
-  // Use useDraft for persistence without the mount-wipe bug
-  const [, setDraftExplanation] = useDraft(`${draftKey}:explanation`);
-  const [, setDraftAnalogy] = useDraft(`${draftKey}:analogy`);
-
-  const [explanation, setExplanationState] = useState<string>(() => {
-    return initialStored?.explanation ?? readDraft(`${draftKey}:explanation`) ?? '';
-  });
-  const [analogy, setAnalogyState] = useState<string>(() => {
-    return initialStored?.analogy ?? readDraft(`${draftKey}:analogy`) ?? '';
-  });
-  const [readAloudConfirmed, setReadAloudConfirmed] = useState<boolean>(() => {
-    return initialStored?.readAloud ?? false;
-  });
+  const [explanation, setExplanation] = useDraft(`${draftKey}:explanation`);
+  const [analogy, setAnalogy] = useDraft(`${draftKey}:analogy`);
+  const [readAloud, setReadAloud] = useDraft(`${draftKey}:readAloud`);
+  const readAloudConfirmed = readAloud === 'yes';
 
   const [copied, setCopied] = useState(false);
-  const [savedMessage, setSavedMessage] = useState(false);
   const [comparison, setComparison] = useState<{ concept: string; covered: number[]; drafted: number[] } | null>(null);
   const [reviewCardPointIndex, setReviewCardPointIndex] = useState<number | null>(null);
-
-  const setExplanation = (next: string) => {
-    setExplanationState(next);
-    setDraftExplanation(next);
-  };
-
-  const setAnalogy = (next: string) => {
-    setAnalogyState(next);
-    setDraftAnalogy(next);
-  };
 
   const analysis = useMemo(
     () => analyzeFeynmanExplanation(explanation, analogy, lesson, activeConcept),
@@ -115,11 +74,7 @@ function FeynmanWorkbench({ program, lesson, module, onDraftMissedConcept }: Fey
   const draftCard = (index: number) => {
     const point = points[index];
     if (!point) return;
-    if (onDraftMissedConcept) {
-      onDraftMissedConcept(point.title, point.body.trim() || point.title);
-    } else {
-      setReviewCardPointIndex(index);
-    }
+    setReviewCardPointIndex(index);
     setComparison((current) => current && { ...current, drafted: [...current.drafted, index] });
   };
 
@@ -164,26 +119,6 @@ function FeynmanWorkbench({ program, lesson, module, onDraftMissedConcept }: Fey
     }
   };
 
-  const handleManualSave = () => {
-    try {
-      localStorage.setItem(
-        storageKey,
-        JSON.stringify({
-          explanation,
-          analogy,
-          readAloud: readAloudConfirmed,
-          concept: activeConcept,
-        }),
-      );
-      setDraft(`${draftKey}:explanation`, explanation);
-      setDraft(`${draftKey}:analogy`, analogy);
-      setSavedMessage(true);
-      setTimeout(() => setSavedMessage(false), 2000);
-    } catch {
-      // ignore
-    }
-  };
-
   return (
     <div className="space-y-6">
       {/* Header and Feynman Technique Guidance */}
@@ -212,14 +147,9 @@ function FeynmanWorkbench({ program, lesson, module, onDraftMissedConcept }: Fey
               {copied ? <Check size={13} className="text-accent" /> : <Copy size={13} />}
               <span>{copied ? 'Copied' : 'Copy explanation'}</span>
             </button>
-            <button
-              type="button"
-              onClick={handleManualSave}
-              className="inline-flex items-center gap-1.5 rounded-full border border-border-default bg-surface-raised px-3.5 py-1.5 text-xs font-medium text-text-primary hover:bg-surface-sunken"
-            >
-              {savedMessage ? <Check size={13} className="text-accent" /> : <Sparkles size={13} />}
-              <span>{savedMessage ? 'Saved' : 'Save draft'}</span>
-            </button>
+            <span className="inline-flex items-center gap-1.5 text-xs text-text-muted">
+              <Check size={13} className="text-success-fg" aria-hidden="true" /> Draft kept on this device
+            </span>
           </div>
         </div>
 
@@ -342,7 +272,7 @@ function FeynmanWorkbench({ program, lesson, module, onDraftMissedConcept }: Fey
                 type="checkbox"
                 aria-label="Speak out loud test"
                 checked={readAloudConfirmed}
-                onChange={(e) => setReadAloudConfirmed(e.target.checked)}
+                onChange={(e) => setReadAloud(e.target.checked ? 'yes' : '')}
                 className="mt-0.5 accent-accent"
               />
               <div>
@@ -407,14 +337,13 @@ function FeynmanWorkbench({ program, lesson, module, onDraftMissedConcept }: Fey
                     )}
                     {!covered && (
                       <div className="mt-2">
-                        {reviewCardPointIndex === index && lesson?.id ? (
+                        {reviewCardPointIndex === index ? (
                           <SaveAsReviewCard
                             programId={program.summary.id}
-                            lessonId={lesson.id}
-                            promptText={point.title}
-                            promptLabel="What should your explanation say about this?"
-                            explanation="Drafted from a gap found using the Feynman technique"
-                            initialAnswer={point.body}
+                            lessonId={lesson?.id}
+                            front={point.title}
+                            back={point.body.trim() || point.title}
+                            sourceLabel="Drafted from a gap found using the Feynman technique"
                           />
                         ) : (
                           <div className="flex justify-end">

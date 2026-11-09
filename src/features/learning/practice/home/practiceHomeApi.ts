@@ -1,92 +1,39 @@
-import { apiCall, type CommandName } from '@/shared/ipc/transport';
+import { newId } from '@/lib/api';
+import type * as Wire from '@/lib/bindings';
+import { studyActivityCall } from '@/lib/studyActivity';
+import type { CommandName } from '@/shared/ipc/transport';
+import { unwrapApiResult } from '@/types/api/result';
 
-export interface LearningPracticeProfileDto {
-  programId: string;
-  details: string;
-  language: string | null;
-  interviewAt: number | null;
-  company: string | null;
-  role: string | null;
-  revision: number;
+async function call<T>(command: string, request: Record<string, unknown>): Promise<T> {
+  return unwrapApiResult(await studyActivityCall<T>('learning', command as CommandName, { request }));
 }
 
-export interface SaveLearningPracticeProfileRequestDto {
-  programId: string;
-  details: string;
-  language?: string | null;
-  interviewAt?: number | null;
-  company?: string | null;
-  role?: string | null;
-  expectedRevision?: number | null;
-}
-
-export type CodingTask = 'problem' | 'bug_fix' | 'project';
-export type Setting = 'coached' | 'mock' | 'watched';
-export type Difficulty = 'easy' | 'medium' | 'hard';
-
-export interface StartCodingBuildRequestDto {
-  programId: string;
-  lessonId?: string | null;
-  task: CodingTask;
-  setting: Setting;
-  language: string;
-  difficulty: Difficulty;
-  focus?: string | null;
-}
-
-export interface StartedCodingBuildDto {
-  jobId: string;
-}
-
-export interface DueItemDto {
-  id: string;
-  kind: 'pattern' | 'lesson';
-  title: string;
-  subtitle?: string;
-  count?: number;
-  overdueText?: string;
-  isOverdue?: boolean;
-}
-
-export interface PracticeDueDto {
-  items: DueItemDto[];
-  totalDue: number;
-}
-
-async function invokeLearning<T>(
-  command: string,
-  args?: Record<string, unknown>,
-): Promise<T> {
-  const result = await apiCall<T>(command as CommandName, args);
-  if (!result.ok) {
-    throw new Error(result.error);
-  }
-  return result.data;
-}
-
-/** Wraps the backend commands for practice profiles, coding build, and practice due. */
+/** The Practice page's commands: the course's profile, practice fit, what is due, and its coding sessions. */
 export const practiceHomeApi = {
-  getProfile: (programId: string): Promise<LearningPracticeProfileDto> =>
-    invokeLearning<LearningPracticeProfileDto>('get_learning_practice_profile', {
+  getProfile: (programId: string): Promise<Wire.LearningPracticeProfileDto> =>
+    call('get_learning_practice_profile', { programId }),
+
+  saveProfile: (request: Wire.SaveLearningPracticeProfileRequestDto): Promise<Wire.LearningPracticeProfileDto> =>
+    call('save_learning_practice_profile', request),
+
+  getFit: (programId: string): Promise<Wire.PracticeFitDto> => call('get_practice_fit', { programId }),
+
+  checkFit: (programId: string): Promise<Wire.PracticeFitDto> => call('check_practice_fit', { programId }),
+
+  due: (programId: string): Promise<Wire.PracticeDueDto> => call('practice_due', { programId }),
+
+  codingSessions: (programId: string): Promise<Wire.CodingSessionSummaryDto[]> =>
+    call('list_coding_sessions', { programId }),
+
+  /** A Coached session on a coding activity that has none yet; returns its id. */
+  startCodingSession: async (programId: string, activityId: string): Promise<string> => {
+    const session = await call<Wire.CodingSessionDto>('start_coding_session', {
+      operationId: newId(),
       programId,
-    }),
-
-  saveProfile: (
-    request: SaveLearningPracticeProfileRequestDto,
-  ): Promise<LearningPracticeProfileDto> =>
-    invokeLearning<LearningPracticeProfileDto>('save_learning_practice_profile', {
-      request,
-    }),
-
-  startCodingBuild: (
-    request: StartCodingBuildRequestDto,
-  ): Promise<StartedCodingBuildDto> =>
-    invokeLearning<StartedCodingBuildDto>('start_coding_build', {
-      request,
-    }),
-
-  getDue: (programId: string): Promise<PracticeDueDto> =>
-    invokeLearning<PracticeDueDto>('practice_due', {
-      programId,
-    }),
+      activityId,
+      setting: 'coached',
+      budgetSeconds: null,
+    });
+    return session.sessionId;
+  },
 };

@@ -382,7 +382,7 @@ impl LearningCurriculumRepository {
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         if program_revision != request.expected_revision {
-            return Err(AppError::InvalidState(
+            return Err(AppError::Conflict(
                 "Program changed; reload and retry.".into(),
             ));
         }
@@ -486,7 +486,7 @@ impl LearningCurriculumRepository {
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         if revision != request.expected_revision {
-            return Err(AppError::InvalidState(
+            return Err(AppError::Conflict(
                 "Program changed; reload and retry.".into(),
             ));
         }
@@ -531,7 +531,7 @@ impl LearningCurriculumRepository {
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         if revision != request.expected_revision {
-            return Err(AppError::InvalidState(
+            return Err(AppError::Conflict(
                 "Program changed; reload and retry.".into(),
             ));
         }

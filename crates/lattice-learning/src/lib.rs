@@ -56,6 +56,7 @@ pub use practice::practical_dto;
 pub use practice::practical_generation;
 pub use practice::practical_repository;
 pub use practice::practical_runs;
+pub use practice::practice_fit;
 pub use practice::practice_generation;
 pub use practice::practice_repository;
 pub use practice::simulation_policy;

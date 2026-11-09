@@ -1,637 +1,580 @@
-//! Counterpart turn policies (Coach, Interviewer, WatchingInterviewer)
-//! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md sections 4.6 and 7.1).
+//! Who speaks in a coding session, and when: the cue table of each setting.
 
 use serde::{Deserialize, Serialize};
-use tokio_util::sync::CancellationToken;
 
-use crate::drills::runner::CodeRunner;
-use crate::practice::coding::harness::{run_cases, CaseHarness};
+use crate::practice::coding::dto::{asked_for, CodingRunScope, CodingStage};
 use crate::practice::coding::observation::WorkspaceObservation;
-use crate::practice::coding::problem::{CaseStatus, Problem};
-use crate::practice::coding::session::{CodingStage, RunScope};
-use lattice_core::shared::error::AppError;
+use crate::practice::coding::problem::{CodingSetting, CodingTask};
+use crate::practice::simulation_policy::TurnPolicy;
+use lattice_core::shared::error::{AppError, Result};
 
-/// Cues that trigger counterpart speech.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum Cue {
-    Opening,
-    StageAdvance,
-    ExampleFeedback,
-    RunFeedback,
-    FollowUp,
-    HintProvided,
-    DraftCheckpoint,
-}
-
-/// Events in a coding session that may cue the counterpart.
+/// Something that happened in a session that may make the counterpart speak.
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub enum SessionEvent {
+pub enum CodingEvent {
     Started,
-    StageChanged(CodingStage),
-    ExampleChecked,
-    RunFinished(RunScope),
-    LearnerTurn(String),
-    HintRequested,
-    DraftPaused,
+    LearnerMessage {
+        spoken: bool,
+    },
+    StageMoved {
+        from: CodingStage,
+        to: CodingStage,
+        skipped: Vec<CodingStage>,
+    },
+    RunFinished {
+        scope: CodingRunScope,
+    },
+    DraftPaused {
+        changed: bool,
+    },
+    Idle,
 }
 
-/// Decides when the counterpart speaks, its prompt, and validates replies.
-pub trait TurnPolicy<S>: Send + Sync {
-    fn cue(&self, event: &SessionEvent, state: &S) -> Option<Cue>;
-    fn system(&self, cue: &Cue, state: &S) -> String;
-    fn check(&self, content: &str, cue: &Cue, state: &S) -> Result<(), AppError>;
-}
-
-/// Policy for Coached setting: guides and explains, cues frequently, never pauses.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct CoachPolicy;
-
-impl TurnPolicy<WorkspaceObservation> for CoachPolicy {
-    fn cue(&self, event: &SessionEvent, _state: &WorkspaceObservation) -> Option<Cue> {
-        match event {
-            SessionEvent::Started => Some(Cue::Opening),
-            SessionEvent::StageChanged(_) => Some(Cue::StageAdvance),
-            SessionEvent::ExampleChecked => Some(Cue::ExampleFeedback),
-            SessionEvent::RunFinished(_) => Some(Cue::RunFeedback),
-            SessionEvent::LearnerTurn(_) => Some(Cue::FollowUp),
-            SessionEvent::HintRequested => Some(Cue::HintProvided),
-            SessionEvent::DraftPaused => None,
-        }
-    }
-
-    fn system(&self, cue: &Cue, state: &WorkspaceObservation) -> String {
-        format!(
-            concat!(
-                "You are a supportive coding coach in a practice session for {}. ",
-                "Current stage: {:?}. Cue: {:?}. ",
-                "Help the learner notice trade-offs, explain steps, and never give full solutions."
-            ),
-            state.public_problem.title, state.stage, cue
-        )
-    }
-
-    fn check(
-        &self,
-        _content: &str,
-        _cue: &Cue,
-        _state: &WorkspaceObservation,
-    ) -> Result<(), AppError> {
-        Ok(())
-    }
-}
-
-/// Policy for Mock setting: in-role interviewer, asks <= 1 question per turn.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct InterviewerPolicy;
-
-impl TurnPolicy<WorkspaceObservation> for InterviewerPolicy {
-    fn cue(&self, event: &SessionEvent, _state: &WorkspaceObservation) -> Option<Cue> {
-        match event {
-            SessionEvent::Started => Some(Cue::Opening),
-            SessionEvent::StageChanged(CodingStage::Code) => Some(Cue::StageAdvance),
-            SessionEvent::RunFinished(RunScope::All) => Some(Cue::RunFeedback),
-            SessionEvent::LearnerTurn(_) => Some(Cue::FollowUp),
-            SessionEvent::DraftPaused
-            | SessionEvent::ExampleChecked
-            | SessionEvent::HintRequested
-            | SessionEvent::RunFinished(RunScope::Examples | RunScope::Input)
-            | SessionEvent::StageChanged(
-                CodingStage::Understand | CodingStage::Plan | CodingStage::Verify,
-            ) => None,
-        }
-    }
-
-    fn system(&self, cue: &Cue, state: &WorkspaceObservation) -> String {
-        format!(
-            concat!(
-                "You are a technical interviewer for {}. In-character, professional. ",
-                "Ask at most one question per turn. Cue: {:?}."
-            ),
-            state.public_problem.title, cue
-        )
-    }
-
-    fn check(
-        &self,
-        content: &str,
-        _cue: &Cue,
-        _state: &WorkspaceObservation,
-    ) -> Result<(), AppError> {
-        let question_count = content.chars().filter(|&c| c == '?').count();
-        if question_count > 1 {
-            return Err(AppError::InvalidInput(
-                "An interviewer asks at most one question per turn".into(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Policy for Watched setting: interviewer watching draft checkpoints and runs; may choose silence.
-#[derive(Debug, Clone, Copy, Default)]
-pub struct WatchingInterviewerPolicy;
-
-impl TurnPolicy<WorkspaceObservation> for WatchingInterviewerPolicy {
-    fn cue(&self, event: &SessionEvent, _state: &WorkspaceObservation) -> Option<Cue> {
-        match event {
-            SessionEvent::Started => Some(Cue::Opening),
-            SessionEvent::StageChanged(CodingStage::Code) => Some(Cue::StageAdvance),
-            SessionEvent::RunFinished(RunScope::All | RunScope::Examples) => {
-                Some(Cue::RunFeedback)
-            }
-            SessionEvent::LearnerTurn(_) => Some(Cue::FollowUp),
-            SessionEvent::DraftPaused => Some(Cue::DraftCheckpoint),
-            SessionEvent::ExampleChecked
-            | SessionEvent::HintRequested
-            | SessionEvent::RunFinished(RunScope::Input)
-            | SessionEvent::StageChanged(
-                CodingStage::Understand | CodingStage::Plan | CodingStage::Verify,
-            ) => None,
-        }
-    }
-
-    fn system(&self, cue: &Cue, state: &WorkspaceObservation) -> String {
-        format!(
-            concat!(
-                "You are a technical interviewer watching the candidate code for {}. ",
-                "At DraftCheckpoint you may choose silence with ",
-                "{{\"speak\": false, \"content\": \"\"}}. ",
-                "Cue: {:?}."
-            ),
-            state.public_problem.title, cue
-        )
-    }
-
-    fn check(
-        &self,
-        content: &str,
-        _cue: &Cue,
-        _state: &WorkspaceObservation,
-    ) -> Result<(), AppError> {
-        let question_count = content.chars().filter(|&c| c == '?').count();
-        if question_count > 1 {
-            return Err(AppError::InvalidInput(
-                "An interviewer asks at most one question per turn".into(),
-            ));
-        }
-        Ok(())
-    }
-}
-
-/// Structured response from model at a watched checkpoint, allowing silence.
+/// Why the counterpart speaks. Stored while pending.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WatchedCheckpointResponse {
-    pub speak: bool,
-    #[serde(default)]
-    pub content: String,
+#[serde(rename_all = "snake_case")]
+pub enum CodingCue {
+    Opening,
+    Reply,
+    StageOpened(CodingStage),
+    AskForSkipped(Vec<CodingStage>),
+    RunReview(CodingRunScope),
+    Submitted,
+    Checkpoint,
+    Idle,
 }
 
-/// Parses raw model response at a watched checkpoint, returning `Ok(None)` on silence.
-pub fn parse_watched_reply(raw: &str) -> Result<Option<String>, AppError> {
-    if let Ok(resp) = serde_json::from_str::<WatchedCheckpointResponse>(raw) {
-        if !resp.speak || resp.content.trim().is_empty() {
-            return Ok(None);
-        }
-        return Ok(Some(resp.content));
+impl CodingCue {
+    /// Which of two pending cues to keep: true when `self` ranks strictly above `other`.
+    pub fn outranks(&self, other: &CodingCue) -> bool {
+        self.rank() > other.rank()
     }
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        Ok(None)
-    } else {
-        Ok(Some(trimmed.to_string()))
+
+    fn rank(&self) -> u8 {
+        match self {
+            Self::Opening => 7,
+            Self::Reply => 6,
+            Self::Submitted => 5,
+            Self::AskForSkipped(_) => 4,
+            Self::StageOpened(_) => 3,
+            Self::RunReview(_) => 2,
+            Self::Checkpoint => 1,
+            Self::Idle => 0,
+        }
     }
 }
 
-/// Checks counterpart reply against shared constraints:
-/// - Policy's own text rules (e.g. <=1 question for interviewers)
-/// - Valid line references (1..=draft_line_count)
-/// - No internal UUID leaks
-/// - Any fenced code block is tested via harness and rejected if it passes all cases
-pub async fn check_counterpart_reply(
-    reply: &str,
-    policy: &dyn TurnPolicy<WorkspaceObservation>,
-    cue: &Cue,
-    observation: &WorkspaceObservation,
-    problem: &Problem,
-    runner: &dyn CodeRunner,
-    harness: &dyn CaseHarness,
-) -> Result<(), AppError> {
-    policy.check(reply, cue, observation)?;
+pub type CodingPolicy = dyn TurnPolicy<WorkspaceObservation, Event = CodingEvent, Cue = CodingCue>;
 
-    let draft_line_count = observation
-        .files
-        .iter()
-        .find(|f| f.path == crate::practice::coding::problem::SOLUTION_PATH)
-        .map(|f| f.content.lines().count().max(1) as u32)
-        .unwrap_or(1);
+/// The one-line instruction a stage opens with.
+pub fn stage_instruction(stage: CodingStage) -> &'static str {
+    match stage {
+        CodingStage::Understand => {
+            "Say what the function takes and returns, and ask about anything the statement leaves open."
+        }
+        CodingStage::Examples => {
+            "Write examples, edge cases included, and check each one against the problem."
+        }
+        CodingStage::Plan => "Say how you will solve it, and what that costs, before you write code.",
+        CodingStage::Code => "Write the function, one small step at a time, and run it as you go.",
+        CodingStage::Test => "Run your examples, then submit to run every case.",
+        CodingStage::Review => "State the time and space cost, and look for anything to simplify.",
+        CodingStage::Reproduce => "Run the code and see the failure for yourself.",
+        CodingStage::Locate => "Find the line, or the idea, that is wrong.",
+        CodingStage::Fix => "Change the code so that the failure goes away and nothing else does.",
+        CodingStage::Verify => "Run every case and say why the code is right now.",
+    }
+}
 
-    let lower = reply.to_ascii_lowercase();
-    let words: Vec<&str> = lower.split_whitespace().collect();
-    for (i, word) in words.iter().enumerate() {
-        if *word == "line" || *word == "lines" {
-            if let Some(next_word) = words.get(i + 1) {
-                let clean_num: String =
-                    next_word.chars().take_while(|c| c.is_ascii_digit()).collect();
-                if let Ok(line_num) = clean_num.parse::<u32>() {
-                    if line_num == 0 || line_num > draft_line_count {
-                        return Err(AppError::InvalidInput(format!(
-                            concat!(
-                                "Referenced line {line_num} exceeds ",
-                                "draft line count ({draft_line_count})"
-                            ),
-                            line_num = line_num,
-                            draft_line_count = draft_line_count
-                        )));
-                    }
-                }
+/// The coach of the Coached setting: teaches, and speaks on every message, stage and run.
+pub struct Coach {
+    pub task: CodingTask,
+}
+
+/// The interviewer of the Mock setting: in role, speaks on messages, submits and skipped stages.
+pub struct Interviewer {
+    pub task: CodingTask,
+}
+
+/// The interviewer of the Watched setting: as the Mock one, and at checkpoints; it may stay silent.
+pub struct WatchingInterviewer {
+    pub task: CodingTask,
+}
+
+fn cue_for(setting: CodingSetting, task: CodingTask, event: &CodingEvent) -> Option<CodingCue> {
+    let coached = setting == CodingSetting::Coached;
+    let watched = setting == CodingSetting::Watched;
+    match event {
+        CodingEvent::Started => Some(CodingCue::Opening),
+        CodingEvent::LearnerMessage { spoken } => Some(if *spoken && watched {
+            CodingCue::Checkpoint
+        } else {
+            CodingCue::Reply
+        }),
+        CodingEvent::StageMoved { to, skipped, .. } => {
+            if coached {
+                return Some(CodingCue::StageOpened(*to));
             }
+            let asked: Vec<CodingStage> = skipped
+                .iter()
+                .filter(|stage| asked_for(task).contains(stage))
+                .copied()
+                .collect();
+            (!asked.is_empty()).then_some(CodingCue::AskForSkipped(asked))
+        }
+        CodingEvent::RunFinished { scope } => match (setting, scope) {
+            (CodingSetting::Coached, scope) => Some(CodingCue::RunReview(*scope)),
+            (_, CodingRunScope::All) => Some(CodingCue::Submitted),
+            (CodingSetting::Watched, _) => Some(CodingCue::Checkpoint),
+            (CodingSetting::Mock, _) => None,
+        },
+        CodingEvent::DraftPaused { changed } => {
+            (watched && *changed).then_some(CodingCue::Checkpoint)
+        }
+        CodingEvent::Idle => coached.then_some(CodingCue::Idle),
+    }
+}
+
+/// The text of `content` outside fenced code blocks.
+fn outside_code(content: &str) -> String {
+    let mut inside = false;
+    let mut kept = Vec::new();
+    for line in content.lines() {
+        if line.trim_start().starts_with("```") {
+            inside = !inside;
+        } else if !inside {
+            kept.push(line);
         }
     }
+    kept.join("\n")
+}
 
-    for word in reply.split_whitespace() {
-        let clean_word: String =
-            word.chars().filter(|c| c.is_ascii_alphanumeric() || *c == '-').collect();
-        if clean_word.len() == 36 && uuid::Uuid::parse_str(&clean_word).is_ok() {
-            return Err(AppError::InvalidInput("Reply leaked internal UUID".into()));
-        }
+fn check_for(setting: CodingSetting, content: &str) -> Result<()> {
+    if setting != CodingSetting::Coached && outside_code(content).matches('?').count() > 1 {
+        return Err(AppError::InvalidInput(
+            "An interviewer asks one question at a time. Ask only one question, with one question mark outside any code."
+                .into(),
+        ));
     }
-
-    if reply.contains("```") {
-        if let Some(start_idx) = reply.find("```") {
-            if let Some(remainder) = reply.get(start_idx + 3..) {
-                let code_start = if let Some(newline_idx) = remainder.find('\n') {
-                    remainder.get(newline_idx + 1..).unwrap_or(remainder)
-                } else {
-                    remainder
-                };
-                if let Some(end_idx) = code_start.find("```") {
-                    if let Some(code) = code_start.get(..end_idx) {
-                        let cancel = CancellationToken::new();
-                        if let Ok((_outcome, results)) =
-                            run_cases(runner, harness, &problem.spec, code, &problem.cases, cancel)
-                                .await
-                        {
-                            if !results.is_empty()
-                                && results.iter().all(|r| r.status == CaseStatus::Passed)
-                            {
-                                return Err(AppError::InvalidInput(
-                                    "Reply contains code that passes all cases".into(),
-                                ));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-    }
-
     Ok(())
+}
+
+const COACH_ROLE: &str = "You are the coach in a coding practice session. You teach: you explain, ask the question that moves the learner on, and say what they did well. You never write their solution for them.";
+
+const INTERVIEWER_ROLE: &str = "You are the interviewer in a mock coding interview. Stay in role: you hold a problem for the candidate and are not a tutor. Do not teach, praise or grade; ask, listen and probe. Ask at most one question per turn, with one question mark outside any code.";
+
+const WATCHING_ROLE: &str = " You are watching the candidate's code change as they work. Mostly stay quiet. Speak only when a question about what they are doing is worth asking.";
+
+const RULES: &str = "Speak about the learner's code, runs and examples only from what you are given; never invent a result. Refer to code by line number. Do not show a complete solution: any code you write must leave the problem unsolved. Never name the technique or pattern that solves the problem; ask about the idea instead. Never write an id. Keep it short, and in the words a person would say aloud. When the learner asks a question the statement leaves open, answer it from the clarifications you are given, word for word, and set clarification to that clarification's number; when none covers it, write \"Your call: state your assumption.\" and set clarification to your_call; otherwise set clarification to none.";
+
+const FORMAT: &str = "Answer as JSON: content is what you say; lines are the line numbers of the learner's code that you refer to, or none; path is the file those lines are in, or null; clarification is as described above.";
+
+const SPEAK: &str =
+    " Also set \"speak\" to false to stay silent, in which case content may be empty.";
+
+fn stage_names(stages: &[CodingStage]) -> String {
+    stages
+        .iter()
+        .map(|stage| format!("{stage:?}"))
+        .collect::<Vec<_>>()
+        .join(" and ")
+}
+
+fn cue_instruction(
+    setting: CodingSetting,
+    cue: &CodingCue,
+    state: &WorkspaceObservation,
+) -> String {
+    let coached = setting == CodingSetting::Coached;
+    match cue {
+        CodingCue::Opening if coached => format!(
+            "Open the session: greet the learner in a sentence, then give the instruction of the {:?} stage in your own words: {}",
+            state.stage,
+            stage_instruction(state.stage)
+        ),
+        CodingCue::Opening => {
+            "Open the interview: introduce yourself in a sentence, say the problem is on screen, and ask the candidate to read it and say what they would like to clarify.".to_owned()
+        }
+        CodingCue::Reply => "Answer the learner's last message in the transcript.".to_owned(),
+        CodingCue::StageOpened(stage) => format!(
+            "The learner has moved to the {stage:?} stage. Open it with its instruction, in your own words: {}",
+            stage_instruction(*stage)
+        ),
+        CodingCue::AskForSkipped(stages) => format!(
+            "The candidate skipped {}. As an interviewer would, ask for it in one question: what they would have done there.",
+            stage_names(stages)
+        ),
+        CodingCue::RunReview(scope) => format!(
+            "The learner ran {scope:?}. Read the last run. Say what it shows, point at what to look at without fixing it, and ask what they make of it."
+        ),
+        CodingCue::Submitted if coached => {
+            "The learner submitted every case. Say how it went from the last run, what to look at in a failing case, and what comes next.".to_owned()
+        }
+        CodingCue::Submitted => {
+            "The candidate submitted. React as an interviewer: acknowledge the result without hinting at the cases you cannot see, and ask one question, about the cost of the code, an edge, or why they chose something.".to_owned()
+        }
+        CodingCue::Checkpoint => {
+            "This is a checkpoint. Speak only if a question is worth asking now: why they chose something, what a line costs, or an edge they have not mentioned. If nothing is worth saying, stay silent.".to_owned()
+        }
+        CodingCue::Idle => {
+            "The learner has been quiet for a while, with no edit, run or message. Check in kindly: ask what they are thinking about, and say they can ask for a hint.".to_owned()
+        }
+    }
+}
+
+fn system_for(setting: CodingSetting, cue: &CodingCue, state: &WorkspaceObservation) -> String {
+    let role = match setting {
+        CodingSetting::Coached => COACH_ROLE.to_owned(),
+        CodingSetting::Mock => INTERVIEWER_ROLE.to_owned(),
+        CodingSetting::Watched => format!("{INTERVIEWER_ROLE}{WATCHING_ROLE}"),
+    };
+    let speak = if setting == CodingSetting::Watched && *cue == CodingCue::Checkpoint {
+        SPEAK
+    } else {
+        ""
+    };
+    format!(
+        "{role}\n\n{RULES}\n\n{}\n\n{FORMAT}{speak}",
+        cue_instruction(setting, cue, state)
+    )
+}
+
+macro_rules! policy {
+    ($policy:ident, $setting:expr) => {
+        impl TurnPolicy<WorkspaceObservation> for $policy {
+            type Event = CodingEvent;
+            type Cue = CodingCue;
+
+            fn cue(&self, event: &CodingEvent, _state: &WorkspaceObservation) -> Option<CodingCue> {
+                cue_for($setting, self.task, event)
+            }
+
+            fn system(&self, cue: &CodingCue, state: &WorkspaceObservation) -> String {
+                system_for($setting, cue, state)
+            }
+
+            fn check(
+                &self,
+                content: &str,
+                _cue: &CodingCue,
+                _state: &WorkspaceObservation,
+            ) -> Result<()> {
+                check_for($setting, content)
+            }
+        }
+    };
+}
+
+policy!(Coach, CodingSetting::Coached);
+policy!(Interviewer, CodingSetting::Mock);
+policy!(WatchingInterviewer, CodingSetting::Watched);
+
+/// The policy of a setting.
+pub fn policy_for(setting: CodingSetting, task: CodingTask) -> Box<CodingPolicy> {
+    match setting {
+        CodingSetting::Coached => Box::new(Coach { task }),
+        CodingSetting::Mock => Box::new(Interviewer { task }),
+        CodingSetting::Watched => Box::new(WatchingInterviewer { task }),
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::drills::runner::{CodeRunner, RunOutcome};
-    use crate::lab_runtime::LearningLabFile;
-    use crate::practice::coding::harness::python::PythonHarness;
-    use crate::practice::coding::problem::{
-        Case, Compare, Difficulty, Param, Problem, ProblemSpec, Setting, Signature, Visibility,
-    };
-    use crate::practice::coding::session::{CodingStage, PublicProblemDto, RunScope};
-    use async_trait::async_trait;
-    use std::collections::BTreeMap;
-    use tokio_util::sync::CancellationToken;
+    use crate::practice::coding::observation::test_support::observation;
 
-    struct TestRunner {
-        outcome: RunOutcome,
-        output: String,
-    }
+    use CodingCue as Cue;
+    use CodingEvent as Event;
+    use CodingStage as Stage;
 
-    #[async_trait]
-    impl CodeRunner for TestRunner {
-        fn name(&self) -> &str {
-            "test-runner"
-        }
-        fn entrypoint(&self) -> &str {
-            "checks.py"
-        }
-        fn contract(&self) -> &str {
-            "test"
-        }
-        fn running(&self, _path: &str) -> String {
-            String::new()
-        }
-        async fn run(
-            &self,
-            _files: &[lattice_core::domain::learning::drills::DrillFile],
-            _test: &str,
-            _cancel: CancellationToken,
-        ) -> lattice_core::shared::error::Result<RunOutcome> {
-            Ok(self.outcome.clone())
-        }
-        async fn run_capturing(
-            &self,
-            _files: &[LearningLabFile],
-            _read_only_paths: &[String],
-            _cancel: CancellationToken,
-        ) -> lattice_core::shared::error::Result<(RunOutcome, String)> {
-            Ok((self.outcome.clone(), self.output.clone()))
+    const SETTINGS: [CodingSetting; 3] = [
+        CodingSetting::Coached,
+        CodingSetting::Mock,
+        CodingSetting::Watched,
+    ];
+
+    fn moved(from: Stage, to: Stage, skipped: &[Stage]) -> Event {
+        Event::StageMoved {
+            from,
+            to,
+            skipped: skipped.to_vec(),
         }
     }
 
-    fn sample_problem() -> Problem {
-        let starter = concat!(
-            "def two_sum(numbers: list[int], target: int) -> list[int]:\n",
-            "    pass\n"
-        );
-        let reference = concat!(
-            "def two_sum(numbers: list[int], target: int) -> list[int]:\n",
-            "    seen = {}\n",
-            "    for i, num in enumerate(numbers):\n",
-            "        diff = target - num\n",
-            "        if diff in seen:\n",
-            "            return [seen[diff], i]\n",
-            "        seen[num] = i\n",
-            "    return []\n"
-        );
-
-        let spec = ProblemSpec {
-            title: "Two Sum".into(),
-            statement: "Find indices of two numbers that add up to target.".into(),
-            signature: Signature {
-                function: "two_sum".into(),
-                params: vec![
-                    Param {
-                        name: "numbers".into(),
-                        annotation: "list[int]".into(),
-                    },
-                    Param {
-                        name: "target".into(),
-                        annotation: "int".into(),
-                    },
+    /// One row of the design's cue table: the event and the cue of Coached, Mock and Watched.
+    fn rows() -> Vec<(&'static str, Event, [Option<Cue>; 3])> {
+        vec![
+            (
+                "started",
+                Event::Started,
+                [Some(Cue::Opening), Some(Cue::Opening), Some(Cue::Opening)],
+            ),
+            (
+                "typed message",
+                Event::LearnerMessage { spoken: false },
+                [Some(Cue::Reply), Some(Cue::Reply), Some(Cue::Reply)],
+            ),
+            (
+                "spoken message",
+                Event::LearnerMessage { spoken: true },
+                [Some(Cue::Reply), Some(Cue::Reply), Some(Cue::Checkpoint)],
+            ),
+            (
+                "stage moved, nothing skipped",
+                moved(Stage::Understand, Stage::Examples, &[]),
+                [Some(Cue::StageOpened(Stage::Examples)), None, None],
+            ),
+            (
+                "stage moved, one asked-for stage skipped",
+                moved(Stage::Understand, Stage::Plan, &[Stage::Examples]),
+                [
+                    Some(Cue::StageOpened(Stage::Plan)),
+                    Some(Cue::AskForSkipped(vec![Stage::Examples])),
+                    Some(Cue::AskForSkipped(vec![Stage::Examples])),
                 ],
-                returns: "list[int]".into(),
-            },
-            constraints: vec![],
-            clarifications: vec![],
-            language: "python".into(),
-            difficulty: Difficulty::Easy,
-            target_complexity: "O(n) time, O(n) space".into(),
-            patterns: vec![],
-            starter: starter.into(),
-        };
+            ),
+            (
+                "stage moved, both asked-for stages skipped",
+                moved(
+                    Stage::Understand,
+                    Stage::Code,
+                    &[Stage::Examples, Stage::Plan],
+                ),
+                [
+                    Some(Cue::StageOpened(Stage::Code)),
+                    Some(Cue::AskForSkipped(vec![Stage::Examples, Stage::Plan])),
+                    Some(Cue::AskForSkipped(vec![Stage::Examples, Stage::Plan])),
+                ],
+            ),
+            (
+                "stage moved, asked-for and other stages skipped",
+                moved(Stage::Examples, Stage::Test, &[Stage::Plan, Stage::Code]),
+                [
+                    Some(Cue::StageOpened(Stage::Test)),
+                    Some(Cue::AskForSkipped(vec![Stage::Plan])),
+                    Some(Cue::AskForSkipped(vec![Stage::Plan])),
+                ],
+            ),
+            (
+                "stage moved, other stages skipped",
+                moved(Stage::Plan, Stage::Review, &[Stage::Code, Stage::Test]),
+                [Some(Cue::StageOpened(Stage::Review)), None, None],
+            ),
+            (
+                "examples run",
+                Event::RunFinished {
+                    scope: CodingRunScope::Examples,
+                },
+                [
+                    Some(Cue::RunReview(CodingRunScope::Examples)),
+                    None,
+                    Some(Cue::Checkpoint),
+                ],
+            ),
+            (
+                "input run",
+                Event::RunFinished {
+                    scope: CodingRunScope::Input,
+                },
+                [
+                    Some(Cue::RunReview(CodingRunScope::Input)),
+                    None,
+                    Some(Cue::Checkpoint),
+                ],
+            ),
+            (
+                "all cases run",
+                Event::RunFinished {
+                    scope: CodingRunScope::All,
+                },
+                [
+                    Some(Cue::RunReview(CodingRunScope::All)),
+                    Some(Cue::Submitted),
+                    Some(Cue::Submitted),
+                ],
+            ),
+            (
+                "draft paused, changed",
+                Event::DraftPaused { changed: true },
+                [None, None, Some(Cue::Checkpoint)],
+            ),
+            (
+                "draft paused, unchanged",
+                Event::DraftPaused { changed: false },
+                [None, None, None],
+            ),
+            ("idle", Event::Idle, [Some(Cue::Idle), None, None]),
+        ]
+    }
 
-        Problem {
-            spec,
-            reference: reference.into(),
-            misreadings: vec![],
-            cases: vec![Case {
-                id: "case-1".into(),
-                category: "basic".into(),
-                args: vec!["[2, 7]".into(), "9".into()],
-                expected: Some("[0, 1]".into()),
-                compare: Compare::Exact,
-                visibility: Visibility::Example,
-                scale: false,
-            }],
-            reference_ms: BTreeMap::new(),
+    #[test]
+    fn the_cue_table_holds_cell_by_cell() {
+        for (name, event, expected) in rows() {
+            for (setting, want) in SETTINGS.into_iter().zip(expected) {
+                let (_, observation) = observation(setting, Stage::Understand);
+                let policy = policy_for(setting, CodingTask::Problem);
+                assert_eq!(
+                    policy.cue(&event, &observation),
+                    want,
+                    "{name} in {setting:?}"
+                );
+            }
         }
     }
 
-    fn sample_observation(setting: Setting, stage: CodingStage) -> WorkspaceObservation {
-        let problem = sample_problem();
-        let numbered_solution = concat!(
-            "1 | def two_sum(numbers, target):\n",
-            "2 |     # line 2\n",
-            "3 |     # line 3\n",
-            "4 |     # line 4\n",
-            "5 |     return []\n"
+    #[test]
+    fn what_is_asked_for_when_skipped_follows_the_task() {
+        let event = moved(Stage::Reproduce, Stage::Fix, &[Stage::Locate]);
+        let skipped_reproduce = moved(
+            Stage::Locate,
+            Stage::Verify,
+            &[Stage::Reproduce, Stage::Fix],
         );
-        let solution_content = concat!(
-            "def two_sum(numbers, target):\n",
-            "    # line 2\n",
-            "    # line 3\n",
-            "    # line 4\n",
-            "    return []\n"
-        );
-
-        WorkspaceObservation {
-            task: crate::practice::coding::problem::CodingTask::Problem,
-            setting,
-            stage,
-            public_problem: PublicProblemDto {
-                title: problem.spec.title.clone(),
-                statement: problem.spec.statement.clone(),
-                signature: problem.spec.signature.clone(),
-                examples: problem.cases.clone(),
-                constraints: vec![],
-                subgoals: vec![],
-                files: vec![],
-                worked_solution: None,
-                target_complexity: Some(problem.spec.target_complexity.clone()),
-                total_misreadings: 0,
-            },
-            clarifications: vec![],
-            target_complexity: "O(n)".into(),
-            patterns: vec![],
-            active_ms: 5000,
-            budget_seconds: Some(1800),
-            files: vec![LearningLabFile {
-                path: "solution.py".into(),
-                content: solution_content.into(),
-            }],
-            numbered_solution: numbered_solution.into(),
-            changed_since_last_seen: None,
-            last_run: None,
-            examples: vec![],
-            hints_given: vec![],
-            turns: vec![],
+        for setting in [CodingSetting::Mock, CodingSetting::Watched] {
+            let (_, observation) = observation(setting, Stage::Reproduce);
+            let policy = policy_for(setting, CodingTask::BugFix);
+            assert_eq!(policy.cue(&event, &observation), None, "{setting:?}");
+            assert_eq!(
+                policy.cue(&skipped_reproduce, &observation),
+                Some(Cue::AskForSkipped(vec![Stage::Reproduce])),
+                "{setting:?}"
+            );
         }
     }
 
     #[test]
-    fn test_coach_policy_cue() {
-        let policy = CoachPolicy;
-        let obs = sample_observation(Setting::Coached, CodingStage::Understand);
-
-        assert_eq!(policy.cue(&SessionEvent::Started, &obs), Some(Cue::Opening));
-        assert_eq!(
-            policy.cue(&SessionEvent::StageChanged(CodingStage::Plan), &obs),
-            Some(Cue::StageAdvance)
-        );
-        assert_eq!(policy.cue(&SessionEvent::ExampleChecked, &obs), Some(Cue::ExampleFeedback));
-        assert_eq!(
-            policy.cue(&SessionEvent::RunFinished(RunScope::Examples), &obs),
-            Some(Cue::RunFeedback)
-        );
-        assert_eq!(
-            policy.cue(&SessionEvent::LearnerTurn("How should I start?".into()), &obs),
-            Some(Cue::FollowUp)
-        );
-        assert_eq!(policy.cue(&SessionEvent::HintRequested, &obs), Some(Cue::HintProvided));
-        assert_eq!(policy.cue(&SessionEvent::DraftPaused, &obs), None);
+    fn a_cue_outranks_those_below_it_and_never_itself() {
+        let ranked = [
+            Cue::Opening,
+            Cue::Reply,
+            Cue::Submitted,
+            Cue::AskForSkipped(vec![Stage::Examples]),
+            Cue::StageOpened(Stage::Plan),
+            Cue::RunReview(CodingRunScope::Examples),
+            Cue::Checkpoint,
+            Cue::Idle,
+        ];
+        for (index, higher) in ranked.iter().enumerate() {
+            assert!(!higher.outranks(higher), "{higher:?} outranks itself");
+            for lower in ranked.iter().skip(index + 1) {
+                assert!(higher.outranks(lower), "{higher:?} must outrank {lower:?}");
+                assert!(
+                    !lower.outranks(higher),
+                    "{lower:?} must not outrank {higher:?}"
+                );
+            }
+        }
     }
 
     #[test]
-    fn test_interviewer_policy_cue() {
-        let policy = InterviewerPolicy;
-        let obs = sample_observation(Setting::Mock, CodingStage::Understand);
-
-        assert_eq!(policy.cue(&SessionEvent::Started, &obs), Some(Cue::Opening));
-        assert_eq!(
-            policy.cue(&SessionEvent::StageChanged(CodingStage::Code), &obs),
-            Some(Cue::StageAdvance)
-        );
-        assert_eq!(
-            policy.cue(&SessionEvent::RunFinished(RunScope::All), &obs),
-            Some(Cue::RunFeedback)
-        );
-        assert_eq!(
-            policy.cue(&SessionEvent::LearnerTurn("I have an approach in mind.".into()), &obs),
-            Some(Cue::FollowUp)
-        );
-
-        assert_eq!(policy.cue(&SessionEvent::DraftPaused, &obs), None);
-        assert_eq!(policy.cue(&SessionEvent::ExampleChecked, &obs), None);
-        assert_eq!(policy.cue(&SessionEvent::RunFinished(RunScope::Examples), &obs), None);
-    }
-
-    #[test]
-    fn test_watching_interviewer_policy_cue() {
-        let policy = WatchingInterviewerPolicy;
-        let obs = sample_observation(Setting::Watched, CodingStage::Code);
-
-        assert_eq!(policy.cue(&SessionEvent::Started, &obs), Some(Cue::Opening));
-        assert_eq!(
-            policy.cue(&SessionEvent::RunFinished(RunScope::Examples), &obs),
-            Some(Cue::RunFeedback)
-        );
-        assert_eq!(policy.cue(&SessionEvent::DraftPaused, &obs), Some(Cue::DraftCheckpoint));
-    }
-
-    #[test]
-    fn test_interviewer_policy_reply_check_question_limit() {
-        let policy = InterviewerPolicy;
-        let obs = sample_observation(Setting::Mock, CodingStage::Plan);
-
-        let zero_q = "Let's begin when you are ready.";
-        assert!(policy.check(zero_q, &Cue::FollowUp, &obs).is_ok());
-
-        let one_q = "What data structure would give you O(1) lookups?";
-        assert!(policy.check(one_q, &Cue::FollowUp, &obs).is_ok());
-
-        let two_q = "What is the time complexity? Can we do it with less space?";
-        let err = policy.check(two_q, &Cue::FollowUp, &obs).unwrap_err();
-        assert!(err.to_string().contains("at most one question"), "got {err}");
-    }
-
-    #[tokio::test]
-    async fn test_reply_check_validates_draft_line_numbers() {
-        let policy = InterviewerPolicy;
-        let obs = sample_observation(Setting::Mock, CodingStage::Code);
-        let problem = sample_problem();
-        let runner = TestRunner {
-            outcome: RunOutcome::Passed,
-            output: String::new(),
-        };
-        let harness = PythonHarness::new();
-
-        let valid_line = "Notice what happens on line 3.";
+    fn cues_of_one_kind_do_not_outrank_each_other() {
+        assert!(!Cue::StageOpened(Stage::Plan).outranks(&Cue::StageOpened(Stage::Code)));
         assert!(
-            check_counterpart_reply(
-                valid_line, &policy, &Cue::FollowUp, &obs, &problem, &runner, &harness
-            )
-            .await
-            .is_ok()
+            !Cue::RunReview(CodingRunScope::All).outranks(&Cue::RunReview(CodingRunScope::Input))
         );
-
-        let invalid_line = "Look at line 12 where the loop terminates.";
-        let err = check_counterpart_reply(
-            invalid_line,
-            &policy,
-            &Cue::FollowUp,
-            &obs,
-            &problem,
-            &runner,
-            &harness,
-        )
-        .await
-        .unwrap_err();
-        assert!(err.to_string().contains("draft line count"), "got {err}");
-    }
-
-    #[tokio::test]
-    async fn test_reply_check_rejects_internal_uuids() {
-        let policy = CoachPolicy;
-        let obs = sample_observation(Setting::Coached, CodingStage::Code);
-        let problem = sample_problem();
-        let runner = TestRunner {
-            outcome: RunOutcome::Passed,
-            output: String::new(),
-        };
-        let harness = PythonHarness::new();
-
-        let leaked_uuid =
-            "According to criterion 550e8400-e29b-41d4-a716-446655440000, your code is clear.";
-        let err = check_counterpart_reply(
-            leaked_uuid,
-            &policy,
-            &Cue::FollowUp,
-            &obs,
-            &problem,
-            &runner,
-            &harness,
-        )
-        .await
-        .unwrap_err();
-        assert!(err.to_string().contains("internal UUID"), "got {err}");
-    }
-
-    #[tokio::test]
-    async fn test_reply_check_rejects_code_passing_all_cases() {
-        let policy = CoachPolicy;
-        let obs = sample_observation(Setting::Coached, CodingStage::Code);
-        let problem = sample_problem();
-        let runner = TestRunner {
-            outcome: RunOutcome::Passed,
-            output: concat!(
-                "__LATTICE_CASE__:{\"case_id\":\"case-1\",\"status\":\"passed\",",
-                "\"actual\":\"[0, 1]\",\"printed\":\"\",\"elapsed_ms\":1}\n"
-            )
-            .into(),
-        };
-        let harness = PythonHarness::new();
-
-        let passing_code_reply = concat!(
-            "Here is how to do it:\n",
-            "```python\n",
-            "def two_sum(numbers, target):\n",
-            "    return [0, 1]\n",
-            "```"
-        );
-        let err = check_counterpart_reply(
-            passing_code_reply,
-            &policy,
-            &Cue::FollowUp,
-            &obs,
-            &problem,
-            &runner,
-            &harness,
-        )
-        .await
-        .unwrap_err();
-        assert!(err.to_string().contains("passes all cases"), "got {err}");
     }
 
     #[test]
-    fn test_watching_interviewer_silence() {
-        let silent_raw = r#"{"speak": false, "content": ""}"#;
-        let parsed = parse_watched_reply(silent_raw).expect("should parse silence");
-        assert_eq!(parsed, None);
+    fn a_cue_survives_storage() {
+        let cues = [
+            Cue::Opening,
+            Cue::Reply,
+            Cue::StageOpened(Stage::Plan),
+            Cue::AskForSkipped(vec![Stage::Examples, Stage::Plan]),
+            Cue::RunReview(CodingRunScope::Input),
+            Cue::Submitted,
+            Cue::Checkpoint,
+            Cue::Idle,
+        ];
+        for cue in cues {
+            let json = serde_json::to_string(&cue).unwrap_or_default();
+            assert!(!json.is_empty(), "{cue:?} does not serialize");
+            assert_eq!(serde_json::from_str::<Cue>(&json).ok(), Some(cue));
+        }
+    }
 
-        let spoken_raw = r#"{"speak": true, "content": "How are you handling duplicate values?"}"#;
-        let parsed_spoken = parse_watched_reply(spoken_raw).expect("should parse spoken reply");
-        assert_eq!(parsed_spoken, Some("How are you handling duplicate values?".into()));
+    #[test]
+    fn interviewers_ask_one_question_and_the_coach_may_ask_two() {
+        let two = "What does it return? And for an empty list?";
+        for setting in SETTINGS {
+            let (_, observation) = observation(setting, Stage::Plan);
+            let policy = policy_for(setting, CodingTask::Problem);
+            let verdict = policy.check(two, &Cue::Reply, &observation);
+            match setting {
+                CodingSetting::Coached => assert!(verdict.is_ok(), "{setting:?}"),
+                _ => assert!(verdict.is_err(), "{setting:?}"),
+            }
+            assert!(
+                policy
+                    .check("What does it return?", &Cue::Reply, &observation)
+                    .is_ok(),
+                "{setting:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_question_mark_inside_a_code_block_is_not_a_question() {
+        let (_, observation) = observation(CodingSetting::Mock, Stage::Code);
+        let policy = policy_for(CodingSetting::Mock, CodingTask::Problem);
+        let reply = "Look at this:\n```python\nx = a if b else c  # why?\nprint('?')\n```\nWhat does it print?";
+        assert!(policy.check(reply, &Cue::Reply, &observation).is_ok());
+    }
+
+    #[test]
+    fn a_stage_cue_tells_the_coach_the_stage_instruction() {
+        let (_, observation) = observation(CodingSetting::Coached, Stage::Plan);
+        let policy = policy_for(CodingSetting::Coached, CodingTask::Problem);
+        let system = policy.system(&Cue::StageOpened(Stage::Plan), &observation);
+        assert!(!stage_instruction(Stage::Plan).is_empty());
+        assert!(system.contains(stage_instruction(Stage::Plan)));
+    }
+
+    #[test]
+    fn every_stage_has_its_own_instruction() {
+        let stages = [
+            Stage::Understand,
+            Stage::Examples,
+            Stage::Plan,
+            Stage::Code,
+            Stage::Test,
+            Stage::Review,
+            Stage::Reproduce,
+            Stage::Locate,
+            Stage::Fix,
+            Stage::Verify,
+        ];
+        let lines: std::collections::BTreeSet<&str> =
+            stages.into_iter().map(stage_instruction).collect();
+        assert_eq!(lines.len(), stages.len());
+        assert!(!lines.contains(""));
+    }
+
+    #[test]
+    fn only_the_watching_interviewer_is_told_it_may_stay_silent() {
+        for setting in SETTINGS {
+            let (_, observation) = observation(setting, Stage::Code);
+            let policy = policy_for(setting, CodingTask::Problem);
+            let system = policy.system(&Cue::Checkpoint, &observation);
+            assert_eq!(
+                system.contains("\"speak\""),
+                setting == CodingSetting::Watched,
+                "{setting:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_system_prompt_names_the_role_of_its_setting() {
+        let roles = [
+            (CodingSetting::Coached, "coach"),
+            (CodingSetting::Mock, "interviewer"),
+            (CodingSetting::Watched, "interviewer"),
+        ];
+        for (setting, role) in roles {
+            let (_, observation) = observation(setting, Stage::Code);
+            let policy = policy_for(setting, CodingTask::Problem);
+            let system = policy.system(&Cue::Reply, &observation).to_lowercase();
+            assert!(system.contains(role), "{setting:?}");
+        }
     }
 }

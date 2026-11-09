@@ -1,95 +1,96 @@
 import { useState } from 'react';
-import { AlertCircle, Check } from 'lucide-react';
+
+import { AlertCircle, CheckCircle2, Layers } from 'lucide-react';
 
 import { useSaveLearningCardDraft } from '@/features/learning/memory/useLearningMemory';
+import { useLearningProgram } from '@/features/learning/workspace/useLearningStudio';
+import { getErrorMessage } from '@/lib/errorUtils';
 
-export interface SaveAsReviewCardProps {
-  programId: string;
-  lessonId: string;
-  promptText?: string;
-  question?: string;
-  promptLabel?: string;
-  answerLabel?: string;
-  explanation?: string;
-  initialAnswer?: string;
-  answer?: string;
-}
-
-/**
- * Shared card allowing learners to correct a misconception in their own words
- * and save it as an active recall study card draft.
- */
+/** Offers one question and answer as a recall card draft, with the answer editable. */
 export function SaveAsReviewCard({
   programId,
+  front,
+  back,
+  sourceLabel,
   lessonId,
-  promptText,
-  question,
-  promptLabel,
-  answerLabel,
-  explanation = 'Drafted from a misconception found in practice',
-  initialAnswer,
-  answer: defaultAnswer,
-}: SaveAsReviewCardProps) {
-  const saveDraft = useSaveLearningCardDraft();
-  const frontText = question ?? promptText ?? '';
-  const labelText = answerLabel ?? promptLabel ?? 'What is actually right, in your own words?';
-  const [answer, setAnswer] = useState(defaultAnswer ?? initialAnswer ?? '');
+  onSaved,
+}: {
+  programId: string;
+  front: string;
+  back: string;
+  sourceLabel?: string;
+  lessonId?: string;
+  onSaved?: () => void;
+}) {
+  const [answer, setAnswer] = useState(back);
+  const save = useSaveLearningCardDraft();
+  const program = useLearningProgram(lessonId ? null : programId);
+  const fallback = program.data?.summary.currentLessonId ?? program.data?.modules[0]?.lessons[0]?.id ?? null;
+  const target = lessonId ?? fallback;
+  const blank = answer.trim() === '';
 
-  if (saveDraft.isSuccess) {
-    return (
-      <p role="status" className="mt-3 flex items-center gap-1.5 text-xs text-text-secondary">
-        <Check className="h-3.5 w-3.5 text-accent" aria-hidden="true" />
-        <span>Saved as a recall card draft. It comes back in Recall.</span>
-      </p>
+  const submit = () => {
+    if (!target || blank) return;
+    save.mutate(
+      {
+        draftId: null,
+        programId,
+        lessonId: target,
+        question: front,
+        answer,
+        explanation: sourceLabel ?? '',
+        sourceIds: [],
+      },
+      { onSuccess: () => onSaved?.() },
     );
-  }
-
-  const handleSave = () => {
-    if (!answer.trim() || saveDraft.isPending) return;
-    saveDraft.mutate({
-      draftId: null,
-      programId,
-      lessonId,
-      question: frontText,
-      answer: answer.trim(),
-      explanation,
-      sourceIds: [],
-    });
   };
 
   return (
-    <div className="mt-3 rounded-xl border border-border-default bg-surface p-4">
-      <div className="text-xs font-semibold text-text-primary">
-        {frontText}
-      </div>
-      <label className="mt-2 block text-xs font-medium text-text-secondary">
-        {labelText}
+    <section className="space-y-3 rounded-2xl border border-border-default bg-surface p-4">
+      <p className="text-sm font-medium text-text-primary">{front}</p>
+      <label className="block space-y-1">
+        <span className="text-xs font-medium text-text-secondary">Answer on the card</span>
         <textarea
-          rows={3}
           value={answer}
           onChange={(event) => setAnswer(event.target.value)}
-          placeholder="Write what is true instead, explaining why…"
-          className="mt-1.5 w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm leading-6 text-text-primary placeholder:text-text-muted outline-hidden focus:border-accent focus:ring-1 focus:ring-ring"
+          rows={3}
+          className="w-full rounded-lg border border-border-default bg-surface-sunken px-3 py-2 text-sm text-text-primary focus:outline-hidden focus:ring-2 focus:ring-ring"
         />
       </label>
-
-      <div className="mt-3 flex items-center gap-3">
+      <div className="flex flex-wrap items-center gap-3">
         <button
           type="button"
-          disabled={!answer.trim() || saveDraft.isPending}
-          onClick={handleSave}
-          className="pressable rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg disabled:cursor-not-allowed disabled:opacity-50"
+          onClick={submit}
+          disabled={!target || blank || save.isPending || save.isSuccess}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-accent px-3 py-1.5 text-xs font-medium text-accent-fg focus:outline-hidden focus:ring-2 focus:ring-ring disabled:opacity-60"
         >
-          {saveDraft.isPending ? 'Saving…' : 'Make a recall card'}
+          <Layers size={14} aria-hidden="true" />
+          Make a recall card
         </button>
+        {save.isSuccess && (
+          <p role="status" className="inline-flex items-center gap-1.5 text-xs text-success-fg">
+            <CheckCircle2 size={14} aria-hidden="true" />
+            Saved as a recall card draft. Review it in Memory.
+          </p>
+        )}
       </div>
-
-      {saveDraft.isError && (
-        <p role="alert" className="mt-2 flex items-center gap-1.5 text-xs text-danger-fg">
-          <AlertCircle className="h-3.5 w-3.5 shrink-0" aria-hidden="true" />
-          <span>{saveDraft.error?.message ?? 'Failed to save card draft.'}</span>
-        </p>
+      {blank && <p className="text-xs text-text-secondary">Write the answer first.</p>}
+      {!target && (
+        <p className="text-xs text-text-secondary">Open a lesson in this course first; the card is filed under it.</p>
       )}
-    </div>
+      {save.isError && (
+        <div role="alert" className="flex flex-wrap items-center gap-2 text-xs text-danger-fg">
+          <AlertCircle size={14} aria-hidden="true" />
+          <span>{getErrorMessage(save.error)}</span>
+          <button
+            type="button"
+            onClick={submit}
+            className="font-medium underline focus:outline-hidden focus:ring-2 focus:ring-ring"
+          >
+            Try again
+          </button>
+        </div>
+      )}
+    </section>
   );
 }

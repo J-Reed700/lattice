@@ -1,48 +1,51 @@
 import { useCallback, useRef, useState } from 'react';
 
-export {
-  type RetryAction,
-  useRetryAction,
-  type UseRetryActionResult,
-} from './useRetryAction';
-
-export interface UseRetryResult<T> {
-  run: () => Promise<T | undefined>;
-  busy: boolean;
-  error: string | null;
-  retry: () => void;
-  clear: () => void;
-}
+import { isConflict } from '@/lib/api';
+import { getErrorMessage } from '@/lib/errorUtils';
 
 /**
- * Shared retry hook for async operations across practice surfaces.
+ * Runs an action that can fail, keeping its error text and the arguments of its
+ * last run so Try again repeats it exactly. A run while one is going does nothing,
+ * and after a conflict the stale request is not repeated: the caller reloads.
  */
-export function useRetry<T>(operation: () => Promise<T>): UseRetryResult<T> {
+export function useRetry<A extends unknown[], R>(action: (...args: A) => Promise<R>) {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const opRef = useRef(operation);
-  opRef.current = operation;
+  const [conflict, setConflict] = useState(false);
+  const actionRef = useRef(action);
+  actionRef.current = action;
+  const running = useRef(false);
+  const lastArgs = useRef<A | null>(null);
 
-  const run = useCallback(async (): Promise<T | undefined> => {
+  const run = useCallback(async (...args: A): Promise<R | undefined> => {
+    if (running.current) return undefined;
+    running.current = true;
+    lastArgs.current = args;
     setBusy(true);
     setError(null);
+    setConflict(false);
     try {
-      return await opRef.current();
-    } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      return await actionRef.current(...args);
+    } catch (cause) {
+      setError(getErrorMessage(cause));
+      setConflict(isConflict(cause));
+      lastArgs.current = isConflict(cause) ? null : args;
       return undefined;
     } finally {
+      running.current = false;
       setBusy(false);
     }
   }, []);
 
   const retry = useCallback(() => {
-    void run();
+    if (lastArgs.current) void run(...lastArgs.current);
   }, [run]);
 
   const clear = useCallback(() => {
     setError(null);
+    setConflict(false);
+    lastArgs.current = null;
   }, []);
 
-  return { run, busy, error, retry, clear };
+  return { run, retry, clear, busy, error, conflict };
 }

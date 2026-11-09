@@ -14,6 +14,7 @@ import {
 import { MODE_LABEL, momentOf } from './reveal/revealCopy';
 import { useCourseDrills } from './useCourseDrills';
 import { useDrillLanguages } from './useDrillLanguages';
+import { usePracticeLanguage } from './usePracticeLanguage';
 
 const INPUT = 'rounded-lg border border-border-default bg-bg px-3 py-2 text-xs text-text-primary outline-hidden focus:border-accent focus:ring-2 focus:ring-accent-muted';
 
@@ -43,7 +44,7 @@ function Choice({ name, value, checked, disabled = false, onSelect, title, detai
 
 const MODES: readonly { id: DrillMode; title: string; detail: string }[] = [
   { id: 'practice', title: 'Practice', detail: 'Untimed. Take the time to find each issue and say why it matters.' },
-  { id: 'interview', title: 'Interview', detail: 'Timed, as in an interview: find the issue that matters most first, and say it clearly.' },
+  { id: 'interview', title: 'Timed', detail: 'Against the clock, as in an interview: find the issue that matters most first, and say it clearly.' },
 ];
 
 const READING = 'Reading the course’s lessons…';
@@ -81,7 +82,7 @@ function lessonText(lesson: DrillLessonDto, fits: boolean, misfit: string): stri
   return `${lesson.title} — ${standingText(lesson)}${lesson.current ? ', current lesson' : ''}${fits ? '' : ` (${misfit})`}`;
 }
 
-function outcomeText(attempt: CourseDrillAttemptDto): string {
+export function outcomeText(attempt: CourseDrillAttemptDto): string {
   switch (attempt.status) {
     case 'open':
       return 'Continue';
@@ -113,10 +114,16 @@ export function DrillChoose({ programId, options, onChange, onStart, onOpenAttem
   onStart: (patch: Partial<DrillOptions>) => void;
   onOpenAttempt: (attemptId: string) => void;
 }) {
-  const { view, error: viewError, reload: reloadView } = useCourseDrills(programId, options.language);
+  const profile = usePracticeLanguage(programId);
   const { languages, error, reload } = useDrillLanguages();
+  const defaultLanguage = profile.language !== null && languages?.includes(profile.language) ? profile.language : null;
+  const requested = options.language ?? defaultLanguage;
+  const { view, error: viewError, reload: reloadView } = useCourseDrills(
+    programId,
+    requested,
+    profile.settled && (languages !== null || error !== null),
+  );
 
-  // Computed effective material instead of mutating via useEffect
   const effectiveMaterial = view
     ? options.material === 'code' && !view.nextCode && view.nextPassage
       ? 'passage'
@@ -126,10 +133,9 @@ export function DrillChoose({ programId, options, onChange, onStart, onOpenAttem
     : options.material;
 
   const passage = effectiveMaterial === 'passage';
-  const language = options.language ?? view?.language ?? null;
+  const language = requested ?? view?.language ?? null;
   const next = view ? (passage ? view.nextPassage : view.nextCode) : null;
 
-  // Computed effective lessonId instead of mutating via useEffect
   const effectiveLessonId = (() => {
     if (!view || !options.lessonId) return null;
     const picked = view.modules.flatMap((module) => module.lessons).find((lesson) => lesson.lessonId === options.lessonId);

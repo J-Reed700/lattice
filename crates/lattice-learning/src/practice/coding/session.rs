@@ -24,7 +24,6 @@ use crate::practical_dto::{
 };
 use crate::practical_repository::{validate_learner_turn, LearningPracticalRepository};
 use crate::practical_runs::CodingRunStart;
-use crate::simulation_policy::TurnPolicy;
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
 
@@ -594,9 +593,14 @@ impl CodingSessions<'_> {
         self.view(&request.program_id, &request.session_id).await
     }
 
-    pub async fn due(&self, request: &PracticeDueRequestDto) -> Result<PracticeDueDto> {
+    /// `code_fits` is the course's fit, from `practice_fit::code_fits`.
+    pub async fn due(
+        &self,
+        request: &PracticeDueRequestDto,
+        code_fits: bool,
+    ) -> Result<PracticeDueDto> {
         self.repo
-            .practice_due(&request.program_id, self.clock.now())
+            .practice_due(&request.program_id, self.clock.now(), code_fits)
             .await
     }
 }

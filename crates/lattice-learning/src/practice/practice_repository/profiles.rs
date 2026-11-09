@@ -1,189 +1,117 @@
 //! Preparing for: course-level practice profiles.
 use super::*;
+use crate::recall::{study_repository::StudyRepository, study_service};
+use lattice_core::shared::persistence::Transactions;
+use sqlx::SqliteConnection;
 
-impl LearningPracticeRepository {
-    /// Reads a course's practice profile, returning the default empty profile if none exists yet.
-    pub async fn get_profile(&self, program_id: &str) -> Result<LearningPracticeProfileDto> {
-        uuid(program_id, "program")?;
-        let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
-            .bind(program_id)
-            .fetch_optional(&self.pool)
-            .await
-            .map_err(db)?;
-        if exists.is_none() {
-            return Err(AppError::NotFound("Learning program not found".into()));
-        }
-
-        let row = sqlx::query(
-            "SELECT details, language, interview_at, company, role, revision FROM learning_practice_profiles WHERE program_id=?"
-        )
+async fn require_program(connection: &mut SqliteConnection, program_id: &str) -> Result<()> {
+    let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
         .bind(program_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *connection)
         .await
         .map_err(db)?;
+    match exists {
+        Some(_) => Ok(()),
+        None => Err(AppError::NotFound("Learning program not found".into())),
+    }
+}
 
-        match row {
-            Some(r) => Ok(LearningPracticeProfileDto {
-                program_id: program_id.to_string(),
-                details: r.get("details"),
-                language: r.get("language"),
-                interview_at: r.get("interview_at"),
-                company: r.get("company"),
-                role: r.get("role"),
-                revision: r.get("revision"),
-            }),
-            None => Ok(LearningPracticeProfileDto {
-                program_id: program_id.to_string(),
-                details: String::new(),
-                language: None,
-                interview_at: None,
-                company: None,
-                role: None,
-                revision: 0,
-            }),
-        }
+impl LearningPracticeRepository {
+    /// A course's practice profile; the empty profile at revision 0 when none was saved.
+    pub async fn get_profile(&self, program_id: &str) -> Result<LearningPracticeProfileDto> {
+        uuid(program_id, "program")?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        require_program(&mut tx, program_id).await?;
+        let saved = profile_in(&mut tx, program_id).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(saved.unwrap_or_else(|| LearningPracticeProfileDto {
+            program_id: program_id.to_owned(),
+            details: String::new(),
+            language: None,
+            interview_at: None,
+            company: None,
+            role: None,
+            revision: 0,
+        }))
     }
 
-    /// Saves a course's practice profile, validating optimistic locking via expected_revision.
+    /// Saves a course's practice profile when `expected_revision` is its current revision. A changed interview date
+    /// becomes the target of the decks of the course's interviews, in the same transaction.
     pub async fn save_profile(
         &self,
         request: &SaveLearningPracticeProfileRequestDto,
     ) -> Result<LearningPracticeProfileDto> {
-        uuid(&request.program_id, "program")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        Self::writer_lock(&mut tx, &request.program_id).await?;
-
-        let exists: Option<i64> = sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=?")
-            .bind(&request.program_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
-        if exists.is_none() {
-            return Err(AppError::NotFound("Learning program not found".into()));
+        let program_id = request.program_id.as_str();
+        uuid(program_id, "program")?;
+        let decks = study_service::interview_deck_ids(&self.pool, program_id).await?;
+        let now = now();
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        Self::writer_lock(&mut tx, program_id).await?;
+        require_program(&mut tx, program_id).await?;
+        let current = profile_in(&mut tx, program_id).await?;
+        let current_revision = current.as_ref().map_or(0, |profile| profile.revision);
+        if request.expected_revision != current_revision {
+            return Err(AppError::Conflict(
+                "The practice profile changed since it was read.".into(),
+            ));
         }
-
-        let existing: Option<(i64, Option<i64>)> = sqlx::query_as(
-            "SELECT revision, interview_at FROM learning_practice_profiles WHERE program_id=?",
-        )
-        .bind(&request.program_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
-
-        let (current_revision, _old_interview_at) = match existing {
-            Some((rev, interview)) => (rev, interview),
-            None => (0, None),
-        };
-
-        if let Some(expected) = request.expected_revision {
-            if expected != current_revision {
-                return Err(AppError::Conflict(
-                    "Practice profile changed; reload and retry.".into(),
-                ));
+        let saved_date = current.as_ref().and_then(|profile| profile.interview_at);
+        if saved_date != request.interview_at {
+            study_service::validate_target(request.interview_at, now)?;
+            for deck_id in &decks {
+                StudyRepository::set_target_in(&mut tx, deck_id, request.interview_at, now).await?;
             }
         }
-
-        let next_revision = current_revision + 1;
-        let t = now();
-
+        let revision = current_revision + 1;
         sqlx::query(
-            "INSERT INTO learning_practice_profiles (program_id, details, language, interview_at, company, role, revision, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-             ON CONFLICT(program_id) DO UPDATE SET
-                details = excluded.details,
-                language = excluded.language,
-                interview_at = excluded.interview_at,
-                company = excluded.company,
-                role = excluded.role,
-                revision = excluded.revision,
-                updated_at = excluded.updated_at"
+            "INSERT INTO learning_practice_profiles(program_id,details,language,interview_at,company,role,revision,updated_at) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(program_id) DO UPDATE SET details=excluded.details,language=excluded.language,interview_at=excluded.interview_at,company=excluded.company,role=excluded.role,revision=excluded.revision,updated_at=excluded.updated_at",
         )
-        .bind(&request.program_id)
+        .bind(program_id)
         .bind(&request.details)
         .bind(&request.language)
         .bind(request.interview_at)
         .bind(&request.company)
         .bind(&request.role)
-        .bind(next_revision)
-        .bind(t)
+        .bind(revision)
+        .bind(now)
         .execute(&mut *tx)
         .await
         .map_err(db)?;
-
-        Self::update_interview_target_in_tx(&mut tx, &request.program_id, request.interview_at)
-            .await?;
-
         tx.commit().await.map_err(db)?;
-
         Ok(LearningPracticeProfileDto {
-            program_id: request.program_id.clone(),
+            program_id: program_id.to_owned(),
             details: request.details.clone(),
             language: request.language.clone(),
             interview_at: request.interview_at,
             company: request.company.clone(),
             role: request.role.clone(),
-            revision: next_revision,
+            revision,
         })
     }
+}
 
-    /// Internal helper to update target_at on associated interview study decks in a transaction.
-    async fn update_interview_target_in_tx(
-        tx: &mut Transaction<'_, Sqlite>,
-        program_id: &str,
-        target_at: Option<i64>,
-    ) -> Result<()> {
-        let activity_ids: Vec<String> = sqlx::query_scalar(
-            "SELECT id FROM learning_practical_activities WHERE program_id=? AND kind='interview'",
-        )
-        .bind(program_id)
-        .fetch_all(&mut **tx)
-        .await
-        .map_err(db)?;
-
-        for activity_id in activity_ids {
-            let deck_ids: Vec<String> =
-                sqlx::query_scalar("SELECT id FROM study_decks WHERE id LIKE ?")
-                    .bind(format!("%{activity_id}%"))
-                    .fetch_all(&mut **tx)
-                    .await
-                    .map_err(db)?;
-
-            for deck_id in deck_ids {
-                match target_at {
-                    Some(target) => {
-                        sqlx::query(
-                            "INSERT INTO study_deck_targets (deck_id, target_at) VALUES (?, ?)
-                             ON CONFLICT(deck_id) DO UPDATE SET target_at=excluded.target_at",
-                        )
-                        .bind(&deck_id)
-                        .bind(target)
-                        .execute(&mut **tx)
-                        .await
-                        .map_err(db)?;
-                    }
-                    None => {
-                        sqlx::query("DELETE FROM study_deck_targets WHERE deck_id=?")
-                            .bind(&deck_id)
-                            .execute(&mut **tx)
-                            .await
-                            .map_err(db)?;
-                    }
-                }
-            }
-        }
-        Ok(())
-    }
-
-    /// Updates interview targets associated with a course's interview date.
-    pub async fn update_interview_target(
-        &self,
-        program_id: &str,
-        target_at: Option<i64>,
-    ) -> Result<()> {
-        uuid(program_id, "program")?;
-        let mut tx = self.pool.begin().await.map_err(db)?;
-        Self::update_interview_target_in_tx(&mut tx, program_id, target_at).await?;
-        tx.commit().await.map_err(db)?;
-        Ok(())
-    }
+/// The saved profile of a course, if any.
+pub(crate) async fn profile_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<Option<LearningPracticeProfileDto>> {
+    let row = sqlx::query(
+        "SELECT details,language,interview_at,company,role,revision FROM learning_practice_profiles WHERE program_id=?",
+    )
+    .bind(program_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(db)?;
+    row.map(|row| {
+        Ok::<_, AppError>(LearningPracticeProfileDto {
+            program_id: program_id.to_owned(),
+            details: row.try_get("details").map_err(db)?,
+            language: row.try_get("language").map_err(db)?,
+            interview_at: row.try_get("interview_at").map_err(db)?,
+            company: row.try_get("company").map_err(db)?,
+            role: row.try_get("role").map_err(db)?,
+            revision: row.try_get("revision").map_err(db)?,
+        })
+    })
+    .transpose()
 }

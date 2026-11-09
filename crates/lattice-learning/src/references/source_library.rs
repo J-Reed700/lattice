@@ -37,6 +37,9 @@ const MAX_CHECKS_IN_WORKSPACE: i64 = 50;
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
+fn conflict(message: impl Into<String>) -> AppError {
+    AppError::Conflict(message.into())
+}
 fn normalized(text: &str) -> String {
     text.replace("\r\n", "\n")
         .replace('\r', "\n")

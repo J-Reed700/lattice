@@ -1,4 +1,7 @@
-import { CriteriaList, type CriterionItem } from '@/features/learning/practice/shared/CriteriaList';
+import { useRef } from 'react';
+
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
+import { CriteriaList, type CriterionView } from '@/features/learning/practice/shared/CriteriaList';
 import type { LearningPracticeSessionDto } from '@/lib/bindings';
 
 function dimensionName(value: string) {
@@ -43,38 +46,21 @@ export function RubricPanel({
   rubric: LearningPracticeSessionDto['rubric'];
   result: LearningPracticeSessionDto['result'];
 }) {
-  const criteriaItems: CriterionItem[] = rubric.map((criterion) => {
+  const criteria: CriterionView[] = rubric.map((criterion) => {
     const feedback = result?.criteria.find((item) => item.criterionId === criterion.id);
-    const state = feedback
-      ? feedback.score === null
-        ? 'insufficient_evidence'
-        : feedback.score >= feedback.maxPoints
-          ? 'met'
-          : feedback.score > 0
-            ? 'partial'
-            : 'missed'
-      : 'pending';
-
     return {
       id: criterion.id,
-      title: criterion.title,
+      title: `${criterion.title} · ${dimensionName(criterion.dimension)}`,
       description: criterion.description,
-      tag: dimensionName(criterion.dimension),
-      state,
-      points: feedback?.score ?? null,
       maxPoints: criterion.maxPoints,
-      observation: feedback?.observation ?? null,
-      quote: feedback?.evidenceQuote ?? null,
+      evidence: feedback?.evidenceQuote ? [{ kind: 'quote', text: feedback.evidenceQuote }] : [],
+      ...(feedback ? { points: feedback.score, feedback: feedback.observation } : {}),
     };
   });
 
   return (
     <div className="space-y-3">
-      <CriteriaList
-        title="Visible rubric"
-        subtitle="What the response considers"
-        items={criteriaItems}
-      />
+      <CriteriaList heading="Visible rubric" criteria={criteria} />
       {result && (
         <p className="rounded-lg bg-surface-sunken p-3 text-xs leading-5 text-text-secondary">
           {result.gradeStatus === 'uncertain'
@@ -128,9 +114,6 @@ export function ResultPanel({ result }: { result: NonNullable<LearningPracticeSe
     </section>
   );
 }
-
-import { useRef } from 'react';
-import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 
 export function ConfirmDialog({
   title,

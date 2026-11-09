@@ -343,7 +343,7 @@ pub async fn refresh_learning_source(
         .map_err(ApiError::from)?;
     if revision != request.expected_revision {
         return Err(ApiError::from(
-            lattice_core::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::Conflict(
                 "Source changed; reload and retry.".into(),
             ),
         ));

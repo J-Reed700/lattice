@@ -153,7 +153,9 @@ impl LearningPracticalRepository {
         let activity =
             Self::internal_activity(&mut tx, &request.program_id, &request.activity_id).await?;
         if activity.revision != request.expected_activity_revision {
-            return Err(invalid("Practical activity changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "Practical activity changed; reload and retry.".into(),
+            ));
         }
         if let Some(practice_id) = request.practice_session_id.as_deref() {
             let owned: Option<i64> = sqlx::query_scalar(
@@ -234,7 +236,9 @@ impl LearningPracticalRepository {
             return Err(invalid("Only active simulations accept turns."));
         }
         if session.get::<i64, _>("revision") != request.expected_revision {
-            return Err(invalid("Simulation changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "Simulation changed; reload and retry.".into(),
+            ));
         }
         let ordinal: i64 = sqlx::query_scalar(
             "SELECT coalesce(max(ordinal),-1)+1 FROM learning_simulation_turns WHERE session_id=?",
@@ -259,7 +263,9 @@ impl LearningPracticalRepository {
             .bind(timestamp).bind(&request.session_id).bind(&request.program_id)
             .bind(request.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() != 1 {
-            return Err(invalid("Simulation changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "Simulation changed; reload and retry.".into(),
+            ));
         }
         operation.record(&mut *tx, &reply_id).await?;
         tx.commit().await.map_err(db)?;
@@ -302,7 +308,9 @@ impl LearningPracticalRepository {
             return Err(invalid("Only active simulations can be submitted."));
         }
         if session.get::<i64, _>("revision") != request.expected_revision {
-            return Err(invalid("Simulation changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "Simulation changed; reload and retry.".into(),
+            ));
         }
         let learner_turns = sqlx::query("SELECT content FROM learning_simulation_turns WHERE session_id=? AND speaker='learner' ORDER BY ordinal")
             .bind(&request.session_id).fetch_all(&mut *tx).await.map_err(db)?;
@@ -330,7 +338,9 @@ impl LearningPracticalRepository {
             .bind(timestamp).bind(timestamp).bind(&request.session_id).bind(&request.program_id)
             .bind(request.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if updated.rows_affected() != 1 {
-            return Err(invalid("Simulation changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "Simulation changed; reload and retry.".into(),
+            ));
         }
         let quote = learner_turns.first().map(|row| {
             row.get::<String, _>("content")

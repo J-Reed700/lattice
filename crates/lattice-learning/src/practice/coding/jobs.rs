@@ -1,34 +1,93 @@
-//! Background jobs for coding sessions: building and proving a problem before it is shown.
-
-use async_trait::async_trait;
-use serde::Serialize;
-use sqlx::SqlitePool;
-use std::collections::BTreeMap;
+//! Background jobs for coding sessions: building and proving a problem before it is shown, then saving it as an
+//! activity whose problem file only the app reads.
 
 use crate::drills::runner::runner_for;
-use crate::embedded_runtime::BuiltinRuntimes;
-use crate::practice::coding::harness::{CaseHarness, PythonHarness, DEFAULT_NONCE};
-use crate::practice::coding::problem::ProblemSpec;
+use crate::embedded_runtime::{BuiltinRuntimes, LearningBuiltinRuntime};
+use crate::persistence::{hash, now};
+use crate::practical_generation::{
+    GeneratedPracticalActivity, GeneratedPracticalFile, PracticalFileRole,
+};
+use crate::practice::coding::dto::StartCodingBuildRequestDto;
+use crate::practice::coding::harness::{harness_for, new_nonce, CaseHarness};
+use crate::practice::coding::patterns::targets_in;
+use crate::practice::coding::problem::{
+    Problem, ProblemDifficulty, PROBLEM_FILE_PATH, SOLUTION_PATH,
+};
 use crate::practice::coding::source::{
-    BuildSteps, GeneratedProblems, ProblemRequest, ProblemSource,
+    BuildSteps, GeneratedProblems, LessonBrief, ProblemRequest, ProblemSource, STEP_SAVING,
 };
+use crate::practice::practical_dto::{
+    GenerateLearningPracticalActivityRequestDto, LearningPracticalActivityKind,
+};
+use crate::practice::practical_repository::LearningPracticalRepository;
+use crate::practice_repository::profile_in;
 use crate::quiz_bank_jobs::ModelLoader;
+use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{
-    Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, RecoveryPolicy,
+    Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobStore, NewJob, RecoveryPolicy,
 };
+use sqlx::SqlitePool;
+use uuid::Uuid;
+
+#[cfg(test)]
+mod tests;
 
 /// The job identifier for coding problem builds.
 pub const CODING_BUILD: &str = "learning.coding_build";
 
-/// The number of progress steps in a coding problem build.
+/// The steps of a coding problem build, for its progress: writing, proving and saving.
 pub const CODING_BUILD_STEPS: u32 = 3;
 
-/// Job configuration for coding problem builds: exclusive per subject and requeued on failure.
+/// How many patterns an easy problem calls for. An easy problem is one idea; a harder one combines two.
+const EASY_PATTERNS: usize = 1;
+
+/// How many patterns a harder problem calls for.
+const HARDER_PATTERNS: usize = 2;
+
+/// One build per program at a time; a running build starts again after a restart, and a disconnected model defers it
+/// rather than failing it.
 pub fn coding_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
         .exclusive_per_subject()
         .backoff(Backoff::default())
+}
+
+/// Queues a build of a problem for a program and returns its job id. The same operation id is the same job.
+pub async fn queue_coding_build(
+    pool: &SqlitePool,
+    request: &StartCodingBuildRequestDto,
+) -> Result<String> {
+    let requested = serde_json::to_value(request)
+        .map_err(|error| AppError::Serialization(error.to_string()))?;
+    let payload_hash = hash(&requested)?;
+    let mut transaction = pool
+        .begin_write()
+        .await
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    let admitted = JobStore::submit_in(
+        &mut transaction,
+        &NewJob {
+            kind: CODING_BUILD.into(),
+            subject_id: Some(request.program_id.clone()),
+            operation_id: Uuid::new_v5(
+                &Uuid::NAMESPACE_OID,
+                format!("{CODING_BUILD}:{}", request.operation_id).as_bytes(),
+            )
+            .to_string(),
+            payload_hash,
+            requested,
+            progress_total: CODING_BUILD_STEPS,
+            message: "Waiting to build a problem".into(),
+        },
+    )
+    .await?;
+    transaction
+        .commit()
+        .await
+        .map_err(|error| AppError::Database(error.to_string()))?;
+    Ok(admitted.id)
 }
 
 /// Bridges `BuildSteps` to `JobContext::progress`.
@@ -43,13 +102,13 @@ impl<'a> JobSteps<'a> {
 }
 
 #[async_trait]
-impl<'a> BuildSteps for JobSteps<'a> {
-    async fn step(&self, index: u32, message: &str) -> Result<bool> {
-        self.context.progress(index, message, None).await
+impl BuildSteps for JobSteps<'_> {
+    async fn step(&self, current: u32, message: &str) -> Result<bool> {
+        self.context.progress(current, message, None).await
     }
 }
 
-/// Worker that executes coding problem build jobs.
+/// Builds coding problems, on the Learning model, pinned for the whole build.
 #[derive(Clone)]
 pub struct CodingBuildWorker {
     pub pool: SqlitePool,
@@ -67,190 +126,196 @@ impl CodingBuildWorker {
     }
 }
 
-#[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
-struct StoredProblemJson<'a> {
-    #[serde(flatten)]
-    spec: &'a ProblemSpec,
-    #[serde(default)]
-    reference_ms: &'a BTreeMap<String, u64>,
+/// What a proven problem is saved as.
+pub(crate) struct ProblemSave<'a> {
+    pub job_id: &'a str,
+    pub program_id: &'a str,
+    pub lesson_id: &'a str,
+    pub focus: Option<&'a str>,
+    pub language: &'a str,
+    pub model: &'a str,
 }
 
-struct FileToInsert {
-    path: String,
-    role: String,
-    content: String,
-    editable: i64,
+/// Saves a proven problem as a coding activity and returns the activity id. The ids come from the job's, so a build
+/// that runs again after the save committed finds its own activity and saves nothing twice.
+pub(crate) async fn save_problem(
+    pool: &SqlitePool,
+    save: &ProblemSave<'_>,
+    problem: &Problem,
+    harness: &dyn CaseHarness,
+) -> Result<String> {
+    let derived = |what: &str| {
+        Uuid::new_v5(
+            &Uuid::NAMESPACE_OID,
+            format!("{CODING_BUILD}:{what}:{}", save.job_id).as_bytes(),
+        )
+        .to_string()
+    };
+    let activity_id = derived("activity");
+    let repository = LearningPracticalRepository::new(pool.clone());
+    let revision = repository.program_revision(save.program_id).await?;
+    let stored = serde_json::to_string(problem)
+        .map_err(|error| AppError::Serialization(error.to_string()))?;
+    let mut files = vec![
+        GeneratedPracticalFile {
+            path: SOLUTION_PATH.into(),
+            role: PracticalFileRole::Starter,
+            content: problem.spec.starter.clone(),
+            editable: true,
+        },
+        GeneratedPracticalFile {
+            path: PROBLEM_FILE_PATH.into(),
+            role: PracticalFileRole::Check,
+            content: stored,
+            editable: false,
+        },
+    ];
+    for file in harness.evaluator(&problem.spec, &problem.cases, &new_nonce())? {
+        files.push(GeneratedPracticalFile {
+            path: file.path,
+            role: PracticalFileRole::Check,
+            content: file.content,
+            editable: false,
+        });
+    }
+    let request = GenerateLearningPracticalActivityRequestDto {
+        operation_id: derived("save"),
+        activity_id: activity_id.clone(),
+        program_id: save.program_id.to_owned(),
+        lesson_id: save.lesson_id.to_owned(),
+        expected_program_revision: revision,
+        kind: LearningPracticalActivityKind::CodingProblem,
+        learner_brief: save.focus.unwrap_or_default().to_owned(),
+        practice_mode: crate::dto::LearningPracticeMode::Practice,
+        allowed_aids: Vec::new(),
+        runtime_profile_id: None,
+        builtin_runtime: Some(LearningBuiltinRuntime::parse(save.language)?),
+        interview_target: None,
+    };
+    let activity = GeneratedPracticalActivity {
+        title: problem.spec.title.clone(),
+        brief: problem.spec.statement.clone(),
+        source_version_ids: Vec::new(),
+        rubric: Vec::new(),
+        files,
+    };
+    repository
+        .save_generated_activity(&request, &activity, save.model, save.job_id)
+        .await?;
+    Ok(activity_id)
 }
 
 #[async_trait]
 impl JobHandler for CodingBuildWorker {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
-        let request: ProblemRequest = serde_json::from_value(context.job().requested.clone())
-            .map_err(|e| {
-                AppError::InvalidInput(format!("Invalid coding build job request: {e}"))
+        let request: StartCodingBuildRequestDto =
+            serde_json::from_value(context.job().requested.clone()).map_err(|error| {
+                AppError::InvalidInput(format!("Invalid coding build job request: {error}"))
             })?;
+        let repository = LearningPracticalRepository::new(self.pool.clone());
+        let lesson = repository
+            .build_lesson(&request.program_id, request.lesson_id.as_deref())
+            .await?;
 
-        let runner = runner_for(&request.language, &self.runtimes).ok_or_else(|| {
+        let mut transaction = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+        let profile = profile_in(&mut transaction, &request.program_id).await?;
+        let language = Some(request.language.trim())
+            .filter(|language| !language.is_empty())
+            .map(str::to_owned)
+            .or_else(|| {
+                profile
+                    .as_ref()
+                    .and_then(|profile| profile.language.clone())
+            })
+            .ok_or_else(|| {
+                AppError::InvalidInput(
+                    "Choose a language for the problem; the practice profile names none.".into(),
+                )
+            })?;
+        let wanted = if request.difficulty == ProblemDifficulty::Easy {
+            EASY_PATTERNS
+        } else {
+            HARDER_PATTERNS
+        };
+        let patterns: Vec<String> =
+            targets_in(&mut transaction, &request.program_id, &language, now())
+                .await?
+                .into_iter()
+                .take(wanted)
+                .collect();
+        transaction
+            .commit()
+            .await
+            .map_err(|error| AppError::Database(error.to_string()))?;
+
+        let runner = runner_for(&language, &self.runtimes).ok_or_else(|| {
+            AppError::ServiceNotAvailable(format!("No runtime is available to run {language}."))
+        })?;
+        let harness = harness_for(&language).ok_or_else(|| {
             AppError::InvalidInput(format!(
-                "No runner available for language {}",
-                request.language
+                "Coding problems are not written in {language} yet."
             ))
         })?;
-
         let Some(pin) = context.until_cancelled((self.load_llm)()).await else {
             return Ok(JobOutcome::Stopped);
         };
         let pin = pin?;
         let llm = pin.llm.as_ref();
 
-        let harness = PythonHarness;
-        let steps = JobSteps::new(context);
-        let generator = GeneratedProblems::new(llm, runner.as_ref(), &harness);
-        let problem = generator
-            .problem(&request, &steps, context.cancellation().clone())
-            .await?;
-
-        let activity_id = uuid::Uuid::new_v4().to_string();
-
-        let lesson_id = match &request.lesson_id {
-            Some(id) => id.clone(),
-            None => {
-                let current: Option<String> = sqlx::query_scalar(
-                    "SELECT current_lesson_id FROM learning_programs WHERE id=?",
-                )
-                .bind(&request.program_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| AppError::Database(e.to_string()))?
-                .flatten();
-
-                match current {
-                    Some(id) => id,
-                    None => {
-                        let first_lesson: Option<String> = sqlx::query_scalar(
-                            "SELECT id FROM learning_lessons WHERE program_id=? ORDER BY ordinal LIMIT 1",
-                        )
-                        .bind(&request.program_id)
-                        .fetch_optional(&self.pool)
-                        .await
-                        .map_err(|e| AppError::Database(e.to_string()))?;
-
-                        first_lesson.unwrap_or_default()
-                    }
-                }
-            }
+        let problem_request = ProblemRequest {
+            program_id: request.program_id.clone(),
+            lesson: Some(LessonBrief {
+                title: lesson.title.clone(),
+                objective: lesson.objective.clone(),
+            }),
+            task: request.task,
+            language: language.clone(),
+            difficulty: request.difficulty,
+            patterns,
+            focus: request.focus.clone(),
+            details: profile.map(|profile| profile.details),
         };
-
-        let mut tx = self
-            .pool
-            .begin()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-        let timestamp = crate::persistence::now();
-        let generator_model = llm.model_name();
-
-        sqlx::query(
-            "INSERT INTO learning_practical_activities(id,program_id,lesson_id,predecessor_id,kind,title,brief,status,practice_mode,allowed_aids_json,outcome_ids_json,source_version_ids_json,rubric_json,runtime_kind,runtime_profile_id,runtime_engine,runtime_image_id,runtime_command_json,runtime_limits_json,generator_model,revision,created_at,updated_at,builtin_runtime,builtin_runtime_version) VALUES(?,?,?,NULL,'coding_problem',?,?,'ready','practice','[]','[]','[]','[]','none',NULL,NULL,NULL,NULL,NULL,?,0,?,?,'python','3.14')"
-        )
-        .bind(&activity_id)
-        .bind(&request.program_id)
-        .bind(&lesson_id)
-        .bind(problem.spec.title.trim())
-        .bind(problem.spec.statement.trim())
-        .bind(generator_model)
-        .bind(timestamp)
-        .bind(timestamp)
-        .execute(&mut *tx)
-        .await
-        .map_err(|e| AppError::Database(e.to_string()))?;
-
-        let stored_json = serde_json::to_string(&StoredProblemJson {
-            spec: &problem.spec,
-            reference_ms: &problem.reference_ms,
-        })
-        .map_err(|e| AppError::Serialization(e.to_string()))?;
-
-        let misreadings_json = serde_json::to_string(&problem.misreadings)
-            .map_err(|e| AppError::Serialization(e.to_string()))?;
-
-        let evaluator_files = harness.evaluator(&problem.spec, &problem.cases, DEFAULT_NONCE);
-
-        let mut files_to_insert = vec![
-            FileToInsert {
-                path: "solution.py".into(),
-                role: "starter".into(),
-                content: problem.spec.starter.clone(),
-                editable: 1,
-            },
-            FileToInsert {
-                path: "problem.json".into(),
-                role: "reference".into(),
-                content: stored_json,
-                editable: 0,
-            },
-        ];
-
-        for eval_file in evaluator_files {
-            files_to_insert.push(FileToInsert {
-                path: eval_file.path,
-                role: "check".into(),
-                content: eval_file.content,
-                editable: 0,
-            });
-        }
-
-        files_to_insert.push(FileToInsert {
-            path: "misreadings.json".into(),
-            role: "check".into(),
-            content: misreadings_json,
-            editable: 0,
-        });
-
-        files_to_insert.push(FileToInsert {
-            path: "reference.py".into(),
-            role: "solution".into(),
-            content: problem.reference.clone(),
-            editable: 0,
-        });
-
-        for (ordinal, file) in files_to_insert.iter().enumerate() {
-            let hash = crate::persistence::hash_text(&file.content);
-            sqlx::query(
-                "INSERT INTO learning_practical_files(activity_id, ordinal, path, role, content, content_sha256, editable) VALUES(?, ?, ?, ?, ?, ?, ?)"
+        let source = GeneratedProblems {
+            llm,
+            runner: runner.as_ref(),
+            harness: harness.as_ref(),
+        };
+        let problem = match source
+            .problem(
+                &problem_request,
+                &JobSteps::new(context),
+                context.cancellation().clone(),
             )
-            .bind(&activity_id)
-            .bind(ordinal as i64)
-            .bind(&file.path)
-            .bind(&file.role)
-            .bind(&file.content)
-            .bind(hash)
-            .bind(file.editable)
-            .execute(&mut *tx)
             .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
+        {
+            Ok(problem) => problem,
+            Err(_) if context.cancellation().is_cancelled() => return Ok(JobOutcome::Stopped),
+            Err(error) => return Err(error),
+        };
+        if !context.progress(2, STEP_SAVING, None).await? {
+            return Ok(JobOutcome::Stopped);
         }
-
-        tx.commit()
-            .await
-            .map_err(|e| AppError::Database(e.to_string()))?;
-
+        let activity_id = save_problem(
+            &self.pool,
+            &ProblemSave {
+                job_id: &context.job().id,
+                program_id: &request.program_id,
+                lesson_id: &lesson.id,
+                focus: request.focus.as_deref(),
+                language: &language,
+                model: llm.model_name(),
+            },
+            &problem,
+            harness.as_ref(),
+        )
+        .await?;
         Ok(JobOutcome::Completed {
-            result_ref: Some(activity_id),
-            message: "Coding problem is ready".into(),
+            result_ref: activity_id,
+            message: "The problem is ready".into(),
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_coding_job_config() {
-        let config = coding_job_config();
-        assert_eq!(CODING_BUILD, "learning.coding_build");
-        assert_eq!(CODING_BUILD_STEPS, 3);
-        assert!(matches!(config.recovery, RecoveryPolicy::Requeue));
     }
 }

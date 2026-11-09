@@ -309,11 +309,17 @@ impl LearningPracticalRepository {
         Ok(worked == 1)
     }
 
-    /// What the Practice page counts as due: coding patterns and the drills'.
-    pub async fn practice_due(&self, program_id: &str, now: i64) -> Result<PracticeDueDto> {
+    /// What the Practice page counts as due: coding patterns and the drills'. Coding items are listed only when
+    /// `code_fits`, the course's fit as `practice_fit` decided it.
+    pub async fn practice_due(
+        &self,
+        program_id: &str,
+        now: i64,
+        code_fits: bool,
+    ) -> Result<PracticeDueDto> {
         uuid(program_id, "program")?;
         let mut tx = self.pool.begin_read().await.map_err(db)?;
-        let due = patterns::practice_due_in(&mut tx, program_id, now).await?;
+        let due = patterns::practice_due_in(&mut tx, program_id, now, code_fits).await?;
         tx.commit().await.map_err(db)?;
         Ok(due)
     }

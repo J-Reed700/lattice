@@ -71,7 +71,7 @@ pub(super) fn parse_row(row: &SqliteRow) -> Result<CodingRow> {
             .ok_or_else(|| AppError::Database("Invalid coding stage".into()))?,
         budget_seconds: row
             .get::<Option<i64>, _>("budget_seconds")
-            .map(|seconds| to_u32(seconds))
+            .map(to_u32)
             .transpose()?,
         active_ms: u64::try_from(row.get::<i64, _>("active_ms"))
             .map_err(|_| AppError::Database("A stored duration is negative.".into()))?,
@@ -554,7 +554,7 @@ impl LearningPracticalRepository {
             && row
                 .pending_cue
                 .as_ref()
-                .map_or(true, |pending| cue.outranks(pending));
+                .is_none_or(|pending| cue.outranks(pending));
         if replaces {
             sqlx::query("UPDATE learning_coding_sessions SET pending_cue_json=? WHERE id=?")
                 .bind(json(cue)?)

@@ -1,7 +1,7 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Beaker, CheckCircle2, CircleHelp, LoaderCircle, Plus } from "lucide-react";
+import { Beaker, CircleHelp, LoaderCircle, Plus } from "lucide-react";
 
 import { useApi } from '@/contexts/ApiContext';
 import { invalidateLearningSourceDependents } from "@/features/learning/api/learningInvalidation";
@@ -11,35 +11,48 @@ import { ActivityComposer } from "@/features/learning/practice/practical/Activit
 import { ActivityShelf } from "@/features/learning/practice/practical/ActivityShelf";
 import { ArtifactEditor } from "@/features/learning/practice/practical/ArtifactEditor";
 import { InterviewDrill } from "@/features/learning/practice/practical/InterviewDrill";
-import {
-  errorText,
-  isSimulationKind,
-  unwrap,
-  uuid,
-} from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
+import { isSimulationKind } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
 import { RunHistory } from "@/features/learning/practice/practical/RunHistory";
 import { RunOutput } from "@/features/learning/practice/practical/RunOutput";
 import { RuntimeSetupPanel } from "@/features/learning/practice/practical/RuntimeSetupPanel";
 import { SimulationPanel } from "@/features/learning/practice/practical/SimulationPanel";
 import { useLearningLabDraft } from "@/features/learning/practice/practical/useLearningLabDraft";
 import { usePracticalWorkspace } from "@/features/learning/practice/practical/usePracticalWorkspace";
+import { newId, unwrap } from "@/lib/api";
 import type {
   GenerateLearningPracticalActivityRequestDto,
   LearningLabFile,
   LearningSimulationSessionDto,
   StartLearningPracticalRunRequestDto,
+  LearningInterviewRoundKind,
   LearningLessonDto,
+  LearningPracticalActivityKind,
   LearningProgramDto,
 } from "@/lib/bindings";
+import { getErrorMessage } from "@/lib/errorUtils";
+
+/** Asks the workbench to open the composer ready to go; a new `id` asks again. */
+export type ComposerRequest = {
+  id: string;
+  kind: LearningPracticalActivityKind;
+  brief?: string;
+  interview?: {
+    companyName: string | null;
+    targetRole: string | null;
+    roundKind: LearningInterviewRoundKind;
+  };
+};
 
 export function PracticalWorkbenchPanel({
   program,
   lesson,
-  projectRequest,
+  activityId = null,
+  composer = null,
 }: {
   program: LearningProgramDto;
   lesson: LearningLessonDto | null;
-  projectRequest?: { id: string; brief: string } | null;
+  activityId?: string | null;
+  composer?: ComposerRequest | null;
 }) {
   const api = useApi();
   const programId = program.summary.id;
@@ -62,14 +75,16 @@ export function PracticalWorkbenchPanel({
       }
     },
   });
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(activityId);
   const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
-  const [composerOpen, setComposerOpen] = useState(false);
-  const [projectBrief, setProjectBrief] = useState<string | null>(null);
-  const [feedbackSubmitted, setFeedbackSubmitted] = useState(false);
-  useEffect(() => {
-    if (projectRequest) { setProjectBrief(projectRequest.brief); setComposerOpen(true); }
-  }, [projectRequest]);
+  const [composerOpened, setComposerOpened] = useState(false);
+  const [dismissedComposerId, setDismissedComposerId] = useState<string | null>(null);
+  const openRequest = composer && composer.id !== dismissedComposerId ? composer : null;
+  const composerOpen = composerOpened || openRequest !== null;
+  const setComposerOpen = (open: boolean) => {
+    setComposerOpened(open);
+    if (!open && composer) setDismissedComposerId(composer.id);
+  };
   const newActivityRef = useRef<HTMLButtonElement>(null);
   const [runtimeSetupRequest, setRuntimeSetupRequest] = useState(0);
   const [selectedFilePath, setSelectedFilePath] = useState<string | null>(null);
@@ -77,6 +92,15 @@ export function PracticalWorkbenchPanel({
   const startingRunRef = useRef(false);
   const [simulation, setSimulation] =
     useState<LearningSimulationSessionDto | { newAttemptFor: string } | null>(null);
+  const [seenActivityId, setSeenActivityId] = useState(activityId);
+  if (activityId !== seenActivityId) {
+    setSeenActivityId(activityId);
+    if (activityId) {
+      setSelectedId(activityId);
+      setSelectedRunId(null);
+      setSimulation(null);
+    }
+  }
   const [runError, setRunError] = useState<string | null>(null);
   const runRequestRef = useRef<{
     fingerprint: string;
@@ -176,18 +200,18 @@ export function PracticalWorkbenchPanel({
         role="status"
         className="rounded-2xl border border-border-default bg-surface p-8 text-sm text-text-muted"
       >
-        <LoaderCircle className="mr-2 inline animate-spin text-accent" size={16} />
-        Loading session workspace…
+        <LoaderCircle className="mr-2 inline animate-spin text-accent" size={16} aria-hidden="true" />
+        Loading practical workspace…
       </div>
     );
   if (query.isError || !workspace)
     return (
       <section className="rounded-2xl border border-border-default bg-surface p-6 shadow-xs">
         <h3 className="font-serif text-xl text-text-primary">
-          Sessions unavailable
+          Labs &amp; simulations unavailable
         </h3>
         <p role="alert" className="mt-2 text-sm text-danger-fg">
-          {errorText(query.error)}
+          {getErrorMessage(query.error)}
         </p>
         <button
           type="button"
@@ -218,8 +242,8 @@ export function PracticalWorkbenchPanel({
           : null;
       if (!request) {
         request = {
-          operationId: uuid(),
-          runId: uuid(),
+          operationId: newId(),
+          runId: newId(),
           programId,
           activityId: activeActivity.id,
           expectedActivityRevision: activeActivity.revision,
@@ -231,16 +255,11 @@ export function PracticalWorkbenchPanel({
       await runMutation.mutateAsync(request);
       runRequestRef.current = null;
     } catch (cause) {
-      setRunError(errorText(cause));
+      setRunError(getErrorMessage(cause));
     } finally {
       startingRunRef.current = false;
       setStartingRun(false);
     }
-  };
-
-  const handleGetFeedback = async () => {
-    await draft.flush();
-    setFeedbackSubmitted(true);
   };
 
   const output = selectedRun;
@@ -251,40 +270,39 @@ export function PracticalWorkbenchPanel({
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2 text-xs font-semibold uppercase tracking-[.16em] text-accent">
-              <Beaker size={14} /> Practice sessions
+              <Beaker size={14} aria-hidden="true" /> Labs &amp; simulations
             </div>
             <h2 className="mt-1 font-serif text-2xl text-text-primary">
               Work through a real brief
             </h2>
             <p className="mt-2 max-w-2xl text-sm leading-6 text-text-secondary">
-              Choose a task, work through the brief, and learn from checks and debrief feedback.
+              Choose a task, work through the brief, and learn from the results.
             </p>
           </div>
           <button
             ref={newActivityRef}
             type="button"
-            aria-label="New activity"
             disabled={lesson?.preparation !== "ready" || generate.isPending}
             onClick={() => setComposerOpen(true)}
             className="inline-flex min-h-[44px] cursor-pointer items-center gap-2 rounded-full bg-accent px-4 py-2 text-xs font-semibold text-accent-fg transition-opacity hover:opacity-90 disabled:opacity-45"
           >
-            <Plus size={14} /> New session
+            <Plus size={14} aria-hidden="true" /> New activity
           </button>
         </div>
       </header>
 
-      {/* Generation progress and error feedback */}
+      {/* The dialog can close while an activity is prepared; say what is happening, and what failed. */}
       {!composerOpen && generate.isPending && (
         <p role="status" className="flex items-center gap-2 rounded-xl border border-border-default bg-surface px-4 py-3 text-sm text-text-secondary">
           <LoaderCircle size={15} className="shrink-0 animate-spin text-accent" />
           {generate.variables?.kind === "interview"
-            ? "Preparing your interview session… Research and question planning can take several minutes."
-            : "Preparing your session…"}
+            ? "Preparing your interview… Company research and question planning can take several minutes."
+            : "Preparing your activity…"}
         </p>
       )}
       {!composerOpen && generate.isError && (
         <p role="alert" className="rounded-xl bg-danger-muted px-4 py-3 text-sm text-danger-fg">
-          The activity could not be prepared: {errorText(generate.error)}
+          The activity could not be prepared: {getErrorMessage(generate.error)}
         </p>
       )}
 
@@ -307,18 +325,16 @@ export function PracticalWorkbenchPanel({
             setSelectedFilePath(null);
             setSelectedRunId(null);
             setSimulation(null);
-            setFeedbackSubmitted(false);
           }}
         />
 
-        {/* Replaced <main> with <div> to preserve single <main> landmark per P3-16 */}
         <div className="min-w-0 space-y-4">
           {!activeActivity ? (
             <section className="grid min-h-64 place-items-center rounded-2xl border border-dashed border-border-default bg-surface p-7 text-center">
               <div>
                 <CircleHelp className="mx-auto h-7 w-7 text-text-muted" />
                 <h3 className="mt-3 font-serif text-xl text-text-primary">
-                  Your workspace starts with a session
+                  Your workspace starts with an activity
                 </h3>
                 <p className="mt-2 max-w-sm text-sm leading-6 text-text-secondary">
                   Create a brief from a ready lesson to open its artifact editor
@@ -331,52 +347,20 @@ export function PracticalWorkbenchPanel({
               <ActivityBrief activeActivity={activeActivity} />
 
               {activeActivity.files.length > 0 && (
-                <div className="space-y-4">
-                  <ArtifactEditor
-                    activeActivity={activeActivity}
-                    draft={draft}
-                    editorFiles={editorFiles}
-                    selectedFile={selectedFile}
-                    setSelectedFilePath={setSelectedFilePath}
-                    canRunActivity={canRunActivity}
-                    startingRun={startingRun}
-                    runPending={runMutation.isPending}
-                    activeRun={activeRun}
-                    beginRun={beginRun}
-                    builtinRuntime={builtinRuntime}
-                    capability={capability}
-                  />
-
-                  {/* P1-2: Activities without runtime get feedback button */}
-                  {!canRunActivity && (
-                    <div className="flex flex-wrap items-center justify-between gap-3 rounded-xl border border-border-default bg-surface p-4 shadow-xs">
-                      <div>
-                        <div className="text-sm font-semibold text-text-primary">
-                          {feedbackSubmitted ? "Draft submitted" : "Ready for feedback"}
-                        </div>
-                        <p className="text-xs text-text-secondary">
-                          {feedbackSubmitted
-                            ? "Your draft has been saved and submitted for debrief feedback."
-                            : "Submit your written work to receive feedback against the rubric."}
-                        </p>
-                      </div>
-                      <button
-                        type="button"
-                        onClick={() => void handleGetFeedback()}
-                        className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-lg bg-accent px-4 text-sm font-semibold text-accent-fg transition-opacity hover:opacity-90"
-                      >
-                        {feedbackSubmitted ? (
-                          <>
-                            <CheckCircle2 size={16} />
-                            <span>Submitted</span>
-                          </>
-                        ) : (
-                          <span>Get feedback</span>
-                        )}
-                      </button>
-                    </div>
-                  )}
-                </div>
+                <ArtifactEditor
+                  activeActivity={activeActivity}
+                  draft={draft}
+                  editorFiles={editorFiles}
+                  selectedFile={selectedFile}
+                  setSelectedFilePath={setSelectedFilePath}
+                  canRunActivity={canRunActivity}
+                  startingRun={startingRun}
+                  runPending={runMutation.isPending}
+                  activeRun={activeRun}
+                  beginRun={beginRun}
+                  builtinRuntime={builtinRuntime}
+                  capability={capability}
+                />
               )}
 
               {runError && (
@@ -387,7 +371,6 @@ export function PracticalWorkbenchPanel({
                   {runError}{" "}
                   <button
                     type="button"
-                    aria-label="Retry run"
                     onClick={() => void beginRun()}
                     className="ml-2 font-semibold underline"
                   >
@@ -404,7 +387,7 @@ export function PracticalWorkbenchPanel({
                       cancelRequestRef.current?.runId === output.id
                         ? cancelRequestRef.current
                         : {
-                            operationId: uuid(),
+                            operationId: newId(),
                             programId,
                             runId: output.id,
                           };
@@ -418,7 +401,7 @@ export function PracticalWorkbenchPanel({
                   role="alert"
                   className="rounded-lg bg-danger-muted p-3 text-xs text-danger-fg"
                 >
-                  {errorText(cancelRun.error)}{" "}
+                  {getErrorMessage(cancelRun.error)}{" "}
                   <button
                     type="button"
                     onClick={() => {
@@ -461,14 +444,14 @@ export function PracticalWorkbenchPanel({
         <ActivityComposer
           program={program}
           lesson={lesson}
-          initialBrief={projectBrief ?? undefined}
-          initialKind={projectBrief ? "project" : undefined}
+          initialBrief={openRequest?.brief}
+          initialKind={openRequest?.kind}
+          initialInterview={openRequest?.interview}
           profiles={profiles}
           builtinRuntimes={builtinRuntimes}
           returnFocusRef={newActivityRef}
           onClose={() => {
             setComposerOpen(false);
-            setProjectBrief(null);
             // An error the dialog already showed need not linger below it.
             if (!generate.isPending) generate.reset();
           }}

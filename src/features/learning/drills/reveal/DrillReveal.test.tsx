@@ -121,7 +121,7 @@ describe('DrillReveal, a graded review', () => {
 
     it.each<[AttemptMode, string]>([
       ['practice', 'Result · Python · Practice'],
-      ['interview', 'Result · Python · Interview'],
+      ['interview', 'Result · Python · Timed'],
       ['rapid', 'Result · Python · Rapid'],
     ])('says the language and the mode it was practised in: %s', (mode, eyebrow) => {
       setup(gradedResult({ mode }));
@@ -152,17 +152,38 @@ describe('DrillReveal, a graded review', () => {
     });
 
     it.each([
-      ['Wrong operator or comparison', 'Found', 'Your comment names the operator.'],
-      [
-        'Stale state',
-        'Half found',
-        'Your comment is on the right line but is about speed, not about hits that never expire.',
-      ],
-      ['Magic number', 'Missed', 'No comment mentions the literals.'],
-    ])('shows %s as %s with the grader’s reason', (name, label, reason) => {
+      ['Wrong operator or comparison', 'Your comment names the operator.'],
+      ['Stale state', 'Your comment is on the right line but is about speed, not about hits that never expire.'],
+      ['Magic number', 'No comment mentions the literals.'],
+    ])('shows the grader’s reason for %s', (name, reason) => {
       setup();
-      expect(within(card(name)).getByText(label)).toBeInTheDocument();
       expect(within(card(name)).getByText(reason)).toBeInTheDocument();
+    });
+
+    it('lists how each planted issue went as criteria, in the key’s words', () => {
+      setup();
+      const outcomes = region('How each issue went');
+      const row = (title: string) => within(outcomes).getByText(title).closest('li') as HTMLElement;
+      expect(within(row('Wrong operator or comparison')).getByText('Found')).toBeInTheDocument();
+      expect(within(row('Stale state')).getByText('Half found')).toBeInTheDocument();
+      expect(within(row('Magic number')).getByText('Missed')).toBeInTheDocument();
+    });
+
+    it('gives no points for an issue: its row is the word and nothing numbered', () => {
+      setup();
+      const outcomes = region('How each issue went');
+      for (const row of within(outcomes).getAllByRole('listitem')) {
+        expect(row.textContent).not.toMatch(/\d+\s*(of|\/)\s*\d+/);
+      }
+    });
+
+    it('no longer puts the outcome badge on the issue card', () => {
+      setup();
+      for (const name of ['Wrong operator or comparison', 'Stale state', 'Magic number']) {
+        for (const word of ['Found', 'Half found', 'Missed']) {
+          expect(within(card(name)).queryByText(word)).toBeNull();
+        }
+      }
     });
 
     it('shows each issue’s severity, its lines, what happens and how to say it', () => {

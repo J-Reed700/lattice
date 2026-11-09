@@ -38,6 +38,11 @@ export function ArtifactEditor({
   builtinRuntime: LearningBuiltinRuntimeCapability | undefined;
   capability: LearningLabRuntimeCapability | undefined;
 }) {
+  const isEdited = (file: LearningLabFile) => {
+    const starter = activeActivity.files.find((candidate) => candidate.path === file.path);
+    return starter !== undefined && starter.content !== file.content;
+  };
+
   const runDisabledReason = !canRunActivity
     ? activeActivity.runtimeKind === 'none'
       ? 'This activity has no execution environment'
@@ -62,7 +67,7 @@ export function ArtifactEditor({
           </h3>
         </div>
 
-        <div className="flex flex-wrap items-center gap-3">
+        <div className="space-y-1">
           <button
             type="button"
             disabled={Boolean(runDisabledReason)}
@@ -70,21 +75,13 @@ export function ArtifactEditor({
             className="inline-flex items-center gap-2 rounded-full bg-accent px-4 py-2.5 text-xs font-semibold text-accent-fg disabled:opacity-40"
           >
             {startingRun || runPending || activeRun ? (
-              <LoaderCircle size={13} className="animate-spin" />
+              <LoaderCircle size={13} className="animate-spin" aria-hidden="true" />
             ) : (
-              <Play size={13} />
+              <Play size={13} aria-hidden="true" />
             )}
-            {startingRun || runPending
-              ? 'Starting run…'
-              : activeRun
-                ? 'Run in progress…'
-                : 'Run locally'}
+            {startingRun || runPending ? 'Starting run…' : activeRun ? 'Run in progress…' : 'Run locally'}
           </button>
-          {runDisabledReason && (
-            <span className="text-xs text-text-muted">
-              {runDisabledReason}
-            </span>
-          )}
+          {runDisabledReason && <p className="text-xs text-text-secondary">{runDisabledReason}</p>}
         </div>
 
         <span role="status" aria-live="polite" className="text-xs text-text-muted">
@@ -143,18 +140,18 @@ export function ArtifactEditor({
       <div className="mt-4 overflow-hidden rounded-xl border border-border-default">
         {editorFiles.length > 0 && (
           <FileTabs
-            files={editorFiles.map((file) => ({ path: file.path }))}
-            activePath={selectedFile?.path ?? editorFiles[0]?.path ?? ''}
+            label="Files"
+            files={editorFiles.map((file) => ({ path: file.path, modified: isEdited(file) }))}
+            active={selectedFile?.path ?? editorFiles[0]?.path ?? ''}
             onSelect={(path) => setSelectedFilePath(path)}
           />
         )}
 
-        {editorFiles.map((file, index) => (
+        {editorFiles.map((file) => (
           <div
             key={`${activeActivity.id}:${activeActivity.revision}:${file.path}`}
-            id={`lab-file-panel-${activeActivity.id}-${index}`}
             role="tabpanel"
-            aria-labelledby={`lab-file-tab-${activeActivity.id}-${index}`}
+            aria-label={file.path}
             hidden={selectedFile?.path !== file.path}
           >
             <LearningCodeEditor
@@ -170,7 +167,7 @@ export function ArtifactEditor({
         ))}
 
         {editorFiles.length === 0 && (
-          <p className="bg-bg p-4 text-xs text-text-muted">
+          <p className="bg-surface-sunken p-4 text-xs text-text-muted">
             This activity has no editable starter files.
           </p>
         )}
@@ -181,6 +178,7 @@ export function ArtifactEditor({
           <AlertTriangle
             size={16}
             className="mt-0.5 shrink-0 text-warning-fg"
+            aria-hidden="true"
           />
           <div>
             <h4 className="text-xs font-semibold text-text-primary">

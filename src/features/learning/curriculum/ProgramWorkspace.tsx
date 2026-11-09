@@ -17,7 +17,6 @@ import { OutlineReviewPanel, type OutlineOperation } from '@/features/learning/c
 import { PlanPanel } from '@/features/learning/curriculum/PlanPanel';
 import { StartingPointPanel } from '@/features/learning/curriculum/StartingPointPanel';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
-import { CourseDrillsPanel } from '@/features/learning/drills/CourseDrillsPanel';
 import { StudyHabitsBar, type FrameworkAction } from '@/features/learning/habits';
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
 import { LessonPreparationLine } from '@/features/learning/lessons/LessonPreparationLine';
@@ -28,11 +27,8 @@ import { NotebookPanel, RecallPanel } from '@/features/learning/memory/MemoryPan
 import { useLearningMemory, useSaveLearningCardDraft } from '@/features/learning/memory/useLearningMemory';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PortabilityPanel } from '@/features/learning/portability/PortabilityPanel';
-import { FeynmanTechniquePanel } from '@/features/learning/practice/FeynmanTechniquePanel';
-import { PracticeHome } from '@/features/learning/practice/home/PracticeHome';
+import { PracticeArea } from '@/features/learning/practice/home/PracticeArea';
 import { usePracticeView } from '@/features/learning/practice/home/usePracticeView';
-import { PracticalWorkbenchPanel } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
-import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { LessonQuizCallout } from '@/features/learning/quizzes/LessonQuizCallout';
 import { ModuleTestCallout } from '@/features/learning/quizzes/ModuleTestCallout';
 import { QuizzesOverview } from '@/features/learning/quizzes/QuizzesOverview';
@@ -82,16 +78,11 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const [canvasOpened, setCanvasOpened] = useState(false);
-  const [practicalOpened, setPracticalOpened] = useState(false);
-  const [drillsOpened, setDrillsOpened] = useState(false);
-  const [writtenOpened, setWrittenOpened] = useState(false);
   const practiceView = usePracticeView({ kind: 'home' });
   // The quiz open in the Quizzes tab (runner or result), and a module test row to bring into view.
   const [quizFormId, setQuizFormId] = useState<string | null>(null);
   const [quizModuleFocus, setQuizModuleFocus] = useState<string | null>(null);
-  const [projectRequest, setProjectRequest] = useState<{ id: string; brief: string } | null>(null);
   const [recallView, setRecallView] = useState<'lesson' | 'evolution' | 'brain-dump'>('lesson');
-  const [workbenchMode, setWorkbenchMode] = useState<'practice' | 'feynman'>('practice');
   const saveRecallDraft = useSaveLearningCardDraft();
   const handleImported = (importedProgramId: string) => {
     // A copy or another course: land on it, which resumes at its current lesson.
@@ -99,13 +90,9 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     // Import flushes pending saves first. Retained workbenches must now discard
     // local session selections and saved lab snapshots, even when IDs/revisions
     // match the replaced course. The import panel itself stays open.
-    practiceView.openHome();
-    setWrittenOpened(false);
-    setPracticalOpened(false);
-    setDrillsOpened(false);
+    practiceView.reset();
     setCanvasOpened(false);
     setQuizFormId(null);
-    setProjectRequest(null);
     setNotebookDrafts({});
   };
   const openedDestination = useRef<StudyDestination | undefined>(undefined);
@@ -120,12 +107,12 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     }
     if (destination.formId) setQuizFormId(destination.formId);
     if (next === 'quizzes' && !destination.formId) setQuizModuleFocus(destination.lessonId ? null : destination.moduleId ?? null);
-    const resolvedTab = next === 'study' ? 'lessons' : next;
+    const resolvedTab = next === 'study' ? 'lessons' : next === 'practical' || next === 'drills' ? 'workbench' : next;
     setTab(resolvedTab);
     setMoreOpen(false);
     if (resolvedTab === 'canvas') setCanvasOpened(true);
-    if (resolvedTab === 'practical') { setPracticalOpened(true); practiceView.openSession(); }
-    if (resolvedTab === 'drills') { setDrillsOpened(true); practiceView.openDrill(); }
+    if (next === 'practical') practiceView.openActivity();
+    if (next === 'drills') practiceView.openDrill();
   }, [destination, program.modules, practiceView]);
   const [title, setTitle] = useState(program.summary.title);
   const [notebookDrafts, setNotebookDrafts] = useState<Record<string, NotebookDraft>>({});
@@ -169,15 +156,14 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const primary = [{ id: 'lessons' as const, label: 'Lessons' }, { id: 'workbench' as const, label: 'Practice' }, { id: 'quizzes' as const, label: 'Quizzes' }, { id: 'recall' as const, label: 'Recall' }, { id: 'notebook' as const, label: 'Notebook' }, { id: 'tutor' as const, label: 'Tutor' }, { id: 'sources' as const, label: 'Sources' }];
   const activateTab = (next: Tab) => {
     if (next === 'canvas') setCanvasOpened(true);
-    if (next === 'practical') { setPracticalOpened(true); practiceView.openSession(); }
-    if (next === 'drills') { setDrillsOpened(true); practiceView.openDrill(); }
+    if (next === 'practical') practiceView.openActivity();
+    if (next === 'drills') practiceView.openDrill();
     setMoreOpen(false);
-    setTab(next);
+    setTab(next === 'practical' || next === 'drills' ? 'workbench' : next);
   };
   const selectTab = (next: Tab) => {
     void afterNotebookSave(() => activateTab(next));
   };
-  const selectPracticeGroup = () => selectTab('workbench');
   const selectMoreTab = (next: Tab) => {
     void afterNotebookSave(() => {
       activateTab(next);
@@ -195,9 +181,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         selectTab('recall');
         break;
       case 'feynman':
-        setWorkbenchMode('feynman');
-        setWrittenOpened(true);
-        practiceView.openAttempt();
+        practiceView.openAttempt('feynman');
         selectTab('workbench');
         break;
       case 'interleaving':
@@ -212,7 +196,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         break;
     }
   };
-  const practiceTab = tab === 'workbench' || tab === 'practical' || tab === 'drills';
+  const practiceTab = tab === 'workbench';
   useEffect(() => {
     if (!moreOpen) return;
     const first = moreMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
@@ -347,7 +331,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
             </div>
           </details>
         </div>
-        <nav aria-label="Module workspace" className="studio-workspace-tabs"><NavigationTabs label="Program workspace" value={practiceTab ? 'workbench' : tab} disabled={savingBeforeMove} options={primary.filter((item) => activeProgram || item.id === 'lessons' || item.id === 'sources').map((item) => ({ ...item, badge: item.id === 'recall' && memoryQuery.data?.dueCount ? memoryQuery.data.dueCount : undefined }))} onValueChange={(id) => id === 'workbench' ? selectPracticeGroup() : selectTab(id)} idPrefix="workspace-tab" panelId="workspace-panel" actions={<div className="relative ml-auto"><button ref={moreButtonRef} type="button" aria-haspopup="menu" aria-expanded={moreOpen} aria-current={['plan', 'canvas', 'portability'].includes(tab) ? 'page' : undefined} aria-controls="workspace-more-menu" onClick={() => setMoreOpen((value) => !value)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">More <span aria-hidden="true">⌄</span></button>{moreOpen && <div id="workspace-more-menu" ref={moreMenuRef} role="menu" aria-label="More workspace tools" onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; items[next]?.focus(); }} className="absolute right-0 top-full z-30 mt-1 w-52 rounded-xl border border-border bg-surface p-1.5 shadow-xl">{(activeProgram ? [{ id: 'plan' as const, label: 'Plan' }, { id: 'canvas' as const, label: 'Canvas' }, { id: 'portability' as const, label: 'Import & export' }] : [{ id: 'portability' as const, label: 'Import & export' }]).map((item) => <button key={item.id} type="button" role="menuitem" aria-current={tab === item.id ? 'page' : undefined} onClick={() => selectMoreTab(item.id)} className="flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background focus-visible:bg-background focus-visible:outline-hidden">{item.label}</button>)}</div>}</div>} /></nav>
+        <nav aria-label="Module workspace" className="studio-workspace-tabs"><NavigationTabs label="Program workspace" value={practiceTab ? 'workbench' : tab} disabled={savingBeforeMove} options={primary.filter((item) => activeProgram || item.id === 'lessons' || item.id === 'sources').map((item) => ({ ...item, badge: item.id === 'recall' && memoryQuery.data?.dueCount ? memoryQuery.data.dueCount : undefined }))} onValueChange={selectTab} onReselect={(id) => { if (id === 'workbench') practiceView.openHome(); }} idPrefix="workspace-tab" panelId="workspace-panel" actions={<div className="relative ml-auto"><button ref={moreButtonRef} type="button" aria-haspopup="menu" aria-expanded={moreOpen} aria-current={['plan', 'canvas', 'portability'].includes(tab) ? 'page' : undefined} aria-controls="workspace-more-menu" onClick={() => setMoreOpen((value) => !value)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">More <span aria-hidden="true">⌄</span></button>{moreOpen && <div id="workspace-more-menu" ref={moreMenuRef} role="menu" aria-label="More workspace tools" onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; items[next]?.focus(); }} className="absolute right-0 top-full z-30 mt-1 w-52 rounded-xl border border-border bg-surface p-1.5 shadow-xl">{(activeProgram ? [{ id: 'plan' as const, label: 'Plan' }, { id: 'canvas' as const, label: 'Canvas' }, { id: 'portability' as const, label: 'Import & export' }] : [{ id: 'portability' as const, label: 'Import & export' }]).map((item) => <button key={item.id} type="button" role="menuitem" aria-current={tab === item.id ? 'page' : undefined} onClick={() => selectMoreTab(item.id)} className="flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background focus-visible:bg-background focus-visible:outline-hidden">{item.label}</button>)}</div>}</div>} /></nav>
 
         {activeProgram && tab === 'starting_point' && <div className="mt-4"><StartingPointPanel programId={program.summary.id} onStudy={(lessonId) => goToStep({ kind: 'lesson', title: '', reason: '', lessonId })} onChallenge={(lessonId) => goToStep({ kind: 'assessment', title: '', reason: '', lessonId })} /></div>}
         <CourseIndexNotice programId={program.summary.id} />
@@ -366,123 +350,14 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
           setLessonId(anchor.id);
           const finalModule = currentModule.id === program.modules.at(-1)?.id;
           const scope = finalModule ? program.modules : [currentModule];
-          setProjectRequest({ id: crypto.randomUUID(), brief: `Create a ${finalModule ? 'final capstone integrating the complete course' : 'module project'} for ${program.summary.goal}. Project progression: ${scope.map((item) => item.project ? `${item.project.title}: ${item.project.brief} Deliverables: ${item.project.deliverables.join('; ')}. Success criteria: ${item.project.successCriteria.join('; ')}` : item.summary).join(' | ')}. Each milestone must extend the same project artifact and include a revision after feedback. Outcomes: ${scope.flatMap((item) => item.outcomes).join('; ')}. Require a concrete artifact, milestones, constraints, an explicit grading rubric, and a reflection on tradeoffs. Build on these lessons: ${scope.flatMap((item) => item.lessons.map((lesson) => lesson.title)).join('; ')}.`.slice(0, 4000) });
-          activateTab('practical');
+          practiceView.openActivity(null, { id: crypto.randomUUID(), kind: 'code_lab', brief: `Create a ${finalModule ? 'final capstone integrating the complete course' : 'module project'} for ${program.summary.goal}. Project progression: ${scope.map((item) => item.project ? `${item.project.title}: ${item.project.brief} Deliverables: ${item.project.deliverables.join('; ')}. Success criteria: ${item.project.successCriteria.join('; ')}` : item.summary).join(' | ')}. Each milestone must extend the same project artifact and include a revision after feedback. Outcomes: ${scope.flatMap((item) => item.outcomes).join('; ')}. Require a concrete artifact, milestones, constraints, an explicit grading rubric, and a reflection on tradeoffs. Build on these lessons: ${scope.flatMap((item) => item.lessons.map((lesson) => lesson.title)).join('; ')}.`.slice(0, 4000) });
+          activateTab('workbench');
         })} title="A project brief shaped by these outcomes, with deliverables and a rubric." className="min-h-10 rounded-full px-3 text-left text-text-secondary hover:bg-background hover:text-text-primary disabled:opacity-50"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">04</span>{currentModule?.id === program.modules.at(-1)?.id ? 'Build your capstone →' : 'Build a module project →'}</button></nav>}
         {activeProgram && tab === 'plan' && <div className="mt-5"><PlanPanel programId={program.summary.id} onStartingPoint={() => selectTab('starting_point')} /></div>}
         {tab === 'portability' && <div className="mt-5"><PortabilityPanel programId={program.summary.id} onImported={handleImported} /></div>}
-        {activeProgram && (practiceTab || writtenOpened || practicalOpened || drillsOpened) && (
+        {activeProgram && (practiceTab || practiceView.visited.size > 0) && (
           <div id="practice-content" role="tabpanel" tabIndex={0} aria-labelledby="workspace-tab-workbench" hidden={!practiceTab} className="mt-5">
-            {practiceView.isHome && (
-              <PracticeHome
-                program={program}
-                currentLesson={currentLesson}
-                onStartCard={(cardId) => {
-                  if (cardId === 'spot') {
-                    setDrillsOpened(true);
-                    practiceView.openDrill();
-                  } else if (cardId === 'explain') {
-                    setWorkbenchMode('practice');
-                    setWrittenOpened(true);
-                    practiceView.openAttempt();
-                  } else {
-                    setPracticalOpened(true);
-                    practiceView.openSession();
-                  }
-                }}
-                onContinue={(target) => {
-                  if (target.kind === 'spot') {
-                    setDrillsOpened(true);
-                    practiceView.openDrill(target.id);
-                  } else if (target.kind === 'explain') {
-                    setWrittenOpened(true);
-                    practiceView.openAttempt(target.id);
-                  } else {
-                    setPracticalOpened(true);
-                    practiceView.openSession(target.id);
-                  }
-                }}
-                onOpenDrill={(drillId) => {
-                  setDrillsOpened(true);
-                  practiceView.openDrill(drillId);
-                }}
-                onOpenSession={(sessionId) => {
-                  setPracticalOpened(true);
-                  practiceView.openSession(sessionId);
-                }}
-                onOpenAttempt={(attemptId) => {
-                  setWrittenOpened(true);
-                  practiceView.openAttempt(attemptId);
-                }}
-              />
-            )}
-            {!practiceView.isHome && (
-              <div className="mb-4 flex items-center gap-2">
-                <button
-                  type="button"
-                  onClick={() => {
-                    setDrillsOpened(false);
-                    practiceView.openHome();
-                  }}
-                  className="inline-flex min-h-[44px] cursor-pointer items-center gap-1.5 rounded-lg border border-border-default bg-surface px-3 py-1.5 text-xs font-semibold text-text-secondary hover:bg-surface-raised hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
-                >
-                  <ArrowLeft size={14} />
-                  <span>Back to Practice</span>
-                </button>
-              </div>
-            )}
-            {writtenOpened && (
-              <div hidden={practiceView.view.kind !== 'attempt'} className="space-y-4">
-                <div role="group" aria-label="Written practice mode" className="flex flex-wrap gap-1 rounded-lg border border-border-default bg-surface-sunken p-1 text-xs">
-                  <button
-                    type="button"
-                    aria-pressed={workbenchMode === 'practice'}
-                    onClick={() => setWorkbenchMode('practice')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                      workbenchMode === 'practice' ? 'bg-surface text-text-primary shadow-xs font-medium' : 'text-text-secondary hover:text-text-primary'
-                    }`}
-                  >
-                    Grounded practice
-                  </button>
-                  <button
-                    type="button"
-                    aria-pressed={workbenchMode === 'feynman'}
-                    onClick={() => setWorkbenchMode('feynman')}
-                    className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
-                      workbenchMode === 'feynman' ? 'bg-surface text-text-primary shadow-xs font-medium' : 'text-text-secondary hover:text-text-primary'
-                    }`}
-                  >
-                    Feynman technique (Teach a beginner)
-                  </button>
-                </div>
-
-                <div hidden={workbenchMode !== 'practice'}>
-                  <PracticeWorkbenchPanel key={currentLesson?.id} program={program} lesson={currentLesson} />
-                </div>
-
-                {workbenchMode === 'feynman' && (
-                  <FeynmanTechniquePanel
-                    program={program}
-                    lesson={currentLesson}
-                    module={currentModule}
-                    onDraftMissedConcept={(question, answer) => {
-                      if (!currentLesson?.id) return;
-                      saveRecallDraft.mutate({
-                        draftId: null,
-                        programId: program.summary.id,
-                        lessonId: currentLesson.id,
-                        question,
-                        answer,
-                        explanation: 'Drafted from a gap in a Feynman explanation',
-                        sourceIds: [],
-                      });
-                    }}
-                  />
-                )}
-              </div>
-            )}
-            {practicalOpened && <div hidden={practiceView.view.kind !== 'session'}><PracticalWorkbenchPanel program={program} lesson={currentLesson ?? null} projectRequest={projectRequest} /></div>}
-            {drillsOpened && <div hidden={practiceView.view.kind !== 'drill'}><CourseDrillsPanel programId={program.summary.id} /></div>}
+            <PracticeArea program={program} currentLesson={currentLesson} currentModule={currentModule} view={practiceView} />
           </div>
         )}
         {activeProgram && tab === 'quizzes' && <div className="mt-4" role="tabpanel" aria-labelledby="workspace-tab-quizzes"><QuizzesOverview program={program} formId={quizFormId} onFormIdChange={setQuizFormId} focusModuleId={quizModuleFocus}

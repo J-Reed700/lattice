@@ -86,8 +86,6 @@ export function CodeContrast({
   focus: ContrastFocus | null;
 }) {
   const headingId = useId();
-  const tabsId = useId();
-  const panelId = `${tabsId}-panel`;
   const tabbed = paths.length > 1;
   const active = focus?.path === path ? focus : null;
   const cleanRange = active?.clean ?? null;
@@ -104,19 +102,12 @@ export function CodeContrast({
       </div>
 
       {tabbed && (
-        <FileTabs
-          files={paths.map((p) => ({ path: p }))}
-          activePath={path}
-          onSelect={onPathChange}
-          idBase={tabsId}
-          panelId={panelId}
-        />
+        <FileTabs files={paths.map((p) => ({ path: p }))} active={path} onSelect={onPathChange} label="Files" />
       )}
 
       <div
-        id={panelId}
         role={tabbed ? 'tabpanel' : undefined}
-        aria-labelledby={tabbed ? `${tabsId}-${paths.indexOf(path)}` : undefined}
+        aria-label={tabbed ? path : undefined}
         className="grid gap-4 lg:grid-cols-2"
       >
         <CodePane
