@@ -122,7 +122,8 @@ pub(crate) async fn plan_course(
         .get(program_id)
         .await?;
     let revision = crate::lessons::course_plan::outline_revision(pool, program_id).await?;
-    crate::lessons::course_plan::ensure(pool, planner, &program, revision).await?;
+    crate::lessons::course_plan::ensure(pool, planner, &program, revision, &Default::default())
+        .await?;
     Ok(program)
 }
 

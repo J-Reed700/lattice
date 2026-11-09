@@ -4,6 +4,7 @@
 
 use super::view::{content_revision, outline_lessons, saved_entries};
 use super::{ensure, outline_revision};
+use crate::lessons::course_setup::CourseSetups;
 use crate::persistence::db;
 use crate::quiz_bank_jobs::ModelLoader;
 use crate::repository::LearningRepository;
@@ -19,8 +20,8 @@ use sqlx::{SqliteConnection, SqlitePool};
 
 pub const COURSE_PLAN: &str = "learning.course_plan";
 
-/// Not exclusive: the model call is background work, and an overlapping plan
-/// is saved once by the first to commit.
+/// Not exclusive: the model call is background work, and callers of one course
+/// plan it once through the course lock.
 pub fn course_plan_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff::default())
 }
@@ -152,6 +153,7 @@ pub async fn queue(pool: &SqlitePool, program_id: &str) -> Result<Option<String>
 pub struct CoursePlanWorker {
     pub pool: SqlitePool,
     pub load_llm: ModelLoader,
+    pub course_setups: CourseSetups,
 }
 
 #[async_trait::async_trait]
@@ -186,7 +188,13 @@ impl JobHandler for CoursePlanWorker {
         };
         let pin = pin?;
         let Some(planned) = context
-            .until_cancelled(ensure(&self.pool, pin.llm.as_ref(), &program, revision))
+            .until_cancelled(ensure(
+                &self.pool,
+                pin.llm.as_ref(),
+                &program,
+                revision,
+                &self.course_setups,
+            ))
             .await
         else {
             return Ok(JobOutcome::Stopped);

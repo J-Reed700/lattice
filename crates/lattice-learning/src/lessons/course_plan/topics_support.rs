@@ -145,7 +145,9 @@ pub(super) async fn planned_program(
 ) -> (LearningProgramDto, i64) {
     let program = saved_program(pool).await;
     let revision = outline_revision(pool, &program.summary.id).await.unwrap();
-    ensure(pool, model, &program, revision).await.unwrap();
+    ensure(pool, model, &program, revision, &Default::default())
+        .await
+        .unwrap();
     (program, revision)
 }
 
@@ -208,6 +210,7 @@ pub(super) async fn run_plan_job(pool: &SqlitePool, llm: Arc<dyn LLMPort>, job_i
             let llm = llm.clone();
             Box::pin(async move { Ok(crate::generation_jobs::pinned_for_test(llm)) })
         }),
+        course_setups: Default::default(),
     };
     let runtime = JobRuntime::new(pool.clone());
     runtime

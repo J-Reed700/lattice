@@ -144,11 +144,12 @@ fn lesson_worker(
 fn plan_worker(
     pool: &SqlitePool,
     llm: &Arc<dyn LLMPort>,
-    _setups: &CourseSetups,
+    setups: &CourseSetups,
 ) -> CoursePlanWorker {
     CoursePlanWorker {
         pool: pool.clone(),
         load_llm: loader(llm.clone()),
+        course_setups: setups.clone(),
     }
 }
 

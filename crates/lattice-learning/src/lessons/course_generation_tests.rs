@@ -196,6 +196,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         &repo,
         &Model(lesson_candidate.to_string()),
         &crate::embedded_runtime::BuiltinRuntimes::for_tests(),
+        &Default::default(),
         PrepareLearningLessonRequestDto {
             program_id: draft.summary.id.clone(),
             lesson_id: lesson_id.clone(),
