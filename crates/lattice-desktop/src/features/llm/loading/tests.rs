@@ -578,7 +578,6 @@ fn a_bundled_server_that_cannot_run_reaches_the_wire_as_a_model_load_error() {
 mod output_ceiling_on_the_wire {
     use super::*;
     use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
-    use lattice_core::application::ports::LLMPort;
     use serde_json::{json, Value};
     use wiremock::matchers::method;
     use wiremock::{Mock, MockServer, ResponseTemplate};
