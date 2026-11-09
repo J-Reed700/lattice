@@ -4,7 +4,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-use lattice_core::application::ports::chat_images::ImageTurnScope;
+use lattice_core::application::ports::chat_images::{ChatImagesPort, ImageTurnScope};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
