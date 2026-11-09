@@ -132,6 +132,17 @@ fn drill_grading_worker(
     }
 }
 
+fn coding_worker(
+    container: &Container,
+    runtimes: BuiltinRuntimes,
+) -> super::coding::jobs::CodingBuildWorker {
+    super::coding::jobs::CodingBuildWorker {
+        pool: container.db_pool().clone(),
+        load_llm: drill_model(container),
+        runtimes,
+    }
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("learning")
         .setup(|app, _api| {
@@ -171,8 +182,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 },
                 JobKindRegistration {
                     kind: super::drills::jobs::DRILL_GRADING.into(),
-                    handler: std::sync::Arc::new(drill_grading_worker(&container, runtimes)),
+                    handler: std::sync::Arc::new(drill_grading_worker(&container, runtimes.clone())),
                     config: super::drills::jobs::grading_job_config(),
+                },
+                JobKindRegistration {
+                    kind: super::coding::jobs::CODING_BUILD.into(),
+                    handler: std::sync::Arc::new(coding_worker(&container, runtimes)),
+                    config: super::coding::jobs::coding_job_config(),
                 },
             ];
             // Course index builds the last process left running resume.
