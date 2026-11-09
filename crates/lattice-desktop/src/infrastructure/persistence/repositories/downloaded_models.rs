@@ -6,7 +6,7 @@ use chrono::Utc;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, SqlitePool};
+use sqlx::{Executor, Row, Sqlite, SqliteConnection, SqlitePool};
 use std::path::PathBuf;
 use tracing::{debug, error, info};
 
@@ -246,20 +246,7 @@ impl DownloadedModelRepository {
 
     /// Find a downloaded model by its model_id
     pub async fn find_by_model_id(&self, model_id: &str) -> Result<Option<DownloadedModel>> {
-        let query = build_model_select_query("WHERE m.model_id = ?1");
-        let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
-        .bind(model_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| {
-            error!(error = %e, model_id = %model_id, "Failed to find downloaded model by model_id");
-            AppError::Database(format!("Failed to find downloaded model: {}", e))
-        })?;
-
-        match record {
-            Some(row) => Ok(Some(row.try_into()?)),
-            None => Ok(None),
-        }
+        model_by_model_id(&self.pool, model_id).await
     }
 
     /// List all downloaded models
@@ -267,8 +254,13 @@ impl DownloadedModelRepository {
         let query = build_model_select_query(
             "WHERE m.status = 'completed' ORDER BY m.downloaded_at DESC, m.created_at DESC",
         );
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let records = sqlx::query_as::<_, DownloadedModelRecord>(&query)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| {
                 error!(error = %e, "Failed to list downloaded models");
@@ -287,11 +279,14 @@ impl DownloadedModelRepository {
                     continue;
                 }
             };
-            if self.is_downloaded(model.model_id()).await? {
+            if is_downloaded_in(&mut tx, model.model_id()).await? {
                 models.push(model);
             }
         }
 
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
         Ok(models)
     }
 
@@ -309,6 +304,11 @@ impl DownloadedModelRepository {
     /// - Returns the deleted row via RETURNING clause
     /// - If no row deleted, queries again to distinguish "not found" vs "active"
     pub async fn delete_if_not_active(&self, id: &str) -> Result<Option<DownloadedModel>> {
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         // Atomic DELETE with WHERE guard (single statement; no read/delete race window).
         let result = sqlx::query_as::<_, DownloadedModelRecord>(
             r#"
@@ -336,12 +336,21 @@ impl DownloadedModelRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| {
             error!(error = %e, id = %id, "Failed to atomically delete model");
             AppError::Database(format!("Failed to delete model: {}", e))
         })?;
+
+        let exists = if result.is_none() {
+            exists_by_id(&mut *tx, id).await?
+        } else {
+            false
+        };
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         match result {
             Some(record) => {
@@ -356,8 +365,6 @@ impl DownloadedModelRepository {
             }
             None => {
                 // Model was active OR doesn't exist
-                // Query again to determine which case
-                let exists = self.exists_by_id(id).await?;
                 if exists {
                     Err(AppError::InvalidInput(format!(
                         "Cannot delete model with id '{}': it is currently active. Deactivate it first.",
@@ -370,20 +377,6 @@ impl DownloadedModelRepository {
                 }
             }
         }
-    }
-
-    /// Check if model exists by id (primary key) (helper for error handling)
-    async fn exists_by_id(&self, id: &str) -> Result<bool> {
-        let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE id = ?")
-            .bind(id)
-            .fetch_one(&self.pool)
-            .await
-            .map_err(|e| {
-                error!(error = %e, id = %id, "Failed to check model existence by id");
-                AppError::Database(format!("Failed to check model existence: {}", e))
-            })?;
-
-        Ok(count > 0)
     }
 
     /// Delete a downloaded model by ID
@@ -413,90 +406,136 @@ impl DownloadedModelRepository {
 
     /// Check if a model is already downloaded
     pub async fn is_downloaded(&self, model_id: &str) -> Result<bool> {
-        let model_status = sqlx::query_scalar::<_, String>(
-            "SELECT status FROM models WHERE model_id = ?1 LIMIT 1",
-        )
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        let downloaded = is_downloaded_in(&mut tx, model_id).await?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
+        Ok(downloaded)
+    }
+}
+
+async fn model_by_model_id(
+    executor: impl Executor<'_, Database = Sqlite>,
+    model_id: &str,
+) -> Result<Option<DownloadedModel>> {
+    let query = build_model_select_query("WHERE m.model_id = ?1");
+    let record = sqlx::query_as::<_, DownloadedModelRecord>(&query)
         .bind(model_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(executor)
         .await
         .map_err(|e| {
-            error!(error = %e, model_id = %model_id, "Failed to check model status");
-            AppError::Database(format!("Failed to check model status: {}", e))
+            error!(error = %e, model_id = %model_id, "Failed to find downloaded model by model_id");
+            AppError::Database(format!("Failed to find downloaded model: {}", e))
         })?;
 
-        let Some(status) = model_status else {
-            return Ok(false);
-        };
+    match record {
+        Some(row) => Ok(Some(row.try_into()?)),
+        None => Ok(None),
+    }
+}
 
-        if status != "completed" {
-            return Ok(false);
-        }
-
-        let Some(model) = self.find_by_model_id(model_id).await? else {
-            return Ok(false);
-        };
-        if !location_is_available(model.location()) {
-            return Ok(false);
-        }
-
-        let rows = sqlx::query(
-            r#"
-            SELECT file_path, status, size_bytes
-            FROM model_files
-            WHERE model_id = ?1
-            "#,
-        )
-        .bind(model_id)
-        .fetch_all(&self.pool)
+/// Check if model exists by id (primary key) (helper for error handling)
+async fn exists_by_id(executor: impl Executor<'_, Database = Sqlite>, id: &str) -> Result<bool> {
+    let count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE id = ?")
+        .bind(id)
+        .fetch_one(executor)
         .await
         .map_err(|e| {
-            error!(error = %e, model_id = %model_id, "Failed to check model files");
-            AppError::Database(format!("Failed to check model files: {}", e))
+            error!(error = %e, id = %id, "Failed to check model existence by id");
+            AppError::Database(format!("Failed to check model existence: {}", e))
         })?;
 
-        if rows.is_empty() {
-            // Legacy fallback for old rows that may not have model_files populated.
-            // Remote-hosted models are always "downloaded" (they're not on disk
-            // by definition); local rows are checked against their loadable
-            // path, which is a file for GGUF and a directory for safetensors.
-            return Ok(true);
-        }
+    Ok(count > 0)
+}
 
-        for row in rows {
-            let file_path: String = row
-                .try_get("file_path")
-                .map_err(|e| AppError::Database(format!("Invalid model_files.file_path: {}", e)))?;
-            let file_status: String = row
-                .try_get("status")
-                .map_err(|e| AppError::Database(format!("Invalid model_files.status: {}", e)))?;
-            let expected_size: i64 = row.try_get("size_bytes").map_err(|e| {
-                AppError::Database(format!("Invalid model_files.size_bytes: {}", e))
+async fn is_downloaded_in(conn: &mut SqliteConnection, model_id: &str) -> Result<bool> {
+    let model_status =
+        sqlx::query_scalar::<_, String>("SELECT status FROM models WHERE model_id = ?1 LIMIT 1")
+            .bind(model_id)
+            .fetch_optional(&mut *conn)
+            .await
+            .map_err(|e| {
+                error!(error = %e, model_id = %model_id, "Failed to check model status");
+                AppError::Database(format!("Failed to check model status: {}", e))
             })?;
 
-            if file_status != "completed" {
-                return Ok(false);
-            }
+    let Some(status) = model_status else {
+        return Ok(false);
+    };
 
-            let path = PathBuf::from(&file_path);
-            if path.is_dir() && matches!(model.location(), ModelLocation::LocalDirectory { .. }) {
-                continue;
-            }
-            if !path.exists() || !path.is_file() {
-                return Ok(false);
-            }
+    if status != "completed" {
+        return Ok(false);
+    }
 
-            if expected_size > 0 {
-                let actual_size = std::fs::metadata(&path)
-                    .map(|m| m.len() as i64)
-                    .unwrap_or_default();
-                if actual_size < expected_size {
-                    return Ok(false);
-                }
-            }
+    let Some(model) = model_by_model_id(&mut *conn, model_id).await? else {
+        return Ok(false);
+    };
+    if !location_is_available(model.location()) {
+        return Ok(false);
+    }
+
+    let rows = sqlx::query(
+        r#"
+        SELECT file_path, status, size_bytes
+        FROM model_files
+        WHERE model_id = ?1
+        "#,
+    )
+    .bind(model_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(|e| {
+        error!(error = %e, model_id = %model_id, "Failed to check model files");
+        AppError::Database(format!("Failed to check model files: {}", e))
+    })?;
+
+    if rows.is_empty() {
+        // Legacy fallback for old rows that may not have model_files populated.
+        // Remote-hosted models are always "downloaded" (they're not on disk
+        // by definition); local rows are checked against their loadable
+        // path, which is a file for GGUF and a directory for safetensors.
+        return Ok(true);
+    }
+
+    for row in rows {
+        let file_path: String = row
+            .try_get("file_path")
+            .map_err(|e| AppError::Database(format!("Invalid model_files.file_path: {}", e)))?;
+        let file_status: String = row
+            .try_get("status")
+            .map_err(|e| AppError::Database(format!("Invalid model_files.status: {}", e)))?;
+        let expected_size: i64 = row
+            .try_get("size_bytes")
+            .map_err(|e| AppError::Database(format!("Invalid model_files.size_bytes: {}", e)))?;
+
+        if file_status != "completed" {
+            return Ok(false);
         }
 
-        Ok(true)
+        let path = PathBuf::from(&file_path);
+        if path.is_dir() && matches!(model.location(), ModelLocation::LocalDirectory { .. }) {
+            continue;
+        }
+        if !path.exists() || !path.is_file() {
+            return Ok(false);
+        }
+
+        if expected_size > 0 {
+            let actual_size = std::fs::metadata(&path)
+                .map(|m| m.len() as i64)
+                .unwrap_or_default();
+            if actual_size < expected_size {
+                return Ok(false);
+            }
+        }
     }
+
+    Ok(true)
 }
 
 #[cfg(test)]
