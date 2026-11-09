@@ -134,3 +134,23 @@ fn the_citing_instructions_tell_a_repair_to_take_back_a_citation() {
 
     assert!(instructions(&lesson).contains("uncite"));
 }
+
+#[test]
+fn both_repairs_are_told_a_section_never_says_the_same_thing_twice() {
+    let lesson = crate::generation::lesson_schema(2);
+
+    for told in [instructions(&lesson), rewrite_instructions(&lesson)] {
+        assert!(told.contains("never says the same thing twice"), "{told}");
+    }
+}
+
+#[test]
+fn an_edit_with_empty_text_after_removes_the_sentence() {
+    let revised = applied(&json!({"edits":[
+        {"path":"/questions/0/explanation","before":" Open notes.txt with cat.","after":""}]}));
+
+    assert_eq!(
+        revised["questions"][0]["explanation"],
+        "Run ls in the projects folder."
+    );
+}
