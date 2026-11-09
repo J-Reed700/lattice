@@ -655,6 +655,30 @@ fn test_build_document_evidence_groups_by_document() {
     assert_eq!(grouped[1].match_count, 1);
 }
 
+#[test]
+fn test_build_document_evidence_reports_every_match_of_a_document() {
+    let now = Utc::now();
+    let results: Vec<DocumentResult> = (0..11)
+        .map(|idx| DocumentResult {
+            document_id: "doc-a".to_string(),
+            filename: "doc-a.pdf".to_string(),
+            file_path: "/tmp/doc-a.pdf".to_string(),
+            mime_type: "application/pdf".to_string(),
+            score: 0.9 - idx as f32 * 0.01,
+            snippet: "excerpt".to_string(),
+            chunk_index: Some(idx),
+            chunk_id: None,
+            modified_at: now,
+            size_bytes: 100,
+        })
+        .collect();
+
+    let grouped = FunctionExecutor::build_document_evidence(&results);
+    assert_eq!(grouped.len(), 1);
+    assert_eq!(grouped[0].match_count, 11);
+    assert!(grouped[0].matches.len() < grouped[0].match_count);
+}
+
 #[tokio::test]
 async fn test_executor_records_calls_and_syncs_custom_tools() {
     let registry: Arc<dyn FunctionRegistryTrait> = Arc::new(
