@@ -570,4 +570,37 @@ mod tests {
         assert_eq!(mentions.len(), 2);
         assert!(mentions[0].context.is_some());
     }
+
+    #[tokio::test]
+    async fn a_document_keeps_its_mentions_when_storing_the_new_ones_fails() {
+        let pool = create_test_pool().await;
+        let repo = MentionRepository::new(pool.clone());
+        repo.extract_and_store_mentions("doc1", "Met @[Ann].")
+            .await
+            .unwrap();
+        sqlx::query(
+            "CREATE TRIGGER refuse_for_test BEFORE INSERT ON document_mentions WHEN NEW.position > 0 BEGIN SELECT RAISE(ABORT, 'refused for the test'); END",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let outcome = repo
+            .extract_and_store_mentions("doc1", "@[Bob] and @[Cy]")
+            .await;
+
+        assert!(outcome.is_err());
+        let linked: Vec<String> = sqlx::query_scalar(
+            "SELECT m.name FROM document_mentions dm JOIN mentions m ON m.id = dm.mention_id WHERE dm.document_id = 'doc1'",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(linked, vec!["Ann".to_string()]);
+        let known: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM mentions")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(known, 1);
+    }
 }
