@@ -21,6 +21,7 @@ mod readings;
 mod receipts;
 mod stops;
 mod successor;
+mod teaching;
 mod unverified;
 mod written;
 

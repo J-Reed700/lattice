@@ -461,6 +461,7 @@ async fn mend_section(
                 unit,
                 field: gap.field.clone(),
                 quote: quote.clone(),
+                released: false,
             });
         }
     }

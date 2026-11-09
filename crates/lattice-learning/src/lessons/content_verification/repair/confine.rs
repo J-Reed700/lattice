@@ -24,6 +24,10 @@ pub(crate) struct Protected {
     pub(crate) unit: usize,
     pub(crate) field: String,
     pub(crate) quote: String,
+    /// The sentence of a machine's claim the teaching review may repair
+    /// after a claim repair or a user edit (claim sources design §10.3).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub(crate) released: bool,
 }
 
 impl Protected {
@@ -32,6 +36,16 @@ impl Protected {
     pub(in crate::lessons::content_verification) fn of_ledger(
         ledger: &ClaimLedger,
         targets: &[ClaimId],
+    ) -> Vec<Self> {
+        Self::releasing(ledger, targets, &[])
+    }
+
+    /// `of_ledger`, the sentences of the `released` claims marked as ones the
+    /// teaching review may repair.
+    pub(in crate::lessons::content_verification) fn releasing(
+        ledger: &ClaimLedger,
+        targets: &[ClaimId],
+        released: &[ClaimId],
     ) -> Vec<Self> {
         ledger
             .entries()
@@ -43,7 +57,10 @@ impl Protected {
                     ClaimState::Removed { .. } | ClaimState::Edited { .. }
                 )
             })
-            .map(|entry| Self::of_location(entry.location()))
+            .map(|entry| Self {
+                released: released.contains(entry.claim_id()),
+                ..Self::of_location(entry.location())
+            })
             .filter(|protected| !protected.quote.trim().is_empty())
             .collect()
     }
@@ -64,6 +81,7 @@ impl Protected {
             unit: location.unit_index,
             field: location.field.clone(),
             quote: location.quote.clone(),
+            released: false,
         }
     }
 }

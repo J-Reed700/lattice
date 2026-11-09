@@ -311,7 +311,7 @@ impl ClaimLedger {
     }
 
     /// The claim `id` succeeds.
-    fn predecessor(&self, id: &ClaimId) -> Option<&ClaimLedgerEntry> {
+    pub(super) fn predecessor(&self, id: &ClaimId) -> Option<&ClaimLedgerEntry> {
         self.entries
             .iter()
             .find(|entry| successors(entry).any(|next| next == id))
