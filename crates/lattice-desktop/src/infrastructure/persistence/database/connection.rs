@@ -1,6 +1,4 @@
 use lattice_core::shared::error::{AppError, Result, ResultExt};
-use lattice_core::shared::persistence::Transactions;
-use lattice_core::shared::resilience::{retry_with_backoff, RetryConfig};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::future::Future;
 use std::path::{Path, PathBuf};
@@ -205,37 +203,6 @@ impl DatabaseConnection {
     pub async fn close(self) -> Result<()> {
         self.pool.close().await;
         Ok(())
-    }
-
-    pub async fn begin_immediate(&self) -> Result<sqlx::Transaction<'_, sqlx::Sqlite>> {
-        tracing::info!("→ begin_immediate: Starting transaction acquisition...");
-        let pool = self.pool.clone();
-        let result = retry_with_backoff(
-            RetryConfig::default(),
-            || async {
-                tracing::info!("→ begin_immediate: Calling pool.begin_write()...");
-                let tx = pool.begin_write().await?;
-                tracing::info!("✓ begin_immediate: Transaction acquired successfully");
-                Ok(tx)
-            },
-            |e: &AppError| {
-                // Retry on database locked errors
-                tracing::warn!("begin_immediate: Database locked, will retry: {}", e);
-                matches!(e, AppError::Database(msg) if
-                    msg.contains("database is locked") ||
-                    msg.contains("SQLITE_BUSY") ||
-                    msg.contains("SQLITE_LOCKED")
-                )
-            },
-        )
-        .await;
-
-        match &result {
-            Ok(_) => tracing::info!("✓ begin_immediate: Transaction acquired successfully"),
-            Err(e) => tracing::error!("✗ begin_immediate: Failed to acquire transaction: {}", e),
-        }
-
-        result
     }
 }
 
