@@ -21,6 +21,6 @@ export interface HistoryProps {
 }
 
 /** Stage 1 minimal non-panicking stub: returns null. */
-export function History(_props: HistoryProps): JSX.Element | null {
+export function History(_props: HistoryProps) {
   return null;
 }

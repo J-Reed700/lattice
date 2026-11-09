@@ -64,6 +64,9 @@ impl CodingBuildWorker {
 impl JobHandler for CodingBuildWorker {
     async fn run(&self, _context: &JobContext) -> Result<JobOutcome> {
         // Stage 1 non-panicking stub: returns completed with no output.
-        Ok(JobOutcome::Completed(None))
+        Ok(JobOutcome::Completed {
+            result_ref: None,
+            message: String::new(),
+        })
     }
 }

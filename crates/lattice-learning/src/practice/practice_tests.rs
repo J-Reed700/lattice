@@ -306,7 +306,7 @@ fn citations_must_be_exact_quotes_from_the_frozen_owned_version() {
             title: "Stored source".into(),
             publisher: None,
             resolved_url: None,
-            excerpt: "café passage".into(),
+            excerpt: "cafÃ© passage".into(),
             content_sha256: "0".repeat(64),
             word_count: 2,
             truncated: false,
@@ -314,13 +314,13 @@ fn citations_must_be_exact_quotes_from_the_frozen_owned_version() {
             acquired_at: 1,
             snapshot_hash: None,
         },
-        full_text: "The café passage supports this.".into(),
+        full_text: "The cafÃ© passage supports this.".into(),
         usage: vec![],
     };
     let valid = LearningPracticeCitationDto {
         source_id: "logical-source".into(),
         version_id: "version-1".into(),
-        quote: "café passage".into(),
+        quote: "cafÃ© passage".into(),
     };
     assert!(
         validate_citations(std::slice::from_ref(&valid), std::slice::from_ref(&source)).is_ok()
@@ -697,4 +697,5 @@ async fn a_learners_long_artifact_is_held_to_the_chat_limit() -> Result<()> {
 }
 
 
+#[path = "profiles_tests.rs"]
 mod profiles_tests;

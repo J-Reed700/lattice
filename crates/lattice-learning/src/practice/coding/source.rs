@@ -139,6 +139,10 @@ mod tests {
         fn max_context_tokens(&self) -> usize {
             8192
         }
+
+        async fn is_ready(&self) -> Result<bool> {
+            Ok(true)
+        }
     }
 
     struct MockRunner;

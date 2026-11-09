@@ -4,9 +4,9 @@ use crate::lab_runtime::{
     LearningLabExecutionResult, LearningLabFile, LearningLabLimits, LearningLabRunStatus,
 };
 use crate::practice::coding::problem::{
-    Case, CaseResult, CaseStatus, Compare, Difficulty, Param, ProblemSpec, Signature, Visibility,
+    Case, CaseStatus, Compare, Difficulty, Param, ProblemSpec, Signature, Visibility,
 };
-use crate::practice::practical_dto::{CaseCheckDetailDto, LearningPracticalCheckStatus};
+use crate::practice::practical_dto::LearningPracticalCheckStatus;
 use crate::practice::practical_repository::{
     LearningPracticalRepository, PreparedExecution, PreparedRun,
 };

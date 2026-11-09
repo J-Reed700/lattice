@@ -23,6 +23,6 @@ export interface StartSentenceProps {
 }
 
 /** Stage 1 minimal non-panicking stub: returns null. */
-export function StartSentence(_props: StartSentenceProps): JSX.Element | null {
+export function StartSentence(_props: StartSentenceProps) {
   return null;
 }

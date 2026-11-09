@@ -448,6 +448,14 @@ async prepareLearningLesson(request: PrepareLearningLessonRequestDto) : Promise<
     else return { status: "error", error: e  as any };
 }
 },
+async prepareLearningModule(request: PrepareLearningModuleRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|prepare_learning_module", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async completeLearningLesson(request: CompleteLearningLessonRequestDto) : Promise<Result<LearningProgramDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|complete_learning_lesson", { request }) };
@@ -1472,30 +1480,6 @@ async codeReviewLanguages() : Promise<string[]> {
  * what a start with no lesson comes to for code and for passages, each lesson's standing by module, and the latest
  * attempts.
  */
-async getLearningPracticeProfile(programId: string) : Promise<Result<LearningPracticeProfileDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practice_profile", { programId }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async saveLearningPracticeProfile(request: SaveLearningPracticeProfileRequestDto) : Promise<Result<LearningPracticeProfileDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_practice_profile", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
-async startCodingBuild(request: StartCodingBuildRequestDto) : Promise<Result<StartedCodingBuildDto, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_coding_build", { request }) };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async courseDrills(programId: string, language: string | null) : Promise<Result<CourseDrillsDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_drills", { programId, language }) };
@@ -4477,10 +4461,6 @@ export type AppError =
  */
 { ConcurrentModification: { resource: string; details: string } } |
 /**
- * Conflict error (e.g. revision mismatch)
- */
-{ Conflict: string } |
-/**
  * Domain layer error - business rule violations
  * BOXED to prevent stack overflow (DomainError is ~160 variants)
  */
@@ -4877,6 +4857,7 @@ export type CapturedSourcesDto = { messageId: string;
  * could be read carrying its snapshot.
  */
 sources: SourceDto[] }
+export type CaseCheckDetailDto = { caseId: string; category: string; args: string[]; expected: string | null; actual: string | null; printed: string; error: string | null; visibility: Visibility }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
  * What the window needs to show a stored picture. Travels in the stream
@@ -6442,10 +6423,6 @@ export type ErrorCode =
  */
 "CONCURRENT_MODIFICATION" |
 /**
- * Conflict detected (e.g. revision mismatch)
- */
-"CONFLICT" |
-/**
  * Processing queue is full
  */
 "QUEUE_FULL" |
@@ -7930,7 +7907,11 @@ errorCode?: ErrorCode | null;
 /**
  * Ended by an update that replaced how lessons are prepared: history, not an attempt to resume.
  */
-endedByUpdate?: boolean; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
+endedByUpdate?: boolean;
+/**
+ * The lessons the job prepares, in course order.
+ */
+lessonIds?: string[]; retryOfJobId: string | null; createdAt: number; startedAt: number | null; finishedAt: number | null }
 export type LearningGenerationJobActionRequestDto = { operationId: string; programId: string; jobId: string; expectedRevision: number }
 export type LearningGenerationJobKind = "program_outline" | "lesson_preparation" | "assessment_variant" | "adaptive_follow_up" | "practical_activity" |
 /**
@@ -8267,15 +8248,7 @@ export type LearningPortabilityWorkspaceDto = { programId: string; exports: Lear
 export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; interviewPlan?: LearningInterviewPlanDto | null; revision: number; createdAt: number; updatedAt: number }
 export type LearningPracticalActivityKind = "code_lab" | "coding_problem" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
-export type CaseCheckDetail = { category: string; input?: string | null; expected?: string | null; actual?: string | null; printed?: string | null; error?: string | null }
-export type CodingTask = "problem" | "bug_fix" | "project"
-export type Setting = "coached" | "mock" | "watched"
-export type Difficulty = "easy" | "medium" | "hard"
-export type StartCodingBuildRequestDto = { programId: string; lessonId: string | null; task: CodingTask; setting: Setting; language: string; difficulty: Difficulty; focus: string | null }
-export type StartedCodingBuildDto = { jobId: string }
-export type LearningPracticeProfileDto = { programId: string; details: string; language: string | null; interviewAt: number | null; company: string | null; role: string | null; revision: number }
-export type SaveLearningPracticeProfileRequestDto = { programId: string; details: string; language?: string | null; interviewAt?: number | null; company?: string | null; role?: string | null; expectedRevision?: number | null }
-export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null; detail?: CaseCheckDetail | null }
+export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null; detail?: CaseCheckDetailDto | null }
 export type LearningPracticalCheckStatus = "passed" | "failed" | "error" | "not_run"
 /**
  * Learner-owned starter files for one immutable practical activity revision.
@@ -8821,7 +8794,12 @@ choices: string[];
 /**
  * The index of the right choice; null for a kind without one.
  */
-right: number | null; explanation: string }
+right: number | null; explanation: string;
+/**
+ * One reason per choice, the right choice's empty; empty when the
+ * question has none.
+ */
+rationales: string[] }
 /**
  * What a rewrite of a question does, or did, to the lesson's statements.
  */
@@ -9427,6 +9405,7 @@ export type PerformanceTierDto =
  */
 "Accurate"
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
+export type PrepareLearningModuleRequestDto = { programId: string; moduleId: string; expectedRevision: number }
 export type PrepareLearningQuizBankRequestDto = { operationId: string; programId: string; scope: LearningQuizScopeDto;
 /**
  * Add questions to a ready bank ("Prepare more questions").
@@ -11416,6 +11395,10 @@ verification: JsonValue;
  */
 turn?: TurnRecordDto | null }
 export type VersionInfoDto = { version: string; buildDate: string | null; commitHash: string | null }
+/**
+ * Whether a case is shown to the learner before and during the session.
+ */
+export type Visibility = "public" | "hidden"
 /**
  * A user's statement that a model takes pictures, and how its encoder
  * resizes and charges for them.

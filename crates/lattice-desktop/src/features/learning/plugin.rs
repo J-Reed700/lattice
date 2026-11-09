@@ -82,6 +82,8 @@ mod code_review;
 pub use code_review::*;
 mod coding;
 pub use coding::*;
+mod coding_debrief;
+pub use coding_debrief::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -351,7 +353,18 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             regrade_code_review,
             code_review_languages,
             course_drills,
-            start_coding_build
+            start_coding_build,
+            start_coding_session,
+            get_coding_session,
+            move_coding_stage,
+            check_coding_example,
+            run_coding_session,
+            ask_coding_hint,
+            send_coding_turn,
+            observe_coding_draft,
+            set_coding_clock,
+            finish_coding_session,
+            practice_due
         ])
         .build()
 }

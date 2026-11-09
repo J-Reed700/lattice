@@ -9,6 +9,6 @@ export interface PreparingForProps {
 }
 
 /** Stage 1 minimal non-panicking stub: returns null. */
-export function PreparingFor(_props: PreparingForProps): JSX.Element | null {
+export function PreparingFor(_props: PreparingForProps) {
   return null;
 }

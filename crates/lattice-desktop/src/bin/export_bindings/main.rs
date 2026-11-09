@@ -121,6 +121,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::repair_learning_outline,
             lattice::features::learning::plugin::accept_learning_program,
             lattice::features::learning::plugin::prepare_learning_lesson,
+            lattice::features::learning::plugin::prepare_learning_module,
             lattice::features::learning::plugin::complete_learning_lesson,
             lattice::features::learning::plugin::delete_learning_program,
             lattice::features::learning::plugin::get_learning_memory,
@@ -234,9 +235,6 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::regrade_code_review,
             lattice::features::learning::plugin::code_review_languages,
             lattice::features::learning::plugin::course_drills,
-            lattice::features::learning::plugin::get_learning_practice_profile,
-            lattice::features::learning::plugin::save_learning_practice_profile,
-            lattice::features::learning::plugin::start_coding_build,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,

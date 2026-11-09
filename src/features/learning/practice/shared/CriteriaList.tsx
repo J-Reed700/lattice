@@ -23,6 +23,6 @@ export interface CriteriaListProps {
   className?: string;
 }
 
-export function CriteriaList(_props: CriteriaListProps): JSX.Element {
+export function CriteriaList(_props: CriteriaListProps) {
   return <></>;
 }

@@ -15,6 +15,6 @@ export interface FileTabsProps {
   className?: string;
 }
 
-export function FileTabs(_props: FileTabsProps): JSX.Element {
+export function FileTabs(_props: FileTabsProps) {
   return <></>;
 }

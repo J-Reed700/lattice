@@ -11,6 +11,6 @@ export interface SaveAsReviewCardProps {
  * Minimal Stage 1 non-panicking stub for SaveAsReviewCard.
  * Returns an empty container so assertions fail on expected elements.
  */
-export function SaveAsReviewCard(_props: SaveAsReviewCardProps): JSX.Element {
+export function SaveAsReviewCard(_props: SaveAsReviewCardProps) {
   return <div />;
 }

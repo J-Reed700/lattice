@@ -36,4 +36,20 @@ export const VaultAPI = new Proxy({} as VaultClients, {
     return method;
   },
 });
+export type UnwrapResult<T> =
+  | { ok: true; data: T }
+  | { ok: false; error?: unknown; data?: unknown }
+  | { status: 'ok'; data: T }
+  | { status: 'error'; error?: unknown; data?: unknown }
+  | { ok: boolean; data?: T; error?: unknown }
+  | { status: 'ok' | 'error'; data?: T; error?: unknown };
+
+export function unwrap<T>(_result: UnwrapResult<T>): T {
+  throw new Error('not implemented');
+}
+
+export function newId(_prefix?: string): string {
+  return '';
+}
+
 export default VaultAPI;

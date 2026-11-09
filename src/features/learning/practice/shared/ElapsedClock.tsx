@@ -10,6 +10,6 @@ export function formatClock(_ms: number): string {
   return '';
 }
 
-export function ElapsedClock(_props: ElapsedClockProps): JSX.Element {
+export function ElapsedClock(_props: ElapsedClockProps) {
   return <></>;
 }

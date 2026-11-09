@@ -11,14 +11,14 @@ export interface StatusLineProps {
  * Minimal Stage 1 non-panicking stub for StatusLine.
  * Returns null so tests asserting on busy/error status fail as expected.
  */
-export function StatusLine(_props: StatusLineProps): JSX.Element | null {
+export function StatusLine(_props: StatusLineProps) {
   return null;
 }
 
 /**
  * Minimal Stage 1 non-panicking stub for PracticeLoadingState.
  */
-export function PracticeLoadingState(_props: { label: string }): JSX.Element {
+export function PracticeLoadingState(_props: { label: string }) {
   return <div />;
 }
 
@@ -29,6 +29,6 @@ export function PracticeEmptyState(_props: {
   title: string;
   description?: string;
   action?: React.ReactNode;
-}): JSX.Element {
+}) {
   return <div />;
 }

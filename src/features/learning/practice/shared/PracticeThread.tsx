@@ -30,6 +30,6 @@ export interface PracticeThreadProps {
  * Minimal Stage 1 non-panicking stub for PracticeThread.
  * Returns an empty container so assertions fail on expected elements.
  */
-export function PracticeThread(_props: PracticeThreadProps): JSX.Element {
+export function PracticeThread(_props: PracticeThreadProps) {
   return <div />;
 }

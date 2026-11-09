@@ -28,6 +28,6 @@ export interface PracticeHomeProps {
 }
 
 /** Stage 1 minimal non-panicking stub: returns null. */
-export function PracticeHome(_props: PracticeHomeProps): JSX.Element | null {
+export function PracticeHome(_props: PracticeHomeProps) {
   return null;
 }

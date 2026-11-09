@@ -21,6 +21,6 @@ export interface CaseResultsProps {
   className?: string;
 }
 
-export function CaseResults(_props: CaseResultsProps): JSX.Element {
+export function CaseResults(_props: CaseResultsProps) {
   return <></>;
 }
