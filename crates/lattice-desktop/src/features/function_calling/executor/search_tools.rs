@@ -121,7 +121,6 @@ impl FunctionExecutor {
                     .unwrap_or(std::cmp::Ordering::Equal)
                     .then_with(|| a.chunk_index.cmp(&b.chunk_index))
             });
-            group.matches.truncate(8);
         }
 
         groups.sort_by(|a, b| {

@@ -676,7 +676,7 @@ fn test_build_document_evidence_reports_every_match_of_a_document() {
     let grouped = FunctionExecutor::build_document_evidence(&results);
     assert_eq!(grouped.len(), 1);
     assert_eq!(grouped[0].match_count, 11);
-    assert!(grouped[0].matches.len() < grouped[0].match_count);
+    assert_eq!(grouped[0].matches.len(), 11);
 }
 
 #[tokio::test]
