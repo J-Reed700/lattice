@@ -325,7 +325,7 @@ fn run_json(
                 "category": case.map_or(result.case_id.as_str(), |case| case.category.as_str()),
                 "status": tag(&result.status),
                 "expected": shown.and_then(|case| case.expected.as_deref()),
-                "actual": shown.and_then(|_| result.actual.as_deref()),
+                "actual": shown.and(result.actual.as_deref()),
                 "error": result.error,
             })
         })

@@ -15,10 +15,10 @@ import {
   MOCK_SETTING_OPTIONS,
   SCENARIO_OPTIONS,
   TASK_OPTIONS,
-  defaultLanguage,
+  CODING_LANGUAGE,
+  LANGUAGE_OPTIONS,
   fitState,
   isCodingRound,
-  languageOptions,
   mockRoundOptions,
   startAction,
   suggestsInterview,
@@ -64,7 +64,7 @@ interface CardDefinition {
   parts: (values: Record<string, string>) => SentencePart[];
 }
 
-function definitions(fit: ReturnType<typeof fitState>, profileLanguage: string | null | undefined): Record<CardId, CardDefinition> {
+function definitions(fit: ReturnType<typeof fitState>): Record<CardId, CardDefinition> {
   const rounds = mockRoundOptions(fit);
   return {
     explain: {
@@ -78,7 +78,7 @@ function definitions(fit: ReturnType<typeof fitState>, profileLanguage: string |
     code: {
       slots: [
         { id: 'difficulty', label: 'Difficulty', options: DIFFICULTY_OPTIONS, defaultValue: 'easy' },
-        { id: 'language', label: 'Language', options: languageOptions(profileLanguage), defaultValue: defaultLanguage(profileLanguage) },
+        { id: 'language', label: 'Language', options: LANGUAGE_OPTIONS, defaultValue: CODING_LANGUAGE },
         { id: 'task', label: 'Task', options: TASK_OPTIONS, defaultValue: 'problem' },
         { id: 'setting', label: 'Setting', options: [{ value: 'coached', label: 'coached' }], defaultValue: 'coached' },
       ],
@@ -169,7 +169,7 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
   const fit = fitState(fitStatus.fit);
   const profile = profileState.profile ?? null;
   const promiseOf = useMemo(() => promises(fit), [fit]);
-  const defs = useMemo(() => definitions(fit, profile?.language), [fit, profile?.language]);
+  const defs = useMemo(() => definitions(fit), [fit]);
   const cards = visibleCards(fit);
   const context = { lessonId, profile };
   const continueItem: HistoryItem | null = history.continueItem;

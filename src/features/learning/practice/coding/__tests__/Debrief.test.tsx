@@ -62,4 +62,10 @@ describe('Debrief', () => {
     await user.click(screen.getByRole('button', { name: 'Try it under interview conditions' }));
     expect(onTryInterview).toHaveBeenCalledTimes(1);
   });
+
+  it('names each setting used once', () => {
+    renderDebrief();
+    expect(screen.getAllByText(/Coached/)).toHaveLength(1);
+    expect(screen.getAllByText(/Mock/)).toHaveLength(1);
+  });
 });

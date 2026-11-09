@@ -41,7 +41,7 @@ fn problem_material(language: &str) -> String {
 }
 
 fn family_name(pattern: &ProblemPattern) -> String {
-    match serde_json::to_value(&pattern.family) {
+    match serde_json::to_value(pattern.family) {
         Ok(serde_json::Value::String(name)) => name,
         _ => String::new(),
     }

@@ -68,7 +68,7 @@ pub fn outcome_of(bundle: &SessionBundle) -> Result<ProblemOutcome> {
         solution_seen_before_passing: bundle
             .row
             .solution_seen_at
-            .is_some_and(|seen| first_pass.map_or(true, |pass| seen < pass)),
+            .is_some_and(|seen| first_pass.is_none_or(|pass| seen < pass)),
     })
 }
 

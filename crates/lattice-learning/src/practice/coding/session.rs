@@ -24,7 +24,6 @@ use crate::practical_dto::{
 };
 use crate::practical_repository::{validate_learner_turn, LearningPracticalRepository};
 use crate::practical_runs::CodingRunStart;
-use crate::simulation_policy::TurnPolicy;
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
 
