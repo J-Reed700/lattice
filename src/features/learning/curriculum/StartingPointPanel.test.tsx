@@ -69,6 +69,23 @@ describe('starting-point performance tasks', () => {
     expect(await screen.findByRole('button', { name: 'Study this topic' })).toBeVisible();
   });
 
+  it('treats an autosave failure as a conflict by its code', async () => {
+    const user = userEvent.setup();
+    mocks.submit.mockImplementationOnce(async () => ({ ok: false, error: Object.assign(new Error('Stale.'), { details: { code: 'CONFLICT' } }) }));
+    show();
+    await user.type(await screen.findByRole('textbox', { name: 'Your reasoning' }), 'The result depends on the values.');
+    expect(await screen.findByRole('button', { name: 'Keep my answers and retry' })).toBeVisible();
+  });
+
+  it('does not treat a message that merely says the answers changed as a conflict', async () => {
+    const user = userEvent.setup();
+    mocks.submit.mockImplementationOnce(async () => ({ ok: false, error: new Error('The answers changed elsewhere; reload and check the revision.') }));
+    show();
+    await user.type(await screen.findByRole('textbox', { name: 'Your reasoning' }), 'The result depends on the values.');
+    expect(await screen.findByRole('button', { name: 'Retry with my saved answers' })).toBeVisible();
+    expect(screen.queryByRole('button', { name: 'Keep my answers and retry' })).not.toBeInTheDocument();
+  });
+
   it('keeps edits after a save failure and retries the exact operation before navigation', async () => {
     const user = userEvent.setup();
     mocks.submit.mockImplementationOnce(async () => ({ ok: false, error: 'Connection interrupted' }));

@@ -141,7 +141,7 @@ describe('usePracticeSession', () => {
     await act(async () => {
       await result.current.switchMode('practice');
     });
-    expect(result.current.actionError).toBe('The attempt changed elsewhere; reload and retry.');
+    expect(result.current.failure?.message).toBe('The attempt changed elsewhere; reload and retry.');
     expect(result.current.conflict).toBe(false);
 
     mocks.mode.mockRejectedValueOnce(conflictError('Stale.'));
@@ -149,5 +149,34 @@ describe('usePracticeSession', () => {
       await result.current.switchMode('practice');
     });
     expect(result.current.conflict).toBe(true);
+  });
+
+  it('names the failed action and tries it again with the same operation ID', async () => {
+    mocks.tutor.mockRejectedValueOnce(new Error('The tutor could not answer.'));
+    mocks.tutor.mockImplementation(async () => ok({ programId: 'program-1', sessions: [summary] }));
+    const { result } = setup();
+    await ready(result);
+    await act(async () => {
+      await result.current.sendTutor('question', 'Why?');
+    });
+    expect(result.current.failure).toMatchObject({ kind: 'tutor', message: 'The tutor could not answer.' });
+
+    await act(async () => {
+      result.current.failure?.retry?.();
+    });
+    await waitFor(() => expect(mocks.tutor).toHaveBeenCalledTimes(2));
+    expect(mocks.tutor.mock.calls[1][0]).toEqual(mocks.tutor.mock.calls[0][0]);
+    await waitFor(() => expect(result.current.failure).toBeNull());
+  });
+
+  it('offers no Try again after a conflict, only the reload', async () => {
+    mocks.mode.mockRejectedValueOnce(conflictError('Stale.'));
+    const { result } = setup();
+    await ready(result);
+    await act(async () => {
+      await result.current.switchMode('practice');
+    });
+    expect(result.current.conflict).toBe(true);
+    expect(result.current.failure?.retry).toBeUndefined();
   });
 });

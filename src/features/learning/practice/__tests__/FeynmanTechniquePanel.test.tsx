@@ -244,6 +244,7 @@ describe('FeynmanTechniquePanel UI', () => {
     expect(screen.getByTestId('review-card')).toBeInTheDocument();
     expect(reviewCard).toHaveBeenCalledWith(expect.objectContaining({
       programId: 'prog-1',
+      lessonId: 'l-1',
       front: 'Call Stack and Base Case',
       back: 'A recursive function calls itself until reaching a termination condition known as the base case.',
     }));

@@ -13,10 +13,11 @@ vi.mock('@/features/learning/practice/shared/SaveAsReviewCard', () => ({
 
 describe('MisconceptionCard', () => {
   it('saves through the shared review card, asking what is wrong and what is right instead', () => {
-    render(<MisconceptionCard programId="program-1" idea="An observation already proves the inference." />);
+    render(<MisconceptionCard programId="program-1" lessonId="lesson-1" idea="An observation already proves the inference." />);
     expect(screen.getByTestId('review-card')).toBeInTheDocument();
     expect(card).toHaveBeenCalledWith(expect.objectContaining({
       programId: 'program-1',
+      lessonId: 'lesson-1',
       front: 'What is wrong with this idea, and what is right instead? “An observation already proves the inference.”',
       back: '',
     }));

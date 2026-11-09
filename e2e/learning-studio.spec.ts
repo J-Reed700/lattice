@@ -338,11 +338,11 @@ test("Studio text viewers survive repeated lesson and quiz navigation", async ({
   await expectNoUnsupportedIpc(page);
 });
 
-test("Learning Studio guided exercise saves, hints, submits and revises in the lesson", async ({ page }) => {
+test("Learning Studio guided attempt saves, hints, submits and revises in the lesson", async ({ page }) => {
   await installLearningStudioBackend(page);
   await openProgram(page);
-  const guided = page.getByRole("region", { name: "Program workspace content" }).getByLabel("Guided exercise", { exact: true });
-  await guided.getByRole("button", { name: "Start guided exercise" }).click();
+  const guided = page.getByRole("region", { name: "Program workspace content" }).getByLabel("Guided attempt", { exact: true });
+  await guided.getByRole("button", { name: "Start guided attempt" }).click();
   const answer = guided.getByRole("textbox", { name: "Your working" });
   await answer.fill("I would compare the same measure over an equal observation period, then note the sample limits.");
   await guided.getByRole("button", { name: "Check my reasoning" }).click();
@@ -1937,7 +1937,7 @@ async function runPracticeWorkbenchJourney(
   );
   await workbench.getByRole("button", { name: "Retry save" }).click();
   await expect(
-    workbench.getByRole("status").filter({ hasText: "Saved" }),
+    workbench.getByRole("status").filter({ hasText: /^Saved$/ }),
   ).toBeVisible();
   const firstSave = await page.evaluate((sessionId) => {
     const state = (
@@ -1992,7 +1992,7 @@ async function runPracticeWorkbenchJourney(
     )
     .toBe(changedText);
   await expect(
-    workbench.getByRole("status").filter({ hasText: "Saved" }),
+    workbench.getByRole("status").filter({ hasText: /^Saved$/ }),
   ).toBeVisible();
   const changedSave = await page.evaluate((sessionId) => {
     const state = (
@@ -2097,11 +2097,12 @@ async function runPracticeWorkbenchJourney(
 
   await openStudioSection(page, "Written practice");
   await expect(workbench.getByRole("textbox", { name: "Your response" })).toHaveValue(changedText);
-  const modeGroup = workbench.getByRole("group", { name: "Session mode" });
-  const demonstrate = modeGroup.getByRole("button", { name: "Demonstrate" });
+  const modeGroup = workbench.getByRole("group", { name: "Help" });
+  const demonstrate = modeGroup.getByRole("button", { name: "No help", exact: true });
   await demonstrate.click();
   await expect(demonstrate).toHaveAttribute("aria-pressed", "true");
-  await expect(workbench.getByRole("button", { name: "Ask tutor" })).toBeDisabled();
+  const tutorThread = workbench.getByRole("region", { name: "Tutor conversation" });
+  await expect(tutorThread.getByRole("button", { name: "Send" })).toBeDisabled();
   await expect(workbench.getByRole("button", { name: "Request critique" })).toBeDisabled();
   await expect(workbench.getByRole("button", { name: /Orienting question/ })).toBeDisabled();
   await expect(workbench.getByRole("button", { name: /Review reveal choice/ })).toHaveCount(0);
@@ -2150,7 +2151,7 @@ async function runPracticeWorkbenchJourney(
     "Solution reveal is unavailable in Demonstrate mode.",
   ]);
 
-  const exploreRadio = modeGroup.getByRole("button", { name: "Explore" });
+  const exploreRadio = modeGroup.getByRole("button", { name: "Full help", exact: true });
   await exploreRadio.click();
   await expect(exploreRadio).toHaveAttribute("aria-pressed", "true");
   const frozenSource = workbench.getByRole("button", { name: /Public field notes.*Version 1/ });
@@ -2192,11 +2193,9 @@ async function runPracticeWorkbenchJourney(
   await expect(sourceReader.getByText("Version 1 · saved", { exact: false })).toBeVisible();
   await expect(sourceReader.getByText("Record the same measure across the observation period.", { exact: false })).toBeVisible();
 
-  const tutorPrompt = workbench.getByRole("textbox", {
-    name: "Ask a question or request critique",
-  });
+  const tutorPrompt = workbench.getByRole("region", { name: "Tutor conversation" }).getByRole("textbox");
   await tutorPrompt.fill("How should I state a limit on the sample?");
-  await workbench.getByRole("button", { name: "Ask tutor" }).click();
+  await workbench.getByRole("region", { name: "Tutor conversation" }).getByRole("button", { name: "Send" }).click();
   const proposalSection = workbench
     .locator("section")
     .filter({ hasText: "Tutor proposals" });
@@ -2253,7 +2252,7 @@ async function runPracticeWorkbenchJourney(
       }, started.summary!.id),
     )
     .toBe(submittedText);
-  await expect(workbench.getByRole("status").filter({ hasText: "Saved" })).toBeVisible();
+  await expect(workbench.getByRole("status").filter({ hasText: /^Saved$/ })).toBeVisible();
   await workbench.getByRole("button", { name: "Submit response" }).click();
   await expect(workbench.getByRole("heading", { name: /Feedback on revision/ })).toBeVisible();
   const submitted = await page.evaluate((sessionId) => {

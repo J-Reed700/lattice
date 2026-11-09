@@ -30,9 +30,10 @@ describe('ResponseEditor', () => {
     expect(screen.getByRole('status')).toHaveTextContent('Saving…');
   });
 
-  it('shows a failed save as an alert with Try again, which flushes', async () => {
+  it('shows a failed save as unsaved, with the error as an alert and Try again, which flushes', async () => {
     const flush = vi.fn(async () => {});
     setup({ dirty: true, autosave: { state: 'error', error: 'Connection interrupted', flush } });
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
     expect(screen.getByRole('alert')).toHaveTextContent('Connection interrupted');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Try again' }));
     expect(flush).toHaveBeenCalledTimes(1);
@@ -40,6 +41,7 @@ describe('ResponseEditor', () => {
 
   it('offers to reload the saved attempt and keep the text after a conflict', async () => {
     const props = setup({ dirty: true, conflict: true, autosave: { state: 'conflict', error: 'Stale', flush: vi.fn() } });
+    expect(screen.getByRole('status')).toHaveTextContent('Unsaved changes');
     await userEvent.setup().click(screen.getByRole('button', { name: 'Reload the saved attempt · keep my text' }));
     expect(props.onReload).toHaveBeenCalledTimes(1);
   });
