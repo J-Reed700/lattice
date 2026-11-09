@@ -225,10 +225,8 @@ impl TagServiceTrait for TagServiceImpl {
     }
 
     async fn generate_tags(&self, document_id: &str, max_tags: usize) -> Result<Vec<String>> {
-        if max_tags == 0 || max_tags > 20 {
-            return Err(AppError::InvalidInput(
-                "Max tags must be between 1 and 20".into(),
-            ));
+        if max_tags == 0 {
+            return Err(AppError::InvalidInput("Max tags must be at least 1".into()));
         }
 
         let _lock = self.acquire_lock_with_timeout(document_id).await?;
