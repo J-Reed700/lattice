@@ -52,10 +52,10 @@ describe('usePassageCapture', () => {
     expect(toast.success).toHaveBeenCalledWith('Saved to references', { message: 'Lattice will use this in future answers.' });
   });
 
-  it('falls back to the source chunk and its own location, and caps the text', async () => {
+  it('falls back to the source chunk and its own location, and keeps the whole text', async () => {
     const { result } = setup({ source: source({ pageNumber: 4 }) });
     await act(() => result.current.handleReference('x'.repeat(4100)));
-    expect(api.createPassageReference).toHaveBeenCalledWith(expect.objectContaining({ chunkId: 'doc-1#3', locator: 'PDF p. 4', text: 'x'.repeat(4000) }));
+    expect(api.createPassageReference).toHaveBeenCalledWith(expect.objectContaining({ chunkId: 'doc-1#3', locator: 'PDF p. 4', text: 'x'.repeat(4100) }));
   });
 
   it('sends no locator when the passage has no known location', async () => {

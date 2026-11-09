@@ -34,7 +34,7 @@ export function usePassageCapture({
   const [captureDraft, setCaptureDraft] = useState<string | null>(null);
 
   const captureLocator = useCallback(
-    (text: string) => text.trim().slice(0, 4000),
+    (text: string) => text.trim(),
     []
   );
 
