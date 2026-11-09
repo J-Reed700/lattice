@@ -1,4 +1,4 @@
-use super::recall::{parse_recall_drafts, recall_draft_schema};
+use super::recall::{parse_recall_drafts, recall_draft_prompt, recall_draft_schema};
 use super::*;
 use crate::dto::LearningProgramDto;
 use crate::lessons::course_generation_tests::length_bounds;
@@ -632,4 +632,19 @@ fn the_writer_is_told_never_to_name_a_source_in_the_text() {
     let instructions = citation_instructions(true);
     assert!(instructions.contains("Never name a source or an excerpt in the lesson's text"));
     assert!(instructions.contains("cite that sentence in the citations list"));
+}
+
+#[test]
+fn recall_cards_are_written_for_a_learner_who_sees_only_the_lesson() {
+    let lesson = crate::tests::fixture().modules[0].lessons[0].clone();
+    let prompt = recall_draft_prompt(&lesson, 2, &HashSet::new(), Vec::new());
+    for expected in [
+        "The learner sees a card and the lesson, never the source excerpts.",
+        "never point at an excerpt, passage or tutorial the learner cannot see",
+    ] {
+        assert!(
+            prompt.contains(expected),
+            "missing {expected:?} in {prompt}"
+        );
+    }
 }

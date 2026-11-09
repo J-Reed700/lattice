@@ -560,3 +560,39 @@ fn a_questions_reasons_are_trimmed_and_kept_with_its_key_in_the_writers_order() 
     );
     assert!(prepared.keys[1].rationales.is_empty());
 }
+
+#[test]
+fn the_writer_writes_only_what_the_learner_sees() {
+    let text = writer_requirements();
+    for expected in [
+        "The learner reads only this lesson, never the sources' excerpts, the course plan (coursePlan) or these requirements.",
+        "say what a source states in the lesson's own words",
+        "credit the source by its title as referenceCatalog gives it",
+        "never point at an excerpt, passage, tutorial, plan or requirement the learner cannot see",
+        "name the system it describes",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in {text}");
+    }
+    assert!(!text.contains("When an excerpt describes"), "{text}");
+}
+
+#[test]
+fn the_writer_asks_questions_only_about_what_the_learner_was_taught() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("Every question, its choices, its rationales and its explanation rest only on what this lesson teaches or on an earlier lesson's planned ideas, terms and actions in coursePlan; a learner who studied only those can answer it."),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_writer_teaches_how_a_deliverable_is_recorded() {
+    let text = writer_requirements();
+    for expected in [
+        "every step a deliverable needs, including how the learner records or saves their work",
+        "a deliverable kept in a file needs the way to write text into that file taught, here or in an earlier lesson's planned actions",
+        "otherwise ask for the record in the learner's own notes",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in {text}");
+    }
+}

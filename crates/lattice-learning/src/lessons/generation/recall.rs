@@ -137,7 +137,7 @@ pub(super) fn recall_draft_schema(
     })
 }
 
-fn recall_draft_prompt(
+pub(super) fn recall_draft_prompt(
     lesson: &LearningLessonDto,
     count: usize,
     allowed_source_ids: &HashSet<String>,
