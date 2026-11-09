@@ -412,6 +412,11 @@ impl MentionRepositoryPort for MentionRepository {
         mention_type: Option<&str>,
         metadata: Option<&str>,
     ) -> Result<MentionData, AppError> {
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         // First, get the current mention
         let current = sqlx::query!(
             r#"
@@ -421,7 +426,7 @@ impl MentionRepositoryPort for MentionRepository {
             "#,
             id
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to fetch mention: {}", e)))?
         .ok_or_else(|| AppError::NotFound(format!("Mention not found: {}", id)))?;
@@ -440,9 +445,12 @@ impl MentionRepositoryPort for MentionRepository {
             new_metadata,
             id
         )
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to update mention: {}", e)))?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(MentionData {
             id: row.id.ok_or_else(|| {
