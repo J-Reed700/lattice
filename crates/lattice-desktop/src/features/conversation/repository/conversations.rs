@@ -1,5 +1,7 @@
 //! Conversation rows: create, read, list, update and delete.
 
+use super::document_references::document_references_of;
+use super::messages::messages_of;
 use super::ConversationRepository;
 use crate::features::conversation::persistence_mapper::{
     ConversationModel, ConversationRowMapper, ConversationSummaryMapper, ConversationSummaryModel,
@@ -100,46 +102,31 @@ impl ConversationRepository {
     }
 
     pub async fn find_by_id(&self, id: &str) -> Result<Option<Conversation>> {
-        let db_model = sqlx::query_as::<_, ConversationModel>(
-            r#"
-            SELECT id, title, model_choice, system_prompt, created_at, updated_at,
-                   message_count, total_tokens
-            FROM conversations
-            WHERE id = ?
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to find conversation: {}", e)))?;
-
-        match db_model {
-            Some(model) => Ok(Some(ConversationRowMapper::to_entity(&model)?)),
-            None => Ok(None),
-        }
+        find_conversation(&self.pool, id).await
     }
 
     pub async fn find_aggregate_by_id(&self, id: &str) -> Result<Option<ConversationAggregate>> {
-        let conversation = match self.find_by_id(id).await? {
-            Some(conv) => conv,
-            None => return Ok(None),
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        let Some(conversation) = find_conversation(&mut *tx, id).await? else {
+            return Ok(None);
         };
+        let messages = messages_of(&mut *tx, id).await?;
+        let document_refs = document_references_of(&mut *tx, id).await?;
+        let compaction = load_summary(&mut *tx, id).await?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
-        let messages = self.get_messages(id).await?;
-
-        let document_refs = self.get_document_references(id).await?;
-
-        let compaction = self.get_summary(id).await?;
-
-        // Reconstruct aggregate
-        let aggregate = ConversationAggregate::from_persistence(
+        Ok(Some(ConversationAggregate::from_persistence(
             conversation,
             messages,
             document_refs,
             compaction,
-        );
-
-        Ok(Some(aggregate))
+        )))
     }
 
     /// Load the compaction summary for a conversation, if any. At most one row
@@ -147,24 +134,7 @@ impl ConversationRepository {
     /// UNIQUE and the memory commit conflicts on it, so a re-compaction updates
     /// the row in place and a read never has to choose between two.
     pub async fn get_summary(&self, id: &str) -> Result<Option<CompactionRecord>> {
-        let model = sqlx::query_as::<_, ConversationSummaryModel>(
-            r#"
-            SELECT id, conversation_id, summary_text, up_to_message_id,
-                   original_message_count, original_tokens, summary_tokens,
-                   compression_ratio, created_at
-            FROM conversation_summaries
-            WHERE conversation_id = ?
-            "#,
-        )
-        .bind(id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to load conversation summary: {}", e)))?;
-
-        match model {
-            Some(m) => Ok(Some(ConversationSummaryMapper::to_entity(&m)?)),
-            None => Ok(None),
-        }
+        load_summary(&self.pool, id).await
     }
 
     pub async fn find_all(
@@ -380,6 +350,53 @@ impl ConversationRepository {
             .iter()
             .map(|row| (row.get::<String, _>("id"), row.get::<String, _>("title")))
             .collect())
+    }
+}
+
+async fn find_conversation(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    id: &str,
+) -> Result<Option<Conversation>> {
+    let db_model = sqlx::query_as::<_, ConversationModel>(
+        r#"
+            SELECT id, title, model_choice, system_prompt, created_at, updated_at,
+                   message_count, total_tokens
+            FROM conversations
+            WHERE id = ?
+            "#,
+    )
+    .bind(id)
+    .fetch_optional(executor)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to find conversation: {}", e)))?;
+
+    match db_model {
+        Some(model) => Ok(Some(ConversationRowMapper::to_entity(&model)?)),
+        None => Ok(None),
+    }
+}
+
+async fn load_summary(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    id: &str,
+) -> Result<Option<CompactionRecord>> {
+    let model = sqlx::query_as::<_, ConversationSummaryModel>(
+        r#"
+            SELECT id, conversation_id, summary_text, up_to_message_id,
+                   original_message_count, original_tokens, summary_tokens,
+                   compression_ratio, created_at
+            FROM conversation_summaries
+            WHERE conversation_id = ?
+            "#,
+    )
+    .bind(id)
+    .fetch_optional(executor)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to load conversation summary: {}", e)))?;
+
+    match model {
+        Some(m) => Ok(Some(ConversationSummaryMapper::to_entity(&m)?)),
+        None => Ok(None),
     }
 }
 

@@ -79,19 +79,26 @@ impl ConversationRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Vec<DocumentReference>> {
-        let db_models = sqlx::query_as::<_, DocumentReferenceModel>(
-            r#"
+        document_references_of(&self.pool, conversation_id).await
+    }
+}
+
+pub(super) async fn document_references_of(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    conversation_id: &str,
+) -> Result<Vec<DocumentReference>> {
+    let db_models = sqlx::query_as::<_, DocumentReferenceModel>(
+        r#"
             SELECT document_id, chunk_id, relevance_score, added_at
             FROM conversation_documents
             WHERE conversation_id = ?
             ORDER BY added_at ASC
             "#,
-        )
-        .bind(conversation_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to get document references: {}", e)))?;
+    )
+    .bind(conversation_id)
+    .fetch_all(executor)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to get document references: {}", e)))?;
 
-        Ok(DocumentReferenceMapper::to_entities(&db_models))
-    }
+    Ok(DocumentReferenceMapper::to_entities(&db_models))
 }

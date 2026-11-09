@@ -322,20 +322,27 @@ impl ConversationRepository {
     }
 
     pub async fn get_messages(&self, conversation_id: &str) -> Result<Vec<ConversationMessage>> {
-        let db_models = sqlx::query_as::<_, ConversationMessageModel>(
-            r#"
+        messages_of(&self.pool, conversation_id).await
+    }
+}
+
+pub(super) async fn messages_of(
+    executor: impl sqlx::Executor<'_, Database = sqlx::Sqlite>,
+    conversation_id: &str,
+) -> Result<Vec<ConversationMessage>> {
+    let db_models = sqlx::query_as::<_, ConversationMessageModel>(
+        r#"
             SELECT id, conversation_id, role, content, tokens, created_at,
                    metadata, status
             FROM conversation_messages
             WHERE conversation_id = ?
             ORDER BY sequence ASC, created_at ASC, rowid ASC
             "#,
-        )
-        .bind(conversation_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
+    )
+    .bind(conversation_id)
+    .fetch_all(executor)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to get messages: {}", e)))?;
 
-        Ok(ConversationMessageMapper::to_entities(&db_models))
-    }
+    Ok(ConversationMessageMapper::to_entities(&db_models))
 }
