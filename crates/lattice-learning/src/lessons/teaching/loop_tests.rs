@@ -28,7 +28,7 @@ fn review(defect: Option<&str>) -> String {
 }
 
 fn actionable() -> String {
-    json!({"issue-0":{"verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The example's printed result contradicts the value the code returns."}}).to_string()
+    json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"internal_conflict","evidenceIds":["blocks-0"],"partId":"blocks-0","requirementId":null,"reason":"The example's printed result contradicts the value the code returns."}]}).to_string()
 }
 
 fn retitle(after: &str) -> String {
@@ -1046,8 +1046,9 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
     })
     .to_string();
 
-    let pass1_evidence = json!({
-        "issue-0": {
+    let pass1_evidence = json!({"decisions": [
+        {
+            "issueId": "issue-0",
             "verdict": "actionable",
             "basis": "internal_conflict",
             "evidenceIds": ["blocks-0"],
@@ -1055,7 +1056,8 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
             "requirementId": null,
             "reason": "Section 0 defect."
         },
-        "issue-1": {
+        {
+            "issueId": "issue-1",
             "verdict": "actionable",
             "basis": "internal_conflict",
             "evidenceIds": ["blocks-1"],
@@ -1063,7 +1065,7 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
             "requirementId": null,
             "reason": "Section 1 defect."
         }
-    })
+    ]})
     .to_string();
 
     let repair = json!({
@@ -1101,8 +1103,9 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
     })
     .to_string();
 
-    let pass2_evidence = json!({
-        "issue-0": {
+    let pass2_evidence = json!({"decisions": [
+        {
+            "issueId": "issue-0",
             "verdict": "actionable",
             "basis": "internal_conflict",
             "evidenceIds": ["blocks-0"],
@@ -1110,7 +1113,7 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
             "requirementId": null,
             "reason": "Section 0 defect."
         }
-    })
+    ]})
     .to_string();
 
     let model = model(vec![
