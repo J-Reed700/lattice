@@ -25,6 +25,24 @@ vi.mock('@/features/learning/portability/PortabilityPanel', () => ({ Portability
 vi.mock('@/features/learning/portability/ImportCourseFlow', () => ({ ImportCourseFlow: ({ onImported }: { onImported: (id: string, title: string) => void }) => <button onClick={() => onImported('imported-1', 'Imported course')}>Complete test import</button> }));
 vi.mock('@/features/learning/drills/CourseDrillsPanel', () => ({ CourseDrillsPanel: ({ programId }: { programId: string }) => <p>{`Review drills of ${programId}`}</p> }));
 
+vi.mock('@/features/learning/practice/home/practiceHomeApi', () => ({
+  practiceHomeApi: {
+    getProfile: async () => ({ programId: 'program-1', details: '', language: null, interviewAt: null, company: null, role: null, revision: 0 }),
+    saveProfile: vi.fn(),
+    getFit: async () => ({ code: 'fits', reason: null }),
+    checkFit: async () => ({ code: 'fits', reason: null }),
+    due: async () => ({ items: [] }),
+    codingSessions: async () => [],
+    startCodingSession: vi.fn(),
+  },
+}));
+
+// The Practice page opens on its home; the lab is reached from History, and by its tab once the learner is in it.
+async function openLab(user: ReturnType<typeof userEvent.setup>) {
+  const control = screen.queryByRole('button', { name: 'Code labs and simulations' });
+  await user.click(control ?? screen.getByRole('tab', { name: 'Code & simulations' }));
+}
+
 const mocks = vi.hoisted(() => ({
   list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), prepareModule: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
   documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(), decks: vi.fn(), deck: vi.fn(), outlineEvidence: vi.fn(), exportAll: vi.fn(),
@@ -432,7 +450,7 @@ describe('Learning Studio program workflow', () => {
     expect(within(mainNav).getAllByRole('tab')).toHaveLength(7);
     expect(within(mainNav).getByRole('tab', { name: 'Tutor' })).toBeVisible();
     await user.click(within(mainNav).getByRole('tab', { name: 'Practice' }));
-    await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
+    await openLab(user);
     const lab = screen.getByRole('textbox', { name: 'Lab scratchpad' });
     await user.type(lab, 'keep this work');
     expect(screen.getByLabelText('Lesson context')).toHaveValue('lesson-1');
@@ -444,7 +462,7 @@ describe('Learning Studio program workflow', () => {
     await user.click(screen.getByRole('option', { name: /Start with the idea/ }));
     await user.click(within(mainNav).getByRole('tab', { name: 'Recall' }));
     await user.click(within(mainNav).getByRole('tab', { name: 'Practice' }));
-    await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
+    await openLab(user);
     expect(screen.getByRole('textbox', { name: 'Lab scratchpad' })).toHaveValue('keep this work');
 
     const more = screen.getByRole('button', { name: 'More' });
@@ -486,13 +504,13 @@ describe('Learning Studio program workflow', () => {
     show();
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     await user.click(screen.getByRole('tab', { name: 'Practice' }));
-    await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
+    await openLab(user);
     await user.type(screen.getByRole('textbox', { name: 'Lab scratchpad' }), 'before import');
     await user.click(screen.getByRole('button', { name: 'More' }));
     await user.click(screen.getByRole('menuitem', { name: 'Import & export' }));
     await user.click(screen.getByRole('button', { name: 'Complete test replacement' }));
     await user.click(screen.getByRole('tab', { name: 'Practice' }));
-    await user.click(screen.getByRole('tab', { name: 'Code & simulations' }));
+    await openLab(user);
     expect(screen.getByRole('textbox', { name: 'Lab scratchpad' })).toHaveValue('');
   });
 

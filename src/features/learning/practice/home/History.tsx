@@ -90,10 +90,11 @@ export function History({ items, loading, error, onRetry, onOpen, onOpenWorkbenc
               </span>
               <button
                 type="button"
+                aria-label={`Open ${item.title}`}
                 onClick={() => onOpen(item)}
                 className="inline-flex min-h-11 items-center gap-1 rounded-lg px-2 text-sm font-medium text-text-secondary hover:text-text-primary focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
               >
-                Open<span className="sr-only"> {item.title}</span>
+                Open
                 <ArrowRight className="h-4 w-4" aria-hidden="true" />
               </button>
             </li>
