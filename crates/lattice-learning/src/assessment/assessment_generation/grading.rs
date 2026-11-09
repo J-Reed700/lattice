@@ -46,7 +46,7 @@ fn grade_schema(ids: &[String], criteria: &[String], with_note: bool) -> Value {
     };
     let criterion = json!({"type":"object","additionalProperties":false,"required":["criterionId","yourWords","whatWasMissing","fullCreditIncludes","sourceQuote","verdict","points"],"properties":{
         "criterionId":criterion_id,
-        "yourWords":{"type":"array","maxItems":4,"items":{"type":"string"}},
+        "yourWords":{"type":"array","items":{"type":"string"}},
         "whatWasMissing":{"type":"string"},
         "fullCreditIncludes":{"type":"string"},
         "sourceQuote":{"type":"string"},
@@ -55,7 +55,7 @@ fn grade_schema(ids: &[String], criteria: &[String], with_note: bool) -> Value {
     }});
     let mut item = json!({"type":"object","additionalProperties":false,"required":["itemId","criteria","summary"],"properties":{
         "itemId":{"enum":ids},
-        "criteria":{"type":"array","minItems":1,"maxItems":12,"items":criterion},
+        "criteria":{"type":"array","minItems":1,"items":criterion},
         "summary":{"type":"string"}
     }});
     if with_note {
@@ -67,7 +67,7 @@ fn grade_schema(ids: &[String], criteria: &[String], with_note: bool) -> Value {
 fn judge_schema(ids: &[String], with_note: bool) -> Value {
     let mut item = json!({"type":"object","additionalProperties":false,"required":["itemId","yourWords","whatWasMissing","fullCreditIncludes","verdict","summary"],"properties":{
         "itemId":{"enum":ids},
-        "yourWords":{"type":"array","maxItems":3,"items":{"type":"string"}},
+        "yourWords":{"type":"array","items":{"type":"string"}},
         "whatWasMissing":{"type":"string"},
         "fullCreditIncludes":{"type":"string"},
         "verdict":{"enum":["equivalent","not_equivalent"]},

@@ -30,7 +30,7 @@ fn validate_response(
             .sum::<usize>();
     if total_text > MAX_CHAT_MESSAGE_CHARS
         || response.ordered_values.len() > 32
-        || response.blank_responses.len() > 8
+        || response.blank_responses.len() > engine::MAX_CLOZE_BLANKS
         || response.matches.len() > 8
         || response.selected_indices.len() > 12
         || response

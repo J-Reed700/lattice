@@ -81,19 +81,20 @@ fn distinct_options(options: &[String]) -> bool {
 
 fn text_key_valid(key: &LearningTextKey) -> bool {
     !key.variants.is_empty()
-        && key.variants.len() <= 12
         && key.variants.iter().all(|v| !v.trim().is_empty())
-        && key.numeric.as_ref().is_none_or(|n| {
-            n.value.is_finite()
-                && n.tolerance.is_finite()
-                && n.tolerance >= 0.0
-                && n.unit_variants.len() <= 12
-        })
+        && key
+            .numeric
+            .as_ref()
+            .is_none_or(|n| n.value.is_finite() && n.tolerance.is_finite() && n.tolerance >= 0.0)
 }
 
 pub const TRUE_FALSE: [&str; 2] = ["True", "False"];
 
 /// How many options a single-choice item may have.
+/// The most blanks a cloze sentence may hold: the learner answers one input
+/// per blank, and a response is checked against this count.
+pub const MAX_CLOZE_BLANKS: usize = 8;
+
 pub const SINGLE_CHOICE_OPTIONS: std::ops::RangeInclusive<usize> = 2..=8;
 
 pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()> {
@@ -112,11 +113,6 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
     if !(1..=5).contains(&candidate.difficulty) {
         return Err(invalid(
             "Assessment item difficulty must use the 1–5 scale.",
-        ));
-    }
-    if candidate.source_version_ids.len() > 24 {
-        return Err(invalid(
-            "Assessment items support at most 24 frozen source versions.",
         ));
     }
     for source in &candidate.source_version_ids {
@@ -183,7 +179,7 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
         (LearningItemFormat::ShortAnswer, LearningAssessmentKey::Text(key)) => {
             if !text_key_valid(key) || !candidate.options.is_empty() || !no_left {
                 return Err(invalid(
-                    "Short-answer items need 1–12 accepted answers and no choices.",
+                    "Short-answer items need accepted answers and no choices.",
                 ));
             }
             if key
@@ -198,7 +194,7 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             let found = cloze_blanks(&candidate.prompt);
             let expected: Vec<usize> = (1..=blanks.len()).collect();
             if blanks.is_empty()
-                || blanks.len() > 8
+                || blanks.len() > MAX_CLOZE_BLANKS
                 || found != expected
                 || !blanks.iter().all(text_key_valid)
                 || !candidate.options.is_empty()

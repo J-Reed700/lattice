@@ -38,7 +38,6 @@ pub(crate) fn lesson_seed_items(
                     .source_ids
                     .iter()
                     .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-                    .take(24)
                     .cloned()
                     .collect(),
                 rubric: vec![],

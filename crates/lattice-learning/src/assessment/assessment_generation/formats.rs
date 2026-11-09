@@ -40,6 +40,10 @@ pub(super) struct RawItem {
     difficulty: u8,
 }
 
+fn strings_from(min: usize) -> Value {
+    json!({"type":"array","minItems":min,"items":{"type":"string","minLength":1}})
+}
+
 fn strings(min: usize, max: usize) -> Value {
     json!({"type":"array","minItems":min,"maxItems":max,"items":{"type":"string","minLength":1}})
 }
@@ -74,18 +78,15 @@ pub(super) fn item_schema(
             );
         }
         LearningItemFormat::ShortAnswer => {
-            put("acceptedAnswers", strings(3, 12));
+            put("acceptedAnswers", strings_from(1));
             put("isNumeric", json!({"type":"boolean"}));
             put("numericValue", json!({"type":"number"}));
             put("tolerance", json!({"type":"number","minimum":0}));
-            put(
-                "units",
-                json!({"type":"array","maxItems":8,"items":{"type":"string"}}),
-            );
+            put("units", json!({"type":"array","items":{"type":"string"}}));
         }
         LearningItemFormat::Cloze => put(
             "blanks",
-            json!({"type":"array","minItems":1,"maxItems":4,"items":{"type":"object","additionalProperties":false,"required":["acceptedAnswers"],"properties":{"acceptedAnswers":strings(1, 8)}}}),
+            json!({"type":"array","minItems":1,"maxItems":engine::MAX_CLOZE_BLANKS,"items":{"type":"object","additionalProperties":false,"required":["acceptedAnswers"],"properties":{"acceptedAnswers":strings_from(1)}}}),
         ),
         LearningItemFormat::Matching => {
             put(
@@ -235,7 +236,6 @@ pub(super) fn to_candidate(
             .source_version_ids
             .iter()
             .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-            .take(24)
             .cloned()
             .collect(),
         rubric,
