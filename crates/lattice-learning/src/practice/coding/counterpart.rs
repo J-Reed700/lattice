@@ -227,7 +227,8 @@ pub async fn respond(
             return Ok(None);
         };
         let ran = refuse_passing_blocks(&reply.content, |code| {
-            passes_every_case(runner, harness, problem, &code, cancel.clone())
+            let cancel = cancel.clone();
+            async move { passes_every_case(runner, harness, problem, &code, cancel).await }
         })
         .await;
         let why = match ran {
