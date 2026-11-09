@@ -7,6 +7,7 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::Mutex;
 
 /// A model that plans the course it is asked about, with the answers it is
 /// told to give first, and keeps every request.
@@ -81,8 +82,12 @@ fn ids(program: &LearningProgramDto) -> Vec<String> {
 }
 
 fn answer(lessons: &[&str]) -> String {
+    answer_of(lessons, "an idea")
+}
+
+fn answer_of(lessons: &[&str], idea: &str) -> String {
     json!({"lessons":lessons.iter().map(|id| json!({
-        "lessonId":id,"ideas":["an idea"],"terms":[],"actions":[],"contrast":""
+        "lessonId":id,"ideas":[idea],"terms":[],"actions":[],"contrast":""
     })).collect::<Vec<_>>()})
     .to_string()
 }
@@ -141,25 +146,40 @@ fn a_plan_that_leaves_out_or_repeats_a_lesson_is_refused_naming_it() {
 }
 
 #[tokio::test]
-async fn however_many_lessons_ask_at_once_one_call_makes_the_plan() {
+async fn two_overlapping_calls_with_different_answers_save_one_plan_and_both_return_it() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
-    let llm = Planner::new();
+    let order = ids(&program);
+    let all: Vec<&str> = order.iter().map(String::as_str).collect();
+    let first = Planner::answering(vec![answer_of(&all, "an idea from the first model")]);
+    let second = Planner::answering(vec![answer_of(&all, "an idea from the second model")]);
 
-    let plans = futures::future::join_all((0..8).map(|_| ensure(&pool, &llm, &program, 1))).await;
+    let (one, other) = tokio::join!(
+        ensure(&pool, &first, &program, 1),
+        ensure(&pool, &second, &program, 1)
+    );
 
-    assert_eq!(llm.calls(), 1, "every other caller waited and read the row");
-    let first = plans[0].as_ref().unwrap();
-    assert_eq!(first.lessons.len(), 4);
-    assert!(plans.iter().all(|plan| plan.as_ref().unwrap() == first));
-    let rows: i64 = sqlx::query_scalar(
-        "SELECT count(*) FROM learning_course_plan_lessons WHERE program_id=? AND outline_revision=1",
+    let (one, other) = (one.unwrap(), other.unwrap());
+    assert_eq!((first.calls(), second.calls()), (1, 1), "both planned");
+    assert_eq!(one, other);
+    let rows: Vec<(String, String)> = sqlx::query_as(
+        "SELECT lesson_id,entry_json FROM learning_course_plan_lessons WHERE program_id=? AND outline_revision=1",
     )
     .bind(&program.summary.id)
-    .fetch_one(&pool)
+    .fetch_all(&pool)
     .await
     .unwrap();
-    assert_eq!(rows, 4, "one row for each lesson");
+    assert_eq!(rows.len(), 4);
+    for (id, entry) in &rows {
+        let entry: PlannedLesson = serde_json::from_str(entry).unwrap();
+        assert_eq!(one.lesson(id), Some(&entry), "the result is what was saved");
+    }
+    let ideas: std::collections::HashSet<_> = one
+        .lessons
+        .iter()
+        .flat_map(|entry| entry.ideas.clone())
+        .collect();
+    assert_eq!(ideas.len(), 1, "every entry is from one answer: {ideas:?}");
 }
 
 #[tokio::test]
@@ -354,4 +374,25 @@ async fn a_plan_made_before_accept_is_reused_after_it_with_no_call() {
     let read = ensure(&pool, &llm, &accepted, after).await.unwrap();
     assert_eq!(llm.calls(), 1);
     assert_eq!(read, made);
+}
+
+#[tokio::test]
+async fn an_unreadable_entry_is_an_error_naming_its_lesson_and_costs_no_call() {
+    let pool = crate::tests::pool().await.unwrap();
+    let program = saved_program(&pool).await;
+    let llm = Planner::new();
+    ensure(&pool, &llm, &program, 1).await.unwrap();
+    let target = ids(&program)[2].clone();
+    sqlx::query("UPDATE learning_course_plan_lessons SET entry_json='{\"x\":1}' WHERE program_id=? AND lesson_id=?")
+        .bind(&program.summary.id)
+        .bind(&target)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    let error = ensure(&pool, &llm, &program, 1).await.unwrap_err();
+
+    assert!(matches!(error, AppError::InternalError(_)), "{error:?}");
+    assert!(error.to_string().contains(&target), "{error}");
+    assert_eq!(llm.calls(), 1, "no new plan is paid for");
 }

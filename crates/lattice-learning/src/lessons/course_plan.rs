@@ -19,7 +19,6 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
-use std::sync::{Arc, LazyLock, Mutex, PoisonError};
 
 /// The `task` of the planning request.
 pub(crate) const PLAN_TASK: &str = "Plan what every lesson of this course teaches";
@@ -93,43 +92,32 @@ pub(crate) async fn outline_revision(pool: &SqlitePool, program_id: &str) -> Res
 }
 
 /// The plan for `program` at `outline_revision`: read when it is saved, made
-/// by one model call when it is not. However many lessons ask at once, one
-/// call is made; the rest wait and read its row, and so does a restart.
+/// by one model call when it is not. It holds no lock: callers that must not
+/// plan twice serialize their calls. Two calls that overlap each save every
+/// entry in one transaction, the first to commit wins, and both return what
+/// was saved.
 pub async fn ensure(
     pool: &SqlitePool,
     llm: &dyn LLMPort,
     program: &LearningProgramDto,
     outline_revision: i64,
 ) -> Result<CoursePlan> {
-    let program_id = program.summary.id.as_str();
-    if let Some(plan) = stored(pool, program, outline_revision).await? {
-        return Ok(plan);
-    }
-    let turn = turn_of(program_id);
-    let _turn = turn.lock().await;
     if let Some(plan) = stored(pool, program, outline_revision).await? {
         return Ok(plan);
     }
     crate::lesson_progress::stage("Planning what each lesson of the course teaches");
     let plan = generate(llm, program).await?;
-    save(pool, program_id, outline_revision, &plan).await?;
-    // An entry already saved for a lesson, such as one the learner edited, wins.
-    Ok(stored(pool, program, outline_revision)
+    save(pool, &program.summary.id, outline_revision, &plan).await?;
+    stored(pool, program, outline_revision)
         .await?
-        .unwrap_or(plan))
-}
-
-type Turns = Mutex<HashMap<String, Arc<tokio::sync::Mutex<()>>>>;
-
-/// The lock a course's planning waits on, one per course.
-fn turn_of(program_id: &str) -> Arc<tokio::sync::Mutex<()>> {
-    static TURNS: LazyLock<Turns> = LazyLock::new(Turns::default);
-    let mut turns = TURNS.lock().unwrap_or_else(PoisonError::into_inner);
-    Arc::clone(turns.entry(program_id.to_owned()).or_default())
+        .ok_or_else(|| {
+            AppError::InternalError("The course plan was saved but could not be read back".into())
+        })
 }
 
 /// The saved plan, read fresh on every call so an edit made meanwhile is
-/// seen. A revision is planned when each of its lessons has a usable entry.
+/// seen. A revision is planned when each of its lessons has an entry; an
+/// entry that cannot be read is an error, never a missing one.
 async fn stored(
     pool: &SqlitePool,
     program: &LearningProgramDto,
@@ -143,11 +131,19 @@ async fn stored(
     .fetch_all(pool)
     .await
     .map_err(db)?;
-    let mut entries: HashMap<String, PlannedLesson> = rows
-        .into_iter()
-        .filter_map(|(id, entry)| Some((id, serde_json::from_str(&entry).ok()?)))
-        .collect();
     let order = lesson_ids(program);
+    let mut entries: HashMap<String, PlannedLesson> = HashMap::new();
+    for (id, entry) in rows {
+        if !order.contains(&id.as_str()) {
+            continue;
+        }
+        let entry = serde_json::from_str(&entry).map_err(|error| {
+            AppError::InternalError(format!(
+                "The course plan entry for lesson {id} cannot be read: {error}"
+            ))
+        })?;
+        entries.insert(id, entry);
+    }
     if order.iter().any(|id| !entries.contains_key(*id)) {
         return Ok(None);
     }

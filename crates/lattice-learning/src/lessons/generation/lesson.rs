@@ -106,7 +106,7 @@ pub(super) fn course_context(
             }
             let topics = plan.lesson(&l.id);
             json!({
-                "lessonId":l.id,"title":l.title,"position":position,
+                "title":l.title,"position":position,
                 "ideas":topics.map(|t| t.ideas.as_slice()).unwrap_or_default(),
                 "terms":topics.map(|t| t.terms.as_slice()).unwrap_or_default(),
                 "actions":topics.map(|t| t.actions.as_slice()).unwrap_or_default(),
