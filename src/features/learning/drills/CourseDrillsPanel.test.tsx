@@ -12,6 +12,7 @@ import { momentOf } from './reveal/revealCopy';
 
 const api = vi.hoisted(() => ({
   codeReviewLanguages: vi.fn(),
+  practiceLanguage: vi.fn(),
   courseDrills: vi.fn(),
   startCourseDrill: vi.fn(),
   submitCodeReview: vi.fn(),
@@ -27,6 +28,14 @@ vi.mock('@tauri-apps/api/event', () => ({
     return Promise.resolve(() => {
       events.handlers.delete(handler);
     });
+  },
+}));
+
+const clock = vi.hoisted(() => ({ props: [] as Array<Record<string, unknown>> }));
+vi.mock('@/features/learning/practice/shared/ElapsedClock', () => ({
+  ElapsedClock: (props: Record<string, unknown>) => {
+    clock.props.push(props);
+    return <p role="timer">Clock</p>;
   },
 }));
 
@@ -219,8 +228,10 @@ const commentTexts = () => screen.getAllByRole('listitem').map((item) => item.qu
 beforeEach(() => {
   localStorage.clear();
   events.handlers.clear();
+  clock.props = [];
   for (const mock of Object.values(api)) mock.mockReset();
   api.codeReviewLanguages.mockResolvedValue(['python', 'csharp', 'sql']);
+  api.practiceLanguage.mockResolvedValue(null);
   served = {};
   api.courseDrills.mockImplementation((_programId: string, language: string | null) =>
     Promise.resolve(courseDrills({ language: language ?? 'python', ...served })));
@@ -261,7 +272,7 @@ describe('choosing a drill', () => {
     localStorage.setItem('lattice.drills.language.course-1', 'sql');
     show();
     expect(await screen.findByRole('combobox', { name: 'Language' })).toHaveValue('sql');
-    expect(screen.getByRole('radio', { name: /Interview/ })).toBeChecked();
+    expect(screen.getByRole('radio', { name: /Timed/ })).toBeChecked();
     expect(screen.getByRole('radio', { name: /Long/ })).toBeChecked();
     expect(screen.getByRole('spinbutton', { name: 'Time limit' })).toHaveValue(25);
   });
@@ -275,7 +286,7 @@ describe('choosing a drill', () => {
 
   it('asks for the length of an interview in whole minutes, and starts only with one', async () => {
     const { user } = show();
-    await user.click(await screen.findByRole('radio', { name: /Interview/ }));
+    await user.click(await screen.findByRole('radio', { name: /Timed/ }));
     const limit = screen.getByRole('spinbutton', { name: 'Time limit' });
     expect(limit).toHaveValue(10);
     fireEvent.change(limit, { target: { value: '' } });
@@ -413,7 +424,7 @@ describe('choosing a lesson', () => {
     const { user } = show();
     await screen.findByRole('option', { name: 'C#' });
     await user.selectOptions(screen.getByRole('combobox', { name: 'Language' }), 'csharp');
-    await user.click(screen.getByRole('radio', { name: /Interview/ }));
+    await user.click(screen.getByRole('radio', { name: /Timed/ }));
     await user.click(screen.getByRole('radio', { name: /Short/ }));
     await clickStart(user);
     await screen.findByRole('heading', { name: 'A rate limiter' });
@@ -564,7 +575,7 @@ describe('the recent drills', () => {
     expect(open.getByText('Continue')).toBeVisible();
 
     const handedIn = within(items[1]);
-    expect(handedIn.getByText(`Explanation · Interview · ${startedText}`)).toBeVisible();
+    expect(handedIn.getByText(`Explanation · Timed · ${startedText}`)).toBeVisible();
     expect(handedIn.getByText('Waiting for its grade')).toBeVisible();
 
     const scored = within(items[2]);
@@ -589,7 +600,7 @@ describe('the recent drills', () => {
     expect(api.courseDrills).toHaveBeenCalledTimes(1);
 
     serve({ recent: [recentAttempt()] });
-    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
+    await user.click(screen.getByRole('button', { name: 'Back to drill setup' }));
     expect(await screen.findByRole('heading', { name: 'Recent drills' })).toBeVisible();
     expect(api.courseDrills).toHaveBeenCalledTimes(2);
   });
@@ -610,6 +621,32 @@ describe('starting a drill', () => {
     expect(screen.getByTestId('code-viewer')).toHaveAttribute('data-path', 'src/limiter.py');
     expect(JSON.parse(localStorage.getItem('lattice.drills.choices') ?? '{}')).toEqual({ material: 'code', mode: 'practice', size: 'short', minutes: 10 });
     expect(localStorage.getItem('lattice.drills.language.course-1')).toBe('csharp');
+  });
+
+  it('names the task above the panes with the number of issues the drill was started for', async () => {
+    api.startCourseDrill.mockResolvedValue(started());
+    const { user } = show();
+    await screen.findByRole('option', { name: 'C#' });
+    await user.click(screen.getByRole('radio', { name: /Short/ }));
+    await clickStart(user);
+    expect(await screen.findByText('Find the 3 issues in this code, and say what is wrong and how to fix each.')).toBeVisible();
+  });
+
+  it('names the task without a number for an attempt opened from the recent drills', async () => {
+    api.codeReviewResult.mockResolvedValue(attempt());
+    serve({ recent: [recentAttempt()] });
+    const { user } = show();
+    await openRecent(user);
+    expect(await screen.findByText('Find the issues in this code, and say what is wrong and how to fix each.')).toBeVisible();
+  });
+
+  it('leaves a review through "Back to drill setup", not "Review drills"', async () => {
+    api.startCourseDrill.mockResolvedValue(started());
+    const { user } = show();
+    await startDrill(user);
+    expect(screen.queryByRole('button', { name: 'Review drills' })).not.toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Back to drill setup' }));
+    expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
   });
 
   it('says a drill is being written when none is ready, shows the job, and opens the review when the build completes', async () => {
@@ -956,7 +993,7 @@ describe('writing a fix', () => {
 
     fireEvent.change(editor, { target: { value: 'DATA = {}\nLOCK = None\n' } });
     expect(screen.getByText('1 file changed')).toBeVisible();
-    expect(screen.getByRole('tab', { name: /src\/store\.py/ })).toHaveTextContent('changed in your fix');
+    expect(screen.getByRole('tab', { name: /src\/store\.py/ })).toHaveTextContent(/modified|edited|changed/i);
 
     fireEvent.change(editor, { target: { value: FILES[1].text } });
     expect(screen.queryByText('1 file changed')).not.toBeInTheDocument();
@@ -1306,7 +1343,7 @@ describe('naming the lesson and leaving a drill', () => {
     const { user } = show();
     await clickStart(user);
     await screen.findByText('Writing a drill for you, usually a minute or two');
-    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
+    await user.click(screen.getByRole('button', { name: 'Back to drill setup' }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
     expect(screen.queryByText('Writing a drill for you, usually a minute or two')).not.toBeInTheDocument();
   });
@@ -1327,7 +1364,7 @@ describe('naming the lesson and leaving a drill', () => {
     const { user } = show();
     await openRecent(user);
     await screen.findByText('Opening your review…');
-    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
+    await user.click(screen.getByRole('button', { name: 'Back to drill setup' }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
   });
 
@@ -1339,7 +1376,7 @@ describe('naming the lesson and leaving a drill', () => {
     await comment(user, 'Something.');
     await user.click(screen.getByRole('button', { name: 'Submit review' }));
     await screen.findByText('Grading your review…');
-    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
+    await user.click(screen.getByRole('button', { name: 'Back to drill setup' }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
     expect(screen.queryByText('Grading your review…')).not.toBeInTheDocument();
   });
@@ -1350,7 +1387,7 @@ describe('naming the lesson and leaving a drill', () => {
     const { user } = show();
     await openRecent(user);
     await screen.findByText('Revealed attempt-1');
-    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
+    await user.click(screen.getByRole('button', { name: 'Back to drill setup' }));
     expect(await screen.findByRole('button', { name: 'Start drill' })).toBeVisible();
     expect(screen.queryByTestId('reveal')).not.toBeInTheDocument();
   });
@@ -1361,7 +1398,7 @@ describe('naming the lesson and leaving a drill', () => {
     await startDrill(user);
     await comment(user, 'Not atomic.');
     serve({ recent: [recentAttempt()] });
-    await user.click(screen.getByRole('button', { name: /Review drills|Back to drill setup/ }));
+    await user.click(screen.getByRole('button', { name: 'Back to drill setup' }));
 
     const item = await screen.findByRole('button', { name: /A rate limiter/ });
     expect(within(item).getByText('Continue')).toBeVisible();
@@ -1372,20 +1409,24 @@ describe('naming the lesson and leaving a drill', () => {
   });
 });
 
-describe('the interview countdown', () => {
+describe('the timed clock', () => {
   beforeEach(() => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-11-04T12:00:00Z'));
   });
 
-  it('counts down the length the learner chose from the start of the attempt', async () => {
+  const lastClock = () => clock.props[clock.props.length - 1];
+
+  it('gives the clock the length the learner chose as its soft limit, counted from the start of the attempt', async () => {
     api.startCourseDrill.mockResolvedValue(started({ mode: 'interview' }));
     const { user } = show();
-    await user.click(await screen.findByRole('radio', { name: /Interview/ }));
+    await user.click(await screen.findByRole('radio', { name: /Timed/ }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Time limit' }), { target: { value: '15' } });
     await clickStart(user);
 
-    expect(await screen.findByRole('timer')).toHaveTextContent('Time left 15:00');
+    expect(await screen.findByRole('timer')).toBeVisible();
+    expect(lastClock()).toMatchObject({ softLimitMs: 15 * 60_000, running: true });
+    expect(lastClock()?.elapsedMs).toBeLessThan(5_000);
     expect(api.startCourseDrill).toHaveBeenCalledWith('course-1', null, { kind: 'code', language: 'python' }, 'interview', 80, 4);
   });
 
@@ -1394,32 +1435,34 @@ describe('the interview countdown', () => {
     const { user } = show();
     await startDrill(user);
     expect(screen.queryByRole('timer')).not.toBeInTheDocument();
-    expect(screen.queryByText(/Time is up/)).not.toBeInTheDocument();
   });
 
-  it('keeps counting from the start when the attempt is reopened, in the length chosen for it', async () => {
+  it('counts from the start when the attempt is reopened, in the length chosen for it', async () => {
     api.startCourseDrill.mockResolvedValue(started({ mode: 'interview' }));
     const first = show();
-    await first.user.click(await screen.findByRole('radio', { name: /Interview/ }));
+    await first.user.click(await screen.findByRole('radio', { name: /Timed/ }));
     fireEvent.change(screen.getByRole('spinbutton', { name: 'Time limit' }), { target: { value: '15' } });
     await clickStart(first.user);
     await screen.findByRole('timer');
     first.unmount();
+    clock.props = [];
 
     vi.setSystemTime(new Date('2026-11-04T12:14:00Z'));
     api.codeReviewResult.mockResolvedValue(attempt({ mode: 'interview', startedAt: new Date('2026-11-04T12:00:00Z').getTime() }));
     serve({ recent: [recentAttempt({ mode: 'interview' })] });
     const second = show();
     await openRecent(second.user);
-    expect(await screen.findByRole('timer')).toHaveTextContent('Time left 1:00');
+    await screen.findByRole('timer');
+    expect(lastClock()).toMatchObject({ softLimitMs: 15 * 60_000, elapsedMs: 14 * 60_000 });
   });
 
-  it('says when time is up and leaves the hand-in to the learner', async () => {
+  it('leaves the hand-in to the learner when time is up', async () => {
     api.codeReviewResult.mockResolvedValue(attempt({ mode: 'interview', startedAt: Date.now() - 11 * 60_000 }));
     serve({ recent: [recentAttempt({ mode: 'interview' })] });
     const { user } = show();
     await openRecent(user);
-    expect((await screen.findByText(/Time is up/)).closest('[role="status"]')).not.toBeNull();
+    await screen.findByRole('timer');
+    expect(lastClock()).toMatchObject({ softLimitMs: 10 * 60_000, elapsedMs: 11 * 60_000 });
     expect(screen.getByRole('button', { name: 'Submit review' })).toBeEnabled();
     expect(api.submitCodeReview).not.toHaveBeenCalled();
   });

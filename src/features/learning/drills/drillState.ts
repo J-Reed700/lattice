@@ -16,6 +16,8 @@ export interface Session {
   drill: CodeReviewDrillDto;
   /** The interview's time limit in milliseconds; none when practising. */
   limitMs: number | null;
+  /** How many issues the drill was asked for; none for an attempt reopened later. */
+  issues?: number;
 }
 
 /** The build of a drill being waited for. */
