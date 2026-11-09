@@ -23,7 +23,7 @@ const SENTENCE = 'Header names keep their spaces exactly as written.';
 const SECTIONS = [{ index: 0, title: 'Boiling' }, { index: 1, title: 'Freezing' }];
 const QUESTION = {
   kind: 'single_choice', prompt: 'What does DictReader do with spaces in a header name?',
-  choices: ['It keeps them.', 'It trims them.'], right: 0, explanation: SENTENCE,
+  choices: ['It keeps them.', 'It trims them.'], right: 0, explanation: SENTENCE, rationales: [],
 };
 const program = {
   summary: { id: 'program-1', revision: 44, status: 'active' }, sources: [],

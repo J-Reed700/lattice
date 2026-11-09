@@ -65,6 +65,17 @@ fn text<'a>(item: &'a Value, field: &str) -> &'a str {
     item.get(field).and_then(Value::as_str).unwrap_or_default()
 }
 
+/// A question's reason for each of its choices, in the choices' order.
+fn reasons(question: &Value) -> Vec<&str> {
+    question
+        .get("rationales")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|reason| reason.as_str().unwrap_or_default())
+        .collect()
+}
+
 /// A broken rule, with what is wrong in plain words for the user and the
 /// note the repair is given.
 fn structure(site: FindingSite, summary: String, note: String) -> ReviewFinding {
@@ -170,7 +181,7 @@ fn same_sentence(a: &str, b: &str) -> bool {
 /// when none does (claim classes design §3.4, §3.5). Code is exempt.
 fn uncited_specifics(
     item: &Value,
-    field: &str,
+    body: &str,
     (site, label): (FindingSite, &str),
     findings: &mut Vec<ReviewFinding>,
 ) {
@@ -187,7 +198,7 @@ fn uncited_specifics(
         .map(|entry| (text(entry, "sentence"), text(entry, "quote")))
         .collect();
     let givens = Givens::of(item);
-    for sentence in prose_sentences(text(item, field)) {
+    for sentence in prose_sentences(body) {
         if !needs_citation(&sentence, &givens) {
             continue;
         }
@@ -461,6 +472,32 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
                 format!("{label} needs four distinct answer choices."),
             ));
         }
+        let reasons = reasons(question);
+        if reasons.len() != options.len() {
+            findings.push(structure(
+                site,
+                format!("{label} needs a reason for each of its choices."),
+                format!("{label} needs one entry in rationales for each answer choice, in the order of the choices: empty for the right choice, and for each wrong choice the misconception it reflects and why it fails."),
+            ));
+        } else {
+            let right = question
+                .get("correctIndex")
+                .and_then(Value::as_u64)
+                .and_then(|right| usize::try_from(right).ok());
+            let lacking: Vec<String> = reasons
+                .iter()
+                .enumerate()
+                .filter(|(at, reason)| Some(*at) != right && !validate_text(reason))
+                .map(|(at, _)| format!("choice {}", at + 1))
+                .collect();
+            if !lacking.is_empty() {
+                findings.push(structure(
+                    site,
+                    format!("{label} needs a reason for each wrong choice: {}.", join_plain(&lacking)),
+                    format!("{label} gives no reason in rationales for {}: for each wrong choice, name the misconception it reflects and why it fails.", join_plain(&lacking)),
+                ));
+            }
+        }
     }
     for (index, block) in blocks.iter().enumerate() {
         let label = format!("Section {} (candidate blocks-{index})", index + 1);
@@ -473,7 +510,7 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
         if CITED_KINDS.contains(&text(block, "kind")) {
             uncited_specifics(
                 block,
-                "body",
+                text(block, "body"),
                 (FindingSite::Section(index), &label),
                 &mut findings,
             );
@@ -489,10 +526,18 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
         );
         uncited_specifics(
             question,
-            "explanation",
+            text(question, "explanation"),
             (FindingSite::Question(index), &label),
             &mut findings,
         );
+        for reason in reasons(question) {
+            uncited_specifics(
+                question,
+                reason,
+                (FindingSite::Question(index), &label),
+                &mut findings,
+            );
+        }
     }
     let per_kind: Vec<_> = crate::dto::LessonQuestionKind::ALL
         .iter()

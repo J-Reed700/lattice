@@ -226,6 +226,11 @@ pub struct LessonAnswerKey {
     pub question_id: String,
     pub correct_index: usize,
     pub explanation: String,
+    /// One reason per option, in the writer's order: the right option's is
+    /// empty, each wrong option's says why it fails. Empty when the lesson
+    /// was written without them.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub rationales: Vec<String>,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PreparedLearningLesson {
