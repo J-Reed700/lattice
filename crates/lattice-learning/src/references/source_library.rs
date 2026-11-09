@@ -146,6 +146,16 @@ pub struct CapturedLearningSource {
     pub signals: lattice_core::domain::provenance::ProvenanceSignals,
 }
 
+/// What saving a page research selected did.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SelectedSaved {
+    Added,
+    /// The course already holds the page, as this version.
+    Held {
+        version_id: String,
+    },
+}
+
 impl LearningSourceLibraryRepository {
     pub fn before_use_allows(status: &LearningSourceCheckStatus) -> Result<()> {
         match status {

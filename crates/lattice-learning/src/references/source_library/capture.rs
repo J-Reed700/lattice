@@ -8,6 +8,7 @@ use super::repository::{
 };
 use super::*;
 use crate::references::trust;
+use lattice_core::shared::http::url_identity::identity;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningSourceLibraryRepository {
@@ -20,13 +21,34 @@ impl LearningSourceLibraryRepository {
         payload_hash: String,
         note: Option<&str>,
     ) -> Result<()> {
-        let note = note.map(str::trim).filter(|note| !note.is_empty());
-        self.add_with_note(
+        self.insert_source(
             source,
             captured,
             payload_hash,
             SourceAddedBy::Research,
-            note,
+            Some(Selection { note, once: false }),
+        )
+        .await
+        .map(|_| ())
+    }
+
+    /// Captures a source research selected unless the course already holds
+    /// that page, which the same transaction decides: two lessons saving one
+    /// page at once leave one source, and the second is told which version
+    /// is held.
+    pub async fn add_selected_once(
+        &self,
+        source: NewLearningSource<'_>,
+        captured: CapturedLearningSource,
+        payload_hash: String,
+        note: Option<&str>,
+    ) -> Result<SelectedSaved> {
+        self.insert_source(
+            source,
+            captured,
+            payload_hash,
+            SourceAddedBy::Research,
+            Some(Selection { note, once: true }),
         )
         .await
     }
@@ -40,18 +62,19 @@ impl LearningSourceLibraryRepository {
         payload_hash: String,
         added_by: SourceAddedBy,
     ) -> Result<()> {
-        self.add_with_note(source, captured, payload_hash, added_by, None)
+        self.insert_source(source, captured, payload_hash, added_by, None)
             .await
+            .map(|_| ())
     }
 
-    async fn add_with_note(
+    async fn insert_source(
         &self,
         source: NewLearningSource<'_>,
         captured: CapturedLearningSource,
         payload_hash: String,
         added_by: SourceAddedBy,
-        selection_note: Option<&str>,
-    ) -> Result<()> {
+        selection: Option<Selection<'_>>,
+    ) -> Result<SelectedSaved> {
         let NewLearningSource {
             operation_id,
             source_id,
@@ -126,7 +149,20 @@ impl LearningSourceLibraryRepository {
         .seen(&mut *tx)
         .await?
         {
-            return Ok(());
+            return Ok(SelectedSaved::Added);
+        }
+        let text_digest = hash_text(&full_text);
+        if selection.as_ref().is_some_and(|selection| selection.once) {
+            if let Some(version_id) = held_page(
+                &mut tx,
+                program_id,
+                [requested_url, captured.resolved_url.as_deref()],
+                &text_digest,
+            )
+            .await?
+            {
+                return Ok(SelectedSaved::Held { version_id });
+            }
         }
         if repository::ids_in_use(&mut *tx, program_id, source_id, version_id).await? {
             return Err(invalid(
@@ -134,7 +170,6 @@ impl LearningSourceLibraryRepository {
             ));
         }
         let (text, truncated) = (full_text, captured.truncated);
-        let text_digest = hash_text(&text);
         stored::insert_source(
             &mut tx,
             SourceInsert {
@@ -150,7 +185,11 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        if let Some(note) = selection_note {
+        if let Some(note) = selection
+            .and_then(|selection| selection.note)
+            .map(str::trim)
+            .filter(|note| !note.is_empty())
+        {
             stored::set_selection_note(&mut tx, program_id, source_id, note).await?;
         }
         repository::insert_version(
@@ -208,7 +247,8 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        tx.commit().await.map_err(db)
+        tx.commit().await.map_err(db)?;
+        Ok(SelectedSaved::Added)
     }
 
     pub async fn source_for_refresh(
@@ -469,4 +509,36 @@ impl LearningSourceLibraryRepository {
         .await?;
         tx.commit().await.map_err(db)
     }
+}
+
+/// How research saves a page it selected.
+struct Selection<'a> {
+    note: Option<&'a str>,
+    once: bool,
+}
+
+/// The version of the course's active, admitted source that is this page: the
+/// same address (without its fragment) as either of the capture's, or the
+/// same text.
+async fn held_page(
+    tx: &mut Transaction<'_, Sqlite>,
+    program_id: &str,
+    addresses: [Option<&str>; 2],
+    text_digest: &str,
+) -> Result<Option<String>> {
+    let wanted: Vec<String> = addresses
+        .into_iter()
+        .flatten()
+        .map(identity)
+        .filter(|address| !address.is_empty())
+        .collect();
+    let pages = stored::active_pages(&mut *tx, program_id).await?;
+    Ok(pages.into_iter().find_map(|page| {
+        let same_address = [&page.resolved_url, &page.requested_url]
+            .into_iter()
+            .flatten()
+            .any(|address| wanted.contains(&identity(address)));
+        let same_text = page.content_sha256.as_deref() == Some(text_digest);
+        (same_address || same_text).then_some(page.version_id)
+    }))
 }

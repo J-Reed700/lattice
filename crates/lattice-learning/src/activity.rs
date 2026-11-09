@@ -288,6 +288,7 @@ mod tests {
             started_at: Some(0),
             finished_at: None,
             heartbeat_at: None,
+            rank: None,
         }
     }
 

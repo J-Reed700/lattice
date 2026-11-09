@@ -295,7 +295,11 @@ impl LearningCurriculumRepository {
             operation.record(&mut **tx, &existing.id).await?;
             return Ok(existing.id);
         }
-        let admitted = JobStore::submit_in(
+        let rank = match lesson_ids.first() {
+            Some(lesson) => lesson_rank_in(tx, lesson).await?,
+            None => None,
+        };
+        let admitted = JobStore::submit_with_rank_in(
             tx,
             &NewJob {
                 kind: LESSON_PREPARATION.into(),
@@ -306,6 +310,7 @@ impl LearningCurriculumRepository {
                 progress_total: request.progress_total,
                 message: "Queued".into(),
             },
+            rank,
         )
         .await?;
         if admitted.created {
@@ -478,6 +483,22 @@ impl LearningCurriculumRepository {
     pub(super) fn jobs_store(&self) -> JobStore {
         JobStore::new(self.pool.clone())
     }
+}
+
+/// A lesson's place in its course, counting from 0 through every lesson in
+/// course order (module ordinal, then lesson ordinal). It is the rank of the
+/// lesson's jobs: the model serves a course's backlog lowest rank first.
+pub(crate) async fn lesson_rank_in(
+    connection: &mut sqlx::SqliteConnection,
+    lesson_id: &str,
+) -> Result<Option<i64>> {
+    sqlx::query_scalar(
+        "SELECT (SELECT count(*) FROM learning_lessons earlier JOIN learning_modules earlier_module ON earlier_module.id=earlier.module_id WHERE earlier.program_id=lesson.program_id AND (earlier_module.ordinal<own_module.ordinal OR (earlier_module.ordinal=own_module.ordinal AND earlier.ordinal<lesson.ordinal))) FROM learning_lessons lesson JOIN learning_modules own_module ON own_module.id=lesson.module_id WHERE lesson.id=?",
+    )
+    .bind(lesson_id)
+    .fetch_optional(connection)
+    .await
+    .map_err(db)
 }
 
 /// The outline revision of a program that is active at `expected_revision`.
