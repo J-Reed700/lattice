@@ -252,22 +252,25 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
   );
 
   const run = useCallback(
-    async (scope: Wire.CodingRunScope, input: string[] | null = null) => {
+    async (
+      scope: Wire.CodingRunScope,
+      input: string[] | null = null,
+      ids: { operationId: string; runId: string } = { operationId: newId(), runId: newId() },
+    ) => {
       if (running) return;
       touch();
       setRunning(true);
       await guarded(
         () =>
           codingApi.run({
-            operationId: newId(),
-            runId: newId(),
+            ...ids,
             programId,
             sessionId,
             scope,
             files: filesRef.current,
             input,
           }),
-        () => void run(scope, input),
+        () => void run(scope, input, ids),
       );
       setRunning(false);
     },
@@ -282,18 +285,18 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
     }
   };
 
-  const ask = async () => {
+  const ask = async (operationId = newId()) => {
     setAsking(true);
     await guarded(
       () =>
         codingApi.askHint({
-          operationId: newId(),
+          operationId,
           programId,
           sessionId,
           files: filesRef.current,
           expectedRevision: sessionRef.current.revision,
         }),
-      () => void ask(),
+      () => void ask(operationId),
     );
     setAsking(false);
   };
@@ -334,13 +337,13 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
 
   const reveal = () => guarded(() => codingApi.revealSolution({ operationId: newId(), programId, sessionId }));
 
-  const send = async (content: string, spoken: boolean): Promise<void> => {
+  const send = async (content: string, spoken: boolean, operationId = newId()): Promise<void> => {
     touch();
     setSendError(null);
     try {
       apply(
         await codingApi.sendTurn({
-          operationId: newId(),
+          operationId,
           programId,
           sessionId,
           content,
@@ -350,17 +353,17 @@ function Workspace({ programId, initial, activityRevision, onExit, onTryIntervie
         }),
       );
     } catch (error) {
-      setSendError({ message: getErrorMessage(error), retry: () => void send(content, spoken) });
+      setSendError({ message: getErrorMessage(error), retry: () => void send(content, spoken, operationId) });
       void refresh();
     }
   };
 
-  const finish = async () => {
+  const finish = async (operationId = newId()) => {
     setFinishing(true);
     await draft.flush();
     await guarded(
-      () => codingApi.finish({ operationId: newId(), programId, sessionId, files: filesRef.current }),
-      () => void finish(),
+      () => codingApi.finish({ operationId, programId, sessionId, files: filesRef.current }),
+      () => void finish(operationId),
     );
     setFinishing(false);
   };
