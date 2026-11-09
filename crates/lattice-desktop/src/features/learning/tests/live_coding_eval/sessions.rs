@@ -1,7 +1,8 @@
 //! Eval 3 of the coding sessions (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md section 9): the
 //! counterpart, the debrief and the latency. Scripted learners of five levels, from strong to weak, play each problem
 //! of a builds run in Coached, Mock and Watched through the app's own session service, on the configured model. After
-//! every step that leaves a cue pending, the counterpart answers, as the screen asks it to.
+//! every step that leaves a cue pending, the counterpart answers, as the screen asks it to. One run of the first
+//! problem's reference comes first and is timed by nothing: it fills the module cache, so every timed run is warm.
 //!
 //! Code checks: the setting's question rule on every stored reply, and every evidence item of every debrief, written
 //! out here from the design's definition and not taken from the debrief module. Everything else is read by hand from
@@ -20,7 +21,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::{
     problem_pattern, ScoreStatus, Scorecard, ScorecardEvidence,
 };
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use lattice_learning::coding::dto::{
     AskCodingHintRequestDto, CheckCodingExampleRequestDto, CodeHintDto, CodeHintRung, CodingRunDto,
     CodingRunScope, CodingSessionDto, CodingSessionRequestDto, CodingStage, DebriefFactsDto,
@@ -32,16 +33,17 @@ use lattice_learning::coding::observation::observe;
 use lattice_learning::coding::policy::{policy_for, CodingCue};
 use lattice_learning::coding::problem::{CaseStatus, CodingSetting, Problem, SOLUTION_PATH};
 use lattice_learning::coding::records::StoredRun;
-use lattice_learning::coding::session::evidence::last_draft_seen;
+use lattice_learning::coding::session::last_draft_seen;
 use lattice_learning::coding::session::{session_view, CodingSessions};
+use lattice_learning::coding::solution_check::passes_every_case;
 use lattice_learning::lab_runtime::LearningLabFile;
 use lattice_learning::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
-use lattice_learning::simulation_policy::TurnPolicy;
 use serde::Serialize;
+use tokio_util::sync::CancellationToken;
 
 use super::{
-    count, lab_sessions, numbered, out_dir, percentiles, problems, write_item, EvalLab, ModelCall,
-    Percentiles,
+    count, fenced, lab_sessions, numbered, out_dir, percentiles, problems, write_item, EvalLab,
+    ModelCall, Percentiles,
 };
 
 /// The levels of a script, from strong to weak.
@@ -764,19 +766,18 @@ fn failing_text(md: &mut String, failing: &[Failing]) {
             ),
             _ => String::new(),
         };
-        writeln!(
+        let _ = writeln!(
             md,
             "  - {} [{}]: input {args}, expected {expected}, got {actual}{error}{held}",
             case.category, case.status
-        )
-        .unwrap();
+        );
     }
 }
 
 fn markdown(item: &SessionItem) -> String {
     let mut md = String::new();
-    writeln!(md, "# {}: {}", item.name, item.title).unwrap();
-    writeln!(
+    let _ = writeln!(md, "# {}: {}", item.name, item.title);
+    let _ = writeln!(
         md,
         "\nModel {}. Setting {}. Script {}. Problem {}. Question-rule failures: {}.\n",
         item.model,
@@ -784,27 +785,25 @@ fn markdown(item: &SessionItem) -> String {
         item.level_name,
         item.problem,
         item.question_rule_failures
-    )
-    .unwrap();
-    writeln!(md, "## Steps\n").unwrap();
+    );
+    let _ = writeln!(md, "## Steps\n");
     for (at, step) in item.steps.iter().enumerate() {
-        writeln!(md, "{}. {} ({} ms)", at + 1, step.action, step.ms).unwrap();
+        let _ = writeln!(md, "{}. {} ({} ms)", at + 1, step.action, step.ms);
         if let Some(error) = &step.error {
-            writeln!(md, "   - REFUSED OR FAILED: {error}").unwrap();
+            let _ = writeln!(md, "   - REFUSED OR FAILED: {error}");
         }
         if let Some(result) = &step.result {
-            writeln!(md, "   - result: {result}").unwrap();
+            let _ = writeln!(md, "   - result: {result}");
         }
         if let Some(run) = &step.run {
-            writeln!(
+            let _ = writeln!(
                 md,
                 "   - run {:?} {}: {} of {} cases passed",
                 run.scope, run.status, run.passed, run.total
-            )
-            .unwrap();
+            );
             failing_text(&mut md, &run.failing);
             if !run.stderr.is_empty() {
-                writeln!(md, "   - error output: {}", run.stderr).unwrap();
+                let _ = writeln!(md, "   - error output: {}", run.stderr);
             }
         }
         if let Some(reply) = &step.reply {
@@ -812,34 +811,37 @@ fn markdown(item: &SessionItem) -> String {
                 .cue
                 .as_ref()
                 .map_or("no cue".to_owned(), |cue| format!("{cue:?}"));
-            writeln!(md, "   - counterpart, cue {cue}, {} ms:", reply.ms).unwrap();
+            let _ = writeln!(md, "   - counterpart, cue {cue}, {} ms:", reply.ms);
             match (&reply.text, &reply.error) {
-                (_, Some(error)) => writeln!(md, "     - ERROR: {error}").unwrap(),
+                (_, Some(error)) => {
+                    let _ = writeln!(md, "     - ERROR: {error}");
+                }
                 (Some(text), None) => {
                     for line in text.lines() {
-                        writeln!(md, "     > {line}").unwrap();
+                        let _ = writeln!(md, "     > {line}");
                     }
                 }
-                (None, None) => writeln!(md, "     - (silent)").unwrap(),
+                (None, None) => {
+                    let _ = writeln!(md, "     - (silent)");
+                }
             }
             if let Some(failure) = &reply.rule_failure {
-                writeln!(md, "     - QUESTION RULE BROKEN: {failure}").unwrap();
+                let _ = writeln!(md, "     - QUESTION RULE BROKEN: {failure}");
             }
-            writeln!(md, "\n~~~~text\n{}~~~~\n", reply.observation).unwrap();
+            let _ = writeln!(md, "\n{}", fenced("text", &reply.observation));
         }
     }
-    writeln!(
+    let _ = writeln!(
         md,
-        "\n## Final draft\n\n~~~~python\n{}\n~~~~\n",
-        numbered(&item.final_draft)
-    )
-    .unwrap();
-    writeln!(md, "\n## Hints\n").unwrap();
+        "\n## Final draft\n\n{}",
+        fenced("python", &numbered(&item.final_draft))
+    );
+    let _ = writeln!(md, "\n## Hints\n");
     if item.hints.is_empty() {
-        writeln!(md, "None.").unwrap();
+        let _ = writeln!(md, "None.");
     }
     for hint in &item.hints {
-        writeln!(
+        let _ = writeln!(
             md,
             "- {:?} (reason: {}): {}{}",
             hint.rung,
@@ -850,12 +852,13 @@ fn markdown(item: &SessionItem) -> String {
             } else {
                 String::new()
             }
-        )
-        .unwrap();
+        );
     }
-    writeln!(md, "\n## Debrief\n").unwrap();
+    let _ = writeln!(md, "\n## Debrief\n");
     match &item.debrief {
-        None => writeln!(md, "None: the session did not finish.").unwrap(),
+        None => {
+            let _ = writeln!(md, "None: the session did not finish.");
+        }
         Some(debrief) => {
             for row in &debrief.scorecard.rows {
                 let score = match (row.status, row.points) {
@@ -864,8 +867,8 @@ fn markdown(item: &SessionItem) -> String {
                     }
                     _ => "not enough evidence".to_owned(),
                 };
-                writeln!(md, "### {}: {score}\n", row.title).unwrap();
-                writeln!(md, "{}\n\nNext step: {}\n", row.feedback, row.next_step).unwrap();
+                let _ = writeln!(md, "### {}: {score}\n", row.title);
+                let _ = writeln!(md, "{}\n\nNext step: {}\n", row.feedback, row.next_step);
                 for check in debrief
                     .evidence_checks
                     .iter()
@@ -875,19 +878,18 @@ fn markdown(item: &SessionItem) -> String {
                         .why
                         .as_ref()
                         .map_or("valid".to_owned(), |why| format!("INVALID ({why})"));
-                    writeln!(md, "- {:?}: {verdict}", check.evidence).unwrap();
+                    let _ = writeln!(md, "- {:?}: {verdict}", check.evidence);
                 }
-                writeln!(md).unwrap();
+                let _ = writeln!(md);
             }
             for issue in &debrief.row_issues {
-                writeln!(md, "- ROW ISSUE: {issue}").unwrap();
+                let _ = writeln!(md, "- ROW ISSUE: {issue}");
             }
-            writeln!(
+            let _ = writeln!(
                 md,
                 "Approach: {}\n\nComplexity: {}\n\nFacts: {:?}",
                 debrief.approach, debrief.complexity, debrief.facts
-            )
-            .unwrap();
+            );
         }
     }
     md
@@ -920,7 +922,7 @@ struct Latency {
     respond: Percentiles,
     respond_by_setting: BTreeMap<String, Percentiles>,
     ask_hint_by_rung: BTreeMap<String, Percentiles>,
-    run_by_scope_warm: BTreeMap<String, Percentiles>,
+    run_by_scope: BTreeMap<String, Percentiles>,
     finish: Percentiles,
 }
 
@@ -970,7 +972,6 @@ fn summarize(model: &str, problem_names: Vec<String>, items: &[SessionItem]) -> 
             interjection_rate: None,
         };
         for item in mine {
-            let mut runs_seen = 0;
             for step in &item.steps {
                 if step.error.is_some() {
                     summary.step_errors += 1;
@@ -982,11 +983,8 @@ fn summarize(model: &str, problem_names: Vec<String>, items: &[SessionItem]) -> 
                             }
                         }
                         "run" => {
-                            runs_seen += 1;
-                            if runs_seen > 1 {
-                                if let Some(scope) = &step.detail {
-                                    run_by.entry(scope.clone()).or_default().push(step.ms);
-                                }
+                            if let Some(scope) = &step.detail {
+                                run_by.entry(scope.clone()).or_default().push(step.ms);
                             }
                         }
                         "finish" => finish.push(step.ms),
@@ -1064,7 +1062,7 @@ fn summarize(model: &str, problem_names: Vec<String>, items: &[SessionItem]) -> 
             respond: percentiles(&respond_all),
             respond_by_setting: grouped(respond_by),
             ask_hint_by_rung: grouped(hint_by),
-            run_by_scope_warm: grouped(run_by),
+            run_by_scope: grouped(run_by),
             finish: percentiles(&finish),
         },
     }
@@ -1072,16 +1070,15 @@ fn summarize(model: &str, problem_names: Vec<String>, items: &[SessionItem]) -> 
 
 fn summary_markdown(summary: &Summary) -> String {
     let mut md = String::new();
-    writeln!(
+    let _ = writeln!(
         md,
         "# Coding sessions eval\n\nModel {}. {} sessions over {} problems.\n",
         summary.model,
         summary.sessions,
         summary.problems.len()
-    )
-    .unwrap();
+    );
     for setting in &summary.settings {
-        writeln!(
+        let _ = writeln!(
             md,
             "- {}: {} sessions, {} replies, {} silences, {} respond errors, {} step errors, {} of {} checkpoint cues spoken",
             setting.setting,
@@ -1092,10 +1089,9 @@ fn summary_markdown(summary: &Summary) -> String {
             setting.step_errors,
             setting.checkpoint_spoken,
             setting.checkpoint_cues
-        )
-        .unwrap();
+        );
     }
-    writeln!(
+    let _ = writeln!(
         md,
         "\nQuestion-rule failures: {}. Invalid evidence items: {}. Scored rows with no evidence: {}. Rows with not enough evidence: {}. Sessions with no debrief: {}.",
         summary.question_rule_failures.len(),
@@ -1103,15 +1099,14 @@ fn summary_markdown(summary: &Summary) -> String {
         summary.row_issues.len(),
         summary.rows_not_enough_evidence,
         summary.debriefs_missing.len()
-    )
-    .unwrap();
+    );
     for failure in &summary.question_rule_failures {
-        writeln!(md, "- {}: {}", failure.session, failure.detail).unwrap();
+        let _ = writeln!(md, "- {}: {}", failure.session, failure.detail);
     }
     for invalid in &summary.invalid_evidence {
-        writeln!(md, "- {}: {}", invalid.session, invalid.detail).unwrap();
+        let _ = writeln!(md, "- {}: {}", invalid.session, invalid.detail);
     }
-    writeln!(md, "\nLatency is in the JSON, as p50 and p90.").unwrap();
+    let _ = writeln!(md, "\nLatency is in the JSON, as p50 and p90.");
     md
 }
 
@@ -1129,16 +1124,28 @@ async fn live_coding_session_eval() -> Result<()> {
     for (_, problem) in &chosen {
         activities.push(lab.activity(problem).await?);
     }
+    if let Some((_, first)) = chosen.first() {
+        let warmed = passes_every_case(
+            lab.runner.as_ref(),
+            lab.harness.as_ref(),
+            first,
+            &first.reference,
+            CancellationToken::new(),
+        )
+        .await?;
+        if !warmed {
+            return Err(AppError::InvalidState(
+                "The warm-up run of the first problem's reference did not pass every case.".into(),
+            ));
+        }
+    }
     lab_sessions!(sessions, lab);
     let mut items = Vec::new();
     for setting in SETTINGS {
         for (at, ((folder, problem), activity)) in chosen.iter().zip(&activities).enumerate() {
-            for level in 1..=LEVELS.len() {
-                let name = format!(
-                    "{}-{:02}",
-                    setting_name(setting),
-                    at * LEVELS.len() + level - 1
-                );
+            for (index, &level_name) in LEVELS.iter().enumerate() {
+                let level = index + 1;
+                let name = format!("{}-{:02}", setting_name(setting), at * LEVELS.len() + index);
                 let mut player = Player::begin(&lab, &sessions, problem, activity, setting).await?;
                 play(&mut player, level).await?;
                 let bundle = lab
@@ -1167,7 +1174,7 @@ async fn live_coding_session_eval() -> Result<()> {
                     name: name.clone(),
                     setting,
                     level,
-                    level_name: LEVELS[level - 1],
+                    level_name,
                     problem: folder.clone(),
                     title: problem.spec.title.clone(),
                     finished: player.session.finished,
@@ -1176,10 +1183,7 @@ async fn live_coding_session_eval() -> Result<()> {
                         .iter()
                         .map(|file| file.content.clone())
                         .collect::<Vec<_>>()
-                        .join(
-                            "
-",
-                        ),
+                        .join("\n"),
                     steps: player.steps,
                     hints: player.session.hints.clone(),
                     question_rule_failures,
