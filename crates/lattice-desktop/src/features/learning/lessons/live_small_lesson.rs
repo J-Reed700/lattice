@@ -415,6 +415,7 @@ pub(super) fn worker(
     courses: Option<Arc<crate::features::learning::references::course_index::CourseIndexes>>,
 ) -> LessonGenerationWorker {
     LessonGenerationWorker {
+        course_setups: Default::default(),
         runtimes: crate::features::learning::tests::runtimes(),
         pool: pool.clone(),
         load_llm: Arc::new(move || {
