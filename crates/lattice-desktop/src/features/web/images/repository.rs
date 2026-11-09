@@ -296,8 +296,8 @@ impl ImageRepository {
                 .await
                 .map_err(db)?;
         }
+        let rows = rows_in_conversation(&mut *tx, conversation_id, &claimable).await?;
         tx.commit().await.map_err(db)?;
-        let rows = self.in_conversation(conversation_id, &claimable).await?;
         Ok(rows
             .into_iter()
             .filter(|row| row.message_id.as_deref() == Some(message_id))
