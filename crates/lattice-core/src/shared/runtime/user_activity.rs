@@ -53,8 +53,8 @@ mod windows_power {
             Foundation::{CloseHandle, HANDLE},
             System::{
                 Power::{
-                    PowerClearRequest, PowerCreateRequest, PowerRequestExecutionRequired,
-                    PowerRequestSystemRequired, PowerSetRequest, POWER_REQUEST_TYPE,
+                    PowerClearRequest, PowerCreateRequest, PowerRequestSystemRequired,
+                    PowerSetRequest,
                 },
                 Threading::{
                     POWER_REQUEST_CONTEXT_SIMPLE_STRING, REASON_CONTEXT, REASON_CONTEXT_0,
@@ -72,8 +72,7 @@ mod windows_power {
     // SetThreadExecutionState, so it survives tokio moving the task.
     pub(super) struct Request {
         handle: Option<HANDLE>,
-        system: bool,
-        execution: bool,
+        set: bool,
     }
 
     fn win(error: windows::core::Error) -> AppError {
@@ -101,60 +100,39 @@ mod windows_power {
             // From here a failure drops `request`, which closes the handle.
             let mut request = Self {
                 handle: Some(handle),
-                system: false,
-                execution: false,
+                set: false,
             };
-            request.system = set(handle, PowerRequestSystemRequired)?;
-            // Keeps this desktop process running if the system enters Modern
-            // Standby despite the system request.
-            request.execution = set(handle, PowerRequestExecutionRequired)?;
+            // SAFETY: `handle` is a live power request handle.
+            #[allow(unsafe_code)]
+            let set = unsafe { PowerSetRequest(handle, PowerRequestSystemRequired) };
+            set.map_err(win)?;
+            request.set = true;
             tracing::info!("Holding the PC awake for active user work");
             Ok(request)
         }
 
-        pub(super) fn system_required_set(&self) -> bool {
-            self.system
-        }
-
-        pub(super) fn execution_required_set(&self) -> bool {
-            self.execution
+        #[cfg(test)]
+        pub(super) fn is_set(&self) -> bool {
+            self.set
         }
 
         pub(super) fn release(&mut self) -> Result<(), AppError> {
-            let Some(handle) = self.handle else {
+            let Some(handle) = self.handle.take() else {
                 return Ok(());
             };
             let mut outcome = Ok(());
-            if self.system {
-                self.system = false;
-                outcome = clear(handle, PowerRequestSystemRequired);
+            if std::mem::take(&mut self.set) {
+                // SAFETY: `handle` is a live power request handle.
+                #[allow(unsafe_code)]
+                let cleared = unsafe { PowerClearRequest(handle, PowerRequestSystemRequired) };
+                outcome = cleared.map_err(win);
             }
-            if self.execution {
-                self.execution = false;
-                let cleared = clear(handle, PowerRequestExecutionRequired);
-                outcome = outcome.and(cleared);
-            }
-            self.handle = None;
             // SAFETY: the handle came from PowerCreateRequest and is closed
             // only here, after which `handle` is None.
             #[allow(unsafe_code)]
             let closed = unsafe { CloseHandle(handle) }.map_err(win);
             outcome.and(closed)
         }
-    }
-
-    fn set(handle: HANDLE, kind: POWER_REQUEST_TYPE) -> Result<bool, AppError> {
-        // SAFETY: `handle` is a live power request handle.
-        #[allow(unsafe_code)]
-        let set = unsafe { PowerSetRequest(handle, kind) };
-        set.map(|()| true).map_err(win)
-    }
-
-    fn clear(handle: HANDLE, kind: POWER_REQUEST_TYPE) -> Result<(), AppError> {
-        // SAFETY: `handle` is a live power request handle.
-        #[allow(unsafe_code)]
-        let cleared = unsafe { PowerClearRequest(handle, kind) };
-        cleared.map_err(win)
     }
 
     impl Drop for Request {
@@ -193,11 +171,6 @@ mod macos {
     // guard has one owner, never exposes them, and ends the activity exactly once.
     #[allow(unsafe_code)]
     unsafe impl Send for Activity {}
-
-    // SAFETY: nothing is reachable through a shared reference; the retained
-    // objects are touched only in begin and Drop.
-    #[allow(unsafe_code)]
-    unsafe impl Sync for Activity {}
 
     impl Activity {
         pub(super) fn begin(reason: &str) -> Result<Self, AppError> {
@@ -276,37 +249,39 @@ mod macos {
 mod tests {
     use super::*;
 
-    fn assert_send_sync<T: Send + Sync>() {}
+    fn assert_send<T: Send>() {}
 
     #[test]
-    fn the_guard_can_be_held_across_awaits_on_any_task() {
-        assert_send_sync::<UserActivity>();
+    fn the_guard_can_be_held_across_awaits() {
+        assert_send::<UserActivity>();
     }
 
     #[test]
     fn beginning_and_dropping_never_panics_even_with_an_odd_reason() {
-        drop(UserActivity::begin("Preparing learning material"));
-        drop(UserActivity::begin(""));
-        drop(UserActivity::begin("embedded\0nul and \u{1F600} non-BMP"));
-        let first = UserActivity::begin("first");
-        let second = UserActivity::begin("second");
-        drop(first);
-        drop(second);
+        {
+            let _guard = UserActivity::begin("Preparing learning material");
+        }
+        {
+            let _guard = UserActivity::begin("");
+        }
+        {
+            let _guard = UserActivity::begin("embedded\0nul and \u{1F600} non-BMP");
+        }
+        let _first = UserActivity::begin("first");
+        let _second = UserActivity::begin("second");
     }
 
     #[cfg(windows)]
     #[test]
     #[allow(clippy::expect_used)]
-    fn windows_guard_sets_both_power_requests_and_clears_them_on_release() {
+    fn windows_guard_sets_the_system_request_and_clears_it_on_release() {
         let mut request = windows_power::Request::begin("Testing power request")
             .expect("A power request must be creatable on Windows");
-        assert!(request.system_required_set());
-        assert!(request.execution_required_set());
+        assert!(request.is_set());
         request
             .release()
             .expect("Clearing a set request must succeed");
-        assert!(!request.system_required_set());
-        assert!(!request.execution_required_set());
+        assert!(!request.is_set());
         request.release().expect("Releasing twice is a no-op");
     }
 
@@ -317,7 +292,7 @@ mod tests {
         let mut first = windows_power::Request::begin("first").expect("first request");
         let mut second = windows_power::Request::begin("second").expect("second request");
         first.release().expect("release first");
-        assert!(second.system_required_set());
+        assert!(second.is_set());
         second.release().expect("release second");
     }
 
