@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from 'react';
+import { ArrowLeft } from 'lucide-react';
 
 import { ConfirmDialog } from '@/components/ConfirmDialog/ConfirmDialog';
 import { Button } from '@/components/ui/button';
@@ -24,7 +25,7 @@ interface Picked {
  * The review: the drill's files on the left, to read and pick lines from, and on the right the comment being written,
  * the comments so far, the optional fix and the hand-in.
  */
-export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: ReactNode }) {
+export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back?: ReactNode }) {
   const { session, review, failure, retry } = drill;
   const [activePath, setActivePath] = useState(session?.drill.files[0]?.path ?? '');
   const [picked, setPicked] = useState<Picked | null>(null);
@@ -100,8 +101,17 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border px-4 py-3 sm:px-6">
-        {back}
+      <header className="flex flex-wrap items-center gap-x-4 gap-y-2 border-b border-border-default px-4 py-3 sm:px-6">
+        <Button
+          type="button"
+          variant="ghost"
+          className="-ml-3 gap-2 text-text-secondary hover:text-text-primary"
+          onClick={drill.toChoices}
+          aria-label="Review drills"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Back to drill setup
+        </Button>
         <div className="min-w-0">
           <h2 className="truncate font-serif text-lg text-text-primary">{session.drill.title}</h2>
           <p className="text-xs text-text-muted">{drillMeta(session.drill, session.mode)}</p>
@@ -112,6 +122,15 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
           </div>
         )}
       </header>
+
+      {/* P2-14: Task statement line above the panes */}
+      <div className="border-b border-border-subtle bg-surface-sunken px-4 py-2 sm:px-6">
+        <p className="text-xs font-medium text-text-secondary">
+          {passage
+            ? 'Find the issues in the explanation below'
+            : 'Find the issues in the code below'}
+        </p>
+      </div>
 
       <div className="grid min-h-0 flex-1 gap-4 overflow-y-auto p-4 sm:p-6 lg:grid-cols-[minmax(0,1fr)_minmax(22rem,28rem)] lg:grid-rows-[minmax(0,1fr)] lg:overflow-hidden">
         <div className="h-[32rem] min-h-0 lg:h-full">
@@ -150,8 +169,8 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
             onMove={(finding, delta) => review.move(finding.id, delta)}
           />
 
-          <section aria-labelledby="drill-fix-title" className="rounded-2xl border border-border bg-surface p-4">
-            <h3 id="drill-fix-title" className="text-sm font-medium text-text-primary">Your fix</h3>
+          <section aria-labelledby="drill-fix-title" className="rounded-2xl border border-border-default bg-surface p-4">
+            <h3 id="drill-fix-title" className="text-xs font-semibold text-text-primary">Your fix</h3>
             <p className="mt-1 text-xs leading-5 text-text-secondary">
               {passage
                 ? 'Optional. Rewrite what you think is wrong in your own copy of the explanation, one sentence to a line.'
@@ -172,7 +191,7 @@ export function DrillReview({ drill, back }: { drill: CodeReviewDrill; back: Rea
             </div>
           </section>
 
-          <div className="sticky bottom-0 mt-auto space-y-3 border-t border-border bg-background pb-1 pt-3">
+          <div className="sticky bottom-0 mt-auto space-y-3 border-t border-border-default bg-bg pb-1 pt-3">
             {failure && <DrillFailure failure={failure} onRetry={retry} />}
             <Button type="button" size="lg" className="w-full" disabled={review.submitting} onClick={handIn}>
               {review.submitting ? 'Submitting…' : 'Submit review'}
