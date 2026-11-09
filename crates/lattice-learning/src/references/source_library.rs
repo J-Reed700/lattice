@@ -23,6 +23,7 @@ mod lifecycle;
 mod lifecycle_tests;
 mod reads;
 pub use reads::ActiveVersion;
+mod repository;
 mod user_evidence;
 pub use user_evidence::{ChosenVersion, SavedSource};
 
@@ -199,30 +200,12 @@ impl LearningSourceLibraryRepository {
         Self::validate_program_id(program_id)?;
         uuid(source_id, "source")?;
         uuid(version_id, "source version")?;
-        let active: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=? AND status='active'")
-                .bind(program_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(db)?;
-        if active.is_none() {
+        if !repository::active_program_exists(&self.pool, program_id).await? {
             return Err(AppError::NotFound(
                 "Active learning program not found".into(),
             ));
         }
-        let collision: Option<i64> = sqlx::query_scalar(
-            "SELECT 1 FROM learning_source_library WHERE program_id=? AND id IN (?,?) UNION SELECT 1 FROM learning_source_versions WHERE program_id=? AND id IN (?,?) LIMIT 1",
-        )
-        .bind(program_id)
-        .bind(source_id)
-        .bind(version_id)
-        .bind(program_id)
-        .bind(source_id)
-        .bind(version_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
-        if collision.is_some() {
+        if repository::ids_in_use(&self.pool, program_id, source_id, version_id).await? {
             return Err(invalid(
                 "The requested source or version ID is already in use.",
             ));
@@ -233,34 +216,10 @@ impl LearningSourceLibraryRepository {
     /// Finalize SQL-migrated legacy snapshots before exposing metadata. This is
     /// idempotent and only touches rows explicitly marked as legacy bounded.
     async fn backfill_legacy(&self, program_id: &str) -> Result<()> {
-        let rows = sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=? AND extraction_version=? AND content_sha256='' ")
-            .bind(program_id).bind(LEGACY_EXTRACTION).fetch_all(&self.pool).await.map_err(db)?;
-        for row in rows {
-            let id: String = row.get("id");
-            let text: String = row.get("full_text");
-            sqlx::query("UPDATE learning_source_versions SET content_sha256=?,word_count=? WHERE program_id=? AND id=? AND extraction_version=? AND content_sha256='' ")
-                .bind(hash_text(&text)).bind(words(&text) as i64).bind(program_id).bind(id).bind(LEGACY_EXTRACTION).execute(&self.pool).await.map_err(db)?;
-        }
-        Ok(())
+        repository::backfill_legacy(&self.pool, program_id).await
     }
 }
 
-fn summary(r: &sqlx::sqlite::SqliteRow) -> LearningSourceVersionSummaryDto {
-    LearningSourceVersionSummaryDto {
-        id: r.get("id"),
-        version_number: r.get("version_number"),
-        title: r.get("title"),
-        publisher: r.get("publisher"),
-        resolved_url: r.get("resolved_url"),
-        excerpt: r.get("excerpt"),
-        content_sha256: r.get("content_sha256"),
-        word_count: r.get::<i64, _>("word_count").max(0) as usize,
-        truncated: r.get::<i64, _>("truncated") != 0,
-        extraction_version: r.get("extraction_version"),
-        acquired_at: r.get("acquired_at"),
-        snapshot_hash: r.get("snapshot_hash"),
-    }
-}
 fn find_case_insensitive(text: &str, query: &str) -> Option<usize> {
     let needle: Vec<char> = query.chars().flat_map(char::to_lowercase).collect();
     if needle.is_empty() {
@@ -282,13 +241,7 @@ fn context_excerpt(text: &str, match_char: usize) -> String {
 }
 
 async fn lock_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
-    let result =
-        sqlx::query("UPDATE learning_programs SET status=status WHERE id=? AND status='active'")
-            .bind(program_id)
-            .execute(&mut **tx)
-            .await
-            .map_err(db)?;
-    if result.rows_affected() != 1 {
+    if !repository::lock_active_program(&mut **tx, program_id).await? {
         return Err(AppError::NotFound(
             "Active learning program not found".into(),
         ));
@@ -340,56 +293,10 @@ fn portability_operation<'a>(
 }
 
 async fn require_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
-    let row: Option<i64> =
-        sqlx::query_scalar("SELECT 1 FROM learning_programs WHERE id=? AND status='active'")
-            .bind(program_id)
-            .fetch_optional(&mut **tx)
-            .await
-            .map_err(db)?;
-    if row.is_none() {
+    if !repository::active_program_exists(&mut **tx, program_id).await? {
         return Err(AppError::NotFound(
             "Active learning program not found".into(),
         ));
     }
-    Ok(())
-}
-
-/// One immutable source version snapshot: each source field alongside its
-/// content hash. The excerpt and word count are derived from `full_text`.
-struct SourceVersionInsert<'a> {
-    program_id: &'a str,
-    source_id: &'a str,
-    version_id: &'a str,
-    version_number: i64,
-    title: &'a str,
-    publisher: Option<&'a str>,
-    requested_url: Option<&'a str>,
-    resolved_url: Option<&'a str>,
-    full_text: &'a str,
-    truncated: bool,
-    extraction_version: &'a str,
-    acquired_at: i64,
-    content_sha256: &'a str,
-}
-
-async fn insert_version(
-    tx: &mut Transaction<'_, Sqlite>,
-    v: SourceVersionInsert<'_>,
-) -> Result<()> {
-    sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)")
-        .bind(v.version_id).bind(v.program_id).bind(v.source_id).bind(v.version_number).bind(v.title).bind(v.publisher).bind(v.requested_url).bind(v.resolved_url).bind(v.full_text).bind(excerpt(v.full_text)).bind(v.content_sha256).bind(words(v.full_text) as i64).bind(v.truncated as i64).bind(v.extraction_version).bind(v.acquired_at).execute(&mut **tx).await.map_err(db)?;
-    Ok(())
-}
-async fn mirror_legacy(
-    tx: &mut Transaction<'_, Sqlite>,
-    program: &str,
-    id: &str,
-    title: &str,
-    url: Option<&str>,
-    text: &str,
-    at: i64,
-) -> Result<()> {
-    sqlx::query("INSERT INTO learning_sources(id,program_id,title,url,excerpt,acquired_at) VALUES(?,?,?,?,?,?)")
-        .bind(id).bind(program).bind(title.trim()).bind(url).bind(excerpt(text)).bind(at).execute(&mut **tx).await.map_err(db)?;
     Ok(())
 }
