@@ -188,6 +188,25 @@ describe('usePracticeSession', () => {
     expect(result.current.failure?.retry).toBeUndefined();
   });
 
+  it('saves the learner text against the refetched revision with one reload after an autosave conflict', async () => {
+    mocks.save.mockImplementationOnce(async () => {
+      summary.revision = 9;
+      throw conflictError('Stale.');
+    });
+    const { result } = setup();
+    await ready(result);
+    act(() => result.current.setText('My own words.'));
+    await waitFor(() => expect(result.current.conflict).toBe(true), { timeout: 3_000 });
+
+    await act(async () => {
+      await result.current.reloadAttempt();
+    });
+    await waitFor(() => expect(result.current.autosave.state).toBe('saved'));
+    expect(mocks.save).toHaveBeenLastCalledWith(expect.objectContaining({ expectedRevision: 9, text: 'My own words.' }));
+    expect(result.current.conflict).toBe(false);
+    expect(result.current.text).toBe('My own words.');
+  });
+
   it('clears the conflict and the failure once the attempt is reloaded', async () => {
     mocks.mode.mockRejectedValueOnce(conflictError('Stale.'));
     const { result } = setup();

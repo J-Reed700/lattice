@@ -145,6 +145,40 @@ describe('useAutosave', () => {
     expect(result.current.state).toBe('saved');
   });
 
+  it('saves again against a newer revision that arrived while a save was in flight and then conflicted', async () => {
+    vi.mocked(isConflict).mockReturnValue(true);
+    const first = deferred<{ revision: number }>();
+    const save = vi.fn().mockReturnValueOnce(first.promise).mockResolvedValueOnce({ revision: 8 });
+    const { result, rerender } = setup(save);
+    rerender({ value: 'second' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(result.current.state).toBe('saving');
+
+    rerender({ value: 'second', revision: 7 });
+    await act(async () => {
+      first.reject(new Error('stale'));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+    expect(save).toHaveBeenCalledTimes(2);
+    expect(save.mock.calls[1]).toEqual(['second', 7]);
+    expect(result.current.state).toBe('saved');
+  });
+
+  it('stays in conflict, with no second save, when no newer revision arrived', async () => {
+    vi.mocked(isConflict).mockReturnValue(true);
+    const save = vi.fn().mockRejectedValue(new Error('stale'));
+    const { result, rerender } = setup(save);
+    rerender({ value: 'second' });
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(DELAY * 3);
+    });
+    expect(save).toHaveBeenCalledTimes(1);
+    expect(result.current.state).toBe('conflict');
+  });
+
   it('flush saves at once without waiting for the pause, and skips an unchanged value', async () => {
     const save = vi.fn().mockResolvedValue({ revision: 2 });
     const { result, rerender } = setup(save);
