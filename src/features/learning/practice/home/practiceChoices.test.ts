@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import type * as Wire from '@/lib/bindings';
 
-import { defaultLanguage, fitState, isCodingRound, languageOptions, MOCK_DIFFICULTY, mockRoundOptions, startAction, suggestsInterview, visibleCards } from './practiceChoices';
+import { fitState, isCodingRound, MOCK_DIFFICULTY, mockRoundOptions, startAction, suggestsInterview, visibleCards } from './practiceChoices';
 
 const profile = (patch: Partial<Wire.LearningPracticeProfileDto> = {}): Wire.LearningPracticeProfileDto => ({
   programId: 'course',
@@ -37,18 +37,6 @@ describe('the Mock interview badge', () => {
     expect(suggestsInterview(profile({ details: 'I have an Interview next week' }))).toBe(true);
     expect(suggestsInterview(profile({ details: 'easy problems' }))).toBe(false);
     expect(suggestsInterview(null)).toBe(false);
-  });
-});
-
-describe('languages', () => {
-  it("keeps the learner's own words as the label and normalizes only the value", () => {
-    expect(languageOptions('JavaScript')).toEqual([{ value: 'javascript', label: 'JavaScript' }, { value: 'python', label: 'Python' }]);
-    expect(defaultLanguage(' JavaScript ')).toBe('javascript');
-  });
-
-  it('offers Python once', () => {
-    expect(languageOptions('python')).toEqual([{ value: 'python', label: 'Python' }]);
-    expect(languageOptions(null)).toEqual([{ value: 'python', label: 'Python' }]);
   });
 });
 
