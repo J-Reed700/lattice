@@ -396,23 +396,26 @@ describe('Course page', () => {
   });
 });
 
-describe('Preparing the whole course', () => {
+describe('The course progress line', () => {
   const MINUTE = 60_000;
   const lessonJob = (lessonId: string, overrides: Partial<LearningGenerationJob> = {}) => job({ id: `job-${lessonId}`, lessonIds: [lessonId], ...overrides });
   const finished = (lessonId: string, minutes: number, overrides: Partial<LearningGenerationJob> = {}) => lessonJob(lessonId, {
     status: 'completed', resultId: lessonId, createdAt: 1_000_000, startedAt: 1_000_000, finishedAt: 1_000_000 + minutes * MINUTE, ...overrides,
   });
-  const showCourse = (course: LearningProgramDto, jobs: LearningGenerationJob[], onPrepareCourse = vi.fn()) => {
+  const showCourse = (course: LearningProgramDto, jobs: LearningGenerationJob[], onLessonOpened = vi.fn()) => {
     api.plan.mockResolvedValue({ ok: true, data: { programId: 'program-1', jobs } });
-    render(<QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-      <ProgramWorkspace program={course} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
-        onPrepare={vi.fn()} preparePending={false} onPrepareCourse={onPrepareCourse} onComplete={vi.fn()} completePending={false} />
-    </QueryClientProvider>);
-    return onPrepareCourse;
+    const client = new QueryClient({ defaultOptions: { queries: { retry: false } } });
+    const page = (current: LearningProgramDto) => <QueryClientProvider client={client}>
+      <ProgramWorkspace program={current} onBack={vi.fn()} onOpenProgram={vi.fn()} onAccept={vi.fn()} acceptPending={false}
+        onPrepare={vi.fn()} preparePending={false} onLessonOpened={onLessonOpened} onComplete={vi.fn()} completePending={false} />
+    </QueryClientProvider>;
+    const view = render(page(course));
+    return { onLessonOpened, update: (current: LearningProgramDto) => view.rerender(page(current)) };
   };
-  /** Four lessons across two modules: lesson-3 ready, the rest outline. */
+  /** Four lessons across two modules: lesson-3 ready, the rest outline. Each call returns lessons of its own, so a test may change them. */
   const course = () => {
     const base = twoModules();
+    base.modules = base.modules.map((module) => ({ ...module, lessons: module.lessons.map((lesson) => ({ ...lesson })) }));
     base.modules[1].lessons[0] = { ...gas, preparation: 'ready' } as LearningLessonDto;
     return base;
   };
@@ -420,32 +423,6 @@ describe('Preparing the whole course', () => {
   beforeEach(() => {
     vi.resetAllMocks();
     api.review.mockResolvedValue({ ok: true, data: null });
-  });
-
-  it('offers Prepare every lesson when an unfinished lesson has no job, and prepares the course from it', async () => {
-    const user = userEvent.setup();
-    const onPrepareCourse = showCourse(course(), [lessonJob('lesson-1'), lessonJob('lesson-2', { status: 'pending' })]);
-    await user.click(await screen.findByRole('button', { name: 'Prepare every lesson' }));
-    expect(onPrepareCourse).toHaveBeenCalledTimes(1);
-  });
-
-  it('hides Prepare every lesson while a pending or running job covers every unfinished lesson', async () => {
-    showCourse(course(), [lessonJob('lesson-1'), lessonJob('lesson-2', { status: 'pending' }), lessonJob('lesson-4', { status: 'pending' })]);
-    expect(await screen.findByText(/lessons ready/)).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Prepare every lesson' })).not.toBeInTheDocument();
-  });
-
-  it('offers it again for a lesson whose job was cancelled', async () => {
-    showCourse(course(), [lessonJob('lesson-1'), lessonJob('lesson-2', { status: 'pending' }), lessonJob('lesson-4', { status: 'cancelled' })]);
-    expect(await screen.findByRole('button', { name: 'Prepare every lesson' })).toBeEnabled();
-  });
-
-  it('hides it when every lesson is ready or complete', async () => {
-    const done = course();
-    for (const lesson of done.modules.flatMap((module) => module.lessons)) lesson.preparation = 'ready';
-    showCourse(done, []);
-    expect(await screen.findByText('Lessons complete')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Prepare every lesson' })).not.toBeInTheDocument();
   });
 
   it('counts the lessons ready, preparing, waiting and needing attention', async () => {
@@ -523,5 +500,47 @@ describe('Preparing the whole course', () => {
     const inCard = (lessonId: string) => within(document.getElementById(`lesson-${lessonId}`) as HTMLElement);
     expect(await inCard('lesson-1').findByText('Preparing · 3 of 10 checked')).toBeVisible();
     expect(await inCard('lesson-2').findByText('Preparing · 7 of 20 checked')).toBeVisible();
+  });
+
+  describe('preparing ahead of the learner', () => {
+    const withLessonOneReady = () => {
+      const base = course();
+      base.modules[0].lessons[0].preparation = 'ready';
+      return base;
+    };
+
+    it('asks once for the prepared lesson that is open', async () => {
+      const { onLessonOpened } = showCourse(withLessonOneReady(), []);
+      await waitFor(() => expect(onLessonOpened).toHaveBeenCalledWith('lesson-1'));
+      expect(onLessonOpened).toHaveBeenCalledTimes(1);
+    });
+
+    it('asks for a prepared lesson the learner selects, and not for one that is not prepared', async () => {
+      const user = userEvent.setup();
+      const { onLessonOpened } = showCourse(withLessonOneReady(), []);
+      await waitFor(() => expect(onLessonOpened).toHaveBeenCalledTimes(1));
+      await user.click(screen.getByRole('button', { name: 'Journey: Blood vessels' }));
+      await user.click(screen.getByRole('button', { name: 'Journey: Airway defenses' }));
+      await user.click(screen.getByRole('button', { name: 'Journey: Gas exchange' }));
+      await waitFor(() => expect(onLessonOpened).toHaveBeenLastCalledWith('lesson-3'));
+      expect(onLessonOpened.mock.calls).toEqual([['lesson-1'], ['lesson-3']]);
+    });
+
+    it('asks when the open lesson becomes prepared', async () => {
+      const { onLessonOpened, update } = showCourse(course(), []);
+      expect(await screen.findByText('Lessons complete')).toBeVisible();
+      expect(onLessonOpened).not.toHaveBeenCalled();
+      update(withLessonOneReady());
+      await waitFor(() => expect(onLessonOpened).toHaveBeenCalledWith('lesson-1'));
+      expect(onLessonOpened).toHaveBeenCalledTimes(1);
+    });
+
+    it('never asks for a draft course', async () => {
+      const draft = withLessonOneReady();
+      draft.summary.status = 'draft';
+      const { onLessonOpened } = showCourse(draft, []);
+      expect(await screen.findByRole('button', { name: 'Start this course' })).toBeVisible();
+      expect(onLessonOpened).not.toHaveBeenCalled();
+    });
   });
 });

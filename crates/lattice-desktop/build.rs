@@ -523,7 +523,7 @@ fn main() {
                     "accept_learning_program",
                     "prepare_learning_lesson",
                     "prepare_learning_module",
-                    "prepare_learning_course",
+                    "prepare_learning_ahead",
                     "complete_learning_lesson",
                     "delete_learning_program",
                     "get_learning_memory",

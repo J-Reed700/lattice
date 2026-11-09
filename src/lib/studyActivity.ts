@@ -55,7 +55,7 @@ const descriptions: Record<string, TaskDescription> = {
 // start/retry response only acknowledges queuing; it is not job completion.
 const dedicatedProgress = new Set([
   'generate_learning_program', 'repair_learning_outline', 'cancel_learning_outline',
-  'prepare_learning_lesson', 'prepare_learning_module', 'prepare_learning_course', 'start_learning_generation_job', 'retry_learning_generation_job',
+  'prepare_learning_lesson', 'prepare_learning_module', 'prepare_learning_ahead', 'start_learning_generation_job', 'retry_learning_generation_job',
   'cancel_learning_generation_job', 'start_learning_practical_run', 'cancel_learning_practical_run',
   'prepare_learning_quiz_bank', 'resume_learning_quiz_grading',
 ]);
