@@ -20,6 +20,26 @@ describe('usePracticeView', () => {
     expect(result.current.attemptMode).toBe('feynman');
   });
 
+  it('opens a written attempt and a drill on the ids it was given and keeps them across tabs', () => {
+    const { result } = renderHook(() => usePracticeView());
+    act(() => result.current.openAttempt('practice', { sessionId: 's-1', lessonId: 'l-1' }));
+    expect(result.current.view).toEqual({ kind: 'attempt', mode: 'practice', attempt: { sessionId: 's-1', lessonId: 'l-1' } });
+    act(() => result.current.openDrill('d-1'));
+    act(() => result.current.openActivity());
+    expect(result.current.attempt).toEqual({ sessionId: 's-1', lessonId: 'l-1' });
+    expect(result.current.drillAttemptId).toBe('d-1');
+  });
+
+  it('opens a fresh attempt and drill when no id is given', () => {
+    const { result } = renderHook(() => usePracticeView());
+    act(() => result.current.openAttempt('practice', { sessionId: 's-1', lessonId: 'l-1' }));
+    act(() => result.current.openAttempt());
+    expect(result.current.attempt).toBeNull();
+    act(() => result.current.openDrill('d-1'));
+    act(() => result.current.openDrill());
+    expect(result.current.drillAttemptId).toBeNull();
+  });
+
   it('does not retain the coding screens', () => {
     const { result } = renderHook(() => usePracticeView());
     act(() => result.current.openCoding('session-1'));

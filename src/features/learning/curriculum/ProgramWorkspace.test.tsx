@@ -34,6 +34,18 @@ vi.mock('@/features/learning/drills/CourseDrillsPanel', async () => {
     },
   };
 });
+// The Practice page's own data is tested with it; here the course teaches code and has nothing yet.
+vi.mock('@/features/learning/practice/home/practiceHomeApi', () => ({
+  practiceHomeApi: {
+    getProfile: async () => ({ programId: 'program-1', details: '', language: null, interviewAt: null, company: null, role: null, revision: 0 }),
+    saveProfile: vi.fn(),
+    getFit: async () => ({ code: 'fits', reason: null }),
+    checkFit: async () => ({ code: 'fits', reason: null }),
+    due: async () => ({ items: [] }),
+    codingSessions: async () => [],
+    startCodingSession: vi.fn(),
+  },
+}));
 // The journey's own markup is tested with it; here it only hands the workspace a module or a lesson to open.
 vi.mock('@/features/learning/curriculum/CourseSyllabus', () => ({
   CourseSyllabus: ({ program, onSelect, onSelectModule }: {
@@ -249,7 +261,7 @@ describe('Course page', () => {
       await user.click(primaryTab('Practice'));
       expect(await screen.findByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
 
-      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: 'Start' }));
+      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: /^Start/ }));
       expect(await screen.findByText('Review drills of program-1')).toBeVisible();
 
       await user.click(screen.getByRole('button', { name: 'Back to Practice' }));
@@ -257,14 +269,14 @@ describe('Course page', () => {
       expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
     });
 
-    it('is mounted once, and stays so while the learner is on Lessons and back', async () => {
+    it('is mounted once, and stays mounted while the learner is on Lessons and back on the Practice page', async () => {
       const user = userEvent.setup();
       show(program(GOAL));
       expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
       await user.click(primaryTab('Practice'));
       expect(screen.queryByText('Review drills of program-1')).not.toBeInTheDocument();
 
-      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: 'Start' }));
+      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: /^Start/ }));
       expect(await screen.findByText('Review drills of program-1')).toBeVisible();
       expect(drills.mounts).toBe(1);
 
@@ -272,6 +284,11 @@ describe('Course page', () => {
       expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
 
       await user.click(primaryTab('Practice'));
+      expect(await screen.findByRole('heading', { level: 3, name: 'Spot the mistakes' })).toBeVisible();
+      expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
+      expect(drills.mounts).toBe(1);
+
+      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: /^Start/ }));
       expect(screen.getByText('Review drills of program-1')).toBeVisible();
       expect(drills.mounts).toBe(1);
     });
@@ -282,18 +299,19 @@ describe('Course page', () => {
       expect(primaryTab('Practice')).toHaveAttribute('aria-selected', 'true');
     });
 
-    it('is where Practice reopens when it was the last practice view', async () => {
+    it('reopens on the Practice page, with the drills kept behind it', async () => {
       const user = userEvent.setup();
       show(program(GOAL));
       await user.click(primaryTab('Practice'));
-      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: 'Start' }));
+      await user.click(within(screen.getByTestId('card-spot')).getByRole('button', { name: /^Start/ }));
       expect(await screen.findByText('Review drills of program-1')).toBeVisible();
 
       await user.click(primaryTab('Lessons'));
       expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
 
       await user.click(primaryTab('Practice'));
-      expect(screen.getByText('Review drills of program-1')).toBeVisible();
+      expect(await screen.findByRole('heading', { level: 3, name: 'Explain' })).toBeVisible();
+      expect(screen.getByText('Review drills of program-1')).not.toBeVisible();
     });
   });
 
@@ -326,7 +344,7 @@ describe('Course page', () => {
     await user.click(tabs[1]);
     expect(await screen.findByRole('heading', { level: 3, name: 'Explain' })).toBeVisible();
 
-    await user.click(within(screen.getByTestId('card-explain')).getByRole('button', { name: 'Start' }));
+    await user.click(within(screen.getByTestId('card-explain')).getByRole('button', { name: /^Start/ }));
     const practiceModes = await screen.findByRole('group', { name: 'Written practice mode' });
     expect(practiceModes).toBeVisible();
     const feynmanButton = within(practiceModes).getByRole('button', { name: 'Feynman technique (Teach a beginner)' });
