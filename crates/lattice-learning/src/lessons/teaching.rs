@@ -13,6 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Map, Value};
 use std::collections::BTreeSet;
 
+pub(crate) mod contract;
 mod passes;
 mod protected;
 mod quotes;
@@ -781,6 +782,8 @@ async fn review_material(
 
 #[cfg(test)]
 mod citation_tests;
+#[cfg(test)]
+mod contract_tests;
 #[cfg(test)]
 mod loop_tests;
 
