@@ -227,9 +227,13 @@ fn reserved_import_paths_require_their_contract_kind() {
 #[test]
 fn decode_revalidates_bounded_manifest_metadata() -> anyhow::Result<()> {
     let decoded = decode_learning_pack(&encode_learning_pack(input())?)?;
-    let mut oversized_title = decoded.manifest.clone();
-    oversized_title.title = "x".repeat(161);
-    assert!(decode_learning_pack(&rearchive(&oversized_title, &decoded.entries)?).is_err());
+    let mut long_title = decoded.manifest.clone();
+    long_title.title = "x".repeat(1_000);
+    assert!(decode_learning_pack(&rearchive(&long_title, &decoded.entries)?).is_ok());
+
+    let mut blank_title = decoded.manifest.clone();
+    blank_title.title = "  ".into();
+    assert!(decode_learning_pack(&rearchive(&blank_title, &decoded.entries)?).is_err());
 
     let mut oversized_version = decoded.manifest.clone();
     oversized_version.application_version = "v".repeat(81);

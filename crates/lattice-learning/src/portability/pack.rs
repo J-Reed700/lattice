@@ -176,10 +176,8 @@ fn validate_privacy(privacy: &LearningPackPrivacyManifest) -> Result<()> {
 }
 
 fn validate_manifest_metadata(manifest: &LearningPackManifest) -> Result<()> {
-    if manifest.title.trim().is_empty() || manifest.title.chars().count() > 160 {
-        return Err(invalid(
-            "A learning-pack title must contain 1–160 characters.",
-        ));
+    if manifest.title.trim().is_empty() {
+        return Err(invalid("A learning-pack title must not be empty."));
     }
     if manifest.application_version.trim().is_empty()
         || manifest.application_version.chars().count() > 80
@@ -388,10 +386,8 @@ pub fn encode_learning_pack(mut input: LearningPackInput) -> Result<Vec<u8>> {
             "A learning-pack creation time is outside its allowed range.",
         ));
     }
-    if input.title.trim().is_empty() || input.title.chars().count() > 160 {
-        return Err(invalid(
-            "A learning-pack title must contain 1–160 characters.",
-        ));
+    if input.title.trim().is_empty() {
+        return Err(invalid("A learning-pack title must not be empty."));
     }
     if input.application_version.trim().is_empty() || input.application_version.chars().count() > 80
     {

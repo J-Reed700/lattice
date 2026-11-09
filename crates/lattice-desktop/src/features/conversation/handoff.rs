@@ -23,17 +23,6 @@ use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 
-const TITLE_CHAR_LIMIT: usize = 200;
-
-fn truncate_chars(text: &str, max_chars: usize) -> String {
-    if text.chars().count() <= max_chars {
-        return text.to_string();
-    }
-    let mut output: String = text.chars().take(max_chars.saturating_sub(1)).collect();
-    output.push('…');
-    output
-}
-
 /// The transcript as evidence, one passage per message under its id. Failed
 /// and empty turns are left out: they are not part of what the conversation
 /// established.
@@ -505,7 +494,7 @@ pub async fn continue_in_new_conversation_impl(
     };
 
     let new_id = uuid::Uuid::new_v4().to_string();
-    let new_title = truncate_chars(&format!("{} · continued", source_title), TITLE_CHAR_LIMIT);
+    let new_title = format!("{} · continued", source_title);
     let metadata = serde_json::json!({
         "continuedFrom": { "conversationId": source_id, "title": source_title },
     })

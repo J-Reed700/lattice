@@ -205,10 +205,7 @@ pub async fn fork_conversation_impl(
             )))
         })?;
 
-    let mut new_title = format!("{} · branch", source.title);
-    if new_title.chars().count() > 200 {
-        new_title = new_title.chars().take(200).collect();
-    }
+    let new_title = format!("{} · branch", source.title);
     let new_id = uuid::Uuid::new_v4().to_string();
 
     let (new_id, copied) = branches
