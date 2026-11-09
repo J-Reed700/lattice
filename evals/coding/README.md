@@ -15,14 +15,14 @@ file, `2026-11-xx-CODING-SESSIONS.md`; one or two items' difference between runs
 | Builds, kills | Are at least `MIN_KILLED_MISREADINGS` (2) misreadings killed? | every proven build | by machine, per build |
 | Hints (`live_coding_hint_eval`), 40 drafts | Does any hint contain code that passes the problem's cases? | none: one blocks the release | by machine: every code block of every stored hint runs as `solution.py` against all cases |
 | Hints, on-rung | Is each hint what its rung is (Nudge, Idea, Plan, Line)? | at least 36 of 40 per rung | by hand, from each draft's Markdown |
-| Hints, Line | Does the Line hint point at the wrong line? | at most 4 of 40 | by hand: the lines it points at are marked in the numbered draft beside a line diff of the draft against the reference |
+| Hints, Line | Does the Line hint point at the line that is wrong? | at least 36 of 40 | by hand: the lines it points at are marked in the numbered draft beside a line diff of the draft against the reference |
 | Sessions (`live_coding_session_eval`), 20 per setting | Is everything the counterpart says about the code or a run true? | at least 19 of 20 | by hand, from each reply beside the exact text the model saw |
 | Sessions, clarifications | Do its answers to clarifying questions agree with the problem's clarifications? | at least 19 of 20 | by hand |
 | Sessions, question rule | Does the interviewer's question rule hold in every reply? | every reply | by machine: the setting's `TurnPolicy::check` re-run on each stored reply with the observation it was made on |
 | Sessions, Watched | What share of Checkpoint cues does it speak on, and do its interjections read as useful and realistic? | rate recorded; at least 16 of 20 interjections | the rate by machine, the reading by hand |
 | Debrief, evidence | Is all evidence valid? | every item | by machine, checked independently of `debrief.rs` |
 | Debrief, points | Are rows' points within one of a careful grader? | at least 85% of rows | by hand, from each session's debrief beside its steps |
-| Latency | p50 and p90 for a counterpart turn, a hint per rung, a run by scope (warm), and finish | recorded; p50 of a warm Run examples | by machine, in `summary.json` |
+| Latency | p50 and p90 for a counterpart turn, a hint per rung, a run by scope, after a warm-up run, and finish | recorded; p50 of a warm Run examples | by machine, in `summary.json` |
 
 The pattern-rating rule is covered by unit tests, not by these evals.
 

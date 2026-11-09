@@ -120,6 +120,15 @@ pub(super) fn percentiles(ms: &[u64]) -> Percentiles {
     }
 }
 
+/// `text` in a fenced code block that opens with `info`; the fence is one backtick longer than any run in `text`.
+pub(super) fn fenced(info: &str, text: &str) -> String {
+    let mut fence = "```".to_owned();
+    while text.contains(&fence) {
+        fence.push('`');
+    }
+    format!("{fence}{info}\n{}\n{fence}\n", text.trim_end_matches('\n'))
+}
+
 /// `code` with right-aligned line numbers, for Markdown.
 pub(super) fn numbered(code: &str) -> String {
     let width = code.lines().count().to_string().len();

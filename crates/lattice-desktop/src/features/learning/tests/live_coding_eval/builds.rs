@@ -23,7 +23,9 @@ use lattice_learning::practice::coding::source::{
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
-use super::{count, numbered, out_dir, percentiles, write_item, EvalLab, ModelCall, Percentiles};
+use super::{
+    count, fenced, numbered, out_dir, percentiles, write_item, EvalLab, ModelCall, Percentiles,
+};
 
 /// Reports nothing and never stops the build.
 struct Silent;
@@ -171,8 +173,8 @@ fn markdown(item: &BuildItem) -> String {
         }
     }
     out.push_str(&format!(
-        "\n## Reference\n\n```python\n{}\n```\n\n",
-        numbered(&problem.reference)
+        "\n## Reference\n\n{}\n",
+        fenced("python", &numbered(&problem.reference))
     ));
     if !problem.reference_ms.is_empty() {
         out.push_str("Reference time on the scale cases:\n\n");
@@ -184,10 +186,10 @@ fn markdown(item: &BuildItem) -> String {
     out.push_str("## Misreadings\n\n");
     for misreading in &problem.misreadings {
         out.push_str(&format!(
-            "### {}\n\n{}\n\n```python\n{}\n```\n\nKilled by:\n\n",
+            "### {}\n\n{}\n\n{}\nKilled by:\n\n",
             misreading.id,
             misreading.description,
-            numbered(&misreading.code)
+            fenced("python", &numbered(&misreading.code))
         ));
         if misreading.killed_by.is_empty() {
             out.push_str("- no case\n");
