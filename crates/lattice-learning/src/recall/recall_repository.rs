@@ -21,6 +21,7 @@ use std::collections::HashSet;
 mod cards;
 #[cfg(test)]
 mod cards_tests;
+pub(super) mod interview;
 mod selectors;
 mod workspace;
 

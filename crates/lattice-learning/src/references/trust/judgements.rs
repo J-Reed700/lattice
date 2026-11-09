@@ -5,9 +5,9 @@
 //! Ownership of a subject is judged when a claim needs it, by the gate.
 
 use super::dto_map;
+use super::repository::judgements::{active_version_id, claim_context, ClaimContext};
 use super::repository::{unix_seconds, SqliteSourceTrustStore};
 use crate::dto::LearningClaimProfileDto;
-use crate::persistence::db;
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::{LLMPort, SourceTrustStore, StoredJudgement};
 use lattice_core::application::services::source_trust::{
@@ -17,7 +17,6 @@ use lattice_core::domain::provenance::{
     known_classes, AddedBy, Chosen, ContentEvidence, Judged, JudgementKey, ProvenanceRecord,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::Row;
 
 fn stored<T>(key: JudgementKey, judged: Judged<T>) -> StoredJudgement<T> {
     StoredJudgement {
@@ -70,15 +69,7 @@ pub async fn reassess_source(
     program_id: &str,
     source_id: &str,
 ) -> Result<()> {
-    let version: Option<String> = sqlx::query_scalar(
-        "SELECT active_version_id FROM learning_source_library WHERE program_id=? AND id=? AND deleted_at IS NULL",
-    )
-    .bind(program_id)
-    .bind(source_id)
-    .fetch_optional(store.pool())
-    .await
-    .map_err(db)?
-    .flatten();
+    let version = active_version_id(store.pool(), program_id, source_id).await?;
     let version = version
         .ok_or_else(|| AppError::NotFound("This source has no saved version to assess.".into()))?;
     let record = store.provenance(&version).await?.ok_or_else(|| {
@@ -109,26 +100,19 @@ pub async fn reprofile_claim(
     program_id: &str,
     claim_id: &str,
 ) -> Result<LearningClaimProfileDto> {
-    let row = sqlx::query(
-        "SELECT c.statement, c.unit_index, l.title AS lesson_title, p.goal \
-         FROM learning_lesson_claims c \
-         JOIN learning_lesson_reviews r ON r.lesson_id = c.lesson_id \
-         JOIN learning_lessons l ON l.id = c.lesson_id AND l.program_id = r.program_id \
-         JOIN learning_programs p ON p.id = r.program_id \
-         WHERE c.claim_id=? AND r.program_id=?",
-    )
-    .bind(claim_id)
-    .bind(program_id)
-    .fetch_optional(store.pool())
-    .await
-    .map_err(db)?
-    .ok_or_else(|| {
-        AppError::NotFound("This statement is not in any of the course's lesson reviews.".into())
-    })?;
-    let statement: String = row.try_get("statement").map_err(db)?;
-    let unit_index: i64 = row.try_get("unit_index").map_err(db)?;
-    let lesson_title: String = row.try_get("lesson_title").map_err(db)?;
-    let goal: String = row.try_get("goal").map_err(db)?;
+    let context = claim_context(store.pool(), program_id, claim_id)
+        .await?
+        .ok_or_else(|| {
+            AppError::NotFound(
+                "This statement is not in any of the course's lesson reviews.".into(),
+            )
+        })?;
+    let ClaimContext {
+        statement,
+        unit_index,
+        lesson_title,
+        goal,
+    } = context;
     let classes = known_classes(&store.site_overrides().await?);
     // The same unit title and course topic the preparation job gives the
     // profile call (`provenance_gate::context`, `generation_jobs`).

@@ -7,6 +7,7 @@
 //! workspace, or about to be read by a lesson, goes first ([`first`]).
 
 use super::job::CourseIndexJob;
+use super::repository;
 use super::search::{CourseSearch, IndexView};
 use super::sync::{self, CourseProgress};
 use super::{IndexMode, COURSE_INDEX};
@@ -336,10 +337,7 @@ impl CourseIndexes {
                 Some((program, entry.meta.get(sync::META_REVISION)?.clone()))
             })
             .collect();
-        let programs: Vec<String> = sqlx::query_scalar("SELECT id FROM learning_programs")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
+        let programs = repository::program_ids(&self.pool).await?;
         let repo = self.repository();
         let mut queued = 0;
         for program in programs {
@@ -408,10 +406,8 @@ impl CourseIndexes {
         let Ok(entries) = std::fs::read_dir(&self.base_dir) else {
             return Ok(());
         };
-        let programs: HashSet<String> = sqlx::query_scalar("SELECT id FROM learning_programs")
-            .fetch_all(&self.pool)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?
+        let programs: HashSet<String> = repository::program_ids(&self.pool)
+            .await?
             .into_iter()
             .collect();
         for entry in entries.filter_map(|entry| entry.ok()) {
@@ -427,12 +423,7 @@ impl CourseIndexes {
 
     /// Whether `program` still exists.
     pub(super) async fn exists(&self, program: &str) -> Result<bool> {
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_programs WHERE id=?")
-            .bind(program)
-            .fetch_one(&self.pool)
-            .await
-            .map(|count| count > 0)
-            .map_err(|error| AppError::Database(error.to_string()))
+        repository::program_exists(&self.pool, program).await
     }
 
     /// Brings `program`'s index current with no one watching: for a test, or

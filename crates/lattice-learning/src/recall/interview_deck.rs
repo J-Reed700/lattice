@@ -2,6 +2,7 @@
 //! answer guides. Each question is answered from memory before its guide is
 //! shown, then comes back on a schedule that fits the interview date, so the
 //! guide is studied as feedback on an attempt rather than read in advance.
+use super::recall_repository::interview;
 use super::study_dto::{StudyCardDto, StudyCardFormat, StudyDeckDto, StudySourceDto};
 use crate::practice::{
     interview_answers::{InterviewAnswerGuide, InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH},
@@ -11,12 +12,8 @@ use crate::practice::{
     practical_generation::INTERVIEW_PLAN_FILE_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::collections::HashMap;
-
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
-}
 
 fn decode<T: serde::de::DeserializeOwned>(content: &str, what: &str) -> Result<T> {
     serde_json::from_str(content)
@@ -39,39 +36,29 @@ pub(crate) async fn load(
     program_id: &str,
     activity_id: &str,
 ) -> Result<InterviewMaterial> {
-    let activity = sqlx::query(
-        "SELECT title,kind,status FROM learning_practical_activities WHERE program_id=? AND id=?",
-    )
-    .bind(program_id)
-    .bind(activity_id)
-    .fetch_optional(pool)
-    .await
-    .map_err(db)?
-    .ok_or_else(|| AppError::NotFound("Interview activity not found".into()))?;
-    if activity.get::<String, _>("kind") != "interview" {
+    let activity = interview::activity(pool, program_id, activity_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Interview activity not found".into()))?;
+    if activity.kind != "interview" {
         return Err(AppError::InvalidInput(
             "Only interview activities can become an interview drill.".into(),
         ));
     }
-    if activity.get::<String, _>("status") != "ready" {
+    if activity.status != "ready" {
         return Err(AppError::InvalidInput(
             "This interview is not ready yet. Wait for it to finish preparing.".into(),
         ));
     }
-    let files = sqlx::query(
-        "SELECT path,content FROM learning_practical_files WHERE activity_id=? AND path IN (?,?)",
+    let files = interview::files(
+        pool,
+        activity_id,
+        [INTERVIEW_PLAN_FILE_PATH, INTERVIEW_ANSWERS_FILE_PATH],
     )
-    .bind(activity_id)
-    .bind(INTERVIEW_PLAN_FILE_PATH)
-    .bind(INTERVIEW_ANSWERS_FILE_PATH)
-    .fetch_all(pool)
-    .await
-    .map_err(db)?;
+    .await?;
     let mut plan = None;
     let mut guides = None;
-    for file in files {
-        let content: String = file.get("content");
-        if file.get::<String, _>("path") == INTERVIEW_PLAN_FILE_PATH {
+    for (path, content) in files {
+        if path == INTERVIEW_PLAN_FILE_PATH {
             plan = Some(decode::<LearningInterviewPlanDto>(&content, "plan")?);
         } else {
             guides = Some(decode::<InterviewAnswerGuides>(&content, "answer guides")?);
@@ -91,20 +78,16 @@ pub(crate) async fn load(
             if sources.contains_key(version) {
                 continue;
             }
-            if let Some(row) = sqlx::query("SELECT title,COALESCE(resolved_url,requested_url) url FROM learning_source_versions WHERE program_id=? AND id=?")
-                .bind(program_id)
-                .bind(version)
-                .fetch_optional(pool)
-                .await
-                .map_err(db)?
+            if let Some(source) =
+                interview::source_title_and_link(pool, program_id, version).await?
             {
-                sources.insert(version.to_owned(), (row.get("title"), row.get("url")));
+                sources.insert(version.to_owned(), source);
             }
         }
     }
     Ok(InterviewMaterial {
         activity_id: activity_id.to_owned(),
-        title: activity.get("title"),
+        title: activity.title,
         plan,
         guides,
         sources,

@@ -122,9 +122,7 @@ impl LearningCurriculumRepository {
         if seeded > 0 {
             return Ok(());
         }
-        // The UI and a background worker may initialize the same legacy plan.
-        // Claim the writer before reading so they cannot both seed a snapshot.
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let existing: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
             .bind(program_id).fetch_one(&mut *tx).await.map_err(db)?;
         if existing > 0 {

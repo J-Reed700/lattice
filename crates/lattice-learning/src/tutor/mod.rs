@@ -16,6 +16,7 @@ mod facts;
 mod notes;
 mod passages;
 pub(crate) mod prompt;
+mod repository;
 mod tools;
 
 #[cfg(test)]

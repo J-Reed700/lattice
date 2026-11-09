@@ -14,6 +14,7 @@ use crate::plan_dto::{
 };
 use crate::quiz_bank_jobs::{QUIZ_BANK, QUIZ_GRADING};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore, NewJob};
 use sqlx::Row;
 
@@ -109,7 +110,7 @@ impl LearningCurriculumRepository {
         request: &StartLearningModuleJobsRequestDto,
     ) -> Result<Vec<LearningGenerationJob>> {
         validate_operation_id(&request.operation_id)?;
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let lessons: Vec<String> = sqlx::query_scalar(
             "SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.module_id=? AND l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' AND NOT EXISTS (SELECT 1 FROM learning_lesson_reviews r WHERE r.lesson_id=l.id AND r.state IN ('needs_review','stopped')) ORDER BY m.ordinal,l.ordinal",
         )
@@ -154,7 +155,7 @@ impl LearningCurriculumRepository {
         &self,
         request: &StartLearningGenerationJobRequestDto,
     ) -> Result<LearningGenerationJob> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let id = Self::admit_job(&mut tx, request).await?;
         tx.commit().await.map_err(db)?;
         self.job(&id).await
@@ -338,7 +339,7 @@ impl LearningCurriculumRepository {
     ) -> Result<LearningGenerationJob> {
         validate_operation_id(&request.operation_id)?;
         let payload = hash(request)?;
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let operation = curriculum_operation(
             &request.operation_id,
             &request.program_id,

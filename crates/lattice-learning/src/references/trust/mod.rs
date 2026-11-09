@@ -16,7 +16,6 @@ pub mod override_changes;
 pub mod overrides;
 pub mod pack;
 pub mod repository;
-mod rows;
 pub mod source_view;
 
 pub use repository::SqliteSourceTrustStore;

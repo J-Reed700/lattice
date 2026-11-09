@@ -5,10 +5,13 @@
 //!
 //! Callers look up and record inside their own transaction, so the ledger row
 //! commits or rolls back with the work it describes.
-use super::persistence::{db, decode, encode, now};
+use self::repository::RecordedOperation;
+use super::persistence::{decode, encode};
 use lattice_core::shared::error::{AppError, Result};
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{Row, Sqlite};
+use sqlx::Sqlite;
+
+mod repository;
 
 /// One request, keyed by its client-supplied operation ID.
 #[derive(Debug, Clone, Copy)]
@@ -37,17 +40,6 @@ impl From<OperationConflict> for AppError {
     }
 }
 
-/// A ledger row as stored.
-#[derive(Debug, Clone)]
-pub(crate) struct RecordedOperation {
-    pub scope: String,
-    pub kind: String,
-    pub program_id: Option<String>,
-    pub subject_id: Option<String>,
-    pub payload_hash: String,
-    pub result_json: String,
-}
-
 impl Operation<'_> {
     /// Same ID and same request: a replay. Same ID and anything else: a conflict.
     pub(crate) fn check(
@@ -73,7 +65,7 @@ impl Operation<'_> {
         T: DeserializeOwned,
         E: sqlx::Executor<'e, Database = Sqlite>,
     {
-        let Some(recorded) = find(executor, self.id).await? else {
+        let Some(recorded) = repository::find(executor, self.id).await? else {
             return Ok(None);
         };
         self.check(&recorded)?;
@@ -97,19 +89,7 @@ impl Operation<'_> {
         T: Serialize + ?Sized,
         E: sqlx::Executor<'e, Database = Sqlite>,
     {
-        sqlx::query("INSERT INTO learning_operations(operation_id,program_id,scope,kind,subject_id,payload_hash,result_json,created_at) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(self.id)
-            .bind(self.program_id)
-            .bind(self.scope)
-            .bind(self.kind)
-            .bind(self.subject_id)
-            .bind(self.payload_hash)
-            .bind(encode(result)?)
-            .bind(now())
-            .execute(executor)
-            .await
-            .map_err(db)?;
-        Ok(())
+        repository::insert(executor, self, &encode(result)?).await
     }
 
     /// Drop this identical request's row once what it produced is gone, so
@@ -119,40 +99,14 @@ impl Operation<'_> {
     where
         E: sqlx::Executor<'e, Database = Sqlite>,
     {
-        sqlx::query("DELETE FROM learning_operations WHERE operation_id=? AND scope=? AND kind=? AND payload_hash=?")
-            .bind(self.id)
-            .bind(self.scope)
-            .bind(self.kind)
-            .bind(self.payload_hash)
-            .execute(executor)
-            .await
-            .map_err(db)?;
-        Ok(())
+        repository::delete(executor, self).await
     }
-}
-
-async fn find<'e, E>(executor: E, operation_id: &str) -> Result<Option<RecordedOperation>>
-where
-    E: sqlx::Executor<'e, Database = Sqlite>,
-{
-    let row = sqlx::query("SELECT scope,kind,program_id,subject_id,payload_hash,result_json FROM learning_operations WHERE operation_id=?")
-        .bind(operation_id)
-        .fetch_optional(executor)
-        .await
-        .map_err(db)?;
-    Ok(row.map(|row| RecordedOperation {
-        scope: row.get("scope"),
-        kind: row.get("kind"),
-        program_id: row.get("program_id"),
-        subject_id: row.get("subject_id"),
-        payload_hash: row.get("payload_hash"),
-        result_json: row.get("result_json"),
-    }))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::persistence::db;
     use crate::tests::pool;
 
     const CONFLICT: &str = "Operation ID was already used with different test data.";

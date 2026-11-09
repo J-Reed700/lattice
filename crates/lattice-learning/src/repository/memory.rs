@@ -143,15 +143,16 @@ impl LearningRepository {
     }
 
     pub async fn discard_card_draft(&self, program_id: &str, draft_id: &str) -> Result<()> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let result = sqlx::query("UPDATE learning_card_drafts SET status='discarded',updated_at=? WHERE id=? AND program_id=? AND status='pending'")
-            .bind(chrono::Utc::now().timestamp_millis()).bind(draft_id).bind(program_id).execute(&self.pool).await.map_err(db)?;
+            .bind(chrono::Utc::now().timestamp_millis()).bind(draft_id).bind(program_id).execute(&mut *tx).await.map_err(db)?;
         if result.rows_affected() == 0 {
             let status: Option<String> = sqlx::query_scalar(
                 "SELECT status FROM learning_card_drafts WHERE id=? AND program_id=?",
             )
             .bind(draft_id)
             .bind(program_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?;
             if status.as_deref() != Some("discarded") {
@@ -160,7 +161,7 @@ impl LearningRepository {
                 ));
             }
         }
-        Ok(())
+        tx.commit().await.map_err(db)
     }
 
     pub async fn accept_card_draft(&self, program_id: &str, draft_id: &str) -> Result<String> {
