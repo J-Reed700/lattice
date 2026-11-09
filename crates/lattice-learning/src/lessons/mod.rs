@@ -6,7 +6,7 @@ pub mod content_verification;
 #[cfg(test)]
 pub(crate) mod course_generation_tests;
 pub mod course_plan;
-pub(crate) mod course_setup;
+pub mod course_setup;
 pub mod generation;
 pub mod generation_jobs;
 pub mod lesson_drafts;

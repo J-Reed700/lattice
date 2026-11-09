@@ -284,6 +284,7 @@ async fn live_complete_python_course() -> Result<()> {
             &repo,
             &model,
             &runtimes,
+            &Default::default(),
             PrepareLearningLessonRequestDto {
                 program_id: program.summary.id.clone(),
                 lesson_id: lesson_id.clone(),

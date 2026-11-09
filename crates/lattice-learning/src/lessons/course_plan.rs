@@ -6,6 +6,7 @@
 //! The plan carries no claims: ideas, terms and actions are topics, and truth
 //! stays with the lesson's own verification.
 
+use super::course_setup::CourseSetups;
 use super::generation::parse_json;
 use super::structured_call::complete_checked_request;
 use crate::dto::{LearningBlockKind, LearningLessonDto, LearningProgramDto};
@@ -20,6 +21,17 @@ use serde_json::{json, Value};
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
+mod edit;
+mod job;
+mod view;
+pub use edit::{change_entries, check_change, edit_entry, undo_entry};
+pub use job::{course_plan_job_config, queue, CoursePlanWorker, COURSE_PLAN};
+pub use view::{
+    view, ChangeCoursePlanEntriesRequestDto, CoursePlanEntryDto, CoursePlanEntryRefDto,
+    CoursePlanStateDto, CoursePlanViewDto, EditCoursePlanEntryRequestDto,
+    PlanLearningCourseRequestDto, UndoCoursePlanEntryRequestDto,
+};
+
 /// The `task` of the planning request.
 pub(crate) const PLAN_TASK: &str = "Plan what every lesson of this course teaches";
 
@@ -31,7 +43,7 @@ const PLAN_TOKENS_PER_LESSON: usize = 250;
 const PLAN_BASE_TOKENS: usize = 1000;
 
 /// What one lesson teaches, as topics.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct PlannedLesson {
     pub lesson_id: String,
@@ -92,16 +104,22 @@ pub(crate) async fn outline_revision(pool: &SqlitePool, program_id: &str) -> Res
 }
 
 /// The plan for `program` at `outline_revision`: read when it is saved, made
-/// by one model call when it is not. It holds no lock: callers that must not
-/// plan twice serialize their calls. Two calls that overlap each save every
-/// entry in one transaction, the first to commit wins, and both return what
-/// was saved.
+/// by one model call when it is not. Callers that share `setups` plan once:
+/// the missing plan is made inside the course's lock, after reading again.
+/// Callers that do not share it may each ask the model, but every save is one
+/// transaction, the first to commit wins, and all return what was saved. The
+/// lock is not reentrant: never call this while holding the course's setup.
 pub async fn ensure(
     pool: &SqlitePool,
     llm: &dyn LLMPort,
     program: &LearningProgramDto,
     outline_revision: i64,
+    setups: &CourseSetups,
 ) -> Result<CoursePlan> {
+    if let Some(plan) = stored(pool, program, outline_revision).await? {
+        return Ok(plan);
+    }
+    let _planning = setups.enter(&program.summary.id).await;
     if let Some(plan) = stored(pool, program, outline_revision).await? {
         return Ok(plan);
     }
@@ -118,7 +136,7 @@ pub async fn ensure(
 /// The saved plan, read fresh on every call so an edit made meanwhile is
 /// seen. A revision is planned when each of its lessons has an entry; an
 /// entry that cannot be read is an error, never a missing one.
-async fn stored(
+pub(crate) async fn stored(
     pool: &SqlitePool,
     program: &LearningProgramDto,
     outline_revision: i64,
@@ -244,6 +262,11 @@ fn planned_lesson_json(lesson: &LearningLessonDto) -> Value {
 /// Whether each appears once is checked in code, as a count in the grammar
 /// would grow with the course.
 pub(crate) fn plan_schema(program: &LearningProgramDto) -> Value {
+    entries_schema(&lesson_ids(program))
+}
+
+/// The schema of an answer that plans the lessons `ids`.
+pub(crate) fn entries_schema(ids: &[&str]) -> Value {
     let topics = json!({"type":"array","items":{"type":"string","minLength":1}});
     json!({
         "type":"object","additionalProperties":false,"required":["lessons"],
@@ -251,7 +274,7 @@ pub(crate) fn plan_schema(program: &LearningProgramDto) -> Value {
             "type":"object","additionalProperties":false,
             "required":["lessonId","ideas","terms","actions","contrast"],
             "properties":{
-                "lessonId":{"type":"string","enum":lesson_ids(program)},
+                "lessonId":{"type":"string","enum":ids},
                 "ideas":topics,"terms":topics,"actions":topics,
                 "contrast":{"type":"string"}
             }
@@ -263,8 +286,13 @@ pub(crate) fn plan_schema(program: &LearningProgramDto) -> Value {
 /// course order. A gap or a repeat is refused with the lessons it names, so
 /// the call asks again.
 pub(crate) fn parse_plan(raw: &str, program: &LearningProgramDto) -> Result<CoursePlan> {
+    parse_entries(raw, &lesson_ids(program), "every lesson of the course")
+}
+
+/// The entries an answer makes: each of `order` exactly once, in that order.
+/// `subject` names them in the refusal.
+pub(crate) fn parse_entries(raw: &str, order: &[&str], subject: &str) -> Result<CoursePlan> {
     let answer: CoursePlan = parse_json(raw)?;
-    let order = lesson_ids(program);
     let known: HashSet<&str> = order.iter().copied().collect();
     let mut planned: HashMap<String, PlannedLesson> = HashMap::new();
     let mut repeated = Vec::new();
@@ -300,7 +328,7 @@ pub(crate) fn parse_plan(raw: &str, program: &LearningProgramDto) -> Result<Cour
         ));
     }
     Err(AppError::InvalidInput(format!(
-        "The plan must list every lesson of the course exactly once, but {}.",
+        "The plan must list {subject} exactly once, but {}.",
         reasons.join(" and ")
     )))
 }
@@ -330,3 +358,19 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
 #[cfg(test)]
 #[path = "course_plan_tests.rs"]
 mod tests;
+
+#[cfg(test)]
+#[path = "course_plan/topics_support.rs"]
+mod topics_support;
+
+#[cfg(test)]
+#[path = "course_plan/job_tests.rs"]
+mod job_tests;
+
+#[cfg(test)]
+#[path = "course_plan/view_tests.rs"]
+mod view_tests;
+
+#[cfg(test)]
+#[path = "course_plan/edit_tests.rs"]
+mod edit_tests;
