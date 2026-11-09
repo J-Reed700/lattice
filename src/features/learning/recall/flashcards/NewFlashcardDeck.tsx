@@ -28,15 +28,15 @@ export function NewFlashcardDeck({ onCreated, onCancel }: { onCreated: (id: stri
     }}>
       <div>
         <label htmlFor="study-title" className="mb-2 block text-sm text-text-primary">Deck title</label>
-        <input id="study-title" className={`${settingsFieldClass} w-full`} required maxLength={120} value={title} onChange={e => setTitle(e.target.value)} disabled={generate.isPending} />
+        <input id="study-title" className={`${settingsFieldClass} w-full`} required value={title} onChange={e => setTitle(e.target.value)} disabled={generate.isPending} />
       </div>
       <div>
         <label htmlFor="study-focus" className="mb-2 block text-sm text-text-primary">Topic or section <span className="text-text-muted">· optional</span></label>
-        <input id="study-focus" className={`${settingsFieldClass} w-full`} placeholder="e.g. photosynthesis, chapter 3, project planning" maxLength={200} value={focus} onChange={e => setFocus(e.target.value)} disabled={generate.isPending} />
+        <input id="study-focus" className={`${settingsFieldClass} w-full`} placeholder="e.g. photosynthesis, chapter 3, project planning" value={focus} onChange={e => setFocus(e.target.value)} disabled={generate.isPending} />
       </div>
       <div>
         <label htmlFor="study-goal" className="mb-2 block text-sm text-text-primary">Learning goal <span className="text-text-muted">· optional</span></label>
-        <input id="study-goal" className={`${settingsFieldClass} w-full`} placeholder="e.g. exam preparation, professional training, general understanding" maxLength={300} value={studyGoal} onChange={e => setStudyGoal(e.target.value)} disabled={generate.isPending} />
+        <input id="study-goal" className={`${settingsFieldClass} w-full`} placeholder="e.g. exam preparation, professional training, general understanding" value={studyGoal} onChange={e => setStudyGoal(e.target.value)} disabled={generate.isPending} />
         <p className="mt-2 text-xs text-text-muted">Guides the question style and difficulty. Answers still come from your documents.</p>
       </div>
       <fieldset disabled={generate.isPending}>
