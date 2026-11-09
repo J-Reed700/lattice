@@ -116,6 +116,33 @@ describe('ModelWindowControls', () => {
     expect(screen.getByRole('status')).toHaveTextContent('OpenAI does not report');
   });
 
+  it('shows no output ceiling for a model whose provider reports none and sends none', () => {
+    state.limits = { data: { contextWindow: null, maxOutputTokens: null }, isLoading: false, isError: false };
+    render(<ModelWindowControls modelRef={{ kind: 'cloud', provider: 'openai', model: 'gpt-5' }} />);
+    const field = screen.getByLabelText('Max output');
+    expect(field).toHaveValue(null);
+    expect(field).toHaveAttribute('placeholder', "Model's own limit");
+  });
+
+  it("goes back to the model's own limit, leaving no output entry behind", async () => {
+    state.limits = { data: { contextWindow: null, maxOutputTokens: null }, isLoading: false, isError: false };
+    const openai = { kind: 'cloud', provider: 'openai', model: 'gpt-5' } as const;
+    state.settings.llm.modelWindows = { 'cloud:openai/gpt-5': { contextWindow: 64000, maxOutputTokens: 4096 } };
+    render(<ModelWindowControls modelRef={openai} />);
+    expect(screen.getByLabelText('Max output')).toHaveValue(4096);
+    fireEvent.click(screen.getByRole('button', { name: "Use the model's own limit" }));
+    await waitFor(() => expect(state.update).toHaveBeenCalledWith({
+      category: 'llm',
+      updates: { modelWindows: { 'cloud:openai/gpt-5': { contextWindow: 64000, maxOutputTokens: null } } },
+    }));
+  });
+
+  it('keeps Anthropic on the Settings ceiling when it could not be asked', () => {
+    state.limits = { data: undefined as never, isLoading: false, isError: true };
+    render(<ModelWindowControls modelRef={claude} />);
+    expect(screen.getByLabelText('Max output')).toHaveValue(128000);
+  });
+
   it('offers an Ollama model its trained length, and no output ceiling', () => {
     state.limits = { data: { contextWindow: 262144, maxOutputTokens: null }, isLoading: false, isError: false };
     render(<ModelWindowControls modelRef={{ kind: 'ollama', model: 'qwen:27b' }} />);

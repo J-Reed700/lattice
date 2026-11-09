@@ -573,3 +573,235 @@ fn a_bundled_server_that_cannot_run_reaches_the_wire_as_a_model_load_error() {
         "{wire:?}"
     );
 }
+
+mod output_ceiling_on_the_wire {
+    use super::*;
+    use crate::features::llm::cloud::CloudLlm;
+    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+    use lattice_core::application::ports::LLMPort;
+    use serde_json::{json, Value};
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn model(provider: CloudProvider) -> ModelRef {
+        ModelRef::Cloud {
+            provider,
+            model: "some-model".into(),
+        }
+    }
+
+    /// The body a scheduled client built from `settings` sends for `request`,
+    /// as a stub server records it.
+    async fn sent_body(
+        provider: CloudProvider,
+        settings: &LLMSettingsDto,
+        reported: &ModelWindowDto,
+        request: CompletionRequest,
+    ) -> Value {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+        let model = model(provider);
+        let mut connection = cloud_connection(settings, &model, Tuning::Standard, reported);
+        connection.provider = llm_provider(provider);
+        connection.model = "some-model".into();
+        let client = CloudLlm::new(&connection, "test-key".into())
+            .unwrap()
+            .with_endpoint(server.uri())
+            .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default());
+        let _ = client.complete(&request).await;
+        let received = server.received_requests().await.unwrap();
+        serde_json::from_slice(&received[0].body).unwrap()
+    }
+
+    fn ask() -> CompletionRequest {
+        CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "When did the bridge open?".into(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn chosen(max_output_tokens: u32) -> LLMSettingsDto {
+        let mut settings = LLMSettingsDto::default();
+        settings.model_windows.insert(
+            model(CloudProvider::Openai).to_string(),
+            ModelWindowDto {
+                context_window: None,
+                max_output_tokens: Some(max_output_tokens),
+            },
+        );
+        settings.model_windows.insert(
+            model(CloudProvider::Google).to_string(),
+            ModelWindowDto {
+                context_window: None,
+                max_output_tokens: Some(max_output_tokens),
+            },
+        );
+        settings
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_sends_no_ceiling_when_none_is_known() {
+        let body = sent_body(
+            CloudProvider::Openai,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(body.get("max_output_tokens").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_keeps_a_chosen_ceiling() {
+        let body = sent_body(
+            CloudProvider::Openai,
+            &chosen(4_096),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert_eq!(body["max_output_tokens"], json!(4_096));
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_keeps_a_reported_ceiling() {
+        let body = sent_body(
+            CloudProvider::Openai,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto {
+                context_window: None,
+                max_output_tokens: Some(16_384),
+            },
+            ask(),
+        )
+        .await;
+        assert_eq!(body["max_output_tokens"], json!(16_384));
+    }
+
+    #[tokio::test]
+    async fn a_google_request_sends_no_ceiling_when_none_is_known() {
+        let body = sent_body(
+            CloudProvider::Google,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(body.get("max_tokens").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_google_request_keeps_a_chosen_ceiling() {
+        let body = sent_body(
+            CloudProvider::Google,
+            &chosen(4_096),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert_eq!(body["max_tokens"], json!(4_096));
+    }
+
+    #[tokio::test]
+    async fn a_request_ceiling_is_sent_even_when_the_model_reports_none() {
+        let request = CompletionRequest {
+            max_output_tokens: Some(512),
+            ..ask()
+        };
+        let openai = sent_body(
+            CloudProvider::Openai,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            request.clone(),
+        )
+        .await;
+        assert_eq!(openai["max_output_tokens"], json!(512));
+        let google = sent_body(
+            CloudProvider::Google,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            request,
+        )
+        .await;
+        assert_eq!(google["max_tokens"], json!(512));
+    }
+
+    fn small_window() -> LLMSettingsDto {
+        LLMSettingsDto {
+            context_window: 32_768,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_with_a_small_window_still_sends_no_ceiling() {
+        let body = sent_body(
+            CloudProvider::Openai,
+            &small_window(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(body.get("max_output_tokens").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_google_request_with_a_small_window_still_sends_no_ceiling() {
+        let body = sent_body(
+            CloudProvider::Google,
+            &small_window(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(body.get("max_tokens").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_above_the_room_is_sent_the_room() {
+        let request = CompletionRequest {
+            max_output_tokens: Some(1_000_000),
+            ..ask()
+        };
+        let body = sent_body(
+            CloudProvider::Openai,
+            &small_window(),
+            &ModelWindowDto::default(),
+            request,
+        )
+        .await;
+        let sent = body["max_output_tokens"].as_u64().unwrap();
+        assert!(sent > 0 && sent < 32_768, "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_anthropic_request_with_a_small_window_sends_a_ceiling_that_fits_it() {
+        let body = sent_body(
+            CloudProvider::Anthropic,
+            &small_window(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        let sent = body["max_tokens"].as_u64().unwrap();
+        assert!(sent > 0 && sent <= 32_768, "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_anthropic_request_still_sends_its_ceiling() {
+        let body = sent_body(
+            CloudProvider::Anthropic,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert_eq!(body["max_tokens"], json!(128_000));
+    }
+}
