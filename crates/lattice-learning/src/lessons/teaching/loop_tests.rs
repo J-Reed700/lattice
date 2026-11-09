@@ -692,6 +692,50 @@ async fn a_long_review_issue_is_repaired_where_a_review_fails_closed() -> Result
     Ok(())
 }
 
+#[tokio::test]
+async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Result<()> {
+    let issues: Vec<String> = (1..=7)
+        .map(|n| format!("Defect number {n} of the outline."))
+        .collect();
+    let model = model(vec![
+        json!({"issues": issues}).to_string(),
+        json!({"modules":[]}).to_string(),
+        json!({"issues":[]}).to_string(),
+    ]);
+    review_and_repair(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &json!({"type":"object","properties":{"modules":{"type":"array"}}}),
+        json!({"modules":[]}).to_string(),
+        4000,
+    )
+    .await?;
+    let prompts = model.prompts.lock().unwrap();
+    assert!(!prompts[0].contains("at most six"), "{}", prompts[0]);
+    assert!(prompts[0].contains("every material defect"));
+    let sent = prompts
+        .iter()
+        .find(|prompt| prompt.contains("issuesToFix"))
+        .unwrap();
+    assert!(
+        sent.contains(&format!("\"issuesToFix\":{}", json!(issues))),
+        "{sent}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_lesson_review_asks_for_every_defect_with_no_count_cap() -> Result<()> {
+    let model = model(vec![review(None)]);
+    run(&model, lesson(EXCERPT)).await?;
+    let prompts = model.prompts.lock().unwrap();
+    assert!(!prompts[0].contains("at most six"), "{}", prompts[0]);
+    assert!(prompts[0].contains("every material defect"));
+    assert!(prompts[0].contains("names every material defect the block has"));
+    Ok(())
+}
+
 const INPUT: &str = "teaching-review-resume";
 
 /// The scripted review, its connection lost on the first call after its first

@@ -175,6 +175,12 @@ mod tests {
     use super::*;
     use crate::review_findings::{FindingKind, FindingSite};
 
+    impl Passes {
+        fn stop_sent(&mut self) -> bool {
+            false
+        }
+    }
+
     fn section(index: usize, note: &str) -> ReviewFinding {
         ReviewFinding::new(
             FindingKind::Teaching,
@@ -236,19 +242,68 @@ mod tests {
     }
 
     #[test]
-    fn a_pass_that_fixes_nothing_sets_every_remaining_finding_aside() {
+    fn a_repair_that_fixes_nothing_stops_only_the_findings_it_was_sent() {
         let mut passes = Passes::default();
         sent(passes.next(vec![section(0, "A"), section(1, "B")]));
-        let stopped =
-            done(passes.next(vec![section(0, "A"), section(1, "B"), section(2, "C, new")]));
+        let third = sent(passes.next(vec![section(0, "A"), section(1, "B"), section(2, "C, new")]));
+        assert_eq!(third, vec![section(2, "").key()]);
         assert_eq!(
-            stopped,
+            done(passes.next(vec![section(0, "A"), section(1, "B")])),
+            vec![(section(0, "").key(), 1), (section(1, "").key(), 1)]
+        );
+    }
+
+    #[test]
+    fn findings_carried_past_a_repair_that_fixes_nothing_still_get_theirs() {
+        let mut passes = Passes::default();
+        let findings: Vec<_> = (0..9).map(|i| section(i, "x")).collect();
+        assert_eq!(sent(passes.next(findings.clone())).len(), PER_REPAIR);
+        let second = sent(passes.next(findings));
+        assert_eq!(
+            second,
             vec![
-                (section(0, "").key(), 1),
-                (section(1, "").key(), 1),
-                (section(2, "").key(), 0),
+                section(6, "").key(),
+                section(7, "").key(),
+                section(8, "").key()
             ]
         );
+    }
+
+    #[test]
+    fn state_saved_before_stalled_findings_were_tracked_still_resumes() {
+        let key = section(3, "").key();
+        let old = serde_json::to_string(&serde_json::json!({
+            "repairs": [(key, 1)],
+            "open_at_repair": [key],
+        }))
+        .unwrap();
+        let mut passes = Passes::default();
+        passes.resume(&old);
+        assert_eq!(passes.repairs.get(&key), Some(&1));
+        // Nothing fixed, but this state never said what was sent: it is repaired again.
+        assert_eq!(sent(passes.next(vec![section(3, "x")])), vec![key]);
+    }
+
+    #[test]
+    fn an_unusable_repair_stops_what_it_was_sent_and_leaves_the_rest() {
+        let mut passes = Passes::default();
+        let findings: Vec<_> = (0..8).map(|i| section(i, "x")).collect();
+        sent(passes.next(findings.clone()));
+        assert!(passes.stop_sent());
+        let next = sent(passes.next(findings));
+        assert_eq!(next, vec![section(6, "").key(), section(7, "").key()]);
+        assert!(!passes.stop_sent());
+    }
+
+    #[test]
+    fn state_saved_mid_review_keeps_what_stopped() {
+        let mut passes = Passes::default();
+        sent(passes.next(vec![section(0, "A")]));
+        sent(passes.next(vec![section(0, "A"), section(1, "B")]));
+        let saved = passes.saved().unwrap();
+        let mut resumed = Passes::default();
+        resumed.resume(&saved);
+        assert!(!resumed.repairable(&section(0, "").key()));
     }
 
     #[test]
