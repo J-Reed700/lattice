@@ -804,3 +804,104 @@ fn helpers_that_each_begin_a_write_transaction_are_flagged() {
         vec![begins(REPOSITORY, 2, "update", 2, 0)]
     );
 }
+
+const BEGIN_WRITE_HELPERS: &str = r#"impl DownloadRepository {
+    async fn begin_write(&self) -> Result<WriteTx, DownloadError> {
+        self.db_conn.pool().begin_write().await.map_err(DownloadError::from)
+    }
+    async fn commit(tx: WriteTx) -> Result<(), DownloadError> {
+        tx.commit().await.map_err(DownloadError::from)
+    }
+"#;
+
+#[test]
+fn a_same_file_begin_write_helper_counts_as_one_begin_for_its_callers() {
+    let source = format!(
+        r#"{BEGIN_WRITE_HELPERS}    pub async fn delete(&self, id: &str) -> Result<(), DownloadError> {{
+        let mut tx = self.begin_write().await?;
+        sqlx::query("DELETE FROM downloads WHERE id = ?")
+            .bind(id)
+            .execute(&mut *tx)
+            .await?;
+        Self::commit(tx).await
+    }}
+    pub async fn register(&self, rows: &[Row]) -> Result<(), DownloadError> {{
+        let mut tx = self.begin_write().await?;
+        for row in rows {{
+            sqlx::query("INSERT INTO downloads VALUES (?)")
+                .bind(&row.id)
+                .execute(&mut *tx)
+                .await?;
+            for part in &row.parts {{
+                sqlx::query("INSERT INTO parts VALUES (?)")
+                    .bind(part)
+                    .execute(&mut *tx)
+                    .await?;
+            }}
+        }}
+        Self::commit(tx).await
+    }}
+    pub async fn create(&self, row: Row) -> Result<(), DownloadError> {{
+        self.register(&[row]).await
+    }}
+}}
+"#
+    );
+    assert_eq!(found(REPOSITORY, &source), Vec::<String>::new());
+}
+
+#[test]
+fn a_function_calling_the_begin_write_helper_twice_still_begins_two_units() {
+    let source = format!(
+        r#"{BEGIN_WRITE_HELPERS}    pub async fn swap(&self) -> Result<(), DownloadError> {{
+        let mut first = self.begin_write().await?;
+        sqlx::query("DELETE FROM a").execute(&mut *first).await?;
+        Self::commit(first).await?;
+        let mut second = self.begin_write().await?;
+        sqlx::query("DELETE FROM b").execute(&mut *second).await?;
+        Self::commit(second).await
+    }}
+}}
+"#
+    );
+    assert_eq!(
+        found(REPOSITORY, &source),
+        vec![begins(REPOSITORY, 8, "swap", 2, 0)]
+    );
+}
+
+#[test]
+fn a_same_file_helper_named_begin_is_not_a_deferred_begin_but_a_pool_begin_is() {
+    let source = r#"impl Repo {
+    async fn begin(&self) -> Result<WriteTx, Error> {
+        self.db_conn.pool().begin_write().await.map_err(Error::from)
+    }
+    async fn delete(&self, id: &str) -> Result<(), Error> {
+        let mut tx = self.begin().await?;
+        sqlx::query("DELETE FROM a WHERE id = ?").bind(id).execute(&mut *tx).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+    async fn select(&self) {
+        tokio::select! { tx = self.begin().await => {} }
+    }
+    async fn raw(&self) {
+        let tx = self.pool.begin().await.unwrap();
+    }
+    async fn through_the_connection(&self) {
+        let tx = self.db_conn.pool().begin().await.unwrap();
+    }
+    async fn on_a_parameter(pool: &SqlitePool) {
+        let tx = pool.begin().await.unwrap();
+    }
+}
+"#;
+    assert_eq!(
+        found(REPOSITORY, source),
+        vec![
+            format!("rule 1: {REPOSITORY}:15 {DEFERRED}"),
+            format!("rule 1: {REPOSITORY}:18 {DEFERRED}"),
+            format!("rule 1: {REPOSITORY}:21 {DEFERRED}"),
+        ]
+    );
+}
