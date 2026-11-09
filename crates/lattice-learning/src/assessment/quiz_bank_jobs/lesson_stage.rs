@@ -71,6 +71,9 @@ pub(crate) struct LessonBank {
     /// The outcome the items address.
     pub outcome_id: String,
     pub items: Vec<AuthoredItem>,
+    /// Items the checks or the blinded key review left out, with why.
+    #[serde(default)]
+    pub dropped: Vec<String>,
     pub author_model: Option<String>,
 }
 
@@ -126,6 +129,7 @@ pub(crate) async fn lesson_bank_stage(
         });
     };
     let mut written: Vec<AuthoredItem> = Vec::new();
+    let mut dropped: Vec<String> = Vec::new();
     for slot in &blueprint.slots {
         let requirement = &slot.requirement;
         let have = seeds
@@ -151,11 +155,14 @@ pub(crate) async fn lesson_bank_stage(
                 .chain(written.iter().map(|w| w.candidate.prompt.clone()))
                 .collect(),
         };
-        written.extend(generation::author_items(llm, &need).await?.items);
+        let authored = generation::author_items(llm, &need).await?;
+        written.extend(authored.items);
+        dropped.extend(authored.dropped);
     }
     Ok(LessonBank {
         outcome_id,
         items: written,
+        dropped,
         author_model: Some(llm.model_name().to_string()),
     })
 }
