@@ -271,7 +271,7 @@ impl LearningCurriculumRepository {
 
     pub async fn plan(&self, program_id: &str) -> Result<LearningPlanDto> {
         self.seed_accepted(program_id).await?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let program_revision =
             sqlx::query_scalar("SELECT revision FROM learning_programs WHERE id=?")
                 .bind(program_id)
