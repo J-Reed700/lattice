@@ -18,7 +18,8 @@ async fn the_state_goes_from_none_to_planning_to_planned() {
     assert_eq!(before.error, None);
 
     let id = queue(&pool, &program.summary.id).await.unwrap();
-    let id = id.unwrap_or_else(|| panic!("a job is queued"));
+    assert!(id.is_some(), "a job is queued");
+    let id = id.unwrap();
     let waiting = view(&pool, &program.summary.id).await.unwrap();
     assert_eq!(waiting.state, CoursePlanStateDto::Planning);
     assert!(
@@ -54,7 +55,8 @@ async fn a_failed_plan_job_shows_failed_with_its_error() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
     let id = queue(&pool, &program.summary.id).await.unwrap();
-    let id = id.unwrap_or_else(|| panic!("a job is queued"));
+    assert!(id.is_some(), "a job is queued");
+    let id = id.unwrap();
     let store = JobStore::new(pool.clone());
     assert!(store.claim(&id).await.unwrap().is_some());
     store

@@ -36,7 +36,9 @@ async fn a_job_carries_the_course_and_the_outline_revision_it_plans() {
 
     let id = queue(&pool, &program.summary.id).await.unwrap();
 
-    let id = id.unwrap_or_else(|| panic!("a job is queued"));
+    assert!(id.is_some(), "a job is queued");
+
+    let id = id.unwrap();
     let job = JobStore::new(pool.clone()).get(&id).await.unwrap();
     assert_eq!(job.kind, COURSE_PLAN);
     assert_eq!(job.requested["programId"], program.summary.id.as_str());
@@ -63,7 +65,8 @@ async fn a_draft_course_can_be_planned() {
     let program = saved_program(&pool).await;
     let model = Arc::new(Topics::new());
     let id = queue(&pool, &program.summary.id).await.unwrap();
-    let id = id.unwrap_or_else(|| panic!("a draft course is queued"));
+    assert!(id.is_some(), "a draft course is queued");
+    let id = id.unwrap();
 
     run_plan_job(&pool, model.clone(), &id).await;
 
@@ -108,7 +111,8 @@ async fn a_stale_revision_completes_without_a_call() {
     let program = saved_program(&pool).await;
     let model = Arc::new(Topics::new());
     let id = queue(&pool, &program.summary.id).await.unwrap();
-    let id = id.unwrap_or_else(|| panic!("a job is queued"));
+    assert!(id.is_some(), "a job is queued");
+    let id = id.unwrap();
     change_outline(&pool, &program.summary.id).await;
 
     run_plan_job(&pool, model.clone(), &id).await;
@@ -150,7 +154,9 @@ async fn the_job_plans_the_revision_it_was_queued_for_and_a_new_one_after_an_out
 async fn a_failed_job_is_tried_again_when_the_course_is_planned_again() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
-    let failed = queue(&pool, &program.summary.id).await.unwrap().unwrap();
+    let failed = queue(&pool, &program.summary.id).await.unwrap();
+    assert!(failed.is_some(), "a job is queued");
+    let failed = failed.unwrap();
     let store = JobStore::new(pool.clone());
     assert!(store.claim(&failed).await.unwrap().is_some());
     store
@@ -160,7 +166,9 @@ async fn a_failed_job_is_tried_again_when_the_course_is_planned_again() {
 
     let again = queue(&pool, &program.summary.id).await.unwrap();
 
-    let again = again.unwrap_or_else(|| panic!("a new attempt is queued"));
+    assert!(again.is_some(), "a new attempt is queued");
+
+    let again = again.unwrap();
     assert_ne!(again, failed);
     assert_eq!(store.get(&again).await.unwrap().status, JobStatus::Pending);
     let twice = queue(&pool, &program.summary.id).await.unwrap();

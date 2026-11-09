@@ -57,11 +57,12 @@ fn undo_request(
 }
 
 fn entry_of<'a>(shown: &'a CoursePlanViewDto, lesson_id: &str) -> &'a CoursePlanEntryDto {
-    shown
+    let found = shown
         .entries
         .iter()
-        .find(|entry| entry.topics.lesson_id == lesson_id)
-        .unwrap()
+        .find(|entry| entry.topics.lesson_id == lesson_id);
+    assert!(found.is_some(), "{lesson_id} is in the plan: {shown:?}");
+    found.unwrap()
 }
 
 fn the_planned_entry(lesson_id: &str) -> PlannedLesson {
@@ -299,6 +300,7 @@ async fn a_change_is_asked_at_interactive_priority_under_a_schema_of_the_selecte
     .await
     .unwrap();
 
+    assert_eq!(model.calls(), 1, "the model is asked once");
     let sent = model.request(0);
     assert_eq!(sent.priority, InferencePriority::Interactive);
     let schema = sent.json_schema.unwrap();
