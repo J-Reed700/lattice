@@ -304,14 +304,15 @@ impl LessonGenerationWorker {
                     // Keep the large multi-stage future on the heap. In debug
                     // builds, nesting it inline through task-local scopes can
                     // exhaust a runtime worker's stack before the network call.
+                    let plan = crate::lessons::course_plan::CoursePlan {
+                        lessons: Vec::new(),
+                    };
                     let preparation = Box::pin(crate::generation::prepare_lesson_with_references(
                         llm.as_ref(),
                         &self.runtimes,
                         &program,
                         lesson,
-                        &crate::lessons::course_plan::CoursePlan {
-                            lessons: Vec::new(),
-                        },
+                        &plan,
                         &references,
                     ));
                     let topic = format!("{}: {}", program.summary.goal, lesson.title);
