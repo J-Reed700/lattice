@@ -13,7 +13,7 @@ mod rank;
 mod repository;
 mod runtime;
 
-pub use admission::{current_observer, observing, AdmissionObserver, QueueExit};
+pub use admission::{current_observer, observing, AdmissionObserver, QueueExit, QueuedRequest};
 pub use rank::{current_rank, RankScope, RankTicket, RankWatcher};
 pub use repository::JobStore;
 pub use runtime::{

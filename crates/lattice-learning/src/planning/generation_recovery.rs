@@ -44,6 +44,7 @@ pub(crate) fn lesson_failure(job: &JobRecord, error: &AppError) -> JobFailure {
         })
         .map(|mut activity| {
             activity.model_running = false;
+            activity.waiting_for_model = false;
             activity.response_characters = 0;
             activity.model_attempt = 0;
             activity.last_activity_at = now();

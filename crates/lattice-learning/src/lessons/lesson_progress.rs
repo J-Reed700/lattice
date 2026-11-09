@@ -12,7 +12,7 @@ use crate::curriculum::{
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use lattice_core::domain::learning::claim_review::{ClaimId, Class};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{AdmissionObserver, JobContext, QueueExit};
+use lattice_core::shared::runtime::jobs::{observing, AdmissionObserver, JobContext, QueueExit};
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -21,6 +21,8 @@ struct State {
     completed: u32,
     activity: LearningGenerationActivity,
     active_model_calls: usize,
+    /// Of the calls in flight, those queued at a scheduler for a slot.
+    queued_calls: usize,
     /// The course this job prepares; its model calls share the course's
     /// sources as a prompt prefix.
     program_id: Option<String>,
@@ -51,15 +53,33 @@ tokio::task_local! {
     static CHECKS: bool;
 }
 
-impl AdmissionObserver for Progress {
-    fn queued(&self) {}
+impl State {
+    fn refresh_waiting(&mut self) {
+        self.activity.waiting_for_model =
+            self.active_model_calls > 0 && self.queued_calls >= self.active_model_calls;
+    }
+}
 
-    fn left_queue(&self, _exit: QueueExit) {}
+impl AdmissionObserver for Progress {
+    fn queued(&self) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.queued_calls += 1;
+        state.refresh_waiting();
+    }
+
+    fn left_queue(&self, _exit: QueueExit) {
+        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
+        state.queued_calls = state.queued_calls.saturating_sub(1);
+        state.refresh_waiting();
+    }
 }
 
 /// Runs `future` as the current lesson job's work, with `progress` recording it.
 async fn scoped<F: std::future::Future>(progress: &Progress, future: F) -> F::Output {
-    CURRENT.scope(progress.clone(), future).await
+    let observer: Arc<dyn AdmissionObserver> = Arc::new(progress.clone());
+    CURRENT
+        .scope(progress.clone(), observing(observer, future))
+        .await
 }
 
 pub(crate) fn active() -> bool {
@@ -154,6 +174,7 @@ impl Drop for ModelCall {
             let mut state = progress.0.lock().unwrap_or_else(|e| e.into_inner());
             state.active_model_calls = state.active_model_calls.saturating_sub(1);
             state.activity.model_running = state.active_model_calls > 0;
+            state.refresh_waiting();
         }
     }
 }
@@ -207,6 +228,7 @@ pub(crate) fn request() -> ModelCall {
         }
         state.active_model_calls += 1;
         state.activity.model_running = true;
+        state.refresh_waiting();
         state.activity.last_activity_at = chrono::Utc::now().timestamp_millis();
     }
     ModelCall(progress)
@@ -549,6 +571,7 @@ fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
     // stopped in that same phase. Do not count time with the app closed.
     activity.phase_started_at = 0;
     activity.reached = LearningGenerationPhase::default();
+    activity.waiting_for_model = false;
     activity.model_calls = 0;
     activity.model_calls_ceiling = None;
     activity.model_calls_ceiling_rises = 0;

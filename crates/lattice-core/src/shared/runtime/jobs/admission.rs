@@ -8,6 +8,8 @@
 use std::future::Future;
 use std::sync::Arc;
 
+tokio::task_local! { static CURRENT: Arc<dyn AdmissionObserver>; }
+
 /// How a queued request's wait ended.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum QueueExit {
@@ -27,12 +29,41 @@ pub trait AdmissionObserver: Send + Sync {
 
 /// The observer of the job whose handler is running this future, if any.
 pub fn current_observer() -> Option<Arc<dyn AdmissionObserver>> {
-    None
+    CURRENT.try_with(Arc::clone).ok()
 }
 
 /// Runs `work` inside a scope observed by `observer`.
-pub async fn observing<F: Future>(_observer: Arc<dyn AdmissionObserver>, work: F) -> F::Output {
-    work.await
+pub async fn observing<F: Future>(observer: Arc<dyn AdmissionObserver>, work: F) -> F::Output {
+    CURRENT.scope(observer, work).await
+}
+
+/// One request's wait, reported to its observer from creation until drop. A
+/// wait that ends any way but [`QueuedRequest::granted`], including the
+/// request's future being dropped, ends abandoned, so no path leaves it
+/// counted as queued.
+pub struct QueuedRequest {
+    observer: Arc<dyn AdmissionObserver>,
+    exit: QueueExit,
+}
+
+impl QueuedRequest {
+    pub fn new(observer: Arc<dyn AdmissionObserver>) -> Self {
+        observer.queued();
+        Self {
+            observer,
+            exit: QueueExit::Abandoned,
+        }
+    }
+
+    pub fn granted(mut self) {
+        self.exit = QueueExit::Granted;
+    }
+}
+
+impl Drop for QueuedRequest {
+    fn drop(&mut self) {
+        self.observer.left_queue(self.exit);
+    }
 }
 
 #[cfg(test)]

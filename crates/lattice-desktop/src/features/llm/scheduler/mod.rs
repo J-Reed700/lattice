@@ -37,7 +37,9 @@ use tokio_util::sync::CancellationToken;
 
 use lattice_core::application::ports::llm_port::{InferencePriority, RequestLoad};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{RankTicket, RankWatcher};
+use lattice_core::shared::runtime::jobs::{
+    current_observer, QueuedRequest, RankTicket, RankWatcher,
+};
 use std::sync::Weak;
 use tokio::sync::watch;
 
@@ -310,7 +312,7 @@ impl InferenceScheduler {
             rank.watch(watcher);
         }
         let lane = Lane::of(request.priority, request.rank.as_ref());
-        let (key, woken) = {
+        let (key, woken, granted_at_once) = {
             let mut state = self.state.lock();
             let key = (lane, state.next_ticket);
             state.next_ticket += 1;
@@ -331,9 +333,13 @@ impl InferenceScheduler {
                 },
             );
             self.dispatch(&mut state);
-            (key, woken)
+            let granted_at_once = state.granted.contains_key(&key.1);
+            (key, woken, granted_at_once)
         };
         self.moved();
+        let queued = current_observer()
+            .filter(|_| !granted_at_once)
+            .map(QueuedRequest::new);
         let mut waiting = Waiting {
             scheduler: self,
             key,
@@ -349,6 +355,9 @@ impl InferenceScheduler {
         };
         match waiting.settle(admitted) {
             Some(grant) => {
+                if let Some(queued) = queued {
+                    queued.granted();
+                }
                 let waited = queued_at.elapsed();
                 if waited >= SLOW_ADMISSION {
                     tracing::info!(
