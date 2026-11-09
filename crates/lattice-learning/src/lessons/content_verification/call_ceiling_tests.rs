@@ -205,11 +205,11 @@ async fn a_statement_the_teaching_review_writes_after_the_sort_is_held_by_the_pl
     )
     .rewriting(&[(ROWS, MAPPED), (HEADER_LAST, HEADER_FIRST)])
     .teaching(1, ALOUD, HEADER_LAST);
-    // The line break makes the review read the second section as two
-    // passages, so its finding names the one no claim stands on.
+    // The blank line makes the review read the second section as two
+    // paragraphs, so its finding names the one no claim stands on.
     let lesson = json!({"blocks":[
         block(0, &format!("{ROWS}{}", PRACTICE.repeat(3))),
-        block(1, &format!("{DELIMITER}{}\n{ALOUD}{PRACTICE}{PRACTICE}", PRACTICE.repeat(3))),
+        block(1, &format!("{DELIMITER}{}\n\n{ALOUD}{PRACTICE}{PRACTICE}", PRACTICE.repeat(3))),
     ],"questions":[]});
 
     let (finished, trace) = crate::lesson_progress::traced(verify_and_repair(
