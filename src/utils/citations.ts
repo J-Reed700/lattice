@@ -42,11 +42,8 @@ const MAX_CITATION_NUMBER = 99_999;
  */
 export function parseCitations(text: string, sourceCount?: number): ParsedCitation[] {
   if (text.length > MAX_TEXT_LENGTH) {
-    console.warn('[Citations] Text too long for parsing:', text.length, 'chars (max:', MAX_TEXT_LENGTH, ')');
-    return [{
-      text: `${text.substring(0, MAX_TEXT_LENGTH)  }... (text truncated)`,
-      citationNumber: undefined,
-    }];
+    console.warn('[Citations] Text too long to scan for citations:', text.length, 'chars');
+    return [{ text, citationNumber: undefined }];
   }
 
   const totalSources = Number.isInteger(sourceCount) && sourceCount && sourceCount > 0
