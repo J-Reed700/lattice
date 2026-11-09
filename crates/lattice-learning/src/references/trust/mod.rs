@@ -32,6 +32,8 @@ mod eval_export_tests;
 #[cfg(test)]
 mod migration_tests;
 #[cfg(test)]
+mod outcomes_tests;
+#[cfg(test)]
 mod overrides_tests;
 #[cfg(test)]
 mod repository_tests;
