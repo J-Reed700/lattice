@@ -692,6 +692,158 @@ async fn a_long_review_issue_is_repaired_where_a_review_fails_closed() -> Result
     Ok(())
 }
 
+#[tokio::test]
+async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Result<()> {
+    let issues: Vec<String> = (1..=7)
+        .map(|n| format!("Defect number {n} of the outline."))
+        .collect();
+    let model = model(vec![
+        json!({"issues": issues}).to_string(),
+        json!({"modules":[]}).to_string(),
+        json!({"issues":[]}).to_string(),
+    ]);
+    review_and_repair(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &json!({"type":"object","properties":{"modules":{"type":"array"}}}),
+        json!({"modules":[]}).to_string(),
+        4000,
+    )
+    .await?;
+    let prompts = model.prompts.lock().unwrap();
+    assert!(!prompts[0].contains("at most six"), "{}", prompts[0]);
+    assert!(prompts[0].contains("every material defect"));
+    let sent = prompts
+        .iter()
+        .find(|prompt| prompt.contains("issuesToFix"))
+        .unwrap();
+    assert!(
+        sent.contains(&format!("\"issuesToFix\":{}", json!(issues))),
+        "{sent}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_lesson_review_asks_for_every_defect_with_no_count_cap() -> Result<()> {
+    let model = model(vec![review(None)]);
+    run(&model, lesson(EXCERPT)).await?;
+    let prompts = model.prompts.lock().unwrap();
+    assert!(!prompts[0].contains("at most six"), "{}", prompts[0]);
+    assert!(prompts[0].contains("every material defect"));
+    assert!(prompts[0].contains("names every material defect the block has"));
+    Ok(())
+}
+
+/// The scripted review, every teaching repair request answered with edits
+/// that match nothing in the draft, and the requests kept.
+struct UnusableRepairs {
+    review: ScriptedModel,
+    repairs: Mutex<Vec<String>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for UnusableRepairs {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if asks_for_repair(request) {
+            self.repairs
+                .lock()
+                .unwrap()
+                .extend(crate::content_verification::tests::fixture_prompts(request));
+            let unusable =
+                json!({"edits":[{"path":"/blocks/0/title","before":"Missing text","after":"X"}]})
+                    .to_string();
+            return Ok(crate::content_verification::tests::fixture_completion(
+                request,
+                vec![unusable],
+            ));
+        }
+        self.review.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.review.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.review.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.review.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn an_unusable_repair_stops_what_it_was_sent_and_the_carried_findings_still_get_theirs(
+) -> Result<()> {
+    let marks = ["A", "B", "C", "D", "E", "F", "G"];
+    assert!(marks.len() > passes::PER_REPAIR);
+    let blocks: Vec<Value> = marks
+        .iter()
+        .map(|mark| {
+            json!({"kind":"explanation","title":format!("Part {mark}"),"body":format!("Unusable repair section {mark} says the function returns the number 4."),"rubric":[],"sourceIndex":0,"quote":EXCERPT})
+        })
+        .collect();
+    let candidate = json!({"blocks":blocks,"questions":[]});
+    let defects = || {
+        let checks = marks.iter().enumerate().map(|(index, mark)| {
+            json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":format!("Defect marker {mark}."),"hasDefect":true})
+        });
+        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks.collect())})
+            .to_string()
+    };
+    let decisions = || {
+        let each = (0..marks.len()).map(|index| {
+            json!({"issueId":format!("issue-{index}"),"verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{index}")],"partId":format!("blocks-{index}"),"requirementId":null,"reason":"The section contradicts itself."})
+        });
+        json!({"decisions":each.collect::<Vec<_>>()}).to_string()
+    };
+    let model = UnusableRepairs {
+        review: model(vec![defects(), decisions(), defects(), decisions()]),
+        repairs: Mutex::new(Vec::new()),
+    };
+    let reviewed = run(&model, candidate.clone()).await?;
+    assert_eq!(
+        serde_json::from_str::<Value>(&reviewed.candidate)?,
+        candidate
+    );
+    let repairs = model.repairs.lock().unwrap();
+    let asked = |repair: &str| -> Vec<bool> {
+        marks
+            .iter()
+            .map(|mark| repair.contains(&format!("Defect marker {mark}.")))
+            .collect()
+    };
+    assert!(
+        repairs.len() >= 2,
+        "the review stopped at the unusable repair; repairs asked: {}",
+        repairs.len()
+    );
+    assert_eq!(
+        asked(&repairs[0]),
+        vec![true, true, true, true, true, true, false]
+    );
+    assert_eq!(
+        asked(&repairs[1]),
+        vec![false, false, false, false, false, false, true]
+    );
+    let waiting: Vec<_> = reviewed
+        .set_aside
+        .iter()
+        .map(|waiting| (waiting.finding.key().id(), waiting.repairs))
+        .collect();
+    assert_eq!(waiting.len(), marks.len(), "{waiting:?}");
+    for index in 0..passes::PER_REPAIR {
+        assert!(
+            waiting.contains(&(format!("teaching:section-{index}"), 1)),
+            "{waiting:?}"
+        );
+    }
+    Ok(())
+}
+
 const INPUT: &str = "teaching-review-resume";
 
 /// The scripted review, its connection lost on the first call after its first
