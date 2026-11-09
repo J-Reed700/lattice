@@ -482,7 +482,7 @@ fn a_context_window_that_does_not_fit_is_out_of_memory_not_a_gpu_init_failure() 
         assert_eq!(err.kind, AttemptFailure::OutOfMemory, "{end:?}");
         assert!(
             err.message.starts_with(
-                "llama-server ran out of memory allocating its context window of 262,144                  tokens on the GPU."
+                "llama-server ran out of memory loading the model at a context window of 262,144 tokens on the GPU."
             ),
             "{}",
             err.message
@@ -507,7 +507,7 @@ fn an_out_of_memory_failure_on_the_cpu_names_the_cpu_and_its_window() {
     assert_eq!(err.kind, AttemptFailure::OutOfMemory);
     assert!(
         err.message.starts_with(
-            "llama-server ran out of memory allocating its context window of 65,536              tokens on the CPU."
+            "llama-server ran out of memory loading the model at a context window of 65,536 tokens on the CPU."
         ),
         "{}",
         err.message
