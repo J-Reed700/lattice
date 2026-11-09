@@ -6,19 +6,28 @@ use std::collections::BTreeMap;
 /// The file the learner's code lives in, beside the harness.
 pub const SOLUTION_PATH: &str = "solution.py";
 
+/// Where the proven problem is stored: a check file, so no public read returns it.
+pub const PROBLEM_FILE_PATH: &str = "problem/problem.json";
+
 /// What the learner is asked to do.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
+#[serde(rename_all = "snake_case
+    /// The comparison learner examples use: the first example case's.
+    pub fn default_compare(&self) -> CaseCompare {
+        self.examples()
+            .next()
+            .map_or(CaseCompare::Exact, |case| case.compare.clone())
+    }
+")]
 pub enum CodingTask {
     Problem,
     BugFix,
-    Project,
 }
 
 /// Who the counterpart is, and what the learner may see.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum Setting {
+pub enum CodingSetting {
     Coached,
     Mock,
     Watched,
@@ -35,7 +44,7 @@ pub enum Hidden {
     WorkedSolution,
 }
 
-impl Setting {
+impl CodingSetting {
     /// Whether the learner may see `hidden` during the session, once they have `submitted` or not. The debrief
     /// shows everything.
     pub fn discloses(self, hidden: Hidden, submitted: bool) -> bool {
@@ -49,7 +58,7 @@ impl Setting {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum Difficulty {
+pub enum ProblemDifficulty {
     Easy,
     Medium,
     Hard,
@@ -58,7 +67,7 @@ pub enum Difficulty {
 /// How a case's result is compared with what it expects.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(tag = "kind", rename_all = "snake_case")]
-pub enum Compare {
+pub enum CaseCompare {
     /// Python `==`.
     Exact,
     /// The same elements in any order, duplicates counted.
@@ -69,7 +78,7 @@ pub enum Compare {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum Visibility {
+pub enum CaseVisibility {
     /// Shown in the statement.
     Example,
     /// Run on submit; a setting decides how much of a failure the learner sees.
@@ -79,7 +88,7 @@ pub enum Visibility {
 /// One call of the learner's function and what it should return.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct Case {
+pub struct ProblemCase {
     /// Unique within the problem.
     pub id: String,
     /// What the case is about, in plain words: "an empty list". Shown when the case itself is hidden.
@@ -88,15 +97,19 @@ pub struct Case {
     pub args: Vec<String>,
     /// A Python literal. `None` runs the call and reports what it returned, as "Try an input" does.
     pub expected: Option<String>,
-    pub compare: Compare,
-    pub visibility: Visibility,
-    /// A large input that tests the complexity; runs after every other case.
+    pub compare: CaseCompare,
+    pub visibility: CaseVisibility,
+    /// A large input that tests the complexity; runs after every other case. Its `args` are expressions, not
+    /// literals, and `expected` is `None`.
     pub scale: bool,
+    /// Scale cases only: the SHA-256 hex of the reference result's canonical form.
+    #[serde(default)]
+    pub digest: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct Param {
+pub struct SignatureParam {
     pub name: String,
     /// The Python annotation: `list[int]`.
     pub annotation: String,
@@ -105,9 +118,9 @@ pub struct Param {
 /// The function the learner writes in `solution.py`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct Signature {
+pub struct ProblemSignature {
     pub function: String,
-    pub params: Vec<Param>,
+    pub params: Vec<SignatureParam>,
     /// The Python return annotation.
     pub returns: String,
 }
@@ -115,7 +128,7 @@ pub struct Signature {
 /// A question the statement leaves open, and the problem's answer to it.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct Clarification {
+pub struct ProblemClarification {
     pub question: String,
     pub answer: String,
 }
@@ -133,19 +146,19 @@ pub struct Misreading {
     pub killed_by: Vec<String>,
 }
 
-/// Everything the counterpart may see. The learner's view is narrower and is cut by `Setting::discloses`.
+/// Everything the counterpart may see. The learner's view is narrower and is cut by `CodingSetting::discloses`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ProblemSpec {
     pub title: String,
     /// Markdown. Never names its pattern.
     pub statement: String,
-    pub signature: Signature,
+    pub signature: ProblemSignature,
     pub constraints: Vec<String>,
-    pub clarifications: Vec<Clarification>,
+    pub clarifications: Vec<ProblemClarification>,
     /// "python".
     pub language: String,
-    pub difficulty: Difficulty,
+    pub difficulty: ProblemDifficulty,
     /// "O(n) time, O(n) space".
     pub target_complexity: String,
     /// Ids from the problem pattern catalogue. Not shown to the learner before the debrief.
@@ -163,17 +176,27 @@ pub struct Problem {
     pub reference: String,
     pub misreadings: Vec<Misreading>,
     /// Every case, examples first, scale cases last.
-    pub cases: Vec<Case>,
+    pub cases: Vec<ProblemCase>,
     /// How long the reference took on each scale case, by case id, in milliseconds.
     pub reference_ms: BTreeMap<String, u64>,
+    /// Fix a bug: the id of the misreading whose code is the starter.
+    #[serde(default)]
+    pub bug: Option<String>,
 }
 
 impl Problem {
     /// The cases shown in the statement.
-    pub fn examples(&self) -> impl Iterator<Item = &Case> {
+    pub fn examples(&self) -> impl Iterator<Item = &ProblemCase> {
         self.cases
             .iter()
-            .filter(|case| case.visibility == Visibility::Example)
+            .filter(|case| case.visibility == CaseVisibility::Example)
+    }
+
+    /// The comparison learner examples use: the first example case's.
+    pub fn default_compare(&self) -> CaseCompare {
+        self.examples()
+            .next()
+            .map_or(CaseCompare::Exact, |case| case.compare.clone())
     }
 }
 
