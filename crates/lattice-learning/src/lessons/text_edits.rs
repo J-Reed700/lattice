@@ -464,6 +464,57 @@ mod tests {
         );
     }
 
+    fn cited_sections() -> Value {
+        json!({"blocks":[
+            {"kind":"explanation","body":"Alpha is first. Beta is second."},
+            {"kind":"explanation","body":"Gamma stands here. Delta ends it.","citations":[{"sentence":"Gamma stands here.","sourceIndex":0,"quote":"Gamma is stated by the source."}]}
+        ],"questions":[]})
+    }
+
+    #[test]
+    fn a_citation_sentence_may_equal_a_sentence_the_lesson_has() {
+        let original = cited_sections();
+        let body =
+            json!({"path":"/blocks/1/body","before":"Delta ends it.","after":"Delta closes it."});
+        let cite = json!({"path":"/blocks/1/citations/0/sentence","before":"Gamma stands here.","after":"Alpha is first."});
+        let repaired = apply_in(
+            &original,
+            &json!({"edits":[body, cite]}).to_string(),
+            &original,
+        )
+        .unwrap();
+        assert_eq!(
+            repaired["blocks"][1]["citations"][0]["sentence"],
+            "Alpha is first."
+        );
+        assert_eq!(
+            repaired["blocks"][1]["body"],
+            "Gamma stands here. Delta closes it."
+        );
+    }
+
+    #[test]
+    fn a_citation_quote_may_equal_a_sentence_the_lesson_has() {
+        let original = cited_sections();
+        let body =
+            json!({"path":"/blocks/1/body","before":"Delta ends it.","after":"Delta closes it."});
+        let cite = json!({"path":"/blocks/1/citations/0/quote","before":"Gamma is stated by the source.","after":"Beta is second."});
+        let repaired = apply_in(
+            &original,
+            &json!({"edits":[body, cite]}).to_string(),
+            &original,
+        )
+        .unwrap();
+        assert_eq!(
+            repaired["blocks"][1]["citations"][0]["quote"],
+            "Beta is second."
+        );
+        assert_eq!(
+            repaired["blocks"][1]["body"],
+            "Gamma stands here. Delta closes it."
+        );
+    }
+
     #[test]
     fn a_list_item_step_another_item_has_may_be_added() {
         let original = json!({"blocks":[

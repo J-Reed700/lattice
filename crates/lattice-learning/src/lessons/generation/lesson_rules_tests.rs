@@ -742,7 +742,9 @@ fn a_prose_sentence_after_a_label_is_still_compared() {
 #[test]
 fn what_stands_under_a_step_after_its_fence_is_no_repeated_sentence() {
     let method = |name: &str| {
-        format!("{name}\n\n1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`.")
+        format!(
+            "{name}\n\n1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`."
+        )
     };
     let mut candidate = lesson();
     candidate["blocks"][1]["body"] =
@@ -769,7 +771,8 @@ fn lines_inside_tilde_fences_are_no_repeated_sentences() {
 
 #[test]
 fn prose_after_a_list_has_ended_is_compared_again() {
-    const STEP: &str = "1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`.";
+    const STEP: &str =
+        "1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`.";
     const SAID: &str = "Say this once here.";
     let mut candidate = lesson();
     candidate["blocks"][1]["body"] = json!(format!("{SAID}\n\n{STEP}"));
