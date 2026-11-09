@@ -6,7 +6,7 @@ import type * as Wire from '@/lib/bindings';
 type AssistanceEvent = Wire.LearningPracticeSessionDto['assistance'][number];
 
 const KIND_LABELS: Record<string, string> = {
-  source_opened: 'Opened a frozen source',
+  source_opened: 'Opened a saved source',
   hint: 'Requested a tutor hint',
   solution_revealed: 'Revealed worked solution',
   mode_changed: 'Changed help',

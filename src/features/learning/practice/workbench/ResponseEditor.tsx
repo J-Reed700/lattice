@@ -1,6 +1,6 @@
 import { SaveStatus } from '@/components/ui/SaveStatus';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
-import type { UseAutosaveResult } from '@/features/learning/practice/shared/useAutosave';
+import { saveStatusOf, type UseAutosaveResult } from '@/features/learning/practice/shared/useAutosave';
 
 export interface ResponseEditorProps {
   text: string;
@@ -31,7 +31,7 @@ export function ResponseEditor({
   onReload,
   onSubmit,
 }: ResponseEditorProps) {
-  const saveState = autosave.state === 'saving' ? 'saving' : dirty || autosave.state === 'error' || autosave.state === 'conflict' ? 'unsaved' : 'saved';
+  const saveState = saveStatusOf(autosave.state, dirty);
   const saveFailed = autosave.state === 'error' || autosave.state === 'conflict';
   const submitReason = !text.trim() ? 'Write a response to submit it.' : busy && !submitting ? 'Another action is in progress.' : null;
 

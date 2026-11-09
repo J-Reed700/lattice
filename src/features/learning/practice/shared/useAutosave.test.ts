@@ -3,7 +3,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { isConflict } from '@/lib/api';
 
-import { useAutosave } from './useAutosave';
+import { saveStatusOf, useAutosave } from './useAutosave';
 
 vi.mock('@/lib/api', () => ({ isConflict: vi.fn(() => false) }));
 
@@ -210,5 +210,16 @@ describe('useAutosave', () => {
       await vi.advanceTimersByTimeAsync(DELAY);
     });
     expect(save).toHaveBeenCalledWith('third', 1);
+  });
+});
+
+describe('saveStatusOf', () => {
+  it('reads saving as saving, a pending or failed save as unsaved, and the rest as saved', () => {
+    expect(saveStatusOf('saving', true)).toBe('saving');
+    expect(saveStatusOf('idle', true)).toBe('unsaved');
+    expect(saveStatusOf('error', false)).toBe('unsaved');
+    expect(saveStatusOf('conflict', false)).toBe('unsaved');
+    expect(saveStatusOf('saved', false)).toBe('saved');
+    expect(saveStatusOf('idle', false)).toBe('saved');
   });
 });

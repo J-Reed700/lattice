@@ -14,11 +14,19 @@ export interface HintRung {
   prompt: string;
 }
 
-export const HELP_MODES: HelpMode[] = [
-  { id: 'explore', help: 'Full help', description: 'Ask questions, use any hint, and reveal the worked solution after a deliberate confirmation.' },
-  { id: 'practice', help: 'Hints only', description: 'Ask questions and use scaffolded hints. Worked explanations and the solution stay closed.' },
-  { id: 'demonstrate', help: 'No help', description: 'Write and submit independently. Source opening, tutor hints, and solutions are closed during the attempt.' },
-];
+const HELP_WORDS: Record<Wire.LearningPracticeMode, HelpLabel> = { explore: 'Full help', practice: 'Hints only', demonstrate: 'No help' };
+
+const DESCRIPTIONS: Record<Wire.LearningPracticeMode, string> = {
+  explore: 'Ask questions, use any hint, and reveal the worked solution after a deliberate confirmation.',
+  practice: 'Ask questions and use scaffolded hints. Worked explanations and the solution stay closed.',
+  demonstrate: 'Write and submit independently. Source opening, tutor hints, and solutions are closed during the attempt.',
+};
+
+export const HELP_MODES: HelpMode[] = (['explore', 'practice', 'demonstrate'] as const).map((id) => ({
+  id,
+  help: HELP_WORDS[id],
+  description: DESCRIPTIONS[id],
+}));
 
 export const HINTS: HintRung[] = [
   { id: 'orienting_question', title: 'Orienting question', prompt: 'Give me an orienting question that helps me notice where to begin, without giving away the answer.' },
@@ -27,6 +35,5 @@ export const HINTS: HintRung[] = [
   { id: 'worked_explanation', title: 'Worked explanation', prompt: 'Give a worked explanation. Clearly label it as substantial assistance.' },
 ];
 
-export const helpModeOf = (id: Wire.LearningPracticeMode): HelpMode | undefined => HELP_MODES.find((mode) => mode.id === id);
-
-export const helpWord = (id: Wire.LearningPracticeMode): HelpLabel => helpModeOf(id)?.help ?? 'Full help';
+export const helpWord = (id: Wire.LearningPracticeMode): HelpLabel => HELP_WORDS[id];
+export const helpDescription = (id: Wire.LearningPracticeMode): string => DESCRIPTIONS[id];

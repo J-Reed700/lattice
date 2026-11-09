@@ -61,10 +61,10 @@ let currentSession: ReturnType<typeof baseSession> | null;
 let currentWorkspace: { programId: string; sessions: unknown[] };
 const toWorkspace = () => ({ programId: 'program-1', sessions: currentWorkspace.sessions });
 const updateRevision = () => { if (currentSession) currentSession.summary.revision += 1; };
-const renderWorkbench = (chosenLesson = lesson, embedded = false) => {
+const renderWorkbench = (chosenLesson = lesson, embedded = false, attemptId?: string | null) => {
   const client = new QueryClient({ defaultOptions: { queries: { retry: false, gcTime: Infinity }, mutations: { retry: false } } });
   const wrapper = ({ children }: { children: ReactNode }) => <QueryClientProvider client={client}>{children}</QueryClientProvider>;
-  return render(<PracticeWorkbenchPanel program={program} lesson={chosenLesson} embedded={embedded} taskKind={embedded ? 'guided' : 'independent'} />, { wrapper });
+  return render(<PracticeWorkbenchPanel program={program} lesson={chosenLesson} embedded={embedded} attemptId={attemptId} taskKind={embedded ? 'guided' : 'independent'} />, { wrapper });
 };
 
 describe('Learning Studio grounded practice workbench', () => {
@@ -218,6 +218,26 @@ describe('Learning Studio grounded practice workbench', () => {
     renderWorkbench({ ...lesson, preparation: 'outline' } as LearningLessonDto);
     expect(await screen.findByText('Prepare this lesson first')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Start an attempt' })).not.toBeInTheDocument();
+  });
+
+  it('opens the attempt it is given, not the latest one', async () => {
+    const earlier = baseSession();
+    earlier.summary.id = 'attempt-earlier';
+    earlier.summary.updatedAt = 1;
+    earlier.artifact.text = 'The earlier attempt text.';
+    currentSession!.summary.updatedAt = 99;
+    currentSession!.artifact.text = 'The latest attempt text.';
+    currentWorkspace.sessions = [{ ...currentSession!.summary }, { ...earlier.summary }];
+    const latest = currentSession!;
+    mocks.getSession.mockImplementation(async (id: string) => ok(id === 'attempt-earlier' ? earlier : latest));
+    renderWorkbench(lesson, false, 'attempt-earlier');
+    expect(await screen.findByDisplayValue('The earlier attempt text.')).toBeVisible();
+  });
+
+  it('works through it in its own words, not by trying the exercise', async () => {
+    currentSession = null; currentWorkspace.sessions = [];
+    renderWorkbench(lesson, true);
+    expect(await screen.findByText(/Work through it in your own words\./)).toBeVisible();
   });
 
   it('names the help in the learner words, not the mode names', async () => {

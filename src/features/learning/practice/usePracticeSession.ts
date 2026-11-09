@@ -42,6 +42,7 @@ export interface UsePracticeSessionOptions {
   lesson: LearningLessonDto | undefined;
   taskKind?: LearningPracticeTaskKind;
   embedded?: boolean;
+  attemptId?: string | null;
 }
 
 
@@ -50,6 +51,7 @@ export function usePracticeSession({
   lesson,
   taskKind = 'independent',
   embedded = false,
+  attemptId = null,
 }: UsePracticeSessionOptions) {
   const programId = program.summary.id;
   const lessonId = lesson?.id ?? '';
@@ -66,6 +68,11 @@ export function usePracticeSession({
   const rejectProposal = useRejectLearningPracticeProposal();
 
   const [sessionId, setSessionId] = useState<string | null>(null);
+  const [seenAttemptId, setSeenAttemptId] = useState<string | null>(null);
+  if (attemptId !== seenAttemptId) {
+    setSeenAttemptId(attemptId);
+    if (attemptId) setSessionId(attemptId);
+  }
   const sessionQuery = useLearningPracticeSession(sessionId);
   const session = sessionQuery.data;
 
@@ -93,6 +100,7 @@ export function usePracticeSession({
 
   // Synchronize active session with workspace
   useEffect(() => {
+    if (attemptId && sessionId === attemptId) return;
     const candidates =
       workspace.data?.sessions.filter(
         (item) => item.lessonId === lessonId && (item.taskKind ?? 'independent') === taskKind,
@@ -108,7 +116,7 @@ export function usePracticeSession({
       return;
     }
     if (latest?.id !== sessionId) setSessionId(latest?.id ?? null);
-  }, [lessonId, sessionId, sessionQuery.data?.summary.lessonId, sessionQuery.data?.summary.taskKind, workspace.data, taskKind]);
+  }, [attemptId, lessonId, sessionId, sessionQuery.data?.summary.lessonId, sessionQuery.data?.summary.taskKind, workspace.data, taskKind]);
 
   // Synchronize revision and used hints
   useEffect(() => {
@@ -196,7 +204,9 @@ export function usePracticeSession({
   const runAction = async (kind: PracticeBusyState, invoke: () => Promise<unknown>) => (await actions.run(kind, invoke)) === true;
 
   const reloadAttempt = async () => {
-    await runAction('idle', async () => {});
+    await Promise.all([sessionQuery.refetch(), workspace.refetch()]);
+    actions.clear();
+    setFailedKind(null);
     await autosave.flush();
   };
 
@@ -230,7 +240,10 @@ export function usePracticeSession({
       expectedRevision: revisionRef.current || latest.revision,
       mode: next,
     };
-    if (await runAction('changing_mode', () => changeMode.mutateAsync(request))) setModeChoice(next);
+    await runAction('changing_mode', async () => {
+      await changeMode.mutateAsync(request);
+      setModeChoice(next);
+    });
   };
 
   const sendTutor = async (
@@ -251,9 +264,10 @@ export function usePracticeSession({
       prompt: prompt.trim(),
       hintLevel: hintLevel ?? null,
     };
-    const ok = await runAction('tutor', () => tutor.mutateAsync(request));
-    if (ok && hintLevel) setHintUsed((current) => (current.includes(hintLevel) ? current : [...current, hintLevel]));
-    return ok;
+    return runAction('tutor', async () => {
+      await tutor.mutateAsync(request);
+      if (hintLevel) setHintUsed((current) => (current.includes(hintLevel) ? current : [...current, hintLevel]));
+    });
   };
 
   const doOpenSource = async (source: LearningSourceLibraryItemDto, versionId: string, preSave?: () => Promise<boolean>) => {
@@ -273,9 +287,10 @@ export function usePracticeSession({
       sourceId: source.id,
       versionId,
     };
-    if (await runAction('opening_source', () => openSource.mutateAsync(request))) {
+    await runAction('opening_source', async () => {
+      await openSource.mutateAsync(request);
       setSelectedSource({ sourceId: source.id, versionId });
-    }
+    });
   };
 
   const doReveal = async (preSave?: () => Promise<boolean>) => {
@@ -288,7 +303,10 @@ export function usePracticeSession({
       sessionId: latest.id,
       expectedRevision: revisionRef.current || latest.revision,
     };
-    if (await runAction('revealing', () => reveal.mutateAsync(request))) setSolutionConfirm(false);
+    await runAction('revealing', async () => {
+      await reveal.mutateAsync(request);
+      setSolutionConfirm(false);
+    });
   };
 
   const doSubmit = async (value: string, preSave?: () => Promise<boolean>) => {
@@ -322,7 +340,7 @@ export function usePracticeSession({
     busyState === 'starting'
       ? 'Starting attempt…'
       : busyState === 'changing_mode'
-          ? 'Changing mode…'
+          ? 'Changing help…'
           : busyState === 'tutor'
             ? 'The tutor is responding…'
             : busyState === 'opening_source'
@@ -330,7 +348,7 @@ export function usePracticeSession({
               : busyState === 'revealing'
                 ? 'Revealing solution…'
                 : busyState === 'submitting'
-                  ? 'Submitting response'
+                  ? 'Submitting response…'
                   : busyState === 'deciding'
                     ? 'Updating idea…'
                     : '';
