@@ -462,6 +462,17 @@ mod tests {
     }
 
     #[test]
+    fn a_line_under_a_step_after_its_fence_may_be_added_to_another_step() {
+        let original = json!({"blocks":[
+            {"kind":"explanation","body":"Method A\n\n1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/pi/Music`."},
+            {"kind":"explanation","body":"Method B\n\n1. Run:\n   ```\n   pwd\n   ```"}
+        ],"questions":[]});
+        let edit = json!({"path":"/blocks/1/body","before":"   ```\n   pwd\n   ```","after":"   ```\n   pwd\n   ```\n   Expected output: `/home/pi/Music`."});
+        let repaired = apply(&original, &json!({"edits":[edit]}).to_string());
+        assert!(repaired.is_ok(), "the line belongs to the step");
+    }
+
+    #[test]
     fn an_edit_adding_a_sentence_its_own_field_has_is_rejected() {
         let original = two_sections();
         let repeat = json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta is second. Alpha is first."});
