@@ -481,6 +481,7 @@ async fn practical_draft_is_revision_scoped_idempotent_and_rejects_private_files
                     practice_session_id: None,
                     learner_files: vec![],
                 },
+                None,
                 "stale-run",
             )
             .await
