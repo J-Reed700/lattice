@@ -407,6 +407,21 @@ async fn apply_or_replace_section(
     .await
 }
 
+/// The sentences the teaching review after a claim repair or a user edit leaves
+/// as they are: every live claim's but the `targets`', except those of the
+/// machine's claims with rewrites left, which it may repair and which are
+/// recorded as waiting for that (claim sources design §10.3).
+pub(super) async fn teaching_protected(
+    ledger: &mut ClaimLedger,
+    policy: &dyn AcceptancePolicy,
+    candidate: &Value,
+    targets: &[ClaimId],
+) -> Result<Vec<Protected>> {
+    let released = ledger.releasable(policy, targets);
+    ledger.begin_teaching(candidate, &released).await?;
+    Ok(Protected::releasing(ledger, targets, &released))
+}
+
 pub(crate) async fn candidate(
     llm: &dyn LLMPort,
     policy: &dyn AcceptancePolicy,
@@ -444,7 +459,7 @@ pub(crate) async fn candidate(
     };
     // What this repair left as it was: the teaching review after it leaves
     // it too (claim sources design §10.3), as the synced ledger has it now.
-    let protected = Protected::of_ledger(ledger, &sent);
+    let protected = teaching_protected(ledger, policy, &candidate, &sent).await?;
     crate::lesson_progress::outside_checks(crate::teaching::review_lesson(
         llm,
         crate::teaching::LESSON_REPAIR_SYSTEM,

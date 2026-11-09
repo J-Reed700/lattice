@@ -186,6 +186,8 @@ impl Review for PreparationReview<'_, '_> {
             self.raw = self.candidate.to_string();
             crate::lesson_drafts::save(&self.raw).await?;
             // The user's text gets the teaching review a rewrite gets (§6.2).
+            let protected =
+                repair::teaching_protected(&mut self.ledger, policy, &self.candidate, &[]).await?;
             self.raw = crate::teaching::review_lesson(
                 self.llm,
                 crate::teaching::LESSON_REPAIR_SYSTEM,
@@ -194,7 +196,7 @@ impl Review for PreparationReview<'_, '_> {
                 std::mem::take(&mut self.raw),
                 self.output_tokens,
                 active,
-                &repair::Protected::of_ledger(&self.ledger, &[]),
+                &protected,
             )
             .await?;
             self.candidate = crate::generation::parse_json(&self.raw)?;

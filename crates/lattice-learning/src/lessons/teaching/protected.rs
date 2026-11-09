@@ -1,8 +1,9 @@
 //! The teaching review after a claim repair or a user edit leaves the
 //! sentences claims stand on as they are (claim sources design §10.3): a
-//! finding about a protected sentence waits for the user, and the review's
-//! repair changes only the sentences its findings name, every other one
-//! reverted and every protected one byte-identical.
+//! finding about a protected sentence waits for the user, except one about the
+//! sentence of a machine's claim with rewrites left, which is repaired. The
+//! review's repair changes only the sentences its findings name, every other
+//! one reverted and every protected one byte-identical.
 
 use crate::lessons::content_verification::{confine, unit_fields, Protected};
 use crate::review_findings::{FindingKey, FindingSite, ReviewFinding};
@@ -94,7 +95,12 @@ pub(super) fn on_protected(
         }
         let block = unit < blocks_in(candidate);
         let editable = targets_of(section, (unit, block), &[finding], &guarded);
-        if overlapping_quote(finding, &guarded) || editable.is_empty() {
+        let fixed: Vec<Protected> = guarded
+            .iter()
+            .filter(|item| !item.released)
+            .cloned()
+            .collect();
+        if overlapping_quote(finding, &fixed) || editable.is_empty() {
             held.push(finding.key());
         }
     }
@@ -211,7 +217,20 @@ pub(super) fn confine_review(
         let here: Vec<&ReviewFinding> = sent.iter().filter(names).collect();
         let guarded = in_unit(protected, unit);
         let targets = targets_of(before, (unit, unit < blocks), &here, &guarded);
-        *after = confine(before, after, &targets, &guarded)?.section;
+        let named = |item: &Protected| {
+            item.released
+                && targets.iter().any(|target| {
+                    target.field == item.field
+                        && (target.quote.contains(item.quote.as_str())
+                            || item.quote.contains(target.quote.as_str()))
+                })
+        };
+        let kept: Vec<Protected> = guarded
+            .iter()
+            .filter(|item| !named(item))
+            .cloned()
+            .collect();
+        *after = confine(before, after, &targets, &kept)?.section;
     }
     let unchanged: Vec<FindingKey> = sent
         .iter()
