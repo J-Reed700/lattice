@@ -123,9 +123,6 @@ impl EvidenceBank {
                             continue;
                         }
                         bank.choices.push(Choice { id, citation, view });
-                        if bank.choices.len() == MAX_EVIDENCE_CHOICES {
-                            return Ok(bank);
-                        }
                     }
                 }
             }
