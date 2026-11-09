@@ -961,4 +961,226 @@ async fn helper(pool: &SqlitePool) {
             assert!(!is_data_module(path), "{path}");
         }
     }
+
+    fn through(
+        path: &str,
+        line: usize,
+        name: &str,
+        helpers: &str,
+        statements: usize,
+        writes: usize,
+    ) -> String {
+        format!(
+            "rule 3: {path}:{line} {name} runs {statements} statements on the pool \
+             (through {helpers}), {writes} of them writes, outside a transaction"
+        )
+    }
+
+    fn before_commit(path: &str, line: usize, name: &str) -> String {
+        format!(
+            "rule 3: {path}:{line} {name} runs a statement on the pool before committing \
+             its write transaction; run it in the transaction"
+        )
+    }
+
+    #[test]
+    fn writes_made_through_same_file_helpers_are_counted() {
+        let source = r#"impl Repo {
+    pub async fn update(&self) {
+        self.update_title().await;
+        Self::update_prompt(self).await;
+    }
+    async fn update_title(&self) {
+        sqlx::query("UPDATE a").execute(&self.pool).await.unwrap();
+    }
+    async fn update_prompt(&self) {
+        sqlx::query("UPDATE b").execute(self.pool()).await.unwrap();
+    }
+}
+"#;
+        assert_eq!(
+            found(REPOSITORY, source),
+            vec![through(
+                REPOSITORY,
+                2,
+                "update",
+                "update_title, update_prompt",
+                2,
+                2
+            )]
+        );
+    }
+
+    #[test]
+    fn helper_writes_are_counted_through_recursion() {
+        let source = r#"impl Repo {
+    pub async fn update(&self) {
+        self.save().await;
+    }
+    async fn save(&self) {
+        self.write_a().await;
+        self.write_b().await;
+    }
+    async fn write_a(&self) {
+        sqlx::query("UPDATE a").execute(&self.pool).await.unwrap();
+    }
+    async fn write_b(&self) {
+        sqlx::query("UPDATE b").execute(&self.pool).await.unwrap();
+    }
+}
+"#;
+        assert_eq!(
+            found(REPOSITORY, source),
+            vec![
+                through(REPOSITORY, 2, "update", "save, write_a, write_b", 2, 2),
+                through(REPOSITORY, 5, "save", "write_a, write_b", 2, 2),
+            ]
+        );
+    }
+
+    #[test]
+    fn helpers_given_the_transaction_are_not_counted() {
+        let source = r#"impl Repo {
+    pub async fn update(&self) {
+        let mut tx = self.pool.begin_write().await.unwrap();
+        self.update_title(&mut *tx).await;
+        self.update_prompt(&mut *tx).await;
+        tx.commit().await.unwrap();
+    }
+    async fn update_title(&self, conn: &mut SqliteConnection) {
+        sqlx::query("UPDATE a").execute(conn).await.unwrap();
+    }
+    async fn update_prompt(&self, pool: &mut SqliteConnection) {
+        sqlx::query("UPDATE b").execute(pool).await.unwrap();
+    }
+}
+"#;
+        assert_eq!(found(REPOSITORY, source), Vec::<String>::new());
+    }
+
+    #[test]
+    fn a_free_helper_counts_when_its_executor_parameter_receives_the_pool() {
+        let source = r#"pub async fn update(pool: &SqlitePool) {
+    write_title(pool).await;
+    write_prompt(pool).await;
+}
+async fn write_title(executor: &SqlitePool) {
+    sqlx::query("UPDATE a").execute(executor).await.unwrap();
+}
+async fn write_prompt(executor: &SqlitePool) {
+    sqlx::query("UPDATE b").execute(executor).await.unwrap();
+}
+"#;
+        assert_eq!(
+            found(REPOSITORY, source),
+            vec![through(
+                REPOSITORY,
+                1,
+                "update",
+                "write_title, write_prompt",
+                2,
+                2
+            )]
+        );
+        let in_transaction = r#"pub async fn update(pool: &SqlitePool) {
+    let mut tx = pool.begin_write().await.unwrap();
+    write_title(&mut *tx).await;
+    write_prompt(&mut *tx).await;
+    tx.commit().await.unwrap();
+}
+async fn write_title(executor: &mut SqliteConnection) {
+    sqlx::query("UPDATE a").execute(executor).await.unwrap();
+}
+async fn write_prompt(executor: &mut SqliteConnection) {
+    sqlx::query("UPDATE b").execute(executor).await.unwrap();
+}
+"#;
+        assert_eq!(found(REPOSITORY, in_transaction), Vec::<String>::new());
+    }
+
+    #[test]
+    fn helpers_that_call_each_other_terminate() {
+        let source = r#"impl Repo {
+    pub async fn first(&self) {
+        self.second().await;
+        sqlx::query("UPDATE a").execute(&self.pool).await.unwrap();
+    }
+    async fn second(&self) {
+        self.first().await;
+        sqlx::query("SELECT b").fetch_one(&self.pool).await.unwrap();
+    }
+}
+"#;
+        assert_eq!(
+            found(REPOSITORY, source),
+            vec![
+                through(REPOSITORY, 2, "first", "second", 2, 1),
+                through(REPOSITORY, 6, "second", "first", 2, 1),
+            ]
+        );
+    }
+
+    #[test]
+    fn a_read_before_the_write_transaction_begins_is_flagged() {
+        let source = r#"pub async fn rename(pool: &SqlitePool) {
+    let row = sqlx::query("SELECT a").fetch_one(pool).await.unwrap();
+    let mut tx = pool.begin_write().await.unwrap();
+    sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+}
+"#;
+        assert_eq!(
+            found(REPOSITORY, source),
+            vec![before_commit(REPOSITORY, 1, "rename")]
+        );
+    }
+
+    #[test]
+    fn a_read_on_the_pool_inside_the_write_transaction_is_flagged() {
+        let own = r#"pub async fn rename(pool: &SqlitePool) {
+    let mut tx = pool.begin_write().await.unwrap();
+    let row = sqlx::query("SELECT a").fetch_one(pool).await.unwrap();
+    sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
+    tx.commit().await.unwrap();
+}
+"#;
+        assert_eq!(
+            found(REPOSITORY, own),
+            vec![before_commit(REPOSITORY, 1, "rename")]
+        );
+        let helper = r#"impl Repo {
+    pub async fn rename(&self) {
+        let mut tx = self.pool.begin_write().await.unwrap();
+        self.ensure_exists().await;
+        sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+    }
+    async fn ensure_exists(&self) {
+        sqlx::query("SELECT a").fetch_one(&self.pool).await.unwrap();
+    }
+}
+"#;
+        assert_eq!(
+            found(REPOSITORY, helper),
+            vec![before_commit(REPOSITORY, 2, "rename")]
+        );
+    }
+
+    #[test]
+    fn a_read_after_the_commit_is_not_flagged() {
+        let source = r#"impl Repo {
+    pub async fn rename(&self) {
+        let mut tx = self.pool.begin_write().await.unwrap();
+        sqlx::query("UPDATE a").execute(&mut *tx).await.unwrap();
+        tx.commit().await.unwrap();
+        let row = sqlx::query("SELECT a").fetch_one(&self.pool).await.unwrap();
+        self.load().await;
+    }
+    async fn load(&self) {
+        sqlx::query("SELECT a").fetch_one(&self.pool).await.unwrap();
+    }
+}
+"#;
+        assert_eq!(found(REPOSITORY, source), Vec::<String>::new());
+    }
 }
