@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
+
 import { AlertCircle, Check, Circle, Loader2 } from 'lucide-react';
 
 import { useJobStatus } from '@/features/jobs/api';
@@ -6,8 +7,8 @@ import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
 import { getErrorMessage } from '@/lib/errorUtils';
 
-import { codingApi } from './codingApi';
 import { SETTING_NAMES } from './caseViews';
+import { codingApi } from './codingApi';
 
 export interface CodingBuildChoice {
   lessonId?: string | null;

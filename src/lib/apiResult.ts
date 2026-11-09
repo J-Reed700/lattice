@@ -1,8 +1,9 @@
 import { type ApiResult, ApiRequestError, unwrapApiResult } from '@/types/api/result';
 
-import type * as Wire from './bindings';
 import { parseApiError } from './errorHandling';
 import { getErrorMessage } from './errorUtils';
+
+import type * as Wire from './bindings';
 
 /** The value of a successful result; a failed one throws, keeping the backend's error details. */
 export function unwrap<T>(result: ApiResult<T> | Wire.Result<T, unknown>): T {

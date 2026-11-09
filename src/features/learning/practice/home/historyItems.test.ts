@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 
+import { outcomeText } from '@/features/learning/drills/DrillChoose';
 import type * as Wire from '@/lib/bindings';
 
-import { outcomeText } from '@/features/learning/drills/DrillChoose';
 
 import { buildHistory, cardOfActivity, pickContinue, type HistorySources } from './historyItems';
 

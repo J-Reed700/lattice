@@ -6,6 +6,7 @@ import { BookOpen, Check, ChevronLeft, ChevronRight, ChevronsLeft, ChevronsRight
 import { Dialog, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { progressLine, recheckLine } from '@/features/learning/lessons/review/claimReviewCopy';
 import { addedByLabel } from '@/features/learning/lessons/review/claimReviewPresentation';
+import { useRetry } from '@/features/learning/practice/shared/useRetry';
 import { LearningDocumentPicker, type LearningDocumentSelection } from '@/features/learning/sources/LearningDocumentPicker';
 import { SourceCleanup } from '@/features/learning/sources/SourceCleanup';
 import { SourceReader } from '@/features/learning/sources/SourceReader';
@@ -24,10 +25,9 @@ import {
   useSearchLearningSources,
   useUpdateLearningSourcePolicy,
 } from '@/features/learning/sources/useLearningSources';
-import { newId } from '@/lib/api';
-import { useRetry } from '@/features/learning/practice/shared/useRetry';
 import { FilePreviewModal } from '@/features/reading/components/FilePreviewModal';
 import { fromLearningSource } from '@/features/reading/model/sourceAdapter';
+import { newId } from '@/lib/api';
 import type {
   AddLearningDocumentSourceRequestDto,
   AddLearningTextSourceRequestDto,

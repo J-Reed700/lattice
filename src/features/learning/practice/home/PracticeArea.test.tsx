@@ -5,8 +5,9 @@ import { describe, expect, it, vi } from 'vitest';
 import type * as Wire from '@/lib/bindings';
 
 import { PracticeArea } from './PracticeArea';
-import type { HistoryTarget } from './historyItems';
 import { usePracticeView } from './usePracticeView';
+
+import type { HistoryTarget } from './historyItems';
 
 vi.mock('./PracticeHome', () => ({
   PracticeHome: ({ onOpenTarget, onOpenWorkbench }: { onOpenTarget: (target: HistoryTarget) => void; onOpenWorkbench: () => void }) => (

@@ -1,11 +1,10 @@
-import { newId } from '@/lib/api';
-import { getErrorMessage } from '@/lib/errorUtils';
 import { useRef, useState, type RefObject } from "react";
 
 import { LoaderCircle, Plus } from "lucide-react";
 
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
+import { newId } from '@/lib/api';
 import type {
   GenerateLearningPracticalActivityRequestDto,
   LearningBuiltinRuntimeCapability,
@@ -17,6 +16,7 @@ import type {
   LearningPracticeMode,
   LearningProgramDto,
 } from "@/lib/bindings";
+import { getErrorMessage } from '@/lib/errorUtils';
 
 export const INTERVIEW_ROUND_LABELS: Record<LearningInterviewRoundKind, string> = {
   full_loop: "Full interview loop",

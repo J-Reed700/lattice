@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { describe, expect, it, vi } from 'vitest';
 
 import { History } from './History';
+
 import type { HistoryItem } from './historyItems';
 
 const item = (patch: Partial<HistoryItem>): HistoryItem => ({

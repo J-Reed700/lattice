@@ -2,10 +2,10 @@ import { ArrowRight, CalendarClock, Check, ChevronRight, X } from 'lucide-react'
 
 import type * as Wire from '@/lib/bindings';
 
-import { CaseResults } from '../shared/CaseResults';
-import { CriteriaList, type CriterionView, type EvidenceView } from '../shared/CriteriaList';
 import { caseResultViews, clockText, SETTING_NAMES } from './caseViews';
 import { STAGE_NAMES } from './StageRail';
+import { CaseResults } from '../shared/CaseResults';
+import { CriteriaList, type CriterionView, type EvidenceView } from '../shared/CriteriaList';
 
 export interface DebriefProps {
   title: string;

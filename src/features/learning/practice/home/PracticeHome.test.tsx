@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import type * as Wire from '@/lib/bindings';
 
 import { PracticeHome, type PracticeHomeProps } from './PracticeHome';
+
 import type { HistoryItem } from './historyItems';
 
 const data = vi.hoisted(() => ({

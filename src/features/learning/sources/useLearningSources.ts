@@ -1,7 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { unwrapApiResult as unwrap } from '@/types/api/result';
 import type { WaitingClaimsCheck } from '@/features/learning/api/client';
 import { invalidateLearningSourceDependents } from '@/features/learning/api/learningInvalidation';
 import type {
@@ -17,6 +16,7 @@ import type {
   SearchLearningSourcesRequestDto,
   UpdateLearningSourcePolicyRequestDto,
 } from '@/lib/bindings';
+import { unwrapApiResult as unwrap } from '@/types/api/result';
 
 
 export const learningSourcesKey = (programId: string) => ['learning-sources', programId] as const;

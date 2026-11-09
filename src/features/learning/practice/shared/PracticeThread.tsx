@@ -1,6 +1,7 @@
-import { Send } from 'lucide-react';
 import type React from 'react';
 import { useEffect, useRef } from 'react';
+
+import { Send } from 'lucide-react';
 
 import { VOICE_STATUS, VoiceButton } from '@/features/voice/components/VoiceButton';
 import { useVoiceConversation } from '@/features/voice/hooks/useVoiceConversation';
