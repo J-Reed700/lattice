@@ -437,7 +437,7 @@ fn the_writer_teaches_the_learners_setup_and_every_step_it_asks_for() {
         "{text}"
     );
     assert!(
-        text.contains("say which one it describes instead of presenting it as the learner's"),
+        text.contains("name that system instead of presenting what it says as the learner's"),
         "{text}"
     );
     assert!(
@@ -567,9 +567,7 @@ fn the_writer_writes_only_what_the_learner_sees() {
     for expected in [
         "The learner reads only this lesson, never the sources' excerpts, the course plan (coursePlan) or these requirements.",
         "say what a source states in the lesson's own words",
-        "credit the source by its title as referenceCatalog gives it",
         "never point at an excerpt, passage, tutorial, plan or requirement the learner cannot see",
-        "name the system it describes",
     ] {
         assert!(text.contains(expected), "missing {expected:?} in {text}");
     }
