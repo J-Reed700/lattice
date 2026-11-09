@@ -476,7 +476,7 @@ fn a_cloud_model_keeps_the_default_window_under_its_providers_ceiling() {
         max_tokens: 131_072,
         ..Default::default()
     };
-    let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
+    let (connection, _) = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
     assert_eq!(connection.context_window, settings.context_window);
     assert_eq!(connection.max_tokens, 128_000);
 }
@@ -491,7 +491,7 @@ fn a_cloud_model_runs_at_what_was_chosen_for_it() {
             max_output_tokens: Some(4_096),
         },
     );
-    let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
+    let (connection, _) = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
     assert_eq!(connection.context_window, 64_000);
     assert_eq!(connection.max_tokens, 4_096);
 }
@@ -504,7 +504,8 @@ fn a_model_nobody_reports_on_runs_at_the_settings_numbers() {
         ..Default::default()
     };
     let unreported = ModelWindowDto::default();
-    let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &unreported);
+    let (connection, known) = cloud_connection(&settings, &claude(), Tuning::Standard, &unreported);
+    assert!(!known);
     assert_eq!(connection.context_window, 90_000);
     assert_eq!(connection.max_tokens, 8_192);
 }
@@ -520,7 +521,7 @@ fn the_utility_role_keeps_its_own_output_ceiling() {
             max_output_tokens: Some(64_000),
         },
     );
-    let connection = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
+    let (connection, _) = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
     assert_eq!(connection.max_tokens, 8_192);
 }
 
@@ -576,7 +577,6 @@ fn a_bundled_server_that_cannot_run_reaches_the_wire_as_a_model_load_error() {
 
 mod output_ceiling_on_the_wire {
     use super::*;
-    use crate::features::llm::cloud::CloudLlm;
     use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use lattice_core::application::ports::LLMPort;
     use serde_json::{json, Value};
@@ -604,13 +604,16 @@ mod output_ceiling_on_the_wire {
             .mount(&server)
             .await;
         let model = model(provider);
-        let mut connection = cloud_connection(settings, &model, Tuning::Standard, reported);
-        connection.provider = llm_provider(provider);
-        connection.model = "some-model".into();
-        let client = CloudLlm::new(&connection, "test-key".into())
-            .unwrap()
-            .with_endpoint(server.uri())
-            .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default());
+        let client = cloud_client(
+            settings,
+            &model,
+            Tuning::Standard,
+            reported,
+            "test-key".into(),
+        )
+        .unwrap()
+        .with_endpoint(server.uri())
+        .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default());
         let _ = client.complete(&request).await;
         let received = server.received_requests().await.unwrap();
         serde_json::from_slice(&received[0].body).unwrap()

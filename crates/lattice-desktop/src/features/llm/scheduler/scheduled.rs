@@ -36,8 +36,8 @@ pub(crate) struct ScheduledLlm {
     estimator: TokenEstimator,
     pace: PaceEstimator,
     /// The backend's own output ceiling, which a request without a cap of its
-    /// own will reserve.
-    output_limit: u32,
+    /// own will reserve; `None` when the backend sends no ceiling of its own.
+    output_limit: Option<u32>,
     tokenizer: Option<ServerTokenizer>,
 }
 
@@ -45,7 +45,7 @@ impl ScheduledLlm {
     pub fn new(
         inner: Arc<dyn LLMPort>,
         scheduler: Arc<InferenceScheduler>,
-        output_limit: u32,
+        output_limit: Option<u32>,
     ) -> Self {
         Self {
             inner,
@@ -112,13 +112,22 @@ impl ScheduledLlm {
         request: &'r CompletionRequest,
     ) -> Result<(Permit, Cow<'r, CompletionRequest>)> {
         let room = self.room_for_answer(request).await?;
-        let ceiling = request.effective_max_output_tokens(self.output_limit) as usize;
+        let ceiling = match self.output_limit {
+            Some(limit) => Some(request.effective_max_output_tokens(limit) as usize),
+            None => request
+                .max_output_tokens
+                .filter(|requested| *requested > 0)
+                .map(|requested| requested as usize),
+        };
         // A llama-server counts the prompt exactly and cuts the answer to the
         // room that leaves (`LlamaCppLlm::measured_body`). Every other backend
         // has its answer cut here, so no provider is asked for more than its
         // window holds.
-        let cut = self.tokenizer.is_none() && ceiling > room;
-        let output = if cut { room } else { ceiling };
+        let cut = self.tokenizer.is_none() && ceiling.is_some_and(|ceiling| ceiling > room);
+        let output = match ceiling {
+            Some(ceiling) if !cut => ceiling,
+            _ => room,
+        };
         let prompt = tokens_for_chars(prompt_chars(request), self.estimator.chars_per_token())
             .saturating_add(request.image_tokens());
         let permit = self

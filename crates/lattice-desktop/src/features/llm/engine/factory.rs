@@ -589,7 +589,7 @@ pub(crate) async fn create_ollama_llm(
     Ok(Arc::new(ScheduledLlm::new(
         Arc::new(client),
         scheduler,
-        output_limit,
+        Some(output_limit),
     )))
 }
 

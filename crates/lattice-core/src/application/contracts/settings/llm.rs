@@ -78,7 +78,8 @@ pub struct LLMSettingsDto {
     pub thinking_sampling: SamplingProfileDto,
 
     /// Maximum tokens to generate, for a model nothing more is known about: a
-    /// connected model's own limits come first (`model_windows`).
+    /// connected model's own limits come first (`model_windows`). A cloud model
+    /// with no known ceiling is sent none, except to a provider that requires one.
     pub max_tokens: u32,
 
     /// The window a connected model runs at until one is chosen for it

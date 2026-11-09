@@ -43,7 +43,7 @@ fn scheduled(model: Arc<Recorder>) -> ScheduledLlm {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    ScheduledLlm::new(model, scheduler, 512)
+    ScheduledLlm::new(model, scheduler, Some(512))
 }
 
 /// `text` from the user with one picture of 400 KB of base64 costing `tokens`.
