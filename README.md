@@ -57,7 +57,8 @@ Optional chat providers (Ollama, a remote llama.cpp server, OpenAI,
 Anthropic, Google) are available if you want them; `crates/lattice-sync/` holds an
 experimental sync service the app does not use yet.
 
-For a cloud provider, open **Settings → Chat**, save its API key, and choose
+For a cloud provider, use "Use an API key instead" on the first-run screen or
+open **Settings → Chat**, save its API key, and choose
 from the available models. Use **Refresh** to reload the provider's list.
 Models from providers with saved keys also appear in each chat's model picker;
 choosing one there changes that conversation's model, keeping the app default.
@@ -115,6 +116,8 @@ no Arch package to build, so use `./setup.sh --dev` there.
 On first launch the app shows "Set up AI" with a chat model and an embedding
 model sized to the machine's memory. Click Install. The downloads run in the
 background and both models are switched on when they finish.
+To use a cloud model instead, click "Use an API key instead", save the key and
+choose a model; chats and courses then use it.
 
 Other modes: `./setup.sh --check` lists what is missing and changes nothing,
 `--deps` stops once the build prerequisites are installed, `--dev` runs
