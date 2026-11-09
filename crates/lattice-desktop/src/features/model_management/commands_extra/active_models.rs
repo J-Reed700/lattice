@@ -232,11 +232,8 @@ pub async fn set_active_embedding_model_impl(
     let model = container
         .open_embedding_for_activation(&candidate, load_identity)
         .await?;
-    crate::infrastructure::persistence::repositories::embedding::generation::prepare(
-        container.db_pool(),
-        model.as_ref(),
-    )
-    .await?;
+    crate::features::search::embedding_generation::prepare(container.db_pool(), model.as_ref())
+        .await?;
 
     match use_case
         .activate(&validated_model_id, Some(&identity))

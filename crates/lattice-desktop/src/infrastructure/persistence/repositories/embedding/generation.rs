@@ -1,94 +1,24 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
-use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::embedding_encoding;
+use lattice_core::shared::persistence::{embedding_encoding, Transactions};
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
+use sqlx::{Executor, Sqlite, SqlitePool};
 
 pub fn content_hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 
-pub async fn ensure_schema(pool: &SqlitePool) -> Result<()> {
-    sqlx::query("CREATE TABLE IF NOT EXISTS embedding_generation_vectors (model_identity TEXT NOT NULL, chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE, content_hash TEXT NOT NULL, embedding BLOB NOT NULL, dimension INTEGER NOT NULL, PRIMARY KEY(model_identity, chunk_id))").execute(pool).await?;
+pub async fn ensure_schema(executor: impl Executor<'_, Database = Sqlite>) -> Result<()> {
+    sqlx::query("CREATE TABLE IF NOT EXISTS embedding_generation_vectors (model_identity TEXT NOT NULL, chunk_id TEXT NOT NULL REFERENCES text_chunks(id) ON DELETE CASCADE, content_hash TEXT NOT NULL, embedding BLOB NOT NULL, dimension INTEGER NOT NULL, PRIMARY KEY(model_identity, chunk_id))").execute(executor).await?;
     Ok(())
 }
 
-/// Reuses completed work only when both model artifacts and source content match.
-/// A passage the new model's window cannot take in one pass is represented by
-/// a normalized, length-weighted mean of its segments, preserving existing
-/// chunk IDs and citation anchors.
-///
-/// The text embedded is `contextualized_content` — the context prefix plus the
-/// chunk, exactly what the indexer embedded — so the prefix never has to be
-/// rebuilt from the document row here.
-pub async fn prepare(pool: &SqlitePool, model: &dyn EmbeddingPort) -> Result<usize> {
-    ensure_schema(pool).await?;
-    let identity = model.model_identity();
-    let mut cursor = String::new();
-    let mut completed = 0;
-    loop {
-        let rows = chunk_page_after(pool, &cursor).await?;
-        if rows.is_empty() {
-            break;
-        }
-        for (id, text) in rows {
-            cursor = id.clone();
-            let hash = content_hash(&text);
-            if is_prepared(pool, &identity, &id, &hash, model.dimension()).await? {
-                completed += 1;
-                continue;
-            }
-            // Not `split_text`: that sizes to the chunk target, and a stored
-            // chunk already fills the target *plus* its context prefix, so it
-            // would cut nearly every full chunk in two and store an average.
-            let parts = model.window_parts(&text)?;
-            if parts.is_empty() {
-                continue;
-            }
-            let inputs: Vec<String> = parts.iter().map(|p| p.text.clone()).collect();
-            let vectors = model.embed_batch(&inputs).await?;
-            if vectors.len() != parts.len() {
-                return Err(AppError::InvalidState(
-                    "Embedding batch was incomplete".into(),
-                ));
-            }
-            let mut combined = vec![0.0f32; model.dimension()];
-            for (part, vector) in parts.iter().zip(vectors) {
-                if vector.len() != combined.len() || vector.iter().any(|v| !v.is_finite()) {
-                    return Err(AppError::InvalidState(
-                        "Invalid embedding during migration".into(),
-                    ));
-                }
-                let weight = part.token_count.max(1) as f32;
-                for (out, value) in combined.iter_mut().zip(vector) {
-                    *out += weight * value;
-                }
-            }
-            let norm = combined.iter().map(|v| v * v).sum::<f32>().sqrt();
-            if !norm.is_finite() || norm <= 0.0 {
-                return Err(AppError::InvalidState(
-                    "Zero or non-finite embedding during migration".into(),
-                ));
-            }
-            for value in &mut combined {
-                *value /= norm;
-            }
-            // The source may have been deleted or edited while inference ran.
-            store_prepared(pool, &identity, &hash, &combined, &id, &text).await?;
-            completed += 1;
-        }
-        tracing::info!(completed, model_identity = %identity, "Preparing embedding generation");
-    }
-    Ok(completed)
-}
-
-async fn chunk_page_after(pool: &SqlitePool, cursor: &str) -> Result<Vec<(String, String)>> {
+pub async fn chunk_page_after(pool: &SqlitePool, cursor: &str) -> Result<Vec<(String, String)>> {
     Ok(sqlx::query_as("SELECT id, COALESCE(NULLIF(contextualized_content, ''), content) FROM text_chunks WHERE id > ? ORDER BY id LIMIT 64")
         .bind(cursor).fetch_all(pool).await?)
 }
 
-async fn is_prepared(
+pub async fn is_prepared(
     pool: &SqlitePool,
     identity: &str,
     chunk_id: &str,
@@ -102,7 +32,7 @@ async fn is_prepared(
 
 /// The statement rechecks the chunk's text, so a chunk deleted or edited while
 /// inference ran stores nothing.
-async fn store_prepared(
+pub async fn store_prepared(
     pool: &SqlitePool,
     identity: &str,
     hash: &str,
@@ -129,7 +59,6 @@ pub async fn restore(
     identity: &str,
     dimension: usize,
 ) -> Result<Vec<(String, Vec<f32>, String, String, String)>> {
-    ensure_schema(pool).await?;
     let mut result = Vec::new();
     let mut cursor = String::new();
     loop {
@@ -166,11 +95,13 @@ pub async fn restore_page(
     // LIMIT. Negative LIMIT values in SQLite mean unlimited rows.
     const MAX_RESTORE_PAGE_SIZE: i64 = 128;
     let limit = limit.min(MAX_RESTORE_PAGE_SIZE);
-    ensure_schema(pool).await?;
+    let mut tx = pool.begin_write().await?;
+    ensure_schema(&mut *tx).await?;
     type RestoredRow = (String, Vec<u8>, String, Option<String>, String);
     let rows: Vec<RestoredRow> = sqlx::query_as(
         "SELECT tc.id, COALESCE(te.embedding, eg.embedding), tc.document_id, CASE WHEN te.embedding IS NULL THEN eg.content_hash ELSE NULL END, COALESCE(NULLIF(tc.contextualized_content, ''), tc.content) FROM text_chunks tc LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? WHERE (te.embedding IS NOT NULL OR eg.embedding IS NOT NULL) AND tc.id > ? ORDER BY tc.id LIMIT ?")
-        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).bind(after_chunk_id).bind(limit).fetch_all(pool).await?;
+        .bind(identity).bind(dimension as i64).bind(identity).bind(dimension as i64).bind(after_chunk_id).bind(limit).fetch_all(&mut *tx).await?;
+    tx.commit().await?;
     let cursor = rows.last().map(|row| row.0.clone()).unwrap_or_default();
     let mut result = Vec::with_capacity(rows.len());
     for (id, bytes, doc_id, hash, source) in rows {
@@ -201,71 +132,6 @@ pub async fn restore_page(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::application::ports::embedding_port::EmbeddingTextChunk;
-    use std::sync::atomic::{AtomicUsize, Ordering};
-    struct Model {
-        identity: &'static str,
-        calls: AtomicUsize,
-        fail_at: usize,
-        split_batches: AtomicUsize,
-    }
-    fn part(text: &str, start: usize) -> EmbeddingTextChunk {
-        EmbeddingTextChunk {
-            text: text.to_owned(),
-            start,
-            end: start + text.len(),
-            token_count: text.len(),
-        }
-    }
-    impl Model {
-        fn new(identity: &'static str, fail_at: usize) -> Self {
-            Self {
-                identity,
-                calls: AtomicUsize::new(0),
-                fail_at,
-                split_batches: AtomicUsize::new(0),
-            }
-        }
-    }
-    #[async_trait::async_trait]
-    impl EmbeddingPort for Model {
-        fn model_identity(&self) -> String {
-            self.identity.into()
-        }
-        fn dimension(&self) -> usize {
-            2
-        }
-        async fn is_ready(&self) -> Result<bool> {
-            Ok(true)
-        }
-        async fn embed_single(&self, _: &str) -> Result<Vec<f32>> {
-            Ok(vec![1.0, 0.0])
-        }
-        /// A chunk-target split that always halves, as the real one does for a
-        /// stored chunk that carries its context prefix.
-        fn split_text(&self, text: &str, _: &str) -> Result<Vec<EmbeddingTextChunk>> {
-            let mid = text.len() / 2;
-            Ok(vec![part(&text[..mid], 0), part(&text[mid..], mid)])
-        }
-        /// A window of eight bytes.
-        fn window_parts(&self, text: &str) -> Result<Vec<EmbeddingTextChunk>> {
-            if text.len() > 8 {
-                self.split_text(text, "")
-            } else {
-                Ok(vec![part(text, 0)])
-            }
-        }
-        async fn embed_batch(&self, texts: &[String]) -> Result<Vec<Vec<f32>>> {
-            if texts.len() > 1 {
-                self.split_batches.fetch_add(1, Ordering::SeqCst);
-            }
-            let call = self.calls.fetch_add(1, Ordering::SeqCst);
-            if call == self.fail_at {
-                return Err(AppError::InvalidState("injected interruption".into()));
-            }
-            Ok(texts.iter().map(|_| vec![1.0, 0.0]).collect())
-        }
-    }
     async fn database() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
@@ -277,54 +143,6 @@ mod tests {
         sqlx::query("INSERT INTO text_chunks VALUES ('a', 'alpha', NULL, 'doc'), ('b', 'beta', NULL, 'doc')").execute(&pool).await.unwrap();
         pool
     }
-    #[tokio::test]
-    async fn interrupted_generation_resumes_and_never_restores_another_vector_space() {
-        let pool = database().await;
-        let first = Model::new("new", 1);
-        assert!(prepare(&pool, &first).await.is_err());
-        let resumed = Model::new("new", usize::MAX);
-        assert_eq!(prepare(&pool, &resumed).await.unwrap(), 2);
-        assert_eq!(
-            resumed.calls.load(Ordering::SeqCst),
-            1,
-            "completed source must not be recomputed"
-        );
-        assert_eq!(restore(&pool, "new", 2).await.unwrap().len(), 2);
-        assert!(restore(&pool, "old-same-dimension", 2)
-            .await
-            .unwrap()
-            .is_empty());
-        sqlx::query("UPDATE text_chunks SET content = 'changed' WHERE id = 'a'")
-            .execute(&pool)
-            .await
-            .unwrap();
-        assert_eq!(
-            restore(&pool, "new", 2).await.unwrap().len(),
-            1,
-            "stale source must not reuse its old vector"
-        );
-        prepare(&pool, &resumed).await.unwrap();
-        assert_eq!(resumed.calls.load(Ordering::SeqCst), 2);
-        assert_eq!(restore(&pool, "new", 2).await.unwrap().len(), 2);
-    }
-
-    #[tokio::test]
-    async fn a_stored_chunk_that_fits_the_window_is_embedded_whole() {
-        let pool = database().await;
-        sqlx::query(
-            "INSERT INTO text_chunks VALUES ('c', 'a much longer stored chunk', NULL, 'doc')",
-        )
-        .execute(&pool)
-        .await
-        .unwrap();
-        let model = Model::new("new", usize::MAX);
-        assert_eq!(prepare(&pool, &model).await.unwrap(), 3);
-        // 'alpha' and 'beta' fit the window and go in one piece; only the
-        // chunk past the window is split.
-        assert_eq!(model.calls.load(Ordering::SeqCst), 3);
-        assert_eq!(model.split_batches.load(Ordering::SeqCst), 1);
-    }
-
     #[tokio::test]
     async fn restore_page_rejects_unbounded_nonpositive_limits() {
         let pool = database().await;

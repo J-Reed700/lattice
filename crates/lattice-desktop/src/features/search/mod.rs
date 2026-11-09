@@ -39,6 +39,7 @@
 
 pub mod commands;
 pub mod di;
+pub mod embedding_generation;
 pub mod mapper;
 pub mod plugin;
 pub mod query_cache;
