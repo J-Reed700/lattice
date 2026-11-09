@@ -130,7 +130,9 @@ fn citations_schema(source_count: usize) -> serde_json::Value {
         }
     }});
     if source_count == 0 {
-        list["maxItems"] = json!(0);
+        if let Some(object) = list.as_object_mut() {
+            object.insert("maxItems".into(), json!(0));
+        }
     }
     list
 }
