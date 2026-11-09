@@ -83,7 +83,8 @@ function Hint({ children }: { children: React.ReactNode }) {
 
 interface ReplyWait {
   after: string | null;
-  error: FooterProps['error'];
+  /** True once no error is showing, so the next one is new. */
+  clear: boolean;
   resolve: (outcome: 'answered' | 'failed') => void;
 }
 
@@ -106,7 +107,9 @@ function VoiceControls({ messages, error, onSend, setText, disabled }: FooterPro
       answer.current = reply.content;
       waiting.current = null;
       wait.resolve('answered');
-    } else if (error && error !== wait.error) {
+    } else if (!error) {
+      wait.clear = true;
+    } else if (wait.clear) {
       waiting.current = null;
       wait.resolve('failed');
     }
@@ -116,9 +119,8 @@ function VoiceControls({ messages, error, onSend, setText, disabled }: FooterPro
     conversationId: null,
     send: async (text) => {
       const after = current.current.messages[current.current.messages.length - 1]?.id ?? null;
-      const before = current.current.error;
       const outcome = new Promise<'answered' | 'failed'>((resolve) => {
-        waiting.current = { after, error: before, resolve };
+        waiting.current = { after, clear: !current.current.error, resolve };
       });
       try {
         await onSend(text, true);

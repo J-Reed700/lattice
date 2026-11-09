@@ -43,14 +43,14 @@ export function StatusLine({ state, className }: { state: StatusState; className
         </button>
       ) : (
         state.retry && (
-        <button
-          type="button"
-          onClick={state.retry}
-          className="inline-flex items-center gap-1 font-medium underline focus:outline-hidden focus:ring-2 focus:ring-ring"
-        >
-          <RotateCcw className="h-3 w-3" aria-hidden="true" />
-          Try again
-        </button>
+          <button
+            type="button"
+            onClick={state.retry}
+            className="inline-flex items-center gap-1 font-medium underline focus:outline-hidden focus:ring-2 focus:ring-ring"
+          >
+            <RotateCcw className="h-3 w-3" aria-hidden="true" />
+            Try again
+          </button>
         )
       )}
     </div>

@@ -41,5 +41,11 @@ export function useRetry<A extends unknown[], R>(action: (...args: A) => Promise
     if (lastArgs.current) void run(...lastArgs.current);
   }, [run]);
 
-  return { run, retry, busy, error, conflict };
+  const clear = useCallback(() => {
+    setError(null);
+    setConflict(false);
+    lastArgs.current = null;
+  }, []);
+
+  return { run, retry, clear, busy, error, conflict };
 }

@@ -5,11 +5,12 @@
  * than with the initial bundle. Each member keeps one identity, so it is safe
  * in dependency arrays and as a query function.
  */
-import { type ApiResult, unwrapApiResult } from '@/types/api/result';
+import { type ApiResult, ApiRequestError, unwrapApiResult } from '@/types/api/result';
 
 import type { VaultClients } from './apiClients';
 import type * as Wire from './bindings';
 import { getErrorMessage } from './errorUtils';
+import { parseApiError } from './errorHandling';
 
 export type ApiClient = VaultClients;
 
@@ -45,7 +46,8 @@ export const VaultAPI = new Proxy({} as VaultClients, {
 export function unwrap<T>(result: ApiResult<T> | Wire.Result<T, unknown>): T {
   if ('ok' in result) return unwrapApiResult(result);
   if (result.status === 'ok') return result.data;
-  throw result.error instanceof Error ? result.error : new Error(getErrorMessage(result.error));
+  if (result.error instanceof Error) throw result.error;
+  throw new ApiRequestError({ ok: false, error: getErrorMessage(result.error), details: parseApiError(result.error) });
 }
 
 /** A fresh id for an operation, session or record. */
@@ -55,7 +57,9 @@ export function newId(): string {
 
 /** Whether the backend refused a write because the record changed since it was read. */
 export function isConflict(error: unknown): boolean {
-  if (typeof error !== 'object' || error === null || !('details' in error)) return false;
+  if (typeof error !== 'object' || error === null) return false;
+  if ('code' in error && error.code === 'CONFLICT') return true;
+  if (!('details' in error)) return false;
   const { details } = error;
   return typeof details === 'object' && details !== null && 'code' in details && details.code === 'CONFLICT';
 }

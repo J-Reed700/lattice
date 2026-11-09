@@ -11,18 +11,19 @@ export type EvidenceView =
 
 export type CriterionLevel = 'met' | 'partly' | 'not_met';
 
-export interface CriterionView {
+type CriterionBase = {
   id: string;
   title: string;
   description?: string;
-  /** A number is a grade, null is "not enough evidence", and leaving it out means not graded yet. */
-  points?: number | null;
-  outcome?: { label: string; level: CriterionLevel };
-  maxPoints: number;
   evidence: EvidenceView[];
   feedback?: string;
   nextStep?: string;
-}
+};
+
+/** Points: a number is a grade, null is "not enough evidence", and leaving it out means not graded yet. */
+export type CriterionView =
+  | (CriterionBase & { maxPoints: number; points?: number | null; outcome?: never })
+  | (CriterionBase & { outcome: { label: string; level: CriterionLevel }; maxPoints?: never; points?: never });
 
 const levelStyle: Record<CriterionLevel, { Icon: typeof CheckCircle2; tone: string }> = {
   met: { Icon: CheckCircle2, tone: 'bg-success-muted text-success-fg' },
@@ -31,8 +32,8 @@ const levelStyle: Record<CriterionLevel, { Icon: typeof CheckCircle2; tone: stri
 };
 
 function Score({ criterion }: { criterion: CriterionView }) {
-  const { points, maxPoints, outcome } = criterion;
-  if (outcome) {
+  if (criterion.outcome) {
+    const { outcome } = criterion;
     const { Icon, tone } = levelStyle[outcome.level];
     return (
       <span
@@ -45,6 +46,7 @@ function Score({ criterion }: { criterion: CriterionView }) {
       </span>
     );
   }
+  const { points, maxPoints } = criterion;
   if (points === undefined) {
     return (
       <span
