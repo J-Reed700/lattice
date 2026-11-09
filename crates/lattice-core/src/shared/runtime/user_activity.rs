@@ -5,6 +5,8 @@
 pub struct UserActivity {
     #[cfg(target_os = "macos")]
     _activity: Option<macos::Activity>,
+    #[cfg(windows)]
+    _power: Option<windows_power::Request>,
 }
 
 impl UserActivity {
@@ -22,10 +24,43 @@ impl UserActivity {
                 _activity: activity,
             }
         }
-        #[cfg(not(target_os = "macos"))]
+        #[cfg(windows)]
+        {
+            let power = match windows_power::Request::begin(reason) {
+                Ok(request) => Some(request),
+                Err(error) => {
+                    tracing::warn!(%error, "Could not keep the PC awake for active user work");
+                    None
+                }
+            };
+            Self { _power: power }
+        }
+        #[cfg(not(any(target_os = "macos", windows)))]
         {
             let _ = reason;
             Self {}
+        }
+    }
+}
+
+#[cfg(windows)]
+mod windows_power {
+    use crate::shared::error::AppError;
+
+    pub(super) struct Request;
+
+    impl Request {
+        pub(super) fn begin(_reason: &str) -> Result<Self, AppError> {
+            Ok(Self)
+        }
+
+        #[cfg(test)]
+        pub(super) fn is_set(&self) -> bool {
+            false
+        }
+
+        pub(super) fn release(&mut self) -> Result<(), AppError> {
+            Ok(())
         }
     }
 }
