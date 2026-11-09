@@ -2408,6 +2408,7 @@ fn a_fitted_server_differs_from_the_one_at_the_trained_length_only_in_its_window
     let refit = SidecarConfig {
         context_size: ORNITH_TRAINED_WINDOW,
         cpu_context_size: None,
+        auto_window: false,
         ..fitted
     };
     assert_eq!(refit, at_trained);
@@ -2439,4 +2440,49 @@ fn the_cpu_attempt_of_a_config_with_its_own_cpu_window_takes_it() {
         ..SidecarConfig::for_model(PathBuf::from("/tmp/model.gguf"))
     };
     assert_eq!(gpu.without_gpu_offload().context_size, 15_360);
+}
+
+#[test]
+fn a_role_with_no_saved_window_joins_the_server_running_at_a_fitted_window() {
+    let path = PathBuf::from("/models/ornith.gguf");
+    let server = |path: &PathBuf, context_size: u32, auto_window: bool| RunningServer {
+        config: SidecarConfig {
+            context_size,
+            auto_window,
+            ..SidecarConfig::for_model(path.clone())
+        },
+        n_gpu_layers: 99,
+        context_size,
+    };
+    let asked = SidecarConfig {
+        context_size: ORNITH_TRAINED_WINDOW,
+        auto_window: true,
+        ..SidecarConfig::for_model(path.clone())
+    };
+
+    let fitted = server(&path, 29_696, true);
+    assert_eq!(
+        running_alike(std::slice::from_ref(&fitted), &asked),
+        Some(fitted.config.clone())
+    );
+
+    // A window the user saved is its own server, on either side.
+    assert_eq!(running_alike(&[server(&path, 29_696, false)], &asked), None);
+    let asked_saved = SidecarConfig {
+        auto_window: false,
+        ..asked.clone()
+    };
+    assert_eq!(running_alike(&[fitted], &asked_saved), None);
+
+    // Another model, or the same one set up differently, is not it.
+    let other = PathBuf::from("/models/other.gguf");
+    assert_eq!(running_alike(&[server(&other, 29_696, true)], &asked), None);
+    let quantized = SidecarConfig {
+        kv_cache_quantization: true,
+        ..asked
+    };
+    assert_eq!(
+        running_alike(&[server(&path, 29_696, true)], &quantized),
+        None
+    );
 }

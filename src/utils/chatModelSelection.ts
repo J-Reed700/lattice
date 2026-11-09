@@ -90,7 +90,8 @@ export function formatModelSize(bytes: number): string | null {
 /**
  * The window a downloaded model runs with. A window saved in Settings is the
  * user's instruction and is shown exactly; otherwise the model loads at its
- * trained length, shown rounded.
+ * trained length, shown rounded: the most it loads with, since an unsaved
+ * window is fitted to this machine's memory.
  */
 export function formatContextLabel(model: Pick<DownloadedModel, 'configured_context_length' | 'trained_context_length'>): string | null {
   const configured = model.configured_context_length;
@@ -137,10 +138,14 @@ export function tokensThatFit(
  * when the trained length fits or the machine does not say.
  */
 export function fittedLaunchWindow(
-  _model: FitHint & Pick<DownloadedModel, 'trained_context_length'>,
-  _kvCacheQuantization: boolean,
+  model: FitHint & Pick<DownloadedModel, 'trained_context_length'>,
+  kvCacheQuantization: boolean,
 ): number | null {
-  return null;
+  const trained = model.trained_context_length;
+  const fits = kvCacheQuantization
+    ? model.fits_context_length_with_kv_quantization
+    : model.fits_context_length;
+  return trained != null && fits != null && fits > 0 && fits < trained ? fits : null;
 }
 
 /**

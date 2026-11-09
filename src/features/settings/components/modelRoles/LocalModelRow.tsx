@@ -22,7 +22,7 @@ import { useModelWarmupStore } from '@/features/model/stores/modelWarmupStore';
 import type { RoleWarmupState, WarmupRole } from '@/features/model/stores/modelWarmupStore';
 import { toast } from '@/stores/toastStore';
 import type { DownloadedModel } from '@/types/downloadedModels';
-import { modelRefForRow, tokensThatFit } from '@/utils/chatModelSelection';
+import { fittedLaunchWindow, modelRefForRow, tokensThatFit } from '@/utils/chatModelSelection';
 import { formatFileSize, formatRelativeDate } from '@/utils/formatters';
 import { handleAsyncEvent } from '@/utils/promiseHandlers';
 
@@ -150,15 +150,12 @@ export function LocalModelRow({ model }: Props) {
   const downloaded = formatRelativeDate(model.downloaded_at);
   const used = formatRelativeDate(model.last_used_at);
   const maxTokens = model.trained_context_length ?? null;
-  // The window it loads with: the user's, else its maximum.
-  const window = model.configured_context_length ?? llmSettings?.localContextWindow ?? maxTokens;
-  const fits = window
-    ? tokensThatFit(
-        model,
-        window,
-        llmSettings?.localModelConfigs?.[model.model_id]?.kvCacheQuantization ?? false,
-      )
-    : null;
+  // The window it loads with: the user's, else the largest that fits, up to its maximum.
+  const savedWindow = model.configured_context_length ?? llmSettings?.localContextWindow ?? null;
+  const kvCacheQuantization =
+    llmSettings?.localModelConfigs?.[model.model_id]?.kvCacheQuantization ?? false;
+  const fits = savedWindow !== null ? tokensThatFit(model, savedWindow, kvCacheQuantization) : null;
+  const fittedWindow = savedWindow === null ? fittedLaunchWindow(model, kvCacheQuantization) : null;
   const meta = [
     formatFileSize(model.file_size_bytes),
     maxTokens ? `Max ${maxTokens.toLocaleString('en-US')} tokens` : null,
@@ -178,10 +175,15 @@ export function LocalModelRow({ model }: Props) {
           <div className="truncate text-sm font-medium text-text-primary">{model.model_name}</div>
           <div className="truncate font-mono text-xs text-text-muted">{model.model_id}</div>
           <div className="mt-1.5 text-xs leading-relaxed tabular-nums text-text-muted">{meta}</div>
-          {window && fits != null ? (
+          {savedWindow !== null && fits != null ? (
             <div role="status" className="mt-0.5 text-xs text-warning-fg">
-              Loads at {window.toLocaleString('en-US')} tokens, which may not fit in this
+              Loads at {savedWindow.toLocaleString('en-US')} tokens, which may not fit in this
               machine&apos;s memory — about {fits.toLocaleString('en-US')} tokens fit.
+            </div>
+          ) : null}
+          {fittedWindow !== null ? (
+            <div role="status" className="mt-0.5 text-xs text-text-muted">
+              {`Loads at ${fittedWindow.toLocaleString('en-US')} tokens, the largest window that fits this machine's memory now.`}
             </div>
           ) : null}
           {model.vision ? <LocalVisionControl model={model} vision={model.vision} /> : null}

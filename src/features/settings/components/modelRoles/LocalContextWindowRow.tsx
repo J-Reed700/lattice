@@ -52,7 +52,7 @@ export function LocalContextWindowRow({ models }: { models: DownloadedModel[] })
   return (
     <SettingsRow
       label="Default context window"
-      hint="Each model loads with its own maximum, the window it was trained for, unless you set one here or in the model's settings. A larger window needs more memory; one too large for this machine fails to load and says how much it needed, and one larger than the model was trained for is stretched by rope scaling, which costs quality."
+      hint="Unless you set a window here or in the model's settings, each model loads with the largest window that fits this machine's memory now, up to its maximum, the window it was trained for. A window you set that is too large for this machine fails to load and says how much it needed, and one larger than the model was trained for is stretched by rope scaling, which costs quality."
       htmlFor="local-context-window"
     >
       <div className="flex items-center gap-3">

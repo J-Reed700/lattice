@@ -232,8 +232,8 @@ pub(super) fn startup_failure(
     end: &StartupEnd,
     output: &[String],
     facts: StartupFacts,
-    _window: u32,
-    _gpu_offload: bool,
+    window: u32,
+    gpu_offload: bool,
 ) -> AttemptError {
     let (code, signal) = match end {
         StartupEnd::Exited { code, signal } => (*code, *signal),
@@ -267,6 +267,21 @@ pub(super) fn startup_failure(
                 "Lattice's bundled local model engine does not support this model ({detail}). \
                  Update Lattice's model engine or select a compatible model. \
                  Downloading the same file again or switching to CPU will not add support."
+            ),
+        };
+    }
+
+    // An allocation llama.cpp could not make is the window not fitting: the
+    // backend came up, so it is no more a GPU failure than a corrupt file.
+    if facts.memory_failure {
+        return AttemptError {
+            kind: AttemptFailure::OutOfMemory,
+            message: format!(
+                "{} ran out of memory allocating its context window of {} tokens on the {}.{}",
+                binary.label(),
+                super::config::tokens(window),
+                if gpu_offload { "GPU" } else { "CPU" },
+                render_tail(output)
             ),
         };
     }
@@ -477,6 +492,22 @@ pub(super) fn line_is_gpu_failure(lower: &str) -> bool {
     ];
     BACKENDS.iter().any(|backend| lower.contains(backend))
         && FAILURES.iter().any(|failure| lower.contains(failure))
+}
+
+/// A line in which llama.cpp or its GPU backend says an allocation failed.
+pub(super) fn line_is_memory_failure(lower: &str) -> bool {
+    const NEEDLES: &[&str] = &[
+        // ggml_vulkan: "Device memory allocation of size N failed." and
+        // "vk::Device::allocateMemory: ErrorOutOfDeviceMemory"
+        "erroroutofdevicememory",
+        "erroroutofhostmemory",
+        "memory allocation of size",
+        // "failed to allocate Vulkan1 buffer of size N"
+        "failed to allocate",
+        // "cudaMalloc failed: out of memory"
+        "out of memory",
+    ];
+    NEEDLES.iter().any(|needle| lower.contains(needle))
 }
 
 /// A line saying llama-server could not take the port we gave it.
@@ -735,6 +766,7 @@ pub(super) struct StartupSignals {
     pub(super) lines: AtomicU64,
     pub(super) model_loader: AtomicBool,
     pub(super) gpu_failure: AtomicBool,
+    pub(super) memory_failure: AtomicBool,
     pub(super) bind_failure: AtomicBool,
 }
 
@@ -749,6 +781,9 @@ impl StartupSignals {
         if !self.gpu_failure.load(Ordering::Relaxed) && line_is_gpu_failure(&lower) {
             self.gpu_failure.store(true, Ordering::Relaxed);
         }
+        if !self.memory_failure.load(Ordering::Relaxed) && line_is_memory_failure(&lower) {
+            self.memory_failure.store(true, Ordering::Relaxed);
+        }
         if !self.bind_failure.load(Ordering::Relaxed) && line_is_bind_failure(&lower) {
             self.bind_failure.store(true, Ordering::Relaxed);
         }
@@ -762,6 +797,7 @@ impl StartupSignals {
         StartupFacts {
             model_loader: self.model_loader.load(Ordering::Relaxed),
             gpu_failure: self.gpu_failure.load(Ordering::Relaxed),
+            memory_failure: self.memory_failure.load(Ordering::Relaxed),
             bind_failure: self.bind_failure.load(Ordering::Relaxed),
         }
     }
@@ -772,6 +808,7 @@ impl StartupSignals {
 pub(super) struct StartupFacts {
     pub(super) model_loader: bool,
     pub(super) gpu_failure: bool,
+    pub(super) memory_failure: bool,
     pub(super) bind_failure: bool,
 }
 
