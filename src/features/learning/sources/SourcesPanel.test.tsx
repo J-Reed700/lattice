@@ -182,6 +182,23 @@ describe('Learning Studio Sources workspace', () => {
     expect(mocks.addText.mock.calls[1][0]).toEqual(firstRequest);
   });
 
+  it('keeps the Add dialog open on Escape while a save is in flight', async () => {
+    const user = userEvent.setup();
+    let finish!: (value: ReturnType<typeof ok<LearningSourceWorkspaceDto>>) => void;
+    mocks.addText.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+    renderSources({ programId: 'program-1', recheck: null, sources: [] });
+    await user.click(await screen.findByRole('button', { name: 'Add material' }));
+    await user.click(screen.getByRole('button', { name: 'Paste text' }));
+    await user.type(screen.getByLabelText('Title'), 'Notes');
+    await user.type(screen.getByLabelText('Saved text'), 'An excerpt.');
+    await user.click(screen.getByRole('button', { name: 'Save source' }));
+    await waitFor(() => expect(mocks.addText).toHaveBeenCalledTimes(1));
+    await user.keyboard('{Escape}');
+    expect(screen.getByLabelText('Title')).toBeVisible();
+    finish(ok({ ...workspace, sources: [] }));
+    await waitFor(() => expect(screen.queryByLabelText('Title')).not.toBeInTheDocument());
+  });
+
   it('adding a source checks the waiting statements and links to the review', async () => {
     const user = userEvent.setup();
     const openReview = vi.fn();
