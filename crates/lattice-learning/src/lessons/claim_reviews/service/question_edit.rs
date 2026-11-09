@@ -323,7 +323,6 @@ impl ClaimReviewService {
             LearningAssessmentRepository::stored_candidate_in(&mut read, &program_id, &stored.id)
                 .await?;
         let sections = blocks::section_count(&mut read, &lesson_id).await?;
-        read.commit().await.map_err(db)?;
         if stored.text != before {
             return Err(AppError::InvalidInput(QUESTION_CHANGED.into()));
         }
@@ -342,9 +341,10 @@ impl ClaimReviewService {
         let edited = edited_candidate(bank_item.candidate, &new);
         engine::validate_candidate(&edited)?;
         let token = content_hash(&StoredItem::from(edited));
-        if self.token_repeated(&program_id, &stored.id, &token).await? {
+        if questions::token_taken_by_another(&mut read, &program_id, &stored.id, &token).await? {
             return Err(AppError::InvalidInput(SAME_QUESTION.into()));
         }
+        read.commit().await.map_err(db)?;
 
         let unit = usize::try_from(sections)
             .unwrap_or_default()
@@ -444,20 +444,6 @@ impl ClaimReviewService {
         let moved = self.write_question_edit(&ledger, &write).await?;
         outcome.revision = self.settled_revision(&ledger, &lesson_id, moved).await?;
         Ok(outcome)
-    }
-
-    /// Whether another question of the program has this content token.
-    async fn token_repeated(
-        &self,
-        program_id: &str,
-        candidate_id: &str,
-        token: &str,
-    ) -> Result<bool> {
-        let mut read = self.pool().begin_read().await.map_err(db)?;
-        let repeated =
-            questions::token_taken_by_another(&mut read, program_id, candidate_id, token).await?;
-        read.commit().await.map_err(db)?;
-        Ok(repeated)
     }
 
     /// The edit and its settlement in one unit of work: the question, its

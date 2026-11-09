@@ -19,7 +19,7 @@ use serde_json::Value;
 use sqlx::SqlitePool;
 
 use super::actions::{in_section_body, refusal, whole_sentence, ONLY_SECTION};
-use super::checker_examples::{CheckerExamples, LabelSource};
+use super::checker_examples::LabelSource;
 use super::dto::ClaimActionRequestDto;
 use super::published_edit::{self, PublishedEdit};
 use super::published_remove;
@@ -64,7 +64,6 @@ const NOT_A_SENTENCE: &str =
 pub struct ClaimReviewService {
     pool: SqlitePool,
     store: ClaimReviewRepository,
-    pub(super) examples: CheckerExamples,
     drafts: LearningCurriculumRepository,
     checker_model: Option<String>,
 }
@@ -98,7 +97,6 @@ impl ClaimReviewService {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             store: ClaimReviewRepository::new(pool.clone()),
-            examples: CheckerExamples::new(pool.clone()),
             drafts: LearningCurriculumRepository::new(pool.clone()),
             checker_model: None,
             pool,

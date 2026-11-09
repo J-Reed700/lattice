@@ -304,7 +304,7 @@ impl SqliteDownloadRepository {
         Self { db_conn }
     }
 
-    async fn begin(&self) -> Result<WriteTx, DownloadError> {
+    async fn begin_write(&self) -> Result<WriteTx, DownloadError> {
         self.db_conn
             .pool()
             .begin_write()
@@ -440,7 +440,7 @@ impl DownloadRepository for SqliteDownloadRepository {
     }
 
     async fn delete(&self, id: &str) -> Result<(), DownloadError> {
-        let mut tx = self.begin().await?;
+        let mut tx = self.begin_write().await?;
         delete_in(&mut tx, id).await?;
         Self::commit(tx).await
     }
@@ -450,7 +450,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         superseded: &[String],
         sessions: &[DownloadSession],
     ) -> Result<(), DownloadError> {
-        let mut tx = self.begin().await?;
+        let mut tx = self.begin_write().await?;
         for id in superseded {
             delete_in(&mut tx, id).await?;
         }
