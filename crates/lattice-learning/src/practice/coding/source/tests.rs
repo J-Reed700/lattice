@@ -164,9 +164,8 @@ async fn a_reference_that_fails_a_case_is_asked_for_again_with_the_failure() {
 #[tokio::test]
 async fn a_misreading_that_passes_everything_is_dropped() {
     let runner = runner(killers());
-    let (problem, model) = built(
-        build(vec![answer()], &runner, &request(CodingTask::Problem)).await,
-    );
+    let (problem, model) =
+        built(build(vec![answer()], &runner, &request(CodingTask::Problem)).await);
     assert_eq!(model.calls(), 1);
     let ids: Vec<&str> = problem
         .misreadings
@@ -266,9 +265,7 @@ async fn a_problem_that_is_never_proven_fails_with_the_last_reason_after_two_mor
 #[tokio::test]
 async fn killed_by_records_the_cases_that_kill_each_misreading() {
     let runner = runner(killers());
-    let (problem, _) = built(
-        build(vec![answer()], &runner, &request(CodingTask::Problem)).await,
-    );
+    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::Problem)).await);
     let killed = |id: &str| {
         problem
             .misreadings
@@ -286,9 +283,7 @@ async fn killed_by_records_the_cases_that_kill_each_misreading() {
 #[tokio::test]
 async fn a_bug_fix_starts_from_the_misreading_killed_by_the_most_cases() {
     let runner = runner(killers());
-    let (problem, _) = built(
-        build(vec![answer()], &runner, &request(CodingTask::BugFix)).await,
-    );
+    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::BugFix)).await);
     assert_eq!(problem.bug.as_deref(), Some("misreading-1"));
     assert_eq!(problem.spec.starter, "LATE");
 }
@@ -297,18 +292,14 @@ async fn a_bug_fix_starts_from_the_misreading_killed_by_the_most_cases() {
 async fn a_bug_fix_tie_goes_to_the_first_misreading() {
     let tied = vec![("LATE", vec!["hidden-1"]), ("EARLY", vec!["example-2"])];
     let runner = runner(tied);
-    let (problem, _) = built(
-        build(vec![answer()], &runner, &request(CodingTask::BugFix)).await,
-    );
+    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::BugFix)).await);
     assert_eq!(problem.bug.as_deref(), Some("misreading-1"));
 }
 
 #[tokio::test]
 async fn a_problem_starts_from_its_signature_and_names_no_bug() {
     let runner = runner(killers());
-    let (problem, _) = built(
-        build(vec![answer()], &runner, &request(CodingTask::Problem)).await,
-    );
+    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::Problem)).await);
     assert_eq!(
         problem.spec.starter,
         "def pair_positions(numbers: list[int], target: int) -> list[int]:\n    pass\n"
@@ -319,13 +310,18 @@ async fn a_problem_starts_from_its_signature_and_names_no_bug() {
 #[tokio::test]
 async fn cases_are_examples_then_hidden_then_scale_with_the_scale_digest_and_time() {
     let runner = runner(killers());
-    let (problem, _) = built(
-        build(vec![answer()], &runner, &request(CodingTask::Problem)).await,
-    );
+    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::Problem)).await);
     let ids: Vec<&str> = problem.cases.iter().map(|case| case.id.as_str()).collect();
     assert_eq!(
         ids,
-        ["example-1", "example-2", "hidden-1", "hidden-2", "hidden-3", "scale-1"]
+        [
+            "example-1",
+            "example-2",
+            "hidden-1",
+            "hidden-2",
+            "hidden-3",
+            "scale-1"
+        ]
     );
     assert_eq!(problem.examples().count(), 2);
     let scale = problem.cases.last().unwrap();
@@ -333,7 +329,11 @@ async fn cases_are_examples_then_hidden_then_scale_with_the_scale_digest_and_tim
     assert_eq!(scale.expected, None);
     assert_eq!(scale.digest, Some(hash_text("'big'")));
     assert_eq!(problem.reference_ms.get("scale-1"), Some(&5));
-    assert!(problem.cases.iter().filter(|case| !case.scale).all(|case| case.digest.is_none()));
+    assert!(problem
+        .cases
+        .iter()
+        .filter(|case| !case.scale)
+        .all(|case| case.digest.is_none()));
 }
 
 #[tokio::test]
@@ -356,10 +356,7 @@ async fn the_build_reports_writing_then_proving_and_stops_when_told_to() {
         .unwrap();
     assert_eq!(
         steps.recorded(),
-        [
-            (0, STEP_WRITING.to_owned()),
-            (1, STEP_PROVING.to_owned())
-        ]
+        [(0, STEP_WRITING.to_owned()), (1, STEP_PROVING.to_owned())]
     );
 
     let model = ScriptedModel::new([answer().to_string()]);
@@ -376,7 +373,10 @@ async fn the_build_reports_writing_then_proving_and_stops_when_told_to() {
             CancellationToken::new(),
         )
         .await;
-    assert!(matches!(result, Err(AppError::InvalidState(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(AppError::InvalidState(_))),
+        "{result:?}"
+    );
     assert_eq!(model.calls(), 0);
 }
 
@@ -400,7 +400,10 @@ async fn a_draft_asked_for_again_is_reported_at_the_proving_step() {
         .await
         .unwrap();
     let indexes: Vec<u32> = steps.recorded().iter().map(|(index, _)| *index).collect();
-    assert!(indexes.windows(2).all(|pair| pair[0] <= pair[1]), "{indexes:?}");
+    assert!(
+        indexes.windows(2).all(|pair| pair[0] <= pair[1]),
+        "{indexes:?}"
+    );
 }
 
 #[tokio::test]
@@ -415,7 +418,12 @@ async fn a_case_with_the_wrong_number_of_arguments_is_asked_for_again() {
     );
     let runner = runner(killers());
     let (_, model) = built(
-        build(vec![short, answer()], &runner, &request(CodingTask::Problem)).await,
+        build(
+            vec![short, answer()],
+            &runner,
+            &request(CodingTask::Problem),
+        )
+        .await,
     );
     assert_eq!(model.calls(), 2);
     assert!(model.texts()[1].contains("example-1"));
@@ -425,7 +433,11 @@ async fn a_case_with_the_wrong_number_of_arguments_is_asked_for_again() {
 async fn every_requested_pattern_must_be_listed() {
     let mut wanted = request(CodingTask::Problem);
     wanted.patterns = vec!["hash_map_lookup".into(), "binary_search".into()];
-    let both = with(answer(), "patterns", json!(["hash_map_lookup", "binary_search"]));
+    let both = with(
+        answer(),
+        "patterns",
+        json!(["hash_map_lookup", "binary_search"]),
+    );
     let runner = runner(killers());
     let (problem, model) = built(build(vec![answer(), both], &runner, &wanted).await);
     assert_eq!(model.calls(), 2);
@@ -439,7 +451,10 @@ async fn a_request_for_an_unknown_pattern_is_refused_before_asking() {
     unknown.patterns = vec!["no_such_pattern".into()];
     let runner = runner(killers());
     let (result, model) = build(vec![answer()], &runner, &unknown).await;
-    assert!(matches!(result, Err(AppError::InvalidInput(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(AppError::InvalidInput(_))),
+        "{result:?}"
+    );
     assert_eq!(model.calls(), 0);
 }
 

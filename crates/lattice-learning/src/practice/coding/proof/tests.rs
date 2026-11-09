@@ -160,7 +160,10 @@ async fn a_misreading_that_raises_on_every_case_does_not_count() {
         misreading("misreading-2", "BROKEN"),
     ];
     let reason = unproven(prove_with(&runner, "REF", &misreadings).await);
-    assert!(reason.contains("misreading-2 raises on every case"), "{reason}");
+    assert!(
+        reason.contains("misreading-2 raises on every case"),
+        "{reason}"
+    );
 }
 
 #[tokio::test]
@@ -188,6 +191,9 @@ async fn a_cancelled_build_stops_before_running_anything() {
         cancel,
     )
     .await;
-    assert!(matches!(result, Err(AppError::InvalidState(_))), "{result:?}");
+    assert!(
+        matches!(result, Err(AppError::InvalidState(_))),
+        "{result:?}"
+    );
     assert!(runner.codes().is_empty());
 }
