@@ -154,9 +154,10 @@ async fn two_overlapping_calls_with_different_answers_save_one_plan_and_both_ret
     let first = Planner::answering(vec![answer_of(&all, "an idea from the first model")]);
     let second = Planner::answering(vec![answer_of(&all, "an idea from the second model")]);
 
+    let (one_lock, other_lock) = (CourseSetups::default(), CourseSetups::default());
     let (one, other) = tokio::join!(
-        ensure(&pool, &first, &program, 1, &Default::default()),
-        ensure(&pool, &second, &program, 1, &Default::default())
+        ensure(&pool, &first, &program, 1, &one_lock),
+        ensure(&pool, &second, &program, 1, &other_lock)
     );
 
     let (one, other) = (one.unwrap(), other.unwrap());
