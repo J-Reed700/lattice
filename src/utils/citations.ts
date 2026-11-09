@@ -16,7 +16,6 @@ export interface ParsedCitation {
   citationNumber?: number;
 }
 
-const MAX_TEXT_LENGTH = 100_000; // 100KB limit
 const CITATION_TIMEOUT_MS = 100; // 100ms timeout
 const MAX_CITATION_NUMBER = 99_999;
 
@@ -41,11 +40,6 @@ const MAX_CITATION_NUMBER = 99_999;
  * // ]
  */
 export function parseCitations(text: string, sourceCount?: number): ParsedCitation[] {
-  if (text.length > MAX_TEXT_LENGTH) {
-    console.warn('[Citations] Text too long to scan for citations:', text.length, 'chars');
-    return [{ text, citationNumber: undefined }];
-  }
-
   const totalSources = Number.isInteger(sourceCount) && sourceCount && sourceCount > 0
     ? sourceCount
     : 0;
