@@ -221,13 +221,14 @@ pub(super) async fn workspace(
         },
         Err(error) => return Err(error),
     };
+    let mut read = pool.begin_read().await.map_err(db)?;
     let exports = sqlx::query("SELECT manifest_json,destination_path,created_at,id,program_id FROM learning_pack_exports WHERE program_id=? ORDER BY created_at DESC")
-            .bind(program_id).fetch_all(pool).await.map_err(db)?.iter().map(export_dto).collect::<Result<Vec<_>>>()?;
+            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.iter().map(export_dto).collect::<Result<Vec<_>>>()?;
     let import_previews = sqlx::query(
         "SELECT * FROM learning_pack_import_previews WHERE program_id=? ORDER BY created_at DESC",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *read)
     .await
     .map_err(db)?
     .into_iter()
@@ -268,7 +269,7 @@ pub(super) async fn workspace(
         "SELECT * FROM learning_pack_imports WHERE imported_program_id=? ORDER BY imported_at DESC",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *read)
     .await
     .map_err(db)?
     .into_iter()
@@ -283,9 +284,8 @@ pub(super) async fn workspace(
         })
     })
     .collect::<Result<Vec<_>>>()?;
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let export_notice = export_notice(&mut connection, program_id).await?;
-    drop(connection);
+    let export_notice = export_notice(&mut read, program_id).await?;
+    read.commit().await.map_err(db)?;
     Ok(LearningPortabilityWorkspaceDto {
         program_id: program_id.into(),
         exports,
