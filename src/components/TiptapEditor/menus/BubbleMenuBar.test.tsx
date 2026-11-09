@@ -59,7 +59,7 @@ function fakeEditor(selected = '  The Nile floods each summer.  '): FakeEditor {
 
 function Location() {
   const location = useLocation();
-  return <output aria-label="location">{location.pathname + location.search}</output>;
+  return <output aria-label="location" data-state={JSON.stringify(location.state)}>{location.pathname + location.search}</output>;
 }
 
 function renderBar(editor: FakeEditor, selectionActions?: { id: string; label: string; onSelect: (text: string) => void }[]) {
@@ -145,7 +145,10 @@ describe('BubbleMenuBar', () => {
   it('asks about the selection in a new chat', () => {
     renderBar(editor);
     fireEvent.mouseDown(screen.getByRole('button', { name: 'Ask about this' }));
-    expect(screen.getByRole('status', { name: 'location' })).toHaveTextContent('/chat?new=1&quote=The+Nile+floods+each+summer.');
+    const here = screen.getByRole('status', { name: 'location' });
+    expect(here).toHaveTextContent('/chat?new=1');
+    expect(here).not.toHaveTextContent('quote');
+    expect(here).toHaveAttribute('data-state', JSON.stringify({ quote: 'The Nile floods each summer.' }));
   });
 
   it('runs a surface’s own verbs with the selected text, and nothing on blank text', () => {

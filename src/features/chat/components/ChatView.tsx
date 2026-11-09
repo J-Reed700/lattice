@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageSquarePlus, PanelLeft } from 'lucide-react';
-import { useSearchParams } from 'react-router';
+import { useLocation, useSearchParams } from 'react-router';
 
 import { IconButton } from '@/components/ui';
 import { useApi } from '@/contexts/ApiContext';
@@ -61,6 +61,7 @@ export function ChatView() {
   const [isSpotlightOpen, setIsSpotlightOpen] = useState(false);
   const [sidebarCollapsed, setSidebarCollapsed] = useState(readSidebarCollapsed);
   const [searchParams, setSearchParams] = useSearchParams();
+  const location = useLocation();
   const selectingConversationRef = useRef<string | null>(null);
   const creatingRef = useRef(false);
   const rowRef = useRef<HTMLDivElement>(null);
@@ -156,7 +157,7 @@ export function ChatView() {
     void handleNewConversation();
   }, [handleNewConversation, searchParams, setSearchParams]);
 
-  // `?documentId=` / `?quote=` — the contract for "Ask about this" from the
+  // `?documentId=` and the `quote` in router state — the contract for "Ask about this" from the
   // Library and reading surfaces both open conversations here.
   // Reading the params and acting on them are two steps on purpose. `?new=1`
   // starts a conversation asynchronously, so at the moment the params are read
@@ -166,23 +167,25 @@ export function ChatView() {
   // until a conversation that is not the one we started from is open.
   useEffect(() => {
     const requestedDocumentId = searchParams.get('documentId');
-    const requestedQuote = searchParams.get('quote');
+    const state: unknown = location.state;
+    const requestedQuote =
+      state && typeof state === 'object' && 'quote' in state && typeof state.quote === 'string' && state.quote
+        ? state.quote
+        : null;
     if (!requestedDocumentId && !requestedQuote) return;
 
     const startedNewConversation = searchParams.get('new') === '1';
     const next = new URLSearchParams(searchParams);
     next.delete('documentId');
-    next.delete('quote');
     // `new` too: this effect runs after the `?new=1` one in the same commit and
     // its write lands last, so leaving `new` in would put it back in the URL
     // and start a second conversation on the next render.
     next.delete('new');
-    setSearchParams(next, { replace: true });
+    setSearchParams(next, { replace: true, state: null });
 
     if (requestedQuote) {
-      const quote = requestedQuote;
-      if (quote.trim()) {
-        const quoted = quote
+      if (requestedQuote.trim()) {
+        const quoted = requestedQuote
           .split('\n')
           .map((line) => `> ${line}`)
           .join('\n');
@@ -196,7 +199,7 @@ export function ChatView() {
       // Non-null only when a fresh conversation is on its way.
       skipConversationId: startedNewConversation ? activeConversationId ?? null : null,
     });
-  }, [activeConversationId, searchParams, setComposerDraft, setSearchParams]);
+  }, [activeConversationId, location.state, searchParams, setComposerDraft, setSearchParams]);
 
   useEffect(() => {
     if (!pendingDocumentLink || !activeConversationId) return;

@@ -60,7 +60,10 @@ function Location() {
 
 let queryClient: QueryClient;
 
-const renderView = (url = '/chat') => {
+type Entry = string | { pathname: string; search?: string; state?: unknown };
+const withQuote = (quote: string): Entry => ({ pathname: '/chat', search: '', state: { quote } });
+
+const renderView = (url: Entry = '/chat') => {
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={queryClient}>
       <TooltipProvider>
@@ -182,28 +185,28 @@ describe('ChatView', () => {
     expect(search()).toBe('?tab=x');
   });
 
-  it('quotes ?quote= into the composer, line by line', () => {
-    renderView(`/chat?quote=${encodeURIComponent('The Nile floods\nevery summer')}`);
+  it('quotes a quote in router state into the composer, line by line', () => {
+    renderView(withQuote('The Nile floods\nevery summer'));
     expect(h.store.setComposerDraft).toHaveBeenCalledWith('> The Nile floods\n> every summer\n\n');
     expect(search()).toBe('');
   });
 
-  it('ignores a blank quote and keeps a quote that cannot be decoded again', () => {
-    const { unmount } = renderView('/chat?quote=%20%20');
+  it('ignores a blank quote and keeps a quote with a percent sign', () => {
+    const { unmount } = renderView(withQuote('  '));
     expect(h.store.setComposerDraft).not.toHaveBeenCalled();
     unmount();
-    renderView(`/chat?quote=${encodeURIComponent('Yields rose 100%')}`);
+    renderView(withQuote('Yields rose 100%'));
     expect(h.store.setComposerDraft).toHaveBeenCalledWith('> Yields rose 100%\n\n');
   });
 
   it('quotes a passage containing a percent escape exactly as captured', () => {
     const passage = 'See https://example.org/field%20notes for the survey';
-    renderView(`/chat?quote=${encodeURIComponent(passage)}`);
+    renderView(withQuote(passage));
     expect(h.store.setComposerDraft).toHaveBeenCalledWith(`> ${passage}\n\n`);
   });
 
   it('quotes a long passage whole', () => {
-    renderView(`/chat?quote=${'a'.repeat(2500)}`);
+    renderView(withQuote('a'.repeat(2500)));
     const draft = (h.store.setComposerDraft as ReturnType<typeof vi.fn>).mock.calls[0][0] as string;
     expect(draft).toBe(`> ${'a'.repeat(2500)}\n\n`);
   });

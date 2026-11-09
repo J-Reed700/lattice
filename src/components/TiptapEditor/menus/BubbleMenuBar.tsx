@@ -103,7 +103,7 @@ export function BubbleMenuBar({ editor, selectionActions = [] }: BubbleMenuBarPr
   const handleAsk = useCallback(() => {
     const quote = selectedText();
     if (!quote) return;
-    navigate(`/chat?${new URLSearchParams({ new: '1', quote }).toString()}`);
+    navigate('/chat?new=1', { state: { quote } });
   }, [navigate, selectedText]);
 
   return (

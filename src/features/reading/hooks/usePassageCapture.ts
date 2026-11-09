@@ -86,10 +86,9 @@ export function usePassageCapture({
       const trimmed = captureLocator(text);
       if (!trimmed) return;
       onClose();
-      navigate(
-        `/chat?new=1&documentId=${encodeURIComponent(source.documentId)}` +
-          `&quote=${encodeURIComponent(trimmed)}`
-      );
+      navigate(`/chat?new=1&documentId=${encodeURIComponent(source.documentId)}`, {
+        state: { quote: trimmed },
+      });
     },
     [source, captureLocator, navigate, onClose]
   );
