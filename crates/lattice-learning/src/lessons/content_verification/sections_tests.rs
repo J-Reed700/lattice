@@ -628,6 +628,7 @@ fn mended_section() -> (Value, Taken, Vec<Protected>) {
         unit: 0,
         field: "body".into(),
         quote: "Kept claim.".into(),
+        released: false,
     }];
     (section, taken, protected)
 }

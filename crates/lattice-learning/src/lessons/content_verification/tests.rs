@@ -607,6 +607,9 @@ mod class_checks_tests;
 #[path = "call_ceiling_tests.rs"]
 mod call_ceiling_tests;
 
+#[path = "teaching_release_tests.rs"]
+mod teaching_release_tests;
+
 #[path = "evidence_paging_tests.rs"]
 mod evidence_paging_tests;
 

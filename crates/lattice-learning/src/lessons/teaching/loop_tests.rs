@@ -487,6 +487,7 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
         unit: 0,
         field: "body".into(),
         quote: sentence.into(),
+        released: false,
     }];
     let reviewed = review_material(
         &model,
@@ -516,6 +517,50 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
 }
 
 #[tokio::test]
+async fn a_teaching_finding_on_the_sentence_of_a_machine_claim_with_attempts_left_is_repaired_and_the_change_kept(
+) -> Result<()> {
+    use crate::lessons::content_verification::Protected;
+    const V1: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
+    let body = format!(
+        "{V1} Their inner membrane folds into cristae that enlarge its surface. They carry their own circular DNA, passed down from the mother, and divide on their own whenever the cell needs more energy."
+    );
+    let candidate = json!({"blocks":[{"kind":"explanation","title":"Example","body":body,"rubric":[],"sourceIndex":0,"quote":EXCERPT}],"questions":[]});
+    let finding = || {
+        review(Some(
+            "The first sentence says mitochondria produce most of the ATP, which the section's own example contradicts.",
+        ))
+    };
+    let fix = json!({"edits":[{"path":"/blocks/0/body","before":"produce most of","after":"produce some of"}]}).to_string();
+    let sentence = |released: bool| Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: V1.into(),
+        released,
+    };
+
+    // The claim is the user's, or has no attempts left: held, as before.
+    let held = model(vec![finding(), actionable()]);
+    let outcome = review_protecting(&held, &candidate, &[sentence(false)]).await?;
+    assert_eq!(outcome.set_aside.len(), 1);
+    assert_eq!(
+        held.prompts.lock().unwrap().len(),
+        2,
+        "no repair was asked for"
+    );
+
+    // The machine's claim with attempts left: repaired, and the repair kept.
+    let repaired = model(vec![finding(), actionable(), fix, review(None)]);
+    let outcome = review_protecting(&repaired, &candidate, &[sentence(true)]).await?;
+    assert!(outcome.set_aside.is_empty(), "{:?}", outcome.set_aside);
+    let after: Value = serde_json::from_str(&outcome.candidate)?;
+    assert_eq!(
+        after["blocks"][0]["body"].as_str().unwrap(),
+        body.replace("produce most of", "produce some of")
+    );
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragraph_with_verified_claims(
 ) -> Result<()> {
     // One paragraph, one inventory passage, two verified claims located to
@@ -536,6 +581,7 @@ async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragra
         unit: 0,
         field: "body".into(),
         quote: quote.into(),
+        released: false,
     };
 
     // Held when the claims were located by their passage: it holds the
@@ -578,6 +624,7 @@ async fn a_lesson_whose_sentences_stand_on_checked_claims_is_never_written_again
         unit: 0,
         field: "body".into(),
         quote: sentence.into(),
+        released: false,
     }];
     let model = model(vec![review(None)]);
 
@@ -849,11 +896,13 @@ fn whole_lesson_and_fully_guarded_section_findings_wait_when_claims_are_protecte
             unit: 0,
             field: "body".into(),
             quote: sentence.into(),
+            released: false,
         },
         Protected {
             unit: 0,
             field: "title".into(),
             quote: "Example".into(),
+            released: false,
         },
     ];
     let lesson_finding = ReviewFinding::new(
@@ -897,6 +946,7 @@ fn protect(
         unit,
         field: field.into(),
         quote: quote.into(),
+        released: false,
     }
 }
 
@@ -1025,6 +1075,7 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
         unit: 0,
         field: "body".into(),
         quote: V1.into(),
+        released: false,
     }];
 
     let pass1_review = json!({

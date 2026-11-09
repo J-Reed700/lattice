@@ -148,6 +148,7 @@ fn targets_of(
                             unit,
                             field: field.clone(),
                             quote: passage.to_owned(),
+                            released: false,
                         });
                     }
                 }
@@ -172,6 +173,7 @@ fn targets_of(
                                 unit,
                                 field: field.clone(),
                                 quote: sentence.to_owned(),
+                                released: false,
                             });
                         }
                     }

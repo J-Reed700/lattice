@@ -6,6 +6,7 @@ fn sentence(field: &str, quote: &str) -> Protected {
         unit: 0,
         field: field.into(),
         quote: quote.into(),
+        released: false,
     }
 }
 
