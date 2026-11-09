@@ -18,6 +18,11 @@ describe('AssistanceLedger', () => {
     expect(screen.getByText(/alongside the help used/)).toBeVisible();
   });
 
+  it('calls an opened source a saved one', () => {
+    render(<AssistanceLedger events={[event({ kind: 'source_opened' })]} />);
+    expect(screen.getByText('Opened a saved source')).toBeVisible();
+  });
+
   it('says what an empty ledger will list', () => {
     render(<AssistanceLedger events={[]} />);
     expect(screen.getByText(/help changes/)).toBeVisible();

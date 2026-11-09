@@ -13,6 +13,9 @@ const mocks = vi.hoisted(() => ({
   save: vi.fn(),
   tutor: vi.fn(),
   mode: vi.fn(),
+  openSource: vi.fn(),
+  reveal: vi.fn(),
+  submit: vi.fn(),
 }));
 
 vi.mock('@/lib/api', async (importOriginal) => ({
@@ -23,6 +26,9 @@ vi.mock('@/lib/api', async (importOriginal) => ({
     saveLearningPracticeArtifact: mocks.save,
     requestLearningTutorResponse: mocks.tutor,
     changeLearningPracticeMode: mocks.mode,
+    openLearningPracticeSource: mocks.openSource,
+    revealLearningPracticeSolution: mocks.reveal,
+    submitLearningPracticeAttempt: mocks.submit,
   },
 }));
 
@@ -62,6 +68,7 @@ describe('usePracticeSession', () => {
     } as unknown as Wire.LearningPracticeSessionDto;
     mocks.getWorkspace.mockImplementation(async () => ok({ programId: 'program-1', sessions: [summary] }));
     mocks.getSession.mockImplementation(async () => ok(session));
+    for (const call of [mocks.mode, mocks.openSource, mocks.reveal, mocks.submit, mocks.tutor]) call.mockImplementation(async () => ok({ programId: 'program-1', sessions: [summary] }));
     mocks.save.mockImplementation(async (request: { text: string }) => {
       session.artifact.text = request.text;
       summary.revision += 1;
@@ -177,6 +184,111 @@ describe('usePracticeSession', () => {
       await result.current.switchMode('practice');
     });
     expect(result.current.conflict).toBe(true);
+    expect(result.current.failure).toMatchObject({ kind: 'changing_mode', message: 'Stale.' });
     expect(result.current.failure?.retry).toBeUndefined();
+  });
+
+  it('clears the conflict and the failure once the attempt is reloaded', async () => {
+    mocks.mode.mockRejectedValueOnce(conflictError('Stale.'));
+    const { result } = setup();
+    await ready(result);
+    await act(async () => {
+      await result.current.switchMode('practice');
+    });
+    await act(async () => {
+      await result.current.reloadAttempt();
+    });
+    expect(result.current.conflict).toBe(false);
+    expect(result.current.failure).toBeNull();
+  });
+
+  it('keeps the opened source selected when the open succeeds on Try again', async () => {
+    mocks.openSource.mockRejectedValueOnce(new Error('Could not open it.'));
+    const { result } = setup();
+    await ready(result);
+    await act(async () => {
+      await result.current.doOpenSource({ id: 'source-1' } as Wire.LearningSourceLibraryItemDto, 'version-1');
+    });
+    expect(result.current.selectedSource).toBeNull();
+    await act(async () => {
+      result.current.failure?.retry?.();
+    });
+    await waitFor(() => expect(result.current.selectedSource).toEqual({ sourceId: 'source-1', versionId: 'version-1' }));
+  });
+
+  it('closes the reveal confirmation when the reveal succeeds on Try again', async () => {
+    mocks.reveal.mockRejectedValueOnce(new Error('Could not reveal it.'));
+    const { result } = setup();
+    await ready(result);
+    act(() => result.current.setSolutionConfirm(true));
+    await act(async () => {
+      await result.current.doReveal();
+    });
+    expect(result.current.solutionConfirm).toBe(true);
+    await act(async () => {
+      result.current.failure?.retry?.();
+    });
+    await waitFor(() => expect(result.current.solutionConfirm).toBe(false));
+  });
+
+  it('takes the chosen help when the change succeeds on Try again', async () => {
+    mocks.mode.mockRejectedValueOnce(new Error('Could not change it.'));
+    const { result } = setup();
+    await ready(result);
+    await act(async () => {
+      await result.current.switchMode('practice');
+    });
+    expect(result.current.modeChoice).toBe('explore');
+    await act(async () => {
+      result.current.failure?.retry?.();
+    });
+    await waitFor(() => expect(result.current.modeChoice).toBe('practice'));
+  });
+
+  it('marks a hint used when the request succeeds on Try again', async () => {
+    mocks.tutor.mockRejectedValueOnce(new Error('The tutor could not answer.'));
+    const { result } = setup();
+    await ready(result);
+    await act(async () => {
+      await result.current.sendTutor('hint', 'Give me a hint', 'orienting_question');
+    });
+    expect(result.current.hintUsed).toEqual([]);
+    await act(async () => {
+      result.current.failure?.retry?.();
+    });
+    await waitFor(() => expect(result.current.hintUsed).toEqual(['orienting_question']));
+  });
+
+  it('labels what it is doing in the learner words', async () => {
+    let finishMode!: () => void;
+    mocks.mode.mockImplementationOnce(() => new Promise((resolve) => {
+      finishMode = () => resolve(ok({ programId: 'program-1', sessions: [summary] }));
+    }));
+    const { result } = setup();
+    await ready(result);
+    let changing!: Promise<void>;
+    act(() => {
+      changing = result.current.switchMode('practice');
+    });
+    await waitFor(() => expect(result.current.busyLabel).toBe('Changing help…'));
+    await act(async () => {
+      finishMode();
+      await changing;
+    });
+
+    let finishSubmit!: () => void;
+    mocks.submit.mockImplementationOnce(() => new Promise((resolve) => {
+      finishSubmit = () => resolve(ok({ programId: 'program-1', sessions: [summary] }));
+    }));
+    act(() => result.current.setText('A response.'));
+    let submitting!: Promise<void>;
+    act(() => {
+      submitting = result.current.doSubmit('A response.');
+    });
+    await waitFor(() => expect(result.current.busyLabel).toBe('Submitting response…'));
+    await act(async () => {
+      finishSubmit();
+      await submitting;
+    });
   });
 });

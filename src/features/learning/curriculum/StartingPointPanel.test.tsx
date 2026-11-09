@@ -26,7 +26,7 @@ describe('starting-point performance tasks', () => {
     mocks.plan.mockImplementation(async () => ok({ latestDiagnostic: attempt, acceptedRevision: { modules: [{ outcomeIds: ['outcome'], lessons: [{ id: 'lesson' }] }] } }));
     mocks.submit.mockImplementation(async (request: SubmitLearningDiagnosticRequestDto) => {
       if (responses.has(request.operationId)) return ok(responses.get(request.operationId)!);
-      if (request.expectedDiagnosticRevision !== attempt.revision) return { ok: false, error: Object.assign(new Error('The starting-point answers changed elsewhere. Reload before saving.'), { details: { code: 'CONFLICT' } }) };
+      if (request.expectedDiagnosticRevision !== attempt.revision) return { ok: false, error: 'The starting-point answers changed elsewhere. Reload before saving.', details: { code: 'CONFLICT', message: 'The starting-point answers changed elsewhere. Reload before saving.' } };
       attempt.responses = request.responses; attempt.revision = (attempt.revision ?? 0) + 1;
       if (!request.saveOnly) { attempt.status = 'submitted'; attempt.findings = [{ promptId: 'prompt', outcomeId: 'outcome', signal: 'needs_practice', feedback: 'Track the accumulator after each iteration and check the empty list.', evidenceQuote: 'The result' }]; }
       responses.set(request.operationId, structuredClone(attempt));
@@ -71,7 +71,7 @@ describe('starting-point performance tasks', () => {
 
   it('treats an autosave failure as a conflict by its code', async () => {
     const user = userEvent.setup();
-    mocks.submit.mockImplementationOnce(async () => ({ ok: false, error: Object.assign(new Error('Stale.'), { details: { code: 'CONFLICT' } }) }));
+    mocks.submit.mockImplementationOnce(async () => ({ ok: false, error: 'Stale.', details: { code: 'CONFLICT', message: 'Stale.' } }));
     show();
     await user.type(await screen.findByRole('textbox', { name: 'Your reasoning' }), 'The result depends on the values.');
     expect(await screen.findByRole('button', { name: 'Keep my answers and retry' })).toBeVisible();
@@ -79,7 +79,7 @@ describe('starting-point performance tasks', () => {
 
   it('does not treat a message that merely says the answers changed as a conflict', async () => {
     const user = userEvent.setup();
-    mocks.submit.mockImplementationOnce(async () => ({ ok: false, error: new Error('The answers changed elsewhere; reload and check the revision.') }));
+    mocks.submit.mockImplementationOnce(async () => ({ ok: false, error: 'The answers changed elsewhere; reload and check the revision.' }));
     show();
     await user.type(await screen.findByRole('textbox', { name: 'Your reasoning' }), 'The result depends on the values.');
     expect(await screen.findByRole('button', { name: 'Retry with my saved answers' })).toBeVisible();
