@@ -169,6 +169,14 @@ describe('DrillReveal, a graded review', () => {
       expect(within(row('Magic number')).getByText('Missed')).toBeInTheDocument();
     });
 
+    it('gives no points for an issue: its row is the word and nothing numbered', () => {
+      setup();
+      const outcomes = region('How each issue went');
+      for (const row of within(outcomes).getAllByRole('listitem')) {
+        expect(row.textContent).not.toMatch(/\d+\s*(of|\/)\s*\d+/);
+      }
+    });
+
     it('no longer puts the outcome badge on the issue card', () => {
       setup();
       for (const name of ['Wrong operator or comparison', 'Stale state', 'Magic number']) {

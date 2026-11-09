@@ -1007,6 +1007,22 @@ async fn an_issue_a_blind_review_raised_is_revealed_as_also_valid_and_a_planted_
 }
 
 #[tokio::test]
+async fn the_learner_is_told_how_many_issues_were_planted_and_not_how_many_were_found_in_review() -> Result<()> {
+    let waiting = Waiting::new(vec![operator_finding()], None).await?;
+    let (_, mut stored) = attempts::get(&waiting.pool, &waiting.attempt).await?;
+    let planted = stored.drill.key[0].clone();
+    let mut found = planted.clone();
+    found.origin = Origin::FoundInReview;
+    stored.drill.key = vec![planted.clone(), planted.clone(), planted, found];
+
+    let shown = reveal::learner_drill(&stored);
+    assert_eq!(shown.issues, 3);
+    let json = serde_json::to_value(&shown).expect("a DTO is JSON");
+    assert_eq!(json["issues"], 3);
+    Ok(())
+}
+
+#[tokio::test]
 async fn ratings_are_revealed_as_stored_whatever_their_number_against_the_key() -> Result<()> {
     let waiting = Waiting::new(vec![operator_finding(), extra_finding()], None).await?;
     let model = ScriptedModel::new(Vec::<String>::new());
