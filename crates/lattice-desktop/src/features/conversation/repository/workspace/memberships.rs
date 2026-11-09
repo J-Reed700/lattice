@@ -63,10 +63,17 @@ impl ConversationRepository {
     ) -> Result<ConversationSpaceMemberDto, AppError> {
         let role = validate_space_role(&request.role)?;
 
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
+            AppError::Database(format!(
+                "Failed to begin transaction while upserting space member: {}",
+                e
+            ))
+        })?;
+
         let space_exists: i64 =
             sqlx::query_scalar("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
                 .bind(&request.space_id)
-                .fetch_one(&self.pool)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| {
                     AppError::Database(format!(
@@ -86,13 +93,6 @@ impl ConversationRepository {
             .display_name
             .clone()
             .unwrap_or_else(|| request.member_id.clone());
-
-        let mut tx = self.pool.begin_write().await.map_err(|e| {
-            AppError::Database(format!(
-                "Failed to begin transaction while upserting space member: {}",
-                e
-            ))
-        })?;
 
         sqlx::query(
             r#"

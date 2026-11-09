@@ -328,7 +328,12 @@ impl ConversationRepository {
             ));
         }
 
-        ensure_journal_space(&self.pool, journal_space_id).await?;
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut *tx, journal_space_id).await?;
 
         sqlx::query(
             r#"
@@ -338,11 +343,15 @@ impl ConversationRepository {
         )
         .bind(journal_space_id)
         .bind(conversation_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to remove conversation from journal: {}", e))
         })?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),
@@ -362,7 +371,12 @@ impl ConversationRepository {
                 "journalSpaceId and conversationId are required".to_string(),
             ));
         }
-        ensure_journal_space(&self.pool, journal_space_id).await?;
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_journal_space(&mut *tx, journal_space_id).await?;
 
         let result = sqlx::query(
             "UPDATE journal_conversation_entries
@@ -373,7 +387,7 @@ impl ConversationRepository {
         .bind(lattice_core::shared::persistence::timestamps::now_db_timestamp())
         .bind(journal_space_id)
         .bind(conversation_id)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to pin journal entry: {}", e)))?;
         if result.rows_affected() == 0 {
@@ -382,6 +396,9 @@ impl ConversationRepository {
                 conversation_id, journal_space_id
             )));
         }
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
         Ok(())
     }
 

@@ -38,13 +38,13 @@ fn validate_space_preferences_not_journal(
 }
 
 pub(super) async fn ensure_standard_space(
-    pool: &SqlitePool,
+    executor: impl sqlx::Executor<'_, Database = Sqlite>,
     space_id: &str,
 ) -> Result<(), AppError> {
     let exists =
         sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversation_spaces WHERE id = ?")
             .bind(space_id)
-            .fetch_one(pool)
+            .fetch_one(executor)
             .await
             .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
 
@@ -191,13 +191,12 @@ impl ConversationRepository {
         &self,
         request: MoveConversationToSpaceRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
-        ensure_standard_space(&self.pool, &request.space_id).await?;
-
         let mut tx = self
             .pool
             .begin_write()
             .await
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+        ensure_standard_space(&mut *tx, &request.space_id).await?;
 
         let _current_space_id = sqlx::query_scalar::<_, String>(
             "SELECT space_id FROM conversations WHERE id = ? LIMIT 1",
