@@ -286,6 +286,7 @@ impl LearningCurriculumRepository {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::seed_on(&mut tx, program_id).await?;
         let plan = Self::plan_on(&mut tx, program_id).await?;
+        tx.commit().await.map_err(db)?;
         Ok(plan)
     }
 
@@ -361,7 +362,6 @@ impl LearningCurriculumRepository {
         let diagnostic = sqlx::query("SELECT * FROM learning_diagnostic_attempts WHERE program_id=? ORDER BY created_at DESC,id DESC LIMIT 1")
             .bind(program_id).fetch_optional(&mut *conn).await.map_err(db)?
             .map(|r| decode_diagnostic_row(&r)).transpose()?;
-        tx.commit().await.map_err(db)?;
         Ok(LearningPlanDto {
             program_id: program_id.into(),
             program_revision,
