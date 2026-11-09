@@ -140,7 +140,9 @@ async fn a_lesson_job_writes_from_the_entry_the_learner_edited() {
     let planner = PlansThenStops {
         tasks: Mutex::new(Vec::new()),
     };
-    ensure(&pool, &planner, &program, revision).await.unwrap();
+    ensure(&pool, &planner, &program, revision, &Default::default())
+        .await
+        .unwrap();
     edit_entry(
         &pool,
         EditCoursePlanEntryRequestDto {

@@ -6,7 +6,11 @@
 //! the teaching repair is given it, and what the repairs cannot settle waits
 //! for the user. It never stops the lesson from publishing.
 use super::{normalize, validate_text};
-use crate::content_verification::{figures, names_a_source, needs_citation, Givens, CITED_KINDS};
+use crate::assessment_engine::{distinct_options, key_fault, KeyFault};
+use crate::content_verification::{
+    figures, names_a_source, needs_citation, quoted_wording, Givens, CITED_KINDS,
+};
+use crate::lessons::repeats;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -163,10 +167,7 @@ fn specifics(sentence: &str, givens: &Givens) -> Vec<String> {
     let own = figures(sentence)
         .filter(|figure| !givens.holds(figure))
         .map(str::to_owned);
-    let quoted = lazy_regex::regex!(r#"['"‘’“”]([^'"‘’“”]{12,})['"‘’“”]"#)
-        .captures_iter(sentence)
-        .filter_map(|captures| captures.get(1))
-        .map(|found| found.as_str().to_owned());
+    let quoted = quoted_wording(sentence).map(str::to_owned);
     own.chain(quoted).collect()
 }
 
@@ -220,7 +221,12 @@ fn uncited_specifics(
         let (summary, note, quote) = if quotes.is_empty() {
             let summary =
                 format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
-            let note = format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.");
+            let unquoted = if quoted_wording(&sentence).next().is_some() {
+                " When the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence instead."
+            } else {
+                ""
+            };
+            let note = format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.{unquoted}");
             (summary, note, "")
         } else {
             let (missing, quote) = quotes
@@ -345,6 +351,24 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
             titles.insert(normalize(title), index);
         }
     }
+    let mut seen = HashSet::new();
+    for (index, block) in blocks.iter().enumerate() {
+        let mut reported = HashSet::new();
+        for sentence in repeats::comparable(text(block, "body")) {
+            let key = repeats::key(&sentence);
+            if !seen.insert(key.clone()) && reported.insert(key) {
+                findings.push(
+                    ReviewFinding::new(
+                        FindingKind::Teaching,
+                        Some(FindingSite::Section(index)),
+                        format!("Section {} (candidate blocks-{index}) says \"{sentence}\" when the lesson has said it already; say it once, in the section it belongs to, and take it out or reword it here.", index + 1),
+                    )
+                    .with_summary(format!("Section {} repeats a sentence the lesson already has: \u{201c}{sentence}\u{201d}", index + 1))
+                    .with_passage(&sentence),
+                );
+            }
+        }
+    }
     let kinds = |items: &[Value], kind: &str| {
         items
             .iter()
@@ -460,17 +484,34 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
                     .collect()
             })
             .unwrap_or_default();
-        let mut choices = HashSet::new();
+        let choice_texts: Vec<String> = options.iter().map(|o| (*o).to_owned()).collect();
+        let right = question
+            .get("correctIndex")
+            .and_then(Value::as_u64)
+            .and_then(|right| usize::try_from(right).ok());
         if options.len() != 4
-            || options
-                .iter()
-                .any(|option| !validate_text(option) || !choices.insert(normalize(option)))
+            || options.iter().any(|option| !validate_text(option))
+            || !distinct_options(&choice_texts)
         {
             findings.push(structure(
                 site,
                 format!("{label} needs four distinct answer choices."),
                 format!("{label} needs four distinct answer choices."),
             ));
+        } else if let Some(fault) = right.and_then(|right| key_fault(prompt, &choice_texts, right))
+        {
+            findings.push(match fault {
+                KeyFault::LengthBiased => structure(
+                    site,
+                    format!("{label}'s right choice stands out as the longest."),
+                    format!("{label}'s right choice is much longer than the others; the four choices must be close in length. Shorten the right choice, or make the wrong choices as specific."),
+                ),
+                KeyFault::GivesAway => structure(
+                    site,
+                    format!("{label}'s prompt gives away its answer."),
+                    format!("{label}'s right choice repeats the prompt's words, so the prompt gives the answer away; reword the prompt or the right choice."),
+                ),
+            });
         }
         let reasons = reasons(question);
         if reasons.len() != options.len() {
@@ -480,10 +521,6 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
                 format!("{label} needs one entry in rationales for each answer choice, in the order of the choices: empty for the right choice, and for each wrong choice the misconception it reflects and why it fails."),
             ));
         } else {
-            let right = question
-                .get("correctIndex")
-                .and_then(Value::as_u64)
-                .and_then(|right| usize::try_from(right).ok());
             let lacking: Vec<String> = reasons
                 .iter()
                 .enumerate()

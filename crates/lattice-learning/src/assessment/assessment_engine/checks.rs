@@ -1,5 +1,5 @@
 //! What a bank item must satisfy before any form may use it (section 5.2).
-use super::answers::whole_words;
+use super::answers::{folded, whole_words};
 use super::*;
 
 /// The leak check (section 5.2): the key's own text in the stem. Comparison
@@ -74,9 +74,62 @@ pub fn cloze_blanks(prompt: &str) -> Vec<usize> {
     found
 }
 
-fn distinct_options(options: &[String]) -> bool {
-    let normalized: HashSet<String> = options.iter().map(|o| normalize_answer(o)).collect();
-    normalized.len() == options.len() && !normalized.iter().any(String::is_empty)
+fn comparable(option: &str) -> String {
+    let folded: String = folded(option)
+        .chars()
+        .map(|c| match c {
+            '\u{2018}' | '\u{2019}' => '\'',
+            '\u{201C}' | '\u{201D}' => '"',
+            '\u{2010}'..='\u{2015}' | '\u{2212}' => '-',
+            other => other,
+        })
+        .collect();
+    let words = folded.split_whitespace().collect::<Vec<_>>().join(" ");
+    words
+        .strip_suffix('.')
+        .unwrap_or(&words)
+        .trim_end()
+        .to_owned()
+}
+
+/// Two choices are the same only when a reader could not tell them apart:
+/// case, typography, spacing and a closing full stop do not count; path
+/// punctuation does.
+pub fn distinct_options(options: &[String]) -> bool {
+    let compared: HashSet<String> = options.iter().map(|o| comparable(o)).collect();
+    compared.len() == options.len() && options.iter().all(|o| !o.trim().is_empty())
+}
+
+/// What is wrong with a single-choice item's key beyond its choices.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyFault {
+    GivesAway,
+    LengthBiased,
+}
+
+impl KeyFault {
+    pub fn message(self) -> &'static str {
+        match self {
+            Self::GivesAway => "The question's stem gives away its answer.",
+            Self::LengthBiased => "The correct option stands out as much the longest.",
+        }
+    }
+}
+
+pub fn key_fault(prompt: &str, options: &[String], key: usize) -> Option<KeyFault> {
+    let others: Vec<String> = options
+        .iter()
+        .enumerate()
+        .filter(|(i, _)| *i != key)
+        .map(|(_, o)| o.clone())
+        .collect();
+    if options
+        .get(key)
+        .is_some_and(|k| key_leaks(prompt, k, &others))
+    {
+        return Some(KeyFault::GivesAway);
+    }
+    (options.len() >= 3 && length_biased(options, key)).then_some(KeyFault::LengthBiased)
 }
 
 fn text_key_valid(key: &LearningTextKey) -> bool {
@@ -140,24 +193,8 @@ pub fn validate_candidate(candidate: &LearningAssessmentCandidate) -> Result<()>
             if !distinct_options(&candidate.options) || !no_left {
                 return Err(invalid("Choice options must be unique and non-empty."));
             }
-            let others: Vec<String> = candidate
-                .options
-                .iter()
-                .enumerate()
-                .filter(|(i, _)| i != key)
-                .map(|(_, o)| o.clone())
-                .collect();
-            if candidate
-                .options
-                .get(*key)
-                .is_some_and(|k| key_leaks(&candidate.prompt, k, &others))
-            {
-                return Err(invalid("The question's stem gives away its answer."));
-            }
-            if candidate.options.len() >= 3 && length_biased(&candidate.options, *key) {
-                return Err(invalid(
-                    "The correct option stands out as much the longest.",
-                ));
+            if let Some(fault) = key_fault(&candidate.prompt, &candidate.options, *key) {
+                return Err(invalid(fault.message()));
             }
         }
         (LearningItemFormat::TrueFalse, LearningAssessmentKey::Choice(key)) => {

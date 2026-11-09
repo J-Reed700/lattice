@@ -6,13 +6,14 @@ pub mod content_verification;
 #[cfg(test)]
 pub(crate) mod course_generation_tests;
 pub mod course_plan;
-pub(crate) mod course_setup;
+pub mod course_setup;
 pub mod generation;
 pub mod generation_jobs;
 pub mod lesson_drafts;
 pub mod lesson_evidence;
 pub(crate) mod lesson_progress;
 pub mod reference_collection;
+pub(crate) mod repeats;
 pub mod review_evidence;
 pub mod review_findings;
 pub(crate) mod structured_call;

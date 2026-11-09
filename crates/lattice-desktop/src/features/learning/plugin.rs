@@ -157,10 +157,16 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // then starts delivering saved work. A kind that fails to register
             // is retried in the background and never fails setup.
             let (bank_worker, grading_worker) = quiz_workers(&container);
+            // One lock per course for every planner of it.
+            let course_setups = super::course_setup::CourseSetups::default();
             let mut kinds = vec![
                 JobKindRegistration {
                     kind: super::curriculum_repository::LESSON_PREPARATION.into(),
-                    handler: std::sync::Arc::new(generation_worker(&container, runtimes.clone())),
+                    handler: std::sync::Arc::new(generation_worker(
+                        &container,
+                        runtimes.clone(),
+                        course_setups.clone(),
+                    )),
                     config: super::curriculum_repository::lesson_job_config(),
                 },
                 // Quiz banks and grading resume or settle the same way.
@@ -180,6 +186,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                     handler: std::sync::Arc::new(super::course_plan::CoursePlanWorker {
                         pool: container.db_pool().clone(),
                         load_llm: course_plan_model(&container),
+                        course_setups,
                     }),
                     config: super::course_plan::course_plan_job_config(),
                 },

@@ -338,6 +338,7 @@ impl LessonGenerationWorker {
                         llm.as_ref(),
                         &program,
                         outline_revision,
+                        &self.course_setups,
                     )
                     .await?;
                     // Before every lesson it prepares, so references captured
@@ -498,13 +499,12 @@ mod repository_tests {
     };
     use lattice_core::shared::runtime::jobs::{JobRuntime, JobStore, RecoveryPolicy};
 
-    /// Model use is the inference scheduler's to limit; the runtime's per-subject
-    /// lock keeps two preparations of one course off the same sources and
-    /// snapshot.
+    /// Model use is the inference scheduler's to limit; the course's setup lock
+    /// keeps the lessons of one course off the same sources and snapshot.
     #[test]
-    fn lesson_jobs_run_one_per_course_and_resume_after_a_restart() {
+    fn lesson_jobs_run_side_by_side_and_resume_after_a_restart() {
         let config = lesson_job_config();
-        assert!(config.exclusive_per_subject);
+        assert!(!config.exclusive_per_subject);
         assert_eq!(config.recovery, RecoveryPolicy::Requeue);
         assert_eq!(config.concurrency, tokio::sync::Semaphore::MAX_PERMITS);
     }
@@ -728,3 +728,7 @@ pub(crate) mod overlap_tests;
 #[cfg(test)]
 #[path = "generation_setup_tests.rs"]
 mod setup_tests;
+
+#[cfg(test)]
+#[path = "generation_side_by_side_tests.rs"]
+mod side_by_side_tests;

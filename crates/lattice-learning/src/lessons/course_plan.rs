@@ -6,6 +6,7 @@
 //! The plan carries no claims: ideas, terms and actions are topics, and truth
 //! stays with the lesson's own verification.
 
+use super::course_setup::CourseSetups;
 use super::generation::parse_json;
 use super::structured_call::complete_checked_request;
 use crate::dto::{LearningBlockKind, LearningLessonDto, LearningProgramDto};
@@ -103,16 +104,22 @@ pub(crate) async fn outline_revision(pool: &SqlitePool, program_id: &str) -> Res
 }
 
 /// The plan for `program` at `outline_revision`: read when it is saved, made
-/// by one model call when it is not. It holds no lock: callers that must not
-/// plan twice serialize their calls. Two calls that overlap each save every
-/// entry in one transaction, the first to commit wins, and both return what
-/// was saved.
+/// by one model call when it is not. Callers that share `setups` plan once:
+/// the missing plan is made inside the course's lock, after reading again.
+/// Callers that do not share it may each ask the model, but every save is one
+/// transaction, the first to commit wins, and all return what was saved. The
+/// lock is not reentrant: never call this while holding the course's setup.
 pub async fn ensure(
     pool: &SqlitePool,
     llm: &dyn LLMPort,
     program: &LearningProgramDto,
     outline_revision: i64,
+    setups: &CourseSetups,
 ) -> Result<CoursePlan> {
+    if let Some(plan) = stored(pool, program, outline_revision).await? {
+        return Ok(plan);
+    }
+    let _planning = setups.enter(&program.summary.id).await;
     if let Some(plan) = stored(pool, program, outline_revision).await? {
         return Ok(plan);
     }

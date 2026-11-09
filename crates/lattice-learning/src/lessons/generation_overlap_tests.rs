@@ -122,7 +122,8 @@ pub(crate) async fn plan_course(
         .get(program_id)
         .await?;
     let revision = crate::lessons::course_plan::outline_revision(pool, program_id).await?;
-    crate::lessons::course_plan::ensure(pool, planner, &program, revision).await?;
+    crate::lessons::course_plan::ensure(pool, planner, &program, revision, &Default::default())
+        .await?;
     Ok(program)
 }
 
@@ -589,22 +590,20 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
             progress_total: 1,
         })
         .await?;
-    let rank_at_load = Arc::new(Mutex::new(None));
-    let entered = Arc::new(tokio::sync::Notify::new());
+    let loads = Arc::new(tokio::sync::watch::channel(Vec::<Option<i64>>::new()).0);
+    let mut seen = loads.subscribe();
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
         pool: pool.clone(),
         load_llm: {
-            let (rank_at_load, entered) = (rank_at_load.clone(), entered.clone());
+            let loads = loads.clone();
             Arc::new(move || {
-                let (rank_at_load, entered) = (rank_at_load.clone(), entered.clone());
+                let loads = loads.clone();
                 Box::pin(async move {
-                    *rank_at_load.lock().unwrap() = Some(
-                        lattice_core::shared::runtime::jobs::current_rank()
-                            .map(|ticket| ticket.rank()),
-                    );
-                    entered.notify_one();
+                    let rank = lattice_core::shared::runtime::jobs::current_rank()
+                        .map(|ticket| ticket.rank());
+                    loads.send_modify(|seen| seen.push(rank));
                     std::future::pending().await
                 })
             })
@@ -619,11 +618,15 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
         .register(LESSON_PREPARATION, Arc::new(worker), lesson_job_config())
         .await?;
     runtime.dispatch(&third.id);
-    tokio::time::timeout(std::time::Duration::from_secs(10), entered.notified())
-        .await
-        .unwrap();
+    tokio::time::timeout(
+        std::time::Duration::from_secs(10),
+        seen.wait_for(|seen| seen.contains(&Some(2))),
+    )
+    .await
+    .unwrap()
+    .unwrap();
     runtime.close();
     runtime.drain().await;
-    assert_eq!(*rank_at_load.lock().unwrap(), Some(Some(2)));
+    assert!(!loads.borrow().contains(&None));
     Ok(())
 }
