@@ -60,7 +60,20 @@ describe('history', () => {
   });
 
   it('opens a written attempt on its own session and lesson', () => {
-    const attempt = { id: 'sess-9', lessonId: 'lesson-4', lessonTitle: 'Graphs', status: 'draft', mode: 'practice', updatedAt: 10, submittedAt: null } as Wire.LearningPracticeSessionSummaryDto;
+    const attempt: Wire.LearningPracticeSessionSummaryDto = {
+      id: 'sess-9',
+      lessonId: 'lesson-4',
+      lessonTitle: 'Graphs',
+      status: 'active',
+      mode: 'practice',
+      revision: 1,
+      artifactRevision: 1,
+      sourceVersionIds: [],
+      createdAt: 5,
+      updatedAt: 10,
+      submittedAt: null,
+      gradeStatus: null,
+    };
     const [entry] = buildHistory({ ...empty, attempts: [attempt] });
     expect(entry?.target).toEqual({ kind: 'attempt', sessionId: 'sess-9', lessonId: 'lesson-4', mode: 'practice' });
   });

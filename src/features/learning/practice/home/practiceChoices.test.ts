@@ -59,8 +59,20 @@ describe('what Start does', () => {
     const action = startAction('code', { difficulty: 'hard', language: 'go', task: 'bug_fix' }, context);
     expect(action).toMatchObject({
       kind: 'coding-build',
-      choice: { lessonId: 'lesson-1', task: 'bug_fix', setting: 'coached', language: 'go', difficulty: 'hard' },
+      choice: { lessonId: 'lesson-1', task: 'bug_fix', setting: 'coached', language: 'python', difficulty: 'hard' },
     });
+  });
+
+  it('builds code in Python whatever the profile or the sentence says', () => {
+    const js = { lessonId: 'lesson-1', profile: profile({ language: 'JavaScript' }) };
+    expect(startAction('code', { task: 'problem' }, js)).toMatchObject({ choice: { language: 'python' } });
+    expect(startAction('code', { task: 'bug_fix', language: 'javascript' }, js)).toMatchObject({ choice: { language: 'python' } });
+  });
+
+  it('builds a live coding round of the Mock card in Python', () => {
+    const js = { lessonId: 'lesson-1', profile: profile({ language: 'JavaScript' }) };
+    expect(startAction('mock', { round: 'live_coding' }, js)).toMatchObject({ kind: 'coding-build', choice: { language: 'python' } });
+    expect(startAction('mock', { round: 'debugging' }, js)).toMatchObject({ kind: 'coding-build', choice: { language: 'python' } });
   });
 
   it('opens a code lab composer for a project', () => {
