@@ -306,6 +306,7 @@ async fn a_lesson_with_no_reference_material_asks_for_it_in_plain_words() {
         &BuiltinRuntimes::for_tests(),
         &program,
         lesson,
+        &CoursePlan::blank(&program),
         &references,
     )
     .await
@@ -327,6 +328,7 @@ fn writer_prompt(program: &LearningProgramDto, lesson: &LearningLessonDto) -> Va
         &outline(1, 1),
         program,
         lesson,
+        &CoursePlan::blank(program),
         &references,
         Vec::new(),
         Vec::new(),
@@ -334,6 +336,49 @@ fn writer_prompt(program: &LearningProgramDto, lesson: &LearningLessonDto) -> Va
     )
     .unwrap();
     serde_json::from_str(&prompt).unwrap()
+}
+
+#[test]
+fn the_writer_is_given_the_course_plan_and_no_recaps() {
+    let program = crate::tests::fixture();
+    let lesson = program.modules[0].lessons[0].clone();
+    let prompt = writer_prompt(&program, &lesson);
+
+    assert!(prompt["courseSequence"]["coursePlan"].is_array());
+    assert!(prompt["courseSequence"].get("recentTeaching").is_none());
+    let whole = prompt.to_string();
+    assert!(!whole.contains("recentTeaching"), "{whole}");
+    assert!(!whole.contains("earlier recaps"), "{whole}");
+}
+
+#[test]
+fn the_writer_teaches_exactly_its_lessons_planned_ideas_and_never_a_later_lessons() {
+    let requirements = writer_requirements();
+
+    assert!(
+        requirements.contains("Teach exactly that lesson's planned ideas, terms and actions"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("Never teach a later lesson's planned ideas"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("an earlier lesson's planned ideas in coursePlan"),
+        "the last check mixes in an earlier lesson's planned ideas"
+    );
+    assert!(
+        requirements.contains("an earlier lesson's planned actions in coursePlan"),
+        "actions an earlier lesson plans are not taught again"
+    );
+    assert!(
+        requirements.contains("the ideas coursePlan lists for earlier lessons"),
+        "recall questions draw on earlier lessons' planned ideas"
+    );
+    assert!(
+        requirements.contains("the next lesson's planned ideas in coursePlan"),
+        "the recap bridges to the next lesson's plan"
+    );
 }
 
 fn writer_requirements() -> String {

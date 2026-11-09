@@ -305,6 +305,9 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 
 /// Shared with course fixtures so they exercise the additional protocol calls.
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
+    if let Some(plan) = crate::lessons::course_plan::fixture_response(prompt) {
+        return Some(plan);
+    }
     if prompt.starts_with("You sort statements extracted from a lesson") {
         // The fixtures' statements are the ones the strict check was written
         // for.

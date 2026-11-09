@@ -326,7 +326,11 @@ pub async fn prepare(
             "Ready lessons are immutable.".into(),
         ));
     }
-    let prepared = super::generation::prepare_lesson(llm, runtimes, &program, lesson).await?;
+    let plan = super::lessons::course_plan::CoursePlan {
+        lessons: Vec::new(),
+    };
+    let prepared =
+        super::generation::prepare_lesson(llm, runtimes, &program, lesson, &plan).await?;
     validate_generated(&prepared, &program)?;
     repo.prepare(
         &request.program_id,

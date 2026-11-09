@@ -13,6 +13,7 @@ use crate::dto::{
     PreparedLearningLesson,
 };
 use crate::embedded_runtime::BuiltinRuntimes;
+use crate::lessons::course_plan::CoursePlan;
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
@@ -84,7 +85,11 @@ struct GeneratedQuestion {
     citations: Vec<GeneratedCitation>,
 }
 
-pub(super) fn course_context(program: &LearningProgramDto, lesson_id: &str) -> serde_json::Value {
+pub(super) fn course_context(
+    program: &LearningProgramDto,
+    lesson_id: &str,
+    _plan: &CoursePlan,
+) -> serde_json::Value {
     // Whole objectives and every earlier recap: the writer's window, measured
     // with this context in its prompt, decides what fits.
     let sequence: Vec<_> = program.modules.iter().map(|m| json!({"title":m.title,"milestone":m.project,"prerequisites":m.prerequisite_module_ids,"outcomes":m.outcomes,"lessons":m.lessons.iter().map(|l|json!({"title":l.title,"objective":l.objective})).collect::<Vec<_>>()})).collect();
@@ -147,6 +152,7 @@ fn lesson_prompt(
     llm: &dyn LLMPort,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
+    plan: &CoursePlan,
     references: &ReferenceCollection<'_>,
     source_data: Vec<serde_json::Value>,
     topics: Vec<serde_json::Value>,
@@ -155,7 +161,7 @@ fn lesson_prompt(
     serde_json::to_string(&json!({
         "task":"Prepare one substantial course lesson with teaching, worked applications, and independent practice",
         "programGoal":program.summary.goal,"priorKnowledge":program.prior_knowledge,
-        "courseSequence":course_context(program, &lesson.id),
+        "courseSequence":course_context(program, &lesson.id, plan),
         "currentModule":program.modules.iter().find(|module| module.lessons.iter().any(|item| item.id == lesson.id)).map(|module| json!({"title":module.title,"outcomes":module.outcomes,"lessonSequence":module.lessons.iter().map(|item| json!({"title":item.title,"objective":item.objective,"current":item.id == lesson.id})).collect::<Vec<_>>()})),
         "lesson":{"title":lesson.title,"objective":lesson.objective,"estimatedMinutes":lesson.estimated_minutes},
         "sources":source_data,
@@ -202,6 +208,7 @@ pub async fn prepare_lesson(
     runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
+    plan: &CoursePlan,
 ) -> Result<PreparedLearningLesson> {
     let references = ReferenceCollection::lexical(&program.sources)?;
     // On the heap, as the lesson job keeps it: in debug builds the whole
@@ -212,6 +219,7 @@ pub async fn prepare_lesson(
         runtimes,
         program,
         lesson,
+        plan,
         &references,
     ))
     .await
@@ -267,6 +275,7 @@ pub async fn prepare_lesson_with_references<'a>(
     runtimes: &BuiltinRuntimes,
     program: &LearningProgramDto,
     lesson: &LearningLessonDto,
+    plan: &CoursePlan,
     references: &ReferenceCollection<'a>,
 ) -> Result<PreparedLearningLesson> {
     if references.sources.is_empty() {
@@ -283,6 +292,7 @@ pub async fn prepare_lesson_with_references<'a>(
         llm,
         program,
         lesson,
+        plan,
         references,
         Vec::new(),
         Vec::new(),
@@ -322,7 +332,16 @@ pub async fn prepare_lesson_with_references<'a>(
             .collect();
         let (room, reserve) = evidence_room(
             llm,
-            &lesson_prompt(llm, program, lesson, references, Vec::new(), unmapped, true)?,
+            &lesson_prompt(
+                llm,
+                program,
+                lesson,
+                plan,
+                references,
+                Vec::new(),
+                unmapped,
+                true,
+            )?,
             output_tokens,
         );
         let mut gathered = evidence::gather(llm, references, &topics, room).await?;
@@ -347,6 +366,7 @@ pub async fn prepare_lesson_with_references<'a>(
                 llm,
                 program,
                 lesson,
+                plan,
                 active,
                 source_data(&sources),
                 map,

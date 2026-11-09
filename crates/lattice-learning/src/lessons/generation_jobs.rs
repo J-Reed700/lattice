@@ -309,6 +309,9 @@ impl LessonGenerationWorker {
                         &self.runtimes,
                         &program,
                         lesson,
+                        &crate::lessons::course_plan::CoursePlan {
+                            lessons: Vec::new(),
+                        },
                         &references,
                     ));
                     let topic = format!("{}: {}", program.summary.goal, lesson.title);
@@ -660,6 +663,10 @@ mod repository_tests {
 #[cfg(test)]
 #[path = "generation_recovery_tests.rs"]
 mod recovery_tests;
+
+#[cfg(test)]
+#[path = "generation_plan_tests.rs"]
+mod plan_tests;
 
 #[cfg(test)]
 #[path = "generation_overlap_tests.rs"]
