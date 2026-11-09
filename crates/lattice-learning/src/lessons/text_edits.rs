@@ -16,7 +16,7 @@ pub(super) const UNQUOTED_REMARKS: &str = "A misconception, a learner's thought,
 
 /// What the teaching repair is told besides [`INSTRUCTIONS`] when a lesson's
 /// parts list the sentences they cite (claim classes design §3.5).
-const CITING: &str = "A sentence that states a figure, a date, a version, a product's behaviour, quoted wording needs a citation. Prefer citing it: when a supplied excerpt states it, append a citation and leave the sentence exactly as it is. A citation names the block or question by path, the sentence copied exactly from its body, explanation or a choice's reason, the sourceIndex of the excerpt that states it, and a quote, an exact span of that excerpt of at least 25 characters and five words, that contains the figure or wording. Write the general form of the sentence instead only when no supplied excerpt states it; generalizing a figure an excerpt states throws away a correct statement. Never cite an excerpt that does not contain what the sentence states. When a citation's quote does not state its sentence, take the citation back by listing its path in uncite; the sentence then either cites a supplied excerpt that states it or is written in its general form.";
+const CITING: &str = "A sentence that states a figure, a date, a version, a product's behaviour or quoted wording needs a citation. Prefer citing it: when a supplied excerpt states it, append a citation and leave the sentence exactly as it is. A citation names the block or question by path, the sentence copied exactly from its body, explanation or a choice's reason, the sourceIndex of the excerpt that states it, and a quote, an exact span of that excerpt of at least 25 characters and five words, that contains the figure or wording. Write the general form of the sentence instead only when no supplied excerpt states it; generalizing a figure an excerpt states throws away a correct statement. Never cite an excerpt that does not contain what the sentence states. When a citation's quote does not state its sentence, take the citation back by listing its path in uncite; the sentence then either cites a supplied excerpt that states it or is written in its general form.";
 
 /// What the claim repair is told besides [`INSTRUCTIONS`] when a lesson's
 /// parts list the sentences they cite: its corrected sentence cites the
@@ -871,6 +871,13 @@ mod tests {
         follows_the_writers_citation_rules(&rewrite_instructions(
             &crate::generation::lesson_schema(2),
         ));
+    }
+
+    #[test]
+    fn the_teaching_repair_says_what_needs_a_citation_in_one_sentence() {
+        let text = instructions(&crate::generation::lesson_schema(2));
+        let sentence = "A sentence that states a figure, a date, a version, a product's behaviour or quoted wording needs a citation.";
+        assert!(text.contains(sentence), "missing {sentence:?} in {text}");
     }
 
     fn parted() -> Value {
