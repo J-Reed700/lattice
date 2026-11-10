@@ -2200,18 +2200,14 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let script = defect_no_repair_fixes();
-    // The reviews of the second run are read from their checkpoints; its three
-    // rechecks of the findings are asked again.
+    // The reviews of the second run are read from their checkpoints; the
+    // evidence check of the first finding is asked again.
     let rest = vec![
         script[0].clone(),
         script[1].clone(),
         script[3].clone(),
-        script[4].clone(),
-        script[6].clone(),
-        script[7].clone(),
+        script[5].clone(),
         script[1].clone(),
-        script[4].clone(),
-        script[7].clone(),
     ];
     let llm = RepairsApart {
         repairs: model(vec![
@@ -2514,7 +2510,6 @@ impl ByRequest {
                 || known.iter().any(|entry| entry["part"] == part.as_str())
         };
         let mut checks = Vec::new();
-        let mut section_defect = false;
         for index in &sections {
             let passages = passages_of(*index);
             let found = passages.iter().find(|(_, text)| (self.defective)(text));
@@ -2523,7 +2518,6 @@ impl ByRequest {
                 .map(|(id, _)| id.clone())
                 .unwrap_or_default();
             let has_defect = found.is_some_and(|(id, _)| self.restates || !covered(*index, id));
-            section_defect |= found.is_some();
             checks.push(json!({
                 "sectionId": format!("section-{index}"),
                 "passageId": id,

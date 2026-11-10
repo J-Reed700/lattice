@@ -260,13 +260,11 @@ fn schema(indices: &[usize], passages: &[Vec<String>], verdict_ids: &[&str]) -> 
     json!({"type":"object","additionalProperties":false,"required":required,"properties":properties})
 }
 
-/// Correct malformed reviewer output once, retaining valid checks and defects.
-/// This does not spend the author's content-repair pass or rerun answer keys.
-/// An unavailable provider propagates immediately; this is not a network retry.
 /// What the reviewer found: its verdict on each finding in `scope.asked`,
 /// and the defects it reports beyond those. A defect of a section's check is
 /// placed in that section; a reviewer's issue is placed later, by the
-/// evidence check.
+/// evidence check. Malformed output is corrected in the same call without
+/// spending the author's repair pass, and an unavailable provider propagates.
 pub async fn review(
     llm: &dyn LLMPort,
     system: &str,

@@ -594,10 +594,11 @@ fn as_the_review_asks(schema: &serde_json::Value, reply: String) -> String {
     if let Some(serde_json::Value::Array(checks)) = fields.get_mut("blockChecks") {
         let sections = listed("/properties/blockChecks/items/properties/sectionId/enum");
         checks.retain(|check| {
-            sections
-                .iter()
-                .flatten()
-                .any(|section| *section == check["sectionId"])
+            !check["sectionId"].is_string()
+                || sections
+                    .iter()
+                    .flatten()
+                    .any(|section| *section == check["sectionId"])
         });
     }
     let defect = fields

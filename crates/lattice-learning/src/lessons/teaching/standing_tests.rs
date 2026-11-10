@@ -75,7 +75,7 @@ fn material_the_reviewer_has_seen_gives_no_round() {
 #[test]
 fn a_changed_section_is_the_only_one_in_the_round_and_its_finding_is_asked_with_its_passage() {
     let candidate = lesson(&[FIRST, SECOND]);
-    let (mut standing, fresh) = reviewed(
+    let (standing, fresh) = reviewed(
         &candidate,
         vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
     );
