@@ -465,7 +465,7 @@ mod tests {
     }
 
     fn proposal(text: &str) -> Vec<ReviewFinding> {
-        vec![ReviewFinding::reviewer(None, text)]
+        vec![ReviewFinding::reviewer(1, None, text)]
     }
 
     /// The check of a first answer, which a broken decision fails.
@@ -737,6 +737,7 @@ mod tests {
         );
         // A finding the section review already placed keeps its section.
         let section = vec![ReviewFinding::reviewer(
+            1,
             Some(FindingSite::Section(4)),
             "Section 5 (candidate blocks-4): a proposed factual correction.",
         )];
@@ -929,6 +930,7 @@ mod tests {
     fn a_finding_that_already_has_a_site_keeps_it_whatever_the_decision_names() -> Result<()> {
         let evidence = parts_evidence();
         let section = vec![ReviewFinding::reviewer(
+            1,
             Some(FindingSite::Section(4)),
             "Section 5 (candidate blocks-4): a proposed factual correction.",
         )];

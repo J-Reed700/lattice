@@ -26,17 +26,19 @@ fn model(replies: Vec<Value>) -> ScriptedModel {
 
 /// The review of the seeded lesson, given `replies` in turn, and the prompts
 /// the model was sent.
-async fn reviewed(replies: Vec<Value>) -> (Result<Vec<ReviewFinding>>, Vec<String>) {
+async fn reviewed(replies: Vec<Value>) -> (Result<Vec<Reported>>, Vec<String>) {
     let model = model(replies);
     let result = review(
         &model,
         "Review instructional quality.",
         json!({}),
         &candidate(),
+        Scope::default(),
         None,
         LengthRule::Fail,
     )
-    .await;
+    .await
+    .map(|judged| judged.reported);
     let prompts = model.prompts.lock().unwrap().clone();
     (result, prompts)
 }
@@ -45,7 +47,7 @@ async fn reviewed(replies: Vec<Value>) -> (Result<Vec<ReviewFinding>>, Vec<Strin
 fn the_schema_is_as_large_for_sixteen_sections_as_for_one() {
     let size = |sections: usize| {
         let indices: Vec<_> = (0..sections).collect();
-        schema(&indices, &passages(sections))
+        schema(&indices, &passages(sections), &[])
     };
     assert_eq!(property_count(&size(1)), property_count(&size(16)));
     let listed = &size(16)["properties"]["blockChecks"]["items"]["properties"]["sectionId"]["enum"];
@@ -54,7 +56,8 @@ fn the_schema_is_as_large_for_sixteen_sections_as_for_one() {
 
 #[test]
 fn the_schema_accepts_one_check_per_section_and_only_known_ids() {
-    let validator = jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages(3))).unwrap();
+    let validator =
+        jsonschema::JSONSchema::compile(&schema(&[0, 1, 2], &passages(3), &[])).unwrap();
     let mut response = reply(vec![check(0), check(1), check(2)]);
     assert!(validator.is_valid(&response));
     response["blockChecks"][0]["sectionId"] = json!("section-9");

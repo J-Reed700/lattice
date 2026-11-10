@@ -32,10 +32,10 @@ fn blocks_in(lesson: &Value) -> usize {
         .map_or(0, Vec::len)
 }
 
-/// The unit index of a finding in the lesson candidate.
-fn unit_of(candidate: &Value, finding: &ReviewFinding) -> Option<usize> {
+/// The unit index of a part of the lesson candidate.
+fn unit_of(candidate: &Value, site: FindingSite) -> Option<usize> {
     let blocks = blocks_in(candidate);
-    match finding.site.unwrap_or(FindingSite::Lesson) {
+    match site {
         FindingSite::Section(section) => Some(section),
         FindingSite::Question(question) => Some(blocks + question),
         FindingSite::Lesson => None,
@@ -57,9 +57,9 @@ fn in_unit(protected: &[Protected], unit: usize) -> Vec<Protected> {
         .collect()
 }
 
-/// Whether a finding's passage overlaps any protected quote in its unit.
-fn overlapping_quote(finding: &ReviewFinding, guarded: &[Protected]) -> bool {
-    finding.passage.as_deref().is_some_and(|passage| {
+/// Whether a passage overlaps any protected quote in its unit.
+fn overlapping_quote(passage: Option<&str>, guarded: &[Protected]) -> bool {
+    passage.is_some_and(|passage| {
         let passage = passage.trim();
         !passage.is_empty()
             && guarded
@@ -76,9 +76,8 @@ pub(super) fn guards(
     passage: &str,
     protected: &[Protected],
 ) -> bool {
-    let finding = ReviewFinding::reviewer(Some(site), "").with_passage(passage);
-    unit_of(candidate, &finding)
-        .is_some_and(|unit| overlapping_quote(&finding, &in_unit(protected, unit)))
+    unit_of(candidate, site)
+        .is_some_and(|unit| overlapping_quote(Some(passage), &in_unit(protected, unit)))
 }
 
 /// The findings about a protected sentence: their passage holds one, or
@@ -97,7 +96,7 @@ pub(super) fn on_protected(
             held.push(finding.id());
             continue;
         }
-        let Some(unit) = unit_of(candidate, finding) else {
+        let Some(unit) = unit_of(candidate, finding.site.unwrap_or(FindingSite::Lesson)) else {
             continue;
         };
         let Some(section) = section_at(candidate, unit) else {
@@ -117,7 +116,7 @@ pub(super) fn on_protected(
         let editable = targets_of(section, (unit, block), &[finding], &fixed)
             .into_iter()
             .any(|target| text_fields.contains(&target.field));
-        if overlapping_quote(finding, &fixed) || !editable {
+        if overlapping_quote(finding.passage.as_deref(), &fixed) || !editable {
             held.push(finding.id());
         }
     }

@@ -553,7 +553,11 @@ impl LLMPort for ScriptedModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let mut replies = Vec::new();
         for prompt in fixture_prompts(request) {
-            replies.push(self.respond(&prompt).await?);
+            let reply = self.respond(&prompt).await?;
+            replies.push(match &request.json_schema {
+                Some(schema) => as_the_review_asks(schema, reply),
+                None => reply,
+            });
         }
         Ok(fixture_completion(request, replies))
     }
@@ -570,6 +574,53 @@ impl LLMPort for ScriptedModel {
         Ok(true)
     }
 }
+/// A scripted teaching-review reply as the request's schema asks it: checks
+/// only for the sections it lists, and, when it asks for a verdict on each
+/// open finding, "present" if the reply reports a defect and "resolved" if it
+/// does not.
+fn as_the_review_asks(schema: &serde_json::Value, reply: String) -> String {
+    let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_str(&reply) else {
+        return reply;
+    };
+    if !fields.contains_key("issues") {
+        return reply;
+    }
+    let listed = |pointer: &str| {
+        schema
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+    };
+    if let Some(serde_json::Value::Array(checks)) = fields.get_mut("blockChecks") {
+        let sections = listed("/properties/blockChecks/items/properties/sectionId/enum");
+        checks.retain(|check| {
+            sections
+                .iter()
+                .flatten()
+                .any(|section| *section == check["sectionId"])
+        });
+    }
+    let defect = fields
+        .get("issues")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|issues| !issues.is_empty())
+        || fields
+            .get("blockChecks")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|checks| checks.iter().any(|check| check["hasDefect"] == true));
+    if let Some(ids) = listed("/properties/openFindings/items/properties/id/enum") {
+        if !fields.contains_key("openFindings") {
+            let verdict = if defect { "present" } else { "resolved" };
+            let entries: Vec<serde_json::Value> = ids
+                .into_iter()
+                .map(|id| serde_json::json!({"id":id,"verdict":verdict,"note":""}))
+                .collect();
+            fields.insert("openFindings".into(), entries.into());
+        }
+    }
+    serde_json::Value::Object(fields).to_string()
+}
+
 impl ScriptedModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
         self.prompts
@@ -825,8 +876,8 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
             .map_err(|_| AppError::InternalError("fixture lock".into()))?;
         assert_eq!(prompts.len(), 3);
         assert!(prompts[1].contains("Correct the comparison"));
-        assert!(prompts[2].contains("originalIssuesToRecheck"));
-        assert!(prompts[2].contains("final publication check"));
+        assert!(prompts[2].contains("openFindings"));
+        assert!(prompts[2].contains("judge the correction"));
         assert!(prompts[2].contains("Correct the comparison"));
     }
     let model = ScriptedModel {
