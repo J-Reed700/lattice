@@ -553,7 +553,7 @@ async fn review_sections(
                             summary,
                             passage: None,
                             passage_id: None,
-                            continues: continued.as_deref().and_then(&continuing),
+                            continues: continued.as_deref().and_then(continuing),
                         });
                     }
                 }
@@ -590,7 +590,7 @@ async fn review_sections(
                     let continued = value
                         .as_object_mut()
                         .and_then(|fields| fields.remove("continues"))
-                        .and_then(|id| id.as_str().and_then(&continuing));
+                        .and_then(|id| id.as_str().and_then(continuing));
                     let section = value
                         .as_object_mut()
                         .and_then(|fields| fields.remove("sectionId"))
