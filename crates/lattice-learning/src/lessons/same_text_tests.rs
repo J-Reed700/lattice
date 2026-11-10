@@ -60,7 +60,7 @@ fn a_whole_sentence_is_held_whatever_its_emphasis_apostrophe_or_case() {
     let text = "It is the tool\u{2019}s name. Then stop.";
     assert!(holds_sentence(text, "It is the **tool's** name."));
     assert!(holds_sentence(text, "THEN STOP."));
-    assert!(holds_sentence(text, "Other words here. then stop."));
+    assert!(holds_sentence(text, "Other words here. THEN stop."));
 }
 
 #[test]
