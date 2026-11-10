@@ -22,8 +22,8 @@ pub(super) struct Reviewed {
 
 /// A second model call critiques the actual candidate, and one targeted
 /// repair is allowed; what the subject does with the rest is its own (a
-/// lesson sends every open finding to a repair, reviews again once a repair
-/// changed it, and publishes only from a pass whose content was reviewed, with
+/// lesson sends every open finding to a repair, has the reviewer judge again
+/// only what a repair changed, and publishes only from a pass whose content was reviewed, with
 /// what is left waiting; other material fails closed).
 /// This is an AI review, not a claim of independent expert verification.
 pub(super) async fn review_material(

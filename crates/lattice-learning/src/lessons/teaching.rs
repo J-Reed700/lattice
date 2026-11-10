@@ -17,6 +17,7 @@ mod protected;
 mod quotes;
 mod repair;
 mod review_loop;
+mod standing;
 mod subject;
 mod waiting;
 use passes::Passes;
@@ -456,6 +457,8 @@ mod contract_tests;
 mod loop_tests;
 #[cfg(test)]
 mod question_tests;
+#[cfg(test)]
+mod standing_tests;
 
 #[cfg(test)]
 mod tests;

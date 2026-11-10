@@ -1986,7 +1986,7 @@ async fn a_batch_with_one_note_that_is_not_one_whole_sentence_changes_nothing_an
 
     let error = note_removal_refused(
         &course,
-        &["rule/quotation/section-0", "reviewer/section-0"],
+        &["rule/quotation/section-0", "reviewer/1"],
         revision,
     )
     .await;
@@ -1995,7 +1995,7 @@ async fn a_batch_with_one_note_that_is_not_one_whole_sentence_changes_nothing_an
     assert!(text.contains(NOT_A_SENTENCE), "{text}");
     assert!(text.contains("Nothing was changed."), "{text}");
 
-    let error = note_removal_refused(&course, &["reviewer/section-0"], revision).await;
+    let error = note_removal_refused(&course, &["reviewer/1"], revision).await;
     let text = error.to_string();
     assert!(text.contains("None of these can be removed"), "{text}");
     assert!(text.contains(NOT_A_SENTENCE), "{text}");
@@ -2099,7 +2099,7 @@ async fn two_notes_in_one_section_go_in_one_call_with_one_revision_and_one_undo_
 
     let removed = remove_notes(
         &course,
-        &["rule/quotation/section-0", "reviewer/section-0"],
+        &["rule/quotation/section-0", "reviewer/1"],
         before.ledger_revision,
     )
     .await?;

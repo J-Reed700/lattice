@@ -11,13 +11,17 @@
 //! is about, never its wording. Findings with one id are one finding; each id
 //! has its own count of repairs. Every repair can leave a new defect with a
 //! new id, so a new finding about words an earlier repair already worked on
-//! starts at that repair's count, and the review still ends.
+//! starts at that repair's count, and the review still ends. A new reviewer
+//! finding with no passage has no words to count, so it starts at the count
+//! of the reviewer's findings with no passage already at its place.
 use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::review_findings::{sentences_of, subject_of, FindingId, Held, ReviewFinding, SetAside};
+use crate::review_findings::{
+    sentences_of, subject_of, FindingId, FindingSite, Held, Origin, ReviewFinding, SetAside,
+};
 
 /// Attempts one finding is given: a first, and one retry that is told what
 /// became of the first. The loop must end on a defect no repair fixes.
@@ -57,6 +61,9 @@ pub(super) struct Passes {
     last: BTreeMap<FindingId, Outcome>,
     /// Sentence digest to the repairs those words have been through.
     worked: BTreeMap<String, u8>,
+    /// For each place, the most repairs a reviewer finding with no passage
+    /// there has been charged.
+    passage_less: BTreeMap<FindingSite, u8>,
     /// The latest pass's findings, one per id.
     latest: Vec<ReviewFinding>,
 }
@@ -67,6 +74,13 @@ struct Kept {
     spent: Vec<(FindingId, u8)>,
     last: Vec<(FindingId, Outcome)>,
     worked: BTreeMap<String, u8>,
+    #[serde(default)]
+    passage_less: Vec<(FindingSite, u8)>,
+}
+
+/// Whether a reviewer's finding has no passage to count the repairs of.
+fn passage_less(finding: &ReviewFinding) -> bool {
+    matches!(finding.origin, Origin::Reviewer { .. }) && finding.passage.is_none()
 }
 
 impl Passes {
@@ -79,8 +93,8 @@ impl Passes {
 
     /// The state that decides stopping, to save with the draft the latest
     /// repair produced.
-    pub fn saved(&self) -> serde_json::Result<String> {
-        serde_json::to_string(&Kept {
+    pub fn saved(&self) -> serde_json::Result<Value> {
+        serde_json::to_value(Kept {
             spent: self
                 .spent
                 .iter()
@@ -92,6 +106,11 @@ impl Passes {
                 .map(|(id, outcome)| (id.clone(), outcome.clone()))
                 .collect(),
             worked: self.worked.clone(),
+            passage_less: self
+                .passage_less
+                .iter()
+                .map(|(site, count)| (*site, *count))
+                .collect(),
         })
     }
 
@@ -102,6 +121,7 @@ impl Passes {
             self.spent = kept.spent.into_iter().collect();
             self.last = kept.last.into_iter().collect();
             self.worked = kept.worked;
+            self.passage_less = kept.passage_less.into_iter().collect();
         }
     }
 
@@ -156,11 +176,15 @@ impl Passes {
             if self.spent.contains_key(&id) {
                 continue;
             }
-            let start = sentences_of(candidate, finding)
+            let mut start = sentences_of(candidate, finding)
                 .iter()
                 .filter_map(|sentence| self.worked.get(&subject_of(sentence)).copied())
                 .max()
                 .unwrap_or_default();
+            if passage_less(finding) {
+                let site = finding.site.unwrap_or(FindingSite::Lesson);
+                start = start.max(self.passage_less.get(&site).copied().unwrap_or_default());
+            }
             if start > 0 {
                 self.spent.insert(id, start);
             }
@@ -182,7 +206,14 @@ impl Passes {
     /// repair is charged to it.
     pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
         let id = finding.id();
-        *self.spent.entry(id.clone()).or_default() += 1;
+        let spent = self.spent.entry(id.clone()).or_default();
+        *spent += 1;
+        if passage_less(finding) {
+            let own = *spent;
+            let site = finding.site.unwrap_or(FindingSite::Lesson);
+            let known = self.passage_less.entry(site).or_default();
+            *known = (*known).max(own);
+        }
         self.last.insert(id, outcome);
     }
 
@@ -234,7 +265,16 @@ mod tests {
     use std::collections::BTreeSet;
 
     fn section(index: usize, note: &str) -> ReviewFinding {
-        ReviewFinding::reviewer(Some(FindingSite::Section(index)), note)
+        ReviewFinding::reviewer(
+            u32::try_from(index).unwrap(),
+            Some(FindingSite::Section(index)),
+            note,
+        )
+    }
+
+    /// A plan finding at section 0: every call is the same finding.
+    fn plan(note: &str) -> ReviewFinding {
+        ReviewFinding::plan(PlanCheck::Used, "an idea", FindingSite::Section(0), note)
     }
 
     /// A finding in section `index` about `words`.
@@ -383,7 +423,7 @@ mod tests {
             &Value::Null,
             vec![section(0, "A"), section(1, "B")],
         );
-        let saved = passes.saved().unwrap();
+        let saved = passes.saved().unwrap().to_string();
         let mut resumed = Passes::default();
         resumed.resume(&saved);
         assert!(!resumed.repairable(&section(0, "")));
@@ -416,12 +456,10 @@ mod tests {
     }
 
     #[test]
-    fn two_notes_about_one_place_are_one_finding() {
+    fn two_notes_with_one_id_are_one_finding() {
         let mut passes = Passes::default();
-        let Next::Repair(send) = passes.next(
-            &Value::Null,
-            vec![section(0, "First."), section(0, "Second.")],
-        ) else {
+        let Next::Repair(send) = passes.next(&Value::Null, vec![plan("First."), plan("Second.")])
+        else {
             panic!("expected a repair");
         };
         assert_eq!(send.len(), 1);
@@ -482,15 +520,15 @@ mod tests {
     }
 
     #[test]
-    fn the_summaries_of_two_notes_about_one_place_stay_together() {
+    fn the_summaries_of_two_notes_with_one_id_stay_together() {
         let mut passes = Passes::default();
         let Next::Repair(send) = passes.next(
             &Value::Null,
             vec![
-                section(0, "First.").with_summary("One problem."),
-                section(0, "Second.").with_summary("Another problem."),
-                section(0, "Third.").with_summary("One problem."),
-                section(0, "Fourth."),
+                plan("First.").with_summary("One problem."),
+                plan("Second.").with_summary("Another problem."),
+                plan("Third.").with_summary("One problem."),
+                plan("Fourth."),
             ],
         ) else {
             panic!("expected a repair");
@@ -503,7 +541,7 @@ mod tests {
     /// note that now stands for more than one has no sentence.
     #[test]
     fn a_merged_note_keeps_its_sentence_only_while_every_note_in_it_is_about_that_sentence() {
-        let about = |sentence: &str| section(0, "A note.").with_sentence(sentence);
+        let about = |sentence: &str| plan("A note.").with_sentence(sentence);
         let merged = |findings: Vec<ReviewFinding>| {
             let mut passes = Passes::default();
             let Next::Repair(send) = passes.next(&Value::Null, findings) else {
@@ -517,8 +555,8 @@ mod tests {
             Some("One.")
         );
         assert_eq!(merged(vec![about("One."), about("Two.")]), None);
-        assert_eq!(merged(vec![about("One."), section(0, "Other.")]), None);
-        assert_eq!(merged(vec![section(0, "Other."), about("One.")]), None);
+        assert_eq!(merged(vec![about("One."), plan("Other.")]), None);
+        assert_eq!(merged(vec![plan("Other."), about("One.")]), None);
     }
 
     #[test]
@@ -573,10 +611,69 @@ mod tests {
         let mut passes = Passes::default();
         let finding = section(0, "A");
         passes.charge(&finding, Outcome::Reverted);
-        let saved = passes.saved().unwrap();
+        let saved = passes.saved().unwrap().to_string();
         let mut resumed = Passes::default();
         resumed.resume(&saved);
         assert_eq!(resumed.last.get(&finding.id()), Some(&Outcome::Reverted));
         assert_eq!(resumed.spent.get(&finding.id()), Some(&1));
+    }
+
+    /// A reviewer finding numbered `number`, at section 0, with no passage.
+    fn without_passage(number: u32) -> ReviewFinding {
+        ReviewFinding::reviewer(number, Some(FindingSite::Section(0)), "A defect.")
+    }
+
+    #[test]
+    fn a_new_reviewer_finding_with_no_passage_starts_at_the_count_of_the_one_before() {
+        let mut passes = Passes::default();
+        sent(&mut passes, &Value::Null, vec![without_passage(1)]);
+        let second = without_passage(2);
+        assert_eq!(
+            sent(&mut passes, &Value::Null, vec![second.clone()]),
+            vec![second.id()]
+        );
+        assert_eq!(passes.spent.get(&second.id()), Some(&2));
+        assert!(!passes.repairable(&second));
+    }
+
+    #[test]
+    fn a_new_reviewer_finding_with_a_passage_does_not_start_at_the_count_of_the_one_before() {
+        let mut passes = Passes::default();
+        sent(&mut passes, &Value::Null, vec![without_passage(1)]);
+        let second = without_passage(2).with_passage("Some words.");
+        sent(&mut passes, &Value::Null, vec![second.clone()]);
+        assert_eq!(passes.spent.get(&second.id()), Some(&1));
+        assert!(passes.repairable(&second));
+    }
+
+    #[test]
+    fn a_plan_finding_does_not_start_at_the_count_of_a_reviewer_finding() {
+        let mut passes = Passes::default();
+        sent(&mut passes, &Value::Null, vec![without_passage(1)]);
+        let other = plan("Another defect.");
+        sent(&mut passes, &Value::Null, vec![other.clone()]);
+        assert_eq!(passes.spent.get(&other.id()), Some(&1));
+    }
+
+    #[test]
+    fn the_count_of_findings_with_no_passage_survives_a_saved_review() {
+        let mut passes = Passes::default();
+        sent(&mut passes, &Value::Null, vec![without_passage(1)]);
+        let saved = passes.saved().unwrap().to_string();
+        let mut resumed = Passes::default();
+        resumed.resume(&saved);
+        let second = without_passage(2);
+        sent(&mut resumed, &Value::Null, vec![second.clone()]);
+        assert_eq!(resumed.spent.get(&second.id()), Some(&2));
+    }
+
+    #[test]
+    fn state_saved_before_findings_with_no_passage_were_counted_still_resumes() {
+        let id = serde_json::to_value(section(3, "").id()).unwrap();
+        let saved = serde_json::json!({"spent": [[id, 1]], "last": [], "worked": {}}).to_string();
+        let mut passes = Passes::default();
+        passes.resume(&saved);
+        assert_eq!(passes.spent.get(&section(3, "").id()), Some(&1));
+        assert!(passes.passage_less.is_empty());
     }
 }

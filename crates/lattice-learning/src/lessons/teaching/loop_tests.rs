@@ -105,11 +105,11 @@ async fn a_defect_no_repair_fixes_waits_after_its_second_repair() -> Result<()> 
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
     assert_eq!(waiting.finding.place().id(), "teaching:section-0");
-    assert_eq!(waiting.finding.id().as_str(), "reviewer/section-0");
+    assert_eq!(waiting.finding.id().as_str(), "reviewer/1");
     assert_eq!(waiting.repairs, 2);
     assert!(waiting.finding.note.contains("after two repairs"));
     assert!(waiting.finding.passage.is_some());
-    assert_eq!(model.prompts.lock().unwrap().len(), 8);
+    assert_eq!(model.prompts.lock().unwrap().len(), 6);
     let asked = repair_requests(&model);
     assert_eq!(asked.len(), 2);
     assert!(asked[1]["issuesToFix"][0]["lastAttempt"]
@@ -603,7 +603,7 @@ fn a_finding_with_no_passage_about_a_released_sentence_changes_that_sentence_and
         released: true,
     }];
     let finding =
-        ReviewFinding::reviewer(Some(FindingSite::Section(0)), "the explanation is wordy");
+        ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "the explanation is wordy");
 
     assert!(
         protected::on_protected(&previous, std::slice::from_ref(&finding), &protected).is_empty()
@@ -816,7 +816,7 @@ async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Resul
         .collect();
     let model = model(vec![
         json!({"issues": issues}).to_string(),
-        json!({"modules":[]}).to_string(),
+        json!({"modules":[{"title":"Revised"}]}).to_string(),
         json!({"issues":[]}).to_string(),
     ]);
     let progress = crate::outline_progress::OutlineProgress::default();
@@ -867,7 +867,7 @@ async fn the_lesson_review_asks_for_every_defect_with_no_count_cap() -> Result<(
 /// `answer` from the ids of the findings it carries; the requests are kept.
 struct Answering {
     review: ScriptedModel,
-    answer: fn(&[String]) -> Result<String>,
+    answer: fn(&Value) -> Result<String>,
     requests: Mutex<Vec<Value>>,
 }
 
@@ -882,9 +882,8 @@ impl LLMPort for Answering {
                 })
                 .find(|sent| sent.get("issuesToFix").is_some())
                 .unwrap();
-            let ids = ids_of(&sent);
-            self.requests.lock().unwrap().push(sent);
-            let reply = (self.answer)(&ids)?;
+            self.requests.lock().unwrap().push(sent.clone());
+            let reply = (self.answer)(&sent)?;
             return Ok(crate::content_verification::tests::fixture_completion(
                 request,
                 vec![reply],
@@ -907,7 +906,7 @@ impl LLMPort for Answering {
 }
 
 impl Answering {
-    fn new(review: Vec<String>, answer: fn(&[String]) -> Result<String>) -> Self {
+    fn new(review: Vec<String>, answer: fn(&Value) -> Result<String>) -> Self {
         Self {
             review: model(review),
             answer,
@@ -938,19 +937,31 @@ fn ids_of(request: &Value) -> Vec<String> {
         .collect()
 }
 
+/// The id of the finding raised for part `index` when every part is
+/// reported in order.
 fn section_id(index: usize) -> String {
-    format!("reviewer/section-{index}")
+    format!("reviewer/{}", index + 1)
 }
 
 fn unusable_edits() -> String {
     json!({"edits":[{"path":"/blocks/0/title","before":"Missing text","after":"X"}]}).to_string()
 }
 
-/// A better idea for each part named, as its finding's edit.
-fn better_ideas(ids: &[String]) -> String {
+/// A better idea for each part a repair request names, as its finding's edit.
+fn better_ideas(sent: &Value) -> String {
     edits_answer(
-        ids.iter()
-            .map(|id| better_idea(id.rsplit('-').next().unwrap().parse().unwrap(), id))
+        sent["issuesToFix"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|entry| {
+                let index = entry["part"]
+                    .as_str()?
+                    .strip_prefix("/blocks/")?
+                    .parse()
+                    .ok()?;
+                Some(better_idea(index, entry["id"].as_str()?))
+            })
             .collect(),
     )
 }
@@ -963,11 +974,11 @@ async fn an_unusable_answer_for_several_findings_is_asked_again_in_halves() -> R
             parts_evidence(&[0, 1, 2, 3]),
             parts_review(4, &[]),
         ],
-        |ids| {
-            if ids.len() > 2 {
+        |sent| {
+            if ids_of(sent).len() > 2 {
                 Ok(unusable_edits())
             } else {
-                Ok(better_ideas(ids))
+                Ok(better_ideas(sent))
             }
         },
     );
@@ -1001,23 +1012,19 @@ async fn one_finding_s_unusable_answer_does_not_stop_the_others() -> Result<()> 
         vec![
             parts_review(2, &[0, 1]),
             parts_evidence(&[0, 1]),
-            parts_review(2, &[0]),
-            parts_evidence(&[0]),
+            parts_review(2, &[]),
         ],
-        |ids| {
-            if ids.contains(&section_id(0)) {
+        |sent| {
+            if ids_of(sent).contains(&section_id(0)) {
                 Ok(unusable_edits())
             } else {
-                Ok(better_ideas(ids))
+                Ok(better_ideas(sent))
             }
         },
     );
     let reviewed = run(&model, parts_lesson(2)).await?;
     assert_eq!(reviewed.set_aside.len(), 1);
-    assert_eq!(
-        reviewed.set_aside[0].finding.id().as_str(),
-        "reviewer/section-0"
-    );
+    assert_eq!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/1");
     assert_eq!(reviewed.set_aside[0].repairs, 2);
     let after: Value = serde_json::from_str(&reviewed.candidate)?;
     assert!(after["blocks"][1]["body"]
@@ -1038,11 +1045,10 @@ async fn findings_whose_repair_does_not_fit_wait_and_the_others_are_still_repair
         vec![
             parts_review(2, &[0, 1]),
             parts_evidence(&[0, 1]),
-            parts_review(2, &[1]),
-            parts_evidence(&[1]),
+            parts_review(2, &[]),
         ],
-        |ids| {
-            if ids.contains(&section_id(1)) {
+        |sent| {
+            if ids_of(sent).contains(&section_id(1)) {
                 Err(AppError::PromptExceedsWindow {
                     prompt_tokens: 251_588,
                     window: 131_072,
@@ -1050,16 +1056,13 @@ async fn findings_whose_repair_does_not_fit_wait_and_the_others_are_still_repair
                     message: "over the window".into(),
                 })
             } else {
-                Ok(better_ideas(ids))
+                Ok(better_ideas(sent))
             }
         },
     );
     let reviewed = run(&model, parts_lesson(2)).await?;
     assert_eq!(reviewed.set_aside.len(), 1);
-    assert_eq!(
-        reviewed.set_aside[0].finding.id().as_str(),
-        "reviewer/section-1"
-    );
+    assert_eq!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/2");
     assert_eq!(reviewed.set_aside[0].repairs, 0);
     let after: Value = serde_json::from_str(&reviewed.candidate)?;
     assert!(after["blocks"][0]["body"]
@@ -1130,9 +1133,9 @@ async fn a_lesson_whose_structure_no_repair_fixes_still_has_its_content_reviewed
             parts_evidence(&[0]),
             parts_review(2, &[]),
         ],
-        |ids| {
-            if ids.contains(&section_id(0)) {
-                Ok(better_ideas(ids))
+        |sent| {
+            if ids_of(sent).contains(&section_id(0)) {
+                Ok(better_ideas(sent))
             } else {
                 Ok(parts_lesson(2).to_string())
             }
@@ -1145,10 +1148,7 @@ async fn a_lesson_whose_structure_no_repair_fixes_still_has_its_content_reviewed
         .unwrap()
         .contains("better idea"));
     assert_eq!(reviewed.set_aside.len(), 1);
-    assert_ne!(
-        reviewed.set_aside[0].finding.id().as_str(),
-        "reviewer/section-0"
-    );
+    assert_ne!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/1");
     assert_eq!(reviewed.set_aside[0].repairs, 2);
     let reviews = model
         .review
@@ -1211,6 +1211,8 @@ fn retitle_a_third_time(after: &str) -> String {
 
 /// The defect of `a_defect_no_repair_fixes_waits_after_its_second_repair`: the
 /// calls of two repairs, each rechecked, and the pass that stops at the second.
+/// The reviewer's verdict on a finding is not checked against the evidence
+/// again.
 fn defect_no_repair_fixes() -> Vec<String> {
     vec![
         review(Some(
@@ -1221,12 +1223,10 @@ fn defect_no_repair_fixes() -> Vec<String> {
         review(Some(
             "Section 1 still prints the result as the string \"4\" instead of the number.",
         )),
-        actionable(),
         retitle_again("Corrected twice"),
         review(Some(
             "Section 1 still prints the result as the string \"4\" after two repairs.",
         )),
-        actionable(),
     ]
 }
 
@@ -1251,23 +1251,37 @@ fn repairs_asked(llm: &DropsAfterRepair) -> usize {
 /// first repair as a requeue cuts one. The second starts on the draft that
 /// repair saved, after `between` has happened to it. Returns the repairs asked
 /// of the model across both runs and the second run's review.
-async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Reviewed)> {
+///
+/// A draft changed since the repair is reviewed afresh: `afresh` is whether
+/// that is what `between` does, which changes the calls the second run makes.
+async fn cut_short_then_resumed(
+    between: fn(&mut Value),
+    afresh: bool,
+) -> Result<(usize, Reviewed)> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let llm = DropsAfterRepair {
-        model: model(
+        model: model(if afresh {
+            let mut script: Vec<String> = defect_no_repair_fixes().into_iter().take(3).collect();
+            script.extend([
+                review(Some(
+                    "Section 1 still prints the result as the string \"4\" in the new draft.",
+                )),
+                actionable(),
+                retitle_again("Corrected twice"),
+                review(Some(
+                    "Section 1 still prints the result as the string \"4\" after two repairs.",
+                )),
+                retitle_a_third_time("Corrected thrice"),
+                review(Some(
+                    "Section 1 still prints the result as the string \"4\" after three repairs.",
+                )),
+            ]);
+            script
+        } else {
             defect_no_repair_fixes()
-                .into_iter()
-                .chain([
-                    retitle_a_third_time("Corrected thrice"),
-                    review(Some(
-                        "Section 1 still prints the result as the string \"4\" after three repairs.",
-                    )),
-                    actionable(),
-                ])
-                .collect(),
-        ),
+        }),
         repaired: AtomicBool::new(false),
         dropped: AtomicBool::new(false),
     };
@@ -1301,11 +1315,11 @@ async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Revie
 #[tokio::test]
 async fn a_review_cut_short_after_its_first_repair_resumes_with_the_repairs_it_had_made(
 ) -> Result<()> {
-    let (repairs, reviewed) = cut_short_then_resumed(|_| {}).await?;
+    let (repairs, reviewed) = cut_short_then_resumed(|_| {}, false).await?;
     assert_eq!(repairs, 2);
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
-    assert_eq!(waiting.finding.id().as_str(), "reviewer/section-0");
+    assert_eq!(waiting.finding.id().as_str(), "reviewer/1");
     assert_eq!(waiting.repairs, 2);
     Ok(())
 }
@@ -1314,11 +1328,11 @@ async fn a_review_cut_short_after_its_first_repair_resumes_with_the_repairs_it_h
 /// claim repair has changed that draft, the review starts again.
 #[tokio::test]
 async fn a_review_cut_short_resumes_afresh_on_a_draft_changed_since_its_repair() -> Result<()> {
-    let (repairs, reviewed) = cut_short_then_resumed(claim_repair).await?;
+    let (repairs, reviewed) = cut_short_then_resumed(claim_repair, true).await?;
     assert_eq!(repairs, 3);
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
-    assert_eq!(waiting.finding.id().as_str(), "reviewer/section-0");
+    assert_eq!(waiting.finding.id().as_str(), "reviewer/1");
     assert_eq!(waiting.repairs, 2);
     Ok(())
 }
@@ -1349,8 +1363,11 @@ fn whole_lesson_and_fully_guarded_section_findings_wait_when_claims_are_protecte
         FindingSite::Lesson,
         "no contrast block",
     );
-    let section_finding =
-        ReviewFinding::reviewer(Some(FindingSite::Section(0)), "expand on the explanation");
+    let section_finding = ReviewFinding::reviewer(
+        1,
+        Some(FindingSite::Section(0)),
+        "expand on the explanation",
+    );
     let findings = vec![lesson_finding.clone(), section_finding.clone()];
     let held = protected::on_protected(&lesson, &findings, &protected);
     let expected = vec![lesson_finding.id(), section_finding.id()];
@@ -1395,7 +1412,7 @@ fn a_finding_on_an_option_is_not_held_when_only_the_explanation_is_protected() {
         "The function adds its two arguments and returns four.",
     )];
     let finding =
-        ReviewFinding::reviewer(Some(FindingSite::Question(0)), "the option is ambiguous")
+        ReviewFinding::reviewer(1, Some(FindingSite::Question(0)), "the option is ambiguous")
             .with_passage("Four is returned.");
     assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
 }
@@ -1424,8 +1441,11 @@ fn a_question_finding_with_no_passage_is_not_held_while_options_are_unprotected(
         "explanation",
         "The function adds its two arguments and returns four.",
     )];
-    let finding =
-        ReviewFinding::reviewer(Some(FindingSite::Question(0)), "the distractors are weak");
+    let finding = ReviewFinding::reviewer(
+        1,
+        Some(FindingSite::Question(0)),
+        "the distractors are weak",
+    );
     assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
 }
 
@@ -1435,8 +1455,11 @@ fn a_section_finding_with_no_passage_is_not_held_while_the_title_is_unprotected(
     let sentence = "The function returns the number 4 for the sum of two and two.";
     lesson["blocks"][0]["body"] = json!(sentence);
     let protected = vec![protect(0, "body", sentence)];
-    let finding =
-        ReviewFinding::reviewer(Some(FindingSite::Section(0)), "expand on the explanation");
+    let finding = ReviewFinding::reviewer(
+        1,
+        Some(FindingSite::Section(0)),
+        "expand on the explanation",
+    );
     assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
 }
 
@@ -1451,8 +1474,11 @@ fn a_review_repair_with_no_passage_cannot_rewrite_the_kind_or_quote() -> Result<
         json!("The first sentence is protected here. The second sentence now reads better.");
     repaired["blocks"][0]["quote"] = json!("A different quotation that was never a target.");
     repaired["blocks"][0]["kind"] = json!("example");
-    let finding =
-        ReviewFinding::reviewer(Some(FindingSite::Section(0)), "improve the second sentence");
+    let finding = ReviewFinding::reviewer(
+        1,
+        Some(FindingSite::Section(0)),
+        "improve the second sentence",
+    );
     let touched = std::collections::BTreeMap::from([("/blocks/0".to_owned(), vec![&finding])]);
     let confined = protected::confine_review(&previous, &repaired, &touched, &protected)?;
     assert_eq!(
@@ -1629,12 +1655,11 @@ async fn an_edit_outside_its_finding_s_part_leaves_the_other_findings_edits_appl
         parts_review(3, &[0, 1]),
         parts_evidence(&[0, 1]),
         edits_answer(vec![
-            better_idea(0, "reviewer/section-0"),
-            better_idea(2, "reviewer/section-1"),
+            better_idea(0, "reviewer/1"),
+            better_idea(2, "reviewer/2"),
         ]),
-        parts_review(3, &[1]),
-        parts_evidence(&[1]),
-        edits_answer(vec![better_idea(1, "reviewer/section-1")]),
+        parts_review(3, &[]),
+        edits_answer(vec![better_idea(1, "reviewer/2")]),
         parts_review(3, &[]),
     ]);
     let reviewed = run(&model, parts_lesson(3)).await?;
@@ -1658,10 +1683,9 @@ async fn a_finding_no_edit_named_is_told_so_on_its_second_attempt() -> Result<()
     let model = model(vec![
         parts_review(2, &[0, 1]),
         parts_evidence(&[0, 1]),
-        edits_answer(vec![better_idea(0, "reviewer/section-0")]),
-        parts_review(2, &[1]),
-        parts_evidence(&[1]),
-        edits_answer(vec![better_idea(1, "reviewer/section-1")]),
+        edits_answer(vec![better_idea(0, "reviewer/1")]),
+        parts_review(2, &[]),
+        edits_answer(vec![better_idea(1, "reviewer/2")]),
         parts_review(2, &[]),
     ]);
     run(&model, parts_lesson(2)).await?;
@@ -1708,7 +1732,7 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
         released: false,
     }];
     let touches_the_protected_sentence = json!({
-        "finding": "reviewer/section-0",
+        "finding": "reviewer/1",
         "path": "/blocks/0/body",
         "before": KEPT,
         "after": "Part A states a different fact about the tool.",
@@ -1718,10 +1742,9 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
         parts_evidence(&[0, 1]),
         edits_answer(vec![
             touches_the_protected_sentence.clone(),
-            better_idea(1, "reviewer/section-1"),
+            better_idea(1, "reviewer/2"),
         ]),
-        parts_review_at(2, &[(0, 1)]),
-        parts_evidence(&[0]),
+        parts_review(2, &[]),
         edits_answer(vec![touches_the_protected_sentence]),
     ]);
     let reviewed = review_protecting(&model, &candidate, &protected).await?;
@@ -2088,7 +2111,7 @@ async fn a_repair_s_answer_is_kept_as_it_was_given() -> Result<()> {
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
     assert!(kept.iter().all(|row| row["answer"].is_string()), "{kept:?}");
-    let first = json!({"edits":[{"finding":"reviewer/section-0","path":"/blocks/0/title","before":"Example","after":"Corrected example"}]});
+    let first = json!({"edits":[{"finding":"reviewer/1","path":"/blocks/0/title","before":"Example","after":"Corrected example"}]});
     let given = |row: &Value| {
         row["answer"]
             .as_str()
@@ -2177,18 +2200,14 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let script = defect_no_repair_fixes();
-    // The reviews of the second run are read from their checkpoints; its three
-    // rechecks of the findings are asked again.
+    // The reviews of the second run are read from their checkpoints; the
+    // evidence check of the first finding is asked again.
     let rest = vec![
         script[0].clone(),
         script[1].clone(),
         script[3].clone(),
-        script[4].clone(),
-        script[6].clone(),
-        script[7].clone(),
+        script[5].clone(),
         script[1].clone(),
-        script[4].clone(),
-        script[7].clone(),
     ];
     let llm = RepairsApart {
         repairs: model(vec![
@@ -2491,7 +2510,6 @@ impl ByRequest {
                 || known.iter().any(|entry| entry["part"] == part.as_str())
         };
         let mut checks = Vec::new();
-        let mut section_defect = false;
         for index in &sections {
             let passages = passages_of(*index);
             let found = passages.iter().find(|(_, text)| (self.defective)(text));
@@ -2500,7 +2518,6 @@ impl ByRequest {
                 .map(|(id, _)| id.clone())
                 .unwrap_or_default();
             let has_defect = found.is_some_and(|(id, _)| self.restates || !covered(*index, id));
-            section_defect |= found.is_some();
             checks.push(json!({
                 "sectionId": format!("section-{index}"),
                 "passageId": id,
@@ -2509,7 +2526,7 @@ impl ByRequest {
             }));
         }
         let wanted = (self.whole)(candidate, number);
-        let mut issues: Vec<String> = wanted
+        let issues: Vec<String> = wanted
             .iter()
             .filter(|note| {
                 !open
@@ -2519,12 +2536,6 @@ impl ByRequest {
             })
             .map(|note| (*note).to_owned())
             .collect();
-        let rechecking = sent["originalIssuesToRecheck"]
-            .as_array()
-            .is_some_and(|issues| !issues.is_empty());
-        if rechecking && issues.is_empty() && wanted.is_empty() && !section_defect {
-            issues.push("The original issue in Section 1 is resolved.".to_owned());
-        }
         let mut answer = json!({"issues": issues});
         if schema.pointer("/properties/blockChecks").is_some() {
             answer["blockChecks"] = json!(checks);
@@ -2887,6 +2898,7 @@ async fn a_stored_reviewer_finding_stands_and_its_section_is_not_reviewed_again(
     let store = TeachingFindingsRepository::new(pool);
     let before = parts_lesson(2);
     let stored = ReviewFinding::reviewer(
+        1,
         Some(FindingSite::Section(0)),
         "Section 1 (candidate blocks-0): The first idea is wrong.",
     );

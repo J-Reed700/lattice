@@ -1,18 +1,19 @@
 //! Material that fails closed after one repair: an outline or other material.
 use super::super::quotes::lesson_quote_checks;
 use super::super::repair::{self, Repaired};
+use super::super::standing::Standing;
 use super::super::{
     holds_up_review, structural_findings, OutlineReviewContext, LESSON_REVIEW_EVIDENCE_SCOPE,
 };
 use super::{
     review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, Settled, Step,
-    Subject, LESSON_PRIORITY, REVIEW_SYSTEM, SHARED_CHECKS,
+    Subject, LESSON_PRIORITY, REVIEW_SYSTEM,
 };
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::copied_wording::Wording;
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule};
+use crate::review_findings::{FindingKind, FindingSite, Held, ReviewFinding, Rule};
 use crate::teaching_review::LengthRule;
 use lattice_core::{
     application::ports::LLMPort,
@@ -46,7 +47,8 @@ fn quiz_step(step: Step) {
 /// How material that fails closed is reviewed.
 struct Lens<'a> {
     first_system: &'static str,
-    shared_checks: &'static str,
+    /// Whether the material has sections to check.
+    block_checks: bool,
     scope: &'static str,
     priority: &'static str,
     edits: bool,
@@ -55,41 +57,41 @@ struct Lens<'a> {
 
 /// The checks of material that fails closed: the answer keys, then the reviewer.
 async fn closed_find(
-    owner: &dyn Subject,
+    standing: &mut Standing,
     llm: &dyn LLMPort,
     pass: &Pass<'_>,
-    original_issues: &[String],
     wording: &Wording,
     lens: Lens<'_>,
 ) -> Result<Found> {
     let structure = structural_findings(pass.schema, pass.candidate, wording)?;
     let blocking = holds_up_review(&structure, None);
     let mut findings = if !blocking {
-        owner.step(Step::CheckingKeys);
-        let answer_issues = crate::key_review::check(llm, pass.value).await?;
-        owner.step(if pass.attempt == 0 {
-            Step::Reviewing
-        } else {
-            Step::Rechecking
-        });
-        let instructions = review_instructions(
-            pass.attempt,
-            lens.first_system,
-            lens.shared_checks,
-            lens.scope,
-        );
-        let mut issues = crate::teaching_review::review(
-            llm,
-            &instructions,
-            review_prompt(pass, original_issues, lens.priority, Vec::new()),
-            pass.value,
-            lens.progress,
-            LengthRule::Fail,
-        )
-        .await?;
-        issues.splice(0..0, answer_issues);
-        issues.extend(structure);
-        issues
+        quiz_step(Step::CheckingKeys);
+        let mut findings = crate::key_review::check(llm, pass.value).await?;
+        if let Some(round) = standing.round(pass.value) {
+            quiz_step(if standing.seen() {
+                Step::Rechecking
+            } else {
+                Step::Reviewing
+            });
+            let instructions =
+                review_instructions(lens.first_system, &round, lens.block_checks, lens.scope);
+            let judged = crate::teaching_review::review(
+                llm,
+                &instructions,
+                review_prompt(pass, lens.priority, Vec::new()),
+                pass.value,
+                round.scope(),
+                lens.progress,
+                LengthRule::Fail,
+            )
+            .await?;
+            let new = standing.judged(pass.value, &round, judged);
+            standing.admit(pass.value, new);
+        }
+        findings.extend(standing.open().iter().cloned());
+        findings.extend(structure);
+        findings
     } else {
         structure
     };
@@ -107,11 +109,7 @@ async fn closed_find(
 }
 
 /// Material that fails closed repairs once; a defect that survives it is an error.
-fn closed_decide(
-    original_issues: &mut Vec<String>,
-    attempt: usize,
-    found: Vec<ReviewFinding>,
-) -> Result<Decision> {
+fn closed_decide(attempt: usize, found: Vec<ReviewFinding>) -> Result<Decision> {
     let issues: Vec<String> = found.iter().map(|finding| finding.note.clone()).collect();
     if issues.iter().any(|s| s.trim().is_empty()) {
         return Err(AppError::InvalidInput(
@@ -127,7 +125,6 @@ fn closed_decide(
             issues.join(" ")
         )));
     }
-    *original_issues = issues;
     Ok(Decision::Repair(found))
 }
 
@@ -147,7 +144,7 @@ pub(in crate::lessons::teaching) struct OutlineSubject<'a> {
     context: OutlineReviewContext<'a>,
     references: ReferenceCollection<'a>,
     wording: Wording,
-    original_issues: Vec<String>,
+    standing: Standing,
 }
 
 impl<'a> OutlineSubject<'a> {
@@ -157,7 +154,7 @@ impl<'a> OutlineSubject<'a> {
             context,
             references,
             wording: Wording::default(),
-            original_issues: Vec::new(),
+            standing: Standing::new(&Held::default()),
         })
     }
 }
@@ -220,21 +217,13 @@ impl Subject for OutlineSubject<'_> {
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
         let lens = Lens {
             first_system: OUTLINE_REVIEW_SYSTEM,
-            shared_checks: "",
+            block_checks: false,
             scope: "",
             priority: OUTLINE_PRIORITY,
             edits: false,
             progress: Some(self.context.progress),
         };
-        closed_find(
-            &*self,
-            llm,
-            pass,
-            &self.original_issues,
-            &self.wording,
-            lens,
-        )
-        .await
+        closed_find(&mut self.standing, llm, pass, &self.wording, lens).await
     }
 
     fn decide(
@@ -243,7 +232,7 @@ impl Subject for OutlineSubject<'_> {
         _candidate: &Value,
         found: Vec<ReviewFinding>,
     ) -> Result<Decision> {
-        closed_decide(&mut self.original_issues, attempt, found)
+        closed_decide(attempt, found)
     }
 
     fn settle_repair(
@@ -261,14 +250,14 @@ impl Subject for OutlineSubject<'_> {
 /// after one repair.
 pub(in crate::lessons::teaching) struct MaterialSubject {
     wording: Wording,
-    original_issues: Vec<String>,
+    standing: Standing,
 }
 
 impl MaterialSubject {
     pub(in crate::lessons::teaching) fn new() -> Self {
         Self {
             wording: Wording::default(),
-            original_issues: Vec::new(),
+            standing: Standing::new(&Held::default()),
         }
     }
 }
@@ -307,21 +296,13 @@ impl Subject for MaterialSubject {
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
         let lens = Lens {
             first_system: REVIEW_SYSTEM,
-            shared_checks: SHARED_CHECKS,
+            block_checks: true,
             scope: LESSON_REVIEW_EVIDENCE_SCOPE,
             priority: LESSON_PRIORITY,
             edits: true,
             progress: None,
         };
-        closed_find(
-            &*self,
-            llm,
-            pass,
-            &self.original_issues,
-            &self.wording,
-            lens,
-        )
-        .await
+        closed_find(&mut self.standing, llm, pass, &self.wording, lens).await
     }
 
     fn decide(
@@ -330,7 +311,7 @@ impl Subject for MaterialSubject {
         _candidate: &Value,
         found: Vec<ReviewFinding>,
     ) -> Result<Decision> {
-        closed_decide(&mut self.original_issues, attempt, found)
+        closed_decide(attempt, found)
     }
 
     fn settle_repair(

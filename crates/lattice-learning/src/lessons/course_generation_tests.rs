@@ -324,6 +324,73 @@ pub(crate) struct ScriptedModel {
     pub(crate) prompts: std::sync::Mutex<Vec<String>>,
 }
 
+/// Diagnostic: what the review adapter rewrote, kept per model (by address,
+/// since the struct is built with literals in many files) and reported when
+/// the model is dropped.
+mod adapted_calls {
+    use super::ScriptedModel;
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    #[derive(Default)]
+    struct Log {
+        calls: usize,
+        records: Vec<String>,
+    }
+
+    static LOGS: Mutex<Option<HashMap<usize, Log>>> = Mutex::new(None);
+
+    fn key(model: &ScriptedModel) -> usize {
+        std::ptr::from_ref(model) as usize
+    }
+
+    fn with_log<R>(model: &ScriptedModel, act: impl FnOnce(&mut Log) -> R) -> R {
+        let mut logs = LOGS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+        act(logs
+            .get_or_insert_with(HashMap::new)
+            .entry(key(model))
+            .or_default())
+    }
+
+    /// The zero-based index of the reply just taken from the script.
+    pub(super) fn next_call(model: &ScriptedModel) -> usize {
+        with_log(model, |log| {
+            log.calls += 1;
+            log.calls - 1
+        })
+    }
+
+    pub(super) fn record(model: &ScriptedModel, call: usize, changes: Vec<String>) {
+        if !changes.is_empty() {
+            with_log(model, |log| {
+                log.records
+                    .push(format!("call {call}: {}", changes.join("; ")));
+            });
+        }
+    }
+
+    impl Drop for ScriptedModel {
+        fn drop(&mut self) {
+            let log = LOGS
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .as_mut()
+                .and_then(|logs| logs.remove(&key(self)));
+            let Some(log) = log.filter(|log| !log.records.is_empty()) else {
+                return;
+            };
+            if std::thread::panicking() {
+                return;
+            }
+            let lines: Vec<String> = log.records.iter().map(|r| format!("ADAPTED {r}")).collect();
+            for line in &lines {
+                eprintln!("{line}");
+            }
+            panic!("ADAPTED-REPLIES {}\n{}", lines.len(), lines.join("\n"));
+        }
+    }
+}
+
 /// Where `schema` bounds a string's length above a blank: each `maxLength`
 /// and each `minLength` over one, as `path: bound`.
 pub(crate) fn length_bounds(schema: &serde_json::Value) -> Vec<String> {
@@ -553,7 +620,17 @@ impl LLMPort for ScriptedModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let mut replies = Vec::new();
         for prompt in fixture_prompts(request) {
-            replies.push(self.respond(&prompt).await?);
+            let reply = self.respond(&prompt).await?;
+            let call = adapted_calls::next_call(self);
+            replies.push(match &request.json_schema {
+                Some(schema) => {
+                    let mut changes = Vec::new();
+                    let adapted = as_the_review_asks(schema, reply, &mut changes);
+                    adapted_calls::record(self, call, changes);
+                    adapted
+                }
+                None => reply,
+            });
         }
         Ok(fixture_completion(request, replies))
     }
@@ -570,6 +647,73 @@ impl LLMPort for ScriptedModel {
         Ok(true)
     }
 }
+/// A scripted teaching-review reply as the request's schema asks it: checks
+/// only for the sections it lists, and, when it asks for a verdict on each
+/// open finding, "present" if the reply reports a defect and "resolved" if it
+/// does not.
+fn as_the_review_asks(
+    schema: &serde_json::Value,
+    reply: String,
+    changes: &mut Vec<String>,
+) -> String {
+    let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_str(&reply) else {
+        return reply;
+    };
+    if !fields.contains_key("issues") {
+        return reply;
+    }
+    let listed = |pointer: &str| {
+        schema
+            .pointer(pointer)
+            .and_then(serde_json::Value::as_array)
+            .cloned()
+    };
+    if let Some(serde_json::Value::Array(checks)) = fields.get_mut("blockChecks") {
+        let sections = listed("/properties/blockChecks/items/properties/sectionId/enum");
+        let mut dropped = Vec::new();
+        checks.retain(|check| {
+            let kept = !check["sectionId"].is_string()
+                || sections
+                    .iter()
+                    .flatten()
+                    .any(|section| *section == check["sectionId"]);
+            if !kept {
+                dropped.push(check["sectionId"].to_string());
+            }
+            kept
+        });
+        if !dropped.is_empty() {
+            changes.push(format!(
+                "dropped checks for sections [{}]",
+                dropped.join(",")
+            ));
+        }
+    }
+    let defect = fields
+        .get("issues")
+        .and_then(serde_json::Value::as_array)
+        .is_some_and(|issues| !issues.is_empty())
+        || fields
+            .get("blockChecks")
+            .and_then(serde_json::Value::as_array)
+            .is_some_and(|checks| checks.iter().any(|check| check["hasDefect"] == true));
+    if let Some(ids) = listed("/properties/openFindings/items/properties/id/enum") {
+        if !fields.contains_key("openFindings") {
+            let verdict = if defect { "present" } else { "resolved" };
+            let entries: Vec<serde_json::Value> = ids
+                .into_iter()
+                .map(|id| serde_json::json!({"id":id,"verdict":verdict,"note":""}))
+                .collect();
+            changes.push(format!(
+                "added verdicts {}",
+                serde_json::Value::Array(entries.clone())
+            ));
+            fields.insert("openFindings".into(), entries.into());
+        }
+    }
+    serde_json::Value::Object(fields).to_string()
+}
+
 impl ScriptedModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
         self.prompts
@@ -825,8 +969,8 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
             .map_err(|_| AppError::InternalError("fixture lock".into()))?;
         assert_eq!(prompts.len(), 3);
         assert!(prompts[1].contains("Correct the comparison"));
-        assert!(prompts[2].contains("originalIssuesToRecheck"));
-        assert!(prompts[2].contains("final publication check"));
+        assert!(prompts[2].contains("openFindings"));
+        assert!(prompts[2].contains("judge the correction"));
         assert!(prompts[2].contains("Correct the comparison"));
     }
     let model = ScriptedModel {
