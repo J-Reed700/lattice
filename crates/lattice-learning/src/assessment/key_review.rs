@@ -3,7 +3,7 @@
 //! prose-step questions while the lesson is written; [`solve_items`] solves
 //! quiz bank items of every format and [`compare`] sets a solution against an
 //! item's key (docs/design/2026-10-23-quizzes-and-tests.md, section 5.2).
-use crate::lessons::structured_call::{complete_reasoned_json, CallKind, ReasonFirst};
+use crate::lessons::structured_call::{complete_reasoned_json, cut_off, CallKind, ReasonFirst};
 use crate::review_findings::ReviewFinding;
 use lattice_core::{
     application::ports::LLMPort,
@@ -277,8 +277,11 @@ pub(crate) async fn solve_items(
     };
     let mut solutions: Vec<Option<Solution>> = vec![None; items.len()];
     let mut start = 0;
-    while start < items.len() {
-        let mut size = items.len() - start;
+    // The most items one request may hold once an answer was cut off at the
+    // output reservation, which is an estimate.
+    let mut room = usize::MAX;
+    'chunks: while start < items.len() {
+        let mut size = (items.len() - start).min(room);
         let request_for = |size: usize| {
             let indices: Vec<usize> = (start..items.len()).take(size).collect();
             let questions: Vec<Value> = indices
@@ -310,6 +313,13 @@ pub(crate) async fn solve_items(
                 model_call::TooLarge::Window("one quiz question with its reference passage"),
             )
             .await?;
+            if cut_off(&response.finish_reason) {
+                if size == 1 {
+                    return Err(unusable());
+                }
+                room = size.div_ceil(2);
+                continue 'chunks;
+            }
             if let Ok(parsed) = crate::generation::parse_json::<Value>(&response.text) {
                 for value in parsed
                     .get("answers")
