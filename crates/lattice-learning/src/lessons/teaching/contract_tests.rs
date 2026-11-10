@@ -22,6 +22,22 @@ struct Routed<'a> {
     contract: Mutex<std::collections::VecDeque<String>>,
     asked: Mutex<Vec<String>>,
     drafting: Mutex<Vec<String>>,
+    confirming: Mutex<Vec<(String, String)>>,
+    confirmed: Mutex<Vec<String>>,
+}
+
+/// The task every confirming read of the check carries in its prompt.
+const CONFIRMING: &str = "\"task\":\"Confirm that the lesson teaches";
+const CONFIRMING_PLANNED: &str = "\"task\":\"Confirm that the lesson teaches a planned item\"";
+
+/// A confirming read nobody scripted: not taught, and an item belongs in
+/// the lesson's middle section.
+fn not_confirmed(user: &str) -> String {
+    if user.contains(CONFIRMING_PLANNED) {
+        json!({"taught":false,"quote":"","belongs":"section-1"}).to_string()
+    } else {
+        json!({"taught":false,"where":"thisLesson","quote":""}).to_string()
+    }
 }
 
 impl<'a> Routed<'a> {
@@ -31,7 +47,22 @@ impl<'a> Routed<'a> {
             contract: Mutex::new(answers.into()),
             asked: Mutex::new(Vec::new()),
             drafting: Mutex::new(Vec::new()),
+            confirming: Mutex::new(Vec::new()),
+            confirmed: Mutex::new(Vec::new()),
         }
+    }
+
+    /// Answer every confirming read whose prompt holds `needle` with `reply`.
+    fn confirming(self, needle: &str, reply: Value) -> Self {
+        self.confirming
+            .lock()
+            .unwrap()
+            .push((needle.to_owned(), reply.to_string()));
+        self
+    }
+
+    fn confirmed(&self) -> Vec<String> {
+        self.confirmed.lock().unwrap().clone()
     }
 
     fn drafting(&self) -> Vec<String> {
@@ -47,6 +78,18 @@ impl<'a> Routed<'a> {
 impl LLMPort for Routed<'_> {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let (system, user) = crate::lessons::structured_call::task_messages(request);
+        if user.contains(CONFIRMING) && !crate::lessons::structured_call::is_draft_request(request)
+        {
+            self.confirmed.lock().unwrap().push(user.to_owned());
+            let reply = self
+                .confirming
+                .lock()
+                .unwrap()
+                .iter()
+                .find(|(needle, _)| user.contains(needle.as_str()))
+                .map_or_else(|| not_confirmed(user), |(_, reply)| reply.clone());
+            return Ok(fixture_completion(request, vec![reply]));
+        }
         let is_contract = system.starts_with(contract::SYSTEM);
         if is_contract && crate::lessons::structured_call::is_draft_request(request) {
             let said = request.input.iter().filter_map(|item| match item {
@@ -897,5 +940,233 @@ async fn the_check_and_the_note_define_shown_how_in_the_same_words() -> Result<(
     let (phrase, _) = rest.split_once(')').unwrap();
     assert_eq!(phrase, SHOWN, "{note}");
     assert!(contract::SYSTEM.contains(phrase), "{}", contract::SYSTEM);
+    Ok(())
+}
+
+const TYPED: &str = "A terminal takes typed commands.";
+
+#[tokio::test]
+async fn an_item_reported_taught_in_another_part_than_its_words_is_taught() -> Result<()> {
+    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let reported = answer(
+        json!([taught("idea-0", 1, TYPED)]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![reported.clone(), reported]);
+    let candidate = lesson([TYPED, "The list shows names.", "Read the names."]);
+    let ctx = context(&["Typing commands"], &[]);
+    let result = run(&model, &candidate, &ctx, &[]).await?;
+    assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
+    assert!(model.confirmed().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_use_in_a_part_other_than_the_one_named_is_a_finding_where_its_words_are() -> Result<()> {
+    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let found = answer(
+        json!([]),
+        json!([used(2, "Type ls -l to see sizes", "the -l option of ls")]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![found.clone(), found]);
+    let candidate = lesson([
+        TYPED,
+        "Type ls -l to see sizes in the list.",
+        "Read the names.",
+    ]);
+    let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    assert_eq!(
+        waiting(&result),
+        [(
+            "teaching:section-1".to_owned(),
+            Some("Type ls -l to see sizes".to_owned())
+        )]
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_use_the_confirming_read_finds_taught_raises_nothing_and_asks_for_no_repair() -> Result<()>
+{
+    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let found = answer(
+        json!([]),
+        json!([used(
+            1,
+            "open the terminal application",
+            "the terminal application"
+        )]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![found.clone(), found]).confirming(
+        "the terminal application",
+        json!({"taught":true,"where":"thisLesson","quote":"Click the terminal icon in the dock"}),
+    );
+    let candidate = lesson([
+        TYPED,
+        "Click the terminal icon in the dock, then open the terminal application.",
+        "Read the names.",
+    ]);
+    let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
+    assert_eq!(model.confirmed().len(), 1);
+    assert!(!scripted
+        .prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .any(|prompt| prompt.contains("issuesToFix")));
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() -> Result<()> {
+    let scripted = scripted(vec![
+        reviewed(3),
+        edits(
+            json!([{"path":"/blocks/1/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."}]),
+        ),
+        reviewed(3),
+        edits(
+            json!([{"path":"/blocks/0/body","before":TYPED,"after":"A terminal runs typed commands."}]),
+        ),
+        reviewed(3),
+    ]);
+    let first = answer(
+        json!([taught("idea-0", 0, TYPED)]),
+        json!([used(1, "Type ls -l to see sizes.", "the -l option of ls")]),
+        json!([]),
+        json!([]),
+    );
+    let second = answer(
+        json!([not_taught("idea-0", 0)]),
+        json!([used(2, "Read the names.", "reading names")]),
+        json!([]),
+        json!([]),
+    );
+    let third = answer(
+        json!([taught("idea-0", 0, "A terminal runs typed commands.")]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![first, second, third]);
+    let candidate = lesson([TYPED, "Type ls -l to see sizes.", "Read the names."]);
+    let ctx = context(&["Typing commands"], &[]);
+    let result = run(&model, &candidate, &ctx, &[]).await?;
+    let asked = model.asked();
+    assert_eq!(asked.len(), 3);
+    assert!(asked[0].contains("Typing commands"), "{}", asked[0]);
+    assert!(!asked[1].contains("Typing commands"), "{}", asked[1]);
+    assert!(asked[2].contains("Typing commands"), "{}", asked[2]);
+    assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_confirming_read_that_finds_a_planned_items_words_settles_it() -> Result<()> {
+    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let missing = answer(
+        json!([not_taught("action-0", 1)]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![missing.clone(), missing]).confirming(
+        OPEN_TERMINAL,
+        json!({"taught":true,"quote":"Press the terminal icon in the dock","belongs":"section-1"}),
+    );
+    let candidate = lesson([
+        TYPED,
+        "Press the terminal icon in the dock to open it.",
+        "Read the names.",
+    ]);
+    let ctx = context(&[], &[OPEN_TERMINAL]);
+    let result = run(&model, &candidate, &ctx, &[]).await?;
+    assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_belongs(
+) -> Result<()> {
+    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let missing = answer(
+        json!([not_taught("idea-0", 0)]),
+        json!([]),
+        json!([]),
+        json!([]),
+    );
+    let model = Routed::new(&scripted, vec![missing.clone(), missing]).confirming(
+        "Typing commands",
+        json!({"taught":false,"quote":"","belongs":"section-2"}),
+    );
+    let candidate = lesson([TYPED, "The list shows names.", "Read the names."]);
+    let ctx = context(&["Typing commands"], &[]);
+    let result = run(&model, &candidate, &ctx, &[]).await?;
+    assert_eq!(waiting(&result), [("teaching:section-2".to_owned(), None)]);
+    Ok(())
+}
+
+/// The section a use is confirmed in: words before the use, the use, words after.
+const USED_IN: &str = "Use the list command. Type ls -l to see sizes. Then read the list.";
+
+/// What waits after the check finds a use and `reply` answers the
+/// confirming read of it.
+async fn waiting_after_confirming(reply: Value) -> Result<Vec<(String, Option<String>)>> {
+    let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
+    let found = answer(
+        json!([]),
+        json!([used(1, "Type ls -l to see sizes", "the -l option of ls")]),
+        json!([]),
+        json!([]),
+    );
+    let model =
+        Routed::new(&scripted, vec![found.clone(), found]).confirming("the -l option of ls", reply);
+    let candidate = lesson([TYPED, USED_IN, "Read the names."]);
+    let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    Ok(waiting(&result))
+}
+
+fn confirmed_by(place: &str, quote: &str) -> Value {
+    json!({"taught":true,"where":place,"quote":quote})
+}
+
+#[tokio::test]
+async fn a_confirming_read_settles_a_use_when_its_words_check_out() -> Result<()> {
+    for (place, quote) in [
+        ("thisLesson", TYPED),
+        ("thisLesson", "Use the list command."),
+        ("thisLesson", "Type ls -l to see sizes"),
+        ("earlierLessons", "Listing the files in a folder"),
+        ("priorKnowledge", "used a graphical file manager"),
+    ] {
+        let left = waiting_after_confirming(confirmed_by(place, quote)).await?;
+        assert!(left.is_empty(), "{place} {quote}: {left:?}");
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_confirming_read_that_does_not_check_out_leaves_the_finding_standing() -> Result<()> {
+    let standing = vec![(
+        "teaching:section-1".to_owned(),
+        Some("Type ls -l to see sizes".to_owned()),
+    )];
+    for (place, quote) in [
+        ("thisLesson", "Then read the list."),
+        ("thisLesson", "Read the names."),
+        ("thisLesson", "Words that are nowhere in the lesson"),
+        ("earlierLessons", "Creating a file"),
+        ("priorKnowledge", "used a graphical file editor"),
+    ] {
+        let left = waiting_after_confirming(confirmed_by(place, quote)).await?;
+        assert_eq!(left, standing, "{place} {quote}");
+    }
     Ok(())
 }
