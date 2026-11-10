@@ -3,6 +3,8 @@
 //! and dashes made plain, whitespace runs one space, case ignored, and no
 //! space at either end.
 
+use lattice_core::shared::text::segmentation::sentences;
+
 /// One character of folded text with the bytes of the original it came from.
 pub(crate) type Folded = Vec<(char, usize, usize)>;
 
@@ -52,6 +54,23 @@ pub(crate) fn fold(text: &str) -> String {
 pub(crate) fn overlap(a: &str, b: &str) -> bool {
     let (a, b) = (fold(a), fold(b));
     !a.is_empty() && !b.is_empty() && (a.contains(&b) || b.contains(&a))
+}
+
+/// Whether some sentence of `sentence` is, folded, a whole sentence of
+/// `text`: a sentence inside a longer one does not count.
+pub(crate) fn holds_sentence(text: &str, sentence: &str) -> bool {
+    let folded_sentences = |text: &str| -> Vec<String> {
+        sentences(text)
+            .into_iter()
+            .filter_map(|(from, to)| text.get(from..to))
+            .map(fold)
+            .filter(|folded| !folded.is_empty())
+            .collect()
+    };
+    let held = folded_sentences(text);
+    folded_sentences(sentence)
+        .iter()
+        .any(|folded| held.contains(folded))
 }
 
 /// The bytes of `text` that `needle` stands for, if it occurs in it (the

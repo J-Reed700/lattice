@@ -30,3 +30,18 @@ fn overlap_is_either_text_holding_the_other() {
     assert!(!overlap("Run ls now.", "Stop."));
     assert!(!overlap("", "Stop."));
 }
+
+#[test]
+fn a_whole_sentence_is_held_whatever_its_emphasis_apostrophe_or_case() {
+    let text = "It is the tool\u{2019}s name. Then stop.";
+    assert!(holds_sentence(text, "It is the **tool's** name."));
+    assert!(holds_sentence(text, "THEN STOP."));
+    assert!(holds_sentence(text, "Other words here. then stop."));
+}
+
+#[test]
+fn a_sentence_inside_a_longer_one_is_not_held() {
+    assert!(!holds_sentence("There is no.", "No."));
+    assert!(!holds_sentence("There is no.", "is no."));
+    assert!(!holds_sentence("Some text.", "  "));
+}
