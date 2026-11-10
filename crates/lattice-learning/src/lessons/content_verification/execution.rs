@@ -38,36 +38,14 @@ pub(crate) async fn label_unlabeled(llm: &dyn LLMPort, raw: String) -> Result<St
             .get("body")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        let mut fence: Option<(char, usize, usize, usize, bool)> = None;
-        let mut offset = 0;
-        for line in body.split_inclusive('\n') {
-            let trimmed = line.trim_start();
-            if let Some((marker, width, insert, start, unlabeled)) = fence {
-                if trimmed.chars().take_while(|c| *c == marker).count() >= width
-                    && trimmed.trim().chars().all(|c| c == marker)
-                {
-                    if unlabeled {
-                        let id = format!("block-{index}-fence-{}", locations.len());
-                        pending.push(json!({"id":id,"section":block.get("title"),"context":body,"fencedText":body.get(start..offset).unwrap_or_default()}));
-                        locations.push((index, insert));
-                    }
-                    fence = None;
-                }
-            } else if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-                let marker = trimmed.chars().next().unwrap_or('`');
-                let width = trimmed.chars().take_while(|c| *c == marker).count();
-                fence = Some((
-                    marker,
-                    width,
-                    offset + line.len() - trimmed.len() + width,
-                    offset + line.len(),
-                    trimmed.get(width..).unwrap_or_default().trim().is_empty(),
-                ));
-            }
-            offset += line.len();
-        }
-        if fence.is_some() {
-            return Err(invalid(format!("Worked example {} contains an unclosed Markdown fence. Its draft is retained; no lesson was published.",index+1)));
+        for fence in fences(body)
+            .closed
+            .iter()
+            .filter(|fence| fence.language.is_empty())
+        {
+            let id = format!("block-{index}-fence-{}", locations.len());
+            pending.push(json!({"id":id,"section":block.get("title"),"context":body,"fencedText":body.get(fence.text.clone()).unwrap_or_default()}));
+            locations.push((index, fence.label_at));
         }
     }
     if pending.is_empty() {
@@ -222,50 +200,26 @@ async fn run(
     })
 }
 
-/// Recognize fenced examples without rewriting the rendered code. Unlabeled
-/// or incomplete fences block verification; other languages are disclosed.
+/// Recognize fenced examples without rewriting the rendered code. An
+/// unlabeled fence blocks verification; a fence the body never closes is no
+/// example, and other languages are disclosed.
 fn examples(body: &str) -> Result<Vec<(LearningBuiltinRuntime, String)>> {
     let mut result = Vec::new();
-    let mut fence: Option<(char, usize, String, String)> = None;
-    for line in body.split_inclusive('\n') {
-        let trimmed = line.trim_start();
-        if let Some((marker, width, language, code)) = fence.as_mut() {
-            if trimmed.chars().take_while(|c| c == marker).count() >= *width
-                && trimmed.trim().chars().all(|c| c == *marker)
-            {
-                let runtime = match language.as_str() {
-                    "python" | "py" => Some(LearningBuiltinRuntime::Python),
-                    "javascript" | "js" => Some(LearningBuiltinRuntime::Javascript),
-                    data if NOT_PROGRAMS.contains(&data) => None,
-                    "" => {
-                        return Err(invalid(
-                            "Label worked-example code fences with their language.",
-                        ))
-                    }
-                    _ => None, // Evidence-checked; explicitly reported as not executed.
-                };
-                if let Some(runtime) = runtime {
-                    result.push((runtime, code.clone()));
-                }
-                fence = None;
-            } else {
-                code.push_str(line);
+    for fence in fences(body).closed {
+        let runtime = match fence.language.as_str() {
+            "python" | "py" => Some(LearningBuiltinRuntime::Python),
+            "javascript" | "js" => Some(LearningBuiltinRuntime::Javascript),
+            data if NOT_PROGRAMS.contains(&data) => None,
+            "" => {
+                return Err(invalid(
+                    "Label worked-example code fences with their language.",
+                ))
             }
-        } else if trimmed.starts_with("```") || trimmed.starts_with("~~~") {
-            let marker = trimmed.chars().next().unwrap_or('`');
-            let width = trimmed.chars().take_while(|c| *c == marker).count();
-            let language = trimmed
-                .get(width..)
-                .unwrap_or_default()
-                .split_whitespace()
-                .next()
-                .unwrap_or_default()
-                .to_ascii_lowercase();
-            fence = Some((marker, width, language, String::new()));
+            _ => None, // Evidence-checked; explicitly reported as not executed.
+        };
+        if let Some(runtime) = runtime {
+            result.push((runtime, body.get(fence.text).unwrap_or_default().to_owned()));
         }
-    }
-    if fence.is_some() {
-        return Err(invalid("A worked example contains an unclosed code fence."));
     }
     Ok(result)
 }

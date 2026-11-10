@@ -45,6 +45,30 @@ struct GeneratedLesson {
     questions: Vec<GeneratedQuestion>,
 }
 
+impl GeneratedLesson {
+    /// A lesson has at least one section.
+    fn has_sections(&self) -> bool {
+        !self.blocks.is_empty()
+    }
+}
+
+/// Whether `candidate` is still the writer's shape of a lesson, as far as
+/// reading it goes; the schema is not consulted.
+pub(crate) fn reads_as_lesson(candidate: &serde_json::Value) -> bool {
+    serde_json::from_value::<GeneratedLesson>(candidate.clone())
+        .is_ok_and(|lesson| lesson.has_sections())
+}
+
+/// Whether `part`, a section when `block` and else a question, still reads as
+/// the writer's shape of one.
+pub(crate) fn reads_as_part(part: &serde_json::Value, block: bool) -> bool {
+    if block {
+        serde_json::from_value::<GeneratedBlock>(part.clone()).is_ok()
+    } else {
+        serde_json::from_value::<GeneratedQuestion>(part.clone()).is_ok()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedBlock {
@@ -495,7 +519,15 @@ pub async fn prepare_lesson_with_references<'a>(
                 subject: "the lesson",
                 brief: &brief,
             }),
-            |raw| parse_json::<GeneratedLesson>(raw).map(|_| raw.to_owned()),
+            |raw| {
+                if parse_json::<GeneratedLesson>(raw)?.has_sections() {
+                    Ok(raw.to_owned())
+                } else {
+                    Err(AppError::InvalidInput(
+                        "The lesson has no sections; write at least one.".into(),
+                    ))
+                }
+            },
         )
         .await?;
         crate::lesson_drafts::save(&raw).await?;
@@ -594,7 +626,8 @@ fn unusable(error: AppError) -> AppError {
 /// (`service::validate_generated`) refuses only what cannot be saved. A
 /// citation whose quotation does not match its source keeps the source it
 /// names and comes back as a finding; a fabricated citation in a course
-/// without sources is dropped and comes back as a finding.
+/// without sources, or a part naming no source it was given, is saved with
+/// none and comes back as a finding.
 fn assemble(
     generated: GeneratedLesson,
     sources: &[LearningSourceDto],
@@ -616,9 +649,13 @@ fn assemble(
             (FindingSite::Section(index), &mut source_ids),
             &mut findings,
         )?;
-        // Practice with fewer than two criteria is a structural finding;
-        // the criteria it has are saved.
-        let rubric = crate::teaching::rubric(block.rubric, false).map_err(unusable)?;
+        // Criteria the rules refuse are not saved, and a practice section
+        // without them is a finding (`teaching::structural_findings`).
+        let rubric = match crate::teaching::rubric(block.rubric, false) {
+            Ok(rubric) => rubric,
+            Err(AppError::InvalidInput(_)) => Vec::new(),
+            Err(other) => return Err(other),
+        };
         blocks.push(LearningBlockDto {
             rubric,
             kind: block.kind,
@@ -734,8 +771,8 @@ fn cite_sentences(
     Ok(())
 }
 
-/// The sources a part is saved with. Only a part of a sourced course that
-/// names no supplied source cannot be saved.
+/// The sources a part is saved with: none when it names no supplied source,
+/// which is a finding that waits.
 fn citation(
     sources: &[LearningSourceDto],
     index: Option<usize>,
@@ -767,17 +804,10 @@ fn citation(
         ))
         .with_passage(quote),
     );
-    if sources.is_empty() {
-        return Ok(Vec::new());
-    }
-    index
+    Ok(index
         .and_then(|index| sources.get(index))
         .map(|source| vec![source.id.clone()])
-        .ok_or_else(|| {
-            AppError::ModelAnswerUnusable(format!(
-                "The citation at {part} names no source this lesson was given."
-            ))
-        })
+        .unwrap_or_default())
 }
 
 #[cfg(test)]

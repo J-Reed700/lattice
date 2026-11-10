@@ -1831,12 +1831,18 @@ async fn exact_worked_code_is_executed_and_bad_output_cannot_hide_a_failed_run()
     assert!(observed[0].evidence().contains('5'));
     let bad = json!({"blocks":[{"kind":"worked_example","body":"```javascript\nthrow new Error('broken example');\n```"}]});
     assert!(!execution::observe(&runtimes, &bad).await?[0].passed());
-    assert!(execution::observe(
-        &runtimes,
-        &json!({"blocks":[{"kind":"worked_example","body":"```python\nprint(1)"}]})
-    )
-    .await
-    .is_err());
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_open_fence_is_no_example_and_the_closed_ones_still_run() -> Result<()> {
+    let runtimes = BuiltinRuntimes::for_tests();
+    let body = "```javascript\nconsole.log(1);\n```\nThen:\n```javascript\nconsole.log(2);\n";
+    let lesson = json!({"blocks":[{"kind":"worked_example","body":body}]});
+    let observed = execution::observe(&runtimes, &lesson).await?;
+    assert_eq!(observed.len(), 1);
+    assert_eq!(observed[0].id, "block-0-example-0");
+    assert!(observed[0].passed());
     Ok(())
 }
 
@@ -1863,6 +1869,35 @@ async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> R
     assert!(observed[0].evidence().contains(" a  b "));
     let titled = json!({"blocks":[{"kind":"worked_example","body":"```javascript title=example.js\nconsole.log(42);\n```"}]});
     assert!(execution::observe(&runtimes, &titled).await?[0].passed());
+    Ok(())
+}
+
+#[tokio::test]
+async fn an_unclosed_fence_is_left_as_written_and_a_closed_one_elsewhere_is_still_labeled(
+) -> Result<()> {
+    use crate::lessons::course_generation_tests::ScriptedModel;
+    let model = ScriptedModel {
+        outputs: Mutex::new(
+            vec![json!({"fences":[{"id":"block-1-fence-0","language":"text"}]}).to_string()].into(),
+        ),
+        prompts: Mutex::new(Vec::new()),
+    };
+    let open = "Try it:\n```\nprint(1)\nand the example goes on";
+    let tree = "project/\n";
+    let lesson = json!({"blocks":[
+        {"kind":"worked_example","title":"Open","body":open},
+        {"kind":"worked_example","title":"Closed","body":format!("Layout:\n```\n{tree}```\n")},
+    ],"questions":[]});
+
+    let corrected: Value =
+        serde_json::from_str(&normalize_example_fences(&model, lesson.to_string()).await?)?;
+
+    assert_eq!(corrected["blocks"][0]["body"], open);
+    assert_eq!(
+        corrected["blocks"][1]["body"],
+        format!("Layout:\n```text\n{tree}```\n")
+    );
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
     Ok(())
 }
 

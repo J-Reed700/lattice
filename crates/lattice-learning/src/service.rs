@@ -345,8 +345,9 @@ pub async fn prepare(
     repo.get(&request.program_id).await
 }
 
-/// [`validate_prepared`] for a lesson the model wrote: what cannot be saved
-/// is the model's answer, never the user's input.
+/// [`validate_prepared`] for a lesson the model wrote: what it checks is what
+/// our code must have built; what the model wrote is the lesson rules' to
+/// report and the quiz bank's to drop. A failure is the model's, not the user's.
 pub(super) fn validate_generated(
     p: &PreparedLearningLesson,
     program: &LearningProgramDto,
@@ -357,13 +358,14 @@ pub(super) fn validate_generated(
     })
 }
 
+/// What our code builds of a saved lesson: never the wording the model wrote.
 pub(super) fn validate_prepared(
     p: &PreparedLearningLesson,
     program: &LearningProgramDto,
 ) -> Result<()> {
-    if p.blocks.is_empty() || p.questions.is_empty() {
+    if p.blocks.is_empty() {
         return Err(AppError::InvalidInput(
-            "Prepared lesson needs teaching blocks and assessment questions.".into(),
+            "Prepared lesson needs teaching blocks.".into(),
         ));
     }
     let source_ids: std::collections::HashSet<&str> =
@@ -372,12 +374,9 @@ pub(super) fn validate_prepared(
     let mut keys = std::collections::HashSet::new();
     for b in &p.blocks {
         super::teaching::validate_saved_rubric(&b.rubric)?;
-        not_blank(&b.title, "Block title")?;
-        not_blank(&b.body, "Block text")?;
-        if (b.source_ids.is_empty() && !source_ids.is_empty())
-            || b.source_ids
-                .iter()
-                .any(|id| !source_ids.contains(id.as_str()))
+        if b.source_ids
+            .iter()
+            .any(|id| !source_ids.contains(id.as_str()))
         {
             return Err(AppError::InvalidInput(
                 "Lesson block references an unknown source.".into(),
@@ -391,28 +390,9 @@ pub(super) fn validate_prepared(
                 "Question identifiers must be unique.".into(),
             ));
         }
-        not_blank(&q.prompt, "Question")?;
-        if q.options.len() < 2
-            || q.options.len() > 8
-            || q.options.iter().any(|o| o.trim().is_empty())
-        {
-            return Err(AppError::InvalidInput(
-                "Questions need 2–8 answer options.".into(),
-            ));
-        }
-        let mut opts = std::collections::HashSet::new();
-        if q.options
+        if q.source_ids
             .iter()
-            .any(|o| !opts.insert(o.trim().to_lowercase()))
-        {
-            return Err(AppError::InvalidInput(
-                "Question options must be unique.".into(),
-            ));
-        }
-        if (q.source_ids.is_empty() && !source_ids.is_empty())
-            || q.source_ids
-                .iter()
-                .any(|id| !source_ids.contains(id.as_str()))
+            .any(|id| !source_ids.contains(id.as_str()))
         {
             return Err(AppError::InvalidInput(
                 "Question references an unknown source.".into(),
@@ -425,35 +405,10 @@ pub(super) fn validate_prepared(
                 "Answer keys must match distinct lesson questions.".into(),
             ));
         }
-        let q = p
-            .questions
-            .iter()
-            .find(|q| q.id == k.question_id)
-            .ok_or_else(|| AppError::InvalidInput("Answer key has no matching question.".into()))?;
-        if k.correct_index >= q.options.len() {
-            return Err(AppError::InvalidInput(
-                "Correct answer index is outside the available options.".into(),
-            ));
-        }
-        not_blank(&k.explanation, "Answer explanation")?;
-        if !k.rationales.is_empty() && k.rationales.len() != q.options.len() {
-            return Err(AppError::InvalidInput(
-                "Answer reasons must be one for each option.".into(),
-            ));
-        }
     }
     if keys.len() != question_ids.len() {
         return Err(AppError::InvalidInput(
             "Every generated question needs exactly one answer key.".into(),
-        ));
-    }
-    let asked: Vec<LessonQuestionKind> = p.questions.iter().map(|q| q.kind.clone()).collect();
-    if super::lessons::shape::policy()
-        .missing_question_kind(&asked)
-        .is_some()
-    {
-        return Err(AppError::InvalidInput(
-            "Each prepared lesson needs practice, quiz, and test questions.".into(),
         ));
     }
     Ok(())
@@ -488,31 +443,43 @@ mod tests {
     }
 
     #[test]
-    fn a_key_carries_no_reasons_or_one_per_option_and_nothing_else() {
+    fn what_the_model_wrote_in_a_question_is_never_refused_by_the_gate() {
         let mut program = fixture();
         program.sources.clear();
         let lesson_id = program.modules[0].lessons[0].id.clone();
         let mut lesson = prepared(&lesson_id);
-        for reasons in [vec![], vec![String::new(), "Unsupported fails.".into()]] {
-            lesson.keys[0].rationales = reasons;
-            assert!(validate_prepared(&lesson, &program).is_ok());
-            assert!(validate_generated(&lesson, &program).is_ok());
-        }
-        for reasons in [
-            vec!["Only one.".to_owned()],
-            vec![String::new(), "Two.".into(), "Three.".into()],
-        ] {
-            lesson.keys[0].rationales = reasons;
-            assert!(validate_prepared(&lesson, &program).is_err());
-            assert!(matches!(
-                validate_generated(&lesson, &program),
-                Err(AppError::ModelAnswerUnusable(_))
-            ));
-        }
+        lesson.questions[0].prompt = String::new();
+        lesson.questions[0].options = vec!["Alpha".into()];
+        lesson.keys[0].correct_index = 9;
+        lesson.keys[0].explanation = String::new();
+        lesson.keys[0].rationales = vec!["Only one.".into(), String::new(), "Three.".into()];
+        lesson.blocks[0].title = String::new();
+        lesson.blocks[0].body = String::new();
+        assert!(validate_prepared(&lesson, &program).is_ok());
+        assert!(validate_generated(&lesson, &program).is_ok());
+        lesson.questions.clear();
+        lesson.keys.clear();
+        assert!(validate_generated(&lesson, &program).is_ok());
     }
 
     #[test]
-    fn a_prepared_lesson_is_checked_for_blank_text_never_for_how_long_it_is() {
+    fn a_key_that_matches_no_question_or_a_question_without_a_key_is_refused() {
+        let mut program = fixture();
+        program.sources.clear();
+        let lesson_id = program.modules[0].lessons[0].id.clone();
+        let mut lesson = prepared(&lesson_id);
+        lesson.keys.pop();
+        assert!(matches!(
+            validate_generated(&lesson, &program),
+            Err(AppError::ModelAnswerUnusable(_))
+        ));
+        let mut lesson = prepared(&lesson_id);
+        lesson.keys[0].question_id = "unknown".into();
+        assert!(validate_prepared(&lesson, &program).is_err());
+    }
+
+    #[test]
+    fn a_prepared_lesson_is_never_checked_for_how_long_its_text_is() {
         let mut program = fixture();
         program.sources.clear();
         let lesson_id = program.modules[0].lessons[0].id.clone();
@@ -530,5 +497,16 @@ mod tests {
             saved.is_ok(),
             "the gate a written lesson meets at save: {saved:?}"
         );
+    }
+
+    #[test]
+    fn a_question_whose_options_differ_only_by_letter_case_is_accepted() {
+        let mut program = fixture();
+        program.sources.clear();
+        let lesson_id = program.modules[0].lessons[0].id.clone();
+        let mut lesson = prepared(&lesson_id);
+        lesson.questions[0].options = vec!["Alpha".into(), "alpha".into()];
+        let checked = validate_prepared(&lesson, &program);
+        assert!(checked.is_ok(), "{checked:?}");
     }
 }
