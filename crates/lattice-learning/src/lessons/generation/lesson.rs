@@ -51,6 +51,16 @@ pub(crate) fn reads_as_lesson(candidate: &serde_json::Value) -> bool {
     serde_json::from_value::<GeneratedLesson>(candidate.clone()).is_ok()
 }
 
+/// Whether `part`, a section when `block` and else a question, still reads as
+/// the writer's shape of one.
+pub(crate) fn reads_as_part(part: &serde_json::Value, block: bool) -> bool {
+    if block {
+        serde_json::from_value::<GeneratedBlock>(part.clone()).is_ok()
+    } else {
+        serde_json::from_value::<GeneratedQuestion>(part.clone()).is_ok()
+    }
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedBlock {
