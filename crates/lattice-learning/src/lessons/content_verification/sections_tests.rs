@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 use super::*;
 use crate::lessons::course_generation_tests::ScriptedModel;
+use crate::lessons::shape;
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLocation, ClaimState, EvidenceFingerprint,
     UnitKind,
@@ -139,6 +140,15 @@ fn report(units: usize) -> LessonVerificationReport {
         unexecuted_languages: Vec::new(),
         replaced_findings: Vec::new(),
     }
+}
+
+/// A schema of the test's own under the kept promise, for tests of what the
+/// schema is not about.
+fn loose() -> LessonShape<'static> {
+    static SCHEMA: std::sync::LazyLock<shape::LessonSchema> = std::sync::LazyLock::new(|| {
+        shape::FixedSchema(json!({"type":"object"})).schema(shape::Phase::Kept, 0)
+    });
+    LessonShape::new(&SCHEMA, shape::policy())
 }
 
 /// Why the lesson without the units that go could not be published.
@@ -466,7 +476,7 @@ async fn a_lesson_that_loses_its_first_explanation_stops_with_the_reason_that_na
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson().to_string(),
         &mut ledger,
@@ -522,7 +532,7 @@ async fn a_lesson_every_statement_of_which_ended_removed_stops_with_the_reason_t
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson().to_string(),
         &mut ledger,
@@ -551,7 +561,7 @@ async fn a_lesson_with_a_statement_left_is_settled_as_before_whatever_was_remove
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson().to_string(),
         &mut ledger,
@@ -579,7 +589,7 @@ async fn a_section_left_with_too_little_goes_and_the_checks_let_go_of_its_statem
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson.to_string(),
         &mut ledger,
@@ -607,7 +617,7 @@ async fn a_lesson_with_nothing_cut_is_settled_without_a_call() -> Result<()> {
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson().to_string(),
         &mut ledger,
@@ -769,7 +779,7 @@ async fn each_section_that_took_a_cut_gets_one_flow_repair_and_never_a_second() 
     for _ in 0..2 {
         let settled = settle(
             &llm,
-            ("{}", &json!({"type":"object"}), 4_000),
+            ("{}", loose(), 4_000),
             &references,
             &lesson.to_string(),
             &mut ledger,
@@ -809,7 +819,7 @@ async fn a_flow_repair_that_cannot_stand_leaves_the_section_as_cut() -> Result<(
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson.to_string(),
         &mut ledger,
@@ -991,7 +1001,7 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson.to_string(),
         &mut ledger,
@@ -1004,7 +1014,7 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
 
     let settled_again = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &edited_str,
         &mut ledger,
@@ -1074,7 +1084,7 @@ async fn a_check_whose_only_worked_example_goes_goes_with_it() -> Result<()> {
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson.to_string(),
         &mut ledger,
@@ -1082,12 +1092,11 @@ async fn a_check_whose_only_worked_example_goes_goes_with_it() -> Result<()> {
     .await?;
 
     // The check after the example would test what the lesson has not shown.
-    let with_it = ledger.cuts.going.contains_key(&3);
-    assert!(
-        with_it || matches!(settled, Settled::Stopped(_)),
-        "{:?}",
-        ledger.cuts.going
+    assert_eq!(
+        ledger.cuts.going.keys().copied().collect::<Vec<_>>(),
+        [1, 3]
     );
+    assert!(matches!(settled, Settled::Again(_)));
     Ok(())
 }
 
@@ -1103,17 +1112,16 @@ async fn the_review_after_cuts_with_no_claim_left_asks_for_no_count_the_cuts_spe
         .collect();
     let review = json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
     let llm = model(&[answers, review]);
-    let mut ledger = ClaimLedger::open(&llm, "{}").await.unwrap();
-    ledger.cuts.go(2, "Not to be confused with".into());
     let sources = sources();
     let references = ReferenceCollection::lexical(&sources).unwrap();
 
-    let _ = settle(
+    let _ = crate::lessons::content_verification::settle_after_cuts(
         &llm,
-        ("{}", &shape::policy().schema(shape::Phase::Kept, 1), 4_000),
+        "{}",
+        shape::policy(),
+        lesson.to_string(),
         &references,
-        &lesson.to_string(),
-        &mut ledger,
+        &[(2, "Not to be confused with")],
     )
     .await;
 

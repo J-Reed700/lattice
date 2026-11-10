@@ -8,6 +8,7 @@ use super::repair_work::{
     withdraw_resolved,
 };
 use super::*;
+use crate::lessons::shape::LessonShape;
 use crate::lessons::text_edits;
 use lattice_core::application::services::grounded_generation::{GroundedRequest, HistoryItem};
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal};
@@ -18,7 +19,7 @@ mod confine;
 mod cut;
 #[cfg(test)]
 pub(super) use citation::quotation;
-pub(super) use citation::{cite_where_supported, number_evidence, number_sources, uncite, Cited};
+pub(super) use citation::{cite_where_supported, number_evidence, uncite, Cited};
 use confine::PutBack;
 pub(crate) use confine::{confine, Protected};
 #[cfg(test)]
@@ -426,7 +427,7 @@ pub(crate) async fn candidate(
     llm: &dyn LLMPort,
     policy: &dyn AcceptancePolicy,
     prompt: &str,
-    schema: &Value,
+    shape: LessonShape<'_>,
     mut context: Value,
     output_tokens: usize,
     references: &ReferenceCollection<'_>,
@@ -436,7 +437,7 @@ pub(crate) async fn candidate(
     // A claim on its last attempt has its sentence taken out in code; the
     // model is asked only for the others, and for a statement whose cut is a
     // narrowing (`ClaimLedger::cut_of`).
-    let handled = cut::last_attempts(policy, &mut context, ledger).await?;
+    let handled = cut::last_attempts(policy, shape.policy, &mut context, ledger).await?;
     let candidate = if handled > 0 && targets(&context)?.is_empty() {
         let candidate = context
             .get("candidate")
@@ -449,7 +450,7 @@ pub(crate) async fn candidate(
             llm,
             policy,
             prompt,
-            schema,
+            shape.value(),
             context,
             output_tokens,
             references,
@@ -464,12 +465,11 @@ pub(crate) async fn candidate(
         llm,
         crate::teaching::LESSON_REPAIR_SYSTEM,
         prompt,
-        schema,
+        shape,
         candidate.to_string(),
         output_tokens,
         references,
         &protected,
-        crate::lessons::shape::Phase::Kept,
     ))
     .await
 }

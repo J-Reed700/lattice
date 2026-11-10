@@ -1,7 +1,7 @@
 //! Instructional review and task-specific teaching contracts.
 use super::writer_excerpts::{self, WriterExcerpts};
 use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
-use crate::lessons::shape::Phase;
+use crate::lessons::shape::LessonShape;
 use crate::review_findings::{
     plain_part, FindingKey, FindingKind, FindingSite, ReviewFinding, SetAside,
 };
@@ -114,12 +114,10 @@ pub const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts
 
 /// Deterministic findings: the schema, each section's body and rubric,
 /// and, under a lesson's schema, the lesson's own rules. Nothing is
-/// dropped; a caller that sends six at a time decides what waits. `phase` says
-/// which promise a lesson is held to.
+/// dropped; a caller that sends six at a time decides what waits.
 pub(crate) fn structural_findings(
-    schema: &Value,
+    schema: ReviewSchema<'_>,
     candidate: &str,
-    phase: Phase,
 ) -> Result<Vec<ReviewFinding>> {
     let value: Value = match serde_json::from_str(candidate) {
         Ok(value) => value,
@@ -132,7 +130,7 @@ pub(crate) fn structural_findings(
             .with_summary("The lesson could not be read as a whole.")])
         }
     };
-    let validator = jsonschema::JSONSchema::compile(schema)
+    let validator = jsonschema::JSONSchema::compile(schema.value())
         .map_err(|_| AppError::InternalError("Invalid teaching schema".into()))?;
     let mut issues = Vec::new();
     if let Err(errors) = validator.validate(&value) {
@@ -173,21 +171,33 @@ pub(crate) fn structural_findings(
             }
         }
     }
-    if is_lesson_schema(schema) {
-        issues.extend(crate::generation::lesson_rules(&value, phase));
+    if let ReviewSchema::Lesson(shape) = schema {
+        issues.extend(crate::generation::lesson_rules(&value, shape));
     }
     Ok(issues)
 }
 
-/// A lesson's schema: sections and questions of the lesson's kinds. Only
-/// under it do the lesson's own rules apply.
-fn is_lesson_schema(schema: &Value) -> bool {
-    schema
-        .pointer("/properties/blocks/items/properties/kind")
-        .is_some()
-        && schema
-            .pointer("/properties/questions/items/properties/kind")
-            .is_some()
+/// What material is reviewed against. Only a lesson's schema, with the policy
+/// that built it, brings the lesson's own rules, in the schema's phase.
+#[derive(Clone, Copy)]
+pub(crate) enum ReviewSchema<'a> {
+    Lesson(LessonShape<'a>),
+    Other(&'a Value),
+}
+
+impl<'a> From<LessonShape<'a>> for ReviewSchema<'a> {
+    fn from(shape: LessonShape<'a>) -> Self {
+        Self::Lesson(shape)
+    }
+}
+
+impl<'a> ReviewSchema<'a> {
+    pub(crate) fn value(&self) -> &'a Value {
+        match self {
+            Self::Lesson(shape) => shape.value(),
+            Self::Other(schema) => *schema,
+        }
+    }
 }
 
 /// Findings for a source quotation that matches no saved reference, placed
@@ -294,8 +304,6 @@ struct ReviewContext<'a> {
     lesson_references: Option<&'a crate::reference_collection::ReferenceCollection<'a>>,
     /// A lesson's findings the user already has: never repaired again.
     held: BTreeSet<FindingKey>,
-    /// Which promise a lesson is held to; outlines and quizzes have no shape.
-    phase: Phase,
 }
 
 /// The reviewed material, and what the repairs could not settle: a lesson
@@ -305,17 +313,18 @@ struct Reviewed {
     set_aside: Vec<SetAside>,
 }
 
-pub(crate) async fn review_lesson(
+pub(crate) async fn review_lesson<'s>(
     llm: &dyn LLMPort,
     system: &str,
     prompt: &str,
-    schema: &Value,
+    review_schema: impl Into<ReviewSchema<'s>>,
     candidate: String,
     output_tokens: usize,
     references: &crate::reference_collection::ReferenceCollection<'_>,
     protected: &[crate::lessons::content_verification::Protected],
-    phase: Phase,
 ) -> Result<String> {
+    let review_schema = review_schema.into();
+    let schema = review_schema.value();
     let mut sources: Vec<_> = references
         .sources
         .iter()
@@ -369,7 +378,7 @@ pub(crate) async fn review_lesson(
         llm,
         system,
         prompt,
-        schema,
+        review_schema,
         candidate,
         output_tokens,
         ReviewContext {
@@ -377,7 +386,6 @@ pub(crate) async fn review_lesson(
             protected,
             lesson_references: Some(references),
             held,
-            phase,
         },
     )
     .await?;
@@ -400,7 +408,7 @@ pub async fn review_and_repair_with_progress(
         llm,
         system,
         prompt,
-        schema,
+        ReviewSchema::Other(schema),
         candidate,
         output_tokens,
         ReviewContext {
@@ -408,7 +416,6 @@ pub async fn review_and_repair_with_progress(
             protected: &[],
             lesson_references: None,
             held: BTreeSet::new(),
-            phase: Phase::Draft,
         },
     )
     .await
@@ -428,11 +435,12 @@ async fn review_material(
     llm: &dyn LLMPort,
     system: &str,
     prompt: &str,
-    schema: &Value,
+    review_schema: ReviewSchema<'_>,
     mut candidate: String,
     output_tokens: usize,
     context: ReviewContext<'_>,
 ) -> Result<Reviewed> {
+    let schema = review_schema.value();
     let outline = context.outline;
     // Only a lesson's review publishes with findings left for the user;
     // outlines, assessments and placement tasks fail closed as before.
@@ -539,7 +547,7 @@ async fn review_material(
             json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
         }).collect();
         let review_prompt = json!({"task":"Review instructional quality", "authoringContext":authoring_context, "originalIssuesToRecheck":original_issues, "sourceQuoteChecks":quote_checks, "correctnessPriority":correctness_priority, "candidate":candidate_value,"referenceVersions":reference_versions});
-        let structure = structural_findings(schema, &candidate, context.phase)?;
+        let structure = structural_findings(review_schema, &candidate)?;
         // A rewrite of the whole lesson changes the sentences its checked
         // claims stand on, so once there are any, what its shape asks waits
         // for the user (claim classes design §3.10).

@@ -87,10 +87,13 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
     assert_eq!(prepared.keys.len(), 5);
     assert!(citations.is_empty());
     // The rules come back as findings for the user, not as an error.
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Draft, 1);
     let findings = crate::teaching::structural_findings(
-        &lesson_schema(1),
+        crate::teaching::ReviewSchema::Lesson(crate::lessons::shape::LessonShape::new(
+            &schema, policy,
+        )),
         &off_shape_value(true).to_string(),
-        crate::lessons::shape::Phase::Draft,
     )
     .unwrap();
     let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.key().id()).collect();
@@ -112,10 +115,13 @@ fn the_publication_check_reports_a_question_kind_the_lesson_lacks() {
         .as_array_mut()
         .unwrap()
         .retain(|question| question["kind"] != "test");
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Kept, 1);
     let findings = crate::teaching::structural_findings(
-        &crate::lessons::shape::policy().schema(crate::lessons::shape::Phase::Kept, 1),
+        crate::teaching::ReviewSchema::Lesson(crate::lessons::shape::LessonShape::new(
+            &schema, policy,
+        )),
         &lesson.to_string(),
-        crate::lessons::shape::Phase::Kept,
     )
     .unwrap();
     assert!(
@@ -426,7 +432,8 @@ fn the_lesson_schema_bounds_no_text_but_a_blank() {
 
 #[test]
 fn a_lessons_text_of_any_length_is_no_schema_finding() {
-    let schema = lesson_schema(1);
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Draft, 1);
     let kinds = [
         "explanation",
         "worked_example",
@@ -456,9 +463,10 @@ fn a_lessons_text_of_any_length_is_no_schema_finding() {
     let mut lesson = json!({"blocks":blocks,"questions":questions});
     let schema_findings = |lesson: &Value| -> Vec<String> {
         crate::teaching::structural_findings(
-            &schema,
+            crate::teaching::ReviewSchema::Lesson(crate::lessons::shape::LessonShape::new(
+                &schema, policy,
+            )),
             &lesson.to_string(),
-            crate::lessons::shape::Phase::Draft,
         )
         .unwrap()
         .into_iter()
@@ -523,6 +531,7 @@ fn writer_prompt(program: &LearningProgramDto, lesson: &LearningLessonDto) -> Va
         Vec::new(),
         Vec::new(),
         true,
+        crate::lessons::shape::policy(),
     )
     .unwrap();
     serde_json::from_str(&prompt).unwrap()

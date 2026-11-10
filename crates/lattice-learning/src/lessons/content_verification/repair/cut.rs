@@ -11,6 +11,7 @@ use super::super::sections::{
 };
 use super::super::*;
 use super::goal_words;
+use crate::lessons::shape::ShapePolicy;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal, Outcome};
 use lattice_core::domain::learning::claim_review::{ClaimId, CutPlace};
 use lattice_core::shared::text::sentences;
@@ -217,6 +218,7 @@ fn ask_narrowing(context: &mut Value, narrowed: &[ClaimId]) {
 /// error that stops the lesson when the cuts leave no claim of it standing.
 pub(in crate::lessons::content_verification) async fn last_attempts(
     policy: &dyn AcceptancePolicy,
+    shape: &dyn ShapePolicy,
     context: &mut Value,
     ledger: &mut ClaimLedger,
 ) -> Result<usize> {
@@ -339,12 +341,12 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
     // The questions marked to go keep their place when they would leave the
     // lesson unpublishable: the lesson loses none of them, and the cuts beside
     // them are made.
-    if !asked_to_go.is_empty() && unpublishable(&lesson, &ledger.cuts).is_some() {
+    if !asked_to_go.is_empty() && unpublishable(&lesson, &ledger.cuts, shape).is_some() {
         let mut kept = ledger.cuts.clone();
         for unit in &asked_to_go {
             kept.going.remove(unit);
         }
-        if unpublishable(&lesson, &kept).is_none() {
+        if unpublishable(&lesson, &kept, shape).is_none() {
             ledger.cuts = kept;
             with_question.retain(|id| {
                 ledger
@@ -384,8 +386,8 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
     let (lesson_ex, cuts_ex) = after_examples
         .clone()
         .unwrap_or_else(|| (before.clone(), cuts_before.clone()));
-    let little_from_examples = left_with_too_little(&lesson_ex, &cuts_ex);
-    let thinned: Vec<usize> = left_with_too_little(&lesson, &ledger.cuts)
+    let little_from_examples = left_with_too_little(&lesson_ex, &cuts_ex, shape);
+    let thinned: Vec<usize> = left_with_too_little(&lesson, &ledger.cuts, shape)
         .into_iter()
         .filter(|unit| !little_from_examples.contains(unit))
         .collect();
@@ -419,7 +421,7 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
         .cloned()
         .collect();
     if !statements.is_empty()
-        && (unpublishable(&lesson, &ledger.cuts).is_some()
+        && (unpublishable(&lesson, &ledger.cuts, shape).is_some()
             || (refused.is_empty() && ledger.nothing_left(&cut)))
     {
         let example_ids: Vec<ClaimId> = taken
@@ -431,7 +433,7 @@ pub(in crate::lessons::content_verification) async fn last_attempts(
         let all_cuts = std::mem::replace(&mut ledger.cuts, cuts_ex);
         let examples_refused = refused.iter().any(|id| !statements.contains(id));
         let examples_stop = !example_ids.is_empty()
-            && (unpublishable(&lesson_ex, &ledger.cuts).is_some()
+            && (unpublishable(&lesson_ex, &ledger.cuts, shape).is_some()
                 || (!examples_refused && ledger.nothing_left(&example_ids)));
         if examples_stop {
             ledger.cuts = all_cuts;

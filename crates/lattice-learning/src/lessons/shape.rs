@@ -25,12 +25,68 @@ pub(crate) enum Phase {
     Kept,
 }
 
+/// A lesson schema and the promise it holds a lesson to. Only the shape
+/// policy builds one, so the two cannot disagree.
+#[derive(Clone, Debug)]
+pub(crate) struct LessonSchema {
+    phase: Phase,
+    value: Value,
+}
+
+impl LessonSchema {
+    pub(crate) fn phase(&self) -> Phase {
+        self.phase
+    }
+
+    pub(crate) fn value(&self) -> &Value {
+        &self.value
+    }
+
+    pub(crate) fn into_value(self) -> Value {
+        self.value
+    }
+
+    /// The same promise for `source_count` sources, once verification has
+    /// numbered more than the writer was given.
+    pub(crate) fn numbered(&self, shape: &dyn ShapePolicy, source_count: usize) -> Self {
+        shape.schema(self.phase, source_count)
+    }
+}
+
+/// A lesson schema with the policy that built it: what a review or a repair
+/// of a lesson is given.
+#[derive(Clone, Copy)]
+pub(crate) struct LessonShape<'a> {
+    pub(crate) schema: &'a LessonSchema,
+    pub(crate) policy: &'a dyn ShapePolicy,
+}
+
+impl<'a> LessonShape<'a> {
+    pub(crate) fn new(schema: &'a LessonSchema, policy: &'a dyn ShapePolicy) -> Self {
+        Self { schema, policy }
+    }
+
+    pub(crate) fn value(&self) -> &'a Value {
+        self.schema.value()
+    }
+
+    pub(crate) fn phase(&self) -> Phase {
+        self.schema.phase()
+    }
+}
+
 /// The one reader of a lesson's shape.
 pub(crate) trait ShapePolicy: Send + Sync {
     /// The lesson schema for `phase` and `source_count` saved sources. Both
     /// phases have the same item shapes; `Kept` has none of the margin's
     /// minimums.
-    fn schema(&self, phase: Phase, source_count: usize) -> Value;
+    fn schema(&self, phase: Phase, source_count: usize) -> LessonSchema;
+
+    /// The fewest and most core ideas a lesson teaches.
+    fn ideas(&self) -> (usize, usize);
+
+    /// The fewest and most sections the writer is asked for.
+    fn sections(&self) -> (usize, usize);
 
     /// The findings about the count and the order of `lesson`'s sections and
     /// questions in `phase`.
@@ -62,13 +118,17 @@ pub(crate) fn policy() -> &'static dyn ShapePolicy {
 
 pub(crate) struct StandardShape;
 
+/// The core ideas a lesson teaches: two or three.
+const IDEAS: (usize, usize) = (2, 3);
+
 /// The sections a lesson is written with: at least this many of each kind, or
-/// exactly this many when `exact`.
+/// exactly this many when `exact`. Each idea has one section of each kind that
+/// is not exact; the exact kinds close the lesson.
 const SECTION_MIX: [(&str, usize, bool); 8] = [
-    ("explanation", 2, false),
-    ("worked_example", 2, false),
+    ("explanation", IDEAS.0, false),
+    ("worked_example", IDEAS.0, false),
     ("contrast", 1, false),
-    ("check", 2, false),
+    ("check", IDEAS.0, false),
     ("guided_practice", 1, true),
     ("independent_practice", 1, true),
     ("reflection", 1, true),
@@ -79,28 +139,52 @@ const SECTION_MIX: [(&str, usize, bool); 8] = [
 /// one; a lesson is saved with one of each (`LessonQuestionKind::ALL`).
 const QUESTIONS_PER_KIND: usize = 2;
 
-/// The fewest sections the writer is asked for: the mix above at its least,
-/// plus the ideas' own examples and checks. The writer's prompt asks for 10 to
-/// 16.
-const SECTIONS_ASKED: usize = 10;
+/// The fewest sections the writer is asked for: the mix at its least.
+const fn least_sections(mix: &[(&str, usize, bool)]) -> usize {
+    match mix {
+        [] => 0,
+        [(_, least, _), rest @ ..] => *least + least_sections(rest),
+    }
+}
 
-/// The most sections a lesson has: what the writer's prompt allows. Cuts never
+/// The most sections a lesson has: the most ideas, each with a section of
+/// every kind that is not exact, then the exact closing sections. Cuts never
 /// add, so a lesson never has more.
-const MOST_SECTIONS: usize = 16;
+const fn most_sections(mix: &[(&str, usize, bool)]) -> usize {
+    match mix {
+        [] => 0,
+        [(_, least, exact), rest @ ..] => {
+            (if *exact { *least } else { IDEAS.1 }) + most_sections(rest)
+        }
+    }
+}
+
+const SECTIONS: (usize, usize) = (least_sections(&SECTION_MIX), most_sections(&SECTION_MIX));
 
 /// A section that took a cut and has fewer teaching sentences than this has
 /// nothing left to teach with.
 const LEAST_TEACHING_SENTENCES: usize = 2;
 
 impl ShapePolicy for StandardShape {
-    fn schema(&self, phase: Phase, source_count: usize) -> Value {
+    fn schema(&self, phase: Phase, source_count: usize) -> LessonSchema {
         let kinds = LessonQuestionKind::ALL.len();
         let asked = QUESTIONS_PER_KIND * kinds;
         let (sections, questions) = match phase {
-            Phase::Draft => ((SECTIONS_ASKED, MOST_SECTIONS), (asked, asked)),
-            Phase::Kept => ((1, MOST_SECTIONS), (kinds, asked)),
+            Phase::Draft => (SECTIONS, (asked, asked)),
+            Phase::Kept => ((1, SECTIONS.1), (kinds, asked)),
         };
-        crate::generation::lesson_schema_counting(source_count, sections, questions)
+        LessonSchema {
+            phase,
+            value: crate::generation::lesson_schema_counting(source_count, sections, questions),
+        }
+    }
+
+    fn ideas(&self) -> (usize, usize) {
+        IDEAS
+    }
+
+    fn sections(&self) -> (usize, usize) {
+        SECTIONS
     }
 
     fn findings(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
@@ -186,6 +270,49 @@ impl ShapePolicy for StandardShape {
     }
 }
 
+/// The standard policy with a schema of the test's own, for tests of what the
+/// schema is not about.
+#[cfg(test)]
+pub(crate) struct FixedSchema(pub(crate) Value);
+
+#[cfg(test)]
+impl ShapePolicy for FixedSchema {
+    fn schema(&self, phase: Phase, _source_count: usize) -> LessonSchema {
+        LessonSchema {
+            phase,
+            value: self.0.clone(),
+        }
+    }
+
+    fn ideas(&self) -> (usize, usize) {
+        StandardShape.ideas()
+    }
+
+    fn sections(&self) -> (usize, usize) {
+        StandardShape.sections()
+    }
+
+    fn findings(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
+        StandardShape.findings(lesson, phase)
+    }
+
+    fn too_little(&self, body: &str, answer_lost: bool) -> bool {
+        StandardShape.too_little(body, answer_lost)
+    }
+
+    fn dependants(&self, lesson: &Value, going: &BTreeSet<usize>) -> BTreeSet<usize> {
+        StandardShape.dependants(lesson, going)
+    }
+
+    fn floor(&self, lesson: &Value, going: &BTreeSet<usize>) -> Option<String> {
+        StandardShape.floor(lesson, going)
+    }
+
+    fn missing_question_kind(&self, asked: &[LessonQuestionKind]) -> Option<LessonQuestionKind> {
+        StandardShape.missing_question_kind(asked)
+    }
+}
+
 fn items<'a>(lesson: &'a Value, list: &str) -> &'a [Value] {
     lesson
         .get(list)
@@ -212,6 +339,62 @@ fn kind_count(items: &[Value], kind: &str) -> usize {
 /// "2 checks", "1 contrast": `count` of `noun`, in the plural unless it is one.
 fn counted(count: usize, noun: &str) -> String {
     format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+}
+
+const NUMBER_WORDS: [&str; 11] = [
+    "zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+];
+
+/// `count` as a word, or in digits past ten.
+pub(crate) fn number(count: usize) -> String {
+    NUMBER_WORDS
+        .get(count)
+        .map_or_else(|| count.to_string(), |word| (*word).to_owned())
+}
+
+fn kind_name(kind: &str) -> String {
+    kind.replace('_', " ")
+}
+
+/// What the writer is asked for of the sections, in words, from `SECTION_MIX`:
+/// "at least two explanations, ... and one each of guided practice, ...";
+/// `exactly` goes before "one each" when it is not empty.
+fn mix_asked(exactly: &str) -> String {
+    let mix = &SECTION_MIX;
+    let wanted = |exact: bool| mix.iter().filter(move |(_, _, is)| *is == exact);
+    let ideas: Vec<String> = wanted(false)
+        .map(|(kind, least, _)| {
+            format!(
+                "{} {}{}",
+                number(*least),
+                kind_name(kind),
+                if *least == 1 { "" } else { "s" }
+            )
+        })
+        .collect();
+    let closing: Vec<String> = wanted(true).map(|(kind, _, _)| kind_name(kind)).collect();
+    let each = wanted(true).map(|(_, count, _)| *count).next().unwrap_or(1);
+    format!(
+        "at least {}, and {exactly}{} each of {}",
+        join_plain(&ideas),
+        number(each),
+        join_plain(&closing)
+    )
+}
+
+/// What the writer is asked for of the questions, in words: "at least two
+/// questions each for practice, quiz and test"; `adjective` goes before
+/// "questions" when it is not empty.
+fn questions_asked(adjective: &str) -> String {
+    let kinds: Vec<String> = LessonQuestionKind::ALL
+        .iter()
+        .map(|kind| kind.as_str().to_owned())
+        .collect();
+    format!(
+        "at least {} {adjective}questions each for {}",
+        number(QUESTIONS_PER_KIND),
+        join_plain(&kinds)
+    )
 }
 
 /// The sections that are checks and follow no worked example since the
@@ -280,10 +463,15 @@ fn section_mix_finding(blocks: &[Value]) -> Option<ReviewFinding> {
     Some(structure(
         FindingSite::Lesson,
         format!(
-            "The lesson should have at least two explanations, two worked examples, one contrast and two checks, and one each of guided practice, independent practice, reflection and recap. It has {}.",
+            "The lesson should have {}. It has {}.",
+            mix_asked(""),
             plain.join(", ")
         ),
-        format!("The lesson needs at least two explanations, two worked examples, one contrast and two checks, and exactly one each of guided practice, independent practice, reflection and recap; it has {}.", has.join(", ")),
+        format!(
+            "The lesson needs {}; it has {}.",
+            mix_asked("exactly "),
+            has.join(", ")
+        ),
     ))
 }
 
@@ -309,10 +497,15 @@ fn question_count_finding(questions: &[Value]) -> Option<ReviewFinding> {
     Some(structure(
         FindingSite::Lesson,
         format!(
-            "The lesson needs at least two questions each for practice, quiz and test. It has {}.",
+            "The lesson needs {}. It has {}.",
+            questions_asked(""),
             plain.join(", ")
         ),
-        format!("The lesson needs at least two distinct questions each for practice, quiz and test; it has {}.", has.join(", ")),
+        format!(
+            "The lesson needs {}; it has {}.",
+            questions_asked("distinct "),
+            has.join(", ")
+        ),
     ))
 }
 

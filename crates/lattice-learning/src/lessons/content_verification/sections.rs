@@ -12,7 +12,7 @@ use super::claim_ledger::ClaimLedger;
 use super::repair_work::rejected;
 use super::*;
 use crate::generation::{parse_json, split_check, teaching_sentences};
-use crate::lessons::shape;
+use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::text_edits;
 use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
@@ -255,10 +255,14 @@ pub(super) fn unit_label(lesson: &Value, unit: usize) -> Option<String> {
 
 /// The sections `cuts` leaves with too little to teach in `lesson`, whatever
 /// else of it could be published.
-pub(super) fn left_with_too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
+pub(super) fn left_with_too_little(
+    lesson: &Value,
+    cuts: &Cuts,
+    shape: &dyn ShapePolicy,
+) -> Vec<usize> {
     let mut cuts = cuts.clone();
     cuts.keep_current(lesson);
-    too_little(lesson, &cuts)
+    too_little(lesson, &cuts, shape)
 }
 
 /// Puts `units` of `lesson` back as they are in `from`, and what `cuts` took
@@ -281,7 +285,7 @@ pub(super) fn restore_units(
 
 /// The sections that took cuts and are left with too little to teach, by the
 /// shape policy's measure.
-fn too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
+fn too_little(lesson: &Value, cuts: &Cuts, shape: &dyn ShapePolicy) -> Vec<usize> {
     let blocks = lesson
         .get("blocks")
         .and_then(Value::as_array)
@@ -290,7 +294,7 @@ fn too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
         .iter()
         .filter(|(unit, _)| **unit < blocks)
         .filter(|(unit, taken)| {
-            shape::policy().too_little(
+            shape.too_little(
                 lesson
                     .pointer(&format!("/blocks/{unit}/body"))
                     .and_then(Value::as_str)
@@ -305,15 +309,15 @@ fn too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
 /// Sends the sections that go out of `lesson` into `cuts`: those left with too
 /// little to teach, then the checks that lose the worked example they follow.
 /// Whether it sent any.
-fn send_out(lesson: &Value, cuts: &mut Cuts) -> bool {
+fn send_out(lesson: &Value, cuts: &mut Cuts, shape: &dyn ShapePolicy) -> bool {
     let mut sent = false;
-    for unit in too_little(lesson, cuts) {
+    for unit in too_little(lesson, cuts, shape) {
         if let (false, Some(label)) = (cuts.going.contains_key(&unit), unit_label(lesson, unit)) {
             cuts.go(unit, label);
             sent = true;
         }
     }
-    for unit in shape::policy().dependants(lesson, cuts.units().units()) {
+    for unit in shape.dependants(lesson, cuts.units().units()) {
         if let (false, Some(label)) = (cuts.going.contains_key(&unit), unit_label(lesson, unit)) {
             cuts.go(unit, label);
             sent = true;
@@ -325,11 +329,15 @@ fn send_out(lesson: &Value, cuts: &mut Cuts) -> bool {
 /// Why `lesson`, with the sections `cuts` takes out, those left with too
 /// little and the checks that lose their example, could not be published, when
 /// it could not.
-pub(super) fn unpublishable(lesson: &Value, cuts: &Cuts) -> Option<String> {
+pub(super) fn unpublishable(
+    lesson: &Value,
+    cuts: &Cuts,
+    shape: &dyn ShapePolicy,
+) -> Option<String> {
     let mut cuts = cuts.clone();
     cuts.keep_current(lesson);
-    send_out(lesson, &mut cuts);
-    shape::policy().floor(lesson, cuts.units().units())
+    send_out(lesson, &mut cuts, shape);
+    shape.floor(lesson, cuts.units().units())
 }
 
 /// Whether a cut took the answer of a check: the first teaching sentence under
@@ -514,19 +522,19 @@ pub(super) enum Settled {
 /// one flow repair, and the teaching review reads the lesson as it will be.
 pub(super) async fn settle(
     llm: &dyn LLMPort,
-    (prompt, schema, output_tokens): (&str, &Value, usize),
+    (prompt, shape, output_tokens): (&str, LessonShape<'_>, usize),
     references: &ReferenceCollection<'_>,
     raw: &str,
     ledger: &mut ClaimLedger,
 ) -> Result<Settled> {
     let lesson: Value = parse_json(raw)?;
     ledger.cuts.keep_current(&lesson);
-    if send_out(&lesson, &mut ledger.cuts) {
+    if send_out(&lesson, &mut ledger.cuts, shape.policy) {
         ledger.save_cuts().await?;
         return Ok(Settled::Again(raw.to_owned()));
     }
     let going = ledger.cuts.units();
-    if let Some(what) = shape::policy().floor(&lesson, going.units()) {
+    if let Some(what) = shape.policy.floor(&lesson, going.units()) {
         return Ok(Settled::Stopped(ledger.stop_unsupported(raw, &what).await?));
     }
     if ledger.nothing_left(&[]) {
@@ -575,7 +583,7 @@ pub(super) async fn settle(
         let known = ledger.live_in(unit);
         let outcome = match mend_section(
             llm,
-            (schema, output_tokens),
+            (shape.value(), output_tokens),
             (unit, unit < blocks, &section),
             (&taken, &protected),
             &edited,
@@ -624,12 +632,11 @@ pub(super) async fn settle(
             llm,
             crate::teaching::LESSON_REPAIR_SYSTEM,
             prompt,
-            schema,
+            shape,
             without_going.to_string(),
             output_tokens,
             references,
             &protected,
-            crate::lessons::shape::Phase::Kept,
         ))
         .await?;
         ledger.cuts.reviewed_without_going = Some(digest(&reviewed));

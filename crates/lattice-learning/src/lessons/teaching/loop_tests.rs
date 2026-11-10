@@ -52,7 +52,7 @@ async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
         model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -60,7 +60,6 @@ async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
             protected: &[],
             lesson_references: Some(&references),
             held: BTreeSet::new(),
-            phase: Phase::Draft,
         },
     )
     .await
@@ -79,7 +78,7 @@ async fn review_protecting(
         model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -87,7 +86,6 @@ async fn review_protecting(
             protected,
             lesson_references: Some(&references),
             held: BTreeSet::new(),
-            phase: Phase::Kept,
         },
     )
     .await
@@ -332,7 +330,7 @@ async fn a_repair_too_long_for_the_window_leaves_the_lesson_waiting() -> Result<
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         original.to_string(),
         4000,
         ReviewContext {
@@ -340,7 +338,6 @@ async fn a_repair_too_long_for_the_window_leaves_the_lesson_waiting() -> Result<
             protected: &[],
             lesson_references: Some(&references),
             held: BTreeSet::new(),
-            phase: Phase::Draft,
         },
     )
     .await?;
@@ -381,7 +378,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         &window,
         LESSON_REPAIR_SYSTEM,
         &json!({"sources":excerpts}).to_string(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -389,7 +386,6 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
             protected: &[],
             lesson_references: Some(&references),
             held: BTreeSet::new(),
-            phase: Phase::Draft,
         },
     )
     .await?;
@@ -429,7 +425,7 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         lesson(EXCERPT).to_string(),
         4000,
         ReviewContext {
@@ -440,7 +436,6 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
                 kind: FindingKind::Teaching,
                 site: FindingSite::Section(0),
             }]),
-            phase: Phase::Draft,
         },
     )
     .await?;
@@ -498,7 +493,7 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -506,7 +501,6 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
             protected: &protected,
             lesson_references: Some(&references),
             held: BTreeSet::new(),
-            phase: Phase::Draft,
         },
     )
     .await?;
@@ -1471,12 +1465,18 @@ async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<
         quote: PROTECTED_SENTENCE.into(),
         released: false,
     }];
-    let phase = if protected { Phase::Kept } else { Phase::Draft };
+    let policy = crate::lessons::shape::policy();
+    let phase = if protected {
+        crate::lessons::shape::Phase::Kept
+    } else {
+        crate::lessons::shape::Phase::Draft
+    };
+    let schema = policy.schema(phase, 1);
     let reviewed = review_material(
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &crate::lessons::shape::policy().schema(phase, 1),
+        ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -1484,7 +1484,6 @@ async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<
             protected: if protected { &sentences } else { &[] },
             lesson_references: Some(&references),
             held: BTreeSet::new(),
-            phase,
         },
     )
     .await?;
@@ -1534,13 +1533,17 @@ async fn a_protected_review_still_holds_a_section_without_a_title() -> Result<()
 
 #[test]
 fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall() {
-    let schema = crate::generation::lesson_schema(1);
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Draft, 1);
     let at_lesson = |lesson: &Value| -> usize {
-        structural_findings(&schema, &lesson.to_string(), Phase::Draft)
-            .unwrap()
-            .iter()
-            .filter(|finding| finding.key().id() == "structure:lesson")
-            .count()
+        structural_findings(
+            ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
+            &lesson.to_string(),
+        )
+        .unwrap()
+        .iter()
+        .filter(|finding| finding.key().id() == "structure:lesson")
+        .count()
     };
     assert_eq!(at_lesson(&shaped_lesson()), 0);
     assert_eq!(at_lesson(&shaped_lesson_after_a_cut()), 2);
@@ -1605,20 +1608,13 @@ async fn a_repair_of_a_lesson_the_cuts_left_five_questions_is_not_asked_for_six(
     };
     let sources = references();
     let references = ReferenceCollection::lexical(&sources).unwrap();
-    let _ = review_material(
+    let _ = crate::lessons::content_verification::settle_after_cuts(
         &recorder,
-        LESSON_REPAIR_SYSTEM,
         &context(),
-        &crate::lessons::shape::policy().schema(Phase::Kept, 1),
+        crate::lessons::shape::policy(),
         candidate.to_string(),
-        4000,
-        ReviewContext {
-            outline: None,
-            protected: &[],
-            lesson_references: Some(&references),
-            held: BTreeSet::new(),
-            phase: Phase::Kept,
-        },
+        &references,
+        &[(2, "Not to be confused with")],
     )
     .await;
     let schemas = recorder.schemas.lock().unwrap();

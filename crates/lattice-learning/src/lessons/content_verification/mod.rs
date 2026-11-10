@@ -115,6 +115,8 @@ pub mod test_support;
 pub(crate) mod tests;
 use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
 #[cfg(test)]
+pub(crate) use repair_loop::settle_after_cuts;
+#[cfg(test)]
 pub(crate) use repair_loop::verify_and_repair;
 pub(crate) use repair_loop::verify_and_repair_with_references;
 pub(crate) use repair_request::has_pending_repair;

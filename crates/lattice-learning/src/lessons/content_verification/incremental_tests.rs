@@ -514,12 +514,11 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &Model::new(),
             "system",
             "{}",
-            &json!({}),
+            crate::teaching::ReviewSchema::Other(&json!({})),
             candidate.clone(),
             3000,
             &ReferenceCollection::lexical(&sources)?,
             &[],
-            crate::lessons::shape::Phase::Draft,
         )
         .await?;
         // Keep the model name identical but make any new request fail.
@@ -557,12 +556,11 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &NoRequests,
             "system",
             "{}",
-            &json!({}),
+            crate::teaching::ReviewSchema::Other(&json!({})),
             first.clone(),
             3000,
             &ReferenceCollection::lexical(&sources)?,
             &[],
-            crate::lessons::shape::Phase::Draft,
         )
         .await?;
         assert_eq!(restored, first);
@@ -571,12 +569,11 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &NoRequests,
             "system",
             "{}",
-            &json!({}),
+            crate::teaching::ReviewSchema::Other(&json!({})),
             first,
             3000,
             &ReferenceCollection::lexical(&sources)?,
             &[],
-            crate::lessons::shape::Phase::Draft,
         )
         .await
         .is_err());
@@ -584,12 +581,11 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             &NoRequests,
             "system",
             "{}",
-            &json!({}),
+            crate::teaching::ReviewSchema::Other(&json!({})),
             candidate.replace(GOOD, BAD),
             3000,
             &ReferenceCollection::lexical(&sources)?,
             &[],
-            crate::lessons::shape::Phase::Draft,
         )
         .await
         .is_err());
