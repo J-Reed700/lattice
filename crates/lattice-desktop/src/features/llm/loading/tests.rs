@@ -505,7 +505,7 @@ fn a_model_nobody_reports_on_runs_at_the_settings_numbers() {
     };
     let unreported = ModelWindowDto::default();
     let (connection, known) = cloud_connection(&settings, &claude(), Tuning::Standard, &unreported);
-    assert!(!known);
+    assert_eq!(known, None);
     assert_eq!(connection.context_window, 90_000);
     assert_eq!(connection.max_tokens, 8_192);
 }
