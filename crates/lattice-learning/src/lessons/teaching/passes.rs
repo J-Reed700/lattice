@@ -237,7 +237,7 @@ impl Passes {
 mod tests {
     #![allow(clippy::panic, clippy::indexing_slicing)]
     use super::*;
-    use crate::review_findings::{subject_of, FindingSite, PlanCheck};
+    use crate::review_findings::{FindingSite, PlanCheck};
 
     fn section(index: usize, note: &str) -> ReviewFinding {
         ReviewFinding::reviewer(Some(FindingSite::Section(index)), note)

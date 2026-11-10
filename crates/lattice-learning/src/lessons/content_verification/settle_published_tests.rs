@@ -1828,13 +1828,9 @@ async fn notes_about(course: &Course, notes: &[(usize, FindingKind, &str)]) -> R
     let set_aside: Vec<SetAside> = notes
         .iter()
         .map(|(section, kind, sentence)| {
-            let mut finding = ReviewFinding::rule(
-                Rule::Quotation,
-                *kind,
-                FindingSite::Section(*section),
-                "A note.",
-            )
-            .with_summary("No source is cited for this sentence.");
+            let mut finding =
+                ReviewFinding::of_kind(*kind, FindingSite::Section(*section), "A note.")
+                    .with_summary("No source is cited for this sentence.");
             finding.sentence = Some((*sentence).to_owned());
             SetAside {
                 finding,

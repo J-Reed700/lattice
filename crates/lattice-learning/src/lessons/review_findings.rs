@@ -312,6 +312,17 @@ impl ReviewFinding {
         Self::raised(Origin::Reviewer, FindingKind::Teaching, site, note)
     }
 
+    /// A finding of `kind` at `site`, raised as that kind is.
+    #[cfg(test)]
+    pub(crate) fn of_kind(kind: FindingKind, site: FindingSite, note: impl Into<String>) -> Self {
+        match kind {
+            FindingKind::Teaching => Self::reviewer(Some(site), note),
+            FindingKind::Quotation => Self::rule(Rule::Quotation, kind, site, note),
+            FindingKind::Structure => Self::rule(Rule::Schema, kind, site, note),
+            FindingKind::AnswerKey => Self::raised(Origin::AnswerKey, kind, Some(site), note),
+        }
+    }
+
     /// This finding with the whole `sentence` it is about; none when blank.
     pub fn with_sentence(mut self, sentence: &str) -> Self {
         self.sentence = (!sentence.trim().is_empty()).then(|| sentence.trim().to_owned());
@@ -622,6 +633,10 @@ mod tests {
         assert_eq!(first.id(), reworded.id());
         assert_eq!(first.id().as_str(), "reviewer/section-2");
         assert_eq!(first.place().id(), "teaching:section-2");
+        assert_ne!(
+            ReviewFinding::of_kind(FindingKind::Teaching, part, "x").id(),
+            ReviewFinding::of_kind(FindingKind::Quotation, part, "x").id()
+        );
         assert_eq!(
             ReviewFinding::reviewer(None, "lesson-wide").id().as_str(),
             "reviewer/lesson"
