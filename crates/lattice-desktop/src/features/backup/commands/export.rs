@@ -43,7 +43,7 @@ fn resolve_export_root(
 
 fn export_use_case(container: &Container) -> ExportConversationsUseCase {
     let use_case = ExportConversationsUseCase::new(Arc::new(ExportRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )));
     match lattice_core::shared::fs::roots::chat_images_root() {
         Ok(root) => use_case.with_chat_images_root(root),

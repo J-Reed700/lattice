@@ -31,7 +31,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
     let temp = tempfile::tempdir()?;
     let web = WebService::new(temp.path())?;
     struct ObservedModel {
-        inner: LlamaCppLlm,
+        inner: std::sync::Arc<dyn LLMPort>,
         call: std::sync::atomic::AtomicUsize,
         replay_draft: Option<String>,
     }
@@ -98,7 +98,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
         }
     }
     let client = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?,
+        inner: LlamaCppLlm::new(&config)?.into_port().await,
         call: std::sync::atomic::AtomicUsize::new(0),
         replay_draft: std::env::var("LATTICE_OUTLINE_REPLAY_DRAFT")
             .ok()

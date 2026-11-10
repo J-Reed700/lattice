@@ -28,7 +28,7 @@ pub async fn set_conversation_model_choice_impl(
         .await?;
     }
 
-    let repository = ConversationRepository::new(container.db_pool().clone());
+    let repository = ConversationRepository::new(container.database().clone());
     let from = repository.model_choice(&conversation_id).await?;
     repository
         .set_model_choice(&conversation_id, &choice)

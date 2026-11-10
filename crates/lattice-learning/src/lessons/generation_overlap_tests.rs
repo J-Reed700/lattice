@@ -9,6 +9,7 @@ use crate::{
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobRuntime, JobStatus, JobStore};
 use std::sync::Mutex;
@@ -172,7 +173,7 @@ pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> R
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -468,7 +469,7 @@ async fn a_lesson_job_starts_while_a_quiz_job_of_its_course_is_running() -> Resu
         id: Some(program.modules[0].lessons[0].id.clone()),
     };
     let quiz = crate::quiz_bank_jobs::queue_bank(
-        &pool,
+        &Database::from(pool.clone()),
         &uuid::Uuid::new_v4().to_string(),
         &job.program_id,
         &scope,
@@ -477,7 +478,7 @@ async fn a_lesson_job_starts_while_a_quiz_job_of_its_course_is_running() -> Resu
     .await?;
     let quiz_running = Arc::new(tokio::sync::Notify::new());
     let lesson_started = Arc::new(tokio::sync::Notify::new());
-    let runtime = JobRuntime::new(pool.clone());
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     runtime
         .register(
             QUIZ_BANK,
@@ -595,7 +596,7 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm: {
             let loads = loads.clone();
             Arc::new(move || {
@@ -613,7 +614,7 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
         research_web: None,
         verifier: None,
     };
-    let runtime = JobRuntime::new(pool.clone());
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     runtime
         .register(LESSON_PREPARATION, Arc::new(worker), lesson_job_config())
         .await?;

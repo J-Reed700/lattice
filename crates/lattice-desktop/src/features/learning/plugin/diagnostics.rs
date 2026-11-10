@@ -7,7 +7,7 @@ pub async fn start_learning_diagnostic(
     container: State<'_, Container>,
 ) -> Result<LearningDiagnosticAttemptDto, ApiError> {
     let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     if let Some(replay) = repo
         .diagnostic_replay(
@@ -21,7 +21,7 @@ pub async fn start_learning_diagnostic(
     {
         return Ok(replay);
     }
-    let program = LearningRepository::new(container.db_pool().clone())
+    let program = LearningRepository::new(container.database().clone())
         .get(&request.program_id)
         .await
         .map_err(ApiError::from)?;
@@ -49,7 +49,7 @@ pub async fn start_learning_diagnostic(
     .await?;
     let llm = &pin.llm;
     // Whole captured texts, not the program's stored previews.
-    let sources = LearningRepository::new(container.db_pool().clone())
+    let sources = LearningRepository::new(container.database().clone())
         .verification_sources(&request.program_id)
         .await
         .map_err(ApiError::from)?;
@@ -73,7 +73,7 @@ pub async fn submit_learning_diagnostic(
     container: State<'_, Container>,
 ) -> Result<LearningDiagnosticAttemptDto, ApiError> {
     let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     if let Some(replay) = repo
         .diagnostic_replay(
@@ -101,7 +101,7 @@ pub async fn submit_learning_diagnostic(
             .await
             .map_err(ApiError::from);
     }
-    let program = LearningRepository::new(container.db_pool().clone())
+    let program = LearningRepository::new(container.database().clone())
         .get(&request.program_id)
         .await
         .map_err(ApiError::from)?;
@@ -139,7 +139,7 @@ pub async fn skip_learning_diagnostic(
     container: State<'_, Container>,
 ) -> Result<LearningDiagnosticAttemptDto, ApiError> {
     crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .skip_diagnostic(&request)
     .await

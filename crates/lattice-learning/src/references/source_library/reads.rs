@@ -49,19 +49,10 @@ impl LearningSourceLibraryRepository {
     ) -> Result<LearningSourceWorkspaceDto> {
         Self::validate_program_id(program_id)?;
         self.backfill_legacy(program_id).await?;
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
-        let workspace = Self::workspace_on(&mut tx, program_id, include_deleted).await?;
+        let mut tx = self.database.begin_read().await.map_err(db)?;
+        let workspace = stored::workspace_in(&mut tx, program_id, include_deleted).await?;
         tx.commit().await.map_err(db)?;
         Ok(workspace)
-    }
-
-    /// Read source metadata and history through an existing database snapshot.
-    pub(crate) async fn workspace_on(
-        connection: &mut sqlx::SqliteConnection,
-        program_id: &str,
-        include_deleted: bool,
-    ) -> Result<LearningSourceWorkspaceDto> {
-        stored::workspace_on(connection, program_id, include_deleted).await
     }
 
     pub async fn get_version(
@@ -78,13 +69,15 @@ impl LearningSourceLibraryRepository {
             }
         }
         self.backfill_legacy(&req.program_id).await?;
-        let found =
-            stored::stored_version(&self.pool, &req.program_id, &req.source_id, &req.version_id)
-                .await?
-                .ok_or_else(|| {
-                    AppError::NotFound("Source version not found in this program".into())
-                })?;
-        let usage = stored::version_usage(&self.pool, &req.program_id, &req.version_id).await?;
+        let found = stored::stored_version(
+            &self.database,
+            &req.program_id,
+            &req.source_id,
+            &req.version_id,
+        )
+        .await?
+        .ok_or_else(|| AppError::NotFound("Source version not found in this program".into()))?;
+        let usage = stored::version_usage(&self.database, &req.program_id, &req.version_id).await?;
         Ok(LearningSourceVersionDto {
             source_id: req.source_id.clone(),
             version: found.summary,
@@ -103,7 +96,7 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Search query must contain 1–200 characters"));
         }
         let limit = req.limit.clamp(1, 50) as i64;
-        let mut rows = stored::searchable_versions(&self.pool, &req.program_id);
+        let mut rows = stored::searchable_versions(&self.database, &req.program_id);
         let mut results = Vec::new();
         while let Some(r) = rows.try_next().await? {
             if let Some(index) = find_case_insensitive(&r.text, query) {
@@ -123,29 +116,29 @@ impl LearningSourceLibraryRepository {
 
     pub async fn prepare_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
         self.backfill_legacy(program_id).await?;
-        stored::excerpted_sources(&self.pool, program_id).await
+        stored::excerpted_sources(&self.database, program_id).await
     }
     /// The active version of every source the program has not deleted, in
     /// the order [`Self::verification_sources`] returns them, without their
     /// text: what the course index holds, read cheaply enough to compare with
     /// it on every use.
     pub async fn active_versions(&self, program_id: &str) -> Result<Vec<ActiveVersion>> {
-        stored::active_versions(&self.pool, program_id).await
+        stored::active_versions(&self.database, program_id).await
     }
     /// The whole captured text of one version of the program's sources,
     /// deleted ones included.
     pub async fn version_text(&self, program_id: &str, version_id: &str) -> Result<Option<String>> {
-        stored::version_text(&self.pool, program_id, version_id).await
+        stored::version_text(&self.database, program_id, version_id).await
     }
 
     /// The whole captured text of every version in the program, by version
     /// ID: what a model receives in place of a stored preview.
     pub async fn version_texts(&self, program_id: &str) -> Result<HashMap<String, String>> {
-        stored::version_texts(&self.pool, program_id).await
+        stored::version_texts(&self.database, program_id).await
     }
 
     pub async fn verification_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
         self.backfill_legacy(program_id).await?;
-        stored::full_text_sources(&self.pool, program_id).await
+        stored::full_text_sources(&self.database, program_id).await
     }
 }

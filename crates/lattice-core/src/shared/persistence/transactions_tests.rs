@@ -1,4 +1,4 @@
-use super::Transactions;
+use super::{PersistenceErrorKind, Transactions};
 use crate::shared::testing::sqlite::file_options;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 use std::time::{Duration, Instant};
@@ -112,4 +112,14 @@ async fn a_read_transaction_that_writes_fails_at_once_with_database_is_locked() 
     );
     drop(tx);
     other.await.unwrap();
+}
+
+#[tokio::test]
+async fn beginning_on_a_closed_pool_reports_it_closed() {
+    let (_dir, pool) = open().await;
+    pool.close().await;
+    let write = pool.begin_write().await.err().unwrap();
+    let read = pool.begin_read().await.err().unwrap();
+    assert_eq!(write.kind(), PersistenceErrorKind::Closed);
+    assert_eq!(read.kind(), PersistenceErrorKind::Closed);
 }

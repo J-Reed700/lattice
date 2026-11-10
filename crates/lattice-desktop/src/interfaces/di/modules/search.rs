@@ -1,7 +1,7 @@
 //! The search module: embeddings, the vector index and the search services.
 
 use super::CoreModule;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - Search
@@ -47,7 +47,7 @@ impl SearchModule {
     /// ahead of the container's model load — avoiding a startup loop where
     /// each restart wipes-then-fails.
     pub async fn new(
-        db_pool: SqlitePool,
+        database: Database,
         core: Arc<CoreModule>,
         model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
         embedding_starter: Arc<dyn EmbeddingServerStarter>,
@@ -57,7 +57,7 @@ impl SearchModule {
     ) -> lattice_core::shared::error::Result<Self> {
         let usearch_index_path = core.data_dir().join("usearch_index.usearch");
         let models_path = core.data_dir().join("models");
-        let active = DownloadedModelRepository::new(db_pool.clone())
+        let active = DownloadedModelRepository::new(database.clone())
             .get_active_embedding_model()
             .await?;
         let facts = match active.as_ref() {
@@ -66,9 +66,9 @@ impl SearchModule {
         };
         let active_dim = facts.as_ref().map(|facts| facts.dimension);
         let search_settings = read_search_settings(core.data_dir()).await;
-        let compression = resolve_vector_compression(&db_pool, &search_settings, active_dim).await;
+        let compression = resolve_vector_compression(&database, &search_settings, active_dim).await;
         let search = crate::features::search::di::build_with_compression(
-            db_pool,
+            database,
             usearch_index_path,
             models_path,
             Arc::new(DynamicEmbedding::new(model_provider)),
@@ -170,7 +170,7 @@ async fn read_search_settings(
 /// a `dims` the model cannot satisfy: the setting is a preference, and a
 /// preference must never leave the app unable to open its index.
 async fn resolve_vector_compression(
-    db_pool: &SqlitePool,
+    database: &Database,
     settings: &crate::features::settings::dto::SearchSettingsDto,
     active_embedding_dimension: Option<usize>,
 ) -> crate::infrastructure::vector_index::VectorIndexCompression {
@@ -182,7 +182,7 @@ async fn resolve_vector_compression(
         return VectorIndexCompression::None;
     }
 
-    let Some(model_id) = active_embedding_model_id(db_pool).await else {
+    let Some(model_id) = active_embedding_model_id(database).await else {
         tracing::info!(
             "Vector compression is set to truncated but no embedding model is active; \
              storing full-precision vectors until one is"
@@ -220,8 +220,8 @@ async fn resolve_vector_compression(
 }
 
 /// The catalog id of the active embedding model, when there is one.
-async fn active_embedding_model_id(db_pool: &SqlitePool) -> Option<String> {
-    let repo = DownloadedModelRepository::new(db_pool.clone());
+async fn active_embedding_model_id(database: &Database) -> Option<String> {
+    let repo = DownloadedModelRepository::new(database.clone());
     let active = repo.get_active_embedding_model().await.ok().flatten()?;
     Some(active.model_id().to_owned())
 }

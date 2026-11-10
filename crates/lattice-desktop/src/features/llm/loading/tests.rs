@@ -476,9 +476,10 @@ fn a_cloud_model_keeps_the_default_window_under_its_providers_ceiling() {
         max_tokens: 131_072,
         ..Default::default()
     };
-    let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
+    let (connection, known) =
+        cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
     assert_eq!(connection.context_window, settings.context_window);
-    assert_eq!(connection.max_tokens, 128_000);
+    assert_eq!(known, Some(128_000));
 }
 
 #[test]
@@ -491,9 +492,10 @@ fn a_cloud_model_runs_at_what_was_chosen_for_it() {
             max_output_tokens: Some(4_096),
         },
     );
-    let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
+    let (connection, known) =
+        cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
     assert_eq!(connection.context_window, 64_000);
-    assert_eq!(connection.max_tokens, 4_096);
+    assert_eq!(known, Some(4_096));
 }
 
 #[test]
@@ -504,9 +506,9 @@ fn a_model_nobody_reports_on_runs_at_the_settings_numbers() {
         ..Default::default()
     };
     let unreported = ModelWindowDto::default();
-    let connection = cloud_connection(&settings, &claude(), Tuning::Standard, &unreported);
+    let (connection, known) = cloud_connection(&settings, &claude(), Tuning::Standard, &unreported);
+    assert_eq!(known, None);
     assert_eq!(connection.context_window, 90_000);
-    assert_eq!(connection.max_tokens, 8_192);
 }
 
 /// A role's ceiling is its own, and is not raised by the model's.
@@ -520,8 +522,70 @@ fn the_utility_role_keeps_its_own_output_ceiling() {
             max_output_tokens: Some(64_000),
         },
     );
-    let connection = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
-    assert_eq!(connection.max_tokens, 8_192);
+    let (_, known) = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
+    assert_eq!(known, Some(8_192));
+}
+
+/// The Messages API refuses a request without a ceiling, and Settings' default
+/// is not a fact about the model.
+#[test]
+fn a_model_whose_provider_needs_a_ceiling_is_not_run_on_a_guess() {
+    let outcome = cloud_client(
+        &LLMSettingsDto::default(),
+        &claude(),
+        Tuning::Standard,
+        &ModelWindowDto::default(),
+        "test-key".into(),
+    );
+    let error = outcome.err();
+    assert!(
+        matches!(&error, Some(AppError::InvalidConfig(text)) if text.contains("Max output")),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_provider_that_could_not_be_asked_is_why_a_model_that_needs_it_does_not_run() {
+    let down = || Err(AppError::Network("down".into()));
+    let outcome = cloud_client_after(
+        &LLMSettingsDto::default(),
+        &claude(),
+        Tuning::Standard,
+        down(),
+        "test-key".into(),
+    );
+    let error = outcome.err();
+    assert!(matches!(&error, Some(AppError::Network(_))), "{error:?}");
+
+    let mut chosen = LLMSettingsDto::default();
+    chosen.model_windows.insert(
+        claude().to_string(),
+        ModelWindowDto {
+            context_window: None,
+            max_output_tokens: Some(4_096),
+        },
+    );
+    let with_a_chosen_ceiling = cloud_client_after(
+        &chosen,
+        &claude(),
+        Tuning::Standard,
+        down(),
+        "test-key".into(),
+    );
+    assert!(with_a_chosen_ceiling.is_ok());
+
+    let openai = ModelRef::Cloud {
+        provider: CloudProvider::Openai,
+        model: "gpt-4.1".into(),
+    };
+    let needing_none = cloud_client_after(
+        &LLMSettingsDto::default(),
+        &openai,
+        Tuning::Standard,
+        down(),
+        "test-key".into(),
+    );
+    assert!(needing_none.is_ok());
 }
 
 #[test]
@@ -572,4 +636,686 @@ fn a_bundled_server_that_cannot_run_reaches_the_wire_as_a_model_load_error() {
             )),
         "{wire:?}"
     );
+}
+
+mod output_ceiling_on_the_wire {
+    use super::*;
+    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
+    use serde_json::{json, Value};
+    use wiremock::matchers::method;
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn model(provider: CloudProvider) -> ModelRef {
+        ModelRef::Cloud {
+            provider,
+            model: "some-model".into(),
+        }
+    }
+
+    /// The body a scheduled client built from `settings` sends for `request`,
+    /// as a stub server records it.
+    async fn sent_body(
+        provider: CloudProvider,
+        settings: &LLMSettingsDto,
+        reported: &ModelWindowDto,
+        request: CompletionRequest,
+    ) -> Value {
+        sent_body_of(provider, "some-model", settings, reported, request).await
+    }
+
+    /// [`sent_body`] for the model named `name`.
+    async fn sent_body_of(
+        provider: CloudProvider,
+        name: &str,
+        settings: &LLMSettingsDto,
+        reported: &ModelWindowDto,
+        request: CompletionRequest,
+    ) -> Value {
+        let server = MockServer::start().await;
+        Mock::given(method("POST"))
+            .respond_with(ResponseTemplate::new(400))
+            .mount(&server)
+            .await;
+        let model = ModelRef::Cloud {
+            provider,
+            model: name.into(),
+        };
+        let client = cloud_client(
+            settings,
+            &model,
+            Tuning::Standard,
+            reported,
+            "test-key".into(),
+        )
+        .unwrap()
+        .with_endpoint(server.uri())
+        .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default());
+        let _ = client.complete(&request).await;
+        let received = server.received_requests().await.unwrap();
+        serde_json::from_slice(&received[0].body).unwrap()
+    }
+
+    fn ask() -> CompletionRequest {
+        CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: "When did the bridge open?".into(),
+            }],
+            ..Default::default()
+        }
+    }
+
+    fn chosen(max_output_tokens: u32) -> LLMSettingsDto {
+        let mut settings = LLMSettingsDto::default();
+        settings.model_windows.insert(
+            model(CloudProvider::Openai).to_string(),
+            ModelWindowDto {
+                context_window: None,
+                max_output_tokens: Some(max_output_tokens),
+            },
+        );
+        settings.model_windows.insert(
+            model(CloudProvider::Google).to_string(),
+            ModelWindowDto {
+                context_window: None,
+                max_output_tokens: Some(max_output_tokens),
+            },
+        );
+        settings.model_windows.insert(
+            model(CloudProvider::Anthropic).to_string(),
+            ModelWindowDto {
+                context_window: None,
+                max_output_tokens: Some(max_output_tokens),
+            },
+        );
+        settings
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_sends_no_ceiling_when_none_is_known() {
+        let body = sent_body(
+            CloudProvider::Openai,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(body.get("max_output_tokens").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_keeps_a_chosen_ceiling() {
+        let body = sent_body(
+            CloudProvider::Openai,
+            &chosen(4_096),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert_eq!(body["max_output_tokens"], json!(4_096));
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_keeps_a_reported_ceiling() {
+        let body = sent_body(
+            CloudProvider::Openai,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto {
+                context_window: None,
+                max_output_tokens: Some(16_384),
+            },
+            ask(),
+        )
+        .await;
+        assert_eq!(body["max_output_tokens"], json!(16_384));
+    }
+
+    #[tokio::test]
+    async fn a_google_request_sends_no_ceiling_when_none_is_known() {
+        let body = sent_body(
+            CloudProvider::Google,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(body.get("max_tokens").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_google_request_keeps_a_chosen_ceiling() {
+        let body = sent_body(
+            CloudProvider::Google,
+            &chosen(4_096),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert_eq!(body["max_tokens"], json!(4_096));
+    }
+
+    #[tokio::test]
+    async fn a_request_ceiling_is_sent_even_when_the_model_reports_none() {
+        let request = CompletionRequest {
+            max_output_tokens: Some(512),
+            ..ask()
+        };
+        let openai = sent_body(
+            CloudProvider::Openai,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            request.clone(),
+        )
+        .await;
+        assert_eq!(openai["max_output_tokens"], json!(512));
+        let google = sent_body(
+            CloudProvider::Google,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            CompletionRequest {
+                reasoning_effort: Some("none".into()),
+                ..request
+            },
+        )
+        .await;
+        assert_eq!(google["max_tokens"], json!(512));
+        let reasoning = sent_body(
+            CloudProvider::Google,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(reasoning.get("max_tokens").is_none(), "{reasoning}");
+    }
+
+    fn small_window() -> LLMSettingsDto {
+        LLMSettingsDto {
+            context_window: 32_768,
+            ..Default::default()
+        }
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_with_a_small_window_still_sends_no_ceiling() {
+        let body = sent_body(
+            CloudProvider::Openai,
+            &small_window(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(body.get("max_output_tokens").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn a_google_request_with_a_small_window_still_sends_no_ceiling() {
+        let body = sent_body(
+            CloudProvider::Google,
+            &small_window(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(body.get("max_tokens").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_openai_request_above_the_room_is_sent_the_room() {
+        let request = CompletionRequest {
+            max_output_tokens: Some(1_000_000),
+            ..ask()
+        };
+        let body = sent_body(
+            CloudProvider::Openai,
+            &small_window(),
+            &ModelWindowDto::default(),
+            request,
+        )
+        .await;
+        let sent = body["max_output_tokens"].as_u64().unwrap();
+        assert!(sent > 0 && sent < 32_768, "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_anthropic_request_with_a_small_window_sends_a_ceiling_that_fits_it() {
+        let body = sent_body(
+            CloudProvider::Anthropic,
+            &small_window(),
+            &reports(64_000),
+            ask(),
+        )
+        .await;
+        let sent = body["max_tokens"].as_u64().unwrap();
+        assert!(sent > 0 && sent <= 32_768, "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_anthropic_request_sends_the_ceiling_chosen_for_it_when_none_is_reported() {
+        let body = sent_body(
+            CloudProvider::Anthropic,
+            &chosen(4_096),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert_eq!(body["max_tokens"], json!(4_096));
+    }
+
+    fn reports(max_output_tokens: u32) -> ModelWindowDto {
+        ModelWindowDto {
+            context_window: None,
+            max_output_tokens: Some(max_output_tokens),
+        }
+    }
+
+    fn window_of(context_window: u32) -> LLMSettingsDto {
+        LLMSettingsDto {
+            context_window,
+            ..Default::default()
+        }
+    }
+
+    fn capped_at(max_output_tokens: u32) -> CompletionRequest {
+        CompletionRequest {
+            max_output_tokens: Some(max_output_tokens),
+            ..ask()
+        }
+    }
+
+    #[tokio::test]
+    async fn an_openai_reasoning_model_is_sent_its_ceiling_not_the_answers_cap() {
+        let body = sent_body_of(
+            CloudProvider::Openai,
+            "gpt-5",
+            &window_of(400_000),
+            &reports(100_000),
+            capped_at(512),
+        )
+        .await;
+        assert_eq!(body["max_output_tokens"], json!(100_000));
+    }
+
+    #[tokio::test]
+    async fn a_google_model_that_reasons_is_sent_its_ceiling_not_the_answers_cap() {
+        let body = sent_body_of(
+            CloudProvider::Google,
+            "gemini-2.5-flash",
+            &window_of(400_000),
+            &reports(65_536),
+            capped_at(512),
+        )
+        .await;
+        assert_eq!(body["max_tokens"], json!(65_536));
+    }
+
+    #[tokio::test]
+    async fn an_openai_reasoning_model_says_it_thinks_before_every_answer() {
+        for (provider, name, thinks) in [
+            (CloudProvider::Openai, "gpt-5", true),
+            (CloudProvider::Openai, "gpt-4.1", false),
+            (CloudProvider::Google, "gemini-2.5-flash", false),
+        ] {
+            let model = ModelRef::Cloud {
+                provider,
+                model: name.into(),
+            };
+            let port = cloud_client(
+                &window_of(400_000),
+                &model,
+                Tuning::Standard,
+                &reports(100_000),
+                "test-key".into(),
+            )
+            .unwrap()
+            .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default());
+            assert_eq!(port.thinks_before_answering(), thinks, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fine_tune_of_a_reasoning_model_is_sent_its_ceiling_and_no_sampling() {
+        let request = CompletionRequest {
+            sampling: Some(
+                lattice_core::application::ports::llm_port::SamplingOverride {
+                    temperature: Some(0.7),
+                    ..Default::default()
+                },
+            ),
+            ..capped_at(512)
+        };
+        let body = sent_body_of(
+            CloudProvider::Openai,
+            "ft:o4-mini:org::id",
+            &window_of(400_000),
+            &reports(100_000),
+            request,
+        )
+        .await;
+        assert_eq!(body["max_output_tokens"], json!(100_000));
+        assert!(body.get("temperature").is_none(), "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_openai_reasoning_model_is_sent_its_ceiling_cut_to_the_room_the_prompt_leaves() {
+        let body = sent_body_of(
+            CloudProvider::Openai,
+            "gpt-5",
+            &window_of(32_768),
+            &reports(100_000),
+            capped_at(512),
+        )
+        .await;
+        let sent = body["max_output_tokens"].as_u64().unwrap();
+        assert!(32_000 < sent && sent <= 32_768, "{body}");
+    }
+
+    #[tokio::test]
+    async fn an_openai_model_that_does_not_reason_is_sent_the_answers_cap() {
+        let body = sent_body_of(
+            CloudProvider::Openai,
+            "gpt-4.1",
+            &window_of(400_000),
+            &reports(32_768),
+            capped_at(512),
+        )
+        .await;
+        assert_eq!(body["max_output_tokens"], json!(512));
+    }
+
+    #[tokio::test]
+    async fn a_google_model_told_not_to_reason_is_sent_the_answers_cap() {
+        let request = CompletionRequest {
+            reasoning_effort: Some("none".into()),
+            ..capped_at(512)
+        };
+        let body = sent_body_of(
+            CloudProvider::Google,
+            "gemini-2.5-flash",
+            &window_of(400_000),
+            &reports(65_536),
+            request,
+        )
+        .await;
+        assert_eq!(body["max_tokens"], json!(512));
+    }
+
+    #[tokio::test]
+    async fn a_claude_model_that_thinks_unasked_is_sent_its_ceiling_not_the_answers_cap() {
+        let body = sent_body_of(
+            CloudProvider::Anthropic,
+            "claude-haiku-5-5",
+            &LLMSettingsDto::default(),
+            &reports(64_000),
+            capped_at(512),
+        )
+        .await;
+        assert_eq!(body["max_tokens"], json!(64_000));
+    }
+
+    #[tokio::test]
+    async fn a_claude_model_with_thinking_turned_off_is_sent_the_answers_cap() {
+        let request = CompletionRequest {
+            reasoning_effort: Some("none".into()),
+            ..capped_at(512)
+        };
+        let body = sent_body_of(
+            CloudProvider::Anthropic,
+            "claude-haiku-5-5",
+            &LLMSettingsDto::default(),
+            &reports(64_000),
+            request,
+        )
+        .await;
+        assert_eq!(body["thinking"], json!({"type": "disabled"}));
+        assert_eq!(body["max_tokens"], json!(512));
+    }
+}
+
+/// What a local backend sends for a request, as a stub server records it.
+mod local_reply_ceiling_on_the_wire {
+    use super::*;
+    use lattice_core::application::contracts::settings::LlamaCppSettingsDto;
+    use lattice_core::application::ports::llm_port::{
+        CompletionInput, CompletionRequest, ThinkingMode, TEMPLATE_TOKENS_FOR_ANSWER,
+        TEMPLATE_TOKENS_PER_MESSAGE,
+    };
+    use serde_json::{json, Value};
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    fn ask(content: &str) -> CompletionRequest {
+        CompletionRequest {
+            input: vec![CompletionInput::Message {
+                role: "user".into(),
+                content: content.into(),
+            }],
+            max_output_tokens: Some(512),
+            ..Default::default()
+        }
+    }
+
+    fn thinking(content: &str) -> CompletionRequest {
+        CompletionRequest {
+            thinking: ThinkingMode::On,
+            ..ask(content)
+        }
+    }
+
+    fn configured(context_window: u32, max_tokens: u32) -> LLMSettingsDto {
+        LLMSettingsDto {
+            context_window,
+            max_tokens,
+            ..Default::default()
+        }
+    }
+
+    /// A scheduled client of a llama-server whose window is
+    /// `settings.context_window` and whose tokenizer counts `tokenized` tokens.
+    async fn llama_port(
+        settings: &LLMSettingsDto,
+        tokenized: usize,
+    ) -> (
+        MockServer,
+        std::sync::Arc<dyn lattice_core::application::ports::llm_port::LLMPort>,
+    ) {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/props"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "total_slots": 1,
+                "default_generation_settings": {"n_ctx": settings.context_window}
+            })))
+            .mount(&server)
+            .await;
+        Mock::given(method("GET"))
+            .and(path("/health"))
+            .respond_with(ResponseTemplate::new(200))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/tokenize"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(json!({"tokens": vec![1; tokenized]})),
+            )
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_string(format!(
+                "data: {}\n\ndata: [DONE]\n\n",
+                json!({"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}]})
+            )))
+            .mount(&server)
+            .await;
+        let settings = LLMSettingsDto {
+            llama_cpp: LlamaCppSettingsDto {
+                url: server.uri(),
+                model: "qwen3.5-9b".into(),
+                ..Default::default()
+            },
+            ..settings.clone()
+        };
+        let client = crate::features::llm::llama_cpp::LlamaCppLlm::new(&settings)
+            .unwrap()
+            .schedule(&SchedulerRegistry::default())
+            .await;
+        (server, client)
+    }
+
+    /// The body that client sends for `request`.
+    async fn llama_body(
+        settings: &LLMSettingsDto,
+        tokenized: usize,
+        request: CompletionRequest,
+    ) -> Value {
+        let (server, client) = llama_port(settings, tokenized).await;
+        let _ = client.complete(&request).await;
+        let received = server.received_requests().await.unwrap();
+        let chat = received
+            .iter()
+            .find(|sent| sent.url.path() == "/v1/chat/completions")
+            .expect("the chat request reached the server");
+        serde_json::from_slice(&chat.body).unwrap()
+    }
+
+    /// A scheduled Ollama client of a model run at `settings.context_window`.
+    async fn ollama_port(
+        settings: &LLMSettingsDto,
+    ) -> (
+        MockServer,
+        std::sync::Arc<dyn lattice_core::application::ports::llm_port::LLMPort>,
+    ) {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/api/tags"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({"models": []})))
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/api/chat"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({
+                "model": "qwen3.5",
+                "message": {"role": "assistant", "content": "ok"},
+                "done": true,
+                "done_reason": "stop",
+                "prompt_eval_count": 30,
+                "eval_count": 4
+            })))
+            .mount(&server)
+            .await;
+        let client = crate::features::llm::engine::factory::create_ollama_llm(
+            &server.uri(),
+            "qwen3.5",
+            None,
+            GenerationConfig::from_settings(settings),
+            None,
+            Some(settings.context_window),
+            &SchedulerRegistry::default(),
+        )
+        .await
+        .expect("the stub answers every probe the factory makes");
+        (server, client)
+    }
+
+    /// The `options` that client sends for `request`.
+    async fn ollama_options(settings: &LLMSettingsDto, request: CompletionRequest) -> Value {
+        let (server, client) = ollama_port(settings).await;
+        let _ = client.complete(&request).await;
+        let received = server.received_requests().await.unwrap();
+        let chat = received
+            .iter()
+            .find(|sent| sent.url.path() == "/api/chat")
+            .expect("the chat request reached the server");
+        let body: Value = serde_json::from_slice(&chat.body).unwrap();
+        body["options"].clone()
+    }
+
+    fn always_thinking(mut settings: LLMSettingsDto) -> LLMSettingsDto {
+        settings.thinking_override =
+            lattice_core::application::contracts::settings::ThinkingOverrideDto::On;
+        settings
+    }
+
+    #[tokio::test]
+    async fn a_llama_cpp_model_set_to_always_think_says_it_thinks_before_every_answer() {
+        let (_server, always) = llama_port(&always_thinking(configured(8_192, 4_096)), 10).await;
+        assert!(always.thinks_before_answering());
+        let (_server, default) = llama_port(&configured(8_192, 4_096), 10).await;
+        assert!(!default.thinks_before_answering());
+    }
+
+    #[tokio::test]
+    async fn an_ollama_model_set_to_always_think_says_it_thinks_before_every_answer() {
+        let (_server, always) = ollama_port(&always_thinking(configured(8_192, 4_096))).await;
+        assert!(always.thinks_before_answering());
+        let (_server, default) = ollama_port(&configured(8_192, 4_096)).await;
+        assert!(!default.thinks_before_answering());
+    }
+
+    #[tokio::test]
+    async fn a_llama_cpp_request_that_thinks_is_sent_the_configured_ceiling_not_the_answers_cap() {
+        let body = llama_body(
+            &configured(32_768, 4_096),
+            10,
+            thinking("When did the bridge open?"),
+        )
+        .await;
+        assert_eq!(body["chat_template_kwargs"]["enable_thinking"], json!(true));
+        assert_eq!(body["max_tokens"], json!(4_096));
+    }
+
+    #[tokio::test]
+    async fn an_ollama_request_that_thinks_is_sent_the_configured_ceiling_not_the_answers_cap() {
+        let options = ollama_options(
+            &configured(32_768, 4_096),
+            thinking("When did the bridge open?"),
+        )
+        .await;
+        assert_eq!(options["num_predict"], json!(4_096));
+    }
+
+    #[tokio::test]
+    async fn a_llama_cpp_request_that_does_not_think_is_sent_the_answers_cap() {
+        let body = llama_body(
+            &configured(32_768, 4_096),
+            10,
+            ask("When did the bridge open?"),
+        )
+        .await;
+        assert_eq!(
+            body["chat_template_kwargs"]["enable_thinking"],
+            json!(false)
+        );
+        assert_eq!(body["max_tokens"], json!(512));
+    }
+
+    #[tokio::test]
+    async fn a_llama_cpp_answer_that_does_not_fit_is_cut_to_the_room_the_exact_count_leaves() {
+        // 20,000 characters read as 5,001 tokens at four a token; with the
+        // margin that plus the 4,096 asked for exceeds the 8,192 window, so
+        // the server's own count (6,000) decides.
+        let prompt = "word ".repeat(4_000);
+        let request = CompletionRequest {
+            max_output_tokens: Some(4_096),
+            ..ask(&prompt)
+        };
+        let body = llama_body(&configured(8_192, 4_096), 6_000, request).await;
+        let framing = TEMPLATE_TOKENS_PER_MESSAGE + TEMPLATE_TOKENS_FOR_ANSWER;
+        assert_eq!(body["max_tokens"], json!(8_192 - (6_000 + framing)));
+    }
+
+    #[tokio::test]
+    async fn an_ollama_answer_that_does_not_fit_is_cut_to_the_room_the_estimate_leaves() {
+        // "user" and 23,996 characters are 24,000, which the scheduler's
+        // four-characters-a-token estimate reads as exactly 6,000 tokens, and
+        // the framing adds 24.
+        let prompt = "x".repeat(23_996);
+        let request = CompletionRequest {
+            max_output_tokens: None,
+            ..ask(&prompt)
+        };
+        let options = ollama_options(&configured(8_192, 4_096), request).await;
+        assert_eq!(options["num_predict"], json!(8_192 - (6_000 + 24)));
+    }
 }

@@ -48,7 +48,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
         Vec<lattice_core::application::contracts::references::PassageReferenceRecord>,
     > {
         crate::features::references::repository::PassageReferenceRepository::new(
-            self.db_pool().clone(),
+            self.database().clone(),
         )
         .list_created_since(cutoff)
         .await
@@ -62,7 +62,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
         Vec<crate::features::conversation::chat::ports::StoredJournalPage>,
     > {
         let rows = crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(
-            self.db_pool().clone(),
+            self.database().clone(),
         )
         .list_in_date_range(start_date, end_date)
         .await?;
@@ -142,7 +142,7 @@ impl crate::features::conversation::chat::ports::SynthesisEntries for Container 
         };
         crate::features::daily_notes::commands::hydrate_workspace_note(
             &crate::infrastructure::persistence::repositories::workspace_notes::DailyNotesRepository::new(
-                self.db_pool().clone(),
+                self.database().clone(),
             ),
             self,
             row,
@@ -163,7 +163,7 @@ impl crate::features::daily_notes::ports::LinkedConversationArchive for Containe
         url: &str,
     ) -> Result<Option<crate::features::daily_notes::ports::ArchivedWebPage>> {
         let snapshot = crate::features::conversation::repository::ConversationRepository::new(
-            self.db_pool().clone(),
+            self.database().clone(),
         )
         .conversation_web_source_snapshot(conversation_id.to_string(), url.to_string())
         .await?;

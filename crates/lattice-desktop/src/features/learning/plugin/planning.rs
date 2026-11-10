@@ -7,7 +7,7 @@ pub async fn get_learning_plan(
     container: State<'_, Container>,
 ) -> Result<LearningPlanDto, ApiError> {
     crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .plan(&id)
     .await
@@ -21,7 +21,7 @@ pub async fn preview_learning_curriculum_revision(
     container: State<'_, Container>,
 ) -> Result<LearningPlanDto, ApiError> {
     crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .preview(&request)
     .await
@@ -35,7 +35,7 @@ pub async fn accept_learning_curriculum_revision(
     container: State<'_, Container>,
 ) -> Result<LearningPlanDto, ApiError> {
     crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .accept_revision(&request)
     .await
@@ -49,7 +49,7 @@ pub async fn discard_learning_curriculum_revision(
     container: State<'_, Container>,
 ) -> Result<LearningPlanDto, ApiError> {
     crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .discard_revision(&request)
     .await

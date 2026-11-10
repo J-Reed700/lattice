@@ -11,6 +11,7 @@ use lattice_core::domain::provenance::{
     Origin, RelationKind, RelationTarget, SiteStanding, TrustLevel, TrustOverride,
     PAGE_SIGNALS_VERSION,
 };
+use lattice_core::shared::persistence::Database;
 use serde_json::json;
 
 fn page(url: &str, text: &str) -> ReferencePage {
@@ -49,7 +50,7 @@ async fn a_copy_carries_provenance_relations_and_source_overrides_under_new_ids(
         .create(&program)
         .await?;
     let program_id = program.summary.id.clone();
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let text = (0..30)
         .map(|n| format!("High water on day {n} falls at the hour the tide office tabulates."))
         .collect::<Vec<_>>()

@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
 use crate::features::backup::adapter::roll_back_database;
 use crate::features::backup::database_repository;
 use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::shared::persistence::Database;
 
 use super::config::ArchiveConfig;
 use super::crypto::{self, MasterKey};
@@ -65,7 +65,7 @@ pub enum RestoreOutcome {
 
 /// Restores from an archive file. One instance per app, built in the backup DI.
 pub struct ArchiveRestorer {
-    pool: SqlitePool,
+    database: Database,
     db_path: PathBuf,
     app_data_dir: PathBuf,
     settings_repo: Arc<dyn SettingsRepositoryPort>,
@@ -79,7 +79,7 @@ pub struct ArchiveRestorer {
 
 impl ArchiveRestorer {
     pub fn new(
-        pool: SqlitePool,
+        database: Database,
         db_path: PathBuf,
         app_data_dir: PathBuf,
         settings_repo: Arc<dyn SettingsRepositoryPort>,
@@ -88,7 +88,7 @@ impl ArchiveRestorer {
         web_archive_root: Option<PathBuf>,
     ) -> Self {
         Self {
-            pool,
+            database,
             db_path,
             app_data_dir,
             settings_repo,
@@ -228,7 +228,6 @@ impl ArchiveRestorer {
                     "could not clear the restored database's file records: {e}"
                 ))
             })?;
-        self.swap_database(&extracted.db_path).await?;
 
         let files_restored = self
             .merge_files_library(extracted.files_dir.as_deref())
@@ -239,6 +238,8 @@ impl ArchiveRestorer {
             .await;
         self.merge_chat_images(extracted.chat_images_dir.as_deref())
             .await;
+        self.swap_database(&extracted.db_path).await?;
+
         let vault_restored_to = self.restore_vault(extracted.vault_dir.as_deref()).await?;
         self.restore_settings_file(extracted.settings_file.as_deref())
             .await;
@@ -301,14 +302,7 @@ impl ArchiveRestorer {
     /// Highest applied migration in the *live* database — what this build's
     /// schema actually is, rather than what the binary claims.
     async fn newest_local_migration(&self) -> Result<Option<i64>, ArchiveError> {
-        let mut connection = match self.pool.acquire().await {
-            Ok(connection) => connection,
-            Err(e) => {
-                warn!(error = %e, "could not read local migration version; skipping the newer-backup check");
-                return Ok(None);
-            }
-        };
-        match database_repository::newest_migration(&mut connection).await {
+        match database_repository::database_newest_migration(&self.database).await {
             Ok(version) => Ok(version),
             Err(e) => {
                 // A database with no migration table is a test fixture or a
@@ -321,7 +315,7 @@ impl ArchiveRestorer {
     }
 
     /// Swap the snapshot in, following `BackupAdapter::restore_backup`
-    /// exactly: safety copy, close the pool, copy to a temp name, rename,
+    /// exactly: safety copy, close the database, copy to a temp name, rename,
     /// roll back if the rename fails.
     async fn swap_database(&self, snapshot_path: &Path) -> Result<(), ArchiveError> {
         let safety = self.db_path.with_extension("db.pre_restore");
@@ -332,7 +326,7 @@ impl ArchiveRestorer {
         }
 
         info!("closing database connections before swapping in the restored database");
-        self.pool.close().await;
+        self.database.close().await;
 
         let temp_path = self.db_path.with_extension("db.restoring");
         if let Err(e) = tokio::fs::copy(snapshot_path, &temp_path).await {

@@ -1,7 +1,7 @@
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::driver::DriverPool;
 
-pub async fn initialize_database(pool: &SqlitePool) -> Result<()> {
+pub async fn initialize_database(pool: &impl DriverPool) -> Result<()> {
     tracing::info!("Initializing database...");
 
     crate::infrastructure::persistence::database::migrate::run_migrations(pool).await?;

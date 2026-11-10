@@ -63,7 +63,6 @@ pub mod tag_service;
 pub mod text_search_port;
 pub mod transcription_port;
 pub mod turn_source;
-pub mod unit_of_work;
 pub mod update_checker_port;
 pub mod vector_search_port;
 pub mod web_service;
@@ -134,7 +133,6 @@ pub use system_info::{
 pub use tag_service::{DocumentLockGuard, TagServiceTrait};
 pub use text_search_port::TextSearchPort;
 pub use transcription_port::{Transcript, TranscriptSegment, TranscriptionPort};
-pub use unit_of_work::{UnitOfWork, UnitOfWorkFactory};
 pub use update_checker_port::{UpdateCheckerPort, UpdateInfoData};
 pub use vector_search_port::VectorSearchPort;
 pub use web_service::WebServiceTrait;

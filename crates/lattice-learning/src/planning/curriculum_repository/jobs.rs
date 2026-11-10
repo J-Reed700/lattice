@@ -72,7 +72,7 @@ impl LearningCurriculumRepository {
     }
 
     async fn retry_replayed_job_if_stopped(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         program_id: &str,
         expected_revision: i64,
         job: LearningGenerationJob,
@@ -283,7 +283,7 @@ impl LearningCurriculumRepository {
     /// The checks, dedupe and rows of one lesson job inside the caller's
     /// transaction; returns the new job's id or the existing one's.
     async fn admit_job(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         request: &StartLearningGenerationJobRequestDto,
     ) -> Result<String> {
         validate_operation_id(&request.operation_id)?;
@@ -345,7 +345,7 @@ impl LearningCurriculumRepository {
         let content_revision =
             check_program_open(tx, &request.program_id, request.expected_revision).await?;
         let next_lessons: Vec<String> = sqlx::query_scalar("SELECT l.id FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.preparation='outline' AND l.completed=0 AND l.curriculum_state='outline' ORDER BY m.ordinal,l.ordinal")
-            .bind(&request.program_id).fetch_all(&mut **tx).await.map_err(db)?;
+            .bind(&request.program_id).fetch_all(&mut *tx).await.map_err(db)?;
         if (lesson_ids.len() == 1
             && lesson_ids
                 .first()
@@ -421,7 +421,7 @@ impl LearningCurriculumRepository {
         if admitted.created {
             sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) VALUES(?,?,?,?)")
                 .bind(&admitted.id).bind(&request.program_id).bind(request.expected_revision).bind(content_revision)
-                .execute(&mut **tx).await.map_err(db)?;
+                .execute(&mut *tx).await.map_err(db)?;
         }
         operation.record(tx, &admitted.id).await?;
         Ok(admitted.id)
@@ -469,7 +469,7 @@ impl LearningCurriculumRepository {
     }
 
     async fn job_action_on(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         request: &LearningGenerationJobActionRequestDto,
         action: JobAction,
     ) -> Result<String> {
@@ -488,7 +488,7 @@ impl LearningCurriculumRepository {
         let program =
             sqlx::query("SELECT revision,content_revision FROM learning_programs WHERE id=?")
                 .bind(&request.program_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -552,7 +552,7 @@ impl LearningCurriculumRepository {
                 };
                 if admitted.created {
                     sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) SELECT ?,program_id,base_revision_number,content_revision FROM learning_jobs WHERE job_id=?")
-                        .bind(&admitted.id).bind(&request.job_id).execute(&mut **tx).await.map_err(db)?;
+                        .bind(&admitted.id).bind(&request.job_id).execute(&mut *tx).await.map_err(db)?;
                 }
                 admitted.id
             }
@@ -612,14 +612,14 @@ pub(crate) async fn lesson_rank_in(
 
 /// The outline revision of a program that is active at `expected_revision`.
 async fn check_program_open(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut sqlx::SqliteConnection,
     program_id: &str,
     expected_revision: i64,
 ) -> Result<i64> {
     let program =
         sqlx::query("SELECT revision,status,content_revision FROM learning_programs WHERE id=?")
             .bind(program_id)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;

@@ -4,14 +4,11 @@
 //! and are re-derived after import), nor are site overrides (they are the
 //! user's own, across courses) or outcomes (calibration is the user's).
 
-use super::repository;
-use super::repository::rows::{write_override, write_provenance, write_relations};
 use lattice_core::domain::provenance::{
     Origin, ProvenanceRecord, RelationEvidence, RelationTarget, SourceRelation, TrustOverride,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::SqliteConnection;
 
 /// The layout of [`SourceTrustPackEntry`]; a pack with another is refused.
 pub const SOURCE_TRUST_PACK_VERSION: u32 = 1;
@@ -35,26 +32,6 @@ pub struct SourceTrustPackEntry {
 }
 
 impl SourceTrustPackEntry {
-    /// The course's trust rows, read in the export's snapshot transaction.
-    pub async fn read(conn: &mut SqliteConnection, program_id: &str) -> Result<Self> {
-        let provenance = repository::pack::provenance(conn, program_id).await?;
-        let relations = repository::pack::relations(conn, program_id)
-            .await?
-            .into_iter()
-            .map(|(relation, detected_at)| PackRelation {
-                relation,
-                detected_at,
-            })
-            .collect();
-        let overrides = repository::pack::source_overrides(conn, program_id).await?;
-        Ok(Self {
-            version: SOURCE_TRUST_PACK_VERSION,
-            provenance,
-            relations,
-            overrides,
-        })
-    }
-
     /// Refuses an entry this build cannot restore faithfully.
     pub fn check(&self) -> Result<()> {
         if self.version != SOURCE_TRUST_PACK_VERSION {
@@ -108,30 +85,5 @@ impl SourceTrustPackEntry {
             }
         }
         self
-    }
-
-    /// Writes the rows in the import's transaction, after the versions they
-    /// hang from.
-    pub async fn write(&self, conn: &mut SqliteConnection, program_id: &str) -> Result<()> {
-        for record in &self.provenance {
-            write_provenance(conn, record).await?;
-        }
-        for PackRelation {
-            relation,
-            detected_at,
-        } in &self.relations
-        {
-            write_relations(
-                conn,
-                program_id,
-                std::slice::from_ref(relation),
-                *detected_at,
-            )
-            .await?;
-        }
-        for entry in &self.overrides {
-            write_override(conn, entry).await?;
-        }
-        Ok(())
     }
 }

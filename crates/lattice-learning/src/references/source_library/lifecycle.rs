@@ -19,7 +19,7 @@ impl LearningSourceLibraryRepository {
             }
         }
         let hash = hash(req)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -92,7 +92,7 @@ impl LearningSourceLibraryRepository {
             }
         }
         let hash = hash(req)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -169,7 +169,7 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Deletion reason must contain 1–500 characters."));
         }
         let hash = hash(req)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
             .seen(&mut tx)
@@ -232,10 +232,12 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Replacement source text must not be empty."));
         }
         let hash = hash(req)?;
-        let saved_text = stored::active_text(&self.pool, &req.program_id, &req.source_id).await?;
-        let comparison = trust::capture::compare(
-            &self.pool,
-            &req.program_id,
+        let mut read = self.database.begin_read().await.map_err(db)?;
+        let saved_text = stored::active_text_in(&mut read, &req.program_id, &req.source_id).await?;
+        let saved = trust::capture::saved_texts(&mut read, &req.program_id).await?;
+        read.commit().await.map_err(db)?;
+        let comparison = trust::capture::compare_saved(
+            saved,
             trust::capture::VersionText {
                 source_id: &req.source_id,
                 version_id: &req.version_id,
@@ -248,7 +250,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
             .seen(&mut tx)

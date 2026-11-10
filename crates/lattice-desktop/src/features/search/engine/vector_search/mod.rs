@@ -12,7 +12,8 @@ mod repository;
 pub mod runtime_index;
 
 pub use manifest::{
-    read_manifest, read_source_stamp, write_manifest, IndexManifest, ManifestMismatch, SourceStamp,
+    read_manifest, write_manifest, IndexManifest, ManifestMismatch, SourceStamp,
     MANIFEST_FORMAT_VERSION,
 };
 pub use persistence::{IndexPersistence, StartupPath};
+pub use repository::read_source_stamp;

@@ -3,6 +3,7 @@
 use super::*;
 use crate::features::learning::references::course_index::CourseIndexes;
 use lattice_core::domain::learning::claim_review::{Actor, ClaimLedgerEntry, ClaimState, Class};
+use lattice_core::shared::persistence::Database;
 
 /// The §1.1 outline keys the program and its saved draft decide.
 pub(super) fn outline_metrics(
@@ -582,10 +583,11 @@ async fn lesson_stage(
             };
             // As the app wires it: one runtime runs the lesson and the course
             // index builds, and the worker searches the course's index.
-            let runtime = lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone());
+            let database = Database::from(pool.clone());
+            let runtime = lattice_core::shared::runtime::jobs::JobRuntime::new(database.clone());
             let courses = CourseIndexes::new(
                 run.dir.join("course-index"),
-                pool.clone(),
+                database,
                 Arc::new(super::super::GivenModel(Some(run.embedder.clone()))),
                 Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
                 Arc::clone(&runtime),

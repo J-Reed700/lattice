@@ -1,6 +1,7 @@
 //! The admission sweep over a program's saved pages.
 use super::*;
 use crate::{repository::LearningRepository, tests};
+use lattice_core::shared::persistence::Database;
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -90,7 +91,7 @@ async fn the_sweep_marks_a_page_the_machine_saved_that_is_not_a_source_and_leave
 ) -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let repo = LearningRepository::new(pool.clone());
     let article = format!("# Reading files\n{}", words(400));
     save(
@@ -151,7 +152,7 @@ async fn the_sweep_marks_a_page_the_machine_saved_that_is_not_a_source_and_leave
 async fn the_short_pages_the_gate_admitted_are_listed_for_the_floors_to_be_read() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let page = |name: &str, count: usize| {
         (
             format!("https://docs.example.org/{name}"),
@@ -197,7 +198,7 @@ async fn the_library_lists_the_pages_the_gate_refused_and_the_research_no_lesson
 ) -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let article = format!("# Reading files\n{}", words(400));
     let cited = save(
         &library,
@@ -266,7 +267,7 @@ async fn the_library_lists_the_pages_the_gate_refused_and_the_research_no_lesson
 async fn a_research_source_a_lesson_block_cites_is_not_listed_as_unused() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let article = format!("# Reading files\n{}", words(400));
     let cited = save(
         &library,
@@ -306,7 +307,7 @@ async fn a_research_source_a_lesson_block_cites_is_not_listed_as_unused() -> Res
 async fn no_research_source_is_listed_as_unused_while_a_lesson_is_being_prepared() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let article = format!("# Reading files\n{}", words(400));
     save(
         &library,
@@ -342,7 +343,7 @@ async fn no_research_source_is_listed_as_unused_while_a_lesson_is_being_prepared
 async fn a_sweep_that_cannot_mark_every_page_marks_none() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let article = format!("# Reading files\n{}", words(400));
     for url in ["https://docs.example.org/a", "https://docs.example.org/b"] {
         save(

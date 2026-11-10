@@ -13,6 +13,7 @@ use lattice_core::domain::learning::claim_review::{
     Ledger, LessonReview, LessonReviewState, RecordedEvent, Revision, StopReason, UnitKind,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
@@ -53,7 +54,8 @@ pub struct ClaimReviewRepository {
 }
 
 impl ClaimReviewRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -62,21 +64,10 @@ impl ClaimReviewRepository {
         &self,
         lesson_id: &str,
     ) -> Result<HashMap<ClaimId, Vec<ShownPassage>>> {
-        let rows = sqlx::query(
-            "SELECT claim_id,evidence_json FROM learning_lesson_claims WHERE lesson_id=?",
-        )
-        .bind(lesson_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(db)?;
-        rows.iter()
-            .map(|row| {
-                Ok((
-                    ClaimId(row.get("claim_id")),
-                    decode(row.get::<String, _>("evidence_json").as_str())?,
-                ))
-            })
-            .collect()
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let shown = shown_passages_in(&mut read, lesson_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(shown)
     }
 
     /// Replaces the passages a claim's card shows. Display only: the event
@@ -88,13 +79,24 @@ impl ClaimReviewRepository {
         claim_id: &ClaimId,
         passages: &[ShownPassage],
     ) -> Result<()> {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        Self::show_passages_in(&mut connection, lesson_id, claim_id, passages).await
+    }
+
+    /// [`Self::show_passages`] inside the caller's unit of work.
+    pub async fn show_passages_in(
+        conn: &mut SqliteConnection,
+        lesson_id: &str,
+        claim_id: &ClaimId,
+        passages: &[ShownPassage],
+    ) -> Result<()> {
         sqlx::query(
             "UPDATE learning_lesson_claims SET evidence_json=? WHERE claim_id=? AND lesson_id=?",
         )
         .bind(encode(passages)?)
         .bind(&claim_id.0)
         .bind(lesson_id)
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await
         .map_err(db)?;
         Ok(())
@@ -171,6 +173,58 @@ impl ClaimReviewStore for ClaimReviewRepository {
         .map_err(db)?;
         Ok(Revision(revision))
     }
+
+    async fn hold_lesson_review(
+        &self,
+        lesson_id: &str,
+        stop_reason: Option<StopReason>,
+    ) -> Result<Option<Revision>> {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        hold_in(&mut connection, lesson_id, stop_reason.as_ref()).await
+    }
+}
+
+/// Sends the review to Needs review in one statement, keeping its other
+/// fields; `None` keeps the stored stop reason. `None` back: no review row.
+pub(super) async fn hold_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+    stop_reason: Option<&StopReason>,
+) -> Result<Option<Revision>> {
+    let stop_reason = stop_reason.map(encode).transpose()?;
+    let revision: Option<i64> = sqlx::query_scalar(
+        "UPDATE learning_lesson_reviews SET state=?,stop_reason_json=COALESCE(?,stop_reason_json),\
+         revision=revision+1,updated_at=? WHERE lesson_id=? RETURNING revision",
+    )
+    .bind(LessonReviewState::NeedsReview.as_str())
+    .bind(stop_reason)
+    .bind(now())
+    .bind(lesson_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(db)?;
+    Ok(revision.map(Revision))
+}
+
+/// [`ClaimReviewRepository::shown_passages`] inside the caller's unit of work.
+pub(super) async fn shown_passages_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+) -> Result<HashMap<ClaimId, Vec<ShownPassage>>> {
+    let rows =
+        sqlx::query("SELECT claim_id,evidence_json FROM learning_lesson_claims WHERE lesson_id=?")
+            .bind(lesson_id)
+            .fetch_all(&mut *connection)
+            .await
+            .map_err(db)?;
+    rows.iter()
+        .map(|row| {
+            Ok((
+                ClaimId(row.get("claim_id")),
+                decode(row.get::<String, _>("evidence_json").as_str())?,
+            ))
+        })
+        .collect()
 }
 
 /// The refusal of a write made against an older revision (§9): the caller

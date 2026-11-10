@@ -17,11 +17,12 @@ use lattice_core::application::ports::{
     ClaimReviewStore, LLMPort, LibraryPassagesPort, ReferenceSnapshotPort, WebServiceTrait,
 };
 use lattice_core::domain::learning::claim_review::{
-    Actor, AttachOutcome, CheckResult, ClaimActionKind, ClaimEvent, ClaimId, ClaimLedgerEntry,
-    ClaimState, EventProvenance, Ledger, Revision, TrustVerdict,
+    Actor, AttachOutcome, Check, CheckResult, ClaimActionKind, ClaimEvent, ClaimId,
+    ClaimLedgerEntry, ClaimState, EventProvenance, Ledger, Revision, TrustVerdict,
 };
+use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, Transactions};
 use std::sync::Arc;
 
 use self::acquire::Acquired;
@@ -32,11 +33,12 @@ use self::report::{
 use super::checker_examples::CheckerExamples;
 use super::dto::AttachEvidenceDto;
 use super::repository::{ClaimReviewRepository, ShownPassage};
-use super::trust_changed::{record_verdict, Redecided};
+use super::trust_changed::{redecide_kinds, Redecided};
 use crate::dto::LearningSourceDto;
+use crate::persistence::db;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::references::course_index::{CourseIndexes, CourseSearch};
-use crate::references::trust::outcomes::VerdictScope;
+use crate::references::trust::outcomes::{self, VerdictScope};
 use crate::source_library::LearningSourceLibraryRepository;
 
 /// What the user attaches (§5.1 "Attach evidence").
@@ -97,7 +99,7 @@ pub struct LessonSourceRequest<'a> {
 
 /// What the attach works with; the command assembles it from the container.
 pub struct AttachDeps<'a> {
-    pub pool: &'a SqlitePool,
+    pub database: &'a Database,
     pub store: &'a dyn ClaimReviewStore,
     pub web: &'a dyn WebServiceTrait,
     pub snapshots: &'a dyn ReferenceSnapshotPort,
@@ -219,9 +221,12 @@ async fn append_current(
 }
 
 /// After a check is on the ledger: the card shows the passages it compared,
-/// and a flag the new source overturned is a labelled example of the
-/// checker's accuracy (§15). `flagged` is the claim as it was before the
-/// check; `in_collection` says whether the source was already a reference.
+/// a flag the new source overturned is a labelled example of the checker's
+/// accuracy (§15), and, when `count_verdict`, a supported check is a
+/// calibration outcome (§13). All three land in one unit of work; the claims
+/// a moved bar re-decides follow it. `flagged` is the claim as it was before
+/// the check; `in_collection` says whether the source was already a
+/// reference.
 async fn record_check(
     deps: &AttachDeps<'_>,
     (program_id, lesson_id): (&str, &str),
@@ -229,9 +234,10 @@ async fn record_check(
     passages: &[ReferencePassage],
     outcome: &AttachOutcome,
     in_collection: bool,
-) -> Result<()> {
+    count_verdict: bool,
+) -> Result<Redecided> {
     let AttachOutcome::Checked(check) = outcome else {
-        return Ok(());
+        return Ok(Redecided::default());
     };
     let shown: Vec<ShownPassage> = passages
         .iter()
@@ -243,15 +249,58 @@ async fn record_check(
             retrieval_kind: passage.retrieval_kind.clone(),
         })
         .collect();
-    ClaimReviewRepository::new(deps.pool.clone())
-        .show_passages(lesson_id, flagged.claim_id(), &shown)
-        .await?;
+    let moved = write_check(
+        deps.database,
+        (program_id, lesson_id),
+        flagged,
+        &shown,
+        check,
+        in_collection,
+        count_verdict,
+    )
+    .await?;
+    redecide_kinds(deps.database, moved).await
+}
+
+/// The unit of work of [`record_check`]; returns the kinds whose bar the
+/// outcome moved.
+async fn write_check(
+    database: &Database,
+    (program_id, lesson_id): (&str, &str),
+    flagged: &ClaimLedgerEntry,
+    shown: &[ShownPassage],
+    check: &Check,
+    in_collection: bool,
+    count_verdict: bool,
+) -> Result<Vec<ClaimKind>> {
+    let mut tx = database.begin_write().await.map_err(db)?;
+    ClaimReviewRepository::show_passages_in(&mut tx, lesson_id, flagged.claim_id(), shown).await?;
+    let mut moved = Vec::new();
     if matches!(check.result, CheckResult::Supported { .. }) {
-        CheckerExamples::new(deps.pool.clone())
-            .record_evidence_added(program_id, lesson_id, flagged, &shown, in_collection)
+        CheckerExamples::record_evidence_added_in(
+            &mut tx,
+            program_id,
+            lesson_id,
+            flagged,
+            shown,
+            in_collection,
+        )
+        .await?;
+        if count_verdict {
+            moved = outcomes::record_in(
+                &mut tx,
+                VerdictScope {
+                    program_id,
+                    lesson_id,
+                },
+                flagged,
+                TrustVerdict::EvidenceAdded,
+            )
             .await?;
+        }
     }
-    Ok(())
+    tx.commit().await.map_err(db)?;
+    Ok(moved)
 }
 
 /// The course's sources and its evidence index opened for searching: where
@@ -261,7 +310,7 @@ pub(super) async fn course_material(
     deps: &AttachDeps<'_>,
     program_id: &str,
 ) -> Result<(Vec<LearningSourceDto>, Option<CourseSearch>)> {
-    let sources = LearningSourceLibraryRepository::new(deps.pool.clone())
+    let sources = LearningSourceLibraryRepository::new(deps.database.clone())
         .verification_sources(program_id)
         .await?;
     let course = match deps.courses {
@@ -476,32 +525,18 @@ async fn attach_reporting(
         )
     })?;
     let lesson = (request.program_id, request.lesson_id);
-    record_check(
+    // The user's evidence verified the claim: calibration learns that the
+    // claim held (source provenance §13); a bar it moves re-decides claims.
+    let redecided = record_check(
         deps,
         lesson,
         entry,
         &passages,
         &outcome,
         source.already_saved,
+        true,
     )
     .await?;
-    // The user's evidence verified the claim: calibration learns that the
-    // claim held (source provenance §13); a bar it moves re-decides claims.
-    let redecided = match &outcome {
-        AttachOutcome::Checked(check) if matches!(check.result, CheckResult::Supported { .. }) => {
-            record_verdict(
-                deps.pool,
-                VerdictScope {
-                    program_id: request.program_id,
-                    lesson_id: request.lesson_id,
-                },
-                entry,
-                TrustVerdict::EvidenceAdded,
-            )
-            .await?
-        }
-        _ => Redecided::default(),
-    };
     let (others, after) = check_others(
         deps,
         &references,
@@ -548,7 +583,7 @@ async fn put_back_for(
     if !supported {
         return Ok(PutBackOutcomeDto::StaysOut);
     }
-    let service = super::service::ClaimReviewService::new(deps.pool.clone());
+    let service = super::service::ClaimReviewService::new(deps.database.clone());
     let back = service.put_back_for_source(lesson_id, claim_id).await?;
     Ok(if back.is_some() {
         PutBackOutcomeDto::Back
@@ -618,6 +653,7 @@ pub(super) async fn check_others(
                     &passages,
                     &AttachOutcome::Checked(check),
                     in_collection,
+                    false,
                 )
                 .await?;
                 if supported {

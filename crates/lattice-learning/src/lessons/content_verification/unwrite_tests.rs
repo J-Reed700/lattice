@@ -230,7 +230,16 @@ async fn prepared(model: &Script, body: &str) -> Result<Prepared> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let raw = lesson_of(body).to_string();
-    let ended = prepare(&repo, &job, &lesson_id, model, Some(raw), &[source()]).await;
+    let ended = prepare(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        model,
+        Some(raw),
+        &[source()],
+    )
+    .await;
     let claims = ClaimReviewRepository::new(pool.clone())
         .load(&lesson_id)
         .await?

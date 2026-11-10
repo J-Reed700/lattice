@@ -150,7 +150,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         )),
         ..Default::default()
     };
-    let result = lesson_drafts::run(&repo, &job, &lesson, async {
+    let result = lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         paged(&model, &references, &inventory(8), &measured()).await
     })
     .await;
@@ -172,7 +172,7 @@ async fn failing_groups_split_and_remember_the_plan_after_reopen() -> Result<()>
         max_batch_size: Some(4),
         ..Default::default()
     };
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let reads = paged(&model, &references, &inventory(8), &measured()).await?;
         assert_eq!(reads.len(), 8);
         assert!(reads
@@ -205,7 +205,7 @@ async fn a_group_counted_past_the_window_is_split_and_every_claim_is_judged() ->
         window_holds: Some(4),
         ..Default::default()
     };
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let reads = paged(&model, &references, &inventory(8), &measured()).await?;
         assert_eq!(reads.len(), 8);
         assert!(reads
@@ -227,7 +227,7 @@ async fn a_group_counted_past_the_window_is_never_sent_again() -> Result<()> {
     let (repo, job, lesson) = setup(&pool).await?;
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         // The refusal splits the group and records the split; an outage then
         // stops the first half.
         let interrupted = BatchModel {
@@ -273,10 +273,11 @@ async fn connection_loss_rate_limits_and_invalid_requests_do_not_fan_out() -> Re
             batch_error: Some(error.clone()),
             ..Default::default()
         };
-        let result = lesson_drafts::run(&repo, &job, &lesson, async {
-            paged(&model, &references, &inventory(8), &measured()).await
-        })
-        .await;
+        let result =
+            lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
+                paged(&model, &references, &inventory(8), &measured()).await
+            })
+            .await;
         assert_eq!(result.unwrap_err().error_code(), error.error_code());
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![8]);
     }
@@ -313,7 +314,7 @@ async fn batched_checks_reuse_individual_receipts_and_recheck_changed_evidence()
     let (repo, job, lesson) = setup(&pool).await?;
     let mut sources = vec![source()];
     let model = BatchModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         for pass in 0..3 {
             if pass == 2 {
                 sources[0].excerpt.push_str(" Additional source context.");
@@ -373,7 +374,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
     saved.units[0]
         .claims
         .retain(|claim| !missing.contains(&claim.statement));
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         paged(&BatchModel::default(), &references, &saved, &measured()).await?;
         Ok(())
     })
@@ -383,7 +384,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         block_individual: true,
         ..Default::default()
     };
-    crate::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo, &job, &lesson, async {
+    crate::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let inventory = inventory(170);
         let retained = measured();
         crate::lesson_progress::begin_checks(170);
@@ -431,7 +432,7 @@ async fn restores_all_170_claim_receipts_before_slow_checks_and_batches_only_mis
         .await?;
     assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let resumed = BatchModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let reads = paged(&resumed, &references, &inventory(170), &measured()).await?;
         assert_eq!(reads.len(), 170);
         assert_eq!(reads.iter().filter(|read| read.reused).count(), 167);
@@ -473,7 +474,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
     let evidence = evidence_for(&model, &claim.statement, 0, &references, &[]).await?;
     let key = claim_receipt_key(&model, &ClaimChecks::key(0, claim, &evidence));
     let retained = measured();
-    crate::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&repo,&job,&lesson,async {
+    crate::lesson_progress::run(&JobContext::detached(&JobStore::new(pool.clone()), &job).await?, lesson_drafts::run(&Database::from(pool.clone()), &repo,&job,&lesson,async {
         crate::lesson_progress::begin_checks(8);
         let work=driven(&model,&references,&input,&retained);
         tokio::select! {
@@ -506,7 +507,7 @@ async fn completed_batch_siblings_survive_interruption_during_individual_fallbac
         .await?;
     assert!(JobStore::new(pool.clone()).claim(&job).await?.is_some());
     let model = BatchModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let reads = paged(&model, &references, &inventory(8), &measured()).await?;
         assert!(reads
             .iter()
@@ -542,7 +543,7 @@ async fn restores_the_receipts_behind_a_slow_call(reading: Reading) -> Result<()
         claim("Quillet is a lexer that reads characters."),
         claim("Quillet is a lexer that emits tokens."),
     ];
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         for one in &saved {
             let receipt = ClaimReceipt {
                 verdict: ClaimVerdict::Supported,
@@ -614,7 +615,7 @@ async fn a_page_batch_restores_the_pages_it_has_saved_before_it_asks_what_an_ans
         block_individual: true,
         ..Default::default()
     };
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         // A run that read their pages and went down before it asked about them.
         let down = BatchModel {
             batch_error: Some(AppError::Network("down".into())),
@@ -673,7 +674,7 @@ async fn a_statement_parts_hands_to_the_page_is_counted_once_after_its_page_read
     let mut saved = inventory(3);
     let asked = saved.units[0].claims[1].statement.clone();
     saved.units[0].claims.retain(|one| one.statement != asked);
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         paged(&BatchModel::default(), &references, &saved, &measured()).await?;
         let model = BatchModel::default();
         let (steps, trace) = crate::lesson_progress::traced(async {
@@ -700,7 +701,7 @@ async fn claims_of_two_sections_never_share_a_request() -> Result<()> {
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let model = BatchModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let reads = paged(&model, &references, &sections(2, 3), &measured()).await?;
         assert_eq!(reads.len(), 6);
         assert_eq!(*model.batch_sizes.lock().unwrap(), vec![3, 3]);

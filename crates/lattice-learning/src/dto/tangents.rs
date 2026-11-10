@@ -22,7 +22,7 @@ pub struct ListLearningTangentsRequestDto {
     pub program_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow, specta::Type, PartialEq, Eq)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningTangentDto {
     pub conversation_id: String,

@@ -3,6 +3,7 @@ use crate::features::file::custom_collections::dto::{
 };
 use chrono::Utc;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
@@ -13,7 +14,8 @@ pub struct CustomCollectionsRepository {
 }
 
 impl CustomCollectionsRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -165,7 +167,7 @@ impl CustomCollectionsRepository {
 }
 
 async fn insert_memberships(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut sqlx::SqliteConnection,
     id: &str,
     ids: &[String],
 ) -> Result<()> {
@@ -175,7 +177,7 @@ async fn insert_memberships(
             continue;
         }
         sqlx::query("INSERT INTO custom_collection_documents (collection_id, document_id, ordinal) VALUES (?, ?, ?)")
-            .bind(id).bind(document_id).bind(ordinal as i64).execute(&mut **tx).await?;
+            .bind(id).bind(document_id).bind(ordinal as i64).execute(&mut *tx).await?;
     }
     Ok(())
 }

@@ -77,10 +77,11 @@ pub(in super::super) struct RefreshOffer {
 }
 
 pub(in super::super) async fn refresh_offer(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     source_id: &str,
 ) -> Result<Option<RefreshOffer>> {
+    let pool = pool.sqlx_pool();
     let row = sqlx::query("SELECT s.revision,s.kind,s.requested_url,s.freshness_policy,s.deleted_at,p.status FROM learning_source_library s JOIN learning_programs p ON p.id=s.program_id WHERE s.program_id=? AND s.id=?")
         .bind(program_id).bind(source_id).fetch_optional(pool).await.map_err(db)?;
     Ok(row.map(|r| RefreshOffer {

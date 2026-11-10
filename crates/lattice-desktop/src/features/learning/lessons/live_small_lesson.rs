@@ -7,6 +7,7 @@ use crate::features::learning::{
     dto::*,
     plan_dto::{LearningGenerationJobActionRequestDto, StartLearningGenerationJobRequestDto},
 };
+use lattice_core::shared::persistence::Database;
 
 #[tokio::test]
 #[ignore = "real-model controls for requirements versus empirical claims; does not publish content"]
@@ -353,7 +354,8 @@ pub(super) async fn run_and_confirm(
     let web: Arc<dyn lattice_core::application::ports::WebServiceTrait> = Arc::new(
         crate::features::web::services::web::WebService::new(web_dir.path())?,
     );
-    let runtime = lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone());
+    let runtime =
+        lattice_core::shared::runtime::jobs::JobRuntime::new(Database::from(pool.clone()));
     let worker = worker(&pool, model, web, None);
     let result = run_job(runtime, worker, job_id, directory, &|_| Ok(())).await?;
     let job = &result;
@@ -418,7 +420,7 @@ pub(super) fn worker(
     LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::features::learning::tests::runtimes(),
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm: Arc::new(move || {
             let llm: Arc<dyn LLMPort> = model.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -440,7 +442,7 @@ pub(super) async fn run_job(
     directory: &std::path::Path,
     observe: &dyn Fn(&crate::features::learning::curriculum::LearningGenerationJob) -> Result<()>,
 ) -> Result<crate::features::learning::curriculum::LearningGenerationJob> {
-    let repo = LearningCurriculumRepository::new(worker.pool.clone());
+    let repo = LearningCurriculumRepository::new(worker.database.clone());
     let job = repo.job(job_id).await?;
     // Transient network/model failures stay queued, and the runtime
     // redelivers them when their retry is due.
