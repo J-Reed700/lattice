@@ -366,7 +366,7 @@ impl EvalLab {
     pub(super) async fn activity(&self, problem: &Problem) -> Result<String> {
         let job_id = uuid::Uuid::new_v4().to_string();
         save_problem(
-            &self.pool,
+            &lattice_core::shared::persistence::Database::from(self.pool.clone()),
             &ProblemSave {
                 job_id: &job_id,
                 program_id: &self.program_id,

@@ -31,7 +31,7 @@ use lattice_learning::practice::coding::session::{
 };
 
 fn repo_of(container: &Container) -> LearningPracticalRepository {
-    LearningPracticalRepository::new(container.db_pool().clone())
+    LearningPracticalRepository::new(container.database().clone())
 }
 
 fn unused<T>() -> CoreResult<T> {

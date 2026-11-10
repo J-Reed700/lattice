@@ -24,11 +24,10 @@ use crate::practice_repository::profile_in;
 use crate::quiz_bank_jobs::ModelLoader;
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobStore, NewJob, RecoveryPolicy,
 };
-use sqlx::SqlitePool;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -56,13 +55,13 @@ pub fn coding_job_config() -> JobKindConfig {
 
 /// Queues a build of a problem for a program and returns its job id. The same operation id is the same job.
 pub async fn queue_coding_build(
-    pool: &SqlitePool,
+    database: &Database,
     request: &StartCodingBuildRequestDto,
 ) -> Result<String> {
     let requested = serde_json::to_value(request)
         .map_err(|error| AppError::Serialization(error.to_string()))?;
     let payload_hash = hash(&requested)?;
-    let mut transaction = pool
+    let mut transaction = database
         .begin_write()
         .await
         .map_err(|error| AppError::Database(error.to_string()))?;
@@ -111,15 +110,15 @@ impl BuildSteps for JobSteps<'_> {
 /// Builds coding problems, on the Learning model, pinned for the whole build.
 #[derive(Clone)]
 pub struct CodingBuildWorker {
-    pub pool: SqlitePool,
+    pub database: Database,
     pub load_llm: ModelLoader,
     pub runtimes: BuiltinRuntimes,
 }
 
 impl CodingBuildWorker {
-    pub fn new(pool: SqlitePool, load_llm: ModelLoader, runtimes: BuiltinRuntimes) -> Self {
+    pub fn new(database: Database, load_llm: ModelLoader, runtimes: BuiltinRuntimes) -> Self {
         Self {
-            pool,
+            database,
             load_llm,
             runtimes,
         }
@@ -139,7 +138,7 @@ pub struct ProblemSave<'a> {
 /// Saves a proven problem as a coding activity and returns the activity id. The ids come from the job's, so a build
 /// that runs again after the save committed finds its own activity and saves nothing twice.
 pub async fn save_problem(
-    pool: &SqlitePool,
+    database: &Database,
     save: &ProblemSave<'_>,
     problem: &Problem,
     harness: &dyn CaseHarness,
@@ -152,7 +151,7 @@ pub async fn save_problem(
         .to_string()
     };
     let activity_id = derived("activity");
-    let repository = LearningPracticalRepository::new(pool.clone());
+    let repository = LearningPracticalRepository::new(database.clone());
     let revision = repository.program_revision(save.program_id).await?;
     let stored = serde_json::to_string(problem)
         .map_err(|error| AppError::Serialization(error.to_string()))?;
@@ -212,13 +211,13 @@ impl JobHandler for CodingBuildWorker {
             serde_json::from_value(context.job().requested.clone()).map_err(|error| {
                 AppError::InvalidInput(format!("Invalid coding build job request: {error}"))
             })?;
-        let repository = LearningPracticalRepository::new(self.pool.clone());
+        let repository = LearningPracticalRepository::new(self.database.clone());
         let lesson = repository
             .build_lesson(&request.program_id, request.lesson_id.as_deref())
             .await?;
 
         let mut transaction = self
-            .pool
+            .database
             .begin_read()
             .await
             .map_err(|error| AppError::Database(error.to_string()))?;
@@ -300,7 +299,7 @@ impl JobHandler for CodingBuildWorker {
             return Ok(JobOutcome::Stopped);
         }
         let activity_id = save_problem(
-            &self.pool,
+            &self.database,
             &ProblemSave {
                 job_id: &context.job().id,
                 program_id: &request.program_id,

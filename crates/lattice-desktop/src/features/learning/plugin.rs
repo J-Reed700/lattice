@@ -137,7 +137,7 @@ fn coding_worker(
     runtimes: BuiltinRuntimes,
 ) -> super::coding::jobs::CodingBuildWorker {
     super::coding::jobs::CodingBuildWorker {
-        pool: container.db_pool().clone(),
+        database: container.database().clone(),
         load_llm: drill_model(container),
         runtimes,
     }

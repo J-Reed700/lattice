@@ -94,12 +94,18 @@ fn a_build_that_is_stopped_midway_is_requeued() {
 async fn queueing_a_build_twice_with_one_operation_id_is_one_job() {
     let (pool, program_id, _, _) = fixture().await.unwrap();
     let operation = Uuid::new_v4().to_string();
-    let first = queue_coding_build(&pool, &build_request(&operation, &program_id))
-        .await
-        .unwrap();
-    let again = queue_coding_build(&pool, &build_request(&operation, &program_id))
-        .await
-        .unwrap();
+    let first = queue_coding_build(
+        &Database::from(pool.clone()),
+        &build_request(&operation, &program_id),
+    )
+    .await
+    .unwrap();
+    let again = queue_coding_build(
+        &Database::from(pool.clone()),
+        &build_request(&operation, &program_id),
+    )
+    .await
+    .unwrap();
     assert_eq!(first, again);
 
     let job = JobStore::new(pool.clone()).get(&first).await.unwrap();
@@ -108,7 +114,7 @@ async fn queueing_a_build_twice_with_one_operation_id_is_one_job() {
     assert_eq!(job.progress_total, CODING_BUILD_STEPS);
 
     let other = queue_coding_build(
-        &pool,
+        &Database::from(pool.clone()),
         &build_request(&Uuid::new_v4().to_string(), &program_id),
     )
     .await
@@ -120,12 +126,19 @@ async fn queueing_a_build_twice_with_one_operation_id_is_one_job() {
 async fn an_operation_id_reused_for_another_request_is_refused() {
     let (pool, program_id, _, _) = fixture().await.unwrap();
     let operation = Uuid::new_v4().to_string();
-    queue_coding_build(&pool, &build_request(&operation, &program_id))
-        .await
-        .unwrap();
+    queue_coding_build(
+        &Database::from(pool.clone()),
+        &build_request(&operation, &program_id),
+    )
+    .await
+    .unwrap();
     let mut different = build_request(&operation, &program_id);
     different.focus = Some("hashing".into());
-    assert!(queue_coding_build(&pool, &different).await.is_err());
+    assert!(
+        queue_coding_build(&Database::from(pool.clone()), &different)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -133,7 +146,7 @@ async fn the_build_saves_a_coding_problem_activity_with_a_private_problem_file()
     let (pool, program_id, lesson_id, outcome_id) = fixture().await.unwrap();
     let job_id = Uuid::new_v4().to_string();
     let activity_id = save_problem(
-        &pool,
+        &Database::from(pool.clone()),
         &save_of(&job_id, &program_id, &lesson_id),
         &sample_problem(),
         &FakeHarness,
@@ -183,12 +196,22 @@ async fn a_build_that_runs_again_after_saving_finds_its_own_activity() {
     let (pool, program_id, lesson_id, _) = fixture().await.unwrap();
     let job_id = Uuid::new_v4().to_string();
     let save = save_of(&job_id, &program_id, &lesson_id);
-    let first = save_problem(&pool, &save, &sample_problem(), &FakeHarness)
-        .await
-        .unwrap();
-    let again = save_problem(&pool, &save, &sample_problem(), &FakeHarness)
-        .await
-        .unwrap();
+    let first = save_problem(
+        &Database::from(pool.clone()),
+        &save,
+        &sample_problem(),
+        &FakeHarness,
+    )
+    .await
+    .unwrap();
+    let again = save_problem(
+        &Database::from(pool.clone()),
+        &save,
+        &sample_problem(),
+        &FakeHarness,
+    )
+    .await
+    .unwrap();
     assert_eq!(first, again);
 
     let workspace = LearningPracticalRepository::new(pool)
