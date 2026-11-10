@@ -802,7 +802,7 @@ fn a_plural_possessive_is_no_quoted_wording_to_cite() {
 #[test]
 fn a_real_quotation_is_still_quoted_wording_to_cite() {
     for sentence in [
-        "The manual says \"rm deletes files permanently\".",
+        "The manual says \"rm deletes files permanently, with no undo\".",
         "Remember \"the shell keeps a working directory\" always.",
     ] {
         let mut candidate = lesson();

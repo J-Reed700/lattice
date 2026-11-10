@@ -420,16 +420,6 @@ fn a_gap_the_rule_layer_leaves_unsorted_is_adopted() {
     );
 }
 
-/// A remark about the lesson's own sources is Internal by rule: it is no claim.
-#[test]
-fn a_gap_the_rule_layer_makes_internal_is_not_adopted() {
-    let remark = "The sources above do not say how many rows it buffers.";
-    assert_eq!(
-        adopt_one(remark, &claim_ledger::Rewrites::default()),
-        (0, 0, false)
-    );
-}
-
 /// The guard holds for an unsorted gap as for a Sourced one: text no pass
 /// has rewritten is not adopted after the first pass.
 #[test]

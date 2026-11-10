@@ -1,7 +1,7 @@
 //! Claim classes (docs/design/2026-11-01-lesson-claim-classes.md §3.1): a
 //! statement of a lesson gets one class before any evidence is read, and the
-//! class decides the check it meets. The rule layer decides what a string
-//! property can and no model overrides it; the model sorts only what the
+//! class decides the check it meets. The rule layer decides what the text's
+//! structure can and no model overrides it; the model sorts only what the
 //! rules leave, twenty statements to a call.
 
 use super::invalid;
@@ -117,102 +117,93 @@ impl Case {
     }
 }
 
-/// What the rules alone make of a statement. Sourced: a figure beyond its
-/// part's givens, quoted wording or an attribution cue, which can only err
-/// toward a check; in a hypothetical case, whose figures are its own, only
-/// the quotation or the attribution. Internal: anything in a rubric or an
-/// option, or a remark that opens "The sources" (not "The sources of") or
-/// "The other options"; these are the rules that can lighten a statement, to
-/// no check at all. Otherwise nothing, and the model sorts it.
-pub(super) fn rule_class(statement: &str, field: &str, case: &Case) -> Option<Class> {
-    let statement = statement.trim_start();
-    let about_the_lesson = field.starts_with("rubric/")
-        || field.starts_with("options/")
-        || (lazy_regex::regex!(r"(?i)^(the sources|the other options)").is_match(statement)
-            && !lazy_regex::regex!(r"(?i)^the sources of\b").is_match(statement));
-    if about_the_lesson {
-        return Some(Class::Internal);
-    }
-    states_a_specific_in(statement, case).then_some(Class::Sourced)
+/// A mark of a specific in a text: what a quote cited for it must hold.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Marker<'a> {
+    /// A figure the part's givens do not state.
+    Figure(&'a str),
+    /// Wording between double quotation marks, long enough to be a quotation.
+    Quoted(&'a str),
 }
 
-/// Whether a text states a specific in `case`: a figure its part's givens do
-/// not state, quoted wording or an attribution, or a verb of saying; in a
-/// hypothetical case, whose figures are its own, only the last two.
-pub(super) fn states_a_specific_in(text: &str, case: &Case) -> bool {
-    match case {
-        Case::Stated(givens) => needs_citation(text, givens) || attributes(text) || says(text),
-        Case::Hypothetical => {
-            quoted_wording(text).next().is_some() || attributes(text) || says(text)
+impl<'a> Marker<'a> {
+    /// The text the marker stands on.
+    pub(crate) fn text(self) -> &'a str {
+        match self {
+            Self::Figure(text) | Self::Quoted(text) => text,
         }
     }
 }
 
-/// The specifics a quote cited for `text` must hold: its figures beyond its
-/// part's `givens` and its quoted wording.
-pub(crate) fn specifics_in<'a>(text: &'a str, givens: &'a Givens) -> impl Iterator<Item = &'a str> {
-    figures(text)
-        .filter(|figure| !givens.holds(figure))
-        .chain(quoted_wording(text))
+/// The marks of a specific in `text`: in a stated case its figures beyond the
+/// givens, then its quoted wording; in a hypothetical case, whose figures are
+/// its own, only the quoted wording.
+pub(crate) fn markers<'a>(text: &'a str, case: &'a Case) -> impl Iterator<Item = Marker<'a>> + 'a {
+    let givens = match case {
+        Case::Stated(givens) => Some(givens),
+        Case::Hypothetical => None,
+    };
+    givens
+        .into_iter()
+        .flat_map(move |givens| {
+            figures(text)
+                .filter(move |figure| !givens.holds(figure))
+                .map(Marker::Figure)
+        })
+        .chain(quoted_wording(text).map(Marker::Quoted))
 }
 
-/// Whether a text has a specific a cited quote must hold. The writer's rule
-/// asks this of a sentence before it must be cited; an attribution or a verb
-/// of saying is left to the check, though the rule layer still sorts it
-/// Sourced (claim classes design §3.5).
-pub(crate) fn needs_citation(text: &str, givens: &Givens) -> bool {
-    specifics_in(text, givens).next().is_some()
+/// What the rules alone make of a statement. Internal: anything in a rubric or
+/// an option, which can lighten a statement to no check at all. Sourced: a
+/// statement with a marker, which can only err toward a check. Otherwise
+/// nothing, and the model sorts it.
+pub(super) fn rule_class(statement: &str, field: &str, case: &Case) -> Option<Class> {
+    if field.starts_with("rubric/") || field.starts_with("options/") {
+        return Some(Class::Internal);
+    }
+    markers(statement, case).next().map(|_| Class::Sourced)
+}
+
+/// Whether a text has a marker in a stated case with no givens.
+pub(super) fn states_a_specific(text: &str) -> bool {
+    markers(text, &Case::Stated(Givens::NONE)).next().is_some()
 }
 
 /// Marks that open or close a quotation: double quotation marks only.
 pub(crate) const QUOTE_MARKS: &[char] = &['"', '\u{201c}', '\u{201d}'];
 
-/// The wording between double quotation marks, twelve characters or more of
-/// it. A single quote is an apostrophe or a possessive, never a quotation mark.
-pub(crate) fn quoted_wording(text: &str) -> impl Iterator<Item = &str> {
-    let chars: Vec<(usize, char)> = text.char_indices().collect();
-    let marks: Vec<usize> = chars
-        .iter()
-        .enumerate()
-        .filter(|&(_, &(_, c))| QUOTE_MARKS.contains(&c))
-        .map(|(at, _)| at)
-        .collect();
+/// Whether a quotation mark opens a quotation: a curly mark says so itself; a
+/// straight one opens at the start of the text or after whitespace or an
+/// opening bracket, and closes anywhere else.
+fn opens(mark: char, before: Option<char>) -> bool {
+    match mark {
+        '\u{201c}' => true,
+        '\u{201d}' => false,
+        _ => before.is_none_or(|c| c.is_whitespace() || matches!(c, '(' | '[' | '{')),
+    }
+}
+
+/// The wording from an opening double quotation mark to the closing one after
+/// it, when it is long enough to be a quotation. A closing mark with no
+/// opening one before it (an inch or a second, say) quotes nothing. A single
+/// quote is an apostrophe or a possessive, never a quotation mark.
+fn quoted_wording(text: &str) -> impl Iterator<Item = &str> {
     let mut spans = Vec::new();
-    let mut next = 0;
-    while let (Some(&open), Some(&close)) = (marks.get(next), marks.get(next + 1)) {
-        let from = chars.get(open + 1).map_or(text.len(), |&(byte, _)| byte);
-        let to = chars.get(close).map_or(text.len(), |&(byte, _)| byte);
-        match text.get(from..to) {
-            Some(span) if close - open > 12 => {
-                spans.push(span);
-                next += 2;
+    let mut open: Option<usize> = None;
+    let mut before = None;
+    for (at, c) in text.char_indices() {
+        if QUOTE_MARKS.contains(&c) {
+            if opens(c, before) {
+                open = Some(at + c.len_utf8());
+            } else if let Some(span) = open.take().and_then(|from| text.get(from..at)) {
+                if crate::generation::long_enough_quote(span) {
+                    spans.push(span);
+                }
             }
-            _ => next += 1,
         }
+        before = Some(c);
     }
     spans.into_iter()
-}
-
-/// Whether a text attributes something to a source.
-fn attributes(text: &str) -> bool {
-    lazy_regex::regex!(
-        r"(?i)\b(the (study|survey|source|paper|documentation|docs|standard|vendor)|according to)\b"
-    )
-    .is_match(text)
-}
-
-/// Whether a text uses a verb of saying, which the rule layer reads as an
-/// attribution and so errs toward a check. The writer's rule leaves that to
-/// the check: an imperative to "state your assumptions" is no attribution.
-fn says(text: &str) -> bool {
-    lazy_regex::regex!(r"(?i)\b(states?|reports?|found|notes? that|describes?|says?|documented)\b")
-        .is_match(text)
-}
-
-/// Whether a text states a specific, whatever its part gives: what needs a
-/// citation, an attribution or a verb of saying.
-pub(super) fn states_a_specific(text: &str) -> bool {
-    states_a_specific_in(text, &Case::Stated(Givens::NONE))
 }
 
 /// A class for every statement, in order: the rule layer's where it decides,

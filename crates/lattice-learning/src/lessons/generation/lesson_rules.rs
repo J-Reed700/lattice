@@ -7,9 +7,7 @@
 //! publishing.
 use super::validate_text;
 use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
-use crate::content_verification::{
-    names_a_source, needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS,
-};
+use crate::content_verification::{markers, names_a_source, Case, Givens, Marker, CITED_KINDS};
 use crate::lessons::repeats;
 use crate::lessons::same_text::{fold, overlap};
 use crate::lessons::shape;
@@ -163,9 +161,9 @@ fn uncited_specifics(
         .flatten()
         .map(|entry| (text(entry, "sentence"), text(entry, "quote")))
         .collect();
-    let givens = Givens::of(item);
+    let case = Case::Stated(Givens::of(item));
     for sentence in prose_sentences(body) {
-        if !needs_citation(&sentence, &givens) {
+        if markers(&sentence, &case).next().is_none() {
             continue;
         }
         let quotes: Vec<&str> = cited
@@ -173,8 +171,8 @@ fn uncited_specifics(
             .filter(|(cited, _)| overlap(cited, &sentence))
             .map(|(_, quote)| *quote)
             .collect();
-        let wanted: Vec<String> = specifics_in(&sentence, &givens)
-            .map(str::to_owned)
+        let wanted: Vec<String> = markers(&sentence, &case)
+            .map(|marker| marker.text().to_owned())
             .collect();
         let lacking = |quote: &str| -> Vec<String> {
             let held = fold(quote);
@@ -187,7 +185,9 @@ fn uncited_specifics(
         let (summary, note, quote) = if quotes.is_empty() {
             let summary =
                 format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
-            let unquoted = if quoted_wording(&sentence).next().is_some() {
+            let unquoted = if markers(&sentence, &case)
+                .any(|marker| matches!(marker, Marker::Quoted(_)))
+            {
                 " When the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence instead."
             } else {
                 ""

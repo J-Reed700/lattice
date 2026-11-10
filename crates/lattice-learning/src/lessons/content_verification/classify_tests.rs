@@ -4,9 +4,9 @@ use crate::lessons::course_generation_tests::ScriptedModel;
 use std::sync::Mutex;
 
 /// The replay's planted statements (evals/grounding/claim-classes/
-/// replay_classes.py) and what the rules alone make of each: a figure, a
-/// quotation or an attribution cue is caught, and a statement with no cue,
-/// a named product's behaviour among them, is the model's to sort.
+/// replay_classes.py) and what the rules alone make of each: a figure or a
+/// quotation is caught, and a statement with neither, a named product's
+/// behaviour among them, is the model's to sort.
 const PLANTED: [(&str, Option<Class>); 17] = [
     ("The study found that OCR-based RAG improved retrieval recall by 23% over the vision-based pipeline on degraded documents.", Some(Class::Sourced)),
     ("The survey reports that modular document parsing pipelines were introduced by Google in 2019.", Some(Class::Sourced)),
@@ -43,7 +43,7 @@ fn scripted(replies: Vec<Value>) -> ScriptedModel {
 }
 
 #[test]
-fn the_rules_catch_a_figure_a_quotation_or_a_cue_and_leave_the_rest_to_the_model() {
+fn the_rules_catch_a_figure_or_a_quotation_and_leave_the_rest_to_the_model() {
     for (statement, expected) in PLANTED {
         assert_eq!(
             rule_class(statement, "body", &Case::Stated(Givens::NONE)),
@@ -67,41 +67,6 @@ fn a_vendors_name_alone_is_no_cue_and_the_model_sorts_what_a_named_product_does(
             "{statement}"
         );
     }
-}
-
-#[test]
-fn a_remark_about_the_lessons_own_sources_or_options_is_internal_whatever_else_it_says() {
-    for statement in [
-        "The sources state that the choice depends on document quality.",
-        "  The sources do not support the claim that all 3 designs differ.",
-        "The other options each remove the evidence needed to check a table.",
-    ] {
-        assert_eq!(
-            rule_class(statement, "body", &Case::Stated(Givens::NONE)),
-            Some(Class::Internal),
-            "{statement}"
-        );
-    }
-}
-
-#[test]
-fn a_statement_about_the_sources_of_something_is_not_a_remark_about_the_lessons_sources() {
-    assert_eq!(
-        rule_class(
-            "The sources of latency in a network are queuing and propagation.",
-            "body",
-            &Case::Stated(Givens::NONE)
-        ),
-        None
-    );
-    assert_eq!(
-        rule_class(
-            "The sources offered no figure for the choice.",
-            "body",
-            &Case::Stated(Givens::NONE)
-        ),
-        Some(Class::Internal)
-    );
 }
 
 #[test]
@@ -163,22 +128,18 @@ fn an_explanation_a_contrast_a_recap_and_an_answer_state_what_is_so_and_the_rest
         Case::Stated(Givens::of(&lesson["questions"][0])),
         "an answer states what is so from its question's givens"
     );
-    // In a case, a figure is the case's own; a quotation or an attribution
-    // still needs a source.
+    // In a case, a figure is the case's own; a quotation still needs a source.
     let figure = "Suppose 5 documents score below 0.70.";
     assert_eq!(rule_class(figure, "body", &hypothetical()), None);
     assert_eq!(rule_class(figure, "body", &stated()), Some(Class::Sourced));
-    for attributed in [
-        "According to the survey, most teams retrain monthly.",
-        "The vendor reports that 5 documents in 100 need review.",
-        "The page reads \"Total due on receipt of goods\" at the foot.",
-    ] {
-        assert_eq!(
-            rule_class(attributed, "body", &hypothetical()),
-            Some(Class::Sourced),
-            "{attributed}"
-        );
-    }
+    assert_eq!(
+        rule_class(
+            "The page reads \"Total due on receipt of goods\" at the foot.",
+            "body",
+            &hypothetical()
+        ),
+        Some(Class::Sourced)
+    );
     // An answer restates its question's figures as givens; one of its own
     // still needs a source.
     let restated = "Since 0.75 is below 0.80, review it; lowering it to 0.70 would route it.";
@@ -244,7 +205,11 @@ async fn statements_the_rules_decide_make_no_model_call() -> Result<()> {
         &model,
         &[
             body("The study found a gain of 23%."),
-            body("The other options each fail."),
+            ToSort {
+                statement: "Each option removes the evidence.",
+                field: "options/1",
+                case: Case::Stated(Givens::NONE),
+            },
         ],
     )
     .await?;
@@ -268,7 +233,8 @@ async fn the_model_sorts_only_what_the_rules_leave_twenty_to_a_call() -> Result<
     texts.extend(
         ('a'..='v').map(|letter| format!("A stage hands its output to the next stage {letter}.")),
     );
-    let to_sort: Vec<ToSort<'_>> = texts.iter().map(|text| body(text)).collect();
+    let mut to_sort: Vec<ToSort<'_>> = texts.iter().map(|text| body(text)).collect();
+    to_sort[1].field = "options/0";
     let first: Map<String, Value> = (2..=21)
         .map(|index| {
             let class = if index == 5 { "common" } else { "reasoning" };
@@ -359,11 +325,8 @@ fn a_label_word_before_a_number_is_no_figure() {
 
 #[test]
 fn a_source_label_alone_needs_no_citation() {
-    assert!(!needs_citation(
-        "Source 0 describes the usual pattern.",
-        &Givens::NONE
-    ));
-    assert!(needs_citation("The default port is 22.", &Givens::NONE));
+    assert!(!states_a_specific("Source 0 describes the usual pattern."));
+    assert!(states_a_specific("The default port is 22."));
 }
 
 #[test]
@@ -372,17 +335,7 @@ fn a_sentence_that_only_names_a_source_needs_no_citation() {
         "The documentation is available without leaving the program.",
         "According to the survey, most readers skim.",
     ] {
-        assert!(!needs_citation(sentence, &Givens::NONE), "{sentence}");
-    }
-}
-
-#[test]
-fn an_attribution_or_a_verb_of_saying_is_still_a_specific_to_check() {
-    for sentence in [
-        "According to the survey, most readers skim.",
-        "The documentation states that the option is off by default.",
-    ] {
-        assert!(states_a_specific(sentence), "{sentence}");
+        assert!(!states_a_specific(sentence), "{sentence}");
     }
 }
 
@@ -394,18 +347,18 @@ fn an_apostrophe_is_not_a_quotation_mark() {
         "Run pwd before ls so you see the shell\u{2019}s folder rather than the window\u{2019}s.",
         "Don\u{2019}t run rm until you\u{2019}ve checked the folder\u{2019}s contents with ls.",
     ] {
-        assert!(!needs_citation(sentence, &Givens::NONE), "{sentence}");
+        assert!(!states_a_specific(sentence), "{sentence}");
     }
 }
 
 #[test]
 fn a_real_quotation_still_needs_a_citation() {
     for sentence in [
-        "The manual says \"rm deletes files permanently\".",
+        "The manual says \"rm deletes files permanently, with no undo\".",
         "Remember \"the shell keeps a working directory\" always.",
         "Remember \u{201c}the shell keeps a working directory\u{201d} always.",
     ] {
-        assert!(needs_citation(sentence, &Givens::NONE), "{sentence}");
+        assert!(states_a_specific(sentence), "{sentence}");
     }
 }
 
@@ -420,7 +373,7 @@ const SINGLE_QUOTED: [&str; 4] = [
 fn a_single_quotation_mark_never_marks_quoted_wording() {
     for sentence in SINGLE_QUOTED {
         assert_eq!(quoted_wording(sentence).next(), None, "{sentence}");
-        assert!(!needs_citation(sentence, &Givens::NONE), "{sentence}");
+        assert!(!states_a_specific(sentence), "{sentence}");
     }
 }
 

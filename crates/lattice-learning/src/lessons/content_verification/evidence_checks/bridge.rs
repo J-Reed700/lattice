@@ -358,11 +358,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_common_part_that_names_a_figure_a_quotation_or_an_attribution_is_a_specific() {
+    async fn a_common_part_that_names_a_figure_or_a_quotation_is_a_specific() {
         for smuggled in [
             "it was released in 2006",
-            "it is known as \"the page reader\"",
-            "the documentation states that it reads pixels",
+            "it is known as \"the page that reads text from images\"",
         ] {
             let (judged, parts) = weighed(
                 "Tesseract is an OCR engine and a specific.",
