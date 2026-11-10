@@ -15,10 +15,8 @@ use lattice_core::shared::text::segmentation::sentences;
 use sqlx::SqliteConnection;
 
 use super::actions::{in_section_body, ONLY_SECTION};
-use super::published_edit::{
-    gone, placed, section_body, update_report, write_section_body, CHANGED,
-};
-use super::repository::{append_in, load_in};
+use super::published_edit::{gone, placed, section_body, update_report, CHANGED};
+use super::repository::{append_in, blocks, load_in};
 use crate::content_verification::TakenOut;
 
 /// `body` with the sentence at `range` taken out, and the whitespace around
@@ -200,7 +198,7 @@ pub(super) async fn remove_in(
         };
         append_in(connection, lesson_id, entry.claim_id(), user.clone(), event).await?;
     }
-    write_section_body(connection, lesson_id, unit, &new_body).await?;
+    blocks::write_section_body(connection, lesson_id, unit, &new_body).await?;
     let ids: HashSet<String> = removed
         .iter()
         .map(|entry| entry.claim_id().0.clone())

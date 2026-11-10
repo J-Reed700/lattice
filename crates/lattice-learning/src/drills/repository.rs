@@ -10,6 +10,7 @@ use crate::persistence::{db, decode, encode, now};
 use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue, Material};
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
+use std::collections::HashMap;
 
 /// Whether a drill is waiting in the bank or a learner has it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -216,6 +217,20 @@ pub(crate) async fn drilled_passages(
     .await
     .map_err(db)?;
     stored.iter().map(|json| decode(json)).collect()
+}
+
+/// For each version of the course's sources, the source it is a version of.
+pub(crate) async fn source_owners(
+    pool: &SqlitePool,
+    program_id: &str,
+) -> Result<HashMap<String, String>> {
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT id,source_id FROM learning_source_versions WHERE program_id=?")
+            .bind(program_id)
+            .fetch_all(pool)
+            .await
+            .map_err(db)?;
+    Ok(rows.into_iter().collect())
 }
 
 /// A drill by its id, ready or taken.

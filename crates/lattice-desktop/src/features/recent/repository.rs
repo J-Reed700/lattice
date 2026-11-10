@@ -121,6 +121,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
         let pool = self.pool.clone();
 
         query_with_timeout(|| async {
+            let mut tx = pool.begin_write().await?;
             let result = if let Some(date) = before_date {
                 let date = date.to_string();
                 sqlx::query!(
@@ -130,7 +131,7 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
                     "#,
                     date
                 )
-                .execute(&pool)
+                .execute(&mut *tx)
                 .await?
             } else {
                 // Clear all history if no date specified
@@ -139,9 +140,10 @@ impl RecentDocumentsRepositoryPort for RecentDocumentsRepository {
                     DELETE FROM recent_documents
                     "#
                 )
-                .execute(&pool)
+                .execute(&mut *tx)
                 .await?
             };
+            tx.commit().await?;
 
             Ok(result.rows_affected() as usize)
         })

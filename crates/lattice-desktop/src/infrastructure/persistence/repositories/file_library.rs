@@ -30,6 +30,14 @@ fn folder_scope(path: &str) -> (&str, String, String) {
     (path, prefix, end)
 }
 
+pub async fn watch_folder_paths(pool: &SqlitePool) -> Result<Vec<String>> {
+    Ok(
+        sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
 pub struct SqliteFileLibrary {
     pool: SqlitePool,
 }

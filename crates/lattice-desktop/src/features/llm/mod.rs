@@ -11,6 +11,7 @@ pub mod di;
 pub mod dto;
 pub(crate) mod instances;
 pub(crate) mod loading;
+mod repository;
 pub mod use_cases;
 
 pub mod cloud;

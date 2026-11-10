@@ -9,6 +9,7 @@ use super::spec::DrillSpec;
 use crate::persistence::{db, hash, now};
 use lattice_core::domain::learning::drills::{next_lessons, targets, Material};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore, NewJob};
 use serde_json::json;
 use sqlx::{SqliteConnection, SqlitePool};
@@ -47,7 +48,7 @@ impl<'a> Shelf<'a> {
 /// asking again with the same seed finds the same job, and the same seed with another spec is refused. The caller
 /// tells the job runtime once the job is committed.
 pub async fn queue_build(pool: &SqlitePool, spec: &DrillSpec, seed: &str) -> Result<String> {
-    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    let mut transaction = pool.begin_write().await.map_err(db)?;
     let id = queue_build_in(&mut transaction, spec, seed).await?;
     transaction.commit().await.map_err(db)?;
     Ok(id)
@@ -163,7 +164,7 @@ pub async fn ensure_build(
     lines: u32,
     count: usize,
 ) -> Result<String> {
-    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    let mut transaction = pool.begin_write().await.map_err(db)?;
     if let Some(found) = under_way_in(&mut transaction, shelf, lesson).await? {
         transaction.commit().await.map_err(db)?;
         return Ok(found.job_id);
@@ -261,7 +262,7 @@ pub async fn take(
     shelf: Shelf<'_>,
     lesson: Option<&str>,
 ) -> Result<Option<Taken>> {
-    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    let mut transaction = pool.begin_write().await.map_err(db)?;
     let taken = take_in(&mut transaction, shelf, lesson).await?;
     transaction.commit().await.map_err(db)?;
     Ok(taken)

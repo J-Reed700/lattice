@@ -8,10 +8,13 @@
 //! signals, and [`publisher`] is the name the library's `publisher` column
 //! shows.
 
+use super::repository::capture::{
+    active_texts, captured_version_of, other_active_version_ids, signals_json, version_text,
+    CourseText,
+};
+use super::repository::rows::{from_json, write_provenance, write_relations};
 use super::repository::unix_seconds;
-use super::rows::{from_json, write_provenance, write_relations};
 use crate::dto::LearningSourceKind;
-use crate::persistence::db;
 use crate::source_library::CapturedLearningSource;
 use lattice_core::application::contracts::web::{ReferencePage, REFERENCE_TEXT_EXTRACTION_VERSION};
 use lattice_core::application::ports::LibraryDocumentText;
@@ -21,7 +24,7 @@ use lattice_core::domain::provenance::{
     RelationTarget, ShingleSet, Sketch, SourceDates, SourceRelation, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 use std::collections::BTreeSet;
 
 /// The extraction version of a library document's signals.
@@ -181,13 +184,6 @@ pub struct Comparison {
     relations: Vec<SourceRelation>,
 }
 
-/// One saved or about-to-be-saved text of a course.
-struct CourseText {
-    source_id: String,
-    version_id: String,
-    text: String,
-}
-
 /// Compares a version with the course's active sources.
 pub async fn compare(
     pool: &SqlitePool,
@@ -207,21 +203,7 @@ pub async fn compare_all(
     program_id: &str,
     versions: &[VersionText<'_>],
 ) -> Result<Vec<Comparison>> {
-    let saved = sqlx::query(
-        "SELECT l.id AS source_id, v.id, v.full_text FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.deleted_at IS NULL",
-    )
-    .bind(program_id)
-    .fetch_all(pool)
-    .await
-    .map_err(db)?;
-    let saved: Vec<CourseText> = saved
-        .iter()
-        .map(|row| CourseText {
-            source_id: row.get("source_id"),
-            version_id: row.get("id"),
-            text: row.get("full_text"),
-        })
-        .collect();
+    let saved = active_texts(pool, program_id).await?;
     let versions: Vec<CourseText> = versions
         .iter()
         .map(|version| CourseText {
@@ -304,15 +286,7 @@ pub async fn carried_forward(
     program_id: &str,
     version_id: &str,
 ) -> Result<ProvenanceSignals> {
-    let stored: Option<String> = sqlx::query_scalar(
-        "SELECT signals_json FROM source_provenance WHERE program_id=? AND source_version_id=?",
-    )
-    .bind(program_id)
-    .bind(version_id)
-    .fetch_optional(&mut *conn)
-    .await
-    .map_err(db)?;
-    match stored {
+    match signals_json(conn, program_id, version_id).await? {
         Some(json) => from_json(&json, "signals"),
         None => Ok(not_extracted(NO_PRIOR_PROVENANCE)),
     }
@@ -372,16 +346,11 @@ async fn relate(
     record: &ProvenanceRecord,
     comparison: &Comparison,
 ) -> Result<Vec<SourceRelation>> {
-    let active: BTreeSet<String> = sqlx::query_scalar::<_, String>(
-        "SELECT v.id FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.deleted_at IS NULL AND l.id<>?",
-    )
-    .bind(version.program_id)
-    .bind(version.source_id)
-    .fetch_all(&mut **tx)
-    .await
-    .map_err(db)?
-    .into_iter()
-    .collect();
+    let active: BTreeSet<String> =
+        other_active_version_ids(tx, version.program_id, version.source_id)
+            .await?
+            .into_iter()
+            .collect();
     let mut relations: Vec<SourceRelation> = comparison
         .relations
         .iter()
@@ -389,14 +358,7 @@ async fn relate(
         .cloned()
         .collect();
     for id in active.difference(&comparison.compared) {
-        let text: String = sqlx::query_scalar(
-            "SELECT full_text FROM learning_source_versions WHERE program_id=? AND id=?",
-        )
-        .bind(version.program_id)
-        .bind(id)
-        .fetch_one(&mut **tx)
-        .await
-        .map_err(db)?;
+        let text = version_text(tx, version.program_id, id).await?;
         let other = shingles(&text, &POLICY);
         relations.extend(page_relations(
             version.version_id,
@@ -445,16 +407,7 @@ async fn target(
     version: &CapturedVersion<'_>,
     url: &str,
 ) -> Result<RelationTarget> {
-    let captured: Option<String> = sqlx::query_scalar(
-        "SELECT v.id FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.deleted_at IS NULL AND l.id<>? AND (v.resolved_url=? OR v.requested_url=?) ORDER BY v.acquired_at, v.id LIMIT 1",
-    )
-    .bind(version.program_id)
-    .bind(version.source_id)
-    .bind(url)
-    .bind(url)
-    .fetch_optional(&mut **tx)
-    .await
-    .map_err(db)?;
+    let captured = captured_version_of(tx, version.program_id, version.source_id, url).await?;
     Ok(captured.map_or_else(
         || RelationTarget::Url(url.to_owned()),
         RelationTarget::Version,

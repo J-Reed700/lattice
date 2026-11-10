@@ -18,13 +18,13 @@
 //! - **Scalable**: Handles thousands of chunk IDs safely
 //! - **Testable**: Business logic separated from command handlers
 
+use crate::features::search::repository::ChunkMetadataRow;
 use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
-use crate::infrastructure::persistence::database::connection::query_with_timeout;
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
 use lattice_core::shared::error::AppError;
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 /// Service for enriching search results with document metadata
@@ -111,65 +111,33 @@ impl SearchEnrichmentService {
         pool: &SqlitePool,
         batch: Vec<String>,
     ) -> Result<HashMap<String, DocumentMetadata>, AppError> {
-        let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
-
-        let query = format!(
-            r#"
-            SELECT
-                tc.id as chunk_id,
-                tc.content,
-                tc.document_id,
-                tc.chunk_index,
-                tc.start_char,
-                tc.end_char,
-                d.file_name,
-                d.file_path,
-                d.file_type,
-                d.size_bytes,
-                d.created_at,
-                d.updated_at
-            FROM text_chunks tc
-            JOIN documents d ON tc.document_id = d.id
-            WHERE tc.id IN ({})
-              -- A file attached to a chat is not part of the vault. Its chunks
-              -- are indexed so that chat can read and cite it, and every
-              -- vault-wide search command resolves its hits through this one
-              -- statement, so refusing it a document here is what keeps it off
-              -- the search page. The callers drop a hit they cannot resolve.
-              AND d.owner_conversation_id IS NULL
-            "#,
-            placeholders
-        );
-
-        let mut query_builder = sqlx::query(&query);
-        for id in &batch {
-            query_builder = query_builder.bind(id);
-        }
-
-        let rows: Vec<sqlx::sqlite::SqliteRow> =
-            query_with_timeout(|| async { query_builder.fetch_all(pool).await }).await?;
+        let rows = super::repository::chunk_metadata(pool, &batch).await?;
 
         let mut batch_data = HashMap::new();
         for row in rows {
-            let chunk_id: String = row.get("chunk_id");
-            let content: String = row.get("content");
-            let document_id: String = row.get("document_id");
-            let chunk_index: i64 = row.get("chunk_index");
-            let start_char: Option<i64> = row.try_get("start_char").ok();
-            let end_char: Option<i64> = row.try_get("end_char").ok();
+            let ChunkMetadataRow {
+                chunk_id,
+                content,
+                document_id,
+                chunk_index,
+                start_char,
+                end_char,
+                file_name,
+                file_path,
+                file_type,
+                size_bytes,
+                created_at,
+                updated_at,
+            } = row;
 
             let snippet = snippet_of(&content);
 
             let mut metadata = HashMap::new();
-            metadata.insert(
-                "filename".to_string(),
-                serde_json::Value::String(row.get("file_name")),
-            );
+            metadata.insert("filename".to_string(), serde_json::Value::String(file_name));
 
-            let file_path: String = row.get("file_path");
             metadata.insert("path".to_string(), serde_json::Value::String(file_path));
 
-            if let Some(file_type) = row.get::<Option<String>, _>("file_type") {
+            if let Some(file_type) = file_type {
                 metadata.insert(
                     "file_type".to_string(),
                     serde_json::Value::String(file_type),
@@ -178,19 +146,17 @@ impl SearchEnrichmentService {
 
             metadata.insert(
                 "file_size".to_string(),
-                serde_json::Value::Number(serde_json::Number::from(
-                    row.get::<i64, _>("size_bytes"),
-                )),
+                serde_json::Value::Number(serde_json::Number::from(size_bytes)),
             );
 
             metadata.insert(
                 "created_at".to_string(),
-                serde_json::Value::String(row.get("created_at")),
+                serde_json::Value::String(created_at),
             );
 
             metadata.insert(
                 "updated_at".to_string(),
-                serde_json::Value::String(row.get("updated_at")),
+                serde_json::Value::String(updated_at),
             );
             metadata.insert(
                 "chunk_index".to_string(),

@@ -14,10 +14,10 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
-use super::repository::ShownPassage;
-use crate::persistence::{db, decode, encode, now};
+use super::repository::{self, ShownPassage};
+use crate::persistence::now;
 
 /// Whether the claim, as written, is true (§15 "Label").
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -30,7 +30,7 @@ pub enum Label {
 }
 
 impl Label {
-    fn as_str(self) -> &'static str {
+    pub(super) fn as_str(self) -> &'static str {
         match self {
             Self::True => "true",
             Self::False => "false",
@@ -38,7 +38,7 @@ impl Label {
         }
     }
 
-    fn from_column(value: &str) -> Option<Self> {
+    pub(super) fn from_column(value: &str) -> Option<Self> {
         [Self::True, Self::False, Self::RetrievalMiss]
             .into_iter()
             .find(|label| label.as_str() == value)
@@ -68,7 +68,7 @@ impl LabelSource {
         }
     }
 
-    fn from_column(value: &str) -> Option<Self> {
+    pub(super) fn from_column(value: &str) -> Option<Self> {
         [
             Self::UserConfirm,
             Self::UserRemove,
@@ -164,24 +164,7 @@ impl CheckerExamples {
     }
 
     pub async fn record(&self, example: &CheckerExample) -> Result<()> {
-        sqlx::query("INSERT INTO learning_checker_examples(id,program_id,lesson_id,claim_id,checker_model,context_window,policy,claim,passages_json,local_verdict,label,label_source,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
-            .bind(&example.id)
-            .bind(&example.program_id)
-            .bind(&example.lesson_id)
-            .bind(&example.claim_id)
-            .bind(&example.checker_model)
-            .bind(example.context_window)
-            .bind(&example.policy)
-            .bind(&example.claim)
-            .bind(encode(&example.passages)?)
-            .bind(&example.local_verdict)
-            .bind(example.label.as_str())
-            .bind(example.label_source.as_str())
-            .bind(example.at)
-            .execute(&self.pool)
-            .await
-            .map_err(db)?;
-        Ok(())
+        repository::checker_examples::insert(&self.pool, example).await
     }
 
     /// Records a human verdict on a claim the local checker flagged (§15):
@@ -289,46 +272,12 @@ impl CheckerExamples {
 
     /// Forgets the examples an undone verdict gave (§5.1 Undo).
     pub async fn forget(&self, claim_id: &str, source: LabelSource) -> Result<()> {
-        sqlx::query("DELETE FROM learning_checker_examples WHERE claim_id=? AND label_source=?")
-            .bind(claim_id)
-            .bind(source.as_str())
-            .execute(&self.pool)
-            .await
-            .map_err(db)?;
-        Ok(())
+        repository::checker_examples::delete_for_claim(&self.pool, claim_id, source).await
     }
 
     /// Every example, oldest first; one program's with `program_id`.
     pub async fn list(&self, program_id: Option<&str>) -> Result<Vec<CheckerExample>> {
-        let rows = sqlx::query("SELECT * FROM learning_checker_examples WHERE ?1 IS NULL OR program_id=?1 ORDER BY at,rowid")
-            .bind(program_id)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)?;
-        rows.iter()
-            .map(|row| {
-                let label: String = row.get("label");
-                let source: String = row.get("label_source");
-                Ok(CheckerExample {
-                    id: row.get("id"),
-                    program_id: row.get("program_id"),
-                    lesson_id: row.get("lesson_id"),
-                    claim_id: row.get("claim_id"),
-                    checker_model: row.get("checker_model"),
-                    context_window: row.get("context_window"),
-                    policy: row.get("policy"),
-                    claim: row.get("claim"),
-                    passages: decode(row.get::<String, _>("passages_json").as_str())?,
-                    local_verdict: row.get("local_verdict"),
-                    label: Label::from_column(&label)
-                        .ok_or_else(|| AppError::Database(format!("Unknown label {label}")))?,
-                    label_source: LabelSource::from_column(&source).ok_or_else(|| {
-                        AppError::Database(format!("Unknown label source {source}"))
-                    })?,
-                    at: row.get("at"),
-                })
-            })
-            .collect()
+        repository::checker_examples::list(&self.pool, program_id).await
     }
 
     /// The examples as `claim-pairs-v1` lines (`{id, claim, passage, label,

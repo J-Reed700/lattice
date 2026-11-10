@@ -945,3 +945,45 @@ fn exact_reader_pads_a_shrinking_source() {
     assert_eq!(out, b"abc");
     assert_eq!(reader.padded, 0);
 }
+
+#[tokio::test]
+async fn a_snapshot_that_fails_while_clearing_keeps_the_tables_it_cleared_first() {
+    let dir = tempdir().unwrap();
+    let live = dir.path().join("lattice.db");
+    let pool = migrated_pool(&live).await;
+    sqlx::query(
+        "INSERT INTO cluster_runs (id, ran_at, doc_count, cluster_count, noise_count, \
+             params_hash, duration_ms, llm_calls) VALUES ('run-1', '2026-09-16T00:00:00Z', 1, 1, 0, 'h', 1, 0)",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "INSERT INTO chat_starter_cache (fingerprint, starters_json, created_at) VALUES ('fp', '[]', '2026-09-16T00:00:00Z')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "CREATE TRIGGER refuse_for_test BEFORE DELETE ON chat_starter_cache BEGIN SELECT RAISE(ABORT, 'refused for the test'); END",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let dest = dir.path().join("snapshot.db");
+    let outcome = snapshot_database(&pool, &dest).await;
+    pool.close().await;
+    assert!(
+        outcome.is_err(),
+        "the refused delete must fail the snapshot"
+    );
+
+    let snap = read_only_pool(&dest).await;
+    assert_eq!(
+        count(&snap, "SELECT COUNT(*) FROM cluster_runs").await,
+        1,
+        "clearing is one transaction: the tables cleared before the failure come back"
+    );
+    snap.close().await;
+}

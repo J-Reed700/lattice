@@ -466,6 +466,40 @@ pub(crate) async fn defer_work(
     Ok(())
 }
 
+pub(crate) async fn document_title(pool: &SqlitePool, document_id: &str) -> Result<Option<String>> {
+    sqlx::query_scalar("SELECT file_name FROM documents WHERE id = ?")
+        .bind(document_id)
+        .fetch_optional(pool)
+        .await
+        .map_err(|e| AppError::Database(format!("summary source title: {e}")))
+}
+
+pub(crate) async fn latest_cluster_label(
+    pool: &SqlitePool,
+    document_id: &str,
+) -> Result<Option<String>> {
+    sqlx::query_scalar(
+        "SELECT c.label FROM cluster_members cm JOIN clusters c ON c.id = cm.cluster_id JOIN cluster_runs r ON r.id = c.run_id WHERE cm.document_id = ? ORDER BY r.ran_at DESC LIMIT 1",
+    )
+    .bind(document_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(|e| AppError::Database(format!("summary source cluster label: {e}")))
+}
+
+pub(crate) async fn document_chunks(
+    pool: &SqlitePool,
+    document_id: &str,
+) -> Result<Vec<(Option<String>, String)>> {
+    sqlx::query_as(
+        "SELECT section, content FROM text_chunks WHERE document_id = ? ORDER BY chunk_index",
+    )
+    .bind(document_id)
+    .fetch_all(pool)
+    .await
+    .map_err(|e| AppError::Database(format!("summary source chunks: {e}")))
+}
+
 #[cfg(test)]
 mod work_queue_tests {
     use super::*;

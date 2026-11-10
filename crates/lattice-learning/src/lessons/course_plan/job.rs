@@ -2,7 +2,8 @@
 //! outline exists, so the learner can read the topics before any lesson is
 //! written.
 
-use super::view::{content_revision, outline_lessons, saved_entries};
+use super::repository::{self, content_revision};
+use super::view::{outline_lessons, saved_entries};
 use super::{ensure, outline_revision};
 use crate::lessons::course_setup::CourseSetups;
 use crate::persistence::db;
@@ -47,12 +48,7 @@ pub(super) async fn latest_attempt(
     program_id: &str,
     outline_revision: i64,
 ) -> Result<Option<JobRecord>> {
-    let revisions: Vec<(String, Option<i64>)> =
-        sqlx::query_as("SELECT job_id,content_revision FROM learning_jobs WHERE program_id=?")
-            .bind(program_id)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+    let revisions = repository::job_revisions(&mut *connection, program_id).await?;
     let jobs = JobStore::list_for_subject_in(connection, COURSE_PLAN, program_id).await?;
     Ok(jobs.into_iter().find(|job| {
         revisions
@@ -67,13 +63,9 @@ pub(super) async fn latest_attempt(
 /// runtime once the job commits.
 pub async fn queue(pool: &SqlitePool, program_id: &str) -> Result<Option<String>> {
     let mut tx = pool.begin_write().await.map_err(db)?;
-    let (status, revision): (String, i64) =
-        sqlx::query_as("SELECT status,revision FROM learning_programs WHERE id=?")
-            .bind(program_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
+    let (status, revision) = repository::program_state(&mut tx, program_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
     if status != "draft" && status != "active" {
         return Err(AppError::InvalidInput(
             "Only a draft or an active course can have its topics planned.".into(),
@@ -124,25 +116,20 @@ pub async fn queue(pool: &SqlitePool, program_id: &str) -> Result<Option<String>
             )
             .await?;
             if admitted.created {
-                sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) VALUES(?,?,?,?)")
-                    .bind(&admitted.id)
-                    .bind(program_id)
-                    .bind(revision.max(0))
-                    .bind(outline)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
+                repository::insert_job_row(
+                    &mut tx,
+                    &admitted.id,
+                    program_id,
+                    revision.max(0),
+                    outline,
+                )
+                .await?;
             }
             (admitted.id, false, None)
         }
     };
     if let (true, Some(old)) = (created, copy_from) {
-        sqlx::query("INSERT INTO learning_jobs(job_id,program_id,base_revision_number,content_revision) SELECT ?,program_id,base_revision_number,content_revision FROM learning_jobs WHERE job_id=?")
-            .bind(&id)
-            .bind(old)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        repository::copy_job_row(&mut tx, &id, &old).await?;
     }
     tx.commit().await.map_err(db)?;
     Ok(Some(id))
