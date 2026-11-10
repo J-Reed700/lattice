@@ -44,9 +44,9 @@ export function checkWords(claim: LearningClaimEvidenceDto): string | null {
   return null;
 }
 
-/** What a Sourced statement says beyond its passage that is common knowledge: the parts no passage states. */
-export function commonParts(claim: LearningClaimEvidenceDto): string[] {
-  return (claim.parts ?? []).filter((part) => part.kind === 'common').map((part) => part.part);
+/** What a Sourced statement says beyond its passage, of one kind: the common knowledge or the lesson's own figures no passage states. */
+export function partsOfKind(claim: LearningClaimEvidenceDto, kind: 'common' | 'own'): string[] {
+  return (claim.parts ?? []).filter((part) => part.kind === kind).map((part) => part.part);
 }
 
 /** One numbering scheme for whole-lesson and section-level evidence. */
