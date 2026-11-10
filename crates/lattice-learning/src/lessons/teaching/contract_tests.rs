@@ -967,6 +967,39 @@ async fn the_request_carries_the_modules_title_and_milestone() -> Result<()> {
     Ok(())
 }
 
+#[tokio::test]
+async fn the_check_is_told_what_later_lessons_teach() -> Result<()> {
+    let scripted = scripted(vec![reviewed(3)]);
+    let model = Routed::new(&scripted, vec![]);
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        "The list shows names.",
+        "Read the names.",
+    ]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let asked = model.asked();
+    assert_eq!(asked.len(), 1);
+    let prompt: Value = serde_json::from_str(&asked[0]).unwrap();
+    let later = prompt.get("laterLessons").and_then(Value::as_array);
+    assert_eq!(later.map(Vec::len), Some(1), "{}", asked[0]);
+    let entry = later.and_then(|later| later.first()).unwrap();
+    assert_eq!(entry["title"], "Making files");
+    assert_eq!(entry["actions"], json!(["Creating a file"]));
+    assert!(
+        !prompt["earlierLessons"]
+            .to_string()
+            .contains("Making files"),
+        "{}",
+        asked[0]
+    );
+    Ok(())
+}
+
+#[test]
+fn the_check_s_rule_lets_a_lesson_say_what_a_later_one_teaches() {
+    assert!(contract::SYSTEM.contains("neither is saying what a later lesson will teach"));
+}
+
 #[test]
 fn pointing_at_the_outline_or_an_earlier_lesson_is_not_unseen() {
     assert!(contract::SYSTEM
