@@ -5,7 +5,7 @@
 use super::*;
 use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
 use crate::lessons::content_verification::Protected;
-use crate::lessons::course_generation_tests::ScriptedModel;
+use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::Held;
 use lattice_core::application::ports::llm_port::{
@@ -173,11 +173,13 @@ fn lesson(bodies: [&str; 3]) -> Value {
 }
 
 fn reviewed(blocks: usize) -> String {
-    let checks = (0..blocks)
-        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"No defect was found in this section.","hasDefect":false}))
-        .collect();
-    json!({"issues":[],"blockChecks":crate::lessons::teaching_review::fixture_checks(checks)})
-        .to_string()
+    reviewed_of(&(0..blocks).collect::<Vec<_>>(), &[])
+}
+
+/// A review that finds no defect in the sections it is asked about, and gives
+/// `verdicts` on the findings it is asked about.
+fn reviewed_of(sections: &[usize], verdicts: &[Value]) -> String {
+    clean_review(sections, verdicts)
 }
 
 fn edits(edits: Value) -> String {
@@ -296,9 +298,9 @@ async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section(
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_again_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let missing = answer(
         json!([not_taught("action-0")]),
@@ -356,9 +358,9 @@ async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_l
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_again_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(
         json!([]),
@@ -398,9 +400,9 @@ async fn a_planned_item_reported_taught_with_words_not_in_the_lesson_is_not_taug
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_again_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let reported = answer(
         json!([
@@ -432,9 +434,9 @@ async fn a_planned_item_missing_from_the_answer_is_not_taught() -> Result<()> {
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_again_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
@@ -502,9 +504,9 @@ async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Re
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(2),
-        reviewed(3),
+        reviewed_of(&[2], &[]),
         retitle_again_at(2),
-        reviewed(3),
+        reviewed_of(&[2], &[]),
     ]);
     let clash = answer(
         json!([]),
@@ -539,7 +541,7 @@ async fn a_finding_in_a_section_with_protected_sentences_is_repaired_when_it_tou
         edits(
             json!([{"path":"/blocks/1/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."}]),
         ),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(
         json!([]),
@@ -575,7 +577,7 @@ async fn teaching_can_be_added_beside_an_editable_sentence_in_a_section_with_pro
         edits(
             json!([{"path":"/blocks/1/body","before":"Then look at the list.","after":format!("Then look at the list. {added}")}]),
         ),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let missing = answer(
         json!([not_taught("action-0")]),
@@ -616,11 +618,11 @@ async fn a_recheck_after_a_repair_checks_the_whole_lesson_again() -> Result<()> 
             {"path":"/blocks/0/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."},
             {"path":"/blocks/2/body","before":"Read the names.","after":"Then rename a file with mv old.txt new.txt."}
         ])),
-        reviewed(3),
+        reviewed_of(&[0, 2], &[]),
         edits(
             json!([{"path":"/blocks/2/body","before":"Then rename a file with mv old.txt new.txt.","after":"Read the names."}]),
         ),
-        reviewed(3),
+        reviewed_of(&[2], &[]),
     ]);
     let first = answer(
         json!([]),
@@ -686,11 +688,11 @@ async fn a_third_defect_in_a_section_gets_its_own_repairs() -> Result<()> {
     let scripted = scripted(vec![
         reviewed(3),
         replace_in_listing(FIRST_USE, "Name the first tool before listing names."),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         replace_in_listing(SECOND_USE, "Name the second tool before sorting names."),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         replace_in_listing(THIRD_USE, "Name the third tool before counting names."),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -720,7 +722,7 @@ async fn two_defects_in_one_section_are_two_entries_for_the_repair() -> Result<(
             &format!("{FIRST_USE} {SECOND_USE}"),
             "Name both tools before listing and sorting names.",
         ),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -757,9 +759,9 @@ async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<(
     let scripted = scripted(vec![
         reviewed(3),
         replace_in_listing(FIRST_USE, "Name the first tool before listing names."),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let model = Routed::new(
         &scripted,
@@ -798,9 +800,9 @@ async fn a_defect_in_words_a_repair_wrote_continues_that_repair_s_count() -> Res
     let scripted = scripted(vec![
         reviewed(3),
         replace_in_listing("Listing may change names.", written),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         edits(json!([{"path":"/blocks/2/body","before":theirs,"after":"Read the names again."}])),
-        reviewed(3),
+        reviewed_of(&[2], &[]),
         retitle(),
         reviewed(3),
     ]);
@@ -845,9 +847,9 @@ async fn words_that_point_at_what_the_learner_never_sees_are_a_finding() -> Resu
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(2),
-        reviewed(3),
+        reviewed_of(&[2], &[]),
         retitle_again_at(2),
-        reviewed(3),
+        reviewed_of(&[2], &[]),
     ]);
     let pointing = answer(
         json!([]),
@@ -926,7 +928,7 @@ async fn the_span_edit_repair_is_told_the_learner_sees_only_the_lesson() -> Resu
         defect_in_first_section(),
         actionable(),
         retitle(),
-        reviewed(3),
+        reviewed_of(&[0], &[verdict("reviewer/1", "resolved")]),
     ]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
@@ -1110,9 +1112,9 @@ async fn finding_note_in(
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_again_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(planned, used, json!([]), json!([]));
     let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
@@ -1305,9 +1307,9 @@ async fn a_use_is_a_finding_at_the_part_that_holds_its_words() -> Result<()> {
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_again_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(
         json!([]),
@@ -1376,11 +1378,11 @@ async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() ->
         edits(
             json!([{"path":"/blocks/1/body","before":"Type ls -l to see sizes.","after":"Type ls to list names."}]),
         ),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         edits(
             json!([{"path":"/blocks/0/body","before":TYPED,"after":"A terminal runs typed commands."}]),
         ),
-        reviewed(3),
+        reviewed_of(&[0], &[]),
     ]);
     let first = answer(
         json!([taught("idea-0", TYPED)]),
@@ -1451,9 +1453,9 @@ async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(2),
-        reviewed(3),
+        reviewed_of(&[2], &[]),
         retitle_again_at(2),
-        reviewed(3),
+        reviewed_of(&[2], &[]),
     ]);
     let missing = answer(
         json!([not_taught("idea-0")]),
@@ -1481,9 +1483,9 @@ async fn waiting_after_confirming(reply: Value) -> Result<Vec<(String, Option<St
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_again_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(
         json!([]),
@@ -1542,9 +1544,9 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_again_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let found = answer(
         json!([not_taught("idea-0"), not_taught("idea-1")]),
@@ -1582,9 +1584,9 @@ async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_h
     let scripted = scripted(vec![
         reviewed(3),
         retitle_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
         retitle_again_at(1),
-        reviewed(3),
+        reviewed_of(&[1], &[]),
     ]);
     let pointing = answer(
         json!([]),

@@ -553,11 +553,7 @@ impl LLMPort for ScriptedModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let mut replies = Vec::new();
         for prompt in fixture_prompts(request) {
-            let reply = self.respond(&prompt).await?;
-            replies.push(match &request.json_schema {
-                Some(schema) => as_the_review_asks(schema, reply),
-                None => reply,
-            });
+            replies.push(self.respond(&prompt).await?);
         }
         Ok(fixture_completion(request, replies))
     }
@@ -574,52 +570,44 @@ impl LLMPort for ScriptedModel {
         Ok(true)
     }
 }
-/// A scripted teaching-review reply as the request's schema asks it: checks
-/// only for the sections it lists, and, when it asks for a verdict on each
-/// open finding, "present" if the reply reports a defect and "resolved" if it
-/// does not.
-fn as_the_review_asks(schema: &serde_json::Value, reply: String) -> String {
-    let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_str(&reply) else {
-        return reply;
-    };
-    if !fields.contains_key("issues") {
-        return reply;
+/// A teaching-review verdict on the finding `id`: "present" or "resolved".
+pub(crate) fn verdict(id: &str, verdict: &str) -> serde_json::Value {
+    json!({"id":id,"verdict":verdict,"note":""})
+}
+
+/// A teaching-review reply that reports no issue, finds no defect in the
+/// sections it checks, and gives `verdicts` on the findings it was asked about.
+pub(crate) fn clean_review(sections: &[usize], verdicts: &[serde_json::Value]) -> String {
+    review_reply(
+        &[],
+        sections
+            .iter()
+            .map(|index| section_check(*index, None))
+            .collect(),
+        verdicts,
+    )
+}
+
+/// The check of section `index`: a defect when `defect` is given.
+pub(crate) fn section_check(index: usize, defect: Option<&str>) -> serde_json::Value {
+    let finding = defect.unwrap_or("No defect was found in this section.");
+    json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":finding,"hasDefect":defect.is_some()})
+}
+
+/// A teaching-review reply as it is written: `checks` are for exactly the
+/// sections the review asks about, `verdicts` for exactly the findings it asks
+/// about (none: no `openFindings`).
+pub(crate) fn review_reply(
+    issues: &[&str],
+    checks: Vec<serde_json::Value>,
+    verdicts: &[serde_json::Value],
+) -> String {
+    let mut reply =
+        json!({"issues":issues,"blockChecks":crate::teaching_review::fixture_checks(checks)});
+    if !verdicts.is_empty() {
+        reply["openFindings"] = json!(verdicts);
     }
-    let listed = |pointer: &str| {
-        schema
-            .pointer(pointer)
-            .and_then(serde_json::Value::as_array)
-            .cloned()
-    };
-    if let Some(serde_json::Value::Array(checks)) = fields.get_mut("blockChecks") {
-        let sections = listed("/properties/blockChecks/items/properties/sectionId/enum");
-        checks.retain(|check| {
-            !check["sectionId"].is_string()
-                || sections
-                    .iter()
-                    .flatten()
-                    .any(|section| *section == check["sectionId"])
-        });
-    }
-    let defect = fields
-        .get("issues")
-        .and_then(serde_json::Value::as_array)
-        .is_some_and(|issues| !issues.is_empty())
-        || fields
-            .get("blockChecks")
-            .and_then(serde_json::Value::as_array)
-            .is_some_and(|checks| checks.iter().any(|check| check["hasDefect"] == true));
-    if let Some(ids) = listed("/properties/openFindings/items/properties/id/enum") {
-        if !fields.contains_key("openFindings") {
-            let verdict = if defect { "present" } else { "resolved" };
-            let entries: Vec<serde_json::Value> = ids
-                .into_iter()
-                .map(|id| serde_json::json!({"id":id,"verdict":verdict,"note":""}))
-                .collect();
-            fields.insert("openFindings".into(), entries.into());
-        }
-    }
-    serde_json::Value::Object(fields).to_string()
+    reply.to_string()
 }
 
 impl ScriptedModel {
@@ -854,7 +842,7 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
             vec![
                 issue.clone(),
                 patch.clone(),
-                json!({"issues":[]}).to_string(),
+                json!({"issues":[],"openFindings":[verdict("reviewer/1", "resolved")]}).to_string(),
             ]
             .into(),
         ),
@@ -882,7 +870,14 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
         assert!(prompts[2].contains("Correct the comparison"));
     }
     let model = ScriptedModel {
-        outputs: std::sync::Mutex::new(vec![issue.clone(), patch, issue].into()),
+        outputs: std::sync::Mutex::new(
+            vec![
+                issue.clone(),
+                patch,
+                json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."],"openFindings":[verdict("reviewer/1", "present")]}).to_string(),
+            ]
+            .into(),
+        ),
         prompts: std::sync::Mutex::new(vec![]),
     };
     assert!(crate::teaching::review_and_repair(
@@ -905,12 +900,18 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
         "A running total is initialized to zero and each accepted value is added exactly once. "
             .repeat(10);
     let candidate = json!({"blocks":[{"kind":"explanation","body":body}]});
-    let check = |has_defect| {
-        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect})])}).to_string()
+    let check = |has_defect, verdicts: &[serde_json::Value]| {
+        review_reply(
+            &[],
+            vec![
+                json!({"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect}),
+            ],
+            verdicts,
+        )
     };
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
-            vec![check(true), json!({"edits":[{"path":"/blocks/0/body","before":body,"after":format!("{body}Return the accumulated total.")}]}).to_string(), check(false)].into(),
+            vec![check(true, &[]), json!({"edits":[{"path":"/blocks/0/body","before":body,"after":format!("{body}Return the accumulated total.")}]}).to_string(), check(false, &[verdict("reviewer/1", "resolved")])].into(),
         ),
         prompts: std::sync::Mutex::new(vec![]),
     };
