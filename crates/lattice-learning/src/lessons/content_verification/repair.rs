@@ -469,6 +469,7 @@ pub(crate) async fn candidate(
         output_tokens,
         references,
         &protected,
+        crate::lessons::shape::Phase::Kept,
     ))
     .await
 }

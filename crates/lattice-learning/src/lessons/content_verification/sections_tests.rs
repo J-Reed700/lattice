@@ -141,6 +141,11 @@ fn report(units: usize) -> LessonVerificationReport {
     }
 }
 
+/// Why the lesson without the units that go could not be published.
+fn thin(lesson: &Value, going: &Going) -> Option<String> {
+    shape::policy().floor(lesson, going.units())
+}
+
 fn gap(before: Option<&str>, after: Option<&str>) -> Gap {
     Gap {
         field: "body".into(),
@@ -1105,7 +1110,7 @@ async fn the_review_after_cuts_with_no_claim_left_asks_for_no_count_the_cuts_spe
 
     let _ = settle(
         &llm,
-        ("{}", &crate::generation::lesson_schema(1), 4_000),
+        ("{}", &shape::policy().schema(shape::Phase::Kept, 1), 4_000),
         &references,
         &lesson.to_string(),
         &mut ledger,

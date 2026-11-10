@@ -197,6 +197,7 @@ impl Review for PreparationReview<'_, '_> {
                 self.output_tokens,
                 active,
                 &protected,
+                crate::lessons::shape::Phase::Kept,
             )
             .await?;
             self.candidate = crate::generation::parse_json(&self.raw)?;

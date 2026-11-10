@@ -13,6 +13,7 @@ use crate::dto::{
 };
 use crate::embedded_runtime::BuiltinRuntimes;
 use crate::lessons::course_plan::CoursePlan;
+use crate::lessons::shape;
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
@@ -117,19 +118,30 @@ pub(super) fn course_context(
     json!({"curriculum":sequence,"coursePlan":planned})
 }
 
-/// The lesson's output schema for `source_count` saved sources. It is the one
+/// The writer's output schema for `source_count` saved sources. It is the one
 /// schema under which teaching review applies the lesson's rules
 /// (`lesson_rules`), so evals that review a lesson use it rather than a copy.
 pub fn lesson_schema(source_count: usize) -> serde_json::Value {
+    crate::lessons::shape::policy().schema(crate::lessons::shape::Phase::Draft, source_count)
+}
+
+/// The lesson schema with `blocks` and `questions` each bounded to the given
+/// (least, most) item counts: the item shapes are the same whatever the
+/// counts, which the shape policy chooses.
+pub(crate) fn lesson_schema_counting(
+    source_count: usize,
+    blocks: (usize, usize),
+    questions: (usize, usize),
+) -> serde_json::Value {
     json!({
         "type":"object","additionalProperties":false,"required":["blocks","questions"],
         "properties":{
-            "blocks":{"type":"array","minItems":10,"maxItems":16,"items":{
+            "blocks":{"type":"array","minItems":blocks.0,"maxItems":blocks.1,"items":{
                 "type":"object","additionalProperties":false,"required":["kind","title","body","rubric","sourceIndex","quote","citations"],"properties":{
                     "kind":{"type":"string","enum":["explanation","worked_example","contrast","check","guided_practice","independent_practice","reflection","recap"]},"title":{"type":"string"},"body":{"type":"string","minLength":1},"rubric":crate::teaching::rubric_schema(),"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
             }},
-            "questions":{"type":"array","minItems":6,"maxItems":6,"items":{
+            "questions":{"type":"array","minItems":questions.0,"maxItems":questions.1,"items":{
                 "type":"object","additionalProperties":false,"required":["kind","prompt","options","correctIndex","rationales","explanation","sourceIndex","quote","citations"],"properties":{
                     "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string"},"options":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":3},"rationales":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"explanation":{"type":"string"},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
@@ -484,13 +496,16 @@ pub async fn prepare_lesson_with_references<'a>(
     };
     let raw = crate::content_verification::normalize_example_fences(llm, raw).await?;
     let raw = crate::content_verification::strip_draft_apparatus(raw);
+    // The draft review holds the lesson to what the writer was asked for;
+    // verification, which cuts, holds it to what the lesson is kept with.
+    let kept_schema = shape::policy().schema(shape::Phase::Kept, sources.len());
     // Finish an interrupted section repair before reviewing the assembled
     // lesson. Its checkpoint is scoped to exact inputs and cannot approve it;
     // the repair path performs teaching review after all patches are saved.
     let raw = if crate::content_verification::has_pending_repair(
         llm,
         &prompt,
-        &lesson_schema(sources.len()),
+        &kept_schema,
         &raw,
         references,
     )
@@ -507,6 +522,7 @@ pub async fn prepare_lesson_with_references<'a>(
             output_tokens,
             references,
             &[],
+            shape::Phase::Draft,
         )
         .await?
     };
@@ -517,7 +533,7 @@ pub async fn prepare_lesson_with_references<'a>(
         llm,
         runtimes,
         &prompt,
-        &lesson_schema(sources.len()),
+        &kept_schema,
         raw,
         references,
         (output_tokens, &mut numbered),
@@ -544,9 +560,9 @@ pub async fn prepare_lesson_with_references<'a>(
     // not repair, and any citation that does not match its source, waits for the
     // user while the lesson publishes.
     let mut findings = crate::teaching::structural_findings(
-        &lesson_schema(sources.len()),
+        &shape::policy().schema(shape::Phase::Kept, sources.len()),
         &raw,
-        crate::generation::Counts::Spent,
+        shape::Phase::Kept,
     )?;
     let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;

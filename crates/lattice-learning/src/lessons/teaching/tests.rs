@@ -102,7 +102,7 @@ fn structure(blocks: Value) -> Vec<ReviewFinding> {
     structural_findings(
         &json!({"type":"object"}),
         &candidate.to_string(),
-        crate::generation::Counts::Asked,
+        crate::lessons::shape::Phase::Draft,
     )
     .unwrap()
 }
@@ -183,7 +183,7 @@ fn material_that_cannot_be_read_is_named_in_plain_words() {
     let found = structural_findings(
         &json!({"type":"object"}),
         "not json",
-        crate::generation::Counts::Asked,
+        crate::lessons::shape::Phase::Draft,
     )
     .unwrap();
     assert_eq!(found.len(), 1);

@@ -55,6 +55,7 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
             4000,
             &references,
             &[],
+            crate::lessons::shape::Phase::Draft,
         )
         .await?;
         assert_eq!(

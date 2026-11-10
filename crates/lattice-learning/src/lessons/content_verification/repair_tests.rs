@@ -705,7 +705,7 @@ async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncite
         json!([{"sentence":sentence,"sourceIndex":0,"quote":quote}])
     );
     let uncited = |lesson: &Value| {
-        crate::generation::lesson_rules(lesson)
+        crate::generation::lesson_rules(lesson, crate::lessons::shape::Phase::Draft)
             .into_iter()
             .filter(|finding| finding.kind == crate::review_findings::FindingKind::Quotation)
             .count()

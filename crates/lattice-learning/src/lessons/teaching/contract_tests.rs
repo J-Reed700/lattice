@@ -207,6 +207,7 @@ async fn run_under(
             protected,
             lesson_references: Some(&references),
             held: BTreeSet::new(),
+            phase: Phase::Draft,
         },
     )
     .await

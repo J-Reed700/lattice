@@ -1,16 +1,17 @@
-//! The lesson's own rules beyond its schema: distinct, titled sections in the
-//! mix the lesson is written for, checks that hold their answer back, an
-//! order that tests what was taught and recalls before it recaps, and
-//! distinct, answerable questions of every kind, and a specific that stands
-//! only in a sentence the writer cited. A broken rule is a finding:
-//! the teaching repair is given it, and what the repairs cannot settle waits
-//! for the user. It never stops the lesson from publishing.
+//! The lesson's own rules beyond its schema: distinct, titled sections,
+//! checks that hold their answer back, distinct, answerable questions, and a
+//! specific that stands only in a sentence the writer cited. The lesson's
+//! shape (its counts and the order of its sections) is the shape policy's. A
+//! broken rule is a finding: the teaching repair is given it, and what the
+//! repairs cannot settle waits for the user. It never stops the lesson from
+//! publishing.
 use super::{normalize, validate_text};
 use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
 use crate::content_verification::{
     names_a_source, needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS,
 };
 use crate::lessons::repeats;
+use crate::lessons::shape::{self, Phase};
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -20,19 +21,6 @@ use std::collections::{HashMap, HashSet};
 /// lessons §3.3): the learner commits to an answer to what is above it
 /// before what is below it is shown. `checkReveal.ts` splits on the same line.
 pub(crate) const CHECK_REVEAL: &str = "### Check your thinking";
-
-/// The sections a lesson is written with: at least this many of each kind,
-/// or exactly this many when `exact`.
-const SECTION_MIX: [(&str, usize, bool); 8] = [
-    ("explanation", 2, false),
-    ("worked_example", 2, false),
-    ("contrast", 1, false),
-    ("check", 2, false),
-    ("guided_practice", 1, true),
-    ("independent_practice", 1, true),
-    ("reflection", 1, true),
-    ("recap", 1, true),
-];
 
 /// A check's case and its reveal, split at its `CHECK_REVEAL` line: `None`
 /// unless exactly one line is that heading (at level two to four). Claim
@@ -60,10 +48,6 @@ pub(crate) fn split_check(body: &str) -> Option<(&str, &str)> {
     let (start, end) = found?;
     Some((body.get(..start)?, body.get(end..)?))
 }
-
-/// Questions the writer is asked for of each kind, so that a cut can spend
-/// one; a lesson is saved with one of each (`LessonQuestionKind::ALL`).
-const QUESTIONS_PER_KIND: usize = 2;
 
 fn text<'a>(item: &'a Value, field: &str) -> &'a str {
     item.get(field).and_then(Value::as_str).unwrap_or_default()
@@ -98,11 +82,6 @@ fn citation(
         .with_summary(summary)
         .with_passage(quote)
         .with_sentence(sentence)
-}
-
-/// "2 checks", "1 contrast": `count` of `noun`, in the plural unless it is one.
-fn counted(count: usize, noun: &str) -> String {
-    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
 }
 
 /// `sentence` without the Markdown that opens it, a heading's hashes or a
@@ -306,27 +285,15 @@ fn scaffolding(
 /// What `lesson_rules` reports, as its notes: for evals outside the crate,
 /// which assert a reviewed lesson keeps the lesson's form.
 pub fn lesson_rule_notes(candidate: &Value) -> Vec<String> {
-    lesson_rules(candidate)
+    lesson_rules(candidate, Phase::Draft)
         .into_iter()
         .map(|finding| finding.note)
         .collect()
 }
 
-/// Which of the writer's quantities a review holds a lesson to: its mix of
-/// sections and its questions of each kind. The draft is held to what the
-/// writer was asked for; a lesson after verification's cuts is not, since
-/// the cuts spent that margin.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(crate) enum Counts {
-    Asked,
-    Spent,
-}
-
-pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
-    lesson_rules_holding(candidate, Counts::Asked)
-}
-
-pub(crate) fn lesson_rules_holding(candidate: &Value, counts: Counts) -> Vec<ReviewFinding> {
+/// The lesson's findings in `phase`: the shape policy's about its counts and
+/// order, and the rules of its parts.
+pub(crate) fn lesson_rules(candidate: &Value, phase: Phase) -> Vec<ReviewFinding> {
     let items = |field| {
         candidate
             .get(field)
@@ -375,23 +342,10 @@ pub(crate) fn lesson_rules_holding(candidate: &Value, counts: Counts) -> Vec<Rev
             }
         }
     }
-    if counts == Counts::Asked {
-        findings.extend(section_mix_finding(blocks));
-    }
-    let kind_at = |index: usize| blocks.get(index).map(|block| text(block, "kind"));
-    let first = |kind: &str| (0..blocks.len()).find(|index| kind_at(*index) == Some(kind));
-    // Each check applies an idea a worked example has shown since the
-    // previous check: two checks in a row, or a check before its idea's
-    // example, test what the lesson has not yet worked through.
-    let mut example_since_check = false;
+    findings.extend(shape::policy().findings(candidate, phase));
     for (index, block) in blocks.iter().enumerate() {
-        match text(block, "kind") {
-            "check" => {}
-            "worked_example" => {
-                example_since_check = true;
-                continue;
-            }
-            _ => continue,
+        if text(block, "kind") != "check" {
+            continue;
         }
         let section = format!("Section {} (candidate blocks-{index})", index + 1);
         let plain = format!("Section {}", index + 1);
@@ -402,23 +356,6 @@ pub(crate) fn lesson_rules_holding(candidate: &Value, counts: Counts) -> Vec<Rev
                 FindingSite::Section(index),
                 format!("{plain} is a check, but it does not hold its answer back until the learner has tried."),
                 format!("{section} is a check: write the case to reason through first, then one line `{CHECK_REVEAL}`, then the answer, the reasoning and the misconception each plausible wrong answer reveals. Nothing above that line may give the answer away."),
-            ));
-        }
-        if !example_since_check {
-            findings.push(structure(
-                FindingSite::Section(index),
-                format!("{plain} is a check on an idea that no worked example has shown since the previous check."),
-                format!("{section} checks an idea no worked example has shown since the previous check; place each check after the example of the idea it asks the learner to apply."),
-            ));
-        }
-        example_since_check = false;
-    }
-    if let (Some(reflection), Some(recap)) = (first("reflection"), first("recap")) {
-        if reflection > recap {
-            findings.push(structure(
-                FindingSite::Section(recap),
-                format!("Section {} recaps the lesson before the learner is asked to explain it from memory.", recap + 1),
-                format!("Section {} (candidate blocks-{recap}) recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", recap + 1),
             ));
         }
     }
@@ -570,75 +507,7 @@ pub(crate) fn lesson_rules_holding(candidate: &Value, counts: Counts) -> Vec<Rev
             );
         }
     }
-    if counts == Counts::Asked {
-        findings.extend(question_count_finding(questions));
-    }
     findings
-}
-
-fn kind_count(items: &[Value], kind: &str) -> usize {
-    items
-        .iter()
-        .filter(|item| item.get("kind").and_then(Value::as_str) == Some(kind))
-        .count()
-}
-
-fn section_mix_finding(blocks: &[Value]) -> Option<ReviewFinding> {
-    let counts: Vec<_> = SECTION_MIX
-        .iter()
-        .map(|(kind, minimum, exact)| (*kind, kind_count(blocks, kind), *minimum, *exact))
-        .collect();
-    if !counts
-        .iter()
-        .any(|(_, count, minimum, exact)| *count < *minimum || (*exact && *count != *minimum))
-    {
-        return None;
-    }
-    let has: Vec<_> = counts
-        .iter()
-        .map(|(kind, count, _, _)| format!("{count} {}", kind.replace('_', " ")))
-        .collect();
-    let plain: Vec<_> = counts
-        .iter()
-        .map(|(kind, count, _, _)| counted(*count, &kind.replace('_', " ")))
-        .collect();
-    Some(structure(
-        FindingSite::Lesson,
-        format!(
-            "The lesson should have at least two explanations, two worked examples, one contrast and two checks, and one each of guided practice, independent practice, reflection and recap. It has {}.",
-            plain.join(", ")
-        ),
-        format!("The lesson needs at least two explanations, two worked examples, one contrast and two checks, and exactly one each of guided practice, independent practice, reflection and recap; it has {}.", has.join(", ")),
-    ))
-}
-
-fn question_count_finding(questions: &[Value]) -> Option<ReviewFinding> {
-    let per_kind: Vec<_> = crate::dto::LessonQuestionKind::ALL
-        .iter()
-        .map(|kind| (kind.as_str(), kind_count(questions, kind.as_str())))
-        .collect();
-    if !per_kind
-        .iter()
-        .any(|(_, count)| *count < QUESTIONS_PER_KIND)
-    {
-        return None;
-    }
-    let has: Vec<_> = per_kind
-        .iter()
-        .map(|(kind, count)| format!("{count} {kind}"))
-        .collect();
-    let plain: Vec<_> = per_kind
-        .iter()
-        .map(|(kind, count)| counted(*count, &format!("{kind} question")))
-        .collect();
-    Some(structure(
-        FindingSite::Lesson,
-        format!(
-            "The lesson needs at least two questions each for practice, quiz and test. It has {}.",
-            plain.join(", ")
-        ),
-        format!("The lesson needs at least two distinct questions each for practice, quiz and test; it has {}.", has.join(", ")),
-    ))
 }
 
 #[cfg(test)]

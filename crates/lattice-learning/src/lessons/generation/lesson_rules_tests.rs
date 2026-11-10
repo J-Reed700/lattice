@@ -2,6 +2,10 @@
 use super::*;
 use serde_json::json;
 
+fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
+    super::lesson_rules(candidate, Phase::Draft)
+}
+
 fn block(kind: &str, title: &str) -> Value {
     let body = if kind == "check" {
         format!("Case for {title}: what happens to the lid?\n\n{CHECK_REVEAL}\n\nAnswer for {title}: it bulges.")

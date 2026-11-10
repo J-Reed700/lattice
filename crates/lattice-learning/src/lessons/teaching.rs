@@ -1,12 +1,11 @@
 //! Instructional review and task-specific teaching contracts.
 use super::writer_excerpts::{self, WriterExcerpts};
 use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
-use crate::generation::Counts;
+use crate::lessons::shape::Phase;
 use crate::review_findings::{
     plain_part, FindingKey, FindingKind, FindingSite, ReviewFinding, SetAside,
 };
 use crate::teaching_review::LengthRule;
-use jsonschema::error::ValidationErrorKind;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -115,12 +114,12 @@ pub const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts
 
 /// Deterministic findings: the schema, each section's body and rubric,
 /// and, under a lesson's schema, the lesson's own rules. Nothing is
-/// dropped; a caller that sends six at a time decides what waits. `counts`
-/// says whether a lesson is held to the quantities its writer was asked for.
+/// dropped; a caller that sends six at a time decides what waits. `phase` says
+/// which promise a lesson is held to.
 pub(crate) fn structural_findings(
     schema: &Value,
     candidate: &str,
-    counts: Counts,
+    phase: Phase,
 ) -> Result<Vec<ReviewFinding>> {
     let value: Value = match serde_json::from_str(candidate) {
         Ok(value) => value,
@@ -137,14 +136,6 @@ pub(crate) fn structural_findings(
         .map_err(|_| AppError::InternalError("Invalid teaching schema".into()))?;
     let mut issues = Vec::new();
     if let Err(errors) = validator.validate(&value) {
-        let errors = errors.filter(|error| {
-            let item_count = matches!(
-                error.kind,
-                ValidationErrorKind::MinItems { .. } | ValidationErrorKind::MaxItems { .. }
-            );
-            let path = error.instance_path.to_string();
-            !(counts == Counts::Spent && item_count && (path == "/blocks" || path == "/questions"))
-        });
         issues.extend(errors.map(|error| {
             ReviewFinding::new(
                 FindingKind::Structure,
@@ -183,7 +174,7 @@ pub(crate) fn structural_findings(
         }
     }
     if is_lesson_schema(schema) {
-        issues.extend(crate::generation::lesson_rules_holding(&value, counts));
+        issues.extend(crate::generation::lesson_rules(&value, phase));
     }
     Ok(issues)
 }
@@ -303,6 +294,8 @@ struct ReviewContext<'a> {
     lesson_references: Option<&'a crate::reference_collection::ReferenceCollection<'a>>,
     /// A lesson's findings the user already has: never repaired again.
     held: BTreeSet<FindingKey>,
+    /// Which promise a lesson is held to; outlines and quizzes have no shape.
+    phase: Phase,
 }
 
 /// The reviewed material, and what the repairs could not settle: a lesson
@@ -321,6 +314,7 @@ pub(crate) async fn review_lesson(
     output_tokens: usize,
     references: &crate::reference_collection::ReferenceCollection<'_>,
     protected: &[crate::lessons::content_verification::Protected],
+    phase: Phase,
 ) -> Result<String> {
     let mut sources: Vec<_> = references
         .sources
@@ -383,6 +377,7 @@ pub(crate) async fn review_lesson(
             protected,
             lesson_references: Some(references),
             held,
+            phase,
         },
     )
     .await?;
@@ -413,6 +408,7 @@ pub async fn review_and_repair_with_progress(
             protected: &[],
             lesson_references: None,
             held: BTreeSet::new(),
+            phase: Phase::Draft,
         },
     )
     .await
@@ -543,12 +539,7 @@ async fn review_material(
             json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
         }).collect();
         let review_prompt = json!({"task":"Review instructional quality", "authoringContext":authoring_context, "originalIssuesToRecheck":original_issues, "sourceQuoteChecks":quote_checks, "correctnessPriority":correctness_priority, "candidate":candidate_value,"referenceVersions":reference_versions});
-        let counts = if context.protected.is_empty() {
-            Counts::Asked
-        } else {
-            Counts::Spent
-        };
-        let structure = structural_findings(schema, &candidate, counts)?;
+        let structure = structural_findings(schema, &candidate, context.phase)?;
         // A rewrite of the whole lesson changes the sentences its checked
         // claims stand on, so once there are any, what its shape asks waits
         // for the user (claim classes design §3.10).
