@@ -72,7 +72,7 @@ fn each_broken_rule_is_a_finding_at_its_place() {
     candidate["blocks"][4]["title"] = json!("first  IDEA");
     candidate["blocks"][10]["kind"] = json!("explanation");
     candidate["questions"][3]["prompt"] = json!("q1?");
-    candidate["questions"][4]["options"] = json!(["Yes", "yes", "Maybe", "No way"]);
+    candidate["questions"][4]["options"] = json!(["Yes", "Yes", "Maybe", "No way"]);
     let findings = lesson_rules(&candidate);
     let sites: Vec<_> = findings.iter().map(|f| f.place().site).collect();
     assert_eq!(
@@ -227,7 +227,7 @@ fn each_broken_rule_says_what_is_wrong_in_plain_words() {
     candidate["blocks"][4]["title"] = json!("first  IDEA");
     candidate["blocks"][10]["kind"] = json!("explanation");
     candidate["questions"][3]["prompt"] = json!("q1?");
-    candidate["questions"][4]["options"] = json!(["Yes", "yes", "Maybe", "No way"]);
+    candidate["questions"][4]["options"] = json!(["Yes", "Yes", "Maybe", "No way"]);
 
     let summaries: Vec<_> = lesson_rules(&candidate)
         .into_iter()
@@ -240,7 +240,7 @@ fn each_broken_rule_says_what_is_wrong_in_plain_words() {
             "Section 5 has the same title as section 1.",
             "The lesson should have at least two explanations, two worked examples, one contrast and two checks, and one each of guided practice, independent practice, reflection and recap. It has 3 explanations, 2 worked examples, 1 contrast, 2 checks, 1 guided practice, 1 independent practice, 1 reflection, 0 recaps.",
             "Question 4 asks the same thing as question 3.",
-            "Question 5 needs four distinct answer choices.",
+            "Question 5 repeats the answer choice \"Yes\"; each choice must differ.",
         ]
     );
 }
@@ -1029,4 +1029,36 @@ fn choices_that_differ_only_by_letter_case_are_not_a_finding() {
     let mut candidate = lesson();
     candidate["questions"][0]["options"] = json!(["Alpha", "alpha", "Bravo", "Charlie"]);
     assert!(lesson_rules(&candidate).is_empty());
+}
+
+fn choices_note(options: Value) -> String {
+    let mut candidate = lesson();
+    candidate["questions"][2]["options"] = options;
+    let findings = lesson_rules(&candidate);
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    findings[0].note.clone()
+}
+
+#[test]
+fn a_wrong_number_of_choices_is_named_with_its_count() {
+    assert_eq!(
+        choices_note(json!(["Alpha", "Bravo", "Charlie"])),
+        "Question 3 needs four answer choices; it has 3."
+    );
+}
+
+#[test]
+fn a_repeated_choice_is_named_by_quoting_it() {
+    assert_eq!(
+        choices_note(json!(["Alpha", "Bravo", "Bravo.", "Charlie"])),
+        "Question 3 repeats the answer choice \"Bravo.\"; each choice must differ."
+    );
+}
+
+#[test]
+fn a_blank_choice_is_named() {
+    assert_eq!(
+        choices_note(json!(["Alpha", "  ", "Bravo", "Charlie"])),
+        "Question 3 has a blank answer choice."
+    );
 }
