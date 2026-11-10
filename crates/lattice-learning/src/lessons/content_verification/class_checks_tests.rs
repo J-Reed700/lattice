@@ -12,7 +12,7 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::application::services::claim_verification::BRIDGE_SYSTEM;
 use lattice_core::domain::learning::acceptance::{
-    most_calls, AcceptancePolicy, End, Outcome, Position, Reading, Step, Then,
+    most_calls, start, End, Outcome, Reading, Step, Then,
 };
 use lattice_core::domain::learning::claim_review::{
     ClaimEvent, ClaimLedgerEntry, ClaimState, VerdictKind,
@@ -1626,12 +1626,7 @@ async fn the_ceiling_after_the_sort_counts_a_statement_the_model_calls_internal_
     // The one sorting call, made; the model's statement at the longest path of
     // the Internal graph from its entry; a flow repair for its section; and
     // nothing for the remark the rules left out.
-    let entry = Position {
-        class: Class::Internal,
-        changed_class: false,
-        reasked: false,
-        node: policy.graph(Class::Internal).entry(),
-    };
+    let entry = start(&policy, Class::Internal);
     assert_eq!(trace.calls, 1);
     assert_eq!(trace.ceilings, [1 + most_calls(&policy, entry) + 1]);
     Ok(())
@@ -1728,6 +1723,39 @@ async fn the_plan_and_the_pass_agree_on_which_statements_are_checked_so_the_ceil
         "{} calls, ceilings {:?}",
         trace.calls,
         trace.ceilings
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_sentence_that_only_names_the_documentation_is_the_models_to_sort() -> Result<()> {
+    const NAMES: &str = "The documentation is available from the tool's own help screen.";
+    let model = Classes::new(&[NAMES]).classed(&[(NAMES, "common")]);
+    let claims = [(
+        0,
+        Claim {
+            quote: NAMES.to_owned(),
+            statement: NAMES.to_owned(),
+        },
+    )];
+
+    let classes = class_checks::sort(
+        &model,
+        &StandardPolicy::new(),
+        &lesson(NAMES),
+        &claims,
+        &[None],
+        &claim_ledger::Rewrites::default(),
+        &Citations::default(),
+    )
+    .await?;
+
+    assert_eq!(
+        classes,
+        [Classed {
+            class: Class::Common,
+            by: ClassifiedBy::Model
+        }]
     );
     Ok(())
 }

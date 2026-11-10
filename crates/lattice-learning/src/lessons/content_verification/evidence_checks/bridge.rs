@@ -400,6 +400,23 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_common_part_that_only_names_the_documentation_is_left_as_the_judge_called_it() {
+        let (judged, parts) = weighed(
+            "Tesseract is an OCR engine and the documentation is available from its help screen.",
+            json!([
+                stated("Tesseract is an OCR engine"),
+                unplaced(
+                    "the documentation is available from its help screen",
+                    "common"
+                )
+            ]),
+        )
+        .await;
+        assert_eq!(judged.verdict, ClaimVerdict::Supported);
+        assert_eq!(kinds(&parts), vec![PartKind::Stated, PartKind::Common]);
+    }
+
+    #[tokio::test]
     async fn nothing_stated_is_nothing_supported_whatever_is_common() {
         let (judged, _) = weighed(
             "OCR turns the pixels of a page image into text.",

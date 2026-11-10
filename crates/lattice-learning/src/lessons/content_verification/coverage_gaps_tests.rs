@@ -528,3 +528,13 @@ fn a_report_whose_audit_names_a_gap_is_still_a_complete_report() {
         "a gap is not a defect of the report"
     );
 }
+
+/// A gap that opens "The sources" is no longer Internal by rule: the model sorts it.
+#[test]
+fn a_gap_that_opens_the_sources_is_adopted_for_the_model_to_sort() {
+    let remark = "The sources above do not say how many rows it buffers.";
+    assert_eq!(
+        adopt_one(remark, &claim_ledger::Rewrites::default()),
+        (1, 1, true)
+    );
+}
