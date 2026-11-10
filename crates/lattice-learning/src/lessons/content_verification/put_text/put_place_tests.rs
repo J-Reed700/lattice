@@ -5,11 +5,11 @@
 
 use super::*;
 
-const A: &str = "Alpha comes first.";
-const B: &str = "Bravo comes second.";
-const C: &str = "Charlie comes third.";
-const D: &str = "Delta comes fourth.";
-const E: &str = "Echo comes last.";
+const A: &str = "Alpha comes first in the list.";
+const B: &str = "Bravo comes second in the list.";
+const C: &str = "Charlie comes third in the list.";
+const D: &str = "Delta comes fourth in the list.";
+const E: &str = "Echo comes last in the list.";
 
 fn cut(sentence: &str, before: &str, after: &str) -> CutPlace {
     CutPlace {
@@ -167,4 +167,17 @@ fn a_sentence_the_text_already_has_is_not_inserted_again() {
         "whitespace does not make it another sentence"
     );
     assert!(insert_sentence(&present, &Anchor::End, C).is_some());
+}
+
+#[test]
+fn a_sentence_too_short_to_quote_that_the_text_already_has_is_not_inserted_again() {
+    const SHORT: &str = "No.";
+    let present = text(&[SHORT, A]);
+    for anchor in [
+        Anchor::After(A.into()),
+        Anchor::Before(A.into()),
+        Anchor::End,
+    ] {
+        assert_eq!(insert_sentence(&present, &anchor, SHORT), None);
+    }
 }

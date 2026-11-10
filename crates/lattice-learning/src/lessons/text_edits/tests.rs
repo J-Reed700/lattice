@@ -25,7 +25,7 @@ fn small_repairs_preserve_every_other_byte_and_reject_ambiguous_or_foreign_edits
 
 fn two_sections() -> Value {
     json!({"blocks":[
-        {"kind":"explanation","body":"Alpha is first. Beta is second."},
+        {"kind":"explanation","body":"Alpha is the first of them all. Beta is second."},
         {"kind":"explanation","body":"Gamma stands here. Delta ends it."}
     ],"questions":[]})
 }
@@ -33,11 +33,14 @@ fn two_sections() -> Value {
 #[test]
 fn an_edit_adding_a_sentence_another_section_has_is_rejected_and_the_field_is_unchanged() {
     let original = two_sections();
-    let repeat = json!({"path":"/blocks/1/body","before":"Delta ends it.","after":"Delta ends it. Alpha is first."});
+    let repeat = json!({"path":"/blocks/1/body","before":"Delta ends it.","after":"Delta ends it. Alpha is the first of them all."});
     let alone = apply(&original, &json!({"edits":[repeat]}).to_string());
     assert!(alone.is_err(), "the sentence is in section 1 already");
     assert!(
-        alone.unwrap_err().to_string().contains("Alpha is first."),
+        alone
+            .unwrap_err()
+            .to_string()
+            .contains("Alpha is the first of them all."),
         "the reason names the sentence"
     );
     let good =
@@ -46,13 +49,13 @@ fn an_edit_adding_a_sentence_another_section_has_is_rejected_and_the_field_is_un
     assert_eq!(mixed["blocks"][1], original["blocks"][1]);
     assert_eq!(
         mixed["blocks"][0]["body"],
-        "Alpha is first. Beta comes second."
+        "Alpha is the first of them all. Beta comes second."
     );
 }
 
 fn cited_sections() -> Value {
     json!({"blocks":[
-        {"kind":"explanation","body":"Alpha is first. Beta is second."},
+        {"kind":"explanation","body":"Alpha is the first of them all. Beta is second."},
         {"kind":"explanation","body":"Gamma stands here. Delta ends it.","citations":[{"sentence":"Gamma stands here.","sourceIndex":0,"quote":"Gamma is stated by the source."}]}
     ],"questions":[]})
 }
@@ -62,7 +65,7 @@ fn a_citation_sentence_may_equal_a_sentence_the_lesson_has() {
     let original = cited_sections();
     let body =
         json!({"path":"/blocks/1/body","before":"Delta ends it.","after":"Delta closes it."});
-    let cite = json!({"path":"/blocks/1/citations/0/sentence","before":"Gamma stands here.","after":"Alpha is first."});
+    let cite = json!({"path":"/blocks/1/citations/0/sentence","before":"Gamma stands here.","after":"Alpha is the first of them all."});
     let repaired = apply_in(
         &original,
         &json!({"edits":[body, cite]}).to_string(),
@@ -72,7 +75,7 @@ fn a_citation_sentence_may_equal_a_sentence_the_lesson_has() {
     .unwrap();
     assert_eq!(
         repaired["blocks"][1]["citations"][0]["sentence"],
-        "Alpha is first."
+        "Alpha is the first of them all."
     );
     assert_eq!(
         repaired["blocks"][1]["body"],
@@ -132,7 +135,7 @@ fn a_line_under_a_step_after_its_fence_may_be_added_to_another_step() {
 #[test]
 fn an_edit_adding_a_sentence_its_own_field_has_is_rejected() {
     let original = two_sections();
-    let repeat = json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta is second. Alpha is first."});
+    let repeat = json!({"path":"/blocks/0/body","before":"Beta is second.","after":"Beta is second. Alpha is the first of them all."});
     let outcome = apply(&original, &json!({"edits":[repeat]}).to_string());
     assert!(outcome.is_err(), "the field has the sentence already");
 }
@@ -147,7 +150,7 @@ fn a_sentence_rewritten_in_place_is_accepted() {
     let repaired = apply(&original, &json!({"edits":edits}).to_string()).unwrap();
     assert_eq!(
         repaired["blocks"][0]["body"],
-        "Alpha is first. Beta is the second one."
+        "Alpha is the first of them all. Beta is the second one."
     );
     assert_eq!(
         repaired["blocks"][1]["body"],
