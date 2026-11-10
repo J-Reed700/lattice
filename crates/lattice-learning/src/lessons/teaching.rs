@@ -736,7 +736,7 @@ async fn review_material(
                 output_tokens,
             };
             writer_excerpts::complete(llm, &request, excerpts.as_ref(), progress, None, |raw| {
-                super::text_edits::apply_with(&candidate_value, raw, &Value::Null, &wording)
+                super::text_edits::apply_in(&candidate_value, raw, &Value::Null, &wording)
                     .map(|value| value.to_string())
             })
             .await
