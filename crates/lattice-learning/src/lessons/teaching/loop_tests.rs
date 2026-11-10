@@ -52,7 +52,7 @@ async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
         model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -78,7 +78,7 @@ async fn review_protecting(
         model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -330,7 +330,7 @@ async fn a_repair_too_long_for_the_window_leaves_the_lesson_waiting() -> Result<
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         original.to_string(),
         4000,
         ReviewContext {
@@ -378,7 +378,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         &window,
         LESSON_REPAIR_SYSTEM,
         &json!({"sources":excerpts}).to_string(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -425,7 +425,7 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         lesson(EXCERPT).to_string(),
         4000,
         ReviewContext {
@@ -493,7 +493,7 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &json!({"type":"object"}),
+        ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -1465,11 +1465,18 @@ async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<
         quote: PROTECTED_SENTENCE.into(),
         released: false,
     }];
+    let policy = crate::lessons::shape::policy();
+    let phase = if protected {
+        crate::lessons::shape::Phase::Kept
+    } else {
+        crate::lessons::shape::Phase::Draft
+    };
+    let schema = policy.schema(phase, 1);
     let reviewed = review_material(
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
-        &crate::generation::lesson_schema(1),
+        ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
         candidate.to_string(),
         4000,
         ReviewContext {
@@ -1526,13 +1533,13 @@ async fn a_protected_review_still_holds_a_section_without_a_title() -> Result<()
 
 #[test]
 fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall() {
-    let schema = crate::generation::lesson_schema(1);
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Draft, 1);
     let at_lesson = |lesson: &Value| -> usize {
         structural_findings(
-            &schema,
+            ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
             &lesson.to_string(),
-            crate::generation::Counts::Asked,
-            &[],
+            &Default::default(),
         )
         .unwrap()
         .iter()
@@ -1544,4 +1551,157 @@ fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall()
     let mut fewer_sections = shaped_lesson();
     fewer_sections["blocks"].as_array_mut().unwrap().remove(5);
     assert_eq!(at_lesson(&fewer_sections), 1);
+}
+
+#[tokio::test]
+async fn a_lesson_a_cut_left_without_a_test_question_waits_for_one_after_a_protected_review(
+) -> Result<()> {
+    let mut candidate = shaped_lesson_after_a_cut();
+    candidate["questions"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|question| question["kind"] != "test");
+    assert_eq!(candidate["questions"].as_array().unwrap().len(), 4);
+    let waiting = waiting_after_review(&candidate, true).await?;
+    assert!(
+        waiting.iter().any(|id| id == "structure:lesson"),
+        "{waiting:?}"
+    );
+    Ok(())
+}
+
+/// Records the schema of every request it passes on.
+struct RecordsSchemas<'a> {
+    inner: &'a ScriptedModel,
+    schemas: Mutex<Vec<Value>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for RecordsSchemas<'_> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if let Some(schema) = &request.json_schema {
+            self.schemas.lock().unwrap().push(schema.clone());
+        }
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_repair_of_a_lesson_the_cuts_left_five_questions_is_not_asked_for_six() {
+    let mut candidate = shaped_lesson_after_a_cut();
+    candidate["questions"][0]["options"] = json!(["One", "Two", "Three"]);
+    let scripted = model(vec![candidate.to_string()]);
+    let recorder = RecordsSchemas {
+        inner: &scripted,
+        schemas: Mutex::new(Vec::new()),
+    };
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    let _ = crate::lessons::content_verification::settle_after_cuts(
+        &recorder,
+        &context(),
+        crate::lessons::shape::policy(),
+        candidate.to_string(),
+        &references,
+        &[(2, "Not to be confused with")],
+    )
+    .await;
+    let schemas = recorder.schemas.lock().unwrap();
+    let asked = |pointer: &str| -> Vec<u64> {
+        schemas
+            .iter()
+            .filter_map(|schema| schema.pointer(pointer)?.as_u64())
+            .collect()
+    };
+    let questions = asked("/properties/questions/minItems");
+    assert!(!questions.is_empty(), "the lesson was not sent to a repair");
+    assert!(questions.iter().all(|least| *least <= 5), "{questions:?}");
+    let sections = asked("/properties/blocks/minItems");
+    assert!(sections.iter().all(|least| *least < 10), "{sections:?}");
+}
+
+/// The scripted review, keeping the text of every request it is sent.
+struct Recording<'a>(&'a ScriptedModel, Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::llm_port::LLMPort for Recording<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        let text: Vec<&str> = request
+            .input
+            .iter()
+            .filter_map(|item| match item {
+                CompletionInput::Message { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        self.1
+            .lock()
+            .map_err(|_| AppError::InternalError("fixture lock".into()))?
+            .push(text.join("\n"));
+        self.0.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.0.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.0.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// An edit that drops a sentence's emphasis markers was refused with a
+/// reason the model could not copy from, so its second answer failed the
+/// same way and the finding waited for the user.
+#[tokio::test]
+async fn a_repair_edit_that_drops_a_sentences_markers_is_asked_again_with_the_exact_sentence(
+) -> Result<()> {
+    const MARKED: &str = "The **function** returns the number 4 for the sum of two and two.";
+    let candidate = json!({"blocks":[{"kind":"explanation","title":"Example","body":format!("{MARKED} It never returns text."),"rubric":[],"sourceIndex":0,"quote":EXCERPT}],"questions":[]});
+    let edit = |before: &str| {
+        json!({"edits":[{"path":"/blocks/0/body","before":before,"after":"The function returns the number 4 for the sum of two and two, as the code shows."}]}).to_string()
+    };
+    let scripted = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        edit("The function returns the number 4 for the sum of two and two."),
+        edit(MARKED),
+        review(None),
+    ]);
+    let recording = Recording(&scripted, Mutex::new(Vec::new()));
+    let reviewed = run(&recording, candidate).await?;
+    let sent = recording.1.lock().unwrap().clone();
+    assert!(
+        sent.iter()
+            .any(|request| request.contains(&format!("its words stand there as \"{MARKED}\""))),
+        "the second request lacks the exact sentence"
+    );
+    assert!(reviewed.set_aside.is_empty(), "{:?}", reviewed.set_aside);
+    let after: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert_eq!(
+        after["blocks"][0]["body"],
+        "The function returns the number 4 for the sum of two and two, as the code shows. It never returns text."
+    );
+    Ok(())
 }

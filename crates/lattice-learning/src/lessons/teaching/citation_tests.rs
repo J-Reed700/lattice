@@ -50,7 +50,7 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
             &model,
             LESSON_REPAIR_SYSTEM,
             &context().to_string(),
-            &json!({"type":"object"}),
+            ReviewSchema::Other(&json!({"type":"object"})),
             original.to_string(),
             4000,
             &references,

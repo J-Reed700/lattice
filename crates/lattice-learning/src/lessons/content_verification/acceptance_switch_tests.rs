@@ -1282,7 +1282,13 @@ async fn a_cut_that_takes_the_sentence_out_ends_the_statement_removed() -> Resul
     let body = format!("{SENTENCE} {HEADER} {MORE}");
     let (mut ledger, id, mut context) = cut_sent(SENTENCE, &body).await?;
 
-    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert_eq!(
         context["candidate"]["blocks"][1]["body"],
@@ -1319,7 +1325,13 @@ async fn a_refused_cut_keeps_its_section_and_publishes_the_statement_not_verifie
     // The sentence is the whole of its field: it cannot be taken out.
     let (mut ledger, id, mut context) = cut_sent(SENTENCE, SENTENCE).await?;
 
-    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     let entry = ledger.entry(&id).unwrap();
     assert_eq!(entry.decided(), Some(&Then::End(End::Unverified)));
@@ -1448,7 +1460,13 @@ async fn a_refuted_rationale_whose_corrections_were_rejected_takes_its_question_
     };
     ledger.append(&later, extracted).await?;
 
-    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert_eq!(
         ledger.cuts.going.get(&4).map(String::as_str),
@@ -1504,7 +1522,13 @@ async fn a_refuted_rationale_in_the_last_question_of_its_kind_stays_and_is_publi
     let (mut ledger, id, mut context) =
         refuted_at(&lesson, (4, UnitKind::AnswerKey, "rationales/2"), WINDOW).await?;
 
-    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
     assert_eq!(context["candidate"], lesson);
@@ -1546,7 +1570,13 @@ async fn a_refused_statement_in_the_last_question_of_its_kind_does_not_hold_back
     )
     .await?;
 
-    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert_eq!(
         context["candidate"]["blocks"][1]["body"],
@@ -1596,7 +1626,13 @@ async fn questions_that_together_would_leave_no_question_of_a_kind_all_stay_and_
     )
     .await?;
 
-    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert_eq!(
         context["candidate"]["blocks"][1]["body"],
@@ -1634,7 +1670,13 @@ async fn a_refuted_sentence_that_is_the_whole_of_a_section_body_is_still_publish
     let (mut ledger, id, mut context) =
         refuted_at(&lesson, (1, UnitKind::Block, "body"), body).await?;
 
-    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
     assert_eq!(context["candidate"], lesson);
@@ -1694,7 +1736,13 @@ async fn a_statement_whose_narrowing_was_not_applied_keeps_the_sentence_it_share
         "failedClaims": [{"unit":1,"claimId":"target","sentence":SENTENCE,"evidence":[],"lastAttempt":true}],
     });
 
-    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &policy,
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert_eq!(context["candidate"]["blocks"][1]["body"], body);
     let entry = ledger.entry(&target).unwrap();
@@ -1722,7 +1770,13 @@ async fn a_cut_that_would_leave_a_section_fewer_than_two_teaching_sentences_is_n
     let body = format!("{SENTENCE} {HEADER}");
     let (mut ledger, id, mut context) = cut_sent(SENTENCE, &body).await?;
 
-    repair::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert_eq!(context["candidate"]["blocks"][1]["body"], body);
     assert!(ledger.cuts.going.is_empty(), "{:?}", ledger.cuts.going);
@@ -1783,7 +1837,13 @@ async fn a_cut_that_thins_one_section_is_held_back_while_a_cut_in_another_is_mad
         ],
     });
 
-    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &policy,
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert_eq!(context["candidate"]["blocks"][1]["body"], thin);
     let state = ledger.entry(&held).unwrap().state();
@@ -1838,7 +1898,13 @@ async fn statements_whose_cuts_leave_no_claim_are_published_not_verified_and_the
         "failedClaims": [{"unit":1,"claimId":"only","sentence":SENTENCE,"evidence":[],"lastAttempt":true}],
     });
 
-    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &policy,
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // Every claim is refuted and cleanly cut, and the sections keep their
     // teaching sentences; the lesson would hold no statement, so the
@@ -1886,7 +1952,13 @@ async fn statement_cuts_are_made_when_failed_examples_alone_take_more_than_a_thi
         ],
     });
 
-    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &policy,
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // The examples' refused cuts take two of three sections, which no cut of
     // a statement changes: the guard holds nothing back, so the statement is
@@ -2011,7 +2083,13 @@ async fn a_batch_with_an_example_beside_statements_publishes_the_statements_not_
         "exampleClaims": [{"unit":1,"claimId":"example","lastAttempt":true}],
     });
 
-    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &policy,
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // The statement keeps its sentence and its section, marked by its last
     // reading; the example's own cut is made, and takes nothing the lesson
@@ -2071,7 +2149,13 @@ async fn an_examples_own_cut_that_would_take_the_first_explanation_still_ends_th
         "exampleClaims": [{"unit":0,"claimId":"example","lastAttempt":true}],
     });
 
-    repair::last_attempts(&policy, &mut context, &mut ledger).await?;
+    repair::last_attempts(
+        &policy,
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // An example is never marked: its section goes with it, which is the
     // first explanation, and the statement's cut is made as before.

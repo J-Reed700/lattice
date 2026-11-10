@@ -2,9 +2,8 @@
 //! sentence that is a whole sentence of an excerpt, or a quotable span of one,
 //! stands only in double quotation marks, whether or not the lesson cites it.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::copied_wording::{excerpt_findings, excerpt_wording};
+use super::copied_wording::{findings, Wording};
 use super::text_edits::apply_in;
-use crate::generation::Counts;
 use crate::review_findings::{FindingKind, FindingSite};
 use serde_json::{json, Value};
 
@@ -12,8 +11,8 @@ const SENTENCE: &str = "The widget keeps every reading in a ledger until the nex
 const EXCERPT: &str =
     "The widget keeps every reading in a ledger until the next sweep. A sweep clears the ledger and starts a new one.";
 
-fn wording() -> Vec<String> {
-    excerpt_wording([EXCERPT])
+fn wording() -> Wording {
+    Wording::of_excerpts([EXCERPT])
 }
 
 fn lesson(body: &str) -> Value {
@@ -22,12 +21,12 @@ fn lesson(body: &str) -> Value {
 }
 
 fn copies(body: &str) -> usize {
-    excerpt_findings(&lesson(body), &wording()).len()
+    findings(&lesson(body), &wording()).len()
 }
 
 #[test]
 fn a_sentence_copied_from_an_excerpt_with_no_quote_and_no_citation_is_a_finding() {
-    let found = excerpt_findings(&lesson(SENTENCE), &wording());
+    let found = findings(&lesson(SENTENCE), &wording());
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].kind, FindingKind::Teaching);
     assert_eq!(found[0].key().site, FindingSite::Section(0));
@@ -76,12 +75,14 @@ fn ordinary_phrasing_on_the_same_topic_is_no_finding() {
 
 #[test]
 fn the_review_and_the_draft_check_find_the_copy_once() {
-    let schema = crate::generation::lesson_schema(2);
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Kept, 2);
     let teaching = |lesson: &Value| {
         crate::teaching::structural_findings(
-            &schema,
+            crate::teaching::ReviewSchema::Lesson(crate::lessons::shape::LessonShape::new(
+                &schema, policy,
+            )),
             &lesson.to_string(),
-            Counts::Spent,
             &wording(),
         )
         .unwrap()
@@ -126,8 +127,8 @@ fn a_repair_edit_in_the_lessons_own_words_is_applied() {
 
 #[test]
 fn an_excerpt_too_short_to_be_quoted_makes_no_sentence_a_copy() {
-    let short = excerpt_wording(["Sweeps clear it."]);
-    let found = excerpt_findings(
+    let short = Wording::of_excerpts(["Sweeps clear it."]);
+    let found = findings(
         &lesson("Then sweeps clear it before the next reading."),
         &short,
     );

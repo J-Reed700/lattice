@@ -22,6 +22,7 @@ pub mod review_findings;
 pub(crate) mod same_text;
 #[cfg(test)]
 mod sentence_identity_tests;
+pub(crate) mod shape;
 pub(crate) mod structured_call;
 pub mod teaching;
 pub mod teaching_review;

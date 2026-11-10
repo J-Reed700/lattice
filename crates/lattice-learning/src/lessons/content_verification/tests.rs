@@ -74,7 +74,9 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
         assert_schema_request_holds_the_shape(request, schema);
     }
     let (system, user) = fixture_messages(request);
-    if system.starts_with(crate::lessons::teaching::contract::SYSTEM) {
+    if system.starts_with(crate::lessons::teaching::contract::SYSTEM)
+        || system.starts_with(crate::lessons::teaching::contract::confirm::SYSTEM)
+    {
         return Vec::new();
     }
     if let Some(batch) = fixture_batch(user) {
@@ -102,6 +104,13 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
 pub(crate) const CONTRACT_NOTHING: &str =
     "{\"planned\":[],\"usedBeforeTaught\":[],\"contradictions\":[],\"unseen\":[]}";
 
+/// What a fixture model answers a confirming read of the lesson's check with:
+/// not taught, and an item belongs in no part in particular.
+pub(crate) const CONFIRM_PLANNED_NOTHING: &str =
+    "{\"taught\":false,\"quote\":\"\",\"belongs\":\"\"}";
+pub(crate) const CONFIRM_USE_NOTHING: &str =
+    "{\"taught\":false,\"where\":\"thisLesson\",\"quote\":\"\"}";
+
 /// The fixture's replies to [`fixture_prompts`], answered in the typed
 /// protocol: one batched reply, a check's verdict as its last line, or the
 /// reply text unchanged.
@@ -113,6 +122,15 @@ pub(crate) fn fixture_completion(
         return CompletionResponse::from_text(crate::lessons::structured_call::FIXTURE_DRAFT);
     }
     let (system, user) = fixture_messages(request);
+    if system.starts_with(crate::lessons::teaching::contract::confirm::SYSTEM) {
+        return CompletionResponse::from_text(
+            if user.contains(crate::lessons::teaching::contract::confirm::PLANNED_TASK) {
+                CONFIRM_PLANNED_NOTHING
+            } else {
+                CONFIRM_USE_NOTHING
+            },
+        );
+    }
     if system.starts_with(crate::lessons::teaching::contract::SYSTEM) {
         let text = replies.concat();
         return CompletionResponse::from_text(if text.is_empty() {
@@ -1091,7 +1109,8 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
             has_pending_repair(
                 &model,
                 "{}",
-                &json!({}),
+                &crate::lessons::shape::FixedSchema(json!({})),
+                0,
                 &saved,
                 &ReferenceCollection::lexical(&sources)?
             )

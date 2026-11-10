@@ -67,7 +67,7 @@ fn a_citation_sentence_may_equal_a_sentence_the_lesson_has() {
         &original,
         &json!({"edits":[body, cite]}).to_string(),
         &original,
-        &[],
+        &Default::default(),
     )
     .unwrap();
     assert_eq!(
@@ -90,7 +90,7 @@ fn a_citation_quote_may_equal_a_sentence_the_lesson_has() {
         &original,
         &json!({"edits":[body, cite]}).to_string(),
         &original,
-        &[],
+        &Default::default(),
     )
     .unwrap();
     assert_eq!(
@@ -517,5 +517,25 @@ fn a_repair_is_told_not_to_come_between_a_sentence_and_one_that_refers_back_to_i
             "never between a sentence and the next one when the next one refers back to it"
         ),
         "{INSTRUCTIONS}"
+    );
+}
+
+#[test]
+fn an_edit_adding_a_sentence_too_short_to_quote_that_the_lesson_has_is_applied() {
+    let original = json!({"blocks":[
+        {"kind":"explanation","body":"The first section opens here. No."},
+        {"kind":"explanation","body":"The second section opens here. Yes."}
+    ],"questions":[]});
+    let edit = json!({"path":"/blocks/1/body","before":"Yes.","after":"No."});
+    let repaired = apply_in(
+        &original,
+        &json!({"edits":[edit]}).to_string(),
+        &original,
+        &Default::default(),
+    );
+    assert!(repaired.is_ok(), "{repaired:?}");
+    assert_eq!(
+        repaired.unwrap()["blocks"][1]["body"],
+        "The second section opens here. No."
     );
 }
