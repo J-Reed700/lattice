@@ -7,7 +7,7 @@ use super::text_edits::citable_texts;
 use crate::generation::{long_enough_quote, teaching_sentences};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule};
-use lattice_core::shared::text::sentences;
+use lattice_core::shared::text::{code_spans, sentences};
 use serde_json::Value;
 
 /// Source wording as folded runs of words, each long enough to be quoted: a
@@ -128,23 +128,44 @@ pub(crate) struct Copied {
     pub words: String,
 }
 
-/// The words of `sentence` that copy a run of the part's or the lesson's
+/// The prose of `sentence` between its inline code spans: a command in code
+/// formatting is literal, not the lesson's wording.
+fn prose_stretches(sentence: &str) -> Vec<&str> {
+    let mut stretches = Vec::new();
+    let mut from = 0;
+    for span in code_spans(sentence) {
+        stretches.extend(sentence.get(from..span.start));
+        from = span.end;
+    }
+    stretches.extend(sentence.get(from..));
+    stretches
+}
+
+/// The words of `stretch` that copy a run of the part's or the lesson's
 /// wording outside double quotation marks: it holds a run of it, or is a span
 /// of one long enough to be quoted.
-fn copied_words(sentence: &str, part: &Wording, lesson: &Wording) -> Option<String> {
-    let own = words(&outside_quotes(sentence));
+fn copied_stretch(stretch: &str, part: &Wording, lesson: &Wording) -> Option<String> {
+    let own = words(&outside_quotes(stretch));
     part.0.iter().chain(&lesson.0).find_map(|run| {
         if holds(&own, run) {
-            let exact = find(sentence, &run.join(" "))
-                .and_then(|(from, to)| sentence.get(from..to))
-                .unwrap_or(sentence);
+            let exact = find(stretch, &run.join(" "))
+                .and_then(|(from, to)| stretch.get(from..to))
+                .unwrap_or(stretch);
             Some(exact.to_owned())
         } else if holds(run, &own) && long_enough_quote(&own.join(" ")) {
-            Some(sentence.to_owned())
+            Some(stretch.trim().to_owned())
         } else {
             None
         }
     })
+}
+
+/// The words of `sentence` that copy the wording outside double quotation
+/// marks and inline code: those of its first prose stretch that does.
+fn copied_words(sentence: &str, part: &Wording, lesson: &Wording) -> Option<String> {
+    prose_stretches(sentence)
+        .into_iter()
+        .find_map(|stretch| copied_stretch(stretch, part, lesson))
 }
 
 /// The teaching sentences of `text` that copy the wording of the part or the
