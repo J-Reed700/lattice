@@ -19,6 +19,7 @@ fn report(site: Option<FindingSite>, note: &str, passage: Option<&str>) -> Repor
         summary: format!("About: {note}"),
         passage: passage.map(str::to_owned),
         passage_id: None,
+        continues: None,
     }
 }
 
@@ -388,4 +389,168 @@ fn a_stored_finding_follows_its_passage_when_its_section_changes_around_it() {
     );
     assert!(fresh.is_empty());
     assert_eq!(standing.open()[0].passage.as_deref(), Some(FIRST));
+}
+
+/// A report with another passage than the open finding's, which says it continues that finding.
+fn continuing(finding: &ReviewFinding, note: &str, passage: Option<&str>) -> Reported {
+    Reported {
+        passage_id: Some("section-0-passage-1".to_owned()),
+        continues: Some(finding.id()),
+        ..report(Some(FindingSite::Section(0)), note, passage)
+    }
+}
+
+#[test]
+fn a_report_that_continues_an_open_finding_is_that_finding_whatever_passage_it_chose() {
+    let candidate = lesson(&[FIRST, SECOND]);
+    let (mut standing, fresh) = reviewed(
+        &candidate,
+        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
+    );
+    let changed = lesson(&["The first part states one plain fact. More.", SECOND]);
+    let (_, new) = answer(
+        &mut standing,
+        &changed,
+        vec![verdict(&fresh[0], true, "")],
+        vec![continuing(&fresh[0], "Wrong, in new words.", None)],
+    );
+    assert!(new.is_empty());
+    assert_eq!(standing.open().len(), 1);
+    assert_eq!(standing.open()[0].id(), fresh[0].id());
+}
+
+#[test]
+fn a_report_that_continues_a_finding_the_verdict_called_resolved_replaces_what_the_finding_says() {
+    let candidate = lesson(&[FIRST, SECOND]);
+    let (mut standing, fresh) = reviewed(
+        &candidate,
+        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
+    );
+    let changed = lesson(&["The first part states one plain fact. More.", SECOND]);
+    let (_, new) = answer(
+        &mut standing,
+        &changed,
+        vec![verdict(&fresh[0], false, "It was fixed.")],
+        vec![continuing(&fresh[0], "Still wrong.", Some("More."))],
+    );
+    assert!(new.is_empty());
+    assert_eq!(standing.open().len(), 1);
+    let open = &standing.open()[0];
+    assert_eq!(open.id(), fresh[0].id());
+    assert_eq!(open.note, "Still wrong.");
+    assert_eq!(open.summary, "About: Still wrong.");
+    assert_eq!(open.site, Some(FindingSite::Section(0)));
+    assert_eq!(open.passage.as_deref(), Some("More."));
+}
+
+#[test]
+fn a_continued_finding_follows_the_report_s_passage() {
+    let first = "The first part states one plain fact.\n\nSecond paragraph here.";
+    let candidate = lesson(&[first, SECOND]);
+    let (mut standing, fresh) = reviewed(
+        &candidate,
+        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
+    );
+    let changed = lesson(&[
+        "The first part states one plain fact.\n\nSecond paragraph here, now.",
+        SECOND,
+    ]);
+    answer(
+        &mut standing,
+        &changed,
+        vec![verdict(&fresh[0], true, "")],
+        vec![continuing(
+            &fresh[0],
+            "Wrong, further down.",
+            Some("Second paragraph here, now."),
+        )],
+    );
+    let moved = lesson(&[
+        "Second paragraph here, now.\n\nThe first part states one plain fact.",
+        SECOND,
+    ]);
+    let asked = standing.round(&moved).unwrap().asked;
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].passage_id.as_deref(), Some("section-0-passage-0"));
+}
+
+#[test]
+fn two_reports_that_continue_one_finding_leave_one_finding_and_no_new_number() {
+    let candidate = lesson(&[FIRST, SECOND]);
+    let (mut standing, fresh) = reviewed(
+        &candidate,
+        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
+    );
+    let changed = lesson(&["The first part states one plain fact. More.", SECOND]);
+    let (_, new) = answer(
+        &mut standing,
+        &changed,
+        vec![verdict(&fresh[0], true, "")],
+        vec![
+            continuing(&fresh[0], "First words.", None),
+            continuing(&fresh[0], "Second words.", None),
+        ],
+    );
+    assert!(new.is_empty());
+    assert_eq!(standing.open().len(), 1);
+    assert_eq!(standing.open()[0].id(), fresh[0].id());
+    assert_eq!(standing.open()[0].note, "First words.");
+    let (_, next) = answer(
+        &mut standing,
+        &lesson(&["Changed again.", SECOND]),
+        vec![verdict(&fresh[0], true, "")],
+        vec![report(None, "Another.", None)],
+    );
+    assert_eq!(next[0].id().as_str(), "reviewer/2");
+}
+
+#[test]
+fn a_report_that_continues_an_id_that_is_not_open_is_raised_as_new() {
+    let candidate = lesson(&[FIRST, SECOND]);
+    let (mut standing, fresh) = reviewed(
+        &candidate,
+        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
+    );
+    let gone = ReviewFinding::reviewer(7, Some(FindingSite::Section(0)), "x");
+    let changed = lesson(&["The first part states one plain fact. More.", SECOND]);
+    let (_, new) = answer(
+        &mut standing,
+        &changed,
+        vec![verdict(&fresh[0], true, "")],
+        vec![continuing(&gone, "Elsewhere.", None)],
+    );
+    assert_eq!(new.len(), 1);
+    assert_eq!(new[0].id().as_str(), "reviewer/2");
+    assert_eq!(standing.open().len(), 1);
+}
+
+#[test]
+fn a_site_less_report_that_continues_a_finding_changes_what_it_says_and_not_where_it_is() {
+    let candidate = lesson(&[FIRST, SECOND]);
+    let (mut standing, fresh) = reviewed(
+        &candidate,
+        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
+    );
+    let changed = lesson(&["The first part states one plain fact. More.", SECOND]);
+    let issue = Reported {
+        continues: Some(fresh[0].id()),
+        ..report(None, "Wrong, in an issue.", None)
+    };
+    let (_, new) = answer(
+        &mut standing,
+        &changed,
+        vec![verdict(&fresh[0], false, "It was fixed.")],
+        vec![issue],
+    );
+    assert!(new.is_empty());
+    assert_eq!(standing.open().len(), 1);
+    let open = &standing.open()[0];
+    assert_eq!(open.id(), fresh[0].id());
+    assert_eq!(open.site, Some(FindingSite::Section(0)));
+    assert_eq!(open.note, "Wrong, in an issue.");
+    assert_eq!(open.summary, "About: Wrong, in an issue.");
+    assert_eq!(
+        open.passage.as_deref(),
+        Some("The first part states one plain fact. More.")
+    );
 }

@@ -1033,6 +1033,18 @@ fn choices_that_differ_only_by_letter_case_are_not_a_finding() {
 
 fn choices_note(options: Value) -> String {
     let mut candidate = lesson();
+    let count = options.as_array().map_or(0, Vec::len);
+    candidate["questions"][2]["rationales"] = Value::Array(
+        (0..count)
+            .map(|at| {
+                json!(if at == 0 {
+                    ""
+                } else {
+                    "Why this choice fails."
+                })
+            })
+            .collect(),
+    );
     candidate["questions"][2]["options"] = options;
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1, "{findings:?}");

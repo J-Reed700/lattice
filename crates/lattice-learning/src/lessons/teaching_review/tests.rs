@@ -745,3 +745,86 @@ async fn the_correction_lists_each_retained_issue_by_part_and_note() {
         ])
     );
 }
+
+#[test]
+fn a_schema_that_asks_about_open_findings_has_each_report_say_which_it_continues() {
+    let (_, passages) = review_candidate(&candidate());
+    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"]);
+    let choices = json!(["reviewer/1", "reviewer/2", "none"]);
+    assert_eq!(
+        with.pointer("/properties/blockChecks/items/properties/continues/enum"),
+        Some(&choices)
+    );
+    assert!(with["properties"]["blockChecks"]["items"]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("continues")));
+    assert_eq!(
+        with.pointer("/properties/issues/items/properties/continues/enum"),
+        Some(&choices)
+    );
+    assert_eq!(
+        with.pointer("/properties/issues/items/properties/note/minLength"),
+        Some(&json!(1))
+    );
+}
+
+#[test]
+fn a_schema_that_asks_about_nothing_is_the_one_it_was_before_reports_could_continue() {
+    let (_, passages) = review_candidate(&candidate());
+    let expected = json!({"type":"object","additionalProperties":false,"required":["issues","blockChecks"],"properties":{
+        "issues":{"type":"array","items":{"type":"string","minLength":1}},
+        "blockChecks":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["sectionId","passageId","finding","hasDefect"],"properties":{
+            "sectionId":{"type":"string","enum":["section-0"]},
+            "passageId":{"type":"string","enum":passages[0]},
+            "finding":{"type":"string","minLength":1},
+            "hasDefect":{"type":"boolean"}}}}}});
+    assert_eq!(schema(&[0], &passages, &[]), expected);
+}
+
+#[tokio::test]
+async fn a_report_carries_the_open_finding_it_continues_and_none_for_an_id_nobody_asked_about(
+) -> Result<()> {
+    let asked = [asked(1, 0)];
+    let mut flagged = check(0);
+    flagged["hasDefect"] = json!(true);
+    flagged["continues"] = json!("reviewer/1");
+    let model = model(vec![json!({
+        "openFindings":[verdict_entry(1, "present", "")],
+        "issues":[
+            {"note":"The same defect in new words.","continues":"reviewer/1"},
+            {"note":"A different defect.","continues":"none"},
+            {"note":"A stray id.","continues":"reviewer/9"}
+        ],
+        "blockChecks":fixture_checks(vec![flagged])
+    })]);
+    let judged = super::review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &candidate(),
+        Scope {
+            sections: Some(&[0]),
+            asked: Some(&asked),
+            known: &[],
+        },
+        None,
+        LengthRule::Fail,
+    )
+    .await?;
+    let continues: Vec<_> = judged
+        .reported
+        .iter()
+        .map(|report| report.continues.clone())
+        .collect();
+    assert_eq!(
+        continues,
+        [
+            Some(asked[0].id.clone()),
+            None,
+            None,
+            Some(asked[0].id.clone())
+        ]
+    );
+    Ok(())
+}

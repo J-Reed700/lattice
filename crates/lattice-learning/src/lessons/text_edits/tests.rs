@@ -768,3 +768,58 @@ fn the_schema_for_findings_names_the_finding_of_every_change() {
         json!(["f1", "f2"])
     );
 }
+
+#[test]
+fn a_group_refused_only_for_overlapping_another_findings_edit_is_deferred() -> Result<()> {
+    let done = apply_named(
+        &two_sections(),
+        json!({"edits":[
+            {"finding":"f1","path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."},
+            {"finding":"f2","path":"/blocks/0/body","before":"is second.","after":"is last."}
+        ]}),
+        &anything,
+    )?;
+    assert!(done.named["f2"].deferred);
+    assert!(done.named["f2"].applied.is_empty());
+    assert!(!done.named["f1"].deferred);
+    assert!(!done.named["f1"].applied.is_empty());
+    Ok(())
+}
+
+#[test]
+fn a_group_refused_for_any_other_reason_is_not_deferred() -> Result<()> {
+    let done = apply_named(
+        &two_sections(),
+        json!({"edits":[
+            {"finding":"f1","path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."},
+            {"finding":"f2","path":"/blocks/1/body","before":"Delta ends it.","after":"Delta closes it."}
+        ]}),
+        &only_f1_in_block_0,
+    )?;
+    assert!(!done.named["f2"].deferred);
+    assert!(!done.named["f1"].deferred);
+    Ok(())
+}
+
+#[test]
+fn a_finding_refused_for_overlap_and_for_another_reason_is_not_deferred() -> Result<()> {
+    let not_f2_in_block_1 = |finding: Option<&str>, part: &str| {
+        if finding == Some("f2") && part == "/blocks/1" {
+            Err("is outside its finding's part.".to_owned())
+        } else {
+            Ok(())
+        }
+    };
+    let done = apply_named(
+        &two_sections(),
+        json!({"edits":[
+            {"finding":"f1","path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."},
+            {"finding":"f2","path":"/blocks/0/body","before":"is second.","after":"is last."},
+            {"finding":"f2","path":"/blocks/1/body","before":"Delta ends it.","after":"Delta closes it."}
+        ]}),
+        &not_f2_in_block_1,
+    )?;
+    assert_eq!(done.named["f2"].problems.len(), 2);
+    assert!(!done.named["f2"].deferred);
+    Ok(())
+}

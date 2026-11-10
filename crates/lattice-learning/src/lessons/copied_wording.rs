@@ -2,7 +2,7 @@
 //! fact in its own sentence; the words of the source are the citation's
 //! quote. A teaching sentence that holds a source's wording outside
 //! quotation marks, or sits inside one, has copied the source.
-use super::same_text::fold;
+use super::same_text::{find, fold};
 use super::text_edits::citable_texts;
 use crate::generation::{long_enough_quote, teaching_sentences};
 use crate::reference_collection::ReferenceCollection;
@@ -119,20 +119,45 @@ fn holds(hay: &[String], needle: &[String]) -> bool {
     !needle.is_empty() && hay.windows(needle.len()).any(|run| run == needle)
 }
 
+/// A teaching sentence that copies a source, and the words of it that do.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Copied {
+    pub sentence: String,
+    /// The words of the sentence that match the source; the whole sentence
+    /// when they cannot be located in it.
+    pub words: String,
+}
+
+/// The words of `sentence` that copy a run of the part's or the lesson's
+/// wording outside double quotation marks: it holds a run of it, or is a span
+/// of one long enough to be quoted.
+fn copied_words(sentence: &str, part: &Wording, lesson: &Wording) -> Option<String> {
+    let own = words(&outside_quotes(sentence));
+    part.0.iter().chain(&lesson.0).find_map(|run| {
+        if holds(&own, run) {
+            let exact = find(sentence, &run.join(" "))
+                .and_then(|(from, to)| sentence.get(from..to))
+                .unwrap_or(sentence);
+            Some(exact.to_owned())
+        } else if holds(run, &own) && long_enough_quote(&own.join(" ")) {
+            Some(sentence.to_owned())
+        } else {
+            None
+        }
+    })
+}
+
 /// The teaching sentences of `text` that copy the wording of the part or the
-/// lesson outside double quotation marks: they hold a run of it, or are a
-/// span of one long enough to be quoted.
-pub(crate) fn copies(text: &str, part: &Wording, lesson: &Wording) -> Vec<String> {
+/// lesson outside double quotation marks.
+pub(crate) fn copies(text: &str, part: &Wording, lesson: &Wording) -> Vec<Copied> {
     if part.0.is_empty() && lesson.0.is_empty() {
         return Vec::new();
     }
     teaching_sentences(text)
         .into_iter()
-        .filter(|sentence| {
-            let own = words(&outside_quotes(sentence));
-            part.0.iter().chain(&lesson.0).any(|run| {
-                holds(&own, run) || (holds(run, &own) && long_enough_quote(&own.join(" ")))
-            })
+        .filter_map(|sentence| {
+            let words = copied_words(&sentence, part, lesson)?;
+            Some(Copied { sentence, words })
         })
         .collect()
 }
@@ -149,11 +174,11 @@ pub(crate) fn gained(
     after: &str,
     part: &Wording,
     lesson: &Wording,
-) -> Option<String> {
+) -> Option<Copied> {
     let had = copies(before, part, lesson);
     copies(after, part, lesson)
         .into_iter()
-        .find(|sentence| !had.contains(sentence))
+        .find(|copied| !had.iter().any(|known| known.sentence == copied.sentence))
 }
 
 /// What a repair is told about a sentence that copies a source.
@@ -180,14 +205,14 @@ pub(crate) fn findings(candidate: &Value, wording: &Wording) -> Vec<ReviewFindin
                 )
             };
             for text in citable_texts(part, question) {
-                for sentence in copies(text, &quotes, wording) {
+                for Copied { sentence, words } in copies(text, &quotes, wording) {
                     found.push(
                         ReviewFinding::rule_about(
                             Rule::CopiedWording,
                             FindingKind::Teaching,
                             site,
                             &sentence,
-                            format!("{label} copies the source's wording in \"{sentence}\" outside quotation marks. {SAY_IT_YOURSELF}"),
+                            format!("{label} copies the source's wording in \"{sentence}\" outside quotation marks: the source's words are \"{words}\". {SAY_IT_YOURSELF}"),
                         )
                         .with_summary(format!("{plain} copies a source's wording without quotation marks: \u{201c}{sentence}\u{201d}"))
                         .with_passage(&sentence),

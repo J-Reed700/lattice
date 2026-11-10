@@ -3,7 +3,7 @@ use super::copied_wording::{self, Wording};
 use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::shape::LessonShape;
-use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding, Rule};
+use crate::review_findings::{plain_part, FindingKind, FindingSite, Remedy, ReviewFinding, Rule};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -121,7 +121,9 @@ fn json_or_text(raw: &str) -> Value {
 
 pub(crate) const LESSON_REPAIR_SYSTEM: &str = "Teach a rigorous lesson.";
 
-pub const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts are a partial selection, not the complete saved evidence collection. Subsequent research and factual repairs can introduce details supported by other saved references. Do not report a teaching defect solely because a detail is absent from these original excerpts. Evidence completeness is checked separately, for every extracted factual claim, against the current saved collection before publication. Still reject concrete factual or mathematical errors, internal contradictions, and citations that misrepresent their attached source. Missing evidence is not proof that a claim is false, and this teaching review is not factual publication approval.";
+pub const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts are a partial selection, not the complete saved evidence collection. Whether each statement is true and supported, and whether each citation states its sentence, is checked separately against the current saved collection before publication: do not report it here, and do not report a detail as a defect because it is absent from these excerpts.";
+/// What the reviewer of quiz material is told of the excerpts; no separate fact check stands behind it.
+pub const MATERIAL_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts are a partial selection, not the complete saved evidence collection. Subsequent research and factual repairs can introduce details supported by other saved references. Do not report a teaching defect solely because a detail is absent from these original excerpts. Evidence completeness is checked separately, for every extracted factual claim, against the current saved collection before publication. Still reject concrete factual or mathematical errors, internal contradictions, and citations that misrepresent their attached source. Missing evidence is not proof that a claim is false, and this teaching review is not factual publication approval.";
 
 /// Deterministic findings: the schema, each section's body and rubric,
 /// and, under a lesson's schema, the lesson's own rules. Nothing is
@@ -259,17 +261,15 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
         .collect()
 }
 
-/// The structure findings a repair of the whole material answers: all but a
-/// missing citation, which the edits of the repair after the review can
-/// append (claim classes design §3.5).
+/// The structure findings only a rewrite of the whole material can answer.
 fn whole_repairs(structure: &[ReviewFinding]) -> impl Iterator<Item = &ReviewFinding> {
     structure
         .iter()
-        .filter(|finding| finding.kind != FindingKind::Quotation)
+        .filter(|finding| finding.remedy() == Remedy::Whole)
 }
 
-/// Whether the structure findings hold up the content review. Structure the
-/// machine stopped repairing no longer does.
+/// Whether a rewrite of the whole material still has structure to answer, which
+/// holds up the content review.
 fn holds_up_review(structure: &[ReviewFinding], passes: Option<&Passes>) -> bool {
     whole_repairs(structure).any(|finding| passes.is_none_or(|passes| passes.repairable(finding)))
 }
