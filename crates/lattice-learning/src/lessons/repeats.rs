@@ -216,12 +216,13 @@ pub(crate) fn counts_of(values: &[&Value]) -> Counts {
 }
 
 /// The first sentence the text `after` has more of than `before` that
-/// `lesson` already has.
+/// `lesson` already has, as `after` writes it.
 pub(crate) fn gained_repeat(before: &str, after: &str, lesson: &Counts) -> Option<String> {
     let (had, has) = (counts_of_text(before), counts_of_text(after));
-    keys(after)
-        .into_iter()
-        .find(|sentence| has.get(sentence) > had.get(sentence) && lesson.contains_key(sentence))
+    comparable(after).into_iter().find(|sentence| {
+        let sentence = key(sentence);
+        has.get(&sentence) > had.get(&sentence) && lesson.contains_key(&sentence)
+    })
 }
 
 /// The compared sentences of each text in `value` by its path, laid out as

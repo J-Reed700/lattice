@@ -41,7 +41,7 @@ fn statement_in(text: &str) -> Option<String> {
         let rest = &text[start..];
         return Some(rest[..=rest.find('.').unwrap()].to_owned());
     }
-    [BAD, GOOD]
+    [BAD, GOOD, FIXED]
         .into_iter()
         .find(|statement| text.contains(*statement))
         .map(str::to_owned)
@@ -174,7 +174,7 @@ impl Figures {
                 ),
             };
             let replacement = if self.repair_to_good {
-                GOOD.to_owned()
+                FIXED.to_owned()
             } else {
                 figure(repair)
             };
@@ -853,7 +853,7 @@ async fn a_claim_confirmed_while_its_repair_was_interrupted_is_not_sent_on_resum
         "the confirmed claim's repair is dropped"
     );
     let lesson: Value = serde_json::from_str(&raw)?;
-    assert_eq!(lesson["blocks"][0]["body"], section(GOOD));
+    assert_eq!(lesson["blocks"][0]["body"], section(FIXED));
     assert_eq!(lesson["blocks"][1]["body"], section(BAD));
     assert!(report.issues.is_empty(), "{:?}", report.issues);
     let confirmed = report.findings.iter().find(|f| f.unit == 1).unwrap();

@@ -3,7 +3,7 @@
 //! in the lesson unchanged, the item is not asked about again, so a later
 //! pass cannot unsay it and spend a repair.
 use super::{Hit, Item, Part};
-use lattice_core::shared::text::segmentation::sentences;
+use crate::lessons::same_text;
 use std::collections::BTreeMap;
 
 /// The sentences each taught item was found in, by item id.
@@ -35,12 +35,12 @@ impl Receipts {
         let Some(text) = hit.part.texts.get(hit.found.text) else {
             return;
         };
-        let lying_in: Vec<String> = sentences(text)
-            .into_iter()
-            .filter(|(start, end)| *start < hit.found.end && hit.found.start < *end)
-            .filter_map(|(start, end)| text.get(start..end))
-            .map(str::to_owned)
-            .collect();
+        let lying_in: Vec<String> =
+            same_text::sentences_over(text, (hit.found.start, hit.found.end))
+                .into_iter()
+                .filter_map(|(start, end)| text.get(start..end))
+                .map(str::to_owned)
+                .collect();
         if !lying_in.is_empty() {
             self.sentences.insert(item.id.clone(), lying_in);
         }

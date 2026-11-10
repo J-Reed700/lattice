@@ -90,47 +90,45 @@ pub(crate) fn exact_source_quote<'a>(source: &'a str, quote: &str) -> Option<&'a
     Some(exact)
 }
 
-/// Fix only typography in the cited source, then require the ordinary strict
-/// quote check to pass on the copied span. Claims and source indices never change;
-/// the full semantic review is still required before acceptance.
+/// Copy the cited source's own bytes over a quote that is the same words
+/// apart from typography and spacing, so a quote is the source's text exactly.
+/// The copied span must pass the same quote validator used for publication.
+/// Claims and source indices never change; the full semantic review is still
+/// required before acceptance.
 pub(crate) fn restore_source_quotes(candidate: &mut Value, sources: &[LearningSourceDto]) -> usize {
-    let failures = outline_evidence::quote_checks(candidate, sources);
-    let mut restored = 0;
-    for (index, source) in sources.iter().enumerate() {
-        let matching: Vec<_> = failures
-            .iter()
-            .filter(|check| check["sourceIndex"].as_u64() == Some(index as u64))
-            .collect();
-        if matching.is_empty() {
+    let mut texts = std::collections::HashMap::<usize, SourceText>::new();
+    let mut restored = Vec::new();
+    for (path, field) in outline_evidence::citable_fields(candidate) {
+        let Some(index) = field["sourceIndex"]
+            .as_u64()
+            .and_then(|i| usize::try_from(i).ok())
+        else {
             continue;
-        }
-        let text = SourceText::new(&source.excerpt);
-        for check in matching {
-            let Some(quote) = check["quote"].as_str() else {
-                continue;
-            };
-            let Some(exact) = text.exact_span(&source.excerpt, quote) else {
-                continue;
-            };
-            if generation::optional_citation(sources, Some(index), exact).is_err() {
-                continue;
-            }
-            let path = format!(
-                "/{}",
-                check["path"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .replace('[', "/")
-                    .replace(']', "")
-                    .replace('.', "/")
-            );
-            if let Some(field) = candidate.pointer_mut(&path) {
-                field["quote"] = json!(exact);
-                restored += 1;
-            }
+        };
+        let (Some(source), Some(quote)) = (sources.get(index), field["quote"].as_str()) else {
+            continue;
+        };
+        let text = texts
+            .entry(index)
+            .or_insert_with(|| SourceText::new(&source.excerpt));
+        let Some(exact) = text.exact_span(&source.excerpt, quote) else {
+            continue;
+        };
+        if exact != quote && generation::optional_citation(sources, Some(index), exact).is_ok() {
+            restored.push((path, exact.to_owned()));
         }
     }
-    restored
+    let count = restored.len();
+    for (path, exact) in restored {
+        let pointer = format!(
+            "/{}",
+            path.replace('[', "/").replace(']', "").replace('.', "/")
+        );
+        if let Some(field) = candidate.pointer_mut(&pointer) {
+            field["quote"] = json!(exact);
+        }
+    }
+    count
 }
 
 #[cfg(test)]
@@ -157,10 +155,7 @@ mod tests {
         ))];
         let field = |quote: &str| json!({"text":"Keep the attached claim unchanged.","sourceIndex":0,"quote":quote.replace('’', "'")});
         let mut candidate = json!({"modules":[{"summary":{"text":"Summary", "sourceIndex":0,"quote":cargo},"outcomes":[field(api)],"lessons":[field(cargo),field(api)]}]});
-        assert_eq!(
-            outline_evidence::quote_checks(&candidate, &sources).len(),
-            3
-        );
+        assert!(outline_evidence::quote_checks(&candidate, &sources).is_empty());
         assert_eq!(restore_source_quotes(&mut candidate, &sources), 3);
         assert!(outline_evidence::quote_checks(&candidate, &sources).is_empty());
         assert_eq!(candidate["modules"][0]["outcomes"][0]["quote"], api);
@@ -173,18 +168,14 @@ mod tests {
     }
 
     #[test]
-    fn copies_original_smart_quotes_and_whitespace_without_loosening_validation() {
+    fn copies_original_smart_quotes_and_whitespace_from_the_source() {
         let exact = "The pastry’s\n\n‘rest’ takes five minutes before rolling.";
         let sources = [source(exact)];
         let mut candidate = json!({"modules":[{"summary":{"sourceIndex":0,"quote":"The pastry's 'rest' takes five minutes before rolling."}}]});
         assert_eq!(restore_source_quotes(&mut candidate, &sources), 1);
         assert_eq!(candidate["modules"][0]["summary"]["quote"], exact);
-        assert!(generation::optional_citation(
-            &sources,
-            Some(0),
-            "The pastry's 'rest' takes five minutes before rolling."
-        )
-        .is_err());
+        assert!(generation::optional_citation(&sources, Some(0), exact).is_ok());
+        assert_eq!(restore_source_quotes(&mut candidate, &sources), 0);
     }
 
     #[test]

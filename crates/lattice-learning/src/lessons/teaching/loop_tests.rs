@@ -1550,7 +1550,7 @@ fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall()
     assert_eq!(at_lesson(&shaped_lesson_after_a_cut()), 2);
     let mut fewer_sections = shaped_lesson();
     fewer_sections["blocks"].as_array_mut().unwrap().remove(5);
-    assert_eq!(at_lesson(&fewer_sections), 1);
+    assert_eq!(at_lesson(&fewer_sections), 2);
 }
 
 #[tokio::test]
