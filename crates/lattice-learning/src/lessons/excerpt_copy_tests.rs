@@ -123,3 +123,13 @@ fn a_repair_edit_in_the_lessons_own_words_is_applied() {
         "Opening. The widget empties its ledger when it is swept."
     );
 }
+
+#[test]
+fn an_excerpt_too_short_to_be_quoted_makes_no_sentence_a_copy() {
+    let short = excerpt_wording(["Sweeps clear it."]);
+    let found = excerpt_findings(
+        &lesson("Then sweeps clear it before the next reading."),
+        &short,
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
