@@ -744,6 +744,36 @@ async fn a_flow_repair_that_rewrites_a_sentence_a_claim_stands_on_is_no_repair()
 }
 
 #[tokio::test]
+async fn a_flow_repair_that_leaves_the_section_no_lesson_leaves_it_as_cut() -> Result<()> {
+    let section = json!({"kind":"explanation","title":"Idea","body":AFTER_CUT,"rubric":[{"title":"One","description":"Observable.","dimension":"recall"}],"sourceIndex":null,"quote":"","citations":[]});
+    let taken = Taken {
+        label: "Idea".into(),
+        gaps: vec![Gap {
+            field: "rubric/0/dimension".into(),
+            before: Some("recall".into()),
+            after: None,
+        }],
+        answer_lost: false,
+    };
+    let llm = model(&[json!({"edits":[
+        {"path":"/blocks/0/rubric/0/dimension","before":"recall","after":"mastery"}
+    ]})]);
+
+    let repaired = mend_section(
+        &llm,
+        (&json!({"type":"object"}), 4_000),
+        (0, true, &section),
+        (&taken, &[]),
+        (&json!({}), &Default::default()),
+    )
+    .await?;
+
+    assert_eq!(repaired, None);
+    assert_eq!(llm.prompts.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_flow_repair_that_asks_for_nothing_changes_nothing() -> Result<()> {
     let (_, taken, protected) = mended_section();
     let llm = model(&[json!({"edits":[],"citations":[]})]);
