@@ -3,6 +3,7 @@
 pub(crate) mod call_plan;
 pub mod claim_reviews;
 pub mod content_verification;
+mod copied_wording;
 #[cfg(test)]
 pub(crate) mod course_generation_tests;
 pub mod course_plan;
@@ -16,6 +17,7 @@ pub mod reference_collection;
 pub(crate) mod repeats;
 pub mod review_evidence;
 pub mod review_findings;
+mod same_text;
 #[cfg(test)]
 mod sentence_identity_tests;
 pub(crate) mod structured_call;

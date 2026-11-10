@@ -1,7 +1,7 @@
 //! Instructional review and task-specific teaching contracts.
 use super::writer_excerpts::{self, WriterExcerpts};
 use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
-use crate::generation::Counts;
+use crate::generation::{Counts, MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::review_findings::{
     plain_part, FindingKey, FindingKind, FindingSite, ReviewFinding, SetAside,
 };
@@ -211,7 +211,7 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
                 FindingKind::Quotation,
                 Some(site),
                 format!(
-                    "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain at least 25 characters and five words.",
+                    "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain at least {MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words.",
                     check["error"].as_str().unwrap_or("it was not found.")
                 )
                 .chars()
@@ -532,7 +532,7 @@ async fn review_material(
             )));
         }
         let quote_issue = (!quote_checks.is_empty()).then(|| format!(
-            "Source quote validation found {} invalid citations. Fix every field listed in sourceQuoteChecks by copying a relevant exact source span, including its punctuation and formatting. Do not turn actual line breaks into literal backslash-n text. Quotes must contain at least 25 characters and five words. An approval cannot override this deterministic check.", quote_checks.len()
+            "Source quote validation found {} invalid citations. Fix every field listed in sourceQuoteChecks by copying a relevant exact source span, including its punctuation and formatting. Do not turn actual line breaks into literal backslash-n text. Quotes must contain at least {MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words. An approval cannot override this deterministic check.", quote_checks.len()
         ));
         let correctness_priority = if is_outline {
             "Check the stated curriculum plan and supporting citations. Do not invent lesson content to evaluate. Recheck original findings and any concrete errors introduced by the revision."
