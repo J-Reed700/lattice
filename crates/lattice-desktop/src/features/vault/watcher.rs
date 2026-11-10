@@ -13,7 +13,7 @@ use tokio::sync::Mutex;
 
 use lattice_core::application::contracts::notes::VaultNoteUpsert;
 use lattice_core::application::ports::{SettingsReaderPort, WorkspaceNotesPort};
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
 mod rescan;
@@ -71,13 +71,12 @@ fn filename_key(path: &Path) -> Option<String> {
 
 pub fn start_vault_watcher(
     settings_uc: Arc<impl SettingsReaderPort + 'static>,
-    db_pool: impl DatabaseHandle,
+    database: Database,
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
     background: Arc<BackgroundTasks>,
     rescan_lock: RescanLock,
 ) {
-    let db_pool = db_pool.database();
     let scope = Arc::clone(&background);
     scope.spawn(async move {
         let settings = match settings_uc.current_settings().await {
@@ -133,7 +132,7 @@ pub fn start_vault_watcher(
 
         run_watcher(
             vault_root,
-            db_pool,
+            database,
             app_handle,
             suppression,
             background,
@@ -145,7 +144,7 @@ pub fn start_vault_watcher(
 
 async fn run_watcher(
     vault_root: PathBuf,
-    db_pool: Database,
+    database: Database,
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
     background: Arc<BackgroundTasks>,
@@ -237,7 +236,7 @@ async fn run_watcher(
         // are no detached path tasks and the pending set has a hard bound.
         if overflow.swap(false, Ordering::AcqRel) {
             if let Err(error) = rescan_vault(
-                db_pool.clone(),
+                database.clone(),
                 vault_root.clone(),
                 suppression.clone(),
                 &rescan_lock,
@@ -254,7 +253,7 @@ async fn run_watcher(
                 break;
             }
             if !suppression.was_just_written(&path).await {
-                import_one(&path, &db_pool, &app_handle).await;
+                import_one(&path, &database, &app_handle).await;
             }
         }
     }
@@ -284,7 +283,7 @@ async fn read_note(path: &Path) -> std::io::Result<String> {
 /// not necessarily the file stem: a note renamed in Finder keeps its id.
 pub(crate) async fn import_one(
     path: &Path,
-    db_pool: &impl DatabaseHandle,
+    database: &Database,
     app_handle: &tauri::AppHandle,
 ) -> Option<String> {
     let contents = match read_note(path).await {
@@ -312,10 +311,10 @@ pub(crate) async fn import_one(
                         to = %renamed.display(),
                         "vault watcher: note renamed on disk — keeping it"
                     );
-                    return Box::pin(import_one(&renamed, db_pool, app_handle)).await;
+                    return Box::pin(import_one(&renamed, database, app_handle)).await;
                 }
             }
-            handle_external_delete(path, db_pool, app_handle).await;
+            handle_external_delete(path, database, app_handle).await;
             return None;
         }
         Err(e) => {
@@ -347,7 +346,7 @@ pub(crate) async fn import_one(
     // A committed application edit/delete takes precedence until its mirror
     // has reached disk. Otherwise a focus scan can re-import the stale file
     // and resurrect a deleted note while its durable writeback is pending.
-    if super::repository::has_pending(db_pool, &parsed.id)
+    if super::repository::has_pending(database, &parsed.id)
         .await
         .unwrap_or(true)
     {
@@ -370,7 +369,7 @@ pub(crate) async fn import_one(
     // ON CONFLICT: only the fields that round-trip through markdown.
     // Lattice-only JSON columns (linked_document_ids, highlights_json,
     // etc.) are preserved.
-    let repository = super::repository::workspace_notes(db_pool);
+    let repository = super::repository::workspace_notes(database);
     let result = repository
         .upsert_from_vault_if_unqueued(VaultNoteUpsert {
             id: &parsed.id,
@@ -444,11 +443,7 @@ async fn find_renamed_note(removed: &Path, id: &str) -> Option<PathBuf> {
 }
 
 /// Trusts the writer's `<id>.md` naming invariant — id is the file stem.
-async fn handle_external_delete(
-    path: &Path,
-    db_pool: &impl DatabaseHandle,
-    app_handle: &tauri::AppHandle,
-) {
+async fn handle_external_delete(path: &Path, database: &Database, app_handle: &tauri::AppHandle) {
     let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
         tracing::debug!(
             path = %path.display(),
@@ -457,14 +452,14 @@ async fn handle_external_delete(
         return;
     };
 
-    if super::repository::has_pending(db_pool, id)
+    if super::repository::has_pending(database, id)
         .await
         .unwrap_or(true)
     {
         return;
     }
 
-    let repository = super::repository::workspace_notes(db_pool);
+    let repository = super::repository::workspace_notes(database);
     let result = repository.delete_from_vault_if_unqueued(id).await;
 
     match result {

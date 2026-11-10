@@ -24,7 +24,7 @@ use lattice_core::domain::provenance::{
     RelationTarget, ShingleSet, Sketch, SourceDates, SourceRelation, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, ReadTx, WriteTx};
+use lattice_core::shared::persistence::{Database, ReadTx, WriteTx};
 use std::collections::BTreeSet;
 
 /// The extraction version of a library document's signals.
@@ -186,7 +186,7 @@ pub struct Comparison {
 
 /// The texts of a course's active sources, read ahead of comparing a
 /// version with them.
-pub struct SavedTexts(Vec<CourseText>);
+pub struct SavedTexts(pub(in crate::references::trust) Vec<CourseText>);
 
 /// Reads the texts of the course's active sources.
 pub async fn saved_texts(conn: &mut ReadTx, program_id: &str) -> Result<SavedTexts> {
@@ -195,11 +195,11 @@ pub async fn saved_texts(conn: &mut ReadTx, program_id: &str) -> Result<SavedTex
 
 /// Compares a version with the course's active sources.
 pub async fn compare(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     version: VersionText<'_>,
 ) -> Result<Comparison> {
-    let saved = SavedTexts(active_texts(pool, program_id).await?);
+    let saved = SavedTexts(active_texts(database, program_id).await?);
     compare_saved(saved, version).await
 }
 
@@ -211,18 +211,7 @@ pub async fn compare_saved(saved: SavedTexts, version: VersionText<'_>) -> Resul
         .ok_or_else(|| AppError::InternalError("A version went uncompared.".into()))
 }
 
-/// [`compare`] for versions saved together: each is compared with the ones
-/// before it too, as it would be if they were saved in turn.
-pub async fn compare_all(
-    pool: &impl DatabaseHandle,
-    program_id: &str,
-    versions: &[VersionText<'_>],
-) -> Result<Vec<Comparison>> {
-    let saved = SavedTexts(active_texts(pool, program_id).await?);
-    compare_all_saved(saved, versions).await
-}
-
-async fn compare_all_saved(
+pub(in crate::references::trust) async fn compare_all_saved(
     saved: SavedTexts,
     versions: &[VersionText<'_>],
 ) -> Result<Vec<Comparison>> {

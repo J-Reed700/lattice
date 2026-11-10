@@ -9,7 +9,8 @@ use lattice_core::application::contracts::notes::{
 };
 use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 
@@ -64,7 +65,7 @@ pub struct DailyNotesRepository {
 }
 
 impl DailyNotesRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }

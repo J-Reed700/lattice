@@ -6,7 +6,7 @@ use crate::persistence::db;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{Row, SqliteConnection};
 
 pub(super) async fn program_status(
@@ -56,7 +56,7 @@ pub(super) async fn bind_course(
 }
 
 pub(super) async fn conversation_course(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     conversation_id: &str,
 ) -> Result<Option<CourseBinding>> {
     let pool = pool.sqlx_pool();
@@ -76,7 +76,7 @@ pub(super) async fn conversation_course(
 
 /// The completed tutor replies of a chat, newest first.
 pub(super) fn assistant_replies<'a>(
-    pool: &'a impl DatabaseHandle,
+    pool: &'a impl DriverPool,
     conversation_id: &'a str,
 ) -> BoxStream<'a, Result<String>> {
     let pool = pool.sqlx_pool();
@@ -89,11 +89,7 @@ pub(super) fn assistant_replies<'a>(
     .boxed()
 }
 
-pub(super) async fn due_count(
-    pool: &impl DatabaseHandle,
-    program_id: &str,
-    at: i64,
-) -> Result<i64> {
+pub(super) async fn due_count(pool: &impl DriverPool, program_id: &str, at: i64) -> Result<i64> {
     let pool = pool.sqlx_pool();
     sqlx::query_scalar(
         "SELECT count(*) FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE m.program_id=? AND c.due_at<=?",
@@ -107,7 +103,7 @@ pub(super) async fn due_count(
 
 /// The deck's cards due at `at`, soonest first.
 pub(super) async fn due_cards(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     at: i64,
 ) -> Result<Vec<DueCard>> {
@@ -143,7 +139,7 @@ pub(super) struct CardToRate {
 }
 
 pub(super) async fn card_to_rate(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     card_id: &str,
 ) -> Result<Option<CardToRate>> {
@@ -164,7 +160,7 @@ pub(super) async fn card_to_rate(
     }))
 }
 
-pub(super) async fn card_due_at(pool: &impl DatabaseHandle, card_id: &str) -> Result<i64> {
+pub(super) async fn card_due_at(pool: &impl DriverPool, card_id: &str) -> Result<i64> {
     let pool = pool.sqlx_pool();
     sqlx::query_scalar("SELECT due_at FROM study_cards WHERE id=?")
         .bind(card_id)
@@ -175,7 +171,7 @@ pub(super) async fn card_due_at(pool: &impl DatabaseHandle, card_id: &str) -> Re
 
 /// A source version's title and saved text.
 pub(super) async fn source_text(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<(String, String)>> {

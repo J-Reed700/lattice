@@ -468,7 +468,7 @@ impl World {
         let library = EmptyLibrary;
         attach(
             &AttachDeps {
-                pool: &self.pool,
+                database: &self.pool,
                 store: &self.ledger,
                 web,
                 snapshots,
@@ -506,7 +506,7 @@ impl World {
         let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
         let report = attach_to(
             &AttachDeps {
-                pool: &self.pool,
+                database: &self.pool,
                 store: &self.ledger,
                 web: &web,
                 snapshots: &snapshots,
@@ -547,7 +547,7 @@ impl World {
         let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
         let report = attach_to_lesson(
             &AttachDeps {
-                pool: &self.pool,
+                database: &self.pool,
                 store: &self.ledger,
                 web,
                 snapshots: &snapshots,
@@ -895,7 +895,7 @@ async fn a_stale_review_is_refused_before_anything_is_saved() {
     let library = EmptyLibrary;
     let refused = attach(
         &AttachDeps {
-            pool: &world.pool,
+            database: &world.pool,
             store: &world.ledger,
             web: &web,
             snapshots: &snapshots,
@@ -976,7 +976,7 @@ async fn a_new_source_is_checked_for_the_waiting_claims_by_the_machine() {
     let library = EmptyLibrary;
     let judge = Judge::says("supported");
     let deps = AttachDeps {
-        pool: &world.pool,
+        database: &world.pool,
         store: &world.ledger,
         web: &web,
         snapshots: &snapshots,

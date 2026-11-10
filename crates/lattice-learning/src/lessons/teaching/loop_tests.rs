@@ -786,26 +786,38 @@ async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Revie
         repaired: AtomicBool::new(false),
         dropped: AtomicBool::new(false),
     };
-    let first = lesson_drafts::run(&repo, &job, &lesson_id, async {
-        lesson_drafts::resume(INPUT.into()).await?;
-        run(&llm, lesson(EXCERPT)).await
-    })
+    let first = lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async {
+            lesson_drafts::resume(INPUT.into()).await?;
+            run(&llm, lesson(EXCERPT)).await
+        },
+    )
     .await;
     assert!(matches!(first, Err(AppError::Network(_))));
     assert_eq!(repairs_asked(&llm), 1, "cut short after the first repair");
-    let second = lesson_drafts::run(&repo, &job, &lesson_id, async {
-        let saved = lesson_drafts::resume(INPUT.into())
-            .await?
-            .expect("the repair saved its draft");
-        let mut draft: Value = serde_json::from_str(&saved)?;
-        assert_eq!(draft["blocks"][0]["title"], "Corrected example");
-        let repaired = draft.clone();
-        between(&mut draft);
-        if draft != repaired {
-            lesson_drafts::save(&draft.to_string()).await?;
-        }
-        run(&llm, draft).await
-    })
+    let second = lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async {
+            let saved = lesson_drafts::resume(INPUT.into())
+                .await?
+                .expect("the repair saved its draft");
+            let mut draft: Value = serde_json::from_str(&saved)?;
+            assert_eq!(draft["blocks"][0]["title"], "Corrected example");
+            let repaired = draft.clone();
+            between(&mut draft);
+            if draft != repaired {
+                lesson_drafts::save(&draft.to_string()).await?;
+            }
+            run(&llm, draft).await
+        },
+    )
     .await?;
     Ok((repairs_asked(&llm), second))
 }

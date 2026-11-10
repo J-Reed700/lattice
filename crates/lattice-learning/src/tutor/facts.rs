@@ -4,7 +4,7 @@
 use super::repository::assistant_replies;
 use futures::TryStreamExt;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 /// Whether a reply put a question to the learner: its closing paragraph asks
 /// one. A rhetorical close counts too; the number is a nudge, not a score.
@@ -18,11 +18,8 @@ fn asks_the_learner(reply: &str) -> bool {
 
 /// Tutor replies since the last one that asked the learner something, newest
 /// first, read only as far back as that one.
-pub(super) async fn replies_since_check(
-    pool: &impl DatabaseHandle,
-    conversation_id: &str,
-) -> Result<i64> {
-    let mut replies = assistant_replies(pool, conversation_id);
+pub(super) async fn replies_since_check(database: &Database, conversation_id: &str) -> Result<i64> {
+    let mut replies = assistant_replies(database, conversation_id);
     let mut since = 0;
     while let Some(reply) = replies.try_next().await? {
         if asks_the_learner(&reply) {

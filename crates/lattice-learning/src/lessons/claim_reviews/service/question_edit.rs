@@ -291,7 +291,7 @@ impl ClaimReviewService {
         question_index: usize,
     ) -> Result<QuestionText> {
         self.ensure_in_course(program_id, lesson_id).await?;
-        let mut read = self.pool().begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await.map_err(db)?;
         let row = questions::question_at(&mut read, program_id, lesson_id, question_index).await?;
         read.commit().await.map_err(db)?;
         stored_from(row)?
@@ -315,7 +315,7 @@ impl ClaimReviewService {
         } = edit;
         let ledger = self.editable_ledger(&program_id, &lesson_id).await?;
         validate(before.kind, &after)?;
-        let mut read = self.pool().begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await.map_err(db)?;
         let row =
             questions::question_at(&mut read, &program_id, &lesson_id, question_index).await?;
         let stored = stored_from(row)?.ok_or_else(|| AppError::NotFound(NOT_IN_LESSON.into()))?;
@@ -468,7 +468,7 @@ impl ClaimReviewService {
             at,
         } = *write;
         let user = ledger.review.as_ref().map(provenance);
-        let mut tx = self.pool().begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         if ledger.review.is_some() {
             check_revision(&mut tx, lesson_id, ledger.revision).await?;
         }

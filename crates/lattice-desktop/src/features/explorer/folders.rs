@@ -11,7 +11,7 @@ use super::dto::{ExplorerFolderDto, ExplorerFolderListDto};
 use super::index::manager::FolderIndexManager;
 use super::repository;
 use chrono::{DateTime, SecondsFormat, Utc};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::{AppError, Result};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -32,9 +32,9 @@ fn default_name(root: &Path) -> String {
 
 /// The folder at `root` (canonical) was opened: listed if it is new, marked
 /// opened now if not.
-pub async fn record_open(pool: &impl DatabaseHandle, root: &str) -> Result<()> {
+pub async fn record_open(database: &Database, root: &str) -> Result<()> {
     repository::record_folder_opened(
-        pool,
+        database,
         root,
         &default_name(Path::new(root)),
         &stamp(Utc::now()),
@@ -46,11 +46,11 @@ pub async fn record_open(pool: &impl DatabaseHandle, root: &str) -> Result<()> {
 /// its thread count and its index: live for the open folder, read from disk
 /// for the rest.
 pub async fn list(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     manager: &FolderIndexManager,
 ) -> Result<ExplorerFolderListDto> {
     let indexes = manager.index_dirs().await;
-    let mut rows = repository::list_folders(pool).await?;
+    let mut rows = repository::list_folders(database).await?;
     let listed: HashSet<&str> = rows.iter().map(|row| row.root.as_str()).collect();
     let unlisted: Vec<(&Path, i64)> = indexes
         .iter()
@@ -63,7 +63,7 @@ pub async fn list(
                 .filter(|_| last_opened > 0)
                 .unwrap_or_else(Utc::now);
             repository::adopt_folder(
-                pool,
+                database,
                 &root.to_string_lossy(),
                 &default_name(root),
                 &stamp(opened),
@@ -71,10 +71,10 @@ pub async fn list(
             .await?;
             info!(root = %root.display(), "Explorer folder adopted from its index");
         }
-        rows = repository::list_folders(pool).await?;
+        rows = repository::list_folders(database).await?;
     }
 
-    let threads = repository::thread_counts(pool).await?;
+    let threads = repository::thread_counts(database).await?;
     let roots: Vec<PathBuf> = rows.iter().map(|row| PathBuf::from(&row.root)).collect();
     let summaries = manager.summaries(&roots, &indexes).await;
     let folders = rows
@@ -107,14 +107,14 @@ pub async fn list(
 }
 
 /// Renames a folder in the list. An empty name goes back to the folder's own.
-pub async fn rename(pool: &impl DatabaseHandle, root: &str, name: &str) -> Result<()> {
+pub async fn rename(database: &Database, root: &str, name: &str) -> Result<()> {
     let name = name.trim();
     let name = if name.is_empty() {
         default_name(Path::new(root))
     } else {
         name.chars().take(120).collect()
     };
-    repository::rename_folder(pool, root, &name).await
+    repository::rename_folder(database, root, &name).await
 }
 
 /// Longest system prompt a folder keeps, in characters.
@@ -125,7 +125,7 @@ const MAX_INSTRUCTIONS_CHARS: usize = 20_000;
 /// the space with it, so its library and memory change for them too. Returns
 /// how many threads moved.
 pub async fn set_settings(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     root: &str,
     instructions: &str,
     space_id: &str,
@@ -140,7 +140,7 @@ pub async fn set_settings(
     let own_space =
         (!space_id.is_empty() && space_id != repository::GENERAL_SPACE_ID).then_some(space_id);
     let moved = repository::save_folder_settings(
-        pool,
+        database,
         root,
         (!instructions.is_empty()).then_some(instructions),
         own_space,
@@ -159,22 +159,18 @@ pub async fn set_settings(
 /// Binds a thread to a folder and files it in the folder's space, so a new
 /// thread never takes the space from whatever the Chat sidebar had selected.
 pub async fn bind_thread(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     conversation_id: &str,
     root: Option<&str>,
 ) -> Result<()> {
-    repository::bind_thread_to_folder(pool, conversation_id, root, &stamp(Utc::now())).await
+    repository::bind_thread_to_folder(database, conversation_id, root, &stamp(Utc::now())).await
 }
 
 /// Remembers the thread the folder's chat is showing, so the folder reopens
 /// on it. Only a thread bound to the folder can be its thread.
-pub async fn remember_thread(
-    pool: &impl DatabaseHandle,
-    root: &str,
-    conversation_id: &str,
-) -> Result<()> {
+pub async fn remember_thread(database: &Database, root: &str, conversation_id: &str) -> Result<()> {
     let remembered = repository::remember_folder_thread(
-        pool,
+        database,
         root,
         &default_name(Path::new(root)),
         conversation_id,
@@ -189,8 +185,8 @@ pub async fn remember_thread(
     Ok(())
 }
 
-pub async fn set_pinned(pool: &impl DatabaseHandle, root: &str, pinned: bool) -> Result<()> {
-    repository::set_folder_pinned(pool, root, pinned).await
+pub async fn set_pinned(database: &Database, root: &str, pinned: bool) -> Result<()> {
+    repository::set_folder_pinned(database, root, pinned).await
 }
 
 /// Deletes the folder's own index and keeps it listed, so the next open
@@ -215,14 +211,14 @@ pub trait FolderThreads: Send + Sync {
 /// kept stay bound to the folder and come back if it is added again. Returns
 /// how many threads were deleted.
 pub async fn remove(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     conversations: &dyn FolderThreads,
     manager: &FolderIndexManager,
     root: &str,
     delete_threads: bool,
 ) -> Result<usize> {
     let threads = if delete_threads {
-        repository::folder_threads(pool, root).await?
+        repository::folder_threads(database, root).await?
     } else {
         Vec::new()
     };
@@ -231,7 +227,7 @@ pub async fn remove(
     for conversation_id in threads {
         conversations.delete_thread(&conversation_id).await?;
     }
-    repository::delete_folder(pool, root).await?;
+    repository::delete_folder(database, root).await?;
     info!(root, threads_deleted = deleted, "Explorer folder removed");
     Ok(deleted)
 }

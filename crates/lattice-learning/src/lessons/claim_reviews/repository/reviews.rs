@@ -4,7 +4,8 @@ use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::LessonReviewState;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::db;
@@ -12,7 +13,7 @@ use crate::persistence::db;
 /// The course's lessons held for review: waiting for the user, or being
 /// verified.
 pub(in crate::lessons::claim_reviews) async fn held_lessons(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<String>> {
     let pool = pool.sqlx_pool();
@@ -61,7 +62,7 @@ pub(in crate::lessons::claim_reviews) async fn source_versions(
 
 /// The versions of the program's deleted sources.
 pub(in crate::lessons::claim_reviews) async fn deleted_versions(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<HashSet<String>> {
     let pool = pool.sqlx_pool();
@@ -107,7 +108,7 @@ pub(in crate::lessons::claim_reviews) async fn mark_needs_review(
 /// Lessons with a claim the gate weighed: the only ones a trust change can
 /// touch.
 pub(in crate::lessons::claim_reviews) async fn weighed_lessons(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
 ) -> Result<Vec<String>> {
     let pool = pool.sqlx_pool();
     let rows = sqlx::query(

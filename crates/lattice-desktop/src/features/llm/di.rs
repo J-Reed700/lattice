@@ -29,7 +29,7 @@ use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 
 mod roles;
 
@@ -57,12 +57,11 @@ pub struct LlmPorts {
 }
 
 pub fn build(
-    db_pool: impl DatabaseHandle,
+    database: Database,
     credentials: Arc<dyn CredentialsPort>,
     backend_devices: Arc<BackendDevices>,
     ports: LlmPorts,
 ) -> LlmDi {
-    let db_pool = db_pool.database();
     let LlmPorts {
         model_storage,
         downloaded_models,
@@ -93,7 +92,7 @@ pub fn build(
         credentials,
         checksum_service,
         file_system_access,
-        db_pool,
+        database,
     ));
     let delete_model_use_case = Arc::new(DeleteModelUseCase::new(
         model_storage.clone(),
@@ -159,7 +158,7 @@ impl Container {
         request_override: Option<&ModelRef>,
         requirements: ModelRequirements,
     ) -> Result<PinnedModel> {
-        let (choice, title) = chat_model_choice(self.db_pool(), conversation_id).await?;
+        let (choice, title) = chat_model_choice(self.database(), conversation_id).await?;
         self.llm_for(&ModelRequest {
             role: ModelRole::Chat,
             selection: ModelSelection::Chat {
@@ -436,10 +435,10 @@ impl Container {
 /// The chat's own model choice and its title, read from the row that holds
 /// them. No choice is the Settings default, live.
 async fn chat_model_choice(
-    pool: &Database,
+    database: &Database,
     conversation_id: &str,
 ) -> Result<(ChatModelChoice, String)> {
-    let (choice, title) = super::repository::chat_model_row(pool, conversation_id)
+    let (choice, title) = super::repository::chat_model_row(database, conversation_id)
         .await?
         .ok_or_else(|| AppError::NotFound(format!("Conversation {conversation_id} not found")))?;
     Ok((

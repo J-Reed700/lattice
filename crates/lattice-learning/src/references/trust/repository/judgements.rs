@@ -1,6 +1,6 @@
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::Row;
 
 /// What a claim's re-profile reads: its statement and where it sits.
@@ -12,7 +12,7 @@ pub(in crate::references::trust) struct ClaimContext {
 }
 
 pub(in crate::references::trust) async fn active_version_id(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     source_id: &str,
 ) -> Result<Option<String>> {
@@ -29,7 +29,7 @@ pub(in crate::references::trust) async fn active_version_id(
 }
 
 pub(in crate::references::trust) async fn claim_context(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     claim_id: &str,
 ) -> Result<Option<ClaimContext>> {

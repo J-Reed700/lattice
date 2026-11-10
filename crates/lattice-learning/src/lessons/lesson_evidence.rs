@@ -2,7 +2,7 @@
 //! stay on the backend; only teaching claims and original source passages leave.
 use lattice_core::domain::learning::claim_review::UnverifiedReason;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 
 mod repository;
@@ -148,11 +148,11 @@ pub struct LearningLessonEvidenceDto {
 
 /// Read a single database snapshot, then project the typed private report.
 pub async fn get(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<Option<LearningLessonEvidenceDto>> {
-    let snapshot = repository::read(pool, program_id, lesson_id).await?;
+    let snapshot = repository::read(database, program_id, lesson_id).await?;
     snapshot
         .report
         .as_ref()

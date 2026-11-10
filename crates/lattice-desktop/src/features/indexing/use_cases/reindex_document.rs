@@ -22,7 +22,7 @@ use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::{Database, Transactions};
 
 /// Reindex document use case.
 ///
@@ -39,7 +39,7 @@ pub struct ReindexDocumentUseCase {
     content_extractor: Option<Arc<dyn lattice_core::application::ports::ContentExtractionPort>>,
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn RepositoryPort<Document>>,
-    pool: Database,
+    database: Database,
     /// The live vector index, updated alongside SQLite: the persisted index is
     /// rebuilt only when empty, so a reindex that skipped it would leave dangling
     /// vectors and miss the new chunks until then.
@@ -93,16 +93,15 @@ impl ReindexDocumentUseCase {
         file_storage: Arc<dyn FileStoragePort>,
         embedding_service: Arc<dyn EmbeddingPort>,
         document_repo: Arc<dyn RepositoryPort<Document>>,
-        pool: impl DatabaseHandle,
+        database: Database,
         vector_search: Arc<dyn VectorSearchPort>,
     ) -> Self {
-        let pool = pool.database();
         Self {
             file_storage,
             content_extractor: None,
             embedding_service,
             document_repo,
-            pool,
+            database,
             vector_search,
             query_cache: None,
         }
@@ -298,7 +297,7 @@ impl ReindexDocumentUseCase {
         entries: Vec<(Embedding, Vec<f32>)>,
     ) -> Result<()> {
         let id = document.id().to_string();
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.database.begin_write().await?;
         if !document::ops::exists(&mut tx, &id).await? {
             return Err(AppError::NotFound(format!("Document not found: {}", id)));
         }

@@ -6,8 +6,11 @@ use super::recall::{
     study_repository::StudyRepository,
 };
 use super::references::trust::capture;
+use super::references::trust::repository::capture::compare_all;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions, WriteTx};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
@@ -81,21 +84,25 @@ pub struct LearningRepository {
 }
 
 impl LearningRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
     pub async fn active_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
-        super::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
-            .prepare_sources(program_id)
-            .await
+        super::source_library::LearningSourceLibraryRepository::new(Database::from(
+            self.pool.clone(),
+        ))
+        .prepare_sources(program_id)
+        .await
     }
 
     pub async fn verification_sources(&self, program_id: &str) -> Result<Vec<LearningSourceDto>> {
-        super::source_library::LearningSourceLibraryRepository::new(self.pool.clone())
-            .verification_sources(program_id)
-            .await
+        super::source_library::LearningSourceLibraryRepository::new(Database::from(
+            self.pool.clone(),
+        ))
+        .verification_sources(program_id)
+        .await
     }
 
     pub async fn create(&self, program: &LearningProgramDto) -> Result<()> {
@@ -327,7 +334,7 @@ fn source_text(
 /// Compares sources about to be saved together, one [`capture::Comparison`]
 /// per source in order.
 pub(super) async fn compare_sources(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     sources: &[LearningSourceDto],
     references: &[super::sources::InitialReference],
@@ -345,7 +352,7 @@ pub(super) async fn compare_sources(
             text,
         })
         .collect();
-    capture::compare_all(pool, program_id, &versions).await
+    compare_all(pool, program_id, &versions).await
 }
 
 pub(super) async fn insert_source(

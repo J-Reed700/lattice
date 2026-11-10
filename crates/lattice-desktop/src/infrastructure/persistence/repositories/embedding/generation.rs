@@ -1,6 +1,7 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{embedding_encoding, DatabaseHandle};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::embedding_encoding;
 use sha2::{Digest, Sha256};
 
 pub fn content_hash(text: &str) -> String {
@@ -8,7 +9,7 @@ pub fn content_hash(text: &str) -> String {
 }
 
 pub async fn chunk_page_after(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     cursor: &str,
 ) -> Result<Vec<(String, String)>> {
     let pool = pool.sqlx_pool();
@@ -17,7 +18,7 @@ pub async fn chunk_page_after(
 }
 
 pub async fn is_prepared(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     identity: &str,
     chunk_id: &str,
     hash: &str,
@@ -32,7 +33,7 @@ pub async fn is_prepared(
 /// The statement rechecks the chunk's text, so a chunk deleted or edited while
 /// inference ran stores nothing.
 pub async fn store_prepared(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     identity: &str,
     hash: &str,
     vector: &[f32],
@@ -45,7 +46,7 @@ pub async fn store_prepared(
     Ok(())
 }
 
-pub async fn count_chunks_with_content(pool: &impl DatabaseHandle) -> Result<i64> {
+pub async fn count_chunks_with_content(pool: &impl DriverPool) -> Result<i64> {
     let pool = pool.sqlx_pool();
     Ok(
         sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE content != ''")
@@ -56,7 +57,7 @@ pub async fn count_chunks_with_content(pool: &impl DatabaseHandle) -> Result<i64
 
 /// Never restore vectors from another model, even if dimensions happen to match.
 pub async fn restore(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     identity: &str,
     dimension: usize,
 ) -> Result<Vec<(String, Vec<f32>, String, String, String)>> {
@@ -82,7 +83,7 @@ pub struct RestorePage {
 }
 
 pub async fn restore_page(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     identity: &str,
     dimension: usize,
     after_chunk_id: &str,

@@ -1,5 +1,5 @@
 use super::*;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 
 #[tokio::test]
 async fn a_check_whose_example_cannot_be_saved_leaves_the_card_unchanged() {

@@ -67,21 +67,21 @@ pub struct AIModule {
 impl AIModule {
     /// Build AIModule by composing conversation + llm + ai-tags features.
     pub async fn new(
-        db_pool: Database,
+        database: Database,
         core: Arc<CoreModule>,
         model_provider: Arc<dyn LoadedChatModelPort>,
         _llm_endpoint: &str,
         _llm_model: &str,
         backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
     ) -> lattice_core::shared::error::Result<Self> {
-        let conversation = crate::features::conversation::di::build(db_pool.clone());
+        let conversation = crate::features::conversation::di::build(database.clone());
 
         // Model catalog (HuggingFace + SQLite cache)
-        let downloaded_models = Arc::new(DownloadedModelRepository::new(db_pool.clone()));
+        let downloaded_models = Arc::new(DownloadedModelRepository::new(database.clone()));
 
         let huggingface = Arc::new(HuggingFaceAdapter::new()) as Arc<dyn ModelCatalogPort>;
         let model_catalog_cache =
-            Arc::new(ModelCacheAdapter::new(db_pool.clone(), huggingface).await?);
+            Arc::new(ModelCacheAdapter::new(database.clone(), huggingface).await?);
         let model_catalog = model_catalog_cache.clone() as Arc<dyn ModelCatalogPort>;
 
         // Download wiring
@@ -95,7 +95,7 @@ impl AIModule {
         )) as Arc<dyn DownloadManager>;
 
         let llm = crate::features::llm::di::build(
-            db_pool.clone(),
+            database.clone(),
             core.credentials().clone(),
             backend_devices,
             crate::features::llm::di::LlmPorts {
@@ -105,7 +105,7 @@ impl AIModule {
                 model_catalog: model_catalog.clone(),
             },
         );
-        let ai_tags = crate::features::tags::di::build_ai(db_pool, model_provider);
+        let ai_tags = crate::features::tags::di::build_ai(database, model_provider);
         let speech = crate::features::speech::di::build(
             downloaded_models.clone()
                 as Arc<dyn lattice_core::domain::repositories::DownloadedModelRepository>,

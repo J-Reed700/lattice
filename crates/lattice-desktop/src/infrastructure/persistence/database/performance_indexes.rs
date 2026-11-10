@@ -1,10 +1,10 @@
 //! Database index inspection helpers.
 
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 
 /// Return application indexes for diagnostics.
-pub async fn get_index_stats(pool: &impl DatabaseHandle) -> Result<Vec<IndexInfo>> {
+pub async fn get_index_stats(pool: &impl DriverPool) -> Result<Vec<IndexInfo>> {
     let pool = pool.sqlx_pool();
     let indexes = sqlx::query_as::<_, IndexInfo>(
         r#"

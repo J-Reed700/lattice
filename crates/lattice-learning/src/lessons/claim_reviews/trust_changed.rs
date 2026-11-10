@@ -13,7 +13,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::{ClaimKind, EffectiveBars};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::{Database, Transactions};
 use serde::Serialize;
 
 use super::repository::{hold_in, load_in, reviews, ClaimReviewRepository};
@@ -85,10 +85,10 @@ pub struct Redecidable {
 }
 
 impl Redecidable {
-    pub async fn load(pool: &impl DatabaseHandle) -> Result<Self> {
-        let store = ClaimReviewRepository::new(pool.database());
+    pub async fn load(database: &Database) -> Result<Self> {
+        let store = ClaimReviewRepository::new(database.clone());
         let mut claims = Vec::new();
-        for lesson_id in reviews::weighed_lessons(pool).await? {
+        for lesson_id in reviews::weighed_lessons(database).await? {
             let ledger = store.load(&lesson_id).await?;
             let Some(review) = &ledger.review else {
                 continue;
@@ -123,11 +123,8 @@ impl Redecidable {
 
 /// The claims `cause` would re-decide, without changing anything: what
 /// the override menu counts before the user commits.
-pub async fn affected(
-    pool: &impl DatabaseHandle,
-    cause: &TrustCause,
-) -> Result<Vec<AffectedClaim>> {
-    Ok(Redecidable::load(pool)
+pub async fn affected(database: &Database, cause: &TrustCause) -> Result<Vec<AffectedClaim>> {
+    Ok(Redecidable::load(database)
         .await?
         .affected(cause)
         .cloned()
@@ -135,11 +132,11 @@ pub async fn affected(
 }
 
 /// Re-decides every claim `cause` touches (§18.7), with no model call.
-pub async fn trust_changed(pool: &impl DatabaseHandle, cause: &TrustCause) -> Result<Redecided> {
-    let bars = calibration::bars(pool).await?;
+pub async fn trust_changed(database: &Database, cause: &TrustCause) -> Result<Redecided> {
+    let bars = calibration::bars(database).await?;
     let mut report = Redecided::default();
-    for lesson_id in reviews::weighed_lessons(pool).await? {
-        report.merge(redecide_lesson(pool, &lesson_id, cause, &bars).await?);
+    for lesson_id in reviews::weighed_lessons(database).await? {
+        report.merge(redecide_lesson(database, &lesson_id, cause, &bars).await?);
     }
     Ok(report)
 }
@@ -147,34 +144,34 @@ pub async fn trust_changed(pool: &impl DatabaseHandle, cause: &TrustCause) -> Re
 /// Re-decides the claims an override change covers: call after
 /// `overrides::set` or `overrides::clear` with what it returned.
 pub async fn override_changed(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     change: &overrides::TrustChange,
 ) -> Result<Redecided> {
-    trust_changed(pool, &override_cause(change)).await
+    trust_changed(database, &override_cause(change)).await
 }
 
 /// Records the calibration outcomes of the user's `verdict` on `entry` (the
 /// claim before the verdict), then re-decides the claims of every kind
 /// whose bar the outcomes moved.
 pub async fn record_verdict(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     scope: VerdictScope<'_>,
     entry: &ClaimLedgerEntry,
     verdict: TrustVerdict,
 ) -> Result<Redecided> {
-    let moved = outcomes::record(pool, scope, entry, verdict).await?;
-    redecide_kinds(pool, moved).await
+    let moved = outcomes::record(database, scope, entry, verdict).await?;
+    redecide_kinds(database, moved).await
 }
 
 /// Forgets the outcomes of an undone `verdict` and re-decides the claims
 /// of every kind whose bar that moved back.
 pub async fn forget_verdict(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     claim_id: &str,
     verdict: TrustVerdict,
 ) -> Result<Redecided> {
-    let moved = outcomes::forget(pool, claim_id, verdict).await?;
-    redecide_kinds(pool, moved).await
+    let moved = outcomes::forget(database, claim_id, verdict).await?;
+    redecide_kinds(database, moved).await
 }
 
 /// Records the Verifier's agreement with claims the gate accepted (§13:
@@ -184,11 +181,11 @@ pub async fn forget_verdict(
 /// `trust_outcomes` gives nothing for a claim the gate held back or did not
 /// weigh: the Verifier judges entailment, not standing.
 pub async fn record_verifier_agreements(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     scope: VerdictScope<'_>,
     before: &Ledger,
 ) -> Result<Redecided> {
-    let after = ClaimReviewRepository::new(pool.database())
+    let after = ClaimReviewRepository::new(database.clone())
         .load(scope.lesson_id)
         .await?;
     let mut report = Redecided::default();
@@ -215,19 +212,20 @@ pub async fn record_verifier_agreements(
                 )
             });
         if agreed {
-            report.merge(record_verdict(pool, scope, prior, TrustVerdict::VerifierAgreed).await?);
+            report
+                .merge(record_verdict(database, scope, prior, TrustVerdict::VerifierAgreed).await?);
         }
     }
     Ok(report)
 }
 
 pub(super) async fn redecide_kinds(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     kinds: Vec<ClaimKind>,
 ) -> Result<Redecided> {
     let mut report = Redecided::default();
     for kind in kinds {
-        report.merge(trust_changed(pool, &TrustCause::Bar { kind }).await?);
+        report.merge(trust_changed(database, &TrustCause::Bar { kind }).await?);
     }
     Ok(report)
 }
@@ -247,12 +245,12 @@ fn touched<'a>(
 /// what is left is re-decided against it (a claim already re-decided
 /// decides the same and is skipped).
 async fn redecide_lesson(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     lesson_id: &str,
     cause: &TrustCause,
     bars: &EffectiveBars,
 ) -> Result<Redecided> {
-    let store = ClaimReviewRepository::new(pool.database());
+    let store = ClaimReviewRepository::new(database.clone());
     let mut report = Redecided::default();
     'reload: loop {
         let ledger = store.load(lesson_id).await?;
@@ -267,7 +265,7 @@ async fn redecide_lesson(
             let supports = match cause {
                 TrustCause::Bar { .. } => trust.supports.clone(),
                 TrustCause::Override { .. } => {
-                    match relevel(pool, &review.program_id, trust).await {
+                    match relevel(database, &review.program_id, trust).await {
                         Ok(supports) => supports,
                         Err(AppError::NotFound(_)) => {
                             report.not_levelled += 1;
@@ -318,7 +316,7 @@ async fn redecide_lesson(
             }
         }
         if report.reopened > 0 {
-            hold_if_published(&store, lesson_id).await?;
+            hold_if_published(database, lesson_id).await?;
         }
         return Ok(report);
     }
@@ -326,8 +324,8 @@ async fn redecide_lesson(
 
 /// A published lesson with a claim reopened needs the user's review again,
 /// as a Verifier dispute on demand does; the lesson stays published.
-async fn hold_if_published(store: &ClaimReviewRepository, lesson_id: &str) -> Result<()> {
-    let mut tx = store.begin_write().await?;
+async fn hold_if_published(database: &Database, lesson_id: &str) -> Result<()> {
+    let mut tx = database.begin_write().await.map_err(db)?;
     let ledger = load_in(&mut tx, lesson_id).await?;
     if ledger
         .review

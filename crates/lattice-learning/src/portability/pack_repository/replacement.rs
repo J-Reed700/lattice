@@ -10,7 +10,8 @@ use crate::{
     portability_dto::{ExportLearningPackRequestDto, LearningPackExportOptionsDto},
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions, WriteTx};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 use sqlx::{Row, SqliteConnection};
 use std::path::Path;
 
@@ -19,7 +20,7 @@ use std::path::Path;
 mod tests;
 
 pub(super) async fn begin_apply(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     managed_dir: &Path,
     preview_id: &str,
     program_id: &str,

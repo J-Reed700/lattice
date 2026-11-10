@@ -8,7 +8,7 @@ use crate::sync::service::SyncService;
 
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: Database,
+    pub database: Database,
     pub sync_service: Arc<dyn SyncService>,
     pub auth: AuthConfig,
     pub cors_allowed_origins: Vec<HeaderValue>,
@@ -16,13 +16,13 @@ pub struct AppState {
 
 impl AppState {
     pub fn new(
-        pool: Database,
+        database: Database,
         sync_service: Arc<dyn SyncService>,
         auth: AuthConfig,
         cors_allowed_origins: Vec<HeaderValue>,
     ) -> Self {
         Self {
-            pool,
+            database,
             sync_service,
             auth,
             cors_allowed_origins,

@@ -2,6 +2,7 @@
 //! record it.
 use super::job_tests::{finished, pool};
 use super::*;
+use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -54,7 +55,8 @@ async fn a_part_whose_scratch_cannot_be_recorded_leaves_no_scratch_conversation(
     .await
     .unwrap();
     let work = Arc::new(Scratchpad::default());
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     jobs.register(
         JOURNAL_SYNTHESIS,
         Arc::new(JournalSynthesisJob::with(work.clone())),

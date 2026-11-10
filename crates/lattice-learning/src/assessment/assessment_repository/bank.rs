@@ -10,7 +10,8 @@ use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
@@ -269,7 +270,7 @@ impl LearningAssessmentRepository {
     /// [`Self::bank_needs_in`] as a unit of work of its own: working out a
     /// need stores the outcomes and the blueprint revision it reads.
     pub(crate) async fn bank_needs(
-        pool: &impl DatabaseHandle,
+        pool: &impl DriverPool,
         program_id: &str,
         scope: &LearningQuizScopeDto,
         top_up: bool,
@@ -283,7 +284,7 @@ impl LearningAssessmentRepository {
 
     /// [`insert_bank_items_in`] as a unit of work of its own.
     pub(crate) async fn insert_bank_items(
-        pool: &impl DatabaseHandle,
+        pool: &impl DriverPool,
         program_id: &str,
         items: &[BankItem],
         author_model: Option<&str>,

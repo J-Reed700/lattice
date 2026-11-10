@@ -5,7 +5,7 @@ use crate::infrastructure::persistence::repositories::document_scope::SqliteDocu
 use std::sync::Arc;
 
 use lattice_core::application::ports::ConversationHistoryPort;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 use crate::features::conversation::handoff::HandoffsInFlight;
 use crate::features::conversation::memory::CompactionSlots;
@@ -38,11 +38,10 @@ pub struct ConversationDi {
     pub planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
 }
 
-pub fn build(db_pool: impl DatabaseHandle) -> ConversationDi {
-    let db_pool = db_pool.database();
-    let document_scope = Arc::new(SqliteDocumentScope::new(db_pool.clone()));
-    let conversation_context = Arc::new(SqliteConversationContext::new(db_pool.clone()));
-    let repository = Arc::new(ConversationRepository::new(db_pool));
+pub fn build(database: Database) -> ConversationDi {
+    let document_scope = Arc::new(SqliteDocumentScope::new(database.clone()));
+    let conversation_context = Arc::new(SqliteConversationContext::new(database.clone()));
+    let repository = Arc::new(ConversationRepository::new(database));
     let conversation_memory = repository.clone()
         as Arc<dyn lattice_core::application::ports::conversation_memory::ConversationMemoryPort>;
     let conversation_service = Arc::new(ConversationService::new(repository));
@@ -119,7 +118,7 @@ mod tests {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .connect_lazy("sqlite::memory:")
             .unwrap();
-        let services = build(pool);
+        let services = build(Database::from(pool));
         assert_eq!(
             Arc::as_ptr(&services.conversation_service) as *const (),
             Arc::as_ptr(&services.conversation_history) as *const ()

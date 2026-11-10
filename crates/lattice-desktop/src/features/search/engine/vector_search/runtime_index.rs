@@ -10,7 +10,7 @@ use lattice_core::application::ports::{
     EmbeddingIndexBinding, EmbeddingPort, SearchServiceTrait, VectorSearchPort,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::{
     collections::HashSet,
@@ -42,7 +42,7 @@ pub struct RuntimeVectorIndex {
     /// already active, or by [`Self::bind_first`] for the first one.
     persistence: OnceLock<Arc<IndexPersistence>>,
     /// The database the first bind prepares and restores its generation from.
-    pool: Database,
+    database: Database,
     /// Where the persistence worker runs, so shutdown flushes and stops it.
     background: Arc<BackgroundTasks>,
 }
@@ -54,10 +54,9 @@ impl RuntimeVectorIndex {
         path: PathBuf,
         compression: VectorIndexCompression,
         persistence: Option<Arc<IndexPersistence>>,
-        pool: impl DatabaseHandle,
+        database: Database,
         background: Arc<BackgroundTasks>,
     ) -> Self {
-        let pool = pool.database();
         let bound = OnceLock::new();
         if let Some(identity) = identity {
             let _ = bound.set((identity, initial.clone()));
@@ -72,7 +71,7 @@ impl RuntimeVectorIndex {
             path,
             compression,
             persistence: persistence_slot,
-            pool,
+            database,
             background,
         }
     }
@@ -97,7 +96,7 @@ impl RuntimeVectorIndex {
     /// Called inside the embedding loader's single-flight operation, before it
     /// publishes a ready model. All search and indexing consumers share this handle.
     pub async fn bind_first(&self, model: &dyn EmbeddingPort) -> Result<()> {
-        let pool = &self.pool;
+        let pool = &self.database;
         let identity = model.model_identity();
         if let Some(current) = self.identity() {
             return if current == identity && self.dimension() == model.dimension() {
@@ -281,7 +280,7 @@ mod tests {
             dir.path().join("usearch-unconfigured.usearch"),
             VectorIndexCompression::None,
             None,
-            pool.clone(),
+            Database::from(pool.clone()),
             Arc::default(),
         ));
         // These handles exist before the user downloads their first model.
@@ -331,7 +330,7 @@ mod tests {
             dir.path().join("index"),
             VectorIndexCompression::None,
             None,
-            pool.clone(),
+            Database::from(pool.clone()),
             Arc::default(),
         );
         sqlx::query("DROP TABLE text_embeddings")
@@ -358,7 +357,7 @@ mod tests {
             dir.path().join("usearch-unconfigured-mrl1f32.usearch"),
             compression.clone(),
             None,
-            pool.clone(),
+            Database::from(pool.clone()),
             Arc::default(),
         );
         runtime.bind_first(&Model("sha256:first")).await.unwrap();

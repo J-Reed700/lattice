@@ -84,12 +84,45 @@ fn test_io_error_conversion() {
     assert_eq!(api_err.code, ErrorCode::FileNotFound);
 }
 
-#[test]
-fn test_sqlx_error_conversion() {
-    let sqlx_err = sqlx::Error::RowNotFound;
-    let api_err: ApiError = sqlx_err.into();
+fn api_error_of(error: sqlx::Error) -> ApiError {
+    crate::shared::persistence::PersistenceError::from(error).into()
+}
 
-    assert_eq!(api_err.code, ErrorCode::NotFound);
+#[test]
+fn test_persistence_error_conversion() {
+    let cases = [
+        (
+            sqlx::Error::RowNotFound,
+            ErrorCode::NotFound,
+            "Record not found",
+        ),
+        (
+            sqlx::Error::PoolTimedOut,
+            ErrorCode::DatabaseConnectionError,
+            "Database connection error",
+        ),
+        (
+            sqlx::Error::PoolClosed,
+            ErrorCode::DatabaseConnectionError,
+            "Database connection error",
+        ),
+        (
+            sqlx::Error::Configuration("bad url".into()),
+            ErrorCode::InvalidConfig,
+            "Database configuration error",
+        ),
+        (
+            sqlx::Error::WorkerCrashed,
+            ErrorCode::DatabaseError,
+            "Database error",
+        ),
+    ];
+    for (error, code, message) in cases {
+        let api_err = api_error_of(error);
+        assert_eq!(api_err.code, code);
+        assert_eq!(api_err.message, message);
+        assert!(api_err.details.is_some());
+    }
 }
 
 #[test]

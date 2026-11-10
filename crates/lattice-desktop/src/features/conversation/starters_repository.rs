@@ -3,7 +3,7 @@ use super::chat::ports::ChatStarterCache;
 use crate::features::conversation::repository::ConversationRepository;
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use std::collections::{HashMap, HashSet};
 
@@ -22,7 +22,7 @@ pub struct ChatStarterCacheRepository {
 }
 
 impl ChatStarterCacheRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }

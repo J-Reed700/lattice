@@ -10,6 +10,7 @@ use crate::{
     lesson_drafts,
     tests::{fixture, pool},
 };
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::RecoveryPolicy;
 
 fn prepared(lesson: &str) -> PreparedLearningLesson {
@@ -104,13 +105,19 @@ async fn learner_completion_preserves_resume_retry_and_atomic_publication() -> R
     assert_eq!(enqueue(&jobs, &progressed, &target).await?.id, job.id);
     assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
     assert_eq!(enqueue(&jobs, &progressed, &target).await?.id, job.id);
-    lesson_drafts::run(&jobs, &job.id, &target, async {
-        assert_eq!(
-            lesson_drafts::authoring_revision(progressed.summary.revision),
-            program.summary.revision
-        );
-        lesson_drafts::record_checkpoint("comparison", serde_json::json!("retained")).await
-    })
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &jobs,
+        &job.id,
+        &target,
+        async {
+            assert_eq!(
+                lesson_drafts::authoring_revision(progressed.summary.revision),
+                program.summary.revision
+            );
+            lesson_drafts::record_checkpoint("comparison", serde_json::json!("retained")).await
+        },
+    )
     .await?;
     JobStore::new(pool.clone()).suspend(&job.id).await?;
     JobStore::new(pool.clone())
@@ -135,17 +142,23 @@ async fn learner_completion_preserves_resume_retry_and_atomic_publication() -> R
         .is_some());
     retry_request.operation_id = uuid::Uuid::new_v4().to_string();
     assert_eq!(jobs.retry_job(&retry_request).await?.id, retry.id);
-    lesson_drafts::run(&jobs, &retry.id, &target, async {
-        assert_eq!(
-            lesson_drafts::authoring_revision(progressed.summary.revision),
-            program.summary.revision
-        );
-        assert_eq!(
-            lesson_drafts::checkpoint("comparison").await?,
-            Some(serde_json::json!("retained"))
-        );
-        Ok(())
-    })
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &jobs,
+        &retry.id,
+        &target,
+        async {
+            assert_eq!(
+                lesson_drafts::authoring_revision(progressed.summary.revision),
+                program.summary.revision
+            );
+            assert_eq!(
+                lesson_drafts::checkpoint("comparison").await?,
+                Some(serde_json::json!("retained"))
+            );
+            Ok(())
+        },
+    )
     .await?;
     // Publication must preserve the learner's intervening progress and advance
     // the current revision, rather than restore the older job's revision.

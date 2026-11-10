@@ -13,8 +13,9 @@ use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 use lattice_core::application::contracts::notes::WorkspaceNoteRecord;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::Transactions;
 
 async fn capture_target(
     tx: &mut sqlx::SqliteConnection,
@@ -67,7 +68,7 @@ async fn capture_target(
 }
 
 pub(super) async fn capture_reference(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     request: CaptureReferenceRequestDto,
 ) -> Result<CaptureReferenceResultDto> {
     let pool = pool.sqlx_pool();
@@ -107,7 +108,7 @@ pub(super) async fn capture_reference(
 }
 
 pub(super) async fn quick_capture(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     title: &str,
     content: &str,
     sources: Vec<SourceDto>,

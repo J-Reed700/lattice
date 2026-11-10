@@ -10,7 +10,7 @@ use crate::features::initialization::use_cases::{
 };
 use crate::infrastructure::services::traits::ModelManagerTrait;
 use crate::interfaces::di::Container;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 #[derive(Clone)]
 pub struct InitializationDi {
@@ -18,13 +18,9 @@ pub struct InitializationDi {
     pub initialize_models_use_case: Arc<InitializeModelsUseCase>,
 }
 
-pub fn build(
-    db_pool: impl DatabaseHandle,
-    model_manager: Arc<dyn ModelManagerTrait>,
-) -> InitializationDi {
-    let db_pool = db_pool.database();
+pub fn build(database: Database, model_manager: Arc<dyn ModelManagerTrait>) -> InitializationDi {
     InitializationDi {
-        initialize_database_use_case: Arc::new(InitializeDatabaseUseCase::new(Arc::new(db_pool))),
+        initialize_database_use_case: Arc::new(InitializeDatabaseUseCase::new(database)),
         initialize_models_use_case: Arc::new(InitializeModelsUseCase::new(model_manager)),
     }
 }

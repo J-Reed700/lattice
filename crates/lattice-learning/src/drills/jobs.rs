@@ -48,7 +48,7 @@ pub fn judge_grader(llm: &dyn LLMPort) -> Box<dyn ReviewGrader + '_> {
 /// Builds drills, on the Learning model, pinned for the whole build.
 #[derive(Clone)]
 pub struct DrillBuildWorker {
-    pub pool: Database,
+    pub database: Database,
     pub load_llm: ModelLoader,
     pub runtimes: BuiltinRuntimes,
     pub grader: GraderFactory,
@@ -83,7 +83,7 @@ impl JobHandler for DrillBuildWorker {
             llm,
             material,
             grader.as_ref(),
-            &self.pool,
+            &self.database,
             context.cancellation().clone(),
         )
         .run(context, &spec)
@@ -103,7 +103,7 @@ pub fn grading_job_config() -> JobKindConfig {
 /// Grades submitted attempts, on the Learning model, pinned for the whole job.
 #[derive(Clone)]
 pub struct DrillGradingWorker {
-    pub pool: Database,
+    pub database: Database,
     pub load_llm: ModelLoader,
     pub runtimes: BuiltinRuntimes,
     pub grader: GraderFactory,
@@ -126,7 +126,7 @@ impl JobHandler for DrillGradingWorker {
         let Ok(id) = attempt_of(job) else { return };
         let message = job.error_message.as_deref().unwrap_or_default();
         let recorded = async {
-            let mut tx = self.pool.begin_write().await.map_err(db)?;
+            let mut tx = self.database.begin_write().await.map_err(db)?;
             attempts::repository::record_ungraded_in(&mut tx, &id, None, message).await?;
             tx.commit().await.map_err(db)
         };
@@ -137,7 +137,7 @@ impl JobHandler for DrillGradingWorker {
 
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
         let id = attempt_of(context.job())?;
-        let Some((attempt, stored)) = attempts::waiting(&self.pool, &id).await? else {
+        let Some((attempt, stored)) = attempts::waiting(&self.database, &id).await? else {
             return Ok(JobOutcome::Completed {
                 result_ref: format!("attempt:{id}"),
                 message: "No review is waiting for this grade.".into(),
@@ -148,7 +148,7 @@ impl JobHandler for DrillGradingWorker {
         };
         let pin = match pin {
             Ok(pin) => pin,
-            Err(error) => return give_up(&self.pool, context, &id, None, &error).await,
+            Err(error) => return give_up(&self.database, context, &id, None, &error).await,
         };
         let llm = pin.llm.as_ref();
         let runner = stored
@@ -163,7 +163,7 @@ impl JobHandler for DrillGradingWorker {
             llm,
             material,
             grader.as_ref(),
-            &self.pool,
+            &self.database,
             context.cancellation().clone(),
         )
         .run(context, &attempt, &stored)

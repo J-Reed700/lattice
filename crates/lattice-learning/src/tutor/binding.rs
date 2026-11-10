@@ -4,7 +4,7 @@
 use super::repository;
 use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::{Database, Transactions};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
@@ -26,10 +26,10 @@ pub(super) struct CourseBinding {
 /// Binds a conversation to an accepted course and, optionally, one of its
 /// lessons. A conversation reads one source, so a folder's thread is refused.
 pub async fn bind_conversation(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     request: &SetConversationCourseRequestDto,
 ) -> Result<()> {
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let status = repository::program_status(&mut tx, &request.program_id).await?;
     match status.as_deref() {
         Some("active") => {}

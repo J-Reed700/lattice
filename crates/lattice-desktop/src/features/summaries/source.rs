@@ -11,7 +11,7 @@
 use crate::features::summaries::repository;
 use async_trait::async_trait;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 
 /// One top-level section's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,13 +89,13 @@ pub fn assemble(
 }
 
 pub struct SqliteSummarySource {
-    pool: Database,
+    database: Database,
 }
 
 impl SqliteSummarySource {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(database: Database) -> Self {
         Self {
-            pool: pool.database(),
+            database: database.database(),
         }
     }
 }
@@ -105,7 +105,7 @@ impl SummarySourcePort for SqliteSummarySource {
     async fn load(&self, document_id: &str) -> Result<Option<SummarySource>> {
         // The newest cluster run wins; older runs describe a corpus shape that
         // no longer exists. Absent clustering simply contributes no label.
-        let Some(parts) = repository::source_parts(&self.pool, document_id).await? else {
+        let Some(parts) = repository::source_parts(&self.database, document_id).await? else {
             return Ok(None);
         };
         Ok(Some(assemble(

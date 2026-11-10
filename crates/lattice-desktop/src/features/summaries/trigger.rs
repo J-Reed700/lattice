@@ -3,7 +3,7 @@
 use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
 use async_trait::async_trait;
 use lattice_core::application::ports::DocumentIndexObserver;
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 struct Hook {
     use_case: Arc<GenerateDocumentSummariesUseCase>,
-    pool: Database,
+    database: Database,
     wake: Notify,
     cancel: CancellationToken,
     operation: Mutex<()>,
@@ -35,15 +35,14 @@ impl SummaryTrigger {
     pub fn register_post_index_hook(
         &self,
         use_case: Arc<GenerateDocumentSummariesUseCase>,
-        pool: impl DatabaseHandle,
+        database: Database,
         background: &BackgroundTasks,
     ) {
-        let pool = pool.database();
         self.clear_post_index_hook();
         let cancel = background.token().child_token();
         let hook = Arc::new(Hook {
             use_case,
-            pool,
+            database,
             wake: Notify::new(),
             cancel: cancel.clone(),
             operation: Mutex::new(()),
@@ -78,7 +77,7 @@ impl SummaryTrigger {
         // generation must never make the primary document index fail. Retry a
         // transient SQLite error briefly before giving up and logging the loss.
         for attempt in 0..4 {
-            match super::repository::enqueue_work(&hook.pool, document_id).await {
+            match super::repository::enqueue_work(&hook.database, document_id).await {
                 Ok(()) => {
                     hook.wake.notify_one();
                     return;
@@ -104,11 +103,11 @@ impl SummaryTrigger {
             .is_some_and(|h| h.use_case.is_enabled() && !h.cancel.is_cancelled())
     }
 
-    pub async fn notify_document_at_path(&self, pool: &impl DatabaseHandle, path: &Path) {
+    pub async fn notify_document_at_path(&self, database: &Database, path: &Path) {
         if !self.is_active() {
             return;
         }
-        match super::repository::document_id_at_path(pool, path).await {
+        match super::repository::document_id_at_path(database, path).await {
             Ok(Some(id)) => self.notify_document_indexed(&id).await,
             Ok(None) => {}
             Err(error) => tracing::warn!(%error, "Could not resolve summary document"),
@@ -127,7 +126,7 @@ impl SummaryTrigger {
             cancel.cancel();
         }
         let _operation = hook.operation.lock().await;
-        if let Err(error) = super::repository::remove_work(&hook.pool, document_id).await {
+        if let Err(error) = super::repository::remove_work(&hook.database, document_id).await {
             tracing::warn!(%error, "Could not clear summary request");
         }
         if let Err(error) = hook.use_case.forget(document_id).await {
@@ -169,7 +168,7 @@ async fn run(hook: Arc<Hook>) {
             }
             continue;
         }
-        match super::repository::next_work(&hook.pool).await {
+        match super::repository::next_work(&hook.database).await {
             Ok(Some((id, revision))) => {
                 let _operation = tokio::select! {
                     biased;
@@ -191,7 +190,7 @@ async fn run(hook: Arc<Hook>) {
                         // Its share done: to the back of the queue, so other
                         // documents get a turn before it resumes.
                         if let Err(error) =
-                            super::repository::requeue_work(&hook.pool, &id, &revision).await
+                            super::repository::requeue_work(&hook.database, &id, &revision).await
                         {
                             tracing::warn!(%error, "Could not requeue summary work");
                         }
@@ -199,7 +198,8 @@ async fn run(hook: Arc<Hook>) {
                     }
                     Ok(super::use_cases::generate_summaries::SummaryRun::Published(_)) => {
                         if let Err(error) =
-                            super::repository::acknowledge_work(&hook.pool, &id, &revision).await
+                            super::repository::acknowledge_work(&hook.database, &id, &revision)
+                                .await
                         {
                             tracing::warn!(%error, "Could not acknowledge summary work");
                         }
@@ -207,7 +207,7 @@ async fn run(hook: Arc<Hook>) {
                     }
                     Err(error) => {
                         tracing::warn!(%error, document_id = id, "Summary failed; retained for retry");
-                        let _ = super::repository::defer_work(&hook.pool, &id, &revision).await;
+                        let _ = super::repository::defer_work(&hook.database, &id, &revision).await;
                     }
                 }
             }

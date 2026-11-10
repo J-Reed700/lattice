@@ -3,7 +3,8 @@
 use std::collections::HashSet;
 use std::path::Path;
 
-use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions, WriteTx};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
 use tracing::{debug, warn};
@@ -14,7 +15,7 @@ use crate::features::backup::database_repository;
 
 /// `VACUUM INTO dest_str` of the live database, onto `dest`.
 pub(super) async fn copy_database(
-    database: &impl DatabaseHandle,
+    database: &impl DriverPool,
     dest: &Path,
     dest_str: &str,
 ) -> Result<(), ArchiveError> {
@@ -102,7 +103,7 @@ async fn reconcile_fts_tables(
 /// Everything that happens on the scratch pool, so the caller can always
 /// close it afterwards.
 pub(super) async fn finish_snapshot(
-    database: &impl DatabaseHandle,
+    database: &impl DriverPool,
 ) -> Result<(Vec<String>, Option<i64>), ArchiveError> {
     let pool = database.sqlx_pool();
     let cleared = clear_snapshot_tables(pool).await?;

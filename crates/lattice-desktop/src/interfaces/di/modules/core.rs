@@ -26,7 +26,7 @@ use lattice_core::application::ports::CredentialsPort;
 #[derive(Clone)]
 pub struct CoreModule {
     // Cross-cutting shared infrastructure — not owned by any feature slice.
-    db_pool: Database,
+    database: Database,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
     security_context: Arc<SecurityContext>,
     file_access_config: Arc<FileAccessConfig>,
@@ -40,7 +40,7 @@ pub struct CoreModule {
 impl CoreModule {
     /// Build shared Layer-1 infrastructure plus the credentials feature slice.
     pub async fn new(
-        db_pool: Database,
+        database: Database,
         db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         data_dir: PathBuf,
         background: Arc<BackgroundTasks>,
@@ -67,7 +67,7 @@ impl CoreModule {
         let credentials = crate::features::credentials::di::build(credentials_path);
 
         Ok(Self {
-            db_pool,
+            database,
             db_conn,
             security_context,
             file_access_config,
@@ -78,8 +78,8 @@ impl CoreModule {
     }
 
     // Infrastructure getters
-    pub fn db_pool(&self) -> &Database {
-        &self.db_pool
+    pub fn database(&self) -> &Database {
+        &self.database
     }
 
     pub fn db_conn(

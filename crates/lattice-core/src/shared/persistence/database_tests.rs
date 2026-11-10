@@ -39,3 +39,10 @@ async fn a_unit_of_work_begun_on_the_database_persists_when_committed() {
         .unwrap();
     assert_eq!(count, 1);
 }
+
+#[tokio::test]
+async fn the_open_connections_are_the_pools() {
+    let db = open().await;
+    assert!(db.is_reachable().await);
+    assert_eq!(db.open_connections(), 1);
+}

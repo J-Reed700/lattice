@@ -4,7 +4,7 @@ use lattice_core::domain::provenance::{
     AddedBy, AuthorityAssessment, ClaimProfile, StandingAssessment,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{Row, SqlitePool};
 
 /// One version as the trust view reads it.
@@ -27,7 +27,7 @@ fn version(row: &sqlx::sqlite::SqliteRow) -> Result<Version> {
 }
 
 pub(in crate::references::trust) async fn latest_claim_profile(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     input_sha256: &str,
     policy: &str,
 ) -> Result<Option<ClaimProfile>> {
@@ -42,7 +42,7 @@ pub(in crate::references::trust) async fn latest_claim_profile(
 }
 
 pub(in crate::references::trust) async fn latest_standing(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     signals_sha256: &str,
     policy: &str,
 ) -> Result<Option<StandingAssessment>> {
@@ -57,7 +57,7 @@ pub(in crate::references::trust) async fn latest_standing(
 }
 
 pub(in crate::references::trust) async fn latest_authority(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     origin_key: &str,
     subject_key: &str,
@@ -92,7 +92,7 @@ async fn latest<T: serde::de::DeserializeOwned>(
 }
 
 pub(in crate::references::trust) async fn active_versions(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<Version>> {
     let pool = pool.sqlx_pool();
@@ -108,7 +108,7 @@ pub(in crate::references::trust) async fn active_versions(
 }
 
 pub(in crate::references::trust) async fn version_of(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<Version>> {

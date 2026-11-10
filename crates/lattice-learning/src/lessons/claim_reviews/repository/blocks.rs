@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::db;
@@ -87,7 +87,7 @@ pub(in crate::lessons::claim_reviews) async fn write_section(
 
 /// The published sections' text, by section index.
 pub(in crate::lessons::claim_reviews) async fn section_bodies(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     lesson_id: &str,
 ) -> Result<HashMap<usize, String>> {
     let pool = pool.sqlx_pool();
@@ -108,7 +108,7 @@ pub(in crate::lessons::claim_reviews) async fn section_bodies(
 }
 
 pub(in crate::lessons::claim_reviews) async fn lesson_in_course(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<bool> {

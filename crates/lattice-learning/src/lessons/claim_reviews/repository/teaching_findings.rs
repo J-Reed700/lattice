@@ -3,7 +3,7 @@
 use std::collections::BTreeSet;
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::db;
@@ -52,7 +52,7 @@ pub(in crate::lessons::claim_reviews) struct FindingWrite<'a> {
 }
 
 pub(in crate::lessons::claim_reviews) async fn held_rows(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     lesson_id: &str,
 ) -> Result<Vec<HeldRow>> {
     let pool = pool.sqlx_pool();
@@ -132,7 +132,7 @@ pub(in crate::lessons::claim_reviews) async fn upsert(
 
 /// The lesson's findings: by place, then kind.
 pub(in crate::lessons::claim_reviews) async fn stored_findings(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     lesson_id: &str,
 ) -> Result<Vec<StoredFinding>> {
     let pool = pool.sqlx_pool();

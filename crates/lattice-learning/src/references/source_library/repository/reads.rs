@@ -122,7 +122,7 @@ pub(in super::super) struct StoredVersion {
 }
 
 pub(in super::super) async fn stored_version(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     source_id: &str,
     version_id: &str,
@@ -144,7 +144,7 @@ pub(in super::super) async fn stored_version(
 }
 
 pub(in super::super) async fn version_usage(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     version_id: &str,
 ) -> Result<Vec<LearningSourceUsageDto>> {
@@ -214,7 +214,7 @@ pub(in super::super) struct SearchedVersion {
 
 /// Every version of the program, newest first, read as the caller pulls them.
 pub(in super::super) fn searchable_versions<'a>(
-    pool: &'a impl DatabaseHandle,
+    pool: &'a impl DriverPool,
     program_id: &'a str,
 ) -> BoxStream<'a, Result<SearchedVersion>> {
     let pool = pool.sqlx_pool();
@@ -246,7 +246,7 @@ fn source_dto(r: &sqlx::sqlite::SqliteRow) -> LearningSourceDto {
 }
 
 pub(in super::super) async fn excerpted_sources(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<LearningSourceDto>> {
     let pool = pool.sqlx_pool();
@@ -256,7 +256,7 @@ pub(in super::super) async fn excerpted_sources(
 }
 
 pub(in super::super) async fn full_text_sources(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<LearningSourceDto>> {
     let pool = pool.sqlx_pool();
@@ -266,7 +266,7 @@ pub(in super::super) async fn full_text_sources(
 }
 
 pub(in super::super) async fn active_versions(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<ActiveVersion>> {
     let pool = pool.sqlx_pool();
@@ -286,7 +286,7 @@ pub(in super::super) async fn active_versions(
 }
 
 pub(in super::super) async fn version_text(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<String>> {
@@ -300,7 +300,7 @@ pub(in super::super) async fn version_text(
 }
 
 pub(in super::super) async fn version_texts(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<HashMap<String, String>> {
     let pool = pool.sqlx_pool();

@@ -7,7 +7,7 @@ use super::context::Judgements;
 use lattice_core::domain::learning::claim_review::TrustAssessment;
 use lattice_core::domain::provenance::Support;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 /// `trust`'s supports with each one's level for the claim's subject read
 /// again: the stored standing and ownership (judged by the model that
@@ -16,12 +16,12 @@ use lattice_core::shared::persistence::DatabaseHandle;
 /// as the gate recorded it. Errs, changing nothing, when a judgement was
 /// never stored, since only a model could level that support.
 pub(crate) async fn relevel(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     trust: &TrustAssessment,
 ) -> Result<Vec<Support>> {
     let mut judgements =
-        Judgements::cached(pool.database(), program_id, &trust.profile.model).await?;
+        Judgements::cached(database.clone(), program_id, &trust.profile.model).await?;
     let versions: Vec<String> = trust
         .supports
         .iter()

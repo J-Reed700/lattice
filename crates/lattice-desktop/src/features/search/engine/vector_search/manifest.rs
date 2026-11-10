@@ -34,7 +34,6 @@ use crate::infrastructure::vector_index::index_config::{manifest_path_for, Index
 use crate::infrastructure::vector_index::usearch_index::write_file_atomically;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
 
 /// Bumped whenever the meaning of anything the index persists changes. A
 /// manifest written under a different version is not read; the index is
@@ -50,29 +49,6 @@ pub struct SourceStamp {
     pub row_count: u64,
     /// Global monotonic write counter from `vector_index_state`.
     pub write_counter: u64,
-}
-
-/// Read the stamp for one generation.
-///
-/// Two aggregate queries against covering indexes; no embedding blob is
-/// touched. The counter is a single-row primary key lookup.
-pub async fn read_source_stamp(
-    pool: &impl DatabaseHandle,
-    identity: &str,
-    dimension: usize,
-) -> Result<SourceStamp> {
-    let dimension = dimension as i64;
-    // Mirrors `generation::restore`'s row set. `restore` also drops
-    // a prepared vector whose source text has since changed, which this count
-    // cannot see; that direction is safe, because the extra row makes the
-    // stamp differ and buys a rebuild.
-    let (row_count, write_counter) =
-        super::repository::source_stamp_counts(pool, identity, dimension).await?;
-
-    Ok(SourceStamp {
-        row_count: row_count.max(0) as u64,
-        write_counter: write_counter.max(0) as u64,
-    })
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -202,6 +178,7 @@ pub fn write_manifest(index_path: &Path, manifest: &IndexManifest) -> Result<()>
 #[cfg(test)]
 #[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
+    use super::super::repository::read_source_stamp;
     use super::*;
     use crate::infrastructure::vector_index::compression::{
         VectorIndexCompression, VectorQuantization,

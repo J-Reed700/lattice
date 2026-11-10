@@ -10,7 +10,9 @@ use crate::{
     source_library::LearningSourceLibraryRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::path::Path;
 
@@ -61,7 +63,7 @@ pub(super) fn pack_operation<'a>(
 /// What an earlier identical pack request produced: the export's file
 /// path, the preview ID, or the imported program ID.
 pub(super) async fn replay(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     id: &str,
     kind: &str,
     payload: &str,
@@ -100,7 +102,7 @@ fn export_dto(r: &SqliteRow) -> Result<LearningPackExportDto> {
 /// What an identical earlier export request wrote, while that file is
 /// still there. A pack deleted since is written again under the same ID.
 pub(super) async fn replayed_export(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     req: &ExportLearningPackRequestDto,
     payload: &str,
 ) -> Result<Option<LearningPackExportDto>> {
@@ -123,7 +125,7 @@ pub(super) async fn replayed_export(
 /// recorded under the same operation ID points at a pack that is gone, since
 /// the replay found no file, and gives way to this one.
 pub(super) async fn record_export(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     req: &ExportLearningPackRequestDto,
     payload: &str,
     destination: String,
@@ -208,11 +210,11 @@ async fn export_notice(
 }
 
 pub(super) async fn workspace(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<LearningPortabilityWorkspaceDto> {
     let pool = pool.sqlx_pool();
-    let source_workspace = match LearningSourceLibraryRepository::new(pool.clone())
+    let source_workspace = match LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .workspace(program_id)
         .await
     {
@@ -302,10 +304,7 @@ pub(super) async fn workspace(
 }
 
 /// The program a stored preview would produce.
-pub(super) async fn preview_program(
-    pool: &impl DatabaseHandle,
-    preview_id: &str,
-) -> Result<String> {
+pub(super) async fn preview_program(pool: &impl DriverPool, preview_id: &str) -> Result<String> {
     let pool = pool.sqlx_pool();
     sqlx::query_scalar("SELECT program_id FROM learning_pack_import_previews WHERE id=?")
         .bind(preview_id)
@@ -317,7 +316,7 @@ pub(super) async fn preview_program(
 /// Store a preview; it can be applied only while none of its conflicts
 /// stands under its policy. Answers with the program it would produce.
 pub(super) async fn record_preview(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     req: &PreviewLearningPackImportRequestDto,
     payload: &str,
     decoded: &DecodedLearningPack,
@@ -353,7 +352,7 @@ pub(super) struct PendingPreview {
 
 /// The preview `preview_id`, while it is pending and nothing blocks it.
 pub(super) async fn pending_preview(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     preview_id: &str,
 ) -> Result<PendingPreview> {
     let pool = pool.sqlx_pool();

@@ -12,7 +12,8 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use lattice_core::application::contracts::images::{ChatImageDto, ImageOrigin};
 use lattice_core::application::ports::chat_images::DRAFT_REQUEST_PREFIX;
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id};
@@ -128,7 +129,7 @@ pub struct ImageRepository {
 }
 
 impl ImageRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }

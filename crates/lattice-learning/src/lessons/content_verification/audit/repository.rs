@@ -5,13 +5,14 @@ use serde_json::{json, Value};
 use sqlx::Row;
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 
 use super::runs::{AuditRun, BatchRecord, CourseAuditUsage, RunKey, RunState};
 use crate::persistence::{db, decode, encode};
 
 pub(super) async fn latest_run(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     lesson_id: &str,
 ) -> Result<Option<AuditRun>> {
     let pool = pool.sqlx_pool();
@@ -28,7 +29,7 @@ pub(super) async fn latest_run(
 }
 
 pub(super) async fn course_usage(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<CourseAuditUsage> {
     let pool = pool.sqlx_pool();
@@ -75,7 +76,7 @@ fn signed(tokens: u64) -> i64 {
 /// Opens the run for `key`, or reopens it keeping its batches, as running,
 /// and returns it.
 pub(super) async fn open_run(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     key: &RunKey,
     policy: &str,
     at: i64,
@@ -114,7 +115,7 @@ pub(super) async fn open_run(
 }
 
 pub(super) async fn append_batch(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     key: &RunKey,
     batch: &BatchRecord,
 ) -> Result<()> {
@@ -141,7 +142,7 @@ pub(super) async fn append_batch(
 }
 
 pub(super) async fn finish_run(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     key: &RunKey,
     state: RunState,
     at: i64,
@@ -165,7 +166,7 @@ pub(super) async fn finish_run(
 /// The lesson's own reviewed questions in its quiz bank, in the shape the
 /// draft holds them.
 pub(super) async fn lesson_questions(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<Vec<Value>> {

@@ -65,7 +65,7 @@ pub(in super::super) async fn mark_admission(
 }
 
 pub(in super::super) async fn admitted_under(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     policy: &str,
     words: i64,
@@ -93,7 +93,7 @@ pub(in super::super) async fn admitted_under(
 }
 
 pub(in super::super) async fn refused_sources(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<RefusedSource>> {
     let pool = pool.sqlx_pool();
@@ -118,7 +118,7 @@ pub(in super::super) async fn refused_sources(
 }
 
 pub(in super::super) async fn job_running(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     kind: &str,
     subject_id: &str,
 ) -> Result<bool> {
@@ -135,7 +135,7 @@ pub(in super::super) async fn job_running(
 }
 
 pub(in super::super) async fn cited_by_reports(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<HashSet<String>> {
     let pool = pool.sqlx_pool();
@@ -152,7 +152,7 @@ pub(in super::super) async fn cited_by_reports(
 }
 
 pub(in super::super) async fn admitted_added_by(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     added_by: &str,
 ) -> Result<Vec<ResearchSource>> {

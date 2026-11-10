@@ -95,7 +95,9 @@ async fn snapshot_clears_derivable_tables_and_keeps_everything_else() {
     .unwrap();
 
     let dest = dir.path().join("snapshot.db");
-    let report = snapshot_database(&pool, &dest).await.unwrap();
+    let report = snapshot_database(&Database::from(pool.clone()), &dest)
+        .await
+        .unwrap();
     pool.close().await;
 
     assert_eq!(report.path, dest);
@@ -154,13 +156,13 @@ async fn snapshot_refuses_an_existing_destination_and_unsafe_paths() {
     let taken = dir.path().join("taken.db");
     std::fs::write(&taken, b"x").unwrap();
     assert!(matches!(
-        snapshot_database(&pool, &taken).await,
+        snapshot_database(&Database::from(pool.clone()), &taken).await,
         Err(ArchiveError::Other(_))
     ));
 
     let nasty = dir.path().join("evil'; DROP TABLE documents; --.db");
     assert!(matches!(
-        snapshot_database(&pool, &nasty).await,
+        snapshot_database(&Database::from(pool.clone()), &nasty).await,
         Err(ArchiveError::Other(_))
     ));
     pool.close().await;
@@ -216,7 +218,9 @@ async fn referenced_blobs_come_from_the_snapshot_not_the_live_database() {
     }
 
     let dest = dir.path().join("snapshot.db");
-    snapshot_database(&pool, &dest).await.unwrap();
+    snapshot_database(&Database::from(pool.clone()), &dest)
+        .await
+        .unwrap();
 
     // A document deleted after the snapshot was taken is not in the
     // snapshot, so its blob is not referenced by the archive either.
@@ -849,7 +853,9 @@ async fn validate_snapshot_rejects_non_databases_and_truncated_files() {
     let live = dir.path().join("lattice.db");
     let pool = migrated_pool(&live).await;
     let good = dir.path().join("good.db");
-    snapshot_database(&pool, &good).await.unwrap();
+    snapshot_database(&Database::from(pool.clone()), &good)
+        .await
+        .unwrap();
     pool.close().await;
     assert!(validate_snapshot(&good).await.is_ok());
 
@@ -884,7 +890,9 @@ async fn a_snapshot_reports_the_memory_layout_it_stores_so_restore_can_refuse_it
     .unwrap();
 
     let dest = dir.path().join("current.db");
-    snapshot_database(&pool, &dest).await.unwrap();
+    snapshot_database(&Database::from(pool.clone()), &dest)
+        .await
+        .unwrap();
     let info = validate_snapshot(&dest).await.unwrap();
     assert!(info.memory_tables_present);
     assert_eq!(
@@ -900,7 +908,9 @@ async fn a_snapshot_reports_the_memory_layout_it_stores_so_restore_can_refuse_it
         .await
         .unwrap();
     let future = dir.path().join("future.db");
-    snapshot_database(&pool, &future).await.unwrap();
+    snapshot_database(&Database::from(pool.clone()), &future)
+        .await
+        .unwrap();
     pool.close().await;
 
     let future_info = validate_snapshot(&future).await.unwrap();
@@ -920,7 +930,9 @@ async fn a_backup_without_a_memory_ledger_is_restorable_rather_than_rejected() {
     // No memory rows at all: the state every conversation is in before its
     // first compaction, and the state every pre-feature backup is in.
     let dest = dir.path().join("empty-memory.db");
-    snapshot_database(&pool, &dest).await.unwrap();
+    snapshot_database(&Database::from(pool.clone()), &dest)
+        .await
+        .unwrap();
     pool.close().await;
 
     let info = validate_snapshot(&dest).await.unwrap();
@@ -975,7 +987,7 @@ async fn a_snapshot_that_fails_while_clearing_keeps_the_tables_it_cleared_first(
     .unwrap();
 
     let dest = dir.path().join("snapshot.db");
-    let outcome = snapshot_database(&pool, &dest).await;
+    let outcome = snapshot_database(&Database::from(pool.clone()), &dest).await;
     pool.close().await;
     assert!(
         outcome.is_err(),

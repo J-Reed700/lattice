@@ -4,7 +4,7 @@ use crate::infrastructure::persistence::repositories::embedding::generation::{
 };
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 /// Reuses completed work only when both model artifacts and source content match.
 /// A passage the new model's window cannot take in one pass is represented by
@@ -14,19 +14,19 @@ use lattice_core::shared::persistence::DatabaseHandle;
 /// The text embedded is `contextualized_content` — the context prefix plus the
 /// chunk, exactly what the indexer embedded — so the prefix never has to be
 /// rebuilt from the document row here.
-pub async fn prepare(pool: &impl DatabaseHandle, model: &dyn EmbeddingPort) -> Result<usize> {
+pub async fn prepare(database: &Database, model: &dyn EmbeddingPort) -> Result<usize> {
     let identity = model.model_identity();
     let mut cursor = String::new();
     let mut completed = 0;
     loop {
-        let rows = chunk_page_after(pool, &cursor).await?;
+        let rows = chunk_page_after(database, &cursor).await?;
         if rows.is_empty() {
             break;
         }
         for (id, text) in rows {
             cursor = id.clone();
             let hash = content_hash(&text);
-            if is_prepared(pool, &identity, &id, &hash, model.dimension()).await? {
+            if is_prepared(database, &identity, &id, &hash, model.dimension()).await? {
                 completed += 1;
                 continue;
             }
@@ -66,7 +66,7 @@ pub async fn prepare(pool: &impl DatabaseHandle, model: &dyn EmbeddingPort) -> R
                 *value /= norm;
             }
             // The source may have been deleted or edited while inference ran.
-            store_prepared(pool, &identity, &hash, &combined, &id, &text).await?;
+            store_prepared(database, &identity, &hash, &combined, &id, &text).await?;
             completed += 1;
         }
         tracing::info!(completed, model_identity = %identity, "Preparing embedding generation");
@@ -160,9 +160,16 @@ mod tests {
     async fn interrupted_generation_resumes_and_never_restores_another_vector_space() {
         let pool = database().await;
         let first = Model::new("new", 1);
-        assert!(prepare(&pool, &first).await.is_err());
+        assert!(prepare(&Database::from(pool.clone()), &first)
+            .await
+            .is_err());
         let resumed = Model::new("new", usize::MAX);
-        assert_eq!(prepare(&pool, &resumed).await.unwrap(), 2);
+        assert_eq!(
+            prepare(&Database::from(pool.clone()), &resumed)
+                .await
+                .unwrap(),
+            2
+        );
         assert_eq!(
             resumed.calls.load(Ordering::SeqCst),
             1,
@@ -182,7 +189,9 @@ mod tests {
             1,
             "stale source must not reuse its old vector"
         );
-        prepare(&pool, &resumed).await.unwrap();
+        prepare(&Database::from(pool.clone()), &resumed)
+            .await
+            .unwrap();
         assert_eq!(resumed.calls.load(Ordering::SeqCst), 2);
         assert_eq!(restore(&pool, "new", 2).await.unwrap().len(), 2);
     }
@@ -197,7 +206,12 @@ mod tests {
         .await
         .unwrap();
         let model = Model::new("new", usize::MAX);
-        assert_eq!(prepare(&pool, &model).await.unwrap(), 3);
+        assert_eq!(
+            prepare(&Database::from(pool.clone()), &model)
+                .await
+                .unwrap(),
+            3
+        );
         // 'alpha' and 'beta' fit the window and go in one piece; only the
         // chunk past the window is split.
         assert_eq!(model.calls.load(Ordering::SeqCst), 3);

@@ -1,4 +1,5 @@
 //! A capture is queued as one unit: its row and its job land together or not at all.
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 use sqlx::SqlitePool;
@@ -31,11 +32,12 @@ async fn service() -> (SqlitePool, Arc<WebPageSnapshotService>, tempfile::TempDi
     let dir = tempfile::tempdir().unwrap();
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
+    let database = Database::from(pool.clone());
     let service = Arc::new(WebPageSnapshotService::new(
-        pool.clone(),
+        database.clone(),
         dir.path().join("web-snapshots"),
         Arc::new(MockPageCapture::new()),
-        lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone()),
+        lattice_core::shared::runtime::jobs::JobRuntime::new(database),
         Arc::new(NoEvents),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
         sweep_gate,

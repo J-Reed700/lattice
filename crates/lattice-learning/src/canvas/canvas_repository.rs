@@ -5,7 +5,8 @@ use crate::{
     persistence::{db, hash, now},
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use serde::Serialize;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
@@ -135,7 +136,7 @@ fn validate_text(value: &str, label: &str, max: usize, required: bool) -> Result
 }
 
 impl LearningCanvasRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }

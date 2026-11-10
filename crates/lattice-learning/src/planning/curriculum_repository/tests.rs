@@ -10,6 +10,7 @@ use crate::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::RecoveryPolicy;
 
 async fn active_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
@@ -480,34 +481,43 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
     assert!(curriculum.start_job(&mismatch).await.is_err());
     assert!(jobs(&pool).claim(&job.id).await?.is_some());
     let draft_body = "{\"blocks\":[{\"body\":\"Unpublished lesson draft\"}]}";
-    crate::lesson_drafts::run(&curriculum, &job.id, &target, async {
-        crate::lesson_drafts::authoring(crate::lesson_drafts::AuthoringContext {
-            scope_hash: "same-lesson-request".into(),
-            prompt: "Original authoring prompt and citation order".into(),
-            sources: program.sources.clone(),
-            reference_hashes: program
-                .sources
-                .iter()
-                .map(|source| {
-                    (
-                        source.id.clone(),
-                        crate::content_verification::digest(&source.excerpt),
-                    )
-                })
-                .collect(),
-        });
-        assert!(crate::lesson_drafts::resume("matching-inputs".into())
-            .await?
-            .is_none());
-        crate::lesson_drafts::save(draft_body).await?;
-        crate::lesson_drafts::record_teaching(draft_body, "teaching-policy".into()).await?;
-        crate::lesson_drafts::record_claim_inventory(draft_body, "audited-inventory".into())
+    crate::lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &curriculum,
+        &job.id,
+        &target,
+        async {
+            crate::lesson_drafts::authoring(crate::lesson_drafts::AuthoringContext {
+                scope_hash: "same-lesson-request".into(),
+                prompt: "Original authoring prompt and citation order".into(),
+                sources: program.sources.clone(),
+                reference_hashes: program
+                    .sources
+                    .iter()
+                    .map(|source| {
+                        (
+                            source.id.clone(),
+                            crate::content_verification::digest(&source.excerpt),
+                        )
+                    })
+                    .collect(),
+            });
+            assert!(crate::lesson_drafts::resume("matching-inputs".into())
+                .await?
+                .is_none());
+            crate::lesson_drafts::save(draft_body).await?;
+            crate::lesson_drafts::record_teaching(draft_body, "teaching-policy".into()).await?;
+            crate::lesson_drafts::record_claim_inventory(draft_body, "audited-inventory".into())
+                .await?;
+            crate::lesson_drafts::record_pending_repair(
+                draft_body,
+                "failed-checks-to-repair".into(),
+            )
             .await?;
-        crate::lesson_drafts::record_pending_repair(draft_body, "failed-checks-to-repair".into())
-            .await?;
-        assert!(crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
-        Ok(())
-    })
+            assert!(crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
+            Ok(())
+        },
+    )
     .await?;
     assert_eq!(
         curriculum
@@ -598,88 +608,101 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
 
     assert!(jobs(&pool).claim(&retry.id).await?.is_some());
     let reopened = LearningCurriculumRepository::new(pool.clone());
-    crate::lesson_drafts::run(&reopened, &retry.id, &target, async {
-        let mut augmented = program.sources.clone();
-        let mut additional = augmented[0].clone();
-        additional.id = uuid::Uuid::new_v4().to_string();
-        additional.excerpt = "Additional research never grants publication approval.".into();
-        augmented.push(additional);
-        let (input_hash, authoring) =
-            crate::lesson_drafts::reusable_authoring("same-lesson-request", &augmented)
-                .await?
-                .expect("additional research retains the authoring context");
-        assert_eq!(input_hash, "matching-inputs");
-        assert_eq!(
-            authoring.prompt,
-            "Original authoring prompt and citation order"
-        );
-        assert_eq!(authoring.sources.len(), program.sources.len());
-        assert_eq!(authoring.sources[0].id, program.sources[0].id);
-        assert!(
-            crate::lesson_drafts::reusable_authoring("different-lesson-request", &augmented)
-                .await?
-                .is_none()
-        );
-        augmented[0]
-            .excerpt
-            .push_str(" Changed original reference.");
-        assert!(
-            crate::lesson_drafts::reusable_authoring("same-lesson-request", &augmented)
-                .await?
-                .is_none()
-        );
-        assert!(
-            crate::lesson_drafts::reusable_authoring("same-lesson-request", &[])
-                .await?
-                .is_none()
-        );
-        crate::lesson_drafts::authoring(authoring);
-        assert_eq!(
-            crate::lesson_drafts::resume("matching-inputs".into())
-                .await?
-                .as_deref(),
-            Some(draft_body)
-        );
-        let formatted =
-            serde_json::to_string_pretty(&serde_json::from_str::<serde_json::Value>(draft_body)?)?;
-        assert_eq!(
-            crate::lesson_drafts::pending_repair(&formatted)
-                .await?
-                .as_deref(),
-            Some("failed-checks-to-repair")
-        );
-        assert_eq!(
-            crate::lesson_drafts::claim_inventory(&formatted)
-                .await?
-                .as_deref(),
-            Some("audited-inventory")
-        );
-        assert!(crate::lesson_drafts::claim_inventory("changed draft")
+    crate::lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &reopened,
+        &retry.id,
+        &target,
+        async {
+            let mut augmented = program.sources.clone();
+            let mut additional = augmented[0].clone();
+            additional.id = uuid::Uuid::new_v4().to_string();
+            additional.excerpt = "Additional research never grants publication approval.".into();
+            augmented.push(additional);
+            let (input_hash, authoring) =
+                crate::lesson_drafts::reusable_authoring("same-lesson-request", &augmented)
+                    .await?
+                    .expect("additional research retains the authoring context");
+            assert_eq!(input_hash, "matching-inputs");
+            assert_eq!(
+                authoring.prompt,
+                "Original authoring prompt and citation order"
+            );
+            assert_eq!(authoring.sources.len(), program.sources.len());
+            assert_eq!(authoring.sources[0].id, program.sources[0].id);
+            assert!(crate::lesson_drafts::reusable_authoring(
+                "different-lesson-request",
+                &augmented
+            )
             .await?
             .is_none());
-        assert!(crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
-        assert!(!crate::lesson_drafts::teaching_completed(draft_body, "new-policy").await?);
-        assert!(
-            !crate::lesson_drafts::teaching_completed("changed draft", "teaching-policy").await?
-        );
-        assert!(
-            crate::lesson_drafts::resume("changed-source-or-prompt".into())
+            augmented[0]
+                .excerpt
+                .push_str(" Changed original reference.");
+            assert!(
+                crate::lesson_drafts::reusable_authoring("same-lesson-request", &augmented)
+                    .await?
+                    .is_none()
+            );
+            assert!(
+                crate::lesson_drafts::reusable_authoring("same-lesson-request", &[])
+                    .await?
+                    .is_none()
+            );
+            crate::lesson_drafts::authoring(authoring);
+            assert_eq!(
+                crate::lesson_drafts::resume("matching-inputs".into())
+                    .await?
+                    .as_deref(),
+                Some(draft_body)
+            );
+            let formatted = serde_json::to_string_pretty(&serde_json::from_str::<
+                serde_json::Value,
+            >(draft_body)?)?;
+            assert_eq!(
+                crate::lesson_drafts::pending_repair(&formatted)
+                    .await?
+                    .as_deref(),
+                Some("failed-checks-to-repair")
+            );
+            assert_eq!(
+                crate::lesson_drafts::claim_inventory(&formatted)
+                    .await?
+                    .as_deref(),
+                Some("audited-inventory")
+            );
+            assert!(crate::lesson_drafts::claim_inventory("changed draft")
                 .await?
-                .is_none()
-        );
-        assert!(!crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
-        crate::lesson_drafts::resume("matching-inputs".into()).await?;
-        crate::lesson_drafts::save("changed draft").await?;
-        crate::lesson_drafts::save(draft_body).await?;
-        assert!(crate::lesson_drafts::claim_inventory(draft_body)
-            .await?
-            .is_none());
-        assert!(crate::lesson_drafts::pending_repair(draft_body)
-            .await?
-            .is_none());
-        assert!(!crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
-        Ok(())
-    })
+                .is_none());
+            assert!(crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?);
+            assert!(!crate::lesson_drafts::teaching_completed(draft_body, "new-policy").await?);
+            assert!(
+                !crate::lesson_drafts::teaching_completed("changed draft", "teaching-policy")
+                    .await?
+            );
+            assert!(
+                crate::lesson_drafts::resume("changed-source-or-prompt".into())
+                    .await?
+                    .is_none()
+            );
+            assert!(
+                !crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?
+            );
+            crate::lesson_drafts::resume("matching-inputs".into()).await?;
+            crate::lesson_drafts::save("changed draft").await?;
+            crate::lesson_drafts::save(draft_body).await?;
+            assert!(crate::lesson_drafts::claim_inventory(draft_body)
+                .await?
+                .is_none());
+            assert!(crate::lesson_drafts::pending_repair(draft_body)
+                .await?
+                .is_none());
+            assert!(
+                !crate::lesson_drafts::teaching_completed(draft_body, "teaching-policy").await?
+            );
+            Ok(())
+        },
+    )
     .await?;
     assert!(reopened
         .save_lesson_draft(

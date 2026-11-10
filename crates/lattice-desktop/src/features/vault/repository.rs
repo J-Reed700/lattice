@@ -5,10 +5,11 @@ use crate::infrastructure::persistence::repositories::workspace_notes::{
 use lattice_core::application::contracts::notes::NoteTimestampRecord;
 use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 
 /// The notes table the vault mirrors, seen only through its port.
-pub(super) fn workspace_notes(pool: &impl DatabaseHandle) -> impl WorkspaceNotesPort {
+pub(super) fn workspace_notes(pool: &impl DriverPool) -> impl WorkspaceNotesPort {
     let pool = pool.sqlx_pool();
     DailyNotesRepository::new(pool.clone())
 }
@@ -20,7 +21,7 @@ pub(super) struct PendingWrite {
     pub mirror_complete: bool,
 }
 
-pub(super) async fn pending(pool: &impl DatabaseHandle) -> Result<Vec<PendingWrite>> {
+pub(super) async fn pending(pool: &impl DriverPool) -> Result<Vec<PendingWrite>> {
     let pool = pool.sqlx_pool();
     Ok(
         sqlx::query_as("SELECT note_id, revision, mirror_complete FROM vault_write_outbox WHERE retry_at <= unixepoch() ORDER BY rowid LIMIT 64")
@@ -29,7 +30,7 @@ pub(super) async fn pending(pool: &impl DatabaseHandle) -> Result<Vec<PendingWri
     )
 }
 
-pub(super) async fn acknowledge(pool: &impl DatabaseHandle, write: &PendingWrite) -> Result<()> {
+pub(super) async fn acknowledge(pool: &impl DriverPool, write: &PendingWrite) -> Result<()> {
     let pool = pool.sqlx_pool();
     sqlx::query("DELETE FROM vault_write_outbox WHERE note_id = ? AND revision = ?")
         .bind(&write.note_id)
@@ -39,14 +40,14 @@ pub(super) async fn acknowledge(pool: &impl DatabaseHandle, write: &PendingWrite
     Ok(())
 }
 
-pub(super) async fn enqueue_all(pool: &impl DatabaseHandle) -> Result<()> {
+pub(super) async fn enqueue_all(pool: &impl DriverPool) -> Result<()> {
     let pool = pool.sqlx_pool();
     sqlx::query("INSERT INTO vault_write_outbox(note_id, revision) SELECT id, lower(hex(randomblob(16))) FROM daily_notes_workspace WHERE true ON CONFLICT(note_id) DO UPDATE SET revision = excluded.revision, mirror_complete = 0, retry_at = 0")
         .execute(pool).await?;
     Ok(())
 }
 
-pub(super) async fn mark_mirrored(pool: &impl DatabaseHandle, write: &PendingWrite) -> Result<()> {
+pub(super) async fn mark_mirrored(pool: &impl DriverPool, write: &PendingWrite) -> Result<()> {
     let pool = pool.sqlx_pool();
     sqlx::query(
         "UPDATE vault_write_outbox SET mirror_complete = 1 WHERE note_id = ? AND revision = ?",
@@ -58,14 +59,14 @@ pub(super) async fn mark_mirrored(pool: &impl DatabaseHandle, write: &PendingWri
     Ok(())
 }
 
-pub(super) async fn defer(pool: &impl DatabaseHandle, write: &PendingWrite) -> Result<()> {
+pub(super) async fn defer(pool: &impl DriverPool, write: &PendingWrite) -> Result<()> {
     let pool = pool.sqlx_pool();
     sqlx::query("UPDATE vault_write_outbox SET retry_at = unixepoch() + 30 WHERE note_id = ? AND revision = ?")
         .bind(&write.note_id).bind(&write.revision).execute(pool).await?;
     Ok(())
 }
 
-pub(super) async fn has_pending(pool: &impl DatabaseHandle, id: &str) -> Result<bool> {
+pub(super) async fn has_pending(pool: &impl DriverPool, id: &str) -> Result<bool> {
     let pool = pool.sqlx_pool();
     Ok(sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM vault_write_outbox WHERE note_id = ? AND mirror_complete = 0)",
@@ -75,7 +76,7 @@ pub(super) async fn has_pending(pool: &impl DatabaseHandle, id: &str) -> Result<
     .await?)
 }
 
-pub(super) async fn begin_rescan(pool: &impl DatabaseHandle) -> Result<(String, i64)> {
+pub(super) async fn begin_rescan(pool: &impl DriverPool) -> Result<(String, i64)> {
     let pool = pool.sqlx_pool();
     // Rescans are serialized in the watcher. This clears spill records left
     // by a previous process before allocating a new isolated run id.
@@ -91,7 +92,7 @@ pub(super) async fn begin_rescan(pool: &impl DatabaseHandle) -> Result<(String, 
 }
 
 pub(super) async fn mark_rescan_seen(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     run_id: &str,
     note_id: &str,
 ) -> Result<()> {
@@ -105,7 +106,7 @@ pub(super) async fn mark_rescan_seen(
 }
 
 pub(super) async fn rescan_note_page(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     run_id: &str,
     after_id: Option<&str>,
     limit: i64,
@@ -123,7 +124,7 @@ pub(super) async fn rescan_note_page(
     .await?)
 }
 
-pub(super) async fn finish_rescan(pool: &impl DatabaseHandle, run_id: &str) -> Result<()> {
+pub(super) async fn finish_rescan(pool: &impl DriverPool, run_id: &str) -> Result<()> {
     let pool = pool.sqlx_pool();
     sqlx::query("DELETE FROM vault_rescan_seen WHERE run_id = ?")
         .bind(run_id)

@@ -22,6 +22,7 @@ use lattice_core::domain::learning::claim_review::{
     RepairOutcome, UnitKind, VerdictKind,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 
 use crate::lessons::content_verification::{ClaimVerdict, Finding, LessonVerificationReport};
 
@@ -164,7 +165,7 @@ async fn taken_out_as(
 
 async fn act(course: &Course, claim: &ClaimId, action: ClaimActionRequestDto) -> Result<i64> {
     let revision = ledger(course).await?.revision.0;
-    ClaimReviewService::new(course.pool.clone())
+    ClaimReviewService::new(Database::from(course.pool.clone()))
         .resolve(&course.lesson_id, &claim.0, action, revision)
         .await
 }
@@ -429,7 +430,7 @@ async fn the_review_says_where_a_taken_out_sentence_goes_and_lists_the_sections(
     let course = published().await?;
     let known = taken_out(&course, "known", 0, Some((Some(GOOD), None))).await?;
     let unknown = taken_out(&course, "unknown", 9, None).await?;
-    let review = ClaimReviewService::new(course.pool.clone())
+    let review = ClaimReviewService::new(Database::from(course.pool.clone()))
         .review(&course.program_id, &course.lesson_id)
         .await?
         .unwrap();
@@ -461,7 +462,7 @@ async fn the_review_names_the_unit_a_taken_out_sentence_goes_back_into_as_the_le
     let course = published().await?;
     let stale = taken_out(&course, "stale", 1, Some((Some(GOOD), None))).await?;
     let unknown = taken_out(&course, "unknown", 9, None).await?;
-    let review = ClaimReviewService::new(course.pool.clone())
+    let review = ClaimReviewService::new(Database::from(course.pool.clone()))
         .review(&course.program_id, &course.lesson_id)
         .await?
         .unwrap();
@@ -501,7 +502,7 @@ async fn the_review_names_the_section_a_sentence_goes_back_into_when_its_own_sec
         )
         .await?;
     }
-    let review = ClaimReviewService::new(course.pool.clone())
+    let review = ClaimReviewService::new(Database::from(course.pool.clone()))
         .review(&course.program_id, &course.lesson_id)
         .await?
         .unwrap();
@@ -531,7 +532,7 @@ async fn a_source_that_supports_a_taken_out_sentence_puts_it_back_where_it_stood
     let course = published().await?;
     let known = taken_out(&course, "known", 0, Some((Some(GOOD), None))).await?;
     let unknown = taken_out(&course, "unknown", 9, None).await?;
-    let service = ClaimReviewService::new(course.pool.clone());
+    let service = ClaimReviewService::new(Database::from(course.pool.clone()));
 
     let none = service
         .put_back_for_source(&course.lesson_id, &unknown)
@@ -556,7 +557,7 @@ async fn act_many(
     revision: i64,
 ) -> Result<i64> {
     let ids: Vec<String> = ids.iter().map(|id| id.0.clone()).collect();
-    ClaimReviewService::new(course.pool.clone())
+    ClaimReviewService::new(Database::from(course.pool.clone()))
         .resolve_many(&course.lesson_id, &ids, action, revision)
         .await
 }

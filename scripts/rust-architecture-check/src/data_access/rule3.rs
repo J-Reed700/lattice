@@ -4,6 +4,8 @@
 //! the pool, begins at most one write and one read transaction, reads before it
 //! begins the write transaction, and runs nothing after the write transaction
 //! commits.
+mod pool;
+
 use super::{is_punct, walk_tokens, Exception, Exempt, Violation};
 use crate::{
     item_attrs,
@@ -66,6 +68,14 @@ impl Arg {
                 .collect(),
         }
     }
+}
+
+/// A `let` binding: its name, its annotated type and its initializer when that only copies
+/// something.
+struct Let {
+    name: String,
+    ty: Option<Type>,
+    core: Option<Arg>,
 }
 
 /// A call to a function that may be defined in the same file.
@@ -185,6 +195,7 @@ fn split_arguments(stream: TokenStream) -> Vec<Arg> {
 /// begins.
 #[derive(Default)]
 struct Body {
+    lets: Vec<Let>,
     acquired: HashSet<String>,
     writes: HashSet<String>,
     reads: HashSet<String>,
@@ -327,6 +338,14 @@ impl<'ast> Visit<'ast> for Body {
                 }
             }
         }
+        if let Some(name) = binding(&local.pat) {
+            let ty = match &local.pat {
+                Pat::Type(typed) => Some((*typed.ty).clone()),
+                _ => None,
+            };
+            let core = local.init.as_ref().and_then(|init| pool::alias(&init.expr));
+            self.lets.push(Let { name, ty, core });
+        }
         visit::visit_local(self, local);
     }
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
@@ -460,6 +479,10 @@ struct Def {
     /// Parameter names, without the receiver.
     params: Vec<String>,
     receiver: bool,
+    /// The parameters and bindings that hold the pool, by type or by what they copy.
+    pool_names: HashSet<String>,
+    /// The fields of `self` that hold the pool.
+    pool_fields: HashSet<String>,
     /// Begins a transaction or takes a `WriteTx` / `ReadTx`.
     unit: bool,
     body: Body,
@@ -471,6 +494,12 @@ struct Collect {
     operations: bool,
     owner: Option<String>,
     defs: Vec<Def>,
+    /// Per struct of the file, its fields that hold a pool.
+    fields: HashMap<String, HashSet<String>>,
+    /// The pool fields of the struct the current impl is for.
+    current: HashSet<String>,
+    /// The generics of the current impl that are bounded by `DriverPool`.
+    bounds: HashSet<String>,
 }
 
 impl Collect {
@@ -502,12 +531,42 @@ impl Collect {
                 FnArg::Typed(typed) => Some(binding(&typed.pat).unwrap_or_else(|| "_".into())),
             })
             .collect();
+        let mut bounded = pool::bounded(&signature.generics);
+        bounded.extend(self.bounds.iter().cloned());
+        let mut pool_names: HashSet<String> = signature
+            .inputs
+            .iter()
+            .filter_map(|input| match input {
+                FnArg::Typed(typed) if pool::pool_type(&typed.ty, &bounded) => binding(&typed.pat),
+                _ => None,
+            })
+            .collect();
+        let pool_fields = if signature.receiver().is_some() {
+            self.current.clone()
+        } else {
+            HashSet::new()
+        };
+        for each in &body.lets {
+            let pool = each
+                .ty
+                .as_ref()
+                .is_some_and(|ty| pool::pool_type(ty, &bounded))
+                || each
+                    .core
+                    .as_ref()
+                    .is_some_and(|arg| pool::pool_text(arg, &pool_names, &pool_fields));
+            if pool {
+                pool_names.insert(each.name.clone());
+            }
+        }
         self.defs.push(Def {
             name: signature.ident.to_string(),
             owner: self.owner.clone(),
             line: signature.fn_token.span.start().line,
             params,
             receiver: signature.receiver().is_some(),
+            pool_names,
+            pool_fields,
             unit,
             body,
         });
@@ -534,7 +593,21 @@ impl<'ast> Visit<'ast> for Collect {
         let outer = self
             .owner
             .replace(item.self_ty.to_token_stream().to_string());
+        let fields = match &*item.self_ty {
+            Type::Path(ty) => ty
+                .path
+                .segments
+                .last()
+                .and_then(|last| self.fields.get(&last.ident.to_string()))
+                .cloned()
+                .unwrap_or_default(),
+            _ => HashSet::new(),
+        };
+        let outer_fields = std::mem::replace(&mut self.current, fields);
+        let outer_bounds = std::mem::replace(&mut self.bounds, pool::bounded(&item.generics));
         visit::visit_item_impl(self, item);
+        self.current = outer_fields;
+        self.bounds = outer_bounds;
         self.owner = outer;
     }
     fn visit_item_trait(&mut self, item: &'ast syn::ItemTrait) {
@@ -610,8 +683,7 @@ impl<'a> Resolver<'a> {
         if let Some(target) = bound.and_then(|bound| arg.words.iter().find_map(|w| bound.get(w))) {
             return *target;
         }
-        if arg.squashed.contains("self.pool")
-            || arg.squashed.contains("acquire()")
+        if pool::pool_text(arg, &def.pool_names, &def.pool_fields)
             || named(&def.body.acquired)
             || arg.squashed.contains("pool")
         {
@@ -713,6 +785,7 @@ pub fn violations(
         operations: !data,
         ..Collect::default()
     };
+    collect.fields = pool::pool_fields(ast);
     collect.visit_file(ast);
     let resolver = Resolver::new(&collect.defs);
     let mut found = Vec::new();

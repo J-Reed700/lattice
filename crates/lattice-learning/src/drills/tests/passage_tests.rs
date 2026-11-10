@@ -44,6 +44,7 @@ use lattice_core::domain::learning::drills::{
     Severity, SourceVerdict,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 use lattice_core::shared::text::segmentation::sentences;
 use serde_json::json;
@@ -57,12 +58,14 @@ async fn stored_sources(
     pool: &SqlitePool,
     program_id: &str,
 ) -> Result<Vec<(String, String, String)>> {
-    Ok(LearningSourceLibraryRepository::new(pool.clone())
-        .verification_sources(program_id)
-        .await?
-        .into_iter()
-        .map(|source| (source.id, source.title, source.excerpt))
-        .collect())
+    Ok(
+        LearningSourceLibraryRepository::new(Database::from(pool.clone()))
+            .verification_sources(program_id)
+            .await?
+            .into_iter()
+            .map(|source| (source.id, source.title, source.excerpt))
+            .collect(),
+    )
 }
 
 /// The version id and the text of the source of the course with `title`.
@@ -1932,7 +1935,7 @@ async fn a_passage_drill_builds_end_to_end_and_is_stored_with_its_source() -> Re
     let program = course(&pool).await?;
     let (_, text) = source_titled(&pool, &program, "Spacing and memory").await?;
     let spec = passage_lesson_spec(&pool, &program, SPACING_LESSON).await?;
-    let job = bank::queue_build(&pool, &spec, "passage").await?;
+    let job = bank::queue_build(&Database::from(pool.clone()), &spec, "passage").await?;
     let store = JobStore::new(pool.clone());
     store
         .claim(&job)
@@ -2690,9 +2693,12 @@ async fn a_build_under_way_for_a_course_is_found_again_and_another_course_gets_i
         program_id: &two,
         material: &passages,
     };
-    let first = bank::ensure_build(&pool, on_one, None, 4, 2).await?;
-    assert_eq!(bank::ensure_build(&pool, on_one, None, 4, 2).await?, first);
-    let other = bank::ensure_build(&pool, on_two, None, 4, 2).await?;
+    let first = bank::ensure_build(&Database::from(pool.clone()), on_one, None, 4, 2).await?;
+    assert_eq!(
+        bank::ensure_build(&Database::from(pool.clone()), on_one, None, 4, 2).await?,
+        first
+    );
+    let other = bank::ensure_build(&Database::from(pool.clone()), on_two, None, 4, 2).await?;
     assert_ne!(other, first);
     let store = JobStore::new(pool.clone());
     assert_eq!(

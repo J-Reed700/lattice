@@ -4,7 +4,7 @@ use lattice_core::application::ports::conversation_context::{
     ConversationContextPort, LinkedConversationSource,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::SqlitePool;
 
 pub struct SqliteConversationContext {
@@ -12,7 +12,7 @@ pub struct SqliteConversationContext {
 }
 
 impl SqliteConversationContext {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }

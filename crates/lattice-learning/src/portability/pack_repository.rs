@@ -35,7 +35,8 @@ pub use files::DestinationPicker;
 pub use files::PACK_EXTENSION;
 use files::{chosen_file, managed_path, next_free_path, read_untrusted};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use records::{pack_operation, replay, PendingPreview};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
@@ -110,7 +111,7 @@ pub struct LearningPackRepository {
 }
 impl LearningPackRepository {
     pub fn new(
-        pool: impl DatabaseHandle,
+        pool: impl DriverPool,
         managed_dir: std::path::PathBuf,
         app_data_dir: std::path::PathBuf,
     ) -> Self {

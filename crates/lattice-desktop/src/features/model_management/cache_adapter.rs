@@ -31,7 +31,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use lattice_core::application::ports::{ExternalModelMetadata, ModelCatalogPort};
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 
 /// Cache-key schema version.
 ///
@@ -42,7 +42,7 @@ const CACHE_KEY_VERSION: &str = "v6";
 ///
 /// Wraps a `ModelCatalogPort` with SQLite-based caching.
 pub struct ModelCacheAdapter {
-    pool: Database,
+    database: Database,
     upstream: Arc<dyn ModelCatalogPort>,
     ttl_seconds: i64,
 }
@@ -50,12 +50,11 @@ pub struct ModelCacheAdapter {
 impl ModelCacheAdapter {
     /// Create a new cache adapter.
     pub async fn new(
-        pool: impl DatabaseHandle,
+        database: Database,
         upstream: Arc<dyn ModelCatalogPort>,
     ) -> Result<Self, AppError> {
-        let pool = pool.database();
         let adapter = Self {
-            pool,
+            database,
             upstream,
             ttl_seconds: 3600, // 1 hour
         };
@@ -67,13 +66,12 @@ impl ModelCacheAdapter {
 
     /// Create with custom TTL.
     pub async fn with_ttl(
-        pool: impl DatabaseHandle,
+        database: Database,
         upstream: Arc<dyn ModelCatalogPort>,
         ttl_seconds: i64,
     ) -> Result<Self, AppError> {
-        let pool = pool.database();
         let adapter = Self {
-            pool,
+            database,
             upstream,
             ttl_seconds,
         };
@@ -85,7 +83,7 @@ impl ModelCacheAdapter {
 
     /// Initialize cache schema.
     async fn initialize_schema(&self) -> Result<(), AppError> {
-        super::repository::initialize_cache_schema(&self.pool).await
+        super::repository::initialize_cache_schema(&self.database).await
     }
 
     /// Get current Unix timestamp.
@@ -115,7 +113,7 @@ impl ModelCacheAdapter {
         let cache_key = Self::normalize_query(query, limit);
         let now = Self::now();
 
-        let row = super::repository::cached_results_json(&self.pool, &cache_key, now).await?;
+        let row = super::repository::cached_results_json(&self.database, &cache_key, now).await?;
 
         if let Some(results_json) = row {
             let results: Vec<ExternalModelMetadata> =
@@ -146,7 +144,7 @@ impl ModelCacheAdapter {
             .map_err(|e| AppError::Serialization(format!("Failed to serialize results: {}", e)))?;
 
         super::repository::store_results_json(
-            &self.pool,
+            &self.database,
             &cache_key,
             &results_json,
             now,
@@ -162,7 +160,7 @@ impl ModelCacheAdapter {
     pub async fn clear_expired(&self) -> Result<u64, AppError> {
         let now = Self::now();
 
-        let deleted = super::repository::delete_expired(&self.pool, now).await?;
+        let deleted = super::repository::delete_expired(&self.database, now).await?;
         if deleted > 0 {
             tracing::info!("Cleared {} expired cache entries", deleted);
         }
@@ -172,7 +170,7 @@ impl ModelCacheAdapter {
 
     /// Clear all cache entries.
     pub async fn clear_all(&self) -> Result<u64, AppError> {
-        let deleted = super::repository::delete_all(&self.pool).await?;
+        let deleted = super::repository::delete_all(&self.database).await?;
         tracing::info!("Cleared {} cache entries", deleted);
 
         Ok(deleted)
@@ -182,7 +180,7 @@ impl ModelCacheAdapter {
     pub async fn get_stats(&self) -> Result<ModelCatalogStats, AppError> {
         let now = Self::now();
 
-        super::repository::cache_stats(&self.pool, now).await
+        super::repository::cache_stats(&self.database, now).await
     }
 }
 
@@ -266,7 +264,7 @@ mod tests {
             .expect("Failed to create in-memory database");
 
         let mock = Arc::new(MockModelCatalogPort::new());
-        ModelCacheAdapter::new(pool, mock as Arc<dyn ModelCatalogPort>)
+        ModelCacheAdapter::new(Database::from(pool), mock as Arc<dyn ModelCatalogPort>)
             .await
             .expect("Failed to create cache adapter")
     }
@@ -381,9 +379,13 @@ mod tests {
             .await
             .expect("Failed to create in-memory database");
         let mock = Arc::new(MockModelCatalogPort::new());
-        ModelCacheAdapter::with_ttl(pool, mock as Arc<dyn ModelCatalogPort>, ttl_seconds)
-            .await
-            .expect("Failed to create cache")
+        ModelCacheAdapter::with_ttl(
+            Database::from(pool),
+            mock as Arc<dyn ModelCatalogPort>,
+            ttl_seconds,
+        )
+        .await
+        .expect("Failed to create cache")
     }
 
     /// A fresh entry counts as valid.

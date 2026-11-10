@@ -11,7 +11,7 @@ use tokio::sync::Notify;
 use lattice_core::application::ports::NoteIndexSink;
 use lattice_core::application::ports::SettingsReaderPort;
 use lattice_core::application::ports::WorkspaceNotesPort;
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 
 /// The note transaction already persisted its outbox entry. A notification
 /// merely avoids waiting for the periodic recovery tick.
@@ -28,7 +28,7 @@ pub fn spawn_delete_workspace_note(writer: &VaultWriterHandle) {
 /// Journal pages are written through to the vault but were historically never
 /// indexed, so "retrieval over your journal" never happened. This is the one
 /// decision that closes that gap; it is pure so it can be tested without a
-/// container, a pool, or a disk.
+/// container, a database, or a disk.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NoteIndexAction {
     /// Submit the file to the indexing pipeline.
@@ -87,9 +87,9 @@ pub struct VaultWriterHandle {
 impl VaultWriterHandle {
     pub async fn enqueue_backfill(
         &self,
-        pool: &impl DatabaseHandle,
+        database: &Database,
     ) -> lattice_core::shared::error::Result<()> {
-        super::repository::enqueue_all(pool).await?;
+        super::repository::enqueue_all(database).await?;
         self.wake.notify_one();
         Ok(())
     }
@@ -121,10 +121,9 @@ impl VaultWriterHandle {
 pub fn start_vault_writer(
     settings_uc: Arc<impl SettingsReaderPort + 'static>,
     suppression: super::watcher::WriteSuppressionRegistry,
-    pool: impl DatabaseHandle,
+    database: Database,
     background: &lattice_core::shared::runtime::background::BackgroundTasks,
 ) -> VaultWriterHandle {
-    let pool = pool.database();
     let wake = Arc::new(Notify::new());
     let app_handle = Arc::new(std::sync::RwLock::new(None));
     let note_index_sink = Arc::new(std::sync::RwLock::new(None));
@@ -136,7 +135,7 @@ pub fn start_vault_writer(
         app_handle.clone(),
         note_index_sink.clone(),
         suppression,
-        pool,
+        database,
         cancel,
     ));
     VaultWriterHandle {
@@ -153,10 +152,10 @@ async fn run_worker(
     app_handle: Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
     note_index_sink: Arc<std::sync::RwLock<Option<Arc<dyn NoteIndexSink>>>>,
     suppression: super::watcher::WriteSuppressionRegistry,
-    pool: Database,
+    database: Database,
     cancel: tokio_util::sync::CancellationToken,
 ) {
-    let repository = super::repository::workspace_notes(&pool);
+    let repository = super::repository::workspace_notes(&database);
     loop {
         // Intents survive process shutdown. Finish the current atomic write;
         // leave the rest in SQLite for startup replay.
@@ -175,7 +174,7 @@ async fn run_worker(
             if let Some(root) =
                 lattice_core::shared::fs::roots::resolve_vault_root(&settings.vault.vault_path)
             {
-                match super::repository::pending(&pool).await {
+                match super::repository::pending(&database).await {
                     Ok(writes) => {
                         let more = writes.len() == 64;
                         let mut failed = false;
@@ -192,7 +191,7 @@ async fn run_worker(
                                     &root,
                                     "Invalid note file identity",
                                 );
-                                let _ = super::repository::defer(&pool, &write).await;
+                                let _ = super::repository::defer(&database, &write).await;
                                 failed = true;
                                 continue;
                             }
@@ -216,7 +215,7 @@ async fn run_worker(
                                         match atomic_write(&target, &document).await {
                                             Ok(()) => {
                                                 suppression.mark_written(target.clone()).await;
-                                                super::repository::mark_mirrored(&pool, &write)
+                                                super::repository::mark_mirrored(&database, &write)
                                                     .await
                                                     .map_err(|error| error.to_string())
                                             }
@@ -249,7 +248,7 @@ async fn run_worker(
                                                         == std::io::ErrorKind::NotFound => {}
                                                 Err(error) => return Err(error.to_string()),
                                             }
-                                            super::repository::mark_mirrored(&pool, &write)
+                                            super::repository::mark_mirrored(&database, &write)
                                                 .await
                                                 .map_err(|error| error.to_string())?;
                                         }
@@ -270,7 +269,7 @@ async fn run_worker(
                                 }
                                 Err(error) => Err(error.to_string()),
                             };
-                            match settle_write(&pool, &write, result).await {
+                            match settle_write(&database, &write, result).await {
                                 Ok(()) => {}
                                 Err(error) => {
                                     emit_write_error(
@@ -306,14 +305,14 @@ pub(super) fn safe_note_id(id: &str) -> bool {
 }
 
 async fn settle_write(
-    pool: &Database,
+    database: &Database,
     write: &super::repository::PendingWrite,
     apply_result: std::result::Result<(), String>,
 ) -> lattice_core::shared::error::Result<()> {
     match apply_result {
-        Ok(()) => super::repository::acknowledge(pool, write).await,
+        Ok(()) => super::repository::acknowledge(database, write).await,
         Err(error) => {
-            super::repository::defer(pool, write).await?;
+            super::repository::defer(database, write).await?;
             Err(lattice_core::shared::error::AppError::InternalError(error))
         }
     }
@@ -647,7 +646,7 @@ mod tests {
             .await
             .unwrap();
         assert!(settle_write(
-            &pool.database(),
+            &Database::from(pool.clone()),
             &write,
             Err("simulated index failure".into())
         )

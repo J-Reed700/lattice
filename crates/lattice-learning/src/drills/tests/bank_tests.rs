@@ -14,6 +14,7 @@ use crate::persistence::{db, now};
 use crate::tests::pool;
 use lattice_core::domain::learning::drills::{targets, Drill, Material, PatternDue};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore};
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -467,7 +468,7 @@ async fn taking_queues_no_build_while_a_build_of_the_shelf_is_under_way() -> Res
         .put(&pool)
         .await?;
     let under_way = queue_build(
-        &pool,
+        &Database::from(pool.clone()),
         &build_spec(&program, &lessons[1], python.clone()),
         "under way",
     )
@@ -505,26 +506,26 @@ async fn a_build_of_another_shelf_or_one_that_has_ended_does_not_hold_the_next_b
         .put(&pool)
         .await?;
     queue_build(
-        &pool,
+        &Database::from(pool.clone()),
         &build_spec(&program, &lessons[1], Material::code("javascript")),
         "another language",
     )
     .await?;
     queue_build(
-        &pool,
+        &Database::from(pool.clone()),
         &build_spec(&other, &others[1], python.clone()),
         "another course",
     )
     .await?;
     let failed = queue_build(
-        &pool,
+        &Database::from(pool.clone()),
         &build_spec(&program, &lessons[1], python.clone()),
         "failed",
     )
     .await?;
     end(&pool, &failed, "failed").await?;
     let completed = queue_build(
-        &pool,
+        &Database::from(pool.clone()),
         &build_spec(&program, &lessons[2], python.clone()),
         "completed",
     )
@@ -603,16 +604,18 @@ async fn with_no_lesson_left_to_drill_on_the_material_no_build_is_queued() -> Re
 #[tokio::test]
 async fn queueing_a_build_twice_with_one_seed_finds_the_same_job() -> Result<()> {
     let pool = pool().await?;
-    let first = queue_build(&pool, &lesson_spec(), "refill").await?;
-    let again = queue_build(&pool, &lesson_spec(), "refill").await?;
+    let first = queue_build(&Database::from(pool.clone()), &lesson_spec(), "refill").await?;
+    let again = queue_build(&Database::from(pool.clone()), &lesson_spec(), "refill").await?;
     assert_eq!(first, again);
     assert_eq!(builds(&pool).await?, 1);
-    let other = queue_build(&pool, &lesson_spec(), "another").await?;
+    let other = queue_build(&Database::from(pool.clone()), &lesson_spec(), "another").await?;
     assert_ne!(first, other);
 
     let mut different = lesson_spec();
     different.lines += 1;
-    let error = queue_build(&pool, &different, "refill").await.unwrap_err();
+    let error = queue_build(&Database::from(pool.clone()), &different, "refill")
+        .await
+        .unwrap_err();
     assert!(
         matches!(&error, AppError::InvalidInput(message) if message.contains("reused")),
         "{error:?}"
@@ -657,7 +660,9 @@ async fn a_spec_that_names_no_drill_is_refused_before_a_job_is_queued() -> Resul
             ..lesson_spec()
         },
     ] {
-        let error = queue_build(&pool, &bad, "bad").await.unwrap_err();
+        let error = queue_build(&Database::from(pool.clone()), &bad, "bad")
+            .await
+            .unwrap_err();
         assert!(matches!(error, AppError::InvalidInput(_)), "{bad:?}");
     }
     assert_eq!(builds(&pool).await?, 0);
@@ -807,7 +812,7 @@ async fn the_build_under_way_is_found_again_for_its_lesson_or_for_any() -> Resul
     };
     let store = JobStore::new(pool.clone());
 
-    let first = ensure_build(&pool, shelf, None, 40, 2).await?;
+    let first = ensure_build(&Database::from(pool.clone()), shelf, None, 40, 2).await?;
     let job = store.get(&first).await?;
     assert_eq!(job.kind, DRILL_BUILD);
     assert_eq!(job.subject_id, Some(format!("drill:{program}:code:python")));
@@ -823,25 +828,49 @@ async fn the_build_under_way_is_found_again_for_its_lesson_or_for_any() -> Resul
         },
         "the lesson next up, with the patterns the schedule offers"
     );
-    assert_eq!(ensure_build(&pool, shelf, None, 40, 2).await?, first);
+    assert_eq!(
+        ensure_build(&Database::from(pool.clone()), shelf, None, 40, 2).await?,
+        first
+    );
 
-    let second = ensure_build(&pool, shelf, Some(lessons[1].as_str()), 40, 2).await?;
+    let second = ensure_build(
+        &Database::from(pool.clone()),
+        shelf,
+        Some(lessons[1].as_str()),
+        40,
+        2,
+    )
+    .await?;
     assert_ne!(second, first);
     assert_eq!(
         spec_of(&store.get(&second).await?)?.lesson_id.as_deref(),
         Some(lessons[1].as_str())
     );
     assert_eq!(
-        ensure_build(&pool, shelf, Some(lessons[1].as_str()), 40, 2).await?,
+        ensure_build(
+            &Database::from(pool.clone()),
+            shelf,
+            Some(lessons[1].as_str()),
+            40,
+            2
+        )
+        .await?,
         second
     );
     assert_eq!(
-        ensure_build(&pool, shelf, Some(lessons[0].as_str()), 40, 2).await?,
+        ensure_build(
+            &Database::from(pool.clone()),
+            shelf,
+            Some(lessons[0].as_str()),
+            40,
+            2
+        )
+        .await?,
         first
     );
 
     let elsewhere = ensure_build(
-        &pool,
+        &Database::from(pool.clone()),
         Shelf {
             program_id: &program,
             material: &javascript,
@@ -858,7 +887,14 @@ async fn the_build_under_way_is_found_again_for_its_lesson_or_for_any() -> Resul
     );
 
     end(&pool, &first, "failed").await?;
-    let again = ensure_build(&pool, shelf, Some(lessons[0].as_str()), 40, 2).await?;
+    let again = ensure_build(
+        &Database::from(pool.clone()),
+        shelf,
+        Some(lessons[0].as_str()),
+        40,
+        2,
+    )
+    .await?;
     assert!(![&first, &second, &elsewhere].contains(&&again));
     assert_eq!(
         spec_of(&store.get(&again).await?)?.lesson_id.as_deref(),
@@ -880,11 +916,20 @@ async fn ensuring_a_build_with_no_lesson_to_drill_is_refused_unless_one_is_asked
         program_id: &program,
         material: &python,
     };
-    let error = ensure_build(&pool, shelf, None, 40, 2).await.unwrap_err();
+    let error = ensure_build(&Database::from(pool.clone()), shelf, None, 40, 2)
+        .await
+        .unwrap_err();
     assert!(matches!(error, AppError::InvalidInput(_)), "{error:?}");
     assert_eq!(builds(&pool).await?, 0);
 
-    let asked = ensure_build(&pool, shelf, Some(lessons[2].as_str()), 40, 2).await?;
+    let asked = ensure_build(
+        &Database::from(pool.clone()),
+        shelf,
+        Some(lessons[2].as_str()),
+        40,
+        2,
+    )
+    .await?;
     let queued = spec_of(&JobStore::new(pool.clone()).get(&asked).await?)?;
     assert_eq!(queued.lesson_id.as_deref(), Some(lessons[2].as_str()));
     assert_eq!(builds(&pool).await?, 1);

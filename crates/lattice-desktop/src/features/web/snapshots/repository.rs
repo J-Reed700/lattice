@@ -7,7 +7,8 @@ use sqlx::{SqliteConnection, SqlitePool};
 
 use super::dto::WebPageSnapshotStatus;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
@@ -171,7 +172,7 @@ pub struct SnapshotRepository {
 }
 
 impl SnapshotRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }

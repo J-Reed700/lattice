@@ -5,7 +5,8 @@
 use chrono::Utc;
 use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::path::PathBuf;
 use tracing::{debug, error, info};
@@ -30,7 +31,7 @@ pub struct DownloadedModelRepository {
 
 impl DownloadedModelRepository {
     /// Create a new repository instance
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }

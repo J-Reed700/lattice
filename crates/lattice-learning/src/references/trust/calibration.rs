@@ -8,7 +8,7 @@ use lattice_core::domain::provenance::{
     StaticBars, POLICY,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use serde::Serialize;
 
 use super::SqliteSourceTrustStore;
@@ -54,21 +54,21 @@ pub fn bars_of(outcomes: &[OutcomeRecord]) -> EffectiveBars {
 }
 
 /// The bars in force now.
-pub async fn bars(pool: &impl DatabaseHandle) -> Result<EffectiveBars> {
-    Ok(calibrated(pool).await?.bars)
+pub async fn bars(database: &Database) -> Result<EffectiveBars> {
+    Ok(calibrated(database).await?.bars)
 }
 
 /// The bars in force now, with each cell's verdicts.
-pub async fn calibrated(pool: &impl DatabaseHandle) -> Result<Calibrated> {
-    let outcomes = SqliteSourceTrustStore::new(pool.database())
+pub async fn calibrated(database: &Database) -> Result<Calibrated> {
+    let outcomes = SqliteSourceTrustStore::new(database.clone())
         .outcomes()
         .await?;
     Ok(calibrated_of(&outcomes))
 }
 
 /// Calibration as Settings shows it.
-pub async fn view(pool: &impl DatabaseHandle) -> Result<CalibrationView> {
-    let outcomes = SqliteSourceTrustStore::new(pool.database())
+pub async fn view(database: &Database) -> Result<CalibrationView> {
+    let outcomes = SqliteSourceTrustStore::new(database.clone())
         .outcomes()
         .await?;
     let Calibrated { bars, calibration } = calibrated_of(&outcomes);

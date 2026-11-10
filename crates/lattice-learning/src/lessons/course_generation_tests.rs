@@ -4,6 +4,7 @@ use crate::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
     repository::LearningRepository, service,
 };
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
 use lattice_core::{
     application::ports::llm_port::{CompletionRequest, CompletionResponse},
@@ -471,6 +472,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     let first = crate::lesson_progress::run(
         &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
         crate::lesson_drafts::run(
+            &Database::from(pool.clone()),
             &jobs,
             &job.id,
             &lesson.id,
@@ -501,6 +503,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     let prepared = crate::lesson_progress::run(
         &JobContext::detached(&JobStore::new(pool.clone()), &retry.id).await?,
         crate::lesson_drafts::run(
+            &Database::from(pool.clone()),
             &jobs,
             &retry.id,
             &lesson.id,
@@ -746,7 +749,7 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
 
     let prepared = Box::pin(research::run(
-        pool.clone(),
+        Database::from(pool.clone()),
         accepted.summary.id.clone(),
         accepted.summary.goal.clone(),
         Some(research_tests::web(false)),
@@ -1876,6 +1879,7 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
     let prepared = crate::lesson_progress::run(
         &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
         crate::lesson_drafts::run(
+            &Database::from(pool.clone()),
             &jobs,
             &job.id,
             &lesson.id,

@@ -47,7 +47,7 @@ use lattice::features::learning::tutor::{bind_conversation, SetConversationCours
 use lattice::infrastructure::passage_index::EmbedderSource;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use learner::Turn;
 use parking_lot::Mutex;
 use serde::Deserialize;
@@ -400,7 +400,7 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 }
 
 async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option<String>)> {
-    let pool = bench.container.db_pool().sqlx_pool();
+    let pool = bench.container.database().sqlx_pool();
     let seeded = course::seed(pool, bench.course).await?;
     let mode = bench
         .courses
@@ -419,7 +419,7 @@ async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option
         None => None,
     };
     bind_conversation(
-        pool,
+        bench.container.database(),
         &SetConversationCourseRequestDto {
             conversation_id: conversation.clone(),
             program_id: seeded.program_id.clone(),

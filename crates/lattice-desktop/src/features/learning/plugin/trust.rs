@@ -24,7 +24,7 @@ use tauri_plugin_dialog::DialogExt;
 const EXPORT_EXTENSION: &str = "jsonl";
 
 fn store(container: &Container) -> SqliteSourceTrustStore {
-    SqliteSourceTrustStore::new(container.db_pool().clone())
+    SqliteSourceTrustStore::new(container.database().clone())
 }
 
 /// Each source's level with its reasons, standing, provenance, relations,
@@ -37,7 +37,7 @@ pub async fn get_learning_source_trust(
     request: GetLearningSourceTrustRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningSourceTrustViewDto, ApiError> {
-    Ok(trust_overrides::view(&store(&container), &request).await?)
+    Ok(trust_overrides::view(container.database(), &request).await?)
 }
 
 /// Creates or replaces one override, re-decides the claims it touches with
@@ -48,7 +48,7 @@ pub async fn set_source_trust_override(
     request: LearningTrustOverrideInputDto,
     container: State<'_, Container>,
 ) -> Result<LearningTrustChangeResultDto, ApiError> {
-    Ok(trust_overrides::set(&store(&container), &request).await?)
+    Ok(trust_overrides::set(container.database(), &request).await?)
 }
 
 /// Removes the override at `scope` and re-decides the claims it touched;
@@ -59,7 +59,7 @@ pub async fn clear_source_trust_override(
     scope: LearningTrustOverrideScopeDto,
     container: State<'_, Container>,
 ) -> Result<Option<LearningTrustChangeResultDto>, ApiError> {
-    Ok(trust_overrides::clear(&store(&container), &scope).await?)
+    Ok(trust_overrides::clear(container.database(), &scope).await?)
 }
 
 /// Every site and site-for-subject override, with the track record of the
@@ -69,7 +69,7 @@ pub async fn clear_source_trust_override(
 pub async fn list_source_trust_overrides(
     container: State<'_, Container>,
 ) -> Result<Vec<LearningSiteTrustOverrideDto>, ApiError> {
-    Ok(override_changes::list(&store(&container)).await?)
+    Ok(override_changes::list(container.database(), &store(&container)).await?)
 }
 
 /// The bars in force per claim kind and level, every automatic change and
@@ -79,7 +79,7 @@ pub async fn list_source_trust_overrides(
 pub async fn get_source_trust_calibration(
     container: State<'_, Container>,
 ) -> Result<LearningSourceTrustCalibrationDto, ApiError> {
-    Ok(calibration_view::calibration(container.db_pool()).await?)
+    Ok(calibration_view::calibration(container.database()).await?)
 }
 
 /// Judges a source's publisher again with the Learning model, then answers
@@ -99,6 +99,7 @@ pub async fn reassess_learning_source_trust(
     .await?;
     let trust = store(&container);
     judgements::reassess_source(
+        container.database(),
         &trust,
         pin.llm.as_ref(),
         &request.program_id,
@@ -106,6 +107,7 @@ pub async fn reassess_learning_source_trust(
     )
     .await?;
     Ok(source_view::view(
+        container.database(),
         &trust,
         &GetLearningSourceTrustRequestDto {
             program_id: request.program_id,
@@ -132,6 +134,7 @@ pub async fn reprofile_learning_claim(
     )
     .await?;
     Ok(judgements::reprofile_claim(
+        container.database(),
         &store(&container),
         pin.llm.as_ref(),
         &request.program_id,
@@ -166,7 +169,7 @@ pub async fn export_provenance_eval_examples<R: Runtime>(
     let Some(path) = picked else {
         return Ok(None);
     };
-    let examples = eval_export::export(&store(&container), &path).await?;
+    let examples = eval_export::export(container.database(), &store(&container), &path).await?;
     Ok(Some(ExportedProvenanceEvalExamplesDto {
         path: path.to_string_lossy().into_owned(),
         examples: u32::try_from(examples).unwrap_or(u32::MAX),

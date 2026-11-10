@@ -1,5 +1,5 @@
 //! The persistent half of the owner cache: `sourcing_owner_cache`.
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::Row;
 
 pub(super) struct CachedOwnerRow {
@@ -9,7 +9,7 @@ pub(super) struct CachedOwnerRow {
 }
 
 pub(super) async fn find(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     cache_key: &str,
 ) -> Result<Option<CachedOwnerRow>, sqlx::Error> {
     let pool = pool.sqlx_pool();
@@ -27,7 +27,7 @@ pub(super) async fn find(
 }
 
 pub(super) async fn upsert(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     cache_key: &str,
     subject_name: &str,
     subject_kind: &str,

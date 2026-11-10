@@ -79,7 +79,7 @@ async fn act(
         .await?
         .revision
         .0;
-    ClaimReviewService::new(course.pool.clone())
+    ClaimReviewService::new(course.database.clone())
         .resolve(lesson_id, &claim.0, action, revision)
         .await
 }
@@ -105,7 +105,7 @@ async fn stored(course: &Course, lesson_id: &str, claim: &ClaimId) -> Result<Sto
             .events()
             .len(),
         revision,
-        examples: CheckerExamples::new(course.pool.clone())
+        examples: CheckerExamples::new(course.database.clone())
             .list(None)
             .await?
             .len(),
@@ -174,7 +174,7 @@ async fn an_undo_whose_outcomes_cannot_be_forgotten_undoes_nothing() -> Result<(
     let lesson_id = waiting_lesson(&course).await?;
     let held = held_claim(&course, &lesson_id).await;
     act(&course, &lesson_id, &held, confirm()).await?;
-    CheckerExamples::new(course.pool.clone())
+    CheckerExamples::new(course.database.clone())
         .record(&CheckerExample {
             id: uuid::Uuid::new_v4().to_string(),
             program_id: course.program_id.clone(),

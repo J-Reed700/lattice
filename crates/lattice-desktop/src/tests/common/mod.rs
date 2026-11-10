@@ -18,12 +18,12 @@ pub use lattice_core::shared::testing::query_counts;
 /// Container::new() signature as main.rs, but with in-memory SQLite
 /// and minimal configuration suitable for smoke testing.
 pub async fn setup_test_container() -> Result<Container> {
-    let db_pool = SqlitePool::connect(":memory:")
+    let pool = SqlitePool::connect(":memory:")
         .await
         .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
 
     sqlx::migrate!("./migrations")
-        .run(&db_pool)
+        .run(&pool)
         .await
         .map_err(|e| {
             lattice_core::shared::error::AppError::Database(format!("Migration failed: {}", e))
@@ -40,7 +40,7 @@ pub async fn setup_test_container() -> Result<Container> {
     let db_conn = Arc::new(DatabaseConnection::new(temp_db_path).await?);
 
     Container::new(
-        db_pool.into(),
+        pool.into(),
         db_conn,
         None,                     // No embedding model for smoke tests
         "http://localhost:11434", // Ollama default (won't be called in smoke tests)

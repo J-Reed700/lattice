@@ -9,8 +9,8 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 impl Container {
-    pub fn db_pool(&self) -> &Database {
-        self.core.db_pool()
+    pub fn database(&self) -> &Database {
+        self.core.database()
     }
 
     pub fn settings_repository(
@@ -191,7 +191,7 @@ impl Container {
         // Folders being watched are also legitimately readable, and the watch
         // list is authoritative in the database rather than in settings.
         match crate::infrastructure::persistence::repositories::file_library::watch_folder_paths(
-            self.db_pool(),
+            self.database(),
         )
         .await
         {

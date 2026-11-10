@@ -8,7 +8,7 @@ use async_trait::async_trait;
 use sqlx::{Row, SqlitePool};
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CitingConversation {
@@ -32,7 +32,7 @@ pub struct SqliteCitingConversationsRepository {
 }
 
 impl SqliteCitingConversationsRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }

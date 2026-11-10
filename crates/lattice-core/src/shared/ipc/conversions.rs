@@ -467,3 +467,26 @@ impl From<serde_json::Error> for ApiError {
         }
     }
 }
+
+/// Convert a database failure to ApiError by what kind of failure it was.
+impl From<crate::shared::persistence::PersistenceError> for ApiError {
+    fn from(err: crate::shared::persistence::PersistenceError) -> Self {
+        use crate::shared::persistence::PersistenceErrorKind as Kind;
+
+        let (code, message) = match err.kind() {
+            Kind::NotFound => (ErrorCode::NotFound, "Record not found"),
+            Kind::Busy | Kind::Closed => (
+                ErrorCode::DatabaseConnectionError,
+                "Database connection error",
+            ),
+            Kind::Misconfigured => (ErrorCode::InvalidConfig, "Database configuration error"),
+            Kind::Other => (ErrorCode::DatabaseError, "Database error"),
+        };
+
+        ApiError {
+            code,
+            message: message.to_string(),
+            details: Some(sanitize_database_error(&err.to_string())),
+        }
+    }
+}

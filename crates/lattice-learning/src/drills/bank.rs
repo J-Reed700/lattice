@@ -7,7 +7,7 @@ use super::spec::DrillSpec;
 use crate::persistence::{db, now};
 use lattice_core::domain::learning::drills::Material;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::{Database, Transactions};
 
 mod store;
 pub use store::queue_build_in;
@@ -47,12 +47,8 @@ impl<'a> Shelf<'a> {
 /// Queues a `learning.drill_build` job for `spec` and returns its id. The operation ID derives from `seed`, so
 /// asking again with the same seed finds the same job, and the same seed with another spec is refused. The caller
 /// tells the job runtime once the job is committed.
-pub async fn queue_build(
-    pool: &impl DatabaseHandle,
-    spec: &DrillSpec,
-    seed: &str,
-) -> Result<String> {
-    let mut transaction = pool.begin_write().await.map_err(db)?;
+pub async fn queue_build(database: &Database, spec: &DrillSpec, seed: &str) -> Result<String> {
+    let mut transaction = database.begin_write().await.map_err(db)?;
     let id = queue_build_in(&mut transaction, spec, seed).await?;
     transaction.commit().await.map_err(db)?;
     Ok(id)
@@ -64,13 +60,13 @@ pub async fn queue_build(
 /// each time they ask. Refused when no lesson is asked for and none of the course's can be drilled on the material.
 /// The caller tells the job runtime once the job is committed.
 pub async fn ensure_build(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     shelf: Shelf<'_>,
     lesson: Option<&str>,
     lines: u32,
     count: usize,
 ) -> Result<String> {
-    let mut transaction = pool.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await.map_err(db)?;
     if let Some(found) = under_way_in(&mut transaction, shelf, lesson).await? {
         transaction.commit().await.map_err(db)?;
         return Ok(found.job_id);
@@ -133,11 +129,11 @@ pub struct Taken {
 /// The lesson and the patterns come from the schedules: the taken drill's lesson and patterns, and those of drills
 /// ready or waiting for their grade, are pending, so they come last.
 pub async fn take(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     shelf: Shelf<'_>,
     lesson: Option<&str>,
 ) -> Result<Option<Taken>> {
-    let mut transaction = pool.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await.map_err(db)?;
     let taken = take_in(&mut transaction, shelf, lesson).await?;
     transaction.commit().await.map_err(db)?;
     Ok(taken)

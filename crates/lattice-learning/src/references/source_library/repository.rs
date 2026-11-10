@@ -1,6 +1,7 @@
 //! The source library's statements, their bindings and their row mapping.
 use super::*;
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection};
 
 pub(super) mod admission;
@@ -44,7 +45,7 @@ pub(super) async fn ids_in_use(
 }
 
 /// Finalizes SQL-migrated legacy snapshots in one transaction.
-pub(super) async fn backfill_legacy(pool: &impl DatabaseHandle, program_id: &str) -> Result<()> {
+pub(super) async fn backfill_legacy(pool: &impl DriverPool, program_id: &str) -> Result<()> {
     let pool = pool.sqlx_pool();
     let waiting: Option<i64> = {
         let mut read = pool.begin_read().await.map_err(db)?;

@@ -18,7 +18,7 @@ use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::text::segmentation::{
     flowed_sentences, Boundaries, Break, Flowed, Span, Strength,
 };
@@ -40,12 +40,12 @@ pub(super) struct Picked {
 /// passage of the page was drilled or turned down. `passage` is `None` when no place of the lesson's sources teaches
 /// it.
 pub(super) async fn pick(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     llm: &dyn LLMPort,
     context: &LessonContext,
     wanted: u32,
 ) -> Result<Picked> {
-    let owners = repository::source_owners(pool, &context.program_id).await?;
+    let owners = repository::source_owners(database, &context.program_id).await?;
     let owner = |version: &str| -> String {
         owners
             .get(version)
@@ -57,7 +57,7 @@ pub(super) async fn pick(
         .iter()
         .map(|version| owner(version))
         .collect();
-    let sources: Vec<LearningSourceDto> = LearningSourceLibraryRepository::new(pool.database())
+    let sources: Vec<LearningSourceDto> = LearningSourceLibraryRepository::new(database.clone())
         .verification_sources(&context.program_id)
         .await?
         .into_iter()
@@ -70,7 +70,7 @@ pub(super) async fn pick(
             asked: 0,
         });
     }
-    let drilled = repository::drilled_passages(pool, &context.program_id).await?;
+    let drilled = repository::drilled_passages(database, &context.program_id).await?;
     let wanted = usize::try_from(wanted).unwrap_or(usize::MAX);
     let collection = ReferenceCollection::lexical(&sources)?;
     let query = context.query();
@@ -78,7 +78,7 @@ pub(super) async fn pick(
     let mut split: HashMap<&str, Vec<Span>> = HashMap::new();
     let mut made: HashMap<(&str, usize), Option<Candidate>> = HashMap::new();
     let basis = teaches::basis(context)?;
-    let mut verdicts = teaches::stored(pool, context, &basis).await?;
+    let mut verdicts = teaches::stored(database, context, &basis).await?;
     let mut asked = 0;
     let mut depth = FIRST_PAGE;
     let mut hits = collection.retrieve(&query, depth).await?;
@@ -122,7 +122,7 @@ pub(super) async fn pick(
         let taught = teaches::ask(llm, context, &passage).await?;
         asked += 1;
         teaches::record(
-            pool,
+            database,
             context,
             &passage,
             &basis,

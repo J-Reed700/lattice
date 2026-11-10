@@ -5,6 +5,7 @@ use crate::repository::LearningRepository;
 use crate::test_support::file_options;
 use crate::tests::fixture;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 use std::time::Duration;
 
@@ -46,7 +47,7 @@ async fn binding_decides_on_the_course_as_the_other_writer_left_it() {
         writer.commit().await.unwrap();
     });
     let bound = bind_conversation(
-        &pool,
+        &Database::from(pool.clone()),
         &SetConversationCourseRequestDto {
             conversation_id: conversation.clone(),
             program_id: program.summary.id.clone(),

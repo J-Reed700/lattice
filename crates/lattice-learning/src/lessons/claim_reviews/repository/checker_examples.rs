@@ -1,14 +1,14 @@
 //! The `learning_checker_examples` table.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{Row, SqliteConnection};
 
 use crate::lessons::claim_reviews::checker_examples::{CheckerExample, Label, LabelSource};
 use crate::persistence::{db, decode, encode};
 
 pub(in crate::lessons::claim_reviews) async fn insert(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     example: &CheckerExample,
 ) -> Result<()> {
     let pool = pool.sqlx_pool();
@@ -41,7 +41,7 @@ pub(in crate::lessons::claim_reviews) async fn insert_in(
 }
 
 pub(in crate::lessons::claim_reviews) async fn delete_for_claim(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     claim_id: &str,
     source: LabelSource,
 ) -> Result<()> {
@@ -65,7 +65,7 @@ pub(in crate::lessons::claim_reviews) async fn delete_for_claim_in(
 }
 
 pub(in crate::lessons::claim_reviews) async fn list(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: Option<&str>,
 ) -> Result<Vec<CheckerExample>> {
     let pool = pool.sqlx_pool();

@@ -17,7 +17,7 @@ use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
 
 use super::format::ArchiveError;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 mod extract;
 mod payload;
@@ -148,11 +148,11 @@ fn fts_external_content_table(sql: &str) -> Option<String> {
     }
 }
 
-/// `VACUUM INTO dest` from the live pool, then clear `EXCLUDED_TABLES` (and
+/// `VACUUM INTO dest` from the live database, then clear `EXCLUDED_TABLES` (and
 /// FTS shadow content where needed) in the copy and `VACUUM` it so the file
 /// shrinks. The result has no `-wal`/`-shm` sidecars.
 pub async fn snapshot_database(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     dest: &Path,
 ) -> Result<SnapshotReport, ArchiveError> {
     let dest_str = dest.to_string_lossy().to_string();
@@ -170,7 +170,7 @@ pub async fn snapshot_database(
         }
     }
 
-    store::copy_database(pool, dest, &dest_str).await?;
+    store::copy_database(database, dest, &dest_str).await?;
 
     let scratch = store::open_snapshot_copy(dest).await?;
 

@@ -248,7 +248,7 @@ mod tests {
     async fn sqlite_session_interrupted_before_relaunch_is_reconciled() {
         use crate::features::download::download_repository::SqliteDownloadRepository;
         use crate::infrastructure::persistence::database::connection::DatabaseConnection;
-        use lattice_core::shared::persistence::DatabaseHandle;
+        use lattice_core::shared::persistence::driver::DriverPool;
 
         let dir = tempfile::tempdir().unwrap();
         let conn = Arc::new(
@@ -257,7 +257,7 @@ mod tests {
                 .unwrap(),
         );
         sqlx::migrate!("./migrations")
-            .run(conn.pool().sqlx_pool())
+            .run(conn.database().sqlx_pool())
             .await
             .unwrap();
         let repository: Arc<dyn DownloadRepository> = Arc::new(SqliteDownloadRepository::new(conn));

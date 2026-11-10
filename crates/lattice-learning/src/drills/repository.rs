@@ -9,7 +9,7 @@ use super::spec::DrillSpec;
 use crate::persistence::{db, decode, encode, now};
 use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue, Material};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::collections::HashMap;
 
@@ -207,7 +207,7 @@ pub(crate) async fn any_ready_in(
 
 /// The source passages the drills of the course `program_id` were built on, ready or taken.
 pub(crate) async fn drilled_passages(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<SourcePassage>> {
     let pool = pool.sqlx_pool();
@@ -223,7 +223,7 @@ pub(crate) async fn drilled_passages(
 
 /// For each version of the course's sources, the source it is a version of.
 pub(crate) async fn source_owners(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<HashMap<String, String>> {
     let pool = pool.sqlx_pool();

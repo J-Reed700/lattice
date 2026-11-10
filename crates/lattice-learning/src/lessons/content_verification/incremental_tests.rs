@@ -90,7 +90,7 @@ async fn one_fact_edit_in_175_claims_rechecks_only_that_fact_and_resume_reuses_a
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let sources = references(175);
     let model = IncrementalModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         // Twenty-two facts to a section, a sentence each, as in a real
         // extracted paragraph. Editing one fact rewrites its sentence alone.
         let sentence = |n: usize| format!("Mineral {n} is recorded.");
@@ -166,7 +166,7 @@ async fn a_receipt_is_found_only_for_the_statement_on_the_quote_it_was_saved_for
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let model = IncrementalModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         // Two sources, so the claim's words tell its passage from the other.
         let sources = references(2);
         let collection = ReferenceCollection::lexical(&sources)?;
@@ -217,7 +217,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let mut sources = references(170);
     let model = IncrementalModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let result = paged(
             &model,
             &ReferenceCollection::lexical(&sources)?,
@@ -257,7 +257,7 @@ async fn research_reopens_one_of_170_checks_and_resume_reuses_all_completed_deci
         acquired_at: 1,
     });
     let resumed = IncrementalModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let collection = ReferenceCollection::lexical(&sources)?;
         {
             let transient = ClaimChecks::default();
@@ -355,7 +355,7 @@ async fn ranking_churn_and_unrelated_research_do_not_replace_pinned_evidence() -
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let mut sources = references(10);
     let model = IncrementalModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let first = paged(
             &model,
             &ReferenceCollection::lexical(&sources)?,
@@ -419,7 +419,7 @@ async fn the_ranking_bump_rebuilds_the_first_page_of_the_course_once() -> Result
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let sources = references(3);
     let model = IncrementalModel::default();
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let references = ReferenceCollection::lexical(&sources)?;
         let claim = &claims(1).units[0].claims[0];
         // A selection the former ranking saved for this claim, pointing at a
@@ -459,7 +459,7 @@ async fn interrupted_new_evidence_cannot_inherit_the_previous_approval() -> Resu
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let mut sources = references(2);
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         paged(
             &IncrementalModel::default(),
             &ReferenceCollection::lexical(&sources)?,
@@ -506,7 +506,7 @@ async fn interrupted_new_evidence_cannot_inherit_the_previous_approval() -> Resu
 async fn teaching_review_survives_added_sources_but_not_changed_content_or_sources() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         lesson_drafts::resume("teaching-fixture".into()).await?;
         let candidate = candidate(GOOD).to_string();
         let mut sources = vec![source()];

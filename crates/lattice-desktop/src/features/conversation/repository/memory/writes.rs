@@ -13,6 +13,10 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use std::str::FromStr;
 
+fn db(error: impl std::fmt::Display) -> MemoryCommitError {
+    MemoryCommitError::Database(error.to_string())
+}
+
 impl ConversationRepository {
     /// Record a failed attempt without touching items, summary or watermark.
     ///
@@ -99,7 +103,6 @@ impl ConversationRepository {
         candidate: &MemoryCommitCandidate,
     ) -> std::result::Result<CommittedMemorySnapshot, MemoryCommitError> {
         let conversation_id = preconditions.conversation_id.as_str();
-        let db = |error: sqlx::Error| MemoryCommitError::Database(error.to_string());
         let now = Utc::now().to_rfc3339();
 
         let mut tx = self.pool.begin_write().await.map_err(db)?;
@@ -380,7 +383,6 @@ impl ConversationRepository {
         tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
     ) -> std::result::Result<(i64, i64, i64), MemoryCommitError> {
-        let db = |error: sqlx::Error| MemoryCommitError::Database(error.to_string());
         let transcript_revision: Option<i64> =
             sqlx::query_scalar("SELECT transcript_revision FROM conversations WHERE id = ?")
                 .bind(conversation_id)
@@ -419,7 +421,6 @@ impl ConversationRepository {
         tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
     ) -> std::result::Result<(usize, usize), MemoryCommitError> {
-        let db = |error: sqlx::Error| MemoryCommitError::Database(error.to_string());
         #[derive(sqlx::FromRow)]
         struct Row {
             kind: String,

@@ -20,7 +20,7 @@ use lattice_core::application::ports::{LoadedChatModelPort, RepositoryPort};
 use lattice_core::application::services::completion_input::{complete_text, TextCall};
 use lattice_core::domain::entities::Tag;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
@@ -29,17 +29,16 @@ use tracing::warn;
 /// Production tag service implementation
 #[derive(Clone)]
 pub struct TagServiceImpl {
-    pub(crate) db_pool: Database,
+    pub(crate) database: Database,
     document_locks: DocumentLockTable,
     model_provider: Arc<dyn LoadedChatModelPort>,
 }
 
 impl TagServiceImpl {
     /// Create a new tag service
-    pub fn new(db_pool: impl DatabaseHandle, model_provider: Arc<dyn LoadedChatModelPort>) -> Self {
-        let db_pool = db_pool.database();
+    pub fn new(database: Database, model_provider: Arc<dyn LoadedChatModelPort>) -> Self {
         Self {
-            db_pool,
+            database,
             document_locks: DocumentLockTable::default(),
             model_provider,
         }
@@ -84,7 +83,7 @@ impl TagServiceTrait for TagServiceImpl {
         }
 
         let normalized_name = name.trim().to_lowercase();
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         tag_repo
             .create(&normalized_name, color)
@@ -105,7 +104,7 @@ impl TagServiceTrait for TagServiceImpl {
         }
 
         let normalized_name = name.map(|n| n.trim().to_lowercase());
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         tag_repo
             .update(tag_id, normalized_name.as_deref(), color)
@@ -114,7 +113,7 @@ impl TagServiceTrait for TagServiceImpl {
     }
 
     async fn delete_tag(&self, tag_id: &str) -> Result<()> {
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         tag_repo
             .delete(tag_id)
@@ -123,7 +122,7 @@ impl TagServiceTrait for TagServiceImpl {
     }
 
     async fn get_all_tags(&self) -> Result<Vec<Tag>> {
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         tag_repo
             .get_all()
@@ -132,7 +131,7 @@ impl TagServiceTrait for TagServiceImpl {
     }
 
     async fn get_all_tags_with_counts(&self) -> Result<Vec<TagWithCount>> {
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         let results = tag_repo
             .get_all_with_counts()
@@ -152,7 +151,7 @@ impl TagServiceTrait for TagServiceImpl {
     }
 
     async fn get_tags_for_document(&self, document_id: &str) -> Result<Vec<Tag>> {
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         tag_repo
             .get_tags_for_document(document_id)
@@ -164,13 +163,13 @@ impl TagServiceTrait for TagServiceImpl {
         &self,
         document_ids: &[String],
     ) -> Result<std::collections::HashMap<String, Vec<Tag>>> {
-        TagRepository::new(self.db_pool.clone())
+        TagRepository::new(self.database.clone())
             .get_tags_for_documents(document_ids)
             .await
     }
 
     async fn apply_tags(&self, document_id: &str, tag_names: Vec<String>) -> Result<Vec<Tag>> {
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         let existing_tags = tag_repo.get_tags_for_document(document_id).await?;
         let existing_tag_names: Vec<String> =
@@ -202,13 +201,13 @@ impl TagServiceTrait for TagServiceImpl {
         document_id: &str,
         tag_names: Vec<String>,
     ) -> lattice_core::shared::error::Result<()> {
-        crate::features::tags::repository::TagRepository::new(self.db_pool.clone())
+        crate::features::tags::repository::TagRepository::new(self.database.clone())
             .replace_document_tags(document_id, tag_names)
             .await
     }
 
     async fn remove_tag_from_document(&self, document_id: &str, tag_id: &str) -> Result<()> {
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         tag_repo
             .remove_tag_from_document(document_id, tag_id)
@@ -217,7 +216,7 @@ impl TagServiceTrait for TagServiceImpl {
     }
 
     async fn search_documents_by_tag(&self, tag_name: &str) -> Result<Vec<String>> {
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         tag_repo
             .find_documents_by_tag_name(tag_name)
@@ -234,7 +233,7 @@ impl TagServiceTrait for TagServiceImpl {
 
         let _lock = self.acquire_lock_with_timeout(document_id).await?;
 
-        let document_repo = DocumentRepositoryImpl::new(self.db_pool.clone());
+        let document_repo = DocumentRepositoryImpl::new(self.database.clone());
         let document = document_repo
             .find_by_id(document_id)
             .await?
@@ -281,7 +280,7 @@ impl TagServiceTrait for TagServiceImpl {
             ));
         }
 
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
         let untagged_ids = tag_repo.untagged_document_ids(max_documents).await?;
 
         let mut tagged_count = 0;
@@ -343,7 +342,7 @@ impl TagServiceTrait for TagServiceImpl {
     }
 
     async fn get_or_create(&self, name: &str, color: &str) -> Result<Tag> {
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
         tag_repo
             .get_or_create(name, Some(color))
             .await
@@ -446,7 +445,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        TagServiceImpl::new(pool, Arc::new(NoModel))
+        TagServiceImpl::new(Database::from(pool), Arc::new(NoModel))
     }
 
     fn long_tag(suffix: &str) -> String {

@@ -22,7 +22,7 @@ use crate::source_library::LearningSourceLibraryRepository;
 
 /// One course's web, as its Verifier audit may use it.
 pub struct VerifierPages {
-    pub pool: Database,
+    pub database: Database,
     pub program_id: String,
     pub web: Arc<dyn WebServiceTrait>,
     pub snapshots: Arc<dyn ReferenceSnapshotPort>,
@@ -53,14 +53,14 @@ impl VerifierWeb for VerifierPages {
         };
         let saved = capture_page(
             &capture,
-            &self.pool,
+            &self.database,
             &self.program_id,
             url,
             SourceAddedBy::Verifier,
         )
         .await?
         .map_err(|failure| AppError::InvalidInput(failure.message))?;
-        let version = LearningSourceLibraryRepository::new(self.pool.clone())
+        let version = LearningSourceLibraryRepository::new(self.database.clone())
             .get_version(&GetLearningSourceVersionRequestDto {
                 program_id: self.program_id.clone(),
                 source_id: saved.source_id,

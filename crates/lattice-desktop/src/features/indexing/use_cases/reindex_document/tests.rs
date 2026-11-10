@@ -293,7 +293,7 @@ async fn test_reindex_document() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo.clone(),
-        pool.clone(),
+        Database::from(pool.clone()),
         Arc::new(MockVectorSearch::default()),
     );
 
@@ -335,7 +335,7 @@ async fn reindex_evicts_stale_vectors_and_adds_new_ones() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo.clone(),
-        pool.clone(),
+        Database::from(pool.clone()),
         vector_search.clone(),
     );
 
@@ -384,7 +384,7 @@ async fn a_file_that_now_extracts_to_whitespace_fails_and_keeps_its_vectors() {
         }),
         Arc::new(MockEmbedder),
         repo,
-        pool.clone(),
+        Database::from(pool.clone()),
         vector_search.clone(),
     );
 
@@ -406,7 +406,7 @@ async fn test_reindex_document_not_found() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo,
-        pool_with(None).await,
+        Database::from(pool_with(None).await),
         Arc::new(MockVectorSearch::default()),
     );
 
@@ -431,7 +431,7 @@ async fn test_reindex_with_different_strategy() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo,
-        pool.clone(),
+        Database::from(pool.clone()),
         vector_search.clone(),
     );
 
@@ -487,7 +487,7 @@ async fn reindex_refreshes_stale_octet_stream_mime_type_and_marks_yaml_chunks_as
         }),
         Arc::new(MockEmbedder),
         repo,
-        pool.clone(),
+        Database::from(pool.clone()),
         Arc::new(MockVectorSearch::default()),
     );
 
@@ -513,7 +513,7 @@ async fn reindex_does_not_resurrect_a_document_deleted_meanwhile() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo,
-        pool.clone(),
+        Database::from(pool.clone()),
         Arc::new(MockVectorSearch::default()),
     );
 

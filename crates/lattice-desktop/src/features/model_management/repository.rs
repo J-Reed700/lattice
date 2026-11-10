@@ -2,9 +2,9 @@ use sqlx::Row;
 
 use super::cache_adapter::ModelCatalogStats;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 
-pub async fn initialize_cache_schema(pool: &impl DatabaseHandle) -> Result<(), AppError> {
+pub async fn initialize_cache_schema(pool: &impl DriverPool) -> Result<(), AppError> {
     let pool = pool.sqlx_pool();
     sqlx::query(
         r#"
@@ -27,7 +27,7 @@ pub async fn initialize_cache_schema(pool: &impl DatabaseHandle) -> Result<(), A
 }
 
 pub async fn cached_results_json(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     cache_key: &str,
     now: i64,
 ) -> Result<Option<String>, AppError> {
@@ -49,7 +49,7 @@ pub async fn cached_results_json(
 }
 
 pub async fn store_results_json(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     cache_key: &str,
     results_json: &str,
     now: i64,
@@ -76,7 +76,7 @@ pub async fn store_results_json(
     Ok(())
 }
 
-pub async fn delete_expired(pool: &impl DatabaseHandle, now: i64) -> Result<u64, AppError> {
+pub async fn delete_expired(pool: &impl DriverPool, now: i64) -> Result<u64, AppError> {
     let pool = pool.sqlx_pool();
     let result = sqlx::query(
         r#"
@@ -91,7 +91,7 @@ pub async fn delete_expired(pool: &impl DatabaseHandle, now: i64) -> Result<u64,
     Ok(result.rows_affected())
 }
 
-pub async fn delete_all(pool: &impl DatabaseHandle) -> Result<u64, AppError> {
+pub async fn delete_all(pool: &impl DriverPool) -> Result<u64, AppError> {
     let pool = pool.sqlx_pool();
     let result = sqlx::query("DELETE FROM model_catalog_cache")
         .execute(pool)
@@ -100,10 +100,7 @@ pub async fn delete_all(pool: &impl DatabaseHandle) -> Result<u64, AppError> {
     Ok(result.rows_affected())
 }
 
-pub async fn cache_stats(
-    pool: &impl DatabaseHandle,
-    now: i64,
-) -> Result<ModelCatalogStats, AppError> {
+pub async fn cache_stats(pool: &impl DriverPool, now: i64) -> Result<ModelCatalogStats, AppError> {
     let pool = pool.sqlx_pool();
     let row = sqlx::query(
         r#"

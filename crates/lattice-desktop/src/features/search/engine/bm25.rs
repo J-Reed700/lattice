@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use lattice_core::application::contracts::search::engine::BM25Result;
 use lattice_core::application::ports::BM25SearchTrait;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use tracing::warn;
 
 /// Ranked lexical retrieval over the chunk FTS5 indexes.
@@ -12,14 +12,12 @@ use tracing::warn;
 /// two indexes a query can be answered from.
 #[derive(Debug)]
 pub struct BM25Search {
-    pool: Database,
+    database: Database,
 }
 
 impl BM25Search {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
-        Self {
-            pool: pool.database(),
-        }
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
     pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<BM25Result>> {
@@ -50,7 +48,7 @@ impl BM25Search {
     }
 
     async fn execute_bm25_query(&self, query: &FtsQuery, top_k: usize) -> Result<Vec<BM25Result>> {
-        super::repository::bm25_results(&self.pool, query, top_k).await
+        super::repository::bm25_results(&self.database, query, top_k).await
     }
 
     fn is_fts_syntax_error(error: &AppError) -> bool {
@@ -76,11 +74,11 @@ impl BM25Search {
     }
 
     pub async fn optimize_index(&self) -> Result<()> {
-        super::repository::optimize_chunk_indexes(&self.pool).await
+        super::repository::optimize_chunk_indexes(&self.database).await
     }
 
     pub async fn rebuild_index(&self) -> Result<()> {
-        super::repository::rebuild_chunk_indexes(&self.pool).await
+        super::repository::rebuild_chunk_indexes(&self.database).await
     }
 
     pub fn supports_query(query: &str) -> bool {
@@ -201,7 +199,7 @@ mod tests {
     #[tokio::test]
     async fn test_bm25_search() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(pool);
+        let search = BM25Search::new(Database::from(pool));
 
         let results = search.search("programming", 10).await.unwrap();
 
@@ -213,7 +211,7 @@ mod tests {
     #[tokio::test]
     async fn test_bm25_exact_keyword() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(pool);
+        let search = BM25Search::new(Database::from(pool));
 
         let results = search.search("Rust", 10).await.unwrap();
 
@@ -241,7 +239,10 @@ mod tests {
         .await
         .unwrap();
 
-        let results = BM25Search::new(pool).search("Rust", 1).await.unwrap();
+        let results = BM25Search::new(Database::from(pool))
+            .search("Rust", 1)
+            .await
+            .unwrap();
 
         assert_eq!(results.len(), 1);
         assert_eq!(results[0].chunk_id, "chunk1");
@@ -250,7 +251,7 @@ mod tests {
     #[tokio::test]
     async fn test_bm25_multiple_terms() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(pool);
+        let search = BM25Search::new(Database::from(pool));
 
         let results = search.search("Python neural", 10).await.unwrap();
 
@@ -269,7 +270,7 @@ mod tests {
     #[tokio::test]
     async fn a_digits_only_query_finds_its_chunk() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(pool);
+        let search = BM25Search::new(Database::from(pool));
 
         for query in ["4012", "429", "2026"] {
             let results = search.search(query, 10).await.unwrap();
@@ -284,14 +285,17 @@ mod tests {
     #[tokio::test]
     async fn an_identifier_keeps_both_halves() {
         let pool = setup_test_db().await.unwrap();
-        let results = BM25Search::new(pool).search("ERR-4012", 10).await.unwrap();
+        let results = BM25Search::new(Database::from(pool))
+            .search("ERR-4012", 10)
+            .await
+            .unwrap();
         assert_eq!(results.first().map(|r| r.chunk_id.as_str()), Some("chunk4"));
     }
 
     #[tokio::test]
     async fn a_cyrillic_query_finds_its_chunk() {
         let pool = setup_test_db().await.unwrap();
-        let results = BM25Search::new(pool)
+        let results = BM25Search::new(Database::from(pool))
             .search("политика хранения", 10)
             .await
             .unwrap();
@@ -303,7 +307,7 @@ mod tests {
     #[tokio::test]
     async fn a_japanese_substring_query_finds_its_chunk() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(pool);
+        let search = BM25Search::new(Database::from(pool));
         for query in ["日本語サポート", "担当チーム", "金曜日"] {
             let results = search.search(query, 10).await.unwrap();
             assert_eq!(
@@ -317,14 +321,17 @@ mod tests {
     #[tokio::test]
     async fn a_two_character_cjk_query_returns_nothing_rather_than_failing() {
         let pool = setup_test_db().await.unwrap();
-        let results = BM25Search::new(pool).search("設定", 10).await.unwrap();
+        let results = BM25Search::new(Database::from(pool))
+            .search("設定", 10)
+            .await
+            .unwrap();
         assert!(results.is_empty());
     }
 
     #[tokio::test]
     async fn hostile_and_empty_queries_do_not_error() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(pool);
+        let search = BM25Search::new(Database::from(pool));
         for query in [
             "",
             "   ",
@@ -360,7 +367,7 @@ mod tests {
         .await
         .unwrap();
 
-        let search = BM25Search::new(pool.clone());
+        let search = BM25Search::new(Database::from(pool.clone()));
         assert_eq!(
             search
                 .search("日本語サポート", 10)
@@ -393,7 +400,7 @@ mod tests {
     #[tokio::test]
     async fn maintenance_commands_cover_both_indexes() {
         let pool = setup_test_db().await.unwrap();
-        let search = BM25Search::new(pool);
+        let search = BM25Search::new(Database::from(pool));
         search.rebuild_index().await.unwrap();
         search.optimize_index().await.unwrap();
         assert!(!search
@@ -440,7 +447,10 @@ mod tests {
         let pool = pool_with_only_the_words_index().await;
         let commits = count_commits(&pool).await;
 
-        assert!(BM25Search::new(pool).optimize_index().await.is_err());
+        assert!(BM25Search::new(Database::from(pool))
+            .optimize_index()
+            .await
+            .is_err());
 
         assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }
@@ -450,7 +460,10 @@ mod tests {
         let pool = pool_with_only_the_words_index().await;
         let commits = count_commits(&pool).await;
 
-        assert!(BM25Search::new(pool).rebuild_index().await.is_err());
+        assert!(BM25Search::new(Database::from(pool))
+            .rebuild_index()
+            .await
+            .is_err());
 
         assert_eq!(commits.load(std::sync::atomic::Ordering::SeqCst), 0);
     }

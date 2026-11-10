@@ -14,7 +14,8 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
 use crate::features::summaries::entity::DocumentSummary;
 use lattice_core::application::ports::summary_search::SummaryLevel;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 
 /// Port for persisting and reading document/section summaries.
 ///
@@ -104,7 +105,7 @@ pub struct SqliteSummaryRepository {
 }
 
 impl SqliteSummaryRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         Self {
             pool: pool.sqlx_pool().clone(),
         }
@@ -401,7 +402,7 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
 
 /// Queue identities only; repeated indexing replaces one revision atomically.
 pub(crate) async fn enqueue_work(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     id: &str,
 ) -> lattice_core::shared::error::Result<()> {
     let pool = pool.sqlx_pool();
@@ -410,13 +411,13 @@ pub(crate) async fn enqueue_work(
     Ok(())
 }
 pub(crate) async fn next_work(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
 ) -> lattice_core::shared::error::Result<Option<(String, String)>> {
     let pool = pool.sqlx_pool();
     Ok(sqlx::query_as("SELECT document_id, revision FROM summary_work_queue WHERE retry_at <= unixepoch() ORDER BY requested_at, document_id LIMIT 1").fetch_optional(pool).await?)
 }
 pub(crate) async fn acknowledge_work(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     id: &str,
     revision: &str,
 ) -> lattice_core::shared::error::Result<()> {
@@ -429,7 +430,7 @@ pub(crate) async fn acknowledge_work(
     Ok(())
 }
 pub(crate) async fn remove_work(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     id: &str,
 ) -> lattice_core::shared::error::Result<()> {
     let pool = pool.sqlx_pool();
@@ -440,7 +441,7 @@ pub(crate) async fn remove_work(
     Ok(())
 }
 pub(crate) async fn document_id_at_path(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     path: &std::path::Path,
 ) -> lattice_core::shared::error::Result<Option<String>> {
     let pool = pool.sqlx_pool();
@@ -456,7 +457,7 @@ pub(crate) async fn document_id_at_path(
 /// the back of the queue, so other documents get their turn before it
 /// resumes.
 pub(crate) async fn requeue_work(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     id: &str,
     revision: &str,
 ) -> lattice_core::shared::error::Result<()> {
@@ -466,7 +467,7 @@ pub(crate) async fn requeue_work(
 }
 
 pub(crate) async fn defer_work(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     id: &str,
     revision: &str,
 ) -> lattice_core::shared::error::Result<()> {
@@ -486,7 +487,7 @@ pub(crate) struct SourceParts {
 /// unit so a re-index between them cannot mix two versions. `None` when the
 /// document is gone.
 pub(crate) async fn source_parts(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     document_id: &str,
 ) -> Result<Option<SourceParts>> {
     let pool = pool.sqlx_pool();

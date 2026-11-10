@@ -34,8 +34,12 @@ fn found_among(files: &[(&str, &str)], target: &str) -> Vec<String> {
         .iter()
         .map(|(path, source)| (handouts::module_of(path), syn::parse_file(source).unwrap()))
         .collect();
-    let modules =
-        handouts::module_scopes(parsed.iter().map(|(module, ast)| (module.as_slice(), ast)));
+    let modules = handouts::module_scopes(
+        files
+            .iter()
+            .zip(&parsed)
+            .map(|((path, _), (module, ast))| (*path, module.as_slice(), ast)),
+    );
     let index = files.iter().position(|(path, _)| *path == target).unwrap();
     let (module, ast) = &parsed[index];
     file_violations_in(target, module, ast, &modules)

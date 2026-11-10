@@ -4,6 +4,7 @@ use crate::{
     lessons::course_generation_tests::ScriptedModel, practical_dto::LearningInterviewRoundKind,
 };
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
+use lattice_core::shared::persistence::Database;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Mutex,
@@ -891,7 +892,7 @@ async fn researched_answers_are_captured_hidden_and_frozen_with_each_attempt() -
             title: program.summary.title.clone(),
         })
         .await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let web = MockWebService::new();
     let url = "https://spec.example/idempotency";
     let text = source().full_text;

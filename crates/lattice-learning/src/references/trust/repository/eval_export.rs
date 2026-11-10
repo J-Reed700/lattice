@@ -2,7 +2,7 @@ use super::rows::{override_from_row, OVERRIDE_COLUMNS};
 use crate::persistence::db;
 use lattice_core::domain::provenance::TrustOverride;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::Row;
 
 /// A version an override covers, with who added its source.
@@ -23,7 +23,7 @@ fn covered_rows(rows: &[sqlx::sqlite::SqliteRow]) -> Result<Vec<CoveredRow>> {
 }
 
 pub(in crate::references::trust) async fn source_versions(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     source_id: &str,
 ) -> Result<Vec<CoveredRow>> {
@@ -40,7 +40,7 @@ pub(in crate::references::trust) async fn source_versions(
 }
 
 pub(in crate::references::trust) async fn site_versions(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     registrable_domain: &str,
 ) -> Result<Vec<CoveredRow>> {
     let pool = pool.sqlx_pool();
@@ -55,7 +55,7 @@ pub(in crate::references::trust) async fn site_versions(
 }
 
 pub(in crate::references::trust) async fn all_overrides(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
 ) -> Result<Vec<TrustOverride>> {
     let pool = pool.sqlx_pool();
     sqlx::query(&format!(

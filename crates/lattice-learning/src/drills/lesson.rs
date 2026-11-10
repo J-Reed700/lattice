@@ -3,7 +3,7 @@
 use crate::persistence::{db, decode};
 use lattice_core::domain::learning::drills::{LessonBrief, LessonSentence};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::{Database, Transactions};
 
 pub(crate) mod repository;
 
@@ -35,12 +35,8 @@ pub(crate) struct LessonContext {
 
 impl LessonContext {
     /// The lesson `lesson_id` of the course `program_id`. An error when the lesson is not one of the course's.
-    pub async fn load(
-        pool: &impl DatabaseHandle,
-        program_id: &str,
-        lesson_id: &str,
-    ) -> Result<Self> {
-        let mut tx = pool.begin_read().await.map_err(db)?;
+    pub async fn load(database: &Database, program_id: &str, lesson_id: &str) -> Result<Self> {
+        let mut tx = database.begin_read().await.map_err(db)?;
         let row = repository::lesson_in(&mut tx, program_id, lesson_id).await?;
         let Some((
             course,

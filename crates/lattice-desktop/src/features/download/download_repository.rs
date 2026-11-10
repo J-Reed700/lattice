@@ -4,7 +4,8 @@ use chrono::{DateTime, Utc};
 use lattice_core::domain::download::{
     Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
 };
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions, WriteTx};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 use sqlx::{FromRow, SqliteConnection};
 use std::sync::Arc;
 
@@ -306,7 +307,7 @@ impl SqliteDownloadRepository {
 
     async fn begin_write(&self) -> Result<WriteTx, DownloadError> {
         self.db_conn
-            .pool()
+            .database()
             .begin_write()
             .await
             .map_err(|e| DownloadError::IoError(format!("Failed to begin transaction: {}", e)))
@@ -332,7 +333,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(self.db_conn.pool().sqlx_pool())
+        .fetch_optional(self.db_conn.database().sqlx_pool())
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to get session: {}", e)))?;
 
@@ -344,7 +345,7 @@ impl DownloadRepository for SqliteDownloadRepository {
 
     async fn update(&self, session: &DownloadSession) -> Result<(), DownloadError> {
         let mut tx =
-            self.db_conn.pool().begin_write().await.map_err(|e| {
+            self.db_conn.database().begin_write().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
             })?;
 
@@ -410,7 +411,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         bytes_per_second: f64,
     ) -> Result<(), DownloadError> {
         let mut tx =
-            self.db_conn.pool().begin_write().await.map_err(|e| {
+            self.db_conn.database().begin_write().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
             })?;
 
@@ -466,7 +467,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             SELECT * FROM download_sessions ORDER BY created_at DESC
             "#,
         )
-        .fetch_all(self.db_conn.pool().sqlx_pool())
+        .fetch_all(self.db_conn.database().sqlx_pool())
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list sessions: {}", e)))?;
 
@@ -485,7 +486,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             "#,
         )
         .bind(state_str)
-        .fetch_all(self.db_conn.pool().sqlx_pool())
+        .fetch_all(self.db_conn.database().sqlx_pool())
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list sessions by state: {}", e)))?;
 
@@ -502,7 +503,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             .bind(after_id)
             .bind(after_id)
             .bind(limit)
-            .fetch_all(self.db_conn.pool().sqlx_pool())
+            .fetch_all(self.db_conn.database().sqlx_pool())
             .await
             .map_err(|e| {
                 DownloadError::IoError(format!(
@@ -522,7 +523,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             ORDER BY created_at DESC
             "#,
         )
-        .fetch_all(self.db_conn.pool().sqlx_pool())
+        .fetch_all(self.db_conn.database().sqlx_pool())
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list active sessions: {}", e)))?;
 
@@ -531,7 +532,7 @@ impl DownloadRepository for SqliteDownloadRepository {
 
     async fn delete_pending_by_model(&self, model_id: &str) -> Result<u64, DownloadError> {
         let mut tx =
-            self.db_conn.pool().begin_write().await.map_err(|e| {
+            self.db_conn.database().begin_write().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
             })?;
 

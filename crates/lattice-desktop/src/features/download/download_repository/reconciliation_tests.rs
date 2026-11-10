@@ -1,6 +1,6 @@
 use super::*;
 use crate::infrastructure::persistence::database::connection::DatabaseConnection;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 
 async fn insert_model(pool: &sqlx::SqlitePool, model_id: &str) {
     sqlx::query(
@@ -64,14 +64,14 @@ async fn reconciliation_query_returns_only_latest_durable_mismatches() {
             .unwrap(),
     );
     sqlx::migrate!("./migrations")
-        .run(connection.pool().sqlx_pool())
+        .run(connection.database().sqlx_pool())
         .await
         .unwrap();
     let repository = SqliteDownloadRepository::new(connection.clone());
 
-    insert_model(connection.pool().sqlx_pool(), "failed-mismatch").await;
+    insert_model(connection.database().sqlx_pool(), "failed-mismatch").await;
     insert_model_file(
-        connection.pool().sqlx_pool(),
+        connection.database().sqlx_pool(),
         "failed-mismatch",
         "downloading",
     )
@@ -84,9 +84,13 @@ async fn reconciliation_query_returns_only_latest_durable_mismatches() {
     )
     .await;
 
-    insert_model(connection.pool().sqlx_pool(), "completed-model-mismatch").await;
+    insert_model(
+        connection.database().sqlx_pool(),
+        "completed-model-mismatch",
+    )
+    .await;
     insert_model_file(
-        connection.pool().sqlx_pool(),
+        connection.database().sqlx_pool(),
         "completed-model-mismatch",
         "completed",
     )
@@ -99,17 +103,17 @@ async fn reconciliation_query_returns_only_latest_durable_mismatches() {
     )
     .await;
 
-    insert_model(connection.pool().sqlx_pool(), "already-consistent").await;
+    insert_model(connection.database().sqlx_pool(), "already-consistent").await;
     sqlx::query(
         "UPDATE models SET status = 'completed', storage_path = '/tmp/already-complete' \
              WHERE model_id = ?",
     )
     .bind("already-consistent")
-    .execute(connection.pool().sqlx_pool())
+    .execute(connection.database().sqlx_pool())
     .await
     .unwrap();
     insert_model_file(
-        connection.pool().sqlx_pool(),
+        connection.database().sqlx_pool(),
         "already-consistent",
         "completed",
     )
@@ -122,14 +126,14 @@ async fn reconciliation_query_returns_only_latest_durable_mismatches() {
     )
     .await;
 
-    insert_model(connection.pool().sqlx_pool(), "registry-missing").await;
+    insert_model(connection.database().sqlx_pool(), "registry-missing").await;
     sqlx::query("UPDATE models SET status = 'completed' WHERE model_id = ?")
         .bind("registry-missing")
-        .execute(connection.pool().sqlx_pool())
+        .execute(connection.database().sqlx_pool())
         .await
         .unwrap();
     insert_model_file(
-        connection.pool().sqlx_pool(),
+        connection.database().sqlx_pool(),
         "registry-missing",
         "completed",
     )
@@ -167,7 +171,7 @@ async fn reconciliation_query_uses_terminal_candidate_and_covering_status_indexe
         .await
         .unwrap();
     sqlx::migrate!("./migrations")
-        .run(connection.pool().sqlx_pool())
+        .run(connection.database().sqlx_pool())
         .await
         .unwrap();
 
@@ -177,7 +181,7 @@ async fn reconciliation_query_uses_terminal_candidate_and_covering_status_indexe
     .bind(Option::<String>::None)
     .bind(Option::<String>::None)
     .bind(64_i64)
-    .fetch_all(connection.pool().sqlx_pool())
+    .fetch_all(connection.database().sqlx_pool())
     .await
     .unwrap();
     let details: Vec<_> = plan.iter().map(|row| row.3.as_str()).collect();

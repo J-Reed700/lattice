@@ -25,7 +25,7 @@ use lattice_core::application::services::live_index::{
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::{Database, Transactions};
 use tracing::instrument;
 
 mod prepare;
@@ -82,7 +82,7 @@ pub struct IndexFileUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn DocumentRepositoryPort>,
     embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
-    pool: Database,
+    database: Database,
     /// Shared in-memory vector index for runtime updates.
     /// When new embeddings are persisted, they are also added here
     /// so that newly indexed documents are immediately searchable.
@@ -107,9 +107,8 @@ impl IndexFileUseCase {
         embedding_service: Arc<dyn EmbeddingPort>,
         document_repo: Arc<dyn DocumentRepositoryPort>,
         embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
-        pool: impl DatabaseHandle,
+        database: Database,
     ) -> Self {
-        let pool = pool.database();
         Self {
             content_storage,
             file_storage,
@@ -117,7 +116,7 @@ impl IndexFileUseCase {
             embedding_service,
             document_repo,
             embedding_repo,
-            pool,
+            database,
             vector_search: None,
             query_cache: None,
             index_observer: None,
@@ -207,7 +206,7 @@ impl IndexFileUseCase {
             PrepareForIndexingOutcome::Prepared(prepared) => {
                 let chunks_created = prepared.document.chunks().len();
                 let file_path = prepared.library_path.clone();
-                let document_id = self.commit_prepared(*prepared, &self.pool).await?;
+                let document_id = self.commit_prepared(*prepared, &self.database).await?;
                 Ok(IndexFileResponseDto {
                     document_id,
                     chunks_created,
@@ -267,7 +266,7 @@ impl IndexFileUseCase {
     pub async fn commit_prepared(
         &self,
         prepared: PreparedDocument,
-        pool: &impl DatabaseHandle,
+        database: &Database,
     ) -> Result<String> {
         let PreparedDocument {
             mut document,
@@ -281,7 +280,7 @@ impl IndexFileUseCase {
         // Status and the complete chunk/vector set commit in the same transaction.
         document.mark_indexed();
         let document_id = document.id().to_string();
-        let stale_chunk_ids = match save_document(pool, &document, &embeddings).await {
+        let stale_chunk_ids = match save_document(database, &document, &embeddings).await {
             Ok(stale_chunk_ids) => stale_chunk_ids,
             Err(error) => {
                 // Nothing will reference the blob now; release it before the
@@ -378,11 +377,11 @@ mod tests;
 /// Writes the document with its chunks and vectors in one unit of work, and
 /// returns the chunk ids whose vectors the new set replaces.
 async fn save_document(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     document: &Document,
     embeddings: &[EmbeddingWithVector],
 ) -> Result<Vec<String>> {
-    let mut tx = pool.begin_write().await?;
+    let mut tx = database.begin_write().await?;
     let stale_chunk_ids = embedding::ops::find_by_document_id(&mut tx, &document.id().to_string())
         .await?
         .into_iter()

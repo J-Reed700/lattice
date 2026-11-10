@@ -12,7 +12,7 @@ use lattice_core::domain::learning::claim_review::{
     AttachOutcome, Checker, ClaimEvent, ClaimLedgerEntry, VerdictKind,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle, WriteTx};
+use lattice_core::shared::persistence::{Database, WriteTx};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 
@@ -242,17 +242,16 @@ pub fn export_file_name(date: &str) -> String {
 
 #[derive(Clone)]
 pub struct CheckerExamples {
-    pool: Database,
+    database: Database,
 }
 
 impl CheckerExamples {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
-        let pool = pool.database();
-        Self { pool }
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
     pub async fn record(&self, example: &CheckerExample) -> Result<()> {
-        repository::checker_examples::insert(&self.pool, example).await
+        repository::checker_examples::insert(&self.database, example).await
     }
 
     /// Records a human verdict on a claim the local checker flagged (§15):
@@ -321,7 +320,7 @@ impl CheckerExamples {
 
     /// Forgets the examples an undone verdict gave (§5.1 Undo).
     pub async fn forget(&self, claim_id: &str, source: LabelSource) -> Result<()> {
-        repository::checker_examples::delete_for_claim(&self.pool, claim_id, source).await
+        repository::checker_examples::delete_for_claim(&self.database, claim_id, source).await
     }
 
     /// [`Self::forget`] inside the caller's unit of work.
@@ -335,7 +334,7 @@ impl CheckerExamples {
 
     /// Every example, oldest first; one program's with `program_id`.
     pub async fn list(&self, program_id: Option<&str>) -> Result<Vec<CheckerExample>> {
-        repository::checker_examples::list(&self.pool, program_id).await
+        repository::checker_examples::list(&self.database, program_id).await
     }
 
     /// The examples as `claim-pairs-v1` lines (`{id, claim, passage, label,

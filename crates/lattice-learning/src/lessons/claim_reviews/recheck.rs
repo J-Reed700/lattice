@@ -7,7 +7,7 @@
 use lattice_core::application::ports::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::Ledger;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 use super::attach::report::ClaimAttachProgressDto;
 use super::attach::{check_others, course_material, AttachDeps, Checking, OtherClaims, Others};
@@ -27,11 +27,11 @@ const WAITING: OtherClaims<'static> = OtherClaims {
 /// empty when a new source has nothing to be checked for.
 pub async fn waiting_lessons(
     store: &dyn ClaimReviewStore,
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
 ) -> Result<Vec<Ledger>> {
     let mut ledgers = Vec::new();
-    for lesson_id in repository::reviews::held_lessons(pool, program_id).await? {
+    for lesson_id in repository::reviews::held_lessons(database, program_id).await? {
         let ledger = store.load(&lesson_id).await?;
         if ledger.claims.iter().any(|entry| WAITING.take(entry)) {
             ledgers.push(ledger);
@@ -70,7 +70,7 @@ pub async fn waiting_claims(
     let mut recheck = WaitingClaimsRecheckDto::default();
     for ledger in lessons {
         let lesson_deps = AttachDeps {
-            job_id: running_job(deps.pool, ledger).await,
+            job_id: running_job(deps.database, ledger).await,
             ..*deps
         };
         let (tally, _) = check_others(
@@ -98,9 +98,9 @@ pub async fn waiting_claims(
 }
 
 /// The lesson's preparation job while it runs, for event provenance.
-pub async fn running_job(pool: &impl DatabaseHandle, ledger: &Ledger) -> Option<String> {
+pub async fn running_job(database: &Database, ledger: &Ledger) -> Option<String> {
     let job_id = &ledger.review.as_ref()?.job_id;
-    let job = LearningCurriculumRepository::new(pool.database())
+    let job = LearningCurriculumRepository::new(database.clone())
         .job(job_id)
         .await
         .ok()?;

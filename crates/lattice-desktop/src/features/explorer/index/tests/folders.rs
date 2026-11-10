@@ -6,7 +6,8 @@ use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::explorer::{folders, repository};
 use lattice_core::domain::conversation::MessageRole;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::AppError;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
@@ -95,7 +96,9 @@ async fn the_table_lists_pinned_first_then_the_most_recently_opened() {
     ));
 
     // An empty name goes back to the folder's own.
-    folders::rename(&pool, "/w/c", "   ").await.unwrap();
+    folders::rename(&Database::from(pool.clone()), "/w/c", "   ")
+        .await
+        .unwrap();
     assert_eq!(repository::list_folders(&pool).await.unwrap()[2].name, "c");
 
     // Threads are counted per folder; ordinary chats are not.
@@ -144,19 +147,27 @@ async fn the_list_adopts_indexes_without_a_row_and_says_what_each_holds() {
     let child = parent.join("app");
     for root in [&parent, &child] {
         open_settled(&manager, root).await;
-        folders::record_open(&pool, &text(root)).await.unwrap();
+        folders::record_open(&Database::from(pool.clone()), &text(root))
+            .await
+            .unwrap();
     }
     // One whose folder has since gone from disk.
     let gone = rig.project("gone", &[("a.rs", "fn a() {}\n")]);
     open_settled(&manager, &gone).await;
-    folders::record_open(&pool, &text(&gone)).await.unwrap();
+    folders::record_open(&Database::from(pool.clone()), &text(&gone))
+        .await
+        .unwrap();
     manager.close().await;
     std::fs::remove_dir_all(&gone).unwrap();
     // The home folder: picked, never indexed.
-    folders::record_open(&pool, &text(&rig.home)).await.unwrap();
+    folders::record_open(&Database::from(pool.clone()), &text(&rig.home))
+        .await
+        .unwrap();
     thread(&pool, Some(child.as_path()), "about the app").await;
 
-    let listed = folders::list(&pool, &manager).await.unwrap();
+    let listed = folders::list(&Database::from(pool.clone()), &manager)
+        .await
+        .unwrap();
     assert_eq!(listed.home, Some(text(&rig.home)));
     assert_eq!(listed.folders.len(), 5);
     let find = |root: &Path| {
@@ -198,7 +209,11 @@ async fn the_list_adopts_indexes_without_a_row_and_says_what_each_holds() {
 
     // Listing again adopts nothing twice.
     assert_eq!(
-        folders::list(&pool, &manager).await.unwrap().folders.len(),
+        folders::list(&Database::from(pool.clone()), &manager)
+            .await
+            .unwrap()
+            .folders
+            .len(),
         5
     );
 }
@@ -224,7 +239,9 @@ async fn a_building_folder_lists_live_open_or_not_and_a_stopped_build_as_paused(
         .collect();
     let root = rig.project("slow", &refs);
     manager.open(&text(&root)).await.unwrap();
-    folders::record_open(&pool, &text(&root)).await.unwrap();
+    folders::record_open(&Database::from(pool.clone()), &text(&root))
+        .await
+        .unwrap();
     for _ in 0..500 {
         if embedder.batches.load(Ordering::SeqCst) >= 3 {
             break;
@@ -232,21 +249,30 @@ async fn a_building_folder_lists_live_open_or_not_and_a_stopped_build_as_paused(
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
 
-    let live = folders::list(&pool, &manager).await.unwrap().folders;
+    let live = folders::list(&Database::from(pool.clone()), &manager)
+        .await
+        .unwrap()
+        .folders;
     assert_eq!(live[0].index.state, FolderIndexSummaryState::Indexing);
     assert_eq!(live[0].index.passages_total, 40);
 
     // Closed, its build runs on and is still listed live.
     manager.close().await;
     for _ in 0..500 {
-        let listed = folders::list(&pool, &manager).await.unwrap().folders;
+        let listed = folders::list(&Database::from(pool.clone()), &manager)
+            .await
+            .unwrap()
+            .folders;
         if listed[0].index.state == FolderIndexSummaryState::Indexing {
             break;
         }
         tokio::time::sleep(Duration::from_millis(5)).await;
     }
     assert_eq!(
-        folders::list(&pool, &manager).await.unwrap().folders[0]
+        folders::list(&Database::from(pool.clone()), &manager)
+            .await
+            .unwrap()
+            .folders[0]
             .index
             .state,
         FolderIndexSummaryState::Indexing
@@ -255,7 +281,7 @@ async fn a_building_folder_lists_live_open_or_not_and_a_stopped_build_as_paused(
     // The app stops; what is on disk is a paused index.
     manager.jobs.close();
     manager.jobs.drain().await;
-    let paused = folders::list(&pool, &manager)
+    let paused = folders::list(&Database::from(pool.clone()), &manager)
         .await
         .unwrap()
         .folders
@@ -271,25 +297,33 @@ async fn a_building_folder_lists_live_open_or_not_and_a_stopped_build_as_paused(
 #[tokio::test(flavor = "multi_thread")]
 async fn removing_a_folder_keeps_its_threads_unless_asked() {
     let container = crate::tests::common::setup_test_container().await.unwrap();
-    let pool = DatabaseHandle::sqlx_pool(container.db_pool()).clone();
+    let pool = DriverPool::sqlx_pool(container.database()).clone();
     let rig = Rig::new();
     let embedder = FakeEmbedder::new("model-a");
     let manager = rig.manager(&embedder).await;
     let root = rig.project("music", &[("synth.rs", "pub fn voice() {}\n")]);
     open_settled(&manager, &root).await;
-    folders::record_open(&pool, &text(&root)).await.unwrap();
+    folders::record_open(&Database::from(pool.clone()), &text(&root))
+        .await
+        .unwrap();
     let voices = thread(&pool, Some(root.as_path()), "voices").await;
     let filters = thread(&pool, Some(root.as_path()), "filters").await;
     let chat = thread(&pool, None, "ordinary").await;
 
     // Kept: the index and the row go, closed first; the threads stay bound.
-    let deleted = folders::remove(&pool, &container, &manager, &text(&root), false)
-        .await
-        .unwrap();
+    let deleted = folders::remove(
+        &Database::from(pool.clone()),
+        &container,
+        &manager,
+        &text(&root),
+        false,
+    )
+    .await
+    .unwrap();
     assert_eq!(deleted, 0);
     assert!(rig.index_dirs().is_empty());
     assert!(manager.search_for(&root).await.is_none());
-    assert!(folders::list(&pool, &manager)
+    assert!(folders::list(&Database::from(pool.clone()), &manager)
         .await
         .unwrap()
         .folders
@@ -303,16 +337,28 @@ async fn removing_a_folder_keeps_its_threads_unless_asked() {
     );
 
     // Added again, they are back.
-    folders::record_open(&pool, &text(&root)).await.unwrap();
+    folders::record_open(&Database::from(pool.clone()), &text(&root))
+        .await
+        .unwrap();
     assert_eq!(
-        folders::list(&pool, &manager).await.unwrap().folders[0].thread_count,
+        folders::list(&Database::from(pool.clone()), &manager)
+            .await
+            .unwrap()
+            .folders[0]
+            .thread_count,
         2
     );
 
     // Deleted: through the conversation delete, messages and all.
-    let deleted = folders::remove(&pool, &container, &manager, &text(&root), true)
-        .await
-        .unwrap();
+    let deleted = folders::remove(
+        &Database::from(pool.clone()),
+        &container,
+        &manager,
+        &text(&root),
+        true,
+    )
+    .await
+    .unwrap();
     assert_eq!(deleted, 2);
     assert!(repository::folder_threads(&pool, &text(&root))
         .await
@@ -334,7 +380,7 @@ async fn removing_a_folder_keeps_its_threads_unless_asked() {
         .await
         .unwrap();
     assert_eq!(kept, 1, "an ordinary chat is not the folder's");
-    assert!(folders::list(&pool, &manager)
+    assert!(folders::list(&Database::from(pool.clone()), &manager)
         .await
         .unwrap()
         .folders
@@ -366,16 +412,23 @@ async fn a_folders_settings_carry_its_threads_into_its_space() {
     let pool = database().await;
     add_space(&pool, "space_music", false).await;
     let root = "/Users/me/MusicVST";
-    folders::record_open(&pool, root).await.unwrap();
+    folders::record_open(&Database::from(pool.clone()), root)
+        .await
+        .unwrap();
     let first = thread(&pool, None, "First").await;
-    folders::bind_thread(&pool, &first, Some(root))
+    folders::bind_thread(&Database::from(pool.clone()), &first, Some(root))
         .await
         .unwrap();
     assert_eq!(space_of(&pool, &first).await, "space_general");
 
-    let moved = folders::set_settings(&pool, root, "  JUCE, C++20.  ", "space_music")
-        .await
-        .unwrap();
+    let moved = folders::set_settings(
+        &Database::from(pool.clone()),
+        root,
+        "  JUCE, C++20.  ",
+        "space_music",
+    )
+    .await
+    .unwrap();
     assert_eq!(moved, 1);
     assert_eq!(space_of(&pool, &first).await, "space_music");
     let row = repository::list_folders(&pool).await.unwrap().remove(0);
@@ -385,12 +438,12 @@ async fn a_folders_settings_carry_its_threads_into_its_space() {
     // A thread started while the Chat sidebar had another space selected
     // still lands in the folder's.
     let second = thread(&pool, None, "Second").await;
-    folders::bind_thread(&pool, &second, Some(root))
+    folders::bind_thread(&Database::from(pool.clone()), &second, Some(root))
         .await
         .unwrap();
     assert_eq!(space_of(&pool, &second).await, "space_music");
 
-    let moved = folders::set_settings(&pool, root, "   ", "space_general")
+    let moved = folders::set_settings(&Database::from(pool.clone()), root, "   ", "space_general")
         .await
         .unwrap();
     assert_eq!(moved, 2);
@@ -405,19 +458,33 @@ async fn a_folder_cannot_take_a_missing_or_archived_space() {
     let pool = database().await;
     add_space(&pool, "space_old", true).await;
     let root = "/Users/me/project";
-    folders::record_open(&pool, root).await.unwrap();
+    folders::record_open(&Database::from(pool.clone()), root)
+        .await
+        .unwrap();
     for space in ["space_nowhere", "space_old"] {
         assert!(matches!(
-            folders::set_settings(&pool, root, "", space).await,
+            folders::set_settings(&Database::from(pool.clone()), root, "", space).await,
             Err(AppError::NotFound(_))
         ));
     }
     assert!(matches!(
-        folders::set_settings(&pool, root, &"x".repeat(20_001), "space_general").await,
+        folders::set_settings(
+            &Database::from(pool.clone()),
+            root,
+            &"x".repeat(20_001),
+            "space_general"
+        )
+        .await,
         Err(AppError::InvalidInput(_))
     ));
     assert!(matches!(
-        folders::set_settings(&pool, "/Users/me/unlisted", "", "space_general").await,
+        folders::set_settings(
+            &Database::from(pool.clone()),
+            "/Users/me/unlisted",
+            "",
+            "space_general"
+        )
+        .await,
         Err(AppError::NotFound(_))
     ));
 }
@@ -443,7 +510,9 @@ async fn a_folder_remembers_its_last_thread_until_the_thread_is_deleted() {
     let chat = thread(&pool, None, "Chat").await;
 
     // A thread used before the open was recorded lists the folder.
-    folders::remember_thread(&pool, root, &first).await.unwrap();
+    folders::remember_thread(&Database::from(pool.clone()), root, &first)
+        .await
+        .unwrap();
     assert_eq!(
         last_thread(&pool, root).await.as_deref(),
         Some(first.as_str())
@@ -454,12 +523,14 @@ async fn a_folder_remembers_its_last_thread_until_the_thread_is_deleted() {
     );
 
     // Opening again keeps it; using another thread replaces it.
-    folders::record_open(&pool, root).await.unwrap();
+    folders::record_open(&Database::from(pool.clone()), root)
+        .await
+        .unwrap();
     assert_eq!(
         last_thread(&pool, root).await.as_deref(),
         Some(first.as_str())
     );
-    folders::remember_thread(&pool, root, &second)
+    folders::remember_thread(&Database::from(pool.clone()), root, &second)
         .await
         .unwrap();
     assert_eq!(
@@ -469,7 +540,7 @@ async fn a_folder_remembers_its_last_thread_until_the_thread_is_deleted() {
 
     for foreign in [&elsewhere, &chat] {
         assert!(matches!(
-            folders::remember_thread(&pool, root, foreign).await,
+            folders::remember_thread(&Database::from(pool.clone()), root, foreign).await,
             Err(AppError::InvalidInput(_))
         ));
     }
@@ -505,20 +576,39 @@ async fn a_thread_that_cannot_be_deleted_leaves_the_folder_listed_for_another_tr
     let manager = rig.manager(&embedder).await;
     let root = rig.project("music", &[("synth.rs", "pub fn voice() {}\n")]);
     open_settled(&manager, &root).await;
-    folders::record_open(&pool, &text(&root)).await.unwrap();
+    folders::record_open(&Database::from(pool.clone()), &text(&root))
+        .await
+        .unwrap();
     thread(&pool, Some(root.as_path()), "voices").await;
 
-    let failed = folders::remove(&pool, &RefusesToDelete, &manager, &text(&root), true).await;
+    let failed = folders::remove(
+        &Database::from(pool.clone()),
+        &RefusesToDelete,
+        &manager,
+        &text(&root),
+        true,
+    )
+    .await;
 
     assert!(failed.is_err());
     assert_eq!(
-        folders::list(&pool, &manager).await.unwrap().folders.len(),
+        folders::list(&Database::from(pool.clone()), &manager)
+            .await
+            .unwrap()
+            .folders
+            .len(),
         1
     );
-    folders::remove(&pool, &RefusesToDelete, &manager, &text(&root), false)
-        .await
-        .unwrap();
-    assert!(folders::list(&pool, &manager)
+    folders::remove(
+        &Database::from(pool.clone()),
+        &RefusesToDelete,
+        &manager,
+        &text(&root),
+        false,
+    )
+    .await
+    .unwrap();
+    assert!(folders::list(&Database::from(pool.clone()), &manager)
         .await
         .unwrap()
         .folders

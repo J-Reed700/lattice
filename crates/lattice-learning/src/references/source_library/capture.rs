@@ -127,7 +127,7 @@ impl LearningSourceLibraryRepository {
             LearningSourceKind::Document => "document",
             LearningSourceKind::Pasted => "pasted",
         };
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await.map_err(db)?;
         let saved = trust::capture::saved_texts(&mut read, program_id).await?;
         read.commit().await.map_err(db)?;
         let comparison = trust::capture::compare_saved(
@@ -139,7 +139,7 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, program_id).await?;
         if source_operation(
             operation_id,
@@ -261,7 +261,7 @@ impl LearningSourceLibraryRepository {
         Self::validate_program_id(program_id)?;
         owned_id(source_id, "source")?;
         self.backfill_legacy(program_id).await?;
-        let r = stored::refresh_offer(&self.pool, program_id, source_id)
+        let r = stored::refresh_offer(&self.database, program_id, source_id)
             .await?
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         if r.program_status != "active" || r.deleted_at.is_some() {
@@ -307,7 +307,7 @@ impl LearningSourceLibraryRepository {
         let version_id = uuid::Uuid::new_v4().to_string();
         let comparison = match captured.as_ref().filter(|_| failure.is_none()) {
             Some(captured) => {
-                let mut read = self.pool.begin_read().await.map_err(db)?;
+                let mut read = self.database.begin_read().await.map_err(db)?;
                 let saved = trust::capture::saved_texts(&mut read, &req.program_id).await?;
                 read.commit().await.map_err(db)?;
                 Some(
@@ -324,7 +324,7 @@ impl LearningSourceLibraryRepository {
             }
             None => None,
         };
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,

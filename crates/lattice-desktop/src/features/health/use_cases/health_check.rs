@@ -14,7 +14,7 @@ use std::sync::Arc;
 use crate::features::health::dto::HealthCheckResponseDto;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 
 /// Health check use case.
 ///
@@ -29,18 +29,18 @@ use lattice_core::shared::persistence::{Database, DatabaseHandle};
 ///
 /// ## Dependencies
 ///
-/// - `db_pool` - Database connection pool for health checks
+/// - `database` - Database connection pool for health checks
 /// - `embedding_service` - Embedding service to verify availability
 pub struct HealthCheckUseCase {
-    db_pool: Database,
+    database: Database,
     embedding_service: Arc<dyn EmbeddingPort>,
 }
 
 impl HealthCheckUseCase {
     /// Create a new health check use case.
-    pub fn new(db_pool: impl DatabaseHandle, embedding_service: Arc<dyn EmbeddingPort>) -> Self {
+    pub fn new(database: Database, embedding_service: Arc<dyn EmbeddingPort>) -> Self {
         Self {
-            db_pool: db_pool.database(),
+            database,
             embedding_service,
         }
     }
@@ -83,7 +83,7 @@ impl HealthCheckUseCase {
     /// Attempts to acquire a connection from the pool. If successful,
     /// the database is considered healthy.
     async fn check_database(&self) -> bool {
-        self.db_pool.is_reachable().await
+        self.database.is_reachable().await
     }
 
     /// Check embedding service availability.
@@ -145,8 +145,8 @@ mod tests {
         }
     }
 
-    async fn create_test_pool() -> SqlitePool {
-        SqlitePool::connect(":memory:").await.unwrap()
+    async fn create_test_pool() -> Database {
+        SqlitePool::connect(":memory:").await.unwrap().into()
     }
 
     #[tokio::test]

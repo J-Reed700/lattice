@@ -45,14 +45,14 @@ pub struct LibraryModule {
 impl LibraryModule {
     /// Build LibraryModule by composing feature-local DI builders.
     pub async fn new(
-        db_pool: Database,
+        database: Database,
         _core: Arc<CoreModule>,
     ) -> lattice_core::shared::error::Result<Self> {
         Ok(Self {
-            tags: crate::features::tags::di::build(db_pool.clone()),
-            favorites: crate::features::favorites::di::build(db_pool.clone()),
-            recent: crate::features::recent::di::build(db_pool.clone()),
-            mentions: crate::features::mentions::di::build(db_pool),
+            tags: crate::features::tags::di::build(database.clone()),
+            favorites: crate::features::favorites::di::build(database.clone()),
+            recent: crate::features::recent::di::build(database.clone()),
+            mentions: crate::features::mentions::di::build(database),
         })
     }
 

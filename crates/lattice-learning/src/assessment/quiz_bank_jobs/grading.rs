@@ -45,7 +45,7 @@ pub async fn judge_short_answer(llm: &dyn LLMPort, answer: &ShortAnswer) -> Resu
 /// Grades a submitted quiz's pending items, or regrades a contest.
 #[derive(Clone)]
 pub struct QuizGradingWorker {
-    pub pool: Database,
+    pub database: Database,
     pub load_llm: ModelLoader,
 }
 
@@ -112,7 +112,7 @@ impl QuizGradingWorker {
         only: Option<i64>,
         note: Option<&str>,
     ) -> Result<Vec<PendingItem>> {
-        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let mut tx = self.database.begin_read().await.map_err(db)?;
         let form = LearningAssessmentRepository::form_in(&mut tx, form_id).await?;
         let Some(submission) = &form.submission else {
             return Ok(vec![]);
@@ -254,7 +254,7 @@ impl JobHandler for QuizGradingWorker {
             .get("contestId")
             .and_then(serde_json::Value::as_str)
             .map(str::to_owned);
-        let repo = LearningAssessmentRepository::new(self.pool.clone());
+        let repo = LearningAssessmentRepository::new(self.database.clone());
         let contest = match &contest_id {
             Some(id) => match repo.contest_input(id).await? {
                 Some(contest) => Some(contest),

@@ -27,7 +27,7 @@ mod workspace;
 #[cfg(test)]
 mod write_tests;
 
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::SqlitePool;
 
 /// SQLite implementation of the conversation repository.
@@ -39,7 +39,7 @@ pub struct ConversationRepository {
 
 impl ConversationRepository {
     /// Creates a conversation repository.
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self {
             pool,

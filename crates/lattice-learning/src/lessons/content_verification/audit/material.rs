@@ -18,7 +18,7 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::persistence::db;
 use crate::repository::LearningRepository;
 use crate::source_library::workspace_in;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::{Database, Transactions};
 
 pub struct AuditMaterial {
     pub draft_sha256: String,
@@ -30,7 +30,7 @@ impl AuditMaterial {
     /// `candidate`, the draft a preparation is about to publish, whose
     /// digest is `draft_sha256`.
     pub(crate) async fn of_draft(
-        pool: &impl DatabaseHandle,
+        database: &Database,
         program_id: &str,
         lesson_id: &str,
         candidate: &Value,
@@ -39,18 +39,14 @@ impl AuditMaterial {
         Ok(Self {
             draft_sha256,
             units: units(candidate),
-            passages: passages(pool, program_id, lesson_id).await?,
+            passages: passages(database, program_id, lesson_id).await?,
         })
     }
 
     /// The lesson as its review stands: the draft that waits for review, or
     /// the published lesson once it is ready ("Audit this lesson now").
-    pub async fn of_lesson(
-        pool: &impl DatabaseHandle,
-        program_id: &str,
-        lesson_id: &str,
-    ) -> Result<Self> {
-        let review = ClaimReviewRepository::new(pool.database())
+    pub async fn of_lesson(database: &Database, program_id: &str, lesson_id: &str) -> Result<Self> {
+        let review = ClaimReviewRepository::new(database.clone())
             .load(lesson_id)
             .await?
             .review
@@ -59,19 +55,19 @@ impl AuditMaterial {
         let waiting = if review.state == LessonReviewState::Ready {
             None
         } else {
-            LearningCurriculumRepository::new(pool.database())
+            LearningCurriculumRepository::new(database.clone())
                 .lesson_draft(&review.job_id, lesson_id)
                 .await?
         };
         let candidate = match waiting {
             Some(draft) => serde_json::from_str(&draft.candidate)
                 .map_err(|error| AppError::Serialization(error.to_string()))?,
-            None => published(pool, program_id, lesson_id).await?,
+            None => published(database, program_id, lesson_id).await?,
         };
         Ok(Self {
             draft_sha256: review.draft_sha256,
             units: units(&candidate),
-            passages: passages(pool, program_id, lesson_id).await?,
+            passages: passages(database, program_id, lesson_id).await?,
         })
     }
 }
@@ -86,8 +82,8 @@ fn units(candidate: &Value) -> Vec<AuditUnit> {
 
 /// The published lesson in the draft's shape, its reviewed questions and
 /// their explanations included, so its units index as the report's do.
-async fn published(pool: &impl DatabaseHandle, program_id: &str, lesson_id: &str) -> Result<Value> {
-    let program = LearningRepository::new(pool.database())
+async fn published(database: &Database, program_id: &str, lesson_id: &str) -> Result<Value> {
+    let program = LearningRepository::new(database.clone())
         .get(program_id)
         .await?;
     let lesson = program
@@ -97,20 +93,20 @@ async fn published(pool: &impl DatabaseHandle, program_id: &str, lesson_id: &str
         .find(|lesson| lesson.id == lesson_id)
         .ok_or_else(|| AppError::NotFound("This lesson is not in the course.".into()))?;
     // The lesson's own reviewed questions live in its quiz bank.
-    let questions = repository::lesson_questions(pool, program_id, lesson_id).await?;
+    let questions = repository::lesson_questions(database, program_id, lesson_id).await?;
     Ok(json!({ "blocks": lesson.blocks, "questions": questions }))
 }
 
 /// Each claim's passages as its card shows them, with each source
 /// version's title (deleted sources included: a card still names them).
 async fn passages(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<HashMap<ClaimId, Vec<AuditPassage>>> {
-    let claims = ClaimReviewRepository::new(pool.database());
+    let claims = ClaimReviewRepository::new(database.clone());
     let shown = claims.shown_passages(lesson_id).await?;
-    let mut read = pool.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await.map_err(db)?;
     let workspace = workspace_in(&mut read, program_id, true).await?;
     read.commit().await.map_err(db)?;
     let titles: HashMap<String, String> = workspace

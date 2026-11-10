@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 
 /// The most a perfectly fresh document can gain, at the highest recency
@@ -84,14 +84,14 @@ impl RecencyScorer {
 
     pub async fn get_document_timestamps(
         &self,
-        pool: &impl DatabaseHandle,
+        database: &Database,
         document_ids: &[String],
     ) -> Result<HashMap<String, DateTime<Utc>>> {
         if document_ids.is_empty() {
             return Ok(HashMap::new());
         }
 
-        let rows = super::repository::document_updated_at(pool, document_ids).await?;
+        let rows = super::repository::document_updated_at(database, document_ids).await?;
 
         let mut timestamps = HashMap::new();
         for (id, updated_at) in rows {

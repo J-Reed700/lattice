@@ -1,6 +1,6 @@
 use crate::infrastructure::persistence::database::connection::query_with_timeout;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::Row;
 
 pub(super) struct ChunkMetadataRow {
@@ -20,7 +20,7 @@ pub(super) struct ChunkMetadataRow {
 
 /// Metadata for a batch of chunk IDs.
 pub(super) async fn chunk_metadata(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     batch: &[String],
 ) -> Result<Vec<ChunkMetadataRow>, AppError> {
     let pool = pool.sqlx_pool();

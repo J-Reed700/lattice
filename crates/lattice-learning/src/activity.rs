@@ -9,7 +9,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{
     ActivityItem, ActivityProgress, ActivityResource, ActivitySource, ActivityState, ActivityTarget,
 };
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
 use lattice_core::shared::Result;
 pub(crate) use repository::course_titles;
@@ -21,7 +21,7 @@ mod repository;
 
 /// Learning's live work, read from its jobs, its tables and its outline runs.
 pub struct LearningActivity {
-    pool: Database,
+    database: Database,
     jobs: Arc<JobRuntime>,
     courses: Option<Arc<CourseIndexes>>,
     outlines: OutlineRunRegistry,
@@ -29,14 +29,13 @@ pub struct LearningActivity {
 
 impl LearningActivity {
     pub fn new(
-        pool: impl DatabaseHandle,
+        database: Database,
         jobs: Arc<JobRuntime>,
         courses: Option<Arc<CourseIndexes>>,
         outlines: OutlineRunRegistry,
     ) -> Self {
-        let pool = pool.database();
         Self {
-            pool,
+            database,
             jobs,
             courses,
             outlines,
@@ -64,9 +63,9 @@ impl ActivitySource for LearningActivity {
         };
         programs.sort();
         programs.dedup();
-        let titles = course_titles(&self.pool, &programs).await?;
+        let titles = course_titles(&self.database, &programs).await?;
         let lesson_ids: Vec<String> = lessons.iter().flat_map(requested_lessons).collect();
-        let lesson_titles = lesson_titles(&self.pool, &lesson_ids).await?;
+        let lesson_titles = lesson_titles(&self.database, &lesson_ids).await?;
 
         let mut items: Vec<ActivityItem> = lessons
             .iter()

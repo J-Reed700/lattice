@@ -6,7 +6,8 @@ use chrono::Utc;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::fs::path::path_to_string;
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use serde::Deserialize;
 use sqlx::SqliteConnection;
 use std::path::Path;
@@ -256,7 +257,7 @@ async fn insert_chunks_and_embeddings(
 
 /// Store document with contextualized chunks.
 pub async fn store_document_with_context(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     path: &Path,
     mime_type: &str,
     chunks: Vec<ContextualizedChunk>,
@@ -285,7 +286,7 @@ pub async fn store_document_with_context(
 
 /// Store document with context and file ID.
 pub async fn store_document_with_context_and_file(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     path: &Path,
     _file_id: &str,
     mime_type: &str,

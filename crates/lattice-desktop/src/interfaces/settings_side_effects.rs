@@ -34,7 +34,7 @@ pub(crate) struct ContainerSettingsSideEffects {
     pub(crate) settings_repository: Arc<dyn SettingsRepositoryPort>,
 
     /// Used by the vault backfill side effect.
-    pub(crate) db_pool: Database,
+    pub(crate) database: Database,
 
     /// Backfill submits through this so it shares the FIFO queue with
     /// per-note writes.
@@ -73,7 +73,7 @@ impl SettingsSideEffectsPort for ContainerSettingsSideEffects {
                             vault_root = %vault_root.display(),
                             "Vault enabled — enqueueing one-shot backfill"
                         );
-                        if let Err(error) = self.vault_writer.enqueue_backfill(&self.db_pool).await
+                        if let Err(error) = self.vault_writer.enqueue_backfill(&self.database).await
                         {
                             tracing::warn!(%error, "Could not persist vault backfill intent");
                         }

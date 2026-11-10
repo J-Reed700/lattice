@@ -1,7 +1,7 @@
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::{AppError, Result};
 
-pub(super) async fn program_ids(pool: &impl DatabaseHandle) -> Result<Vec<String>> {
+pub(super) async fn program_ids(pool: &impl DriverPool) -> Result<Vec<String>> {
     let pool = pool.sqlx_pool();
     sqlx::query_scalar("SELECT id FROM learning_programs")
         .fetch_all(pool)
@@ -9,7 +9,7 @@ pub(super) async fn program_ids(pool: &impl DatabaseHandle) -> Result<Vec<String
         .map_err(|error| AppError::Database(error.to_string()))
 }
 
-pub(super) async fn program_exists(pool: &impl DatabaseHandle, program: &str) -> Result<bool> {
+pub(super) async fn program_exists(pool: &impl DriverPool, program: &str) -> Result<bool> {
     let pool = pool.sqlx_pool();
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM learning_programs WHERE id=?")
         .bind(program)

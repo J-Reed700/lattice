@@ -6,7 +6,7 @@ use std::sync::Arc;
 use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::parse_db_timestamp;
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
 use super::{emit_note_imported, import_one, RescanLock, WriteSuppressionRegistry};
@@ -14,14 +14,13 @@ use super::{emit_note_imported, import_one, RescanLock, WriteSuppressionRegistry
 /// Catches edits the watcher dropped (sleep/wake, AV interference, etc.).
 /// Idempotent. Frontend invokes on window focus.
 pub async fn rescan_vault(
-    db_pool: impl DatabaseHandle,
+    database: Database,
     vault_root: PathBuf,
     suppression: WriteSuppressionRegistry,
     rescan_lock: &RescanLock,
     app_handle: tauri::AppHandle,
     background: Arc<BackgroundTasks>,
 ) -> Result<RescanSummary> {
-    let db_pool = db_pool.database();
     let notes_dir = vault_root.join("notes");
     // repository-barrier-allow: rescan reconciles the configured vault resource with its repository.
     if !notes_dir.exists() {
@@ -32,14 +31,14 @@ pub async fn rescan_vault(
         });
     }
 
-    let repository = super::super::repository::workspace_notes(&db_pool);
+    let repository = super::super::repository::workspace_notes(&database);
     const DB_PAGE: i64 = 128;
     let _rescan_lock = rescan_lock.0.lock().await;
-    let (run_id, total_rows) = super::super::repository::begin_rescan(&db_pool)
+    let (run_id, total_rows) = super::super::repository::begin_rescan(&database)
         .await
         .map_err(|e| e.with_context("focus-rescan: repository setup failed"))?;
     let mut membership_guard = RescanMembershipGuard {
-        pool: db_pool.clone(),
+        database: database.clone(),
         run_id: run_id.clone(),
         active: true,
         background,
@@ -89,10 +88,10 @@ pub async fn rescan_vault(
 
         let stem = path.file_stem().and_then(|s| s.to_str());
         if let Some(id) = stem {
-            super::super::repository::mark_rescan_seen(&db_pool, &run_id, id)
+            super::super::repository::mark_rescan_seen(&database, &run_id, id)
                 .await
                 .map_err(|e| e.with_context("focus-rescan: could not mark note as seen"))?;
-            if super::super::repository::has_pending(&db_pool, id)
+            if super::super::repository::has_pending(&database, id)
                 .await
                 .unwrap_or(true)
             {
@@ -119,8 +118,8 @@ pub async fn rescan_vault(
         };
 
         if needs_import {
-            if let Some(imported_id) = import_one(&path, &db_pool, &app_handle).await {
-                super::super::repository::mark_rescan_seen(&db_pool, &run_id, &imported_id)
+            if let Some(imported_id) = import_one(&path, &database, &app_handle).await {
+                super::super::repository::mark_rescan_seen(&database, &run_id, &imported_id)
                     .await
                     .map_err(|e| {
                         e.with_context("focus-rescan: could not mark imported note as seen")
@@ -147,7 +146,7 @@ pub async fn rescan_vault(
     let mut cursor: Option<String> = None;
     loop {
         let rows = super::super::repository::rescan_note_page(
-            &db_pool,
+            &database,
             &run_id,
             cursor.as_deref(),
             DB_PAGE,
@@ -160,7 +159,7 @@ pub async fn rescan_vault(
         let Some(last) = rows.last() else { break };
         cursor = Some(last.id.clone());
         for row in rows {
-            if super::super::repository::has_pending(&db_pool, &row.id)
+            if super::super::repository::has_pending(&database, &row.id)
                 .await
                 .unwrap_or(true)
             {
@@ -184,7 +183,7 @@ pub async fn rescan_vault(
             "focus-rescan: refusing ghost-sweep; vault looks incomplete rather than edited"
         );
         emit_rescan_blocked(&app_handle, reason, candidates, total_rows as usize);
-        let _ = super::super::repository::finish_rescan(&db_pool, &run_id).await;
+        let _ = super::super::repository::finish_rescan(&database, &run_id).await;
         membership_guard.active = false;
         return Ok(RescanSummary {
             scanned,
@@ -199,7 +198,7 @@ pub async fn rescan_vault(
     cursor = None;
     loop {
         let rows = super::super::repository::rescan_note_page(
-            &db_pool,
+            &database,
             &run_id,
             cursor.as_deref(),
             DB_PAGE,
@@ -243,7 +242,7 @@ pub async fn rescan_vault(
         }
     }
 
-    super::super::repository::finish_rescan(&db_pool, &run_id)
+    super::super::repository::finish_rescan(&database, &run_id)
         .await
         .map_err(|e| e.with_context("focus-rescan: membership cleanup failed"))?;
     membership_guard.active = false;
@@ -291,7 +290,7 @@ pub struct RescanSummary {
 }
 
 struct RescanMembershipGuard {
-    pool: Database,
+    database: Database,
     run_id: String,
     active: bool,
     /// Where the release runs when the guard drops mid-scan.
@@ -303,10 +302,10 @@ impl Drop for RescanMembershipGuard {
         if !self.active {
             return;
         }
-        let pool = self.pool.clone();
+        let database = self.database.clone();
         let run_id = self.run_id.clone();
         let _ = self.background.spawn(async move {
-            let _ = crate::features::vault::repository::finish_rescan(&pool, &run_id).await;
+            let _ = crate::features::vault::repository::finish_rescan(&database, &run_id).await;
         });
     }
 }

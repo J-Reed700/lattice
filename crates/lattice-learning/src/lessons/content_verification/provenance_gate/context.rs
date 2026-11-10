@@ -21,7 +21,7 @@ use lattice_core::domain::provenance::{
     StandingAssessment, TrustLevel, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -40,7 +40,7 @@ const COPY_RELATIONS: [RelationKind; 4] = [
 /// The course a lesson preparation job weighs its claims' support in.
 #[derive(Clone)]
 struct Course {
-    pool: Database,
+    database: Database,
     program_id: String,
     /// The course and lesson the judgements are asked about (§12).
     topic: String,
@@ -56,16 +56,15 @@ tokio::task_local! {
 /// (`research::run`); outside it, nothing is weighed and the claim ledger's
 /// gate applies the quotation rule alone.
 pub(crate) async fn with_trust<T>(
-    pool: impl DatabaseHandle,
+    database: Database,
     program_id: String,
     topic: String,
     future: impl std::future::Future<Output = T>,
 ) -> T {
-    let pool = pool.database();
     COURSE
         .scope(
             Course {
-                pool,
+                database,
                 program_id,
                 topic,
             },
@@ -75,7 +74,7 @@ pub(crate) async fn with_trust<T>(
 }
 
 tokio::task_local! {
-    static OUTLINE_POOL: Database;
+    static OUTLINE_DATABASE: Database;
 }
 
 /// Turns the provenance gate on for the outline that `future` drafts or
@@ -84,11 +83,10 @@ tokio::task_local! {
 /// review and repair loop opens the course's scope itself
 /// ([`outline_trust`]). Outside it (unit tests) no outline is weighed.
 pub async fn with_outline_trust<T>(
-    pool: impl DatabaseHandle,
+    database: Database,
     future: impl std::future::Future<Output = T>,
 ) -> T {
-    let pool = pool.database();
-    OUTLINE_POOL.scope(pool, future).await
+    OUTLINE_DATABASE.scope(database, future).await
 }
 
 /// Runs `future` in `program_id`'s trust scope when an outline command
@@ -98,8 +96,8 @@ pub(crate) async fn outline_trust<T>(
     topic: String,
     future: impl std::future::Future<Output = T>,
 ) -> T {
-    match OUTLINE_POOL.try_with(Clone::clone) {
-        Ok(pool) => with_trust(pool, program_id, topic, future).await,
+    match OUTLINE_DATABASE.try_with(Clone::clone) {
+        Ok(database) => with_trust(database, program_id, topic, future).await,
         Err(_) => future.await,
     }
 }
@@ -145,7 +143,7 @@ struct VersionRecord {
 /// The judgements of one verification pass.
 pub(crate) struct Judgements {
     store: SqliteSourceTrustStore,
-    pool: Database,
+    database: Database,
     program_id: String,
     topic: String,
     model: String,
@@ -174,13 +172,9 @@ impl Judgements {
     /// course's overrides, relations and bars as they are now: what a trust
     /// change re-decides from. Nothing here calls a model; a judgement the
     /// store lacks is an error (`facts` with no model).
-    pub(crate) async fn cached(
-        pool: impl DatabaseHandle,
-        program_id: &str,
-        model: &str,
-    ) -> Result<Self> {
+    pub(crate) async fn cached(database: Database, program_id: &str, model: &str) -> Result<Self> {
         let course = Course {
-            pool: pool.database(),
+            database,
             program_id: program_id.to_owned(),
             topic: String::new(),
         };
@@ -188,14 +182,14 @@ impl Judgements {
     }
 
     async fn load(course: Course, model: &str) -> Result<Self> {
-        let store = SqliteSourceTrustStore::new(course.pool.clone());
+        let store = SqliteSourceTrustStore::new(course.database.clone());
         let overrides = store.overrides(&course.program_id).await?;
         let relations = store.relations(&course.program_id).await?;
         let bars = calibration::bars_of(&store.outcomes().await?);
         let known_classes = known_classes(&overrides.entries);
         Ok(Self {
             store,
-            pool: course.pool,
+            database: course.database,
             program_id: course.program_id,
             topic: course.topic,
             model: model.to_owned(),
@@ -588,7 +582,7 @@ impl Judgements {
         llm: Option<&dyn LLMPort>,
         version: &str,
     ) -> Result<Arc<VersionRecord>> {
-        let row = repository::version_row(&self.pool, &self.program_id, version).await?;
+        let row = repository::version_row(&self.database, &self.program_id, version).await?;
         let added_by = AddedBy::from_column(&row.added_by).ok_or_else(|| {
             AppError::InternalError(format!("Unknown source origin \"{}\".", row.added_by))
         })?;
@@ -655,7 +649,7 @@ pub(in crate::lessons::content_verification) async fn passage_labels(
     let Some(course) = course() else {
         return Ok(HashMap::new());
     };
-    let records: HashMap<String, ProvenanceRecord> = SqliteSourceTrustStore::new(course.pool)
+    let records: HashMap<String, ProvenanceRecord> = SqliteSourceTrustStore::new(course.database)
         .program_provenance(&course.program_id)
         .await?
         .into_iter()

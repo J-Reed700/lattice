@@ -12,7 +12,7 @@ use std::sync::Arc;
 use tracing::{debug, info, warn};
 
 use lattice_core::application::ports::SettingsRepositoryPort;
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 
 use super::config::ArchiveConfig;
 use super::crypto::{self, MasterKey};
@@ -118,7 +118,7 @@ pub fn list_archives(destination: &Path) -> Vec<ArchiveFileInfo> {
 /// Writes archives. Holds no mutable state; every run re-reads the config so
 /// a destination change between the scheduler tick and the run is honoured.
 pub struct ArchiveWriter {
-    pool: Database,
+    database: Database,
     app_data_dir: PathBuf,
     settings_repo: Arc<dyn SettingsRepositoryPort>,
     key_store: Arc<MasterKeyStore>,
@@ -134,16 +134,15 @@ pub struct ArchiveWriter {
 
 impl ArchiveWriter {
     pub fn new(
-        pool: impl DatabaseHandle,
+        database: Database,
         app_data_dir: PathBuf,
         settings_repo: Arc<dyn SettingsRepositoryPort>,
         key_store: Arc<MasterKeyStore>,
         files_root: Option<PathBuf>,
         web_archive_root: Option<PathBuf>,
     ) -> Self {
-        let pool = pool.database();
         Self {
-            pool,
+            database,
             app_data_dir,
             settings_repo,
             key_store,
@@ -238,7 +237,7 @@ impl ArchiveWriter {
     ) -> Result<ArchiveRun, ArchiveError> {
         let created_at = chrono::Utc::now();
         let snapshot_path = scratch.join("lattice.db");
-        let report = snapshot::snapshot_database(&self.pool, &snapshot_path).await?;
+        let report = snapshot::snapshot_database(&self.database, &snapshot_path).await?;
         debug!(
             bytes = report.bytes,
             migration_version = ?report.migration_version,

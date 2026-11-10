@@ -19,7 +19,7 @@ use crate::features::model_management::commands_extra::{
     set_active_embedding_model_impl,
 };
 use crate::tests::common::setup_test_container;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 
 /// Test that get_models_with_metadata doesn't panic
 ///
@@ -268,7 +268,7 @@ async fn delete_model_cleans_up_download_sessions_for_same_model() {
     .bind(0_i64)
     .bind(0_i64)
     .bind(0_i64)
-    .execute(container.db_pool().sqlx_pool())
+    .execute(container.database().sqlx_pool())
     .await
     .expect("Should insert model row");
 
@@ -296,14 +296,14 @@ async fn delete_model_cleans_up_download_sessions_for_same_model() {
     .bind(&now)
     .bind("Cleanup Test Embedding Model")
     .bind(model_id)
-    .execute(container.db_pool().sqlx_pool())
+    .execute(container.database().sqlx_pool())
     .await
     .expect("Should insert download session");
 
     let before_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM download_sessions WHERE model_id = ?")
             .bind(model_id)
-            .fetch_one(container.db_pool().sqlx_pool())
+            .fetch_one(container.database().sqlx_pool())
             .await
             .expect("Count query should work");
     assert_eq!(before_count, 1);
@@ -314,7 +314,7 @@ async fn delete_model_cleans_up_download_sessions_for_same_model() {
 
     let deleted_model: Option<String> = sqlx::query_scalar("SELECT id FROM models WHERE id = ?")
         .bind(model_record_id)
-        .fetch_optional(container.db_pool().sqlx_pool())
+        .fetch_optional(container.database().sqlx_pool())
         .await
         .expect("Model lookup should succeed");
     assert!(
@@ -325,7 +325,7 @@ async fn delete_model_cleans_up_download_sessions_for_same_model() {
     let after_count: i64 =
         sqlx::query_scalar("SELECT COUNT(*) FROM download_sessions WHERE model_id = ?")
             .bind(model_id)
-            .fetch_one(container.db_pool().sqlx_pool())
+            .fetch_one(container.database().sqlx_pool())
             .await
             .expect("Count query should work");
     assert_eq!(

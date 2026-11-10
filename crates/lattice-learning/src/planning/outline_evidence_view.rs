@@ -12,7 +12,7 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -280,10 +280,10 @@ pub(crate) fn project(
 }
 
 pub async fn get(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
 ) -> Result<Option<LearningOutlineEvidenceDto>> {
-    let repository = LearningRepository::new(pool.database());
+    let repository = LearningRepository::new(database.clone());
     let program = repository.get(program_id).await?;
     let Some(draft) = repository.outline_draft(program_id).await? else {
         return Ok(None);

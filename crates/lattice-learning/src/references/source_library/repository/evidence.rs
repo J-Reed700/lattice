@@ -20,7 +20,7 @@ fn chosen_from_row(row: &sqlx::sqlite::SqliteRow) -> Result<ChosenVersion> {
 }
 
 pub(in super::super) async fn live_sources(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<LiveSource>> {
     let pool = pool.sqlx_pool();
@@ -54,7 +54,7 @@ pub(in super::super) async fn live_sources(
 }
 
 pub(in super::super) async fn chosen_versions(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<ChosenVersion>> {
     let pool = pool.sqlx_pool();
@@ -69,7 +69,7 @@ pub(in super::super) async fn chosen_versions(
 }
 
 pub(in super::super) async fn chosen_version(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<ChosenVersion>> {
@@ -85,7 +85,7 @@ pub(in super::super) async fn chosen_version(
 }
 
 pub(in super::super) async fn set_snapshot_hash(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     version_id: &str,
     sha256: &str,

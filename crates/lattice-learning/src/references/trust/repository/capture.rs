@@ -1,6 +1,7 @@
+use super::super::capture::{compare_all_saved, Comparison, SavedTexts, VersionText};
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{Row, SqliteConnection};
 
 /// One saved or about-to-be-saved text of a course.
@@ -11,12 +12,24 @@ pub(in crate::references::trust) struct CourseText {
 }
 
 pub(in crate::references::trust) async fn active_texts(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<CourseText>> {
     let pool = pool.sqlx_pool();
     let mut connection = pool.acquire().await.map_err(db)?;
     active_texts_in(&mut connection, program_id).await
+}
+
+/// [`compare_saved`](super::super::capture::compare_saved) for versions saved
+/// together: each is compared with the ones before it too, as it would be if
+/// they were saved in turn.
+pub(crate) async fn compare_all(
+    pool: &impl DriverPool,
+    program_id: &str,
+    versions: &[VersionText<'_>],
+) -> Result<Vec<Comparison>> {
+    let saved = SavedTexts(active_texts(pool, program_id).await?);
+    compare_all_saved(saved, versions).await
 }
 
 pub(in crate::references::trust) async fn active_texts_in(

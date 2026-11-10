@@ -9,7 +9,7 @@ use crate::features::transcription::engine::WhisperTranscriptionService;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::TranscriptionPort;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
 /// Transcription wiring: one shared port.
@@ -20,11 +20,10 @@ pub struct TranscriptionDi {
 }
 
 /// Build the transcription slice.
-pub fn build(db_pool: impl DatabaseHandle, background: Arc<BackgroundTasks>) -> TranscriptionDi {
-    let db_pool = db_pool.database();
+pub fn build(database: Database, background: Arc<BackgroundTasks>) -> TranscriptionDi {
     TranscriptionDi {
         port: Arc::new(WhisperTranscriptionService::new(
-            Arc::new(DownloadedModelRepository::new(db_pool)),
+            Arc::new(DownloadedModelRepository::new(database)),
             background,
         )) as Arc<dyn TranscriptionPort>,
     }

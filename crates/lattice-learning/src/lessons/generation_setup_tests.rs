@@ -18,7 +18,7 @@ fn worker(pool: &SqlitePool, overlap: &Arc<Overlap>) -> LessonGenerationWorker {
     LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone().into(),
+        database: pool.clone().into(),
         load_llm: Arc::new(|| Box::pin(async { Err(AppError::InvalidState("unused".into())) })),
         courses: None,
         refresh_sources: Arc::new(move |_| {

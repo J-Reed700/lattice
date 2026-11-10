@@ -1,7 +1,7 @@
 //! The library rows the provenance gate reads.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::Row;
 
 fn db(error: sqlx::Error) -> AppError {
@@ -18,7 +18,7 @@ pub(super) struct VersionRow {
 }
 
 pub(super) async fn version_row(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     version_id: &str,
 ) -> Result<VersionRow> {

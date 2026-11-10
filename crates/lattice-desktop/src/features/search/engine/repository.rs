@@ -4,7 +4,8 @@ use crate::infrastructure::persistence::database::connection::{
 };
 use lattice_core::application::contracts::search::engine::BM25Result;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::Row;
 
 /// One statement per index. Written out rather than built by string
@@ -51,7 +52,7 @@ const TRIGRAM_SQL: &str = "SELECT
      LIMIT ?";
 
 pub(super) async fn bm25_results(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     query: &FtsQuery,
     top_k: usize,
 ) -> Result<Vec<BM25Result>> {
@@ -99,7 +100,7 @@ pub(super) async fn bm25_results(
         .collect())
 }
 
-pub(super) async fn optimize_chunk_indexes(pool: &impl DatabaseHandle) -> Result<()> {
+pub(super) async fn optimize_chunk_indexes(pool: &impl DriverPool) -> Result<()> {
     let pool = pool.sqlx_pool();
     query_with_heavy_timeout(|| async {
         let mut tx = pool.begin_write().await?;
@@ -114,7 +115,7 @@ pub(super) async fn optimize_chunk_indexes(pool: &impl DatabaseHandle) -> Result
     .await
 }
 
-pub(super) async fn rebuild_chunk_indexes(pool: &impl DatabaseHandle) -> Result<()> {
+pub(super) async fn rebuild_chunk_indexes(pool: &impl DriverPool) -> Result<()> {
     let pool = pool.sqlx_pool();
     query_with_heavy_timeout(|| async {
         let mut tx = pool.begin_write().await?;
@@ -130,7 +131,7 @@ pub(super) async fn rebuild_chunk_indexes(pool: &impl DatabaseHandle) -> Result<
 }
 
 pub(super) async fn document_updated_at(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     document_ids: &[String],
 ) -> Result<Vec<(String, String)>> {
     let pool = pool.sqlx_pool();

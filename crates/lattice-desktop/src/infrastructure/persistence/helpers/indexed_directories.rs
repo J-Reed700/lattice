@@ -4,14 +4,14 @@
 //! FileAccessConfig allowed_roots at application startup.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use std::path::PathBuf;
 
 /// Query unique top-level indexed directories from documents table
 ///
 /// Extracts the first path component (directory name) from all indexed
 /// file paths to determine which directories have been indexed.
-pub async fn query_indexed_directories(pool: &impl DatabaseHandle) -> Result<Vec<PathBuf>> {
+pub async fn query_indexed_directories(pool: &impl DriverPool) -> Result<Vec<PathBuf>> {
     let pool = pool.sqlx_pool();
     let rows = sqlx::query!(
         r#"

@@ -3,7 +3,6 @@
 //! row that says why each stopped (§6.1).
 
 use super::*;
-use lattice_core::shared::persistence::DatabaseHandle;
 
 /// The prefix of a job's result reference when lessons wait for review.
 const NEEDS_REVIEW_REF: &str = "needs_review:";
@@ -49,11 +48,11 @@ pub(crate) struct HeldForReview {
 /// read, and for how many claims: the review row, not the error that unwound
 /// the preparation, is what says so.
 pub(crate) async fn held_for_review(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     lesson_id: &str,
     job_id: &str,
 ) -> Result<Option<HeldForReview>> {
-    let ledger = ClaimReviewRepository::new(pool.database())
+    let ledger = ClaimReviewRepository::new(database.clone())
         .load(lesson_id)
         .await?;
     let review = ledger

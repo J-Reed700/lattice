@@ -13,7 +13,7 @@ use crate::practice::{
     practical_generation::INTERVIEW_PLAN_FILE_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::{Database, Transactions};
 use std::collections::HashMap;
 
 fn decode<T: serde::de::DeserializeOwned>(content: &str, what: &str) -> Result<T> {
@@ -33,11 +33,11 @@ pub(crate) struct InterviewMaterial {
 }
 
 pub(crate) async fn load(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     activity_id: &str,
 ) -> Result<InterviewMaterial> {
-    let mut read = pool.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await.map_err(db)?;
     let activity = interview::activity(&mut read, program_id, activity_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Interview activity not found".into()))?;
@@ -487,6 +487,7 @@ mod tests {
     #[tokio::test]
     async fn a_saved_ready_interview_loads_with_its_guides_and_cited_sources() -> Result<()> {
         let pool = crate::tests::pool().await?;
+        let database = Database::from(pool.clone());
         // Only the rows `load` reads; their program, lesson and source library are not under test.
         sqlx::query("PRAGMA foreign_keys=OFF")
             .execute(&pool)
@@ -516,7 +517,7 @@ mod tests {
         sqlx::query("INSERT INTO learning_source_versions(id,program_id,source_id,version_number,title,publisher,requested_url,resolved_url,full_text,excerpt,content_sha256,word_count,truncated,extraction_version,acquired_at) VALUES('v1','program','s1',1,'Acme engineering blog',NULL,'https://acme.example.com/requested','https://acme.example.com/blog','text','text','sha',1,0,'test',0)")
             .execute(&pool).await.map_err(db)?;
 
-        let material = load(&pool, "program", "ready").await?;
+        let material = load(&database, "program", "ready").await?;
         assert_eq!(material.title, "Acme loop");
         assert_eq!(material.plan.questions.len(), 2);
         assert_eq!(
@@ -546,7 +547,10 @@ mod tests {
             std::slice::from_ref(&plan_file),
         )
         .await?;
-        assert!(load(&pool, "program", "plan-only").await?.guides.is_none());
+        assert!(load(&database, "program", "plan-only")
+            .await?
+            .guides
+            .is_none());
         save(
             &pool,
             "draft",
@@ -560,14 +564,14 @@ mod tests {
         for activity in ["draft", "lab", "empty"] {
             assert!(
                 matches!(
-                    load(&pool, "program", activity).await,
+                    load(&database, "program", activity).await,
                     Err(AppError::InvalidInput(_))
                 ),
                 "{activity} cannot become a drill"
             );
         }
         assert!(matches!(
-            load(&pool, "other-program", "ready").await,
+            load(&database, "other-program", "ready").await,
             Err(AppError::NotFound(_))
         ));
         Ok(())
@@ -581,6 +585,7 @@ mod tests {
             study_service::create_interview_deck,
         };
         let pool = crate::tests::pool().await?;
+        let database = Database::from(pool.clone());
         sqlx::query("PRAGMA foreign_keys=OFF")
             .execute(&pool)
             .await
@@ -604,7 +609,7 @@ mod tests {
         let now = chrono::Utc::now().timestamp_millis();
         let day = super::super::schedule::DAY_MS;
         let interview = now + day;
-        let first = create_interview_deck(&repo, &pool, request(Some(interview))).await?;
+        let first = create_interview_deck(&repo, &database, request(Some(interview))).await?;
         // The first card was recalled well enough to rest until the interview.
         sqlx::query("UPDATE study_cards SET due_at=?, review_count=1 WHERE id=?")
             .bind(interview)
@@ -619,7 +624,7 @@ mod tests {
                 .collect::<Vec<_>>()
         };
         for target in [Some(interview), None] {
-            let again = create_interview_deck(&repo, &pool, request(target)).await?;
+            let again = create_interview_deck(&repo, &database, request(target)).await?;
             assert_eq!(again.id, first.id);
             assert_eq!(ids(&again), ids(&first));
             assert_eq!(
@@ -633,7 +638,7 @@ mod tests {
                 "{target:?} keeps the review and its rest"
             );
         }
-        let moved = create_interview_deck(&repo, &pool, request(Some(now + 2 * day))).await?;
+        let moved = create_interview_deck(&repo, &database, request(Some(now + 2 * day))).await?;
         assert_eq!(moved.id, first.id);
         assert_eq!(moved.target_at, Some(now + 2 * day));
         assert_eq!(moved.cards[0].review_count, 1);

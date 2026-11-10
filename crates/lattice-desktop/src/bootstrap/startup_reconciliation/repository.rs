@@ -1,7 +1,7 @@
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 
-pub async fn mark_interrupted_verifications(pool: &impl DatabaseHandle) -> Result<u64, AppError> {
+pub async fn mark_interrupted_verifications(pool: &impl DriverPool) -> Result<u64, AppError> {
     let pool = pool.sqlx_pool();
     let result = sqlx::query(
         "UPDATE conversation_messages \
@@ -16,7 +16,7 @@ pub async fn mark_interrupted_verifications(pool: &impl DatabaseHandle) -> Resul
 }
 
 pub async fn fail_unfinished_turns(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     resuming_json: String,
 ) -> Result<u64, AppError> {
     let pool = pool.sqlx_pool();

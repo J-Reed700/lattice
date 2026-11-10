@@ -6,7 +6,7 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 use lattice_core::application::ports::{DocumentLockGuard, TagServiceTrait};
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 
 const DOCUMENT_LOCK_STRIPES: usize = 64;
 
@@ -45,15 +45,14 @@ impl DocumentLockTable {
 #[derive(Debug, Clone)]
 pub struct TagService {
     document_locks: DocumentLockTable,
-    pub(crate) db_pool: Database,
+    pub(crate) database: Database,
 }
 
 impl TagService {
-    pub fn new(db_pool: impl DatabaseHandle) -> Self {
-        let db_pool = db_pool.database();
+    pub fn new(database: Database) -> Self {
         Self {
             document_locks: DocumentLockTable::default(),
-            db_pool,
+            database,
         }
     }
 
@@ -125,7 +124,7 @@ impl TagServiceTrait for TagService {
         }
 
         let normalized_name = name.trim().to_lowercase();
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         tag_repo.create(&normalized_name, color).await.map_err(|e| {
             lattice_core::shared::error::AppError::Database(format!("Failed to create tag: {}", e))
@@ -149,7 +148,7 @@ impl TagServiceTrait for TagService {
         }
 
         let normalized_name = name.map(|n| n.trim().to_lowercase());
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         tag_repo
             .update(tag_id, normalized_name.as_deref(), color)
@@ -165,7 +164,7 @@ impl TagServiceTrait for TagService {
     async fn delete_tag(&self, tag_id: &str) -> Result<(), lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
         tag_repo.delete(tag_id).await.map_err(|e| {
             lattice_core::shared::error::AppError::Database(format!("Failed to delete tag: {}", e))
         })
@@ -177,7 +176,7 @@ impl TagServiceTrait for TagService {
     {
         use crate::features::tags::repository::TagRepository;
 
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
         tag_repo.get_all().await.map_err(|e| {
             lattice_core::shared::error::AppError::Database(format!("Failed to get tags: {}", e))
         })
@@ -191,7 +190,7 @@ impl TagServiceTrait for TagService {
     > {
         use crate::features::tags::repository::TagRepository;
 
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
         let results = tag_repo.get_all_with_counts().await.map_err(|e| {
             lattice_core::shared::error::AppError::Database(format!(
                 "Failed to get tags with counts: {}",
@@ -220,7 +219,7 @@ impl TagServiceTrait for TagService {
     {
         use crate::features::tags::repository::TagRepository;
 
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
         tag_repo
             .get_tags_for_document(document_id)
             .await
@@ -239,7 +238,7 @@ impl TagServiceTrait for TagService {
         std::collections::HashMap<String, Vec<lattice_core::domain::entities::Tag>>,
         lattice_core::shared::error::AppError,
     > {
-        crate::features::tags::repository::TagRepository::new(self.db_pool.clone())
+        crate::features::tags::repository::TagRepository::new(self.database.clone())
             .get_tags_for_documents(document_ids)
             .await
     }
@@ -252,7 +251,7 @@ impl TagServiceTrait for TagService {
     {
         use crate::features::tags::repository::TagRepository;
 
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
 
         let existing_tags = tag_repo.get_tags_for_document(document_id).await?;
         let existing_tag_names: Vec<String> =
@@ -294,7 +293,7 @@ impl TagServiceTrait for TagService {
         document_id: &str,
         tag_names: Vec<String>,
     ) -> lattice_core::shared::error::Result<()> {
-        crate::features::tags::repository::TagRepository::new(self.db_pool.clone())
+        crate::features::tags::repository::TagRepository::new(self.database.clone())
             .replace_document_tags(document_id, tag_names)
             .await
     }
@@ -306,7 +305,7 @@ impl TagServiceTrait for TagService {
     ) -> Result<(), lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
         tag_repo
             .remove_tag_from_document(document_id, tag_id)
             .await
@@ -324,7 +323,7 @@ impl TagServiceTrait for TagService {
     ) -> Result<Vec<String>, lattice_core::shared::error::AppError> {
         use crate::features::tags::repository::TagRepository;
 
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
         tag_repo
             .find_documents_by_tag_name(tag_name)
             .await
@@ -389,7 +388,7 @@ impl TagServiceTrait for TagService {
         }
 
         let normalized_name = name.trim().to_lowercase();
-        let tag_repo = TagRepository::new(self.db_pool.clone());
+        let tag_repo = TagRepository::new(self.database.clone());
         tag_repo
             .get_or_create(&normalized_name, Some(color))
             .await
@@ -471,7 +470,7 @@ mod tests {
         assert_eq!(merged.len(), 2);
     }
 
-    async fn pool_with_tags() -> SqlitePool {
+    async fn pool_with_tags() -> Database {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
@@ -489,7 +488,7 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
-        pool
+        Database::from(pool)
     }
 
     fn long_tag(suffix: &str) -> String {
@@ -547,10 +546,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_concurrent_lock_acquisition() {
-        let db_pool = SqlitePool::connect(":memory:")
+        let pool = SqlitePool::connect(":memory:")
             .await
             .expect("Failed to create in-memory pool");
-        let service = TagService::new(db_pool);
+        let service = TagService::new(Database::from(pool));
         let document_id = "test-doc";
 
         let guard1 = service.acquire_lock_with_timeout(document_id).await;

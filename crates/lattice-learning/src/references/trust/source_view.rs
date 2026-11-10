@@ -27,7 +27,7 @@ use lattice_core::domain::provenance::{
     TrackRecord, TrustOverride, POLICY,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::{Database, Transactions};
 use std::collections::BTreeSet;
 
 /// The relations through which a version inherits a level (§5 step 4), as
@@ -45,6 +45,7 @@ pub const NOT_ASSESSED: &str = "not_assessed";
 
 /// The course's overrides and relations, read once per request.
 struct Course<'a> {
+    database: &'a Database,
     store: &'a SqliteSourceTrustStore,
     program_id: &'a str,
     overrides: Overrides,
@@ -53,10 +54,12 @@ struct Course<'a> {
 
 /// The trust view a request asks for.
 pub async fn view(
+    database: &Database,
     store: &SqliteSourceTrustStore,
     request: &GetLearningSourceTrustRequestDto,
 ) -> Result<LearningSourceTrustViewDto> {
     let course = Course {
+        database,
         store,
         program_id: &request.program_id,
         overrides: store.overrides(&request.program_id).await?,
@@ -75,13 +78,13 @@ pub async fn view(
 
 /// The latest profile of `statement` under the current class vocabulary.
 pub async fn latest_profile(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     statement: &str,
     known_classes: &[String],
 ) -> Result<Option<ClaimProfile>> {
     // The input hash does not depend on the model; any model's key has it.
     let key = claim_profile_key(statement, known_classes, "");
-    latest_claim_profile(pool, &key.input_sha256, CLAIM_PROFILE_POLICY).await
+    latest_claim_profile(database, &key.input_sha256, CLAIM_PROFILE_POLICY).await
 }
 
 /// The latest `source-standing-v2` judgement of `record`'s version, by any
@@ -89,26 +92,27 @@ pub async fn latest_profile(
 /// it, as the gate computes it (claim sources design §4.3). A version judged
 /// only under v1 has none: the view shows it as not judged yet.
 pub(crate) async fn latest_standing(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     record: &ProvenanceRecord,
 ) -> Result<Option<StandingAssessment>> {
-    let Some(content) = super::judgements::content_evidence(pool, program_id, record).await? else {
+    let Some(content) = super::judgements::content_evidence(database, program_id, record).await?
+    else {
         return Ok(None);
     };
     // The input hash does not depend on the model; any model's key has it.
     let key = standing_key(&record.signals, &content, "");
-    repository::source_view::latest_standing(pool, &key.input_sha256, STANDING_POLICY).await
+    repository::source_view::latest_standing(database, &key.input_sha256, STANDING_POLICY).await
 }
 
 async fn latest_authority(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     origin: &OriginKey,
     subject: &SubjectKey,
 ) -> Result<Option<AuthorityAssessment>> {
     repository::source_view::latest_authority(
-        pool,
+        database,
         program_id,
         &origin.0,
         &subject.0,
@@ -125,13 +129,9 @@ fn reason(code: &str, text: &str) -> LearningTrustReasonDto {
 }
 
 impl Course<'_> {
-    fn pool(&self) -> &Database {
-        self.store.pool()
-    }
-
     async fn active_versions(&self, source_ids: &[String]) -> Result<Vec<Version>> {
         Ok(
-            repository::source_view::active_versions(self.pool(), self.program_id)
+            repository::source_view::active_versions(self.database, self.program_id)
                 .await?
                 .into_iter()
                 .filter(|row| source_ids.is_empty() || source_ids.contains(&row.source_id))
@@ -140,11 +140,11 @@ impl Course<'_> {
     }
 
     async fn version(&self, version_id: &str) -> Result<Option<Version>> {
-        repository::source_view::version_of(self.pool(), self.program_id, version_id).await
+        repository::source_view::version_of(self.database, self.program_id, version_id).await
     }
 
     async fn text(&self, version_id: &str) -> Result<String> {
-        let mut read = self.pool().begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await.map_err(db)?;
         let text = version_text(&mut read, self.program_id, version_id).await?;
         read.commit().await.map_err(db)?;
         Ok(text)
@@ -152,7 +152,7 @@ impl Course<'_> {
 
     async fn claim(&self, claim: &LearningTrustClaimRequestDto) -> Result<LearningClaimTrustDto> {
         let profile = latest_profile(
-            self.pool(),
+            self.database,
             &claim.statement,
             &known_classes(&self.overrides.entries),
         )
@@ -170,7 +170,7 @@ impl Course<'_> {
         }
         let bar = match &profile {
             Some(profile) => {
-                let calibrated = calibration::calibrated(self.pool()).await?;
+                let calibrated = calibration::calibrated(self.database).await?;
                 calibrated
                     .bars
                     .bar(profile.kind)
@@ -199,7 +199,7 @@ impl Course<'_> {
             None => TrackRecord::default(),
         };
         let standing = match &record {
-            Some(record) => latest_standing(self.pool(), self.program_id, record).await?,
+            Some(record) => latest_standing(self.database, self.program_id, record).await?,
             None => None,
         };
         let trust = match (&record, &standing) {
@@ -272,7 +272,7 @@ impl Course<'_> {
         let relation = match subject {
             Some(subject) if record.origin.host.is_some() => {
                 latest_authority(
-                    self.pool(),
+                    self.database,
                     self.program_id,
                     &record.origin.key,
                     &subject.key,
@@ -321,7 +321,7 @@ impl Course<'_> {
             let Some(record) = self.store.provenance(original).await? else {
                 continue;
             };
-            let Some(standing) = latest_standing(self.pool(), self.program_id, &record).await?
+            let Some(standing) = latest_standing(self.database, self.program_id, &record).await?
             else {
                 continue;
             };

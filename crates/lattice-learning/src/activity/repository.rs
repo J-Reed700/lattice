@@ -1,11 +1,11 @@
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
 /// The titles of `programs` by id; a course deleted meanwhile is left out.
 pub(crate) async fn course_titles(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     programs: &[String],
 ) -> Result<HashMap<String, String>> {
     let pool = pool.sqlx_pool();
@@ -18,7 +18,7 @@ pub(crate) async fn course_titles(
 }
 
 pub(super) async fn lesson_titles(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     lessons: &[String],
 ) -> Result<HashMap<String, String>> {
     let pool = pool.sqlx_pool();

@@ -212,7 +212,7 @@ async fn reading_the_review_reopens_what_an_earlier_deletion_left_and_only_once(
     let confirmed = confirmed_on(&course.pool, &lesson_id, &doomed.version_id).await;
     let elsewhere = confirmed_on(&course.pool, &lesson_id, &other.version_id).await;
     delete_in_the_library_row(&course, &doomed).await;
-    let service = ClaimReviewService::new(course.pool.clone());
+    let service = ClaimReviewService::new(course.database.clone());
     let before = revision(&course.pool, &lesson_id).await;
 
     service.review(&course.program_id, &lesson_id).await?;
@@ -312,10 +312,10 @@ async fn deleted_source_lesson() -> Result<Lesson> {
         .unwrap();
     delete_in_the_library_row(&course, &doomed).await;
 
-    ClaimReviewService::new(course.pool.clone())
+    ClaimReviewService::new(course.database.clone())
         .review(&course.program_id, &lesson_id)
         .await?;
-    let view = crate::lesson_evidence::get(&course.pool, &course.program_id, &lesson_id)
+    let view = crate::lesson_evidence::get(&course.database, &course.program_id, &lesson_id)
         .await?
         .unwrap();
 
@@ -398,7 +398,7 @@ async fn confirm_after_deletion(
     let claim = resolved_by(&course.pool, &lesson_id, &doomed.version_id).await;
     delete(&course, &doomed).await?;
     let revision = revision(&course.pool, &lesson_id).await;
-    ClaimReviewService::new(course.pool.clone())
+    ClaimReviewService::new(course.database.clone())
         .resolve(
             &lesson_id,
             &claim.0,
@@ -416,7 +416,7 @@ async fn confirm_after_deletion(
 async fn a_confirmation_made_after_a_deletion_stays_confirmed_on_every_read() -> Result<()> {
     let (course, lesson_id, doomed, _, claim) =
         confirm_after_deletion(|doomed, _| vec![doomed.version_id.clone()]).await?;
-    let service = ClaimReviewService::new(course.pool.clone());
+    let service = ClaimReviewService::new(course.database.clone());
     let mut written = None;
     for read in 0..2 {
         service.review(&course.program_id, &lesson_id).await?;

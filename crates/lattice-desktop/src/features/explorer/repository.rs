@@ -1,14 +1,15 @@
 //! What Explorer keeps in `lattice.db`: `conversations.explorer_root`, and
 //! the folders list in `explorer_folders`.
 
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::{AppError, Result};
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
 /// Binds a conversation to a folder (a canonical root), or unbinds it.
 pub async fn set_conversation_root(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     conversation_id: &str,
     root: Option<&str>,
 ) -> Result<()> {
@@ -45,7 +46,7 @@ pub async fn set_conversation_root_in(
 
 /// The folder a conversation is bound to; `None` for an ordinary chat.
 pub async fn conversation_root(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     conversation_id: &str,
 ) -> Result<Option<String>> {
     let pool = pool.sqlx_pool();
@@ -89,7 +90,7 @@ pub struct FolderRow {
 /// The space a folder with no space of its own files its threads in.
 pub const GENERAL_SPACE_ID: &str = "space_general";
 
-fn folder_error(action: &str) -> impl Fn(sqlx::Error) -> AppError + '_ {
+fn folder_error<E: std::fmt::Display>(action: &str) -> impl Fn(E) -> AppError + '_ {
     move |e| AppError::Database(format!("Failed to {action}: {e}"))
 }
 
@@ -99,7 +100,7 @@ fn folder_not_found(root: &str) -> AppError {
 
 /// Adds the folder (named `name`), or marks it opened at `now`.
 pub async fn record_folder_opened(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     root: &str,
     name: &str,
     now: &str,
@@ -122,7 +123,7 @@ pub async fn record_folder_opened(
 /// Adds a folder whose index is on disk but which has no row (one indexed
 /// before the list existed). A row already there wins.
 pub async fn adopt_folder(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     root: &str,
     name: &str,
     opened_at: &str,
@@ -143,7 +144,7 @@ pub async fn adopt_folder(
 }
 
 /// Every folder: pinned first, then the most recently opened.
-pub async fn list_folders(pool: &impl DatabaseHandle) -> Result<Vec<FolderRow>> {
+pub async fn list_folders(pool: &impl DriverPool) -> Result<Vec<FolderRow>> {
     let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT root, name, pinned, added_at, last_opened_at, instructions, space_id,
@@ -169,7 +170,7 @@ pub async fn list_folders(pool: &impl DatabaseHandle) -> Result<Vec<FolderRow>> 
         .collect())
 }
 
-pub async fn rename_folder(pool: &impl DatabaseHandle, root: &str, name: &str) -> Result<()> {
+pub async fn rename_folder(pool: &impl DriverPool, root: &str, name: &str) -> Result<()> {
     let pool = pool.sqlx_pool();
     let result = sqlx::query("UPDATE explorer_folders SET name = ? WHERE root = ?")
         .bind(name)
@@ -183,7 +184,7 @@ pub async fn rename_folder(pool: &impl DatabaseHandle, root: &str, name: &str) -
     Ok(())
 }
 
-pub async fn set_folder_pinned(pool: &impl DatabaseHandle, root: &str, pinned: bool) -> Result<()> {
+pub async fn set_folder_pinned(pool: &impl DriverPool, root: &str, pinned: bool) -> Result<()> {
     let pool = pool.sqlx_pool();
     let result = sqlx::query("UPDATE explorer_folders SET pinned = ? WHERE root = ?")
         .bind(i64::from(pinned))
@@ -305,7 +306,7 @@ pub async fn move_thread_to_space_in(
 }
 
 /// Drops the folder's row. Its threads and index are the caller's business.
-pub async fn delete_folder(pool: &impl DatabaseHandle, root: &str) -> Result<()> {
+pub async fn delete_folder(pool: &impl DriverPool, root: &str) -> Result<()> {
     let pool = pool.sqlx_pool();
     sqlx::query("DELETE FROM explorer_folders WHERE root = ?")
         .bind(root)
@@ -316,7 +317,7 @@ pub async fn delete_folder(pool: &impl DatabaseHandle, root: &str) -> Result<()>
 }
 
 /// How many threads each folder has, keyed by root.
-pub async fn thread_counts(pool: &impl DatabaseHandle) -> Result<HashMap<String, u32>> {
+pub async fn thread_counts(pool: &impl DriverPool) -> Result<HashMap<String, u32>> {
     let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT explorer_root, COUNT(*) AS threads FROM conversations
@@ -339,7 +340,7 @@ pub async fn thread_counts(pool: &impl DatabaseHandle) -> Result<HashMap<String,
 
 /// The ids of the folder's top-level threads. Their tangents cascade with
 /// them, so returning both would try to delete a child that is already gone.
-pub async fn folder_threads(pool: &impl DatabaseHandle, root: &str) -> Result<Vec<String>> {
+pub async fn folder_threads(pool: &impl DriverPool, root: &str) -> Result<Vec<String>> {
     let pool = pool.sqlx_pool();
     sqlx::query_scalar(
         "SELECT id FROM conversations WHERE explorer_root = ? AND tangent_parent_id IS NULL",
@@ -350,14 +351,14 @@ pub async fn folder_threads(pool: &impl DatabaseHandle, root: &str) -> Result<Ve
     .map_err(folder_error("list the Explorer threads"))
 }
 
-fn save_error(error: sqlx::Error) -> AppError {
+fn save_error(error: impl std::fmt::Display) -> AppError {
     AppError::Database(format!("Failed to save the Explorer folder: {error}"))
 }
 
 /// Sets a folder's instructions and space and moves its threads with it, in
 /// one unit of work. A named space must be open.
 pub async fn save_folder_settings(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     root: &str,
     instructions: Option<&str>,
     own_space: Option<&str>,
@@ -380,7 +381,7 @@ pub async fn save_folder_settings(
 /// Binds a thread to a folder and files it in the folder's space, in one unit
 /// of work.
 pub async fn bind_thread_to_folder(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     conversation_id: &str,
     root: Option<&str>,
     now: &str,
@@ -398,7 +399,7 @@ pub async fn bind_thread_to_folder(
 /// Records the thread a folder's chat shows, if the thread is bound to the
 /// folder. `Ok(false)` when it is not.
 pub async fn remember_folder_thread(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     root: &str,
     name: &str,
     conversation_id: &str,

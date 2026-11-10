@@ -10,7 +10,7 @@ use crate::model_call;
 use crate::persistence::hash;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use serde::Deserialize;
 use serde_json::json;
 use std::collections::HashMap;
@@ -80,12 +80,12 @@ pub(super) async fn ask(
 
 /// The verdicts stored for the lesson of `context` on `basis`, by the version, start and end of the passage.
 pub(super) async fn stored(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     context: &LessonContext,
     basis: &str,
 ) -> Result<HashMap<(String, usize, usize), bool>> {
     let rows =
-        repository::verdicts_on(pool, &context.program_id, &context.lesson_id, basis).await?;
+        repository::verdicts_on(database, &context.program_id, &context.lesson_id, basis).await?;
     Ok(rows
         .into_iter()
         .filter_map(|(version, start, end, teaches)| {
@@ -97,7 +97,7 @@ pub(super) async fn stored(
 
 /// Stores the verdict `taught` on `passage` for the lesson of `context`, replacing the passage's earlier one.
 pub(super) async fn record(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     context: &LessonContext,
     passage: &SourcePassage,
     basis: &str,
@@ -114,7 +114,7 @@ pub(super) async fn record(
         ));
     };
     repository::record(
-        pool,
+        database,
         &repository::Verdict {
             program_id: &context.program_id,
             lesson_id: &context.lesson_id,

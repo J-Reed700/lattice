@@ -1,5 +1,6 @@
 //! A picture's row and its file are written in an order a failure between
 //! them leaves clean: the row first, taken back when the file cannot follow.
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 use std::time::Instant;
 
@@ -69,7 +70,7 @@ async fn fixture() -> (SqlitePool, Arc<ChatImageService>, tempfile::TempDir) {
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
     let service = Arc::new(ChatImageService::new(
-        pool.clone(),
+        Database::from(pool.clone()),
         dir.path().join("chat-images"),
         Arc::new(NoNetwork),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),

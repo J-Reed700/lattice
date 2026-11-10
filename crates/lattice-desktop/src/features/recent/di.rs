@@ -7,17 +7,16 @@ use std::sync::Arc;
 use crate::features::recent::repository::RecentDocumentsRepository;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::RecentDocumentsRepositoryPort;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 #[derive(Clone)]
 pub struct RecentDi {
     pub recent_docs_repo: Arc<dyn RecentDocumentsRepositoryPort>,
 }
 
-pub fn build(db_pool: impl DatabaseHandle) -> RecentDi {
-    let db_pool = db_pool.database();
-    let recent_docs_repo =
-        Arc::new(RecentDocumentsRepository::new(db_pool)) as Arc<dyn RecentDocumentsRepositoryPort>;
+pub fn build(database: Database) -> RecentDi {
+    let recent_docs_repo = Arc::new(RecentDocumentsRepository::new(database))
+        as Arc<dyn RecentDocumentsRepositoryPort>;
     RecentDi { recent_docs_repo }
 }
 

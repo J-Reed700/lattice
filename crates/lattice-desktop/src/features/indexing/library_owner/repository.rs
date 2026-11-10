@@ -1,9 +1,9 @@
 use sqlx::SqliteConnection;
 
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 
-pub async fn recorded_owner(pool: &impl DatabaseHandle) -> Result<Option<String>> {
+pub async fn recorded_owner(pool: &impl DriverPool) -> Result<Option<String>> {
     let pool = pool.sqlx_pool();
     Ok(
         sqlx::query_scalar::<_, String>("SELECT owner_id FROM library_owner WHERE id = 1")
@@ -12,7 +12,7 @@ pub async fn recorded_owner(pool: &impl DatabaseHandle) -> Result<Option<String>
     )
 }
 
-pub async fn holds_documents(pool: &impl DatabaseHandle) -> Result<bool> {
+pub async fn holds_documents(pool: &impl DriverPool) -> Result<bool> {
     let pool = pool.sqlx_pool();
     Ok(
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM documents)")

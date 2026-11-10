@@ -90,7 +90,7 @@ async fn create_test_pool() -> (SqlitePool, PathBuf, tempfile::TempDir) {
 
 async fn test_create_backup() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
 
@@ -104,7 +104,7 @@ async fn test_create_backup() {
 
 async fn test_create_backup_custom_path() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_root = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_root).unwrap();
@@ -128,7 +128,7 @@ async fn test_create_backup_custom_path() {
 
 async fn test_list_backups() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let _ = adapter.create_backup(None).await.unwrap();
     // Sleep 1 second to avoid timestamp collision (backups use second-precision timestamps)
@@ -149,7 +149,7 @@ async fn test_list_backups() {
 
 async fn test_validate_backup() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
     let backup_pathbuf = PathBuf::from(backup_path);
@@ -164,7 +164,7 @@ async fn test_validate_backup() {
 
 async fn test_validate_invalid_backup() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let invalid_path = PathBuf::from("/nonexistent/backup.db");
     let result = adapter.validate_backup(&invalid_path).await;
@@ -178,7 +178,7 @@ async fn test_validate_invalid_backup() {
 
 async fn test_backup_file_count() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
     let backup_pathbuf = PathBuf::from(backup_path);
@@ -193,7 +193,7 @@ async fn test_backup_file_count() {
 
 async fn test_create_backup_rejects_parent_directory_traversal() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     // Attempt to traverse to parent directory
     let malicious_path = db_path
@@ -221,7 +221,7 @@ async fn test_create_backup_rejects_parent_directory_traversal() {
 
 async fn test_create_backup_rejects_absolute_system_path() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     // Attempt to write to system directory
     #[cfg(unix)]
@@ -248,7 +248,7 @@ async fn test_create_backup_rejects_absolute_system_path() {
 
 async fn test_create_backup_rejects_url_encoded_traversal() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     // URL-encoded ../ pattern: %2e%2e%2f
     let backup_dir = db_path.parent().unwrap().join("backups");
@@ -265,7 +265,7 @@ async fn test_create_backup_rejects_url_encoded_traversal() {
 
 async fn test_create_backup_allows_valid_path_in_backup_dir() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -282,7 +282,7 @@ async fn test_create_backup_allows_valid_path_in_backup_dir() {
 
 async fn create_backup_rejects_a_link_escape(kind: LinkKind) {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -321,7 +321,7 @@ async fn test_create_backup_rejects_junction_escape() {
 
 async fn test_create_backup_handles_directory_input() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -342,7 +342,7 @@ async fn test_create_backup_handles_directory_input() {
 
 async fn test_create_backup_defense_in_depth() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     // Even if initial validation were bypassed, canonicalization
     // and final check should catch traversal
@@ -376,7 +376,7 @@ async fn test_create_backup_defense_in_depth() {
 
 async fn test_restore_backup_success() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     // User-created collections live in ordinary SQLite tables. Include both
     // collection metadata and normalized memberships in this database copy
@@ -467,7 +467,7 @@ async fn a_restored_database_keeps_no_file_records_of_the_one_it_came_from() {
     .execute(&pool)
     .await
     .unwrap();
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
     let backup = PathBuf::from(adapter.create_backup(None).await.unwrap());
 
     adapter.restore_backup(backup).await.unwrap();
@@ -490,7 +490,7 @@ async fn a_restored_database_keeps_no_file_records_of_the_one_it_came_from() {
 
 async fn test_restore_backup_validates_integrity() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let invalid_backup = tempdir().unwrap();
     let invalid_path = invalid_backup.path().join("corrupt.db");
@@ -540,7 +540,7 @@ async fn safety_backup_includes_rows_still_in_the_wal() {
     .execute(&pool)
     .await
     .unwrap();
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
     let backup = PathBuf::from(adapter.create_backup(None).await.unwrap());
 
     sqlx::query("INSERT INTO documents (id, title, content) VALUES ('late', 'Late', 'committed just before restore')")
@@ -569,7 +569,7 @@ async fn safety_backup_includes_rows_still_in_the_wal() {
 
 async fn test_restore_backup_creates_safety_backup() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
     let backup_pathbuf = PathBuf::from(backup_path);
@@ -600,7 +600,7 @@ async fn test_restore_backup_creates_safety_backup() {
 #[tokio::test]
 async fn failed_safety_snapshot_keeps_the_previous_recovery_copy() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
     // An invalid SQLite output path makes snapshot preparation fail before
     // VACUUM INTO. The existing copy must survive all preparation errors.
     let invalid_destination = db_path.parent().unwrap().join("unsafe;destination.db");
@@ -620,7 +620,7 @@ async fn failed_safety_snapshot_keeps_the_previous_recovery_copy() {
 #[tokio::test]
 async fn failed_vacuum_keeps_the_previous_recovery_copy() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
     let safety_path = db_path.with_extension("db.pre_restore");
     fs::write(&safety_path, b"last known-good recovery copy").unwrap();
     pool.close().await;
@@ -644,7 +644,7 @@ async fn failed_vacuum_keeps_the_previous_recovery_copy() {
 #[tokio::test]
 async fn successful_safety_snapshot_replaces_the_previous_copy() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
     let safety_path = db_path.with_extension("db.pre_restore");
     fs::write(&safety_path, b"stale recovery copy").unwrap();
 
@@ -663,7 +663,7 @@ async fn successful_safety_snapshot_replaces_the_previous_copy() {
 
 async fn test_restore_backup_rolls_back_on_failure() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let original_count: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
         .fetch_one(&pool)
@@ -678,7 +678,7 @@ async fn test_restore_backup_rolls_back_on_failure() {
 
     let new_pool = connect_fixture_pool(&db_path).await;
 
-    let adapter2 = BackupAdapter::new(new_pool.clone(), db_path.clone());
+    let adapter2 = BackupAdapter::new(Database::from(new_pool.clone()), db_path.clone());
 
     // Restores create sibling safety and temporary files. Make the parent
     // directory read-only so the failure is portable across Unix filesystems;
@@ -731,7 +731,7 @@ async fn test_restore_backup_rolls_back_on_failure() {
 
 async fn test_restore_backup_handles_missing_file() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let missing_path = PathBuf::from("/nonexistent/backup.db");
     let result = adapter.restore_backup(missing_path).await;
@@ -758,7 +758,7 @@ async fn test_restore_backup_handles_missing_file() {
 
 async fn test_restore_backup_atomic_operation() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_path = adapter.create_backup(None).await.unwrap();
     let backup_pathbuf = PathBuf::from(backup_path);
@@ -791,7 +791,7 @@ async fn test_restore_backup_atomic_operation() {
 
 async fn test_sql_injection_semicolon_statement_terminator() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     // Attempt SQL injection with semicolon
     let backup_dir = db_path.parent().unwrap().join("backups");
@@ -821,7 +821,7 @@ async fn test_sql_injection_semicolon_statement_terminator() {
 
 async fn test_sql_injection_comment_sequences() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -855,7 +855,7 @@ async fn test_sql_injection_comment_sequences() {
 
 async fn test_sql_injection_union_attack() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -880,7 +880,7 @@ async fn test_sql_injection_union_attack() {
 
 async fn test_sql_injection_drop_table() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -911,7 +911,7 @@ async fn test_sql_injection_drop_table() {
 
 async fn test_sql_injection_insert_attack() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -943,7 +943,7 @@ async fn test_sql_injection_insert_attack() {
 
 async fn test_sql_injection_null_byte() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();
@@ -965,7 +965,7 @@ async fn test_sql_injection_null_byte() {
 
 async fn test_sql_injection_exec_execute() {
     let (pool, db_path, _dir) = create_test_pool().await;
-    let adapter = BackupAdapter::new(pool.clone(), db_path.clone());
+    let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
 
     let backup_dir = db_path.parent().unwrap().join("backups");
     fs::create_dir_all(&backup_dir).unwrap();

@@ -12,6 +12,7 @@
     clippy::unwrap_used
 )]
 
+use lattice_core::shared::persistence::Database;
 use std::{
     fs::{create_dir_all, OpenOptions},
     io::Write,
@@ -400,7 +401,7 @@ async fn live_research_rejects_or_corrects_the_retained_rust_counterexample() ->
             title: "Rust reference control".into(),
         })
         .await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let versions = research_interview_answers(
         model.as_ref(),
         &web,

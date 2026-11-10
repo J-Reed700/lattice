@@ -18,6 +18,7 @@ use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionRe
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::Proof;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobRuntime, JobStatus, JobStore, NewJob, RecoveryPolicy,
 };
@@ -31,7 +32,7 @@ use std::time::Duration;
 /// judge that grades reviews, as the app wires it.
 fn worker(pool: &SqlitePool, model: Arc<dyn LLMPort>) -> DrillBuildWorker {
     DrillBuildWorker {
-        pool: pool.clone().into(),
+        database: pool.clone().into(),
         load_llm: Arc::new(move || {
             let model = model.clone();
             Box::pin(async move { Ok(pinned_for_test(model)) })
@@ -79,7 +80,7 @@ async fn a_job_names_the_drill_it_builds() -> Result<()> {
         let job = store.get(&admitted.id).await?;
         assert!(matches!(spec_of(&job), Err(AppError::InvalidInput(_))));
     }
-    let queued = queue_build(&pool, &lesson_spec(), "named").await?;
+    let queued = queue_build(&Database::from(pool.clone()), &lesson_spec(), "named").await?;
     assert_eq!(spec_of(&store.get(&queued).await?)?, lesson_spec());
     Ok(())
 }
@@ -110,7 +111,7 @@ async fn a_build_queued_before_drills_had_lessons_is_refused_by_its_spec() -> Re
 
 /// Runs the job through a runtime of its own, as the app would after a queue.
 async fn run_to_the_end(pool: &SqlitePool, worker: DrillBuildWorker, id: &str) -> Result<()> {
-    let runtime = JobRuntime::new(pool.clone());
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     runtime
         .register(DRILL_BUILD, Arc::new(worker), drill_job_config())
         .await?;
@@ -136,7 +137,7 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
         entry_answer(),
     ]));
     let spec = code_spec(&pool).await?;
-    let id = queue_build(&pool, &spec, "end to end").await?;
+    let id = queue_build(&Database::from(pool.clone()), &spec, "end to end").await?;
     run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
 
     let job = JobStore::new(pool.clone()).get(&id).await?;
@@ -200,9 +201,14 @@ async fn a_queued_build_runs_on_the_runtime_and_the_judge_grades_its_blind_revie
 #[tokio::test]
 async fn a_model_outage_defers_the_build_and_stores_nothing() -> Result<()> {
     let pool = pool().await?;
-    let id = queue_build(&pool, &code_spec(&pool).await?, "outage").await?;
+    let id = queue_build(
+        &Database::from(pool.clone()),
+        &code_spec(&pool).await?,
+        "outage",
+    )
+    .await?;
     let outage = DrillBuildWorker {
-        pool: pool.clone().into(),
+        database: pool.clone().into(),
         load_llm: Arc::new(|| {
             Box::pin(async { Err(AppError::Network("The model is down.".into())) })
         }),
@@ -238,7 +244,7 @@ async fn a_review_the_judge_cannot_grade_fails_the_build_with_the_work_before_it
         nothing(),
     ]));
     let spec = code_spec(&pool).await?;
-    let id = queue_build(&pool, &spec, "ungradable").await?;
+    let id = queue_build(&Database::from(pool.clone()), &spec, "ungradable").await?;
     run_to_the_end(&pool, worker(&pool, model.clone()), &id).await?;
 
     let store = JobStore::new(pool.clone());
@@ -303,8 +309,8 @@ async fn cancelling_a_build_stops_its_model_call_and_stores_nothing() -> Result<
         started: AtomicUsize::new(0),
     });
     let spec = code_spec(&pool).await?;
-    let id = queue_build(&pool, &spec, "cancelled").await?;
-    let runtime = JobRuntime::new(pool.clone());
+    let id = queue_build(&Database::from(pool.clone()), &spec, "cancelled").await?;
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     runtime
         .register(
             DRILL_BUILD,

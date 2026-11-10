@@ -525,7 +525,7 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
             )
         )
     );
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         lesson_drafts::record_checkpoint(
             &earlier,
             serde_json::to_value(ClaimReceipt {

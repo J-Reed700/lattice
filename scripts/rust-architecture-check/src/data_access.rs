@@ -21,6 +21,7 @@ use syn::{
 type Error = Box<dyn std::error::Error>;
 
 const TRANSACTIONS: &str = "crates/lattice-core/src/shared/persistence/transactions.rs";
+const DRIVER: &str = "crates/lattice-core/src/shared/persistence/driver.rs";
 const POSTGRES: &str = "crates/lattice-sync/";
 const STORE_CRATE: &str = "crates/lattice-store/";
 const DATA_NAMES: [&str; 7] = [
@@ -73,19 +74,60 @@ pub const EXCEPTIONS: &[Exception<'static>] = &[
     ),
 ];
 
-/// `(file, function, reason)`: a function rule 5(b) would flag, with the reason it must hand out a handle.
-pub type Exemption<'a> = (&'a str, &'a str, &'a str);
+/// `(file, owner, item, reason)`: an item rule 5(b) would flag, with the reason it must hand
+/// out a handle. The owner is `trait T` for a trait declaration, `impl T for S` for a trait
+/// impl, `impl S` for an inherent impl and empty for a free item; an item of `*` covers the
+/// whole owner.
+pub type Exemption<'a> = (&'a str, &'a str, &'a str, &'a str);
 
 pub const HANDOUT_EXEMPTIONS: &[Exemption<'static>] = &[
     (
-        "crates/lattice-core/src/shared/persistence/database.rs",
+        DRIVER,
+        "trait DriverPool",
         "sqlx_pool",
-        "the one accessor through which data modules reach the pool inside a Database",
+        "the one sanctioned door to the driver's pool; rule 4 keeps the trait out of code outside data modules",
+    ),
+    (
+        DRIVER,
+        "impl DriverPool for Database",
+        "sqlx_pool",
+        "the one sanctioned door to the pool inside a Database",
+    ),
+    (
+        DRIVER,
+        "impl DriverPool for SqlitePool",
+        "sqlx_pool",
+        "the one sanctioned door to a raw pool, for tests and data modules",
+    ),
+    (
+        TRANSACTIONS,
+        "impl Deref for WriteTx",
+        "*",
+        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+    ),
+    (
+        TRANSACTIONS,
+        "impl DerefMut for WriteTx",
+        "*",
+        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+    ),
+    (
+        TRANSACTIONS,
+        "impl Deref for ReadTx",
+        "*",
+        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+    ),
+    (
+        TRANSACTIONS,
+        "impl DerefMut for ReadTx",
+        "*",
+        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
     ),
     (
         "crates/lattice-sync/src/persistence/db.rs",
+        "impl Database",
         "sqlx_pool",
-        "the one accessor through which data modules reach the pool inside the sync server's Postgres Database",
+        "the sync server's own accessor, through which its data modules reach the Postgres pool",
     ),
 ];
 
@@ -130,7 +172,7 @@ pub fn file_violations_with(
     exceptions: &[Exception],
 ) -> Vec<Violation> {
     let module = handouts::module_of(path);
-    let modules = handouts::module_scopes([(module.as_slice(), ast)]);
+    let modules = handouts::module_scopes([(path, module.as_slice(), ast)]);
     scan_file(path, &module, ast, &modules, exceptions)
 }
 
@@ -183,7 +225,8 @@ fn scan_file(
     found
 }
 
-/// Checks the production files below every source root; a root named twice counts once.
+/// Checks the production files below every source root (examples, tests, benches and
+/// `build.rs` are not production and stay unscanned); a root named twice counts once.
 pub fn check(roots: &[&Path], failures: &mut usize) -> Result<(), Error> {
     let mut seen = HashSet::new();
     let mut found = Vec::new();
@@ -196,12 +239,17 @@ pub fn check(roots: &[&Path], failures: &mut usize) -> Result<(), Error> {
         }
         let label = repository_label(&canonical)?;
         let (files, _) = production_files(root)?;
+        let paths: Vec<String> = files
+            .iter()
+            .map(|file| format!("{label}/{}", file.relative))
+            .collect();
         let scopes = |library: bool| {
             handouts::module_scopes(
                 files
                     .iter()
-                    .filter(|file| file.library == library)
-                    .map(|file| (file.module.as_slice(), &file.ast)),
+                    .zip(&paths)
+                    .filter(|(file, _)| file.library == library)
+                    .map(|(file, path)| (path.as_str(), file.module.as_slice(), &file.ast)),
             )
         };
         let (library_scopes, binary_scopes) = (scopes(true), scopes(false));

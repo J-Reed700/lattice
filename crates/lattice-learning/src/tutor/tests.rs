@@ -20,6 +20,7 @@ use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::turn_source::{
     SourcePassage, SourcePassages, TurnSourcePort,
 };
+use lattice_core::shared::persistence::Database;
 use lattice_store::workspace_notes::DailyNotesRepository;
 use serde_json::{json, Value};
 use sqlx::{Row, SqlitePool};
@@ -35,6 +36,7 @@ fn id() -> String {
 
 struct Course {
     pool: SqlitePool,
+    database: Database,
     program: LearningProgramDto,
     conversation: String,
     version: String,
@@ -51,7 +53,7 @@ impl Course {
         let note_written: NoteWritten = Arc::new(move || {
             written.fetch_add(1, Ordering::SeqCst);
         });
-        CourseTurn::resolve(&self.pool, None, &self.conversation, note_written)
+        CourseTurn::resolve(&self.database, None, &self.conversation, note_written)
             .await
             .expect("the chat is bound to the course")
     }
@@ -119,7 +121,7 @@ impl Course {
 
 async fn add_source(pool: &SqlitePool, program_id: &str, title: &str, text: &str) -> String {
     let version = id();
-    LearningSourceLibraryRepository::new(pool.clone())
+    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .add(
             NewLearningSource {
                 operation_id: &id(),
@@ -178,7 +180,7 @@ async fn course() -> Course {
         .await
         .expect("the chat saves");
     bind_conversation(
-        &pool,
+        &Database::from(pool.clone()),
         &SetConversationCourseRequestDto {
             conversation_id: conversation.clone(),
             program_id: program.summary.id.clone(),
@@ -189,6 +191,7 @@ async fn course() -> Course {
     .expect("the chat binds");
     let program = repo.get(&program.summary.id).await.expect("the course");
     Course {
+        database: Database::from(pool.clone()),
         pool,
         program,
         conversation,
@@ -211,7 +214,7 @@ async fn deleting_a_course_leaves_its_tutor_chats_as_ordinary_chats() {
     let course = course().await;
     let lesson = course.lesson(0, 0);
     bind_conversation(
-        &course.pool,
+        &course.database,
         &SetConversationCourseRequestDto {
             conversation_id: course.conversation.clone(),
             program_id: course.program.summary.id.clone(),
@@ -236,7 +239,7 @@ async fn deleting_a_course_leaves_its_tutor_chats_as_ordinary_chats() {
     );
     let note_written: NoteWritten = Arc::new(|| {});
     assert!(
-        CourseTurn::resolve(&course.pool, None, &course.conversation, note_written)
+        CourseTurn::resolve(&course.database, None, &course.conversation, note_written)
             .await
             .is_none(),
         "its turns run as a plain chat's"
@@ -256,18 +259,20 @@ async fn a_chat_binds_only_to_an_accepted_course_a_lesson_of_it_and_no_folder() 
     let program = course.program.summary.id.as_str();
 
     let foreign_lesson = request(&course.conversation, program, Some(id()));
-    assert!(bind_conversation(&course.pool, &foreign_lesson)
+    assert!(bind_conversation(&course.database, &foreign_lesson)
         .await
         .is_err());
 
     let gone = request(&course.conversation, &id(), None);
-    assert!(bind_conversation(&course.pool, &gone).await.is_err());
+    assert!(bind_conversation(&course.database, &gone).await.is_err());
 
     let draft = tests::fixture();
     let repo = LearningRepository::new(course.pool.clone());
     repo.create(&draft).await.expect("the draft saves");
     let unaccepted = request(&course.conversation, &draft.summary.id, None);
-    assert!(bind_conversation(&course.pool, &unaccepted).await.is_err());
+    assert!(bind_conversation(&course.database, &unaccepted)
+        .await
+        .is_err());
 
     let thread = id();
     sqlx::query(
@@ -278,7 +283,7 @@ async fn a_chat_binds_only_to_an_accepted_course_a_lesson_of_it_and_no_folder() 
     .await
     .expect("the thread saves");
     let folder_thread = request(&thread, program, None);
-    assert!(bind_conversation(&course.pool, &folder_thread)
+    assert!(bind_conversation(&course.database, &folder_thread)
         .await
         .is_err());
     assert_eq!(binding(&course.pool, &thread).await, (None, None));
@@ -841,7 +846,7 @@ async fn a_chat_on_a_lesson_reads_the_sources_it_cites_first() {
             .collect()
     };
 
-    bind_conversation(&course.pool, &on_lesson(course.lesson(0, 0)))
+    bind_conversation(&course.database, &on_lesson(course.lesson(0, 0)))
         .await
         .expect("the chat binds");
     let found = course.turn().await.passages("rank fusion", 20_000).await;
@@ -854,7 +859,7 @@ async fn a_chat_on_a_lesson_reads_the_sources_it_cites_first() {
         "the tool reaches the whole course"
     );
 
-    bind_conversation(&course.pool, &on_lesson(course.lesson(1, 0)))
+    bind_conversation(&course.database, &on_lesson(course.lesson(1, 0)))
         .await
         .expect("the chat binds");
     let found = course.turn().await.passages("rank fusion", 20_000).await;

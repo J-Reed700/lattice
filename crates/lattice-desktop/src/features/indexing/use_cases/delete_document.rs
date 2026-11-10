@@ -26,7 +26,7 @@ use lattice_core::application::ports::{
 use lattice_core::domain::entities::Chunk;
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 use serde::{Deserialize, Serialize};
 
 /// Request to delete a document.
@@ -66,7 +66,7 @@ pub struct DeleteDocumentResponseDto {
 /// - A file Lattice does not own is never deleted
 pub struct DeleteDocumentUseCase {
     vector_search: Arc<dyn VectorSearchPort>,
-    pool: Database,
+    database: Database,
     library: Arc<dyn ContentAddressedStoragePort>,
     library_gc: Arc<LibraryGc>,
     web_archive: Arc<dyn ArticleArchive>,
@@ -81,15 +81,14 @@ impl DeleteDocumentUseCase {
     /// Create a new delete document use case.
     pub fn new(
         vector_search: Arc<dyn VectorSearchPort>,
-        pool: impl DatabaseHandle,
+        database: Database,
         library: Arc<dyn ContentAddressedStoragePort>,
         library_gc: Arc<LibraryGc>,
         web_archive: Arc<dyn ArticleArchive>,
     ) -> Self {
-        let pool = pool.database();
         Self {
             vector_search,
-            pool,
+            database,
             library,
             library_gc,
             web_archive,
@@ -125,7 +124,7 @@ impl DeleteDocumentUseCase {
     pub async fn execute(&self, document_id: String) -> Result<DeleteDocumentResponseDto> {
         // 1. Fail fast on a missing document before anyone is told about it;
         //    the write below checks again.
-        let mut read = self.pool.begin_read().await?;
+        let mut read = self.database.begin_read().await?;
         document::ops::find_file_path_by_id(&mut read, &document_id).await?;
         read.commit().await?;
 
@@ -138,7 +137,7 @@ impl DeleteDocumentUseCase {
         // 2. What the artifact is, the chunks and the document row in one
         //    transaction. Both lookups are metadata-only: a document that
         //    failed before it was ever chunked must still be deletable.
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.database.begin_write().await?;
         let DeletedRows {
             file_path,
             checksum,
@@ -383,7 +382,7 @@ mod tests {
             let library = Arc::clone(&self.library) as Arc<dyn ContentAddressedStoragePort>;
             DeleteDocumentUseCase::new(
                 Arc::clone(&self.vectors) as Arc<dyn VectorSearchPort>,
-                self.pool.clone(),
+                Database::from(self.pool.clone()),
                 Arc::clone(&library),
                 Arc::new(
                     LibraryGc::new(library, documents, {

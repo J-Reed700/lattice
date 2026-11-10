@@ -21,7 +21,7 @@ use crate::{
     },
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::{borrow::Cow, collections::HashSet};
 
@@ -152,7 +152,7 @@ impl IdClaim {
 /// the course itself, then every record another course owns. A copy remaps
 /// every identifier, so its claims are read for validation only.
 pub(super) async fn scan(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program: &LearningProgramDto,
     policy: LearningPackConflictPolicy,
     checked: CheckedPack,
@@ -274,7 +274,7 @@ fn schema_conflict(pack: &DecodedLearningPack, local_schema: i64) -> Result<Opti
 
 /// The blocked preview of a pack written by another build, if it is one.
 pub(super) async fn schema_mismatch(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     pack: &DecodedLearningPack,
 ) -> Result<Option<PreviewRecord>> {
     let pool = pool.sqlx_pool();
@@ -284,7 +284,7 @@ pub(super) async fn schema_mismatch(
 
 /// Apply checks the stamp again: a preview never authorizes changed data.
 pub(super) async fn require_same_schema(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     pack: &DecodedLearningPack,
 ) -> Result<()> {
     let pool = pool.sqlx_pool();

@@ -12,7 +12,8 @@ use crate::features::conversation::space_dto::{
     ConversationSpaceDto, CreateConversationSpaceRequestDto,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 
 /// Synthetic single-user owner. Spaces always have an "owner" membership
 /// pointing at this profile so the per-space membership table has a
@@ -25,7 +26,7 @@ pub struct ConversationSpaceRepository {
 }
 
 impl ConversationSpaceRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
     }

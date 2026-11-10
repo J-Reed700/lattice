@@ -33,9 +33,9 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for DeviceRecord {
 }
 
 impl PgSyncRepository {
-    pub fn new(pool: Database) -> Self {
+    pub fn new(database: Database) -> Self {
         Self {
-            pool: pool.sqlx_pool().clone(),
+            pool: database.sqlx_pool().clone(),
         }
     }
 

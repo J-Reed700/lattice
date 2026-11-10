@@ -20,7 +20,7 @@ use lattice_core::application::contracts::tools::explorer::{
 use lattice_core::application::contracts::tools::{FunctionCall, FunctionResult};
 use lattice_core::application::ports::turn_source::{TurnSourcePolicy, TurnSourcePort};
 use lattice_core::application::ports::ToolDefinition;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -89,12 +89,12 @@ impl ExplorerTurn {
     /// `folders` is the app's folder index; the turn searches the folder's
     /// index when it is the open one.
     pub async fn resolve(
-        pool: &impl DatabaseHandle,
+        database: &Database,
         folders: Option<&super::index::manager::FolderIndexManager>,
         conversation_id: &str,
         focus: Option<&ExplorerFocusDto>,
     ) -> Option<Self> {
-        let root = match repository::conversation_root(pool, conversation_id).await {
+        let root = match repository::conversation_root(database, conversation_id).await {
             Ok(Some(root)) => root,
             Ok(None) => return None,
             Err(error) => {

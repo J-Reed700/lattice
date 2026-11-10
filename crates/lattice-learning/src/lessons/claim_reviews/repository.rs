@@ -13,7 +13,8 @@ use lattice_core::domain::learning::claim_review::{
     Ledger, LessonReview, LessonReviewState, RecordedEvent, Revision, StopReason, UnitKind,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions, WriteTx};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
@@ -53,13 +54,9 @@ pub struct ClaimReviewRepository {
 }
 
 impl ClaimReviewRepository {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
-    }
-
-    pub(super) async fn begin_write(&self) -> Result<WriteTx> {
-        self.pool.begin_write().await.map_err(db)
     }
 
     /// The passages each claim's latest check compared, as shown on its card.

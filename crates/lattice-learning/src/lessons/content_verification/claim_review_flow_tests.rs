@@ -30,7 +30,7 @@ use lattice_core::application::ports::{
     ReferenceSnapshot, ReferenceSnapshotPort, WebServiceTrait,
 };
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState, LessonReviewState};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const PAGE_URL: &str = "https://docs.example.org/csv/dictreader-buffering";
@@ -216,6 +216,7 @@ impl Waiting {
         let error = lesson::scope(
             Some(FakeVerifier::local(&verifier)),
             prepare(
+                &Database::from(self.pool.clone()),
                 &self.jobs,
                 &self.job_id,
                 &self.lesson_id,
@@ -232,9 +233,13 @@ impl Waiting {
             error.starts_with("Needs your review: 1 statement"),
             "{error}"
         );
-        let held = held_for_review(&self.pool, &self.lesson_id, &self.job_id)
-            .await?
-            .unwrap();
+        let held = held_for_review(
+            &Database::from(self.pool.clone()),
+            &self.lesson_id,
+            &self.job_id,
+        )
+        .await?
+        .unwrap();
         let (result_ref, message) = review_outcome(&[held]);
         assert!(
             JobStore::new(self.pool.clone())
@@ -259,7 +264,7 @@ impl Waiting {
     }
 
     pub(super) fn service(&self) -> ClaimReviewService {
-        ClaimReviewService::new(self.pool.clone())
+        ClaimReviewService::new(Database::from(self.pool.clone()))
     }
 
     pub(super) async fn resume(&self) -> Result<crate::curriculum::LearningGenerationJob> {
@@ -285,6 +290,7 @@ impl Waiting {
             .await?
             .is_some());
         let (raw, report) = prepare(
+            &Database::from(self.pool.clone()),
             &self.jobs,
             job_id,
             &self.lesson_id,
@@ -398,7 +404,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     };
     let report = attach(
         &AttachDeps {
-            pool: &course.pool.database(),
+            database: &Database::from(course.pool.clone()),
             store: &store,
             web: &page,
             snapshots: &Frozen,
@@ -436,7 +442,9 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     assert!(shown[&claim_id]
         .iter()
         .any(|passage| passage.source_version_id == version));
-    let examples = CheckerExamples::new(course.pool.clone()).list(None).await?;
+    let examples = CheckerExamples::new(Database::from(course.pool.clone()))
+        .list(None)
+        .await?;
     assert!(examples.is_empty(), "{examples:?}");
     assert!(
         course
@@ -489,7 +497,9 @@ async fn a_confirmed_claim_publishes_on_resume_without_a_check() -> Result<()> {
         .await?;
     // The Verifier flagged it, the local checker passed it: no example of the
     // local checker's.
-    let examples = CheckerExamples::new(course.pool.clone()).list(None).await?;
+    let examples = CheckerExamples::new(Database::from(course.pool.clone()))
+        .list(None)
+        .await?;
     assert!(examples.is_empty(), "{examples:?}");
 
     let next = course.resume().await?;

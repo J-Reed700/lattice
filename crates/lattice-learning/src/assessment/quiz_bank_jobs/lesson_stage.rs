@@ -79,7 +79,7 @@ pub(crate) struct LessonBank {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn lesson_bank_stage(
     llm: &dyn LLMPort,
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
     title: &str,
@@ -88,7 +88,7 @@ pub(crate) async fn lesson_bank_stage(
     seeds: Vec<StoredItem>,
 ) -> Result<LessonBank> {
     let (outcome_id, settings, quiz_formats) = {
-        let mut tx = pool.begin_read().await.map_err(db)?;
+        let mut tx = database.begin_read().await.map_err(db)?;
         let existing =
             quiz_blueprints::repository::lesson_outcome_in(&mut tx, program_id, lesson_id).await?;
         let settings = quiz_blueprints::settings_in(&mut tx, program_id).await?;

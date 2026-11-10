@@ -7,17 +7,16 @@ use std::sync::Arc;
 use crate::features::favorites::repository::FavoritesRepository;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::FavoritesRepositoryPort;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 #[derive(Clone)]
 pub struct FavoritesDi {
     pub favorites_repo: Arc<dyn FavoritesRepositoryPort>,
 }
 
-pub fn build(db_pool: impl DatabaseHandle) -> FavoritesDi {
-    let db_pool = db_pool.database();
+pub fn build(database: Database) -> FavoritesDi {
     let favorites_repo =
-        Arc::new(FavoritesRepository::new(db_pool)) as Arc<dyn FavoritesRepositoryPort>;
+        Arc::new(FavoritesRepository::new(database)) as Arc<dyn FavoritesRepositoryPort>;
     FavoritesDi { favorites_repo }
 }
 

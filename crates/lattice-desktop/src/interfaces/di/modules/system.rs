@@ -68,7 +68,7 @@ pub struct SystemModule {
 impl SystemModule {
     /// Build SystemModule by composing system-level feature builders.
     pub async fn new(
-        db_pool: Database,
+        database: Database,
         core: Arc<CoreModule>,
         backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
     ) -> lattice_core::shared::error::Result<Self> {
@@ -78,7 +78,7 @@ impl SystemModule {
 
         let db_path = core.data_dir().join("lattice.db");
         let backup = crate::features::backup::di::build(
-            db_pool.clone(),
+            database.clone(),
             db_path,
             core.data_dir().to_path_buf(),
             settings.settings_repo.clone(),
@@ -88,18 +88,18 @@ impl SystemModule {
         let models_path = core.data_dir().join("models");
         let model_manager = Arc::new(ModelManager::new(models_path)?) as Arc<dyn ModelManagerTrait>;
         let initialization =
-            crate::features::initialization::di::build(db_pool.clone(), model_manager.clone());
+            crate::features::initialization::di::build(database.clone(), model_manager.clone());
 
         Ok(Self {
             settings,
             backup,
             updates: crate::features::updates::di::build(),
             metrics: crate::features::metrics::di::build(),
-            health: crate::features::health::di::build(db_pool.clone()),
+            health: crate::features::health::di::build(database.clone()),
             stats: crate::features::stats::di::build(
-                db_pool.clone(),
+                database.clone(),
                 Arc::new(crate::features::tags::repository::TagRepository::new(
-                    db_pool,
+                    database,
                 )),
             ),
             initialization,

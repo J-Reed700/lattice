@@ -2,7 +2,7 @@ use crate::persistence::db;
 use crate::references::trust::overrides::CoveredVersion;
 use lattice_core::domain::provenance::OverrideScope;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{Row, SqliteConnection};
 
 /// A version a scope covers: its course and its id.
@@ -46,7 +46,7 @@ pub(in crate::references::trust) async fn site_versions(
 
 /// Per site and origin, the outcomes that held and the ones that failed.
 pub(in crate::references::trust) async fn site_outcome_counts(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     sites: &[&str],
 ) -> Result<Vec<(String, i64, i64)>> {
     let pool = pool.sqlx_pool();

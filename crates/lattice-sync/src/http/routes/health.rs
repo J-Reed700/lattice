@@ -12,7 +12,7 @@ pub struct HealthResponse {
 }
 
 pub async fn healthz(State(state): State<AppState>) -> AppResult<Json<HealthResponse>> {
-    state.pool.ping().await?;
+    state.database.ping().await?;
 
     Ok(Json(HealthResponse {
         status: "ok",

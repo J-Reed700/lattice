@@ -1,7 +1,8 @@
 //! Every read and write of `batch_import_items`.
 use super::items::{BatchItem, ItemCounts, ItemState};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, ReadTx, Transactions, WriteTx};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
@@ -34,17 +35,9 @@ pub struct BatchItems {
 }
 
 impl BatchItems {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
         let pool = pool.sqlx_pool().clone();
         Self { pool }
-    }
-
-    pub async fn begin_write(&self) -> std::result::Result<WriteTx, sqlx::Error> {
-        self.pool.begin_write().await
-    }
-
-    pub async fn begin_read(&self) -> std::result::Result<ReadTx, sqlx::Error> {
-        self.pool.begin_read().await
     }
 
     /// Saves a new import's items, pending, in the order given.

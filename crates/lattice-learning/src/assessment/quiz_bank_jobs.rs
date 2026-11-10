@@ -22,7 +22,7 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::PinnedModel;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::{Database, Transactions};
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobFailure, JobHandler, JobKindConfig, JobOutcome, JobRecord,
     RecoveryPolicy,
@@ -51,14 +51,14 @@ pub fn quiz_job_config() -> JobKindConfig {
 /// Queue writing a quiz's questions: its missing bank, or with `top_up` one
 /// more form's worth.
 pub async fn queue_bank(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     operation_id: &str,
     program_id: &str,
     scope: &LearningQuizScopeDto,
     top_up: bool,
 ) -> Result<String> {
     quiz_blueprints::validate_scope(scope)?;
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let needs =
         LearningAssessmentRepository::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
     let rank = match (&scope.kind, &scope.id) {
@@ -93,13 +93,14 @@ pub struct BankReport {
 /// blinded key review), without the job runner. For the course eval's live
 /// hook and other callers that hold a model already.
 pub async fn prepare_bank_now(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     llm: &dyn LLMPort,
     program_id: &str,
     scope: &LearningQuizScopeDto,
     top_up: bool,
 ) -> Result<BankReport> {
-    let needs = LearningAssessmentRepository::bank_needs(pool, program_id, scope, top_up).await?;
+    let needs =
+        LearningAssessmentRepository::bank_needs(database, program_id, scope, top_up).await?;
     let mut report = BankReport::default();
     for need in &needs {
         let authored = generation::author_items(llm, need).await?;
@@ -116,7 +117,7 @@ pub async fn prepare_bank_now(
             })
             .collect();
         report.written += LearningAssessmentRepository::insert_bank_items(
-            pool,
+            database,
             program_id,
             &items,
             Some(llm.model_name()),
@@ -136,7 +137,7 @@ fn requested_str<'a>(job: &'a JobRecord, field: &str) -> Result<&'a str> {
 /// Writes a quiz's question bank.
 #[derive(Clone)]
 pub struct QuizBankWorker {
-    pub pool: Database,
+    pub database: Database,
     pub load_llm: ModelLoader,
 }
 
@@ -156,7 +157,7 @@ impl JobHandler for QuizBankWorker {
             .and_then(serde_json::Value::as_bool)
             .unwrap_or(false);
         let needs =
-            LearningAssessmentRepository::bank_needs(&self.pool, &program_id, &scope, top_up)
+            LearningAssessmentRepository::bank_needs(&self.database, &program_id, &scope, top_up)
                 .await?;
         let lesson_stage = job
             .requested
@@ -208,7 +209,7 @@ impl JobHandler for QuizBankWorker {
                 })
                 .collect();
             written += LearningAssessmentRepository::insert_bank_items(
-                &self.pool,
+                &self.database,
                 &program_id,
                 &items,
                 Some(llm.model_name()),
@@ -255,7 +256,8 @@ impl QuizBankWorker {
         let bank = match saved {
             Some(bank) => bank,
             None => {
-                let inputs = repository::lesson_inputs(&self.pool, program_id, lesson_id).await?;
+                let inputs =
+                    repository::lesson_inputs(&self.database, program_id, lesson_id).await?;
                 let Some(pin) = context.until_cancelled((self.load_llm)()).await else {
                     return Ok(JobOutcome::Stopped);
                 };
@@ -263,7 +265,7 @@ impl QuizBankWorker {
                 let Some(bank) = context
                     .until_cancelled(lesson_bank_stage(
                         pin.llm.as_ref(),
-                        &self.pool,
+                        &self.database,
                         program_id,
                         lesson_id,
                         &inputs.title,
@@ -298,7 +300,7 @@ impl QuizBankWorker {
             })
             .collect();
         let written = LearningAssessmentRepository::insert_bank_items(
-            &self.pool,
+            &self.database,
             program_id,
             &items,
             bank.author_model.as_deref(),

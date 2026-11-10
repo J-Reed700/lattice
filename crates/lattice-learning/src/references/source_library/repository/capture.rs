@@ -77,7 +77,7 @@ pub(in super::super) struct RefreshOffer {
 }
 
 pub(in super::super) async fn refresh_offer(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     program_id: &str,
     source_id: &str,
 ) -> Result<Option<RefreshOffer>> {

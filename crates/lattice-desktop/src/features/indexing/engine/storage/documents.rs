@@ -6,7 +6,7 @@ use crate::features::indexing::engine::error::{IndexingError, Result};
 use chrono::Utc;
 use lattice_core::shared::error::ResultExt;
 use lattice_core::shared::fs::path::path_to_string;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::driver::DriverPool;
 use serde::Deserialize;
 use sqlx::Row;
 use std::path::Path;
@@ -52,7 +52,7 @@ async fn get_web_article_title(path: &Path) -> Result<String> {
 }
 
 /// Check if a document exists in the database by path.
-pub async fn document_exists(pool: &impl DatabaseHandle, path: &Path) -> Result<bool> {
+pub async fn document_exists(pool: &impl DriverPool, path: &Path) -> Result<bool> {
     let pool = pool.sqlx_pool();
     let file_path = path
         .to_str()
@@ -72,7 +72,7 @@ pub async fn document_exists(pool: &impl DatabaseHandle, path: &Path) -> Result<
 
 /// Get document record by file path.
 pub async fn get_document_by_path(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     path: &Path,
 ) -> Result<Option<DocumentRecord>> {
     let pool = pool.sqlx_pool();
@@ -119,7 +119,7 @@ pub async fn get_document_by_path(
 }
 
 /// Check if a document needs reindexing (checksum changed).
-pub async fn needs_reindex(pool: &impl DatabaseHandle, path: &Path) -> Result<bool> {
+pub async fn needs_reindex(pool: &impl DriverPool, path: &Path) -> Result<bool> {
     let pool = pool.sqlx_pool();
     let current_checksum = calculate_checksum(path).await?;
 
@@ -131,11 +131,7 @@ pub async fn needs_reindex(pool: &impl DatabaseHandle, path: &Path) -> Result<bo
 }
 
 /// Update document status.
-pub async fn mark_document_status(
-    pool: &impl DatabaseHandle,
-    path: &Path,
-    status: &str,
-) -> Result<()> {
+pub async fn mark_document_status(pool: &impl DriverPool, path: &Path, status: &str) -> Result<()> {
     let pool = pool.sqlx_pool();
     let file_path = path
         .to_str()
@@ -156,7 +152,7 @@ pub async fn mark_document_status(
 }
 
 /// Remove a document from the database.
-pub async fn remove_document(pool: &impl DatabaseHandle, path: &Path) -> Result<()> {
+pub async fn remove_document(pool: &impl DriverPool, path: &Path) -> Result<()> {
     let pool = pool.sqlx_pool();
     let file_path = path
         .to_str()
@@ -176,7 +172,7 @@ pub async fn remove_document(pool: &impl DatabaseHandle, path: &Path) -> Result<
 
 /// Store only file metadata without indexing content.
 pub async fn store_file_metadata_only(
-    pool: &impl DatabaseHandle,
+    pool: &impl DriverPool,
     path: &Path,
     _file_id: &str,
     mime_type: &str,

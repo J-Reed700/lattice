@@ -20,6 +20,7 @@ use lattice_core::domain::learning::drills::{
     IssueRating, PatternRating,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{
     JobContext, JobHandler, JobOutcome, JobRecord, JobRuntime, JobStatus, JobStore, NewJob,
     RecoveryPolicy,
@@ -270,14 +271,15 @@ async fn an_attempt_that_could_not_be_graded_is_graded_by_a_regrade() -> Result<
     waiting.grade(&none(), None, &failing).await?;
     assert_eq!(waiting.attempt().await?.status, AttemptStatus::CouldntGrade);
 
-    let queued = attempts::regrade(&waiting.pool, &waiting.attempt).await?;
+    let queued = attempts::regrade(&Database::from(waiting.pool.clone()), &waiting.attempt).await?;
     let second = queued.job.expect("a new job");
     assert_ne!(second, waiting.job);
     Waiting::claim(&waiting.store, &second).await?;
     let context = JobContext::detached(&waiting.store, &second).await?;
-    let (attempt, stored) = attempts::waiting(&waiting.pool, &waiting.attempt)
-        .await?
-        .expect("the attempt waits again");
+    let (attempt, stored) =
+        attempts::waiting(&Database::from(waiting.pool.clone()), &waiting.attempt)
+            .await?
+            .expect("the attempt waits again");
     let model = none();
     let grader = FakeGrader::new(review_assessment());
     let grading = waiting.grading(&model, None, &grader);
@@ -299,7 +301,7 @@ async fn an_attempt_that_could_not_be_graded_is_graded_by_a_regrade() -> Result<
 
 fn worker(pool: &SqlitePool, model: Arc<dyn LLMPort>) -> DrillGradingWorker {
     DrillGradingWorker {
-        pool: pool.clone().into(),
+        database: pool.clone().into(),
         load_llm: Arc::new(move || {
             let model = model.clone();
             Box::pin(async move { Ok(pinned_for_test(model)) })
@@ -311,7 +313,7 @@ fn worker(pool: &SqlitePool, model: Arc<dyn LLMPort>) -> DrillGradingWorker {
 
 /// Runs the job through a runtime of its own, as the app would after a queue.
 async fn run_to_the_end(pool: &SqlitePool, worker: DrillGradingWorker, job: &str) -> Result<()> {
-    let runtime = JobRuntime::new(pool.clone());
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     runtime
         .register(DRILL_GRADING, Arc::new(worker), grading_job_config())
         .await?;
@@ -376,7 +378,7 @@ async fn a_model_that_cannot_be_reached_leaves_the_attempt_ungraded_with_the_rea
 {
     let waiting = Waiting::unclaimed(findings(), None).await?;
     let unreachable = DrillGradingWorker {
-        pool: waiting.pool.clone().into(),
+        database: waiting.pool.clone().into(),
         load_llm: Arc::new(|| {
             Box::pin(async { Err(AppError::InvalidConfig("No Learning model is set.".into())) })
         }),
@@ -524,7 +526,7 @@ async fn wait_until_ungraded(waiting: &Waiting) -> Result<()> {
 #[tokio::test]
 async fn a_panic_while_grading_leaves_the_review_marked_not_graded() -> Result<()> {
     let waiting = Waiting::unclaimed(findings(), None).await?;
-    let runtime = JobRuntime::new(waiting.pool.clone());
+    let runtime = JobRuntime::new(Database::from(waiting.pool.clone()));
     runtime
         .register(
             DRILL_GRADING,
@@ -557,7 +559,7 @@ async fn a_grading_job_the_runtime_failed_for_stopping_the_app_leaves_the_review
         .await?;
     Waiting::claim(&waiting.store, &waiting.job).await?;
 
-    let runtime = JobRuntime::new(waiting.pool.clone());
+    let runtime = JobRuntime::new(Database::from(waiting.pool.clone()));
     runtime
         .register(
             DRILL_GRADING,
@@ -585,7 +587,7 @@ fn stuck_worker(pool: &SqlitePool) -> DrillGradingWorker {
 #[tokio::test]
 async fn cancelling_the_job_stops_the_grading_and_leaves_the_attempt_submitted() -> Result<()> {
     let waiting = Waiting::unclaimed(findings(), None).await?;
-    let runtime = JobRuntime::new(waiting.pool.clone());
+    let runtime = JobRuntime::new(Database::from(waiting.pool.clone()));
     runtime
         .register(
             DRILL_GRADING,
@@ -616,7 +618,7 @@ async fn cancelling_the_job_stops_the_grading_and_leaves_the_attempt_submitted()
 #[tokio::test]
 async fn shutting_down_stops_the_grading_and_the_job_resumes_at_the_next_start() -> Result<()> {
     let waiting = Waiting::unclaimed(judged_findings(), None).await?;
-    let runtime = JobRuntime::new(waiting.pool.clone());
+    let runtime = JobRuntime::new(Database::from(waiting.pool.clone()));
     runtime
         .register(
             DRILL_GRADING,

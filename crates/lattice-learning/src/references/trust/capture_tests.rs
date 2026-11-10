@@ -274,7 +274,7 @@ async fn a_source_saved_after_the_comparison_is_related_and_one_removed_since_is
     .await?;
     let (source_id, version_id) = (id(), id());
     let comparison = compare(
-        &course.pool,
+        &course.database,
         &course.program_id,
         VersionText {
             source_id: &source_id,

@@ -14,7 +14,7 @@
 //! left beside it would put old vectors behind new passages.
 
 use super::chunking::NewPassage;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{PersistenceError, PersistenceErrorKind, Transactions};
 use lattice_core::shared::{AppError, Result};
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions, SqliteRow};
 use sqlx::{Connection, Row, SqliteConnection, SqlitePool};
@@ -72,12 +72,15 @@ fn under(column: &str) -> String {
 
 /// A pool that timed out is a busy store, not a broken one: the index job
 /// waits and resumes from its checkpoints instead of ending as failed.
-pub(super) fn db_error(action: &str) -> impl Fn(sqlx::Error) -> AppError + '_ {
-    move |error| match error {
-        sqlx::Error::PoolTimedOut => AppError::ServiceNotAvailable(format!(
-            "Passage index: busy, could not {action}; saved work is retained"
-        )),
-        error => AppError::Database(format!("Passage index: failed to {action}: {error}")),
+pub(super) fn db_error<E: Into<PersistenceError>>(action: &str) -> impl Fn(E) -> AppError + '_ {
+    move |error| {
+        let error = error.into();
+        match error.kind() {
+            PersistenceErrorKind::Busy => AppError::ServiceNotAvailable(format!(
+                "Passage index: busy, could not {action}; saved work is retained"
+            )),
+            _ => AppError::Database(format!("Passage index: failed to {action}: {error}")),
+        }
     }
 }
 

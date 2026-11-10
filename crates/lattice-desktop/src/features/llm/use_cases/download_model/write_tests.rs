@@ -12,6 +12,7 @@ use lattice_core::domain::models::metadata::ModelFileMetadata;
 use lattice_core::domain::models::selection::{
     ModelCategory, ModelFormat, ModelMetadata, PerformanceTier,
 };
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 use tokio::sync::{mpsc, RwLock};
 
@@ -117,7 +118,7 @@ async fn use_case() -> (DownloadModelUseCase, SqlitePool) {
         Arc::new(EmptyKeychain),
         Arc::new(TokioChecksumAdapter),
         Arc::new(TokioFileSystemAdapter),
-        pool.clone(),
+        Database::from(pool.clone()),
     );
     (use_case, pool)
 }

@@ -284,7 +284,7 @@ async fn a_verdict_is_an_outcome_per_cluster_and_undo_forgets_it() -> Result<()>
         program_id: &course.program_id,
         lesson_id: &lesson_id,
     };
-    let moved = outcomes::record(&course.pool, scope, &before, TrustVerdict::Confirm).await?;
+    let moved = outcomes::record(&course.database, scope, &before, TrustVerdict::Confirm).await?;
     assert!(moved.is_empty(), "one verdict does not move a bar");
     let stored = course.store.outcomes().await?;
     assert_eq!(stored.len(), 1);
@@ -300,7 +300,7 @@ async fn a_verdict_is_an_outcome_per_cluster_and_undo_forgets_it() -> Result<()>
     assert_eq!(row.outcome.level, TrustLevel::Established);
     assert!(!row.outcome.decision_was_sufficient && !row.outcome.right);
 
-    outcomes::forget(&course.pool, &claim.0, TrustVerdict::Confirm).await?;
+    outcomes::forget(&course.database, &claim.0, TrustVerdict::Confirm).await?;
     assert!(course.store.outcomes().await?.is_empty());
     Ok(())
 }
@@ -320,7 +320,7 @@ async fn the_verdict_that_relaxes_a_bar_verifies_the_claims_it_held_back() -> Re
     }
     assert_eq!(
         affected(
-            &course.pool,
+            &course.database,
             &TrustCause::Bar {
                 kind: ClaimKind::Specification
             }
@@ -350,7 +350,7 @@ async fn the_verdict_that_relaxes_a_bar_verifies_the_claims_it_held_back() -> Re
         program_id: &course.program_id,
         lesson_id: &lesson_id,
     };
-    let redecided = record_verdict(&course.pool, scope, &before, TrustVerdict::Confirm).await?;
+    let redecided = record_verdict(&course.database, scope, &before, TrustVerdict::Confirm).await?;
     assert_eq!(redecided.verified, 1, "{redecided:?}");
     assert_eq!(redecided.lessons, vec![lesson_id.clone()]);
     let verified = claim_entry(&course.pool, &lesson_id, &waiting).await;
@@ -377,13 +377,13 @@ async fn the_verdict_that_relaxes_a_bar_verifies_the_claims_it_held_back() -> Re
             .state(),
         ClaimState::Confirmed { .. }
     ));
-    let calibration = view(&course.pool).await?;
+    let calibration = view(&course.database).await?;
     let change = calibration.changes.last().unwrap();
     assert!(change.moves_bar() && change.accepted_alone);
     assert_eq!(change.claim_id, confirmed.0);
 
     // Undo puts the bar back, and the claim it verified waits again.
-    let undone = forget_verdict(&course.pool, &confirmed.0, TrustVerdict::Confirm).await?;
+    let undone = forget_verdict(&course.database, &confirmed.0, TrustVerdict::Confirm).await?;
     assert_eq!(undone.reopened, 1, "{undone:?}");
     let reopened = claim_entry(&course.pool, &lesson_id, &waiting).await;
     assert!(matches!(
@@ -426,7 +426,7 @@ async fn an_override_re_levels_from_stored_judgements_and_never_guesses() -> Res
     .await?;
     let record = course.store.provenance(&judged.version_id).await?.unwrap();
     let content =
-        super::judgements::content_evidence(course.store.pool(), &course.program_id, &record)
+        super::judgements::content_evidence(&course.database, &course.program_id, &record)
             .await?
             .unwrap();
     let key = standing_key(&record.signals, &content, MODEL);
@@ -459,7 +459,7 @@ async fn an_override_re_levels_from_stored_judgements_and_never_guesses() -> Res
 
     for source_id in [&judged.source_id, &unjudged.source_id] {
         let change = overrides::set(
-            &course.store,
+            &course.database,
             &TrustOverride::Source {
                 program_id: course.program_id.clone(),
                 source_id: source_id.clone(),
@@ -469,7 +469,7 @@ async fn an_override_re_levels_from_stored_judgements_and_never_guesses() -> Res
             },
         )
         .await?;
-        let redecided = override_changed(&course.pool, &change).await?;
+        let redecided = override_changed(&course.database, &change).await?;
         if source_id == &judged.source_id {
             assert_eq!(redecided.verified, 1, "{redecided:?}");
         } else {
@@ -509,7 +509,7 @@ async fn the_menu_counts_the_claims_an_override_re_decides_and_applying_it_re_de
     .await?;
     let record = course.store.provenance(&chosen.version_id).await?.unwrap();
     let content =
-        super::judgements::content_evidence(course.store.pool(), &course.program_id, &record)
+        super::judgements::content_evidence(&course.database, &course.program_id, &record)
             .await?
             .unwrap();
     let key = standing_key(&record.signals, &content, MODEL);
@@ -542,7 +542,7 @@ async fn the_menu_counts_the_claims_an_override_re_decides_and_applying_it_re_de
         claim: None,
         include_impact: true,
     };
-    let view = trust_overrides::view(&course.store, &request).await?;
+    let view = trust_overrides::view(&course.database, &request).await?;
     let entry = view
         .sources
         .iter()
@@ -561,7 +561,7 @@ async fn the_menu_counts_the_claims_an_override_re_decides_and_applying_it_re_de
 
     // Applying it re-decides those claims, with no model.
     let applied = trust_overrides::set(
-        &course.store,
+        &course.database,
         &LearningTrustOverrideInputDto::Source {
             program_id: course.program_id.clone(),
             source_id: chosen.source_id.clone(),
@@ -662,7 +662,7 @@ async fn the_verifier_agreeing_with_an_accepted_claim_is_a_held_outcome() -> Res
         program_id: &course.program_id,
         lesson_id: &lesson_id,
     };
-    record_verifier_agreements(&course.pool, scope, &before).await?;
+    record_verifier_agreements(&course.database, scope, &before).await?;
     let outcomes = course.store.outcomes().await?;
     assert_eq!(outcomes.len(), 1, "{outcomes:?}");
     assert_eq!(outcomes[0].claim_id, claim.0);
@@ -673,7 +673,7 @@ async fn the_verifier_agreeing_with_an_accepted_claim_is_a_held_outcome() -> Res
     let now = ClaimReviewRepository::new(course.pool.clone())
         .load(&lesson_id)
         .await?;
-    record_verifier_agreements(&course.pool, scope, &now).await?;
+    record_verifier_agreements(&course.database, scope, &now).await?;
     assert_eq!(course.store.outcomes().await?.len(), 1);
     Ok(())
 }

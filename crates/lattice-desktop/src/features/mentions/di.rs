@@ -10,7 +10,7 @@ use crate::features::mentions::use_cases::{
 use crate::infrastructure::persistence::repositories::mentions::MentionRepository;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::MentionRepositoryPort;
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 #[derive(Clone)]
 pub struct MentionsDi {
@@ -24,9 +24,8 @@ pub struct MentionsDi {
     pub delete_mention_use_case: Arc<DeleteMentionUseCase>,
 }
 
-pub fn build(db_pool: impl DatabaseHandle) -> MentionsDi {
-    let db_pool = db_pool.database();
-    let mention_repo = Arc::new(MentionRepository::new(db_pool)) as Arc<dyn MentionRepositoryPort>;
+pub fn build(database: Database) -> MentionsDi {
+    let mention_repo = Arc::new(MentionRepository::new(database)) as Arc<dyn MentionRepositoryPort>;
     let mapper = Arc::new(MentionMapper::new());
 
     MentionsDi {

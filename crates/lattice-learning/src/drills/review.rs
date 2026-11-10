@@ -21,7 +21,7 @@ use lattice_core::domain::learning::drills::{
     language_of_code, LessonStanding, Material, LANGUAGES,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, ReadTx};
+use lattice_core::shared::persistence::{Database, ReadTx, Transactions};
 use std::collections::HashMap;
 
 mod repository;
@@ -60,7 +60,7 @@ pub struct CourseDrill {
 /// refused, and nothing is taken, as is a course that is not there and, for a passage with none ready, a course whose
 /// sources hold no text.
 pub async fn start(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     asked: &CourseDrill,
     mode: AttemptMode,
     lines: u32,
@@ -68,12 +68,12 @@ pub async fn start(
 ) -> Result<Started> {
     let count = usize::try_from(issues).unwrap_or(usize::MAX);
     check_request(&asked.material, lines, count)?;
-    check_asked(pool, asked).await?;
+    check_asked(database, asked).await?;
     let shelf = Shelf {
         program_id: &asked.program_id,
         material: &asked.material,
     };
-    if let Some(begun) = attempts::start(pool, shelf, asked.lesson_id.as_deref(), mode).await? {
+    if let Some(begun) = attempts::start(database, shelf, asked.lesson_id.as_deref(), mode).await? {
         return Ok(Started {
             dto: StartedCodeReviewDto::Started {
                 attempt_id: begun.attempt.id.clone(),
@@ -84,12 +84,12 @@ pub async fn start(
             jobs: begun.next_build.into_iter().collect(),
         });
     }
-    if asked.material == Material::Passage && !has_sources(pool, &asked.program_id).await? {
+    if asked.material == Material::Passage && !has_sources(database, &asked.program_id).await? {
         return Err(AppError::InvalidInput(
             "The course has no source a passage can be taken from.".into(),
         ));
     }
-    let job = bank::ensure_build(pool, shelf, asked.lesson_id.as_deref(), lines, count).await?;
+    let job = bank::ensure_build(database, shelf, asked.lesson_id.as_deref(), lines, count).await?;
     Ok(Started {
         dto: StartedCodeReviewDto::Building {
             job_id: job.clone(),
@@ -99,8 +99,8 @@ pub async fn start(
 }
 
 /// Refuses a course that is not there and a lesson the course does not drill.
-async fn check_asked(pool: &impl DatabaseHandle, asked: &CourseDrill) -> Result<()> {
-    let mut tx = pool.begin_read().await.map_err(db)?;
+async fn check_asked(database: &Database, asked: &CourseDrill) -> Result<()> {
+    let mut tx = database.begin_read().await.map_err(db)?;
     if !repository::course_exists_in(&mut tx, &asked.program_id).await? {
         return Err(not_found());
     }
@@ -128,12 +128,12 @@ struct CourseRead {
 
 /// Reads the course's drills state in one read unit; the course not being there is refused.
 async fn read_course(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     language: Option<&str>,
     at: i64,
 ) -> Result<CourseRead> {
-    let mut tx = pool.begin_read().await.map_err(db)?;
+    let mut tx = database.begin_read().await.map_err(db)?;
     if !repository::course_exists_in(&mut tx, program_id).await? {
         return Err(not_found());
     }
@@ -196,7 +196,7 @@ async fn read_course(
 /// A course's review drills as its Practice view reads them, with code drills offered in `language` or, when none is
 /// asked for, in the one the course suggests.
 pub async fn course_drills(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     program_id: &str,
     language: Option<&str>,
 ) -> Result<CourseDrillsDto> {
@@ -209,8 +209,8 @@ pub async fn course_drills(
         next_code,
         next_passage,
         recent,
-    } = read_course(pool, program_id, language, at).await?;
-    let with_sources = has_sources(pool, program_id).await?;
+    } = read_course(database, program_id, language, at).await?;
+    let with_sources = has_sources(database, program_id).await?;
 
     let titles: HashMap<String, (String, String, String)> = titles
         .into_iter()
@@ -277,8 +277,8 @@ fn not_found() -> AppError {
 }
 
 /// Whether the course has a source with text, which a passage drill's passage is taken from.
-async fn has_sources(pool: &impl DatabaseHandle, program_id: &str) -> Result<bool> {
-    let sources = LearningSourceLibraryRepository::new(pool.database())
+async fn has_sources(database: &Database, program_id: &str) -> Result<bool> {
+    let sources = LearningSourceLibraryRepository::new(database.clone())
         .verification_sources(program_id)
         .await?;
     Ok(sources
@@ -306,7 +306,7 @@ async fn suggested_language_in(tx: &mut ReadTx, program_id: &str) -> Result<Opti
 /// Hands in an open attempt: the learner's findings and, when they wrote one, their fix, with the time they spent as the
 /// client measured it. The grading job is queued.
 pub async fn submit(
-    pool: &impl DatabaseHandle,
+    database: &Database,
     attempt_id: &str,
     findings: Vec<CodeReviewFindingDto>,
     fix_files: Option<Vec<CodeReviewFileDto>>,
@@ -315,7 +315,7 @@ pub async fn submit(
     let time_spent_ms = i64::try_from(time_spent_ms)
         .map_err(|_| AppError::InvalidInput("The time spent is not a time.".into()))?;
     let queued = attempts::submit(
-        pool,
+        database,
         attempt_id,
         Submission {
             findings: findings.into_iter().map(Into::into).collect(),
@@ -324,24 +324,24 @@ pub async fn submit(
         },
     )
     .await?;
-    acted(pool, &queued.attempt.id, queued.job).await
+    acted(database, &queued.attempt.id, queued.job).await
 }
 
 /// The attempt: where it stands and, once it is graded, the reveal.
-pub async fn result(pool: &impl DatabaseHandle, attempt_id: &str) -> Result<CodeReviewResultDto> {
-    let (attempt, stored) = attempts::get(pool, attempt_id).await?;
+pub async fn result(database: &Database, attempt_id: &str) -> Result<CodeReviewResultDto> {
+    let (attempt, stored) = attempts::get(database, attempt_id).await?;
     result_of(&attempt, &stored)
 }
 
 /// Asks for the grade of an attempt that could not be graded again. The grading job is queued.
-pub async fn regrade(pool: &impl DatabaseHandle, attempt_id: &str) -> Result<Acted> {
-    let queued = attempts::regrade(pool, attempt_id).await?;
-    acted(pool, &queued.attempt.id, queued.job).await
+pub async fn regrade(database: &Database, attempt_id: &str) -> Result<Acted> {
+    let queued = attempts::regrade(database, attempt_id).await?;
+    acted(database, &queued.attempt.id, queued.job).await
 }
 
-async fn acted(pool: &impl DatabaseHandle, attempt_id: &str, job: Option<String>) -> Result<Acted> {
+async fn acted(database: &Database, attempt_id: &str, job: Option<String>) -> Result<Acted> {
     Ok(Acted {
-        dto: result(pool, attempt_id).await?,
+        dto: result(database, attempt_id).await?,
         job,
     })
 }

@@ -27,7 +27,7 @@ use tokio_util::sync::CancellationToken;
 /// What a material's stages are given to work with: the model, the database and the build's cancellation.
 pub struct StageCtx<'a> {
     pub llm: &'a dyn LLMPort,
-    pub pool: &'a Database,
+    pub database: &'a Database,
     pub cancel: &'a CancellationToken,
 }
 

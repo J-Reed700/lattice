@@ -5,6 +5,7 @@ use crate::features::download::events::model_download_events::{
 use crate::infrastructure::events::event_bus::EventBus;
 use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
 use chrono::Utc;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 async fn saga_with_downloading_file() -> (DownloadSaga, sqlx::SqlitePool) {
@@ -32,7 +33,7 @@ async fn saga_with_downloading_file() -> (DownloadSaga, sqlx::SqlitePool) {
     .unwrap();
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        pool.clone(),
+        Database::from(pool.clone()),
         Arc::new(DownloadedModelRepository::new(pool.clone())),
     );
     (saga, pool)

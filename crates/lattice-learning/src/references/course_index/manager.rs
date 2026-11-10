@@ -13,7 +13,7 @@ use super::sync::{self, CourseProgress};
 use super::{IndexMode, COURSE_INDEX};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, NewJob};
 use lattice_core::shared::{AppError, Result};
@@ -35,7 +35,7 @@ pub use status::CourseIndexStatusDto;
 pub struct CourseIndexes {
     /// `<data_dir>/course-index`.
     base_dir: PathBuf,
-    pool: Database,
+    database: Database,
     embedders: Arc<dyn EmbedderSource>,
     searches: Arc<dyn HybridSearchFactory>,
     pub jobs: Arc<JobRuntime>,
@@ -54,17 +54,16 @@ pub struct CourseIndexes {
 impl CourseIndexes {
     pub fn new(
         base_dir: PathBuf,
-        pool: impl DatabaseHandle,
+        database: Database,
         embedders: Arc<dyn EmbedderSource>,
         searches: Arc<dyn HybridSearchFactory>,
         jobs: Arc<JobRuntime>,
         background: Arc<BackgroundTasks>,
         turns: Arc<EmbedTurns>,
     ) -> Arc<Self> {
-        let pool = pool.database();
         Arc::new(Self {
             base_dir,
-            pool,
+            database,
             embedders,
             searches,
             jobs,
@@ -87,7 +86,7 @@ impl CourseIndexes {
     }
 
     fn repository(&self) -> LearningSourceLibraryRepository {
-        LearningSourceLibraryRepository::new(self.pool.clone())
+        LearningSourceLibraryRepository::new(self.database.clone())
     }
 
     /// The directory of `program`'s index. A program id is an opaque UUID,
@@ -338,7 +337,7 @@ impl CourseIndexes {
                 Some((program, entry.meta.get(sync::META_REVISION)?.clone()))
             })
             .collect();
-        let programs = repository::program_ids(&self.pool).await?;
+        let programs = repository::program_ids(&self.database).await?;
         let repo = self.repository();
         let mut queued = 0;
         for program in programs {
@@ -407,7 +406,7 @@ impl CourseIndexes {
         let Ok(entries) = std::fs::read_dir(&self.base_dir) else {
             return Ok(());
         };
-        let programs: HashSet<String> = repository::program_ids(&self.pool)
+        let programs: HashSet<String> = repository::program_ids(&self.database)
             .await?
             .into_iter()
             .collect();
@@ -424,7 +423,7 @@ impl CourseIndexes {
 
     /// Whether `program` still exists.
     pub(super) async fn exists(&self, program: &str) -> Result<bool> {
-        repository::program_exists(&self.pool, program).await
+        repository::program_exists(&self.database, program).await
     }
 
     /// Brings `program`'s index current with no one watching: for a test, or

@@ -14,7 +14,7 @@ use crate::recall_repository::LearningRecallRepository;
 use crate::source_library::LearningSourceLibraryRepository;
 use futures::TryStreamExt;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 
@@ -73,9 +73,9 @@ fn plain_words(text: &str) -> String {
 
 /// Whether a reply of the chat put `front` to the learner. Newest first, as the
 /// card asked last is the one answered.
-async fn asked_in(pool: &impl DatabaseHandle, conversation_id: &str, front: &str) -> Result<bool> {
+async fn asked_in(database: &Database, conversation_id: &str, front: &str) -> Result<bool> {
     let front = plain_words(front);
-    let mut replies = assistant_replies(pool, conversation_id);
+    let mut replies = assistant_replies(database, conversation_id);
     while let Some(reply) = replies.try_next().await? {
         if plain_words(&reply).contains(&front) {
             return Ok(true);
@@ -97,7 +97,7 @@ fn invalid(message: &str) -> AppError {
 
 impl CourseTurn {
     pub(super) async fn due_cards(&self) -> Result<Vec<DueCard>> {
-        let cards = due_cards(&self.pool, &self.program_id, now()).await?;
+        let cards = due_cards(&self.database, &self.program_id, now()).await?;
         Ok(interleaved(cards))
     }
 
@@ -112,7 +112,7 @@ impl CourseTurn {
         selected_option: Option<usize>,
     ) -> Result<String> {
         let at = now();
-        let card = card_to_rate(&self.pool, &self.program_id, card_id)
+        let card = card_to_rate(&self.database, &self.program_id, card_id)
             .await?
             .ok_or_else(|| {
                 invalid(
@@ -125,7 +125,7 @@ impl CourseTurn {
                 "That card is not due: it was already reviewed, or it did not come from due_reviews or save_card. Nothing was recorded.",
             ));
         }
-        if !asked_in(&self.pool, &self.conversation_id, &card.question).await? {
+        if !asked_in(&self.database, &self.conversation_id, &card.question).await? {
             return Err(invalid(
                 "That card was not asked in this chat, so there is no answer to rate. Nothing was recorded. Ask it as written, then rate the learner's answer.",
             ));
@@ -135,7 +135,7 @@ impl CourseTurn {
                 "That card is multiple choice: pass the learner's selected_option.",
             ));
         }
-        let recall = LearningRecallRepository::new(self.pool.clone());
+        let recall = LearningRecallRepository::new(self.database.clone());
         recall
             .record_card_review(&ReviewLearningRecallCardRequestDto {
                 review_id: uuid::Uuid::new_v4().to_string(),
@@ -146,8 +146,8 @@ impl CourseTurn {
                 selected_option,
             })
             .await?;
-        let next = card_due_at(&self.pool, card_id).await?;
-        let still_due = due_count(&self.pool, &self.program_id, at).await?;
+        let next = card_due_at(&self.database, card_id).await?;
+        let still_due = due_count(&self.database, &self.program_id, at).await?;
         Ok(format!(
             "Recorded. This card comes back {}. Cards still due: {still_due}.",
             when(next - at)
@@ -158,7 +158,7 @@ impl CourseTurn {
     /// from. Due at once, as a new card is, so the tutor can ask and rate it.
     pub(super) async fn save_card(&self, card: NewCard<'_>) -> Result<String> {
         if card.source_ids.is_empty()
-            && !LearningSourceLibraryRepository::new(self.pool.clone())
+            && !LearningSourceLibraryRepository::new(self.database.clone())
                 .active_versions(&self.program_id)
                 .await?
                 .is_empty()
@@ -168,7 +168,7 @@ impl CourseTurn {
             ));
         }
         let card_id = uuid::Uuid::new_v4().to_string();
-        LearningRecallRepository::new(self.pool.clone())
+        LearningRecallRepository::new(self.database.clone())
             .store_card(&SaveLearningRecallCardRequestDto {
                 operation_id: uuid::Uuid::new_v4().to_string(),
                 program_id: self.program_id.clone(),

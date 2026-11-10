@@ -2,7 +2,7 @@
 //! checked once the write lock is the writer's own.
 use super::{folders, repository};
 use crate::features::conversation::repository::ConversationRepository;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::time::Duration;
@@ -67,7 +67,7 @@ where
 #[tokio::test]
 async fn a_thread_that_cannot_be_filed_in_its_folders_space_is_not_bound() {
     let (pool, _directory) = database().await;
-    folders::set_settings(&pool, ROOT, "", "space_music")
+    folders::set_settings(&Database::from(pool.clone()), ROOT, "", "space_music")
         .await
         .unwrap();
     let id = thread(&pool).await;
@@ -79,7 +79,7 @@ async fn a_thread_that_cannot_be_filed_in_its_folders_space_is_not_bound() {
     .await
     .unwrap();
 
-    let result = folders::bind_thread(&pool, &id, Some(ROOT)).await;
+    let result = folders::bind_thread(&Database::from(pool.clone()), &id, Some(ROOT)).await;
 
     assert!(result.is_err());
     assert_eq!(root_of(&pool, &id).await, None);
@@ -92,7 +92,7 @@ async fn a_space_archived_meanwhile_is_not_given_to_a_folder() {
     let result = after_another_writer(
         &pool,
         "UPDATE conversation_spaces SET is_archived = 1 WHERE id = 'space_music'",
-        || folders::set_settings(&pool, ROOT, "", "space_music"),
+        || folders::set_settings(&Database::from(pool.clone()), ROOT, "", "space_music"),
     )
     .await;
 
@@ -116,7 +116,7 @@ async fn a_thread_unbound_meanwhile_is_not_remembered_as_the_folders() {
     let unbind = format!("UPDATE conversations SET explorer_root = NULL WHERE id = '{id}'");
 
     let result = after_another_writer(&pool, &unbind, || {
-        folders::remember_thread(&pool, ROOT, &id)
+        folders::remember_thread(&Database::from(pool.clone()), ROOT, &id)
     })
     .await;
 

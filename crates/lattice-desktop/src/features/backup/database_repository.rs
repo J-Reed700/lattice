@@ -1,7 +1,8 @@
 //! Statements run on the live database and on backup snapshots.
 use std::path::Path;
 
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Database, Transactions};
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{SqliteConnection, SqlitePool};
 
@@ -16,28 +17,25 @@ pub async fn open_read_only(path: &Path) -> Result<Database> {
 }
 
 /// `vacuum_into` on a connection of its own.
-pub async fn vacuum_database_into(
-    database: &impl DatabaseHandle,
-    destination: &str,
-) -> Result<()> {
+pub async fn vacuum_database_into(database: &impl DriverPool, destination: &str) -> Result<()> {
     let mut connection = database.sqlx_pool().acquire().await?;
     vacuum_into(&mut connection, destination).await
 }
 
 /// `integrity_check` on a connection of its own.
-pub async fn database_integrity_check(database: &impl DatabaseHandle) -> Result<String> {
+pub async fn database_integrity_check(database: &impl DriverPool) -> Result<String> {
     let mut connection = database.sqlx_pool().acquire().await?;
     integrity_check(&mut connection).await
 }
 
 /// `document_count` on a connection of its own.
-pub async fn database_document_count(database: &impl DatabaseHandle) -> Result<i64> {
+pub async fn database_document_count(database: &impl DriverPool) -> Result<i64> {
     let mut connection = database.sqlx_pool().acquire().await?;
     document_count(&mut connection).await
 }
 
 /// `newest_migration` on a connection of its own.
-pub async fn database_newest_migration(database: &impl DatabaseHandle) -> Result<Option<i64>> {
+pub async fn database_newest_migration(database: &impl DriverPool) -> Result<Option<i64>> {
     let mut connection = database.sqlx_pool().acquire().await?;
     newest_migration(&mut connection).await
 }
@@ -57,22 +55,24 @@ pub enum SchemaVersionError {
 /// Whether the backup has a `schema_version` table and its latest row, on one
 /// connection.
 pub async fn backup_schema_version(
-    database: &impl DatabaseHandle,
+    database: &impl DriverPool,
 ) -> std::result::Result<SchemaVersion, SchemaVersionError> {
-    let mut connection = database
-        .sqlx_pool()
-        .acquire()
+    let mut tx = database
+        .begin_read()
         .await
-        .map_err(SchemaVersionError::Check)?;
-    if !has_schema_version_table(&mut connection)
+        .map_err(|error| SchemaVersionError::Check(error.into()))?;
+    if !has_schema_version_table(&mut tx)
         .await
         .map_err(SchemaVersionError::Check)?
     {
         return Ok(SchemaVersion::NoTable);
     }
-    let version = latest_schema_version(&mut connection)
+    let version = latest_schema_version(&mut tx)
         .await
         .map_err(SchemaVersionError::Read)?;
+    tx.commit()
+        .await
+        .map_err(|error| SchemaVersionError::Read(error.into()))?;
     Ok(SchemaVersion::Table(version))
 }
 

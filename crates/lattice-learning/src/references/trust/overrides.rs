@@ -7,11 +7,10 @@
 
 use super::repository::overrides::covered_in;
 use super::repository::rows::{delete_override, write_override};
-use super::repository::SqliteSourceTrustStore;
 use crate::persistence::db;
 use lattice_core::domain::provenance::{OverrideScope, TrustOverride};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 
 /// One source version an override covers.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -29,13 +28,10 @@ pub struct TrustChange {
 
 /// Creates or replaces the override at its scope, in one transaction with
 /// reading the versions it covers.
-pub async fn set(
-    store: &SqliteSourceTrustStore,
-    trust_override: &TrustOverride,
-) -> Result<TrustChange> {
+pub async fn set(database: &Database, trust_override: &TrustOverride) -> Result<TrustChange> {
     let scope = trust_override.scope();
     validate(&scope)?;
-    let mut tx = store.pool().begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     write_override(&mut tx, trust_override).await?;
     let versions = covered_in(&mut tx, &scope).await?;
     tx.commit().await.map_err(db)?;
@@ -44,11 +40,8 @@ pub async fn set(
 
 /// Removes the override at `scope`; `None` when there was none, so nothing
 /// moves.
-pub async fn clear(
-    store: &SqliteSourceTrustStore,
-    scope: &OverrideScope,
-) -> Result<Option<TrustChange>> {
-    let mut tx = store.pool().begin_write().await.map_err(db)?;
+pub async fn clear(database: &Database, scope: &OverrideScope) -> Result<Option<TrustChange>> {
+    let mut tx = database.begin_write().await.map_err(db)?;
     if !delete_override(&mut tx, scope).await? {
         return Ok(None);
     }
@@ -62,11 +55,8 @@ pub async fn clear(
 
 /// The versions an override at `scope` would cover, without changing it:
 /// what the menu counts before the user commits.
-pub async fn preview(
-    store: &SqliteSourceTrustStore,
-    scope: &OverrideScope,
-) -> Result<Vec<CoveredVersion>> {
-    let mut read = store.pool().begin_read().await.map_err(db)?;
+pub async fn preview(database: &Database, scope: &OverrideScope) -> Result<Vec<CoveredVersion>> {
+    let mut read = database.begin_read().await.map_err(db)?;
     let versions = covered_in(&mut read, scope).await?;
     read.commit().await.map_err(db)?;
     Ok(versions)

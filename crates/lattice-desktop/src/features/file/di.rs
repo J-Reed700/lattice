@@ -18,7 +18,7 @@ use lattice_core::application::ports::{
     ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, FileStoragePort,
     FileSystemPort,
 };
-use lattice_core::shared::persistence::DatabaseHandle;
+use lattice_core::shared::persistence::Database;
 
 #[derive(Clone)]
 pub struct FileDi {
@@ -40,10 +40,9 @@ pub fn build(
     tag_service: Arc<dyn TagServiceTrait>,
     file_access_config: Arc<FileAccessConfig>,
     vault_path: PathBuf,
-    db_pool: impl DatabaseHandle,
+    database: Database,
     preview_extractor: Arc<dyn ContentExtractionPort>,
 ) -> FileDi {
-    let db_pool = db_pool.database();
     FileDi {
         open_file_use_case: Arc::new(OpenFileUseCase::new(
             file_system.clone(),
@@ -86,7 +85,7 @@ pub fn build(
             tag_service,
         )),
         list_citing_conversations_use_case: Arc::new(ListCitingConversationsUseCase::new(
-            Arc::new(SqliteCitingConversationsRepository::new(db_pool))
+            Arc::new(SqliteCitingConversationsRepository::new(database))
                 as Arc<dyn CitingConversationsRepositoryPort>,
         )),
     }

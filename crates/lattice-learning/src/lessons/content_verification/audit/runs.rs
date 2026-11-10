@@ -6,7 +6,7 @@
 //! receipts), not this table's.
 
 use async_trait::async_trait;
-use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 
 use lattice_core::domain::models::model_ref::ModelRef;
@@ -121,37 +121,36 @@ pub struct CourseAuditUsage {
 
 #[derive(Clone)]
 pub struct SqliteAuditRuns {
-    pool: Database,
+    database: Database,
 }
 
 impl SqliteAuditRuns {
-    pub fn new(pool: impl DatabaseHandle) -> Self {
-        let pool = pool.database();
-        Self { pool }
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
     /// The lesson's most recently started audit.
     pub async fn latest(&self, lesson_id: &str) -> Result<Option<AuditRun>> {
-        repository::latest_run(&self.pool, lesson_id).await
+        repository::latest_run(&self.database, lesson_id).await
     }
 
     pub async fn course_usage(&self, program_id: &str) -> Result<CourseAuditUsage> {
-        repository::course_usage(&self.pool, program_id).await
+        repository::course_usage(&self.database, program_id).await
     }
 }
 
 #[async_trait]
 impl AuditRunStore for SqliteAuditRuns {
     async fn begin(&self, key: &RunKey, policy: &str, at: i64) -> Result<AuditRun> {
-        repository::open_run(&self.pool, key, policy, at).await
+        repository::open_run(&self.database, key, policy, at).await
     }
 
     async fn record(&self, key: &RunKey, batch: &BatchRecord) -> Result<()> {
-        repository::append_batch(&self.pool, key, batch).await
+        repository::append_batch(&self.database, key, batch).await
     }
 
     async fn finish(&self, key: &RunKey, state: RunState, at: i64) -> Result<()> {
-        repository::finish_run(&self.pool, key, state, at).await
+        repository::finish_run(&self.database, key, state, at).await
     }
 }
 
