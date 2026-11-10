@@ -933,7 +933,7 @@ fn the_writer_s_shape_is_the_draft_s_in_the_policy_s_words() {
     );
 }
 
-fn sweep_baseline() -> Value {
+fn sweep_baseline(cited: bool) -> Value {
     let kinds = [
         "explanation",
         "worked_example",
@@ -952,7 +952,7 @@ fn sweep_baseline() -> Value {
         .enumerate()
         .map(|(i, kind)| {
             let title = format!("Part {i}");
-            let mut section = block(kind, &title, &format!("Body of part {i}."), false);
+            let mut section = block(kind, &title, &format!("Body of part {i}."), cited);
             if kind.ends_with("practice") {
                 section["rubric"] = json!([
                     {"title":"One","description":"Observable.","dimension":"recall"},
@@ -965,7 +965,7 @@ fn sweep_baseline() -> Value {
     let questions: Vec<_> = ["practice", "practice", "quiz", "quiz", "test", "test"]
         .iter()
         .enumerate()
-        .map(|(i, kind)| question(kind, &format!("Question {i}?"), false))
+        .map(|(i, kind)| question(kind, &format!("Question {i}?"), cited))
         .collect();
     json!({"blocks":blocks,"questions":questions})
 }
@@ -1104,10 +1104,10 @@ fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
     program.sources.clear();
     for (name, mutate, rule) in rows {
         assert!(
-            !kept_rules(&sweep_baseline()).contains(&rule),
+            !kept_rules(&sweep_baseline(false)).contains(&rule),
             "{name}: the baseline already breaks {rule:?}"
         );
-        let mut lesson = sweep_baseline();
+        let mut lesson = sweep_baseline(false);
         mutate(&mut lesson);
         assert!(
             kept_rules(&lesson).contains(&rule),
@@ -1118,6 +1118,67 @@ fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
             Ok(assembled) => assembled,
             Err(error) => panic!("{name}: the lesson is not saved: {error:?}"),
         };
+        let checked = crate::service::validate_generated(&prepared, &program);
+        assert!(
+            checked.is_ok(),
+            "{name}: the save gate refuses it: {checked:?}"
+        );
+    }
+}
+
+#[test]
+fn a_part_of_a_sourced_course_naming_no_source_is_saved_with_none_and_waits() {
+    type Mutation = fn(&mut Value);
+    let rows: [(&str, Mutation, FindingSite); 4] = [
+        (
+            "a block whose sourceIndex is out of range",
+            |l| l["blocks"][0]["sourceIndex"] = json!(9),
+            FindingSite::Section(0),
+        ),
+        (
+            "a block with no sourceIndex",
+            |l| l["blocks"][0]["sourceIndex"] = Value::Null,
+            FindingSite::Section(0),
+        ),
+        (
+            "a question whose sourceIndex is out of range",
+            |l| l["questions"][0]["sourceIndex"] = json!(9),
+            FindingSite::Question(0),
+        ),
+        (
+            "a question with no sourceIndex",
+            |l| l["questions"][0]["sourceIndex"] = Value::Null,
+            FindingSite::Question(0),
+        ),
+    ];
+    let sources = [source()];
+    let owned = HashSet::from(["source-a"]);
+    let mut program = crate::test_support::fixture();
+    program.sources = vec![source()];
+    for (name, mutate, site) in rows {
+        let mut lesson = sweep_baseline(true);
+        mutate(&mut lesson);
+        let generated: GeneratedLesson = serde_json::from_value(lesson).unwrap();
+        let (prepared, findings) = match assemble(generated, &sources, &owned) {
+            Ok(assembled) => assembled,
+            Err(error) => panic!("{name}: the lesson is not saved: {error:?}"),
+        };
+        assert!(
+            findings.iter().any(|finding| finding.site == Some(site)
+                && matches!(
+                    finding.origin,
+                    crate::review_findings::Origin::Rule {
+                        rule: Rule::PartCitation,
+                        ..
+                    }
+                )),
+            "{name}: no finding waits for it: {findings:?}"
+        );
+        let saved = match site {
+            FindingSite::Question(at) => &prepared.questions[at].source_ids,
+            _ => &prepared.blocks[0].source_ids,
+        };
+        assert!(saved.is_empty(), "{name}: {saved:?}");
         let checked = crate::service::validate_generated(&prepared, &program);
         assert!(
             checked.is_ok(),
