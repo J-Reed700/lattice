@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::lesson_drafts;
-use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
+use crate::lessons::course_generation_tests::{review_reply, verdict, ScriptedModel, Windowed};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{FindingKey, Held};
 use lattice_core::application::ports::llm_port::{
@@ -24,9 +24,21 @@ fn context() -> String {
 }
 
 fn review(defect: Option<&str>) -> String {
+    judged(defect, &[])
+}
+
+/// A review of the lesson's one section, with `verdicts` on the findings it
+/// was asked about.
+fn judged(defect: Option<&str>, verdicts: &[Value]) -> String {
     let finding =
         defect.unwrap_or("The complete explanation was reviewed and no teaching defect was found.");
-    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-0","finding":finding,"hasDefect":defect.is_some()})])}).to_string()
+    review_reply(
+        &[],
+        vec![
+            json!({"index":0,"passageId":"section-0-passage-0","finding":finding,"hasDefect":defect.is_some()}),
+        ],
+        verdicts,
+    )
 }
 
 fn actionable() -> String {
@@ -138,7 +150,7 @@ async fn a_pass_that_fixes_the_defect_publishes_with_nothing_waiting() -> Result
         )),
         actionable(),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let reviewed = run(&model, lesson(EXCERPT)).await?;
     assert!(reviewed.set_aside.is_empty());
@@ -153,7 +165,7 @@ async fn a_lessons_own_repair_stays_in_the_review_phase() -> Result<()> {
         )),
         actionable(),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let (reviewed, phases, stages) =
         crate::lesson_progress::phased(run(&model, lesson(EXCERPT))).await;
@@ -169,7 +181,11 @@ async fn a_lessons_own_repair_stays_in_the_review_phase() -> Result<()> {
 async fn a_quiz_batch_reviewed_inside_a_lesson_job_changes_no_phase() -> Result<()> {
     let issue = json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."]}).to_string();
     let patch = json!({"edits":[{"path":"/wrong","before":true,"after":false}]}).to_string();
-    let model = model(vec![issue, patch, json!({"issues":[]}).to_string()]);
+    let model = model(vec![
+        issue,
+        patch,
+        json!({"issues":[],"openFindings":[verdict("reviewer/1", "resolved")]}).to_string(),
+    ]);
     let (reviewed, phases, stages) = crate::lesson_progress::phased(async {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Evidence,
@@ -369,7 +385,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         )),
         actionable(),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let window = Windowed(&scripted, 13_000);
     let sources = references();
@@ -449,9 +465,10 @@ async fn outlines_and_assessments_still_fail_closed_after_one_repair() {
             "The example shows \"result\": \"4\" although the code returns the number 4.",
         )),
         retitle("Corrected example"),
-        review(Some(
-            "Section 1 still prints the result as the string \"4\" instead of the number.",
-        )),
+        judged(
+            Some("Section 1 still prints the result as the string \"4\" instead of the number."),
+            &[verdict("reviewer/1", "present")],
+        ),
     ]);
     assert!(review_and_repair(
         &model,
@@ -475,7 +492,7 @@ async fn the_subject_comes_from_the_entry_point_not_the_schema() {
             "The example shows \"result\": \"4\" although the code returns the number 4.",
         )),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let schema = json!({"type":"object","properties":{"modules":{"type":"array"}}});
     let _ = review_and_repair(
@@ -577,7 +594,12 @@ async fn a_teaching_finding_on_the_sentence_of_a_machine_claim_with_attempts_lef
     );
 
     // The machine's claim with attempts left: repaired, and the repair kept.
-    let repaired = model(vec![finding(), actionable(), fix, review(None)]);
+    let repaired = model(vec![
+        finding(),
+        actionable(),
+        fix,
+        judged(None, &[verdict("reviewer/1", "resolved")]),
+    ]);
     let outcome = review_protecting(&repaired, &candidate, &[sentence(true)]).await?;
     assert!(outcome.set_aside.is_empty(), "{:?}", outcome.set_aside);
     let after: Value = serde_json::from_str(&outcome.candidate)?;
@@ -650,7 +672,12 @@ async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragra
     );
 
     // Repaired now: the claims protect their own sentences only.
-    let repaired = model(vec![defect(), actionable(), fix, review(None)]);
+    let repaired = model(vec![
+        defect(),
+        actionable(),
+        fix,
+        judged(None, &[verdict("reviewer/1", "resolved")]),
+    ]);
     let outcome = review_protecting(&repaired, &candidate, &[sentence(V1), sentence(V2)]).await?;
     assert!(outcome.set_aside.is_empty(), "{:?}", outcome.set_aside);
     let after: Value = serde_json::from_str(&outcome.candidate)?;
@@ -765,7 +792,7 @@ async fn a_short_review_issue_is_checked_and_repaired_not_dropped() -> Result<()
         brief.to_string(),
         actionable(),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let reviewed = run(&model, lesson(EXCERPT)).await?;
     assert!(reviewed.set_aside.is_empty(), "{:?}", reviewed.set_aside);
@@ -792,7 +819,7 @@ async fn a_long_review_issue_is_repaired_where_a_review_fails_closed() -> Result
     let model = model(vec![
         first.to_string(),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let repaired = review_and_repair(
         &model,
@@ -817,7 +844,7 @@ async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Resul
     let model = model(vec![
         json!({"issues": issues}).to_string(),
         json!({"modules":[{"title":"Revised"}]}).to_string(),
-        json!({"issues":[]}).to_string(),
+        json!({"issues":[],"openFindings":[verdict("reviewer/1", "resolved"), verdict("reviewer/2", "resolved"), verdict("reviewer/3", "resolved"), verdict("reviewer/4", "resolved"), verdict("reviewer/5", "resolved"), verdict("reviewer/6", "resolved"), verdict("reviewer/7", "resolved")]}).to_string(),
     ]);
     let progress = crate::outline_progress::OutlineProgress::default();
     let sources = references();
@@ -972,7 +999,10 @@ async fn an_unusable_answer_for_several_findings_is_asked_again_in_halves() -> R
         vec![
             parts_review(4, &[0, 1, 2, 3]),
             parts_evidence(&[0, 1, 2, 3]),
-            parts_review(4, &[]),
+            parts_recheck(
+                &[0, 1, 2, 3],
+                &["reviewer/1", "reviewer/2", "reviewer/3", "reviewer/4"],
+            ),
         ],
         |sent| {
             if ids_of(sent).len() > 2 {
@@ -1012,7 +1042,7 @@ async fn one_finding_s_unusable_answer_does_not_stop_the_others() -> Result<()> 
         vec![
             parts_review(2, &[0, 1]),
             parts_evidence(&[0, 1]),
-            parts_review(2, &[]),
+            parts_recheck(&[1], &["reviewer/2"]),
         ],
         |sent| {
             if ids_of(sent).contains(&section_id(0)) {
@@ -1045,7 +1075,7 @@ async fn findings_whose_repair_does_not_fit_wait_and_the_others_are_still_repair
         vec![
             parts_review(2, &[0, 1]),
             parts_evidence(&[0, 1]),
-            parts_review(2, &[]),
+            parts_recheck(&[0], &["reviewer/1"]),
         ],
         |sent| {
             if ids_of(sent).contains(&section_id(1)) {
@@ -1131,7 +1161,7 @@ async fn a_lesson_whose_structure_no_repair_fixes_still_has_its_content_reviewed
         vec![
             parts_review(2, &[0]),
             parts_evidence(&[0]),
-            parts_review(2, &[]),
+            parts_recheck(&[0], &["reviewer/1"]),
         ],
         |sent| {
             if ids_of(sent).contains(&section_id(0)) {
@@ -1220,13 +1250,15 @@ fn defect_no_repair_fixes() -> Vec<String> {
         )),
         actionable(),
         retitle("Corrected example"),
-        review(Some(
-            "Section 1 still prints the result as the string \"4\" instead of the number.",
-        )),
+        judged(
+            Some("Section 1 still prints the result as the string \"4\" instead of the number."),
+            &[verdict("reviewer/1", "present")],
+        ),
         retitle_again("Corrected twice"),
-        review(Some(
-            "Section 1 still prints the result as the string \"4\" after two repairs.",
-        )),
+        judged(
+            Some("Section 1 still prints the result as the string \"4\" after two repairs."),
+            &[verdict("reviewer/1", "present")],
+        ),
     ]
 }
 
@@ -1270,13 +1302,15 @@ async fn cut_short_then_resumed(
                 )),
                 actionable(),
                 retitle_again("Corrected twice"),
-                review(Some(
-                    "Section 1 still prints the result as the string \"4\" after two repairs.",
-                )),
+                judged(
+                    Some("Section 1 still prints the result as the string \"4\" after two repairs."),
+                    &[verdict("reviewer/1", "present")],
+                ),
                 retitle_a_third_time("Corrected thrice"),
-                review(Some(
-                    "Section 1 still prints the result as the string \"4\" after three repairs.",
-                )),
+                judged(
+                    Some("Section 1 still prints the result as the string \"4\" after three repairs."),
+                    &[verdict("reviewer/1", "present")],
+                ),
             ]);
             script
         } else {
@@ -1544,9 +1578,17 @@ fn parts_review(count: usize, defective: &[usize]) -> String {
 /// A review whose defective parts are `(part, paragraph)`: the paragraph
 /// each one's finding is about.
 fn parts_review_at(count: usize, defective: &[(usize, usize)]) -> String {
-    let checks: Vec<Value> = (0..count)
+    let all: Vec<usize> = (0..count).collect();
+    parts_checked(&all, defective, &[])
+}
+
+/// A review of the parts `asked` alone, whose defective parts are
+/// `(part, paragraph)`, with `verdicts` on the findings it was asked about.
+fn parts_checked(asked: &[usize], defective: &[(usize, usize)], verdicts: &[Value]) -> String {
+    let checks: Vec<Value> = asked
+        .iter()
         .map(|index| {
-            let found = defective.iter().find(|(part, _)| *part == index);
+            let found = defective.iter().find(|(part, _)| part == index);
             json!({
                 "index": index,
                 "passageId": format!("section-{index}-passage-{}", found.map_or(0, |(_, paragraph)| *paragraph)),
@@ -1559,11 +1601,14 @@ fn parts_review_at(count: usize, defective: &[(usize, usize)]) -> String {
             })
         })
         .collect();
-    json!({
-        "issues": [],
-        "blockChecks": crate::teaching_review::fixture_checks(checks),
-    })
-    .to_string()
+    review_reply(&[], checks, verdicts)
+}
+
+/// A review of the parts `asked` alone that finds no defect and resolves the
+/// findings `resolved`.
+fn parts_recheck(asked: &[usize], resolved: &[&str]) -> String {
+    let verdicts: Vec<Value> = resolved.iter().map(|id| verdict(id, "resolved")).collect();
+    parts_checked(asked, &[], &verdicts)
 }
 
 fn parts_evidence(defective: &[usize]) -> String {
@@ -1595,7 +1640,7 @@ async fn the_repair_is_told_each_finding_s_id_part_and_passage() -> Result<()> {
         review(Some("The example shows the wrong result.")),
         actionable(),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let candidate = lesson(EXCERPT);
     run(&model, candidate.clone()).await?;
@@ -1620,7 +1665,7 @@ async fn an_edit_names_the_finding_it_is_for() -> Result<()> {
         review(Some("The example shows the wrong result.")),
         actionable(),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let recorder = RecordsSchemas {
         inner: &scripted,
@@ -1658,9 +1703,9 @@ async fn an_edit_outside_its_finding_s_part_leaves_the_other_findings_edits_appl
             better_idea(0, "reviewer/1"),
             better_idea(2, "reviewer/2"),
         ]),
-        parts_review(3, &[]),
+        parts_recheck(&[0], &["reviewer/1"]),
         edits_answer(vec![better_idea(1, "reviewer/2")]),
-        parts_review(3, &[]),
+        parts_recheck(&[1], &["reviewer/2"]),
     ]);
     let reviewed = run(&model, parts_lesson(3)).await?;
     let after: Value = serde_json::from_str(&reviewed.candidate)?;
@@ -1684,9 +1729,9 @@ async fn a_finding_no_edit_named_is_told_so_on_its_second_attempt() -> Result<()
         parts_review(2, &[0, 1]),
         parts_evidence(&[0, 1]),
         edits_answer(vec![better_idea(0, "reviewer/1")]),
-        parts_review(2, &[]),
+        parts_recheck(&[0], &["reviewer/1"]),
         edits_answer(vec![better_idea(1, "reviewer/2")]),
-        parts_review(2, &[]),
+        parts_recheck(&[1], &["reviewer/2"]),
     ]);
     run(&model, parts_lesson(2)).await?;
     let asked = repair_requests(&model);
@@ -1744,7 +1789,7 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
             touches_the_protected_sentence.clone(),
             better_idea(1, "reviewer/2"),
         ]),
-        parts_review(2, &[]),
+        parts_recheck(&[1], &["reviewer/2"]),
         edits_answer(vec![touches_the_protected_sentence]),
     ]);
     let reviewed = review_protecting(&model, &candidate, &protected).await?;
@@ -2064,7 +2109,7 @@ async fn a_repair_edit_that_drops_a_sentences_markers_is_asked_again_with_the_ex
         actionable(),
         edit("The function returns the number 4 for the sum of two and two."),
         edit(MARKED),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let recording = Recording(&scripted, Mutex::new(Vec::new()));
     let reviewed = run(&recording, candidate).await?;
@@ -2319,7 +2364,7 @@ async fn a_review_after_a_cut_and_its_repair_are_told_the_shape_the_lesson_is_ke
         )),
         actionable(),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let policy = FixedSchema(json!({"type":"object"}));
     let schema = policy.schema(Phase::Kept, 1);
@@ -2379,7 +2424,7 @@ async fn a_draft_review_is_told_what_the_writer_was() -> Result<()> {
         )),
         actionable(),
         retitle("Corrected example"),
-        review(None),
+        judged(None, &[verdict("reviewer/1", "resolved")]),
     ]);
     let draft = shape::policy().asked(Phase::Draft);
     let policy = FixedSchema(json!({"type":"object"}));
