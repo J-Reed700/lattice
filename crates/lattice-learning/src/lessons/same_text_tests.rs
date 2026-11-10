@@ -54,3 +54,18 @@ fn the_sentences_a_span_lies_in_are_whole_and_a_span_in_none_stands_for_itself()
     );
     assert_eq!(sentences_over("", (0, 0)), vec![(0, 0)]);
 }
+
+#[test]
+fn a_whole_sentence_is_held_whatever_its_emphasis_apostrophe_or_case() {
+    let text = "It is the tool\u{2019}s name. Then stop.";
+    assert!(holds_sentence(text, "It is the **tool's** name."));
+    assert!(holds_sentence(text, "THEN STOP."));
+    assert!(holds_sentence(text, "Other words here. then stop."));
+}
+
+#[test]
+fn a_sentence_inside_a_longer_one_is_not_held() {
+    assert!(!holds_sentence("There is no.", "No."));
+    assert!(!holds_sentence("There is no.", "is no."));
+    assert!(!holds_sentence("Some text.", "  "));
+}

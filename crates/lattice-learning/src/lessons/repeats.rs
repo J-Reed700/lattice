@@ -2,8 +2,9 @@
 //! sentences are the same when they are the same text ([`fold`]). Only the
 //! sentences of a paragraph are compared: not headings, list items, table
 //! rows, code, a sentence that is only code (a command shown on a line of its
-//! own), or the strong label that opens a paragraph, which lessons repeat on
-//! purpose.
+//! own), a sentence too short to be quoted, or the strong label that opens a
+//! paragraph, which lessons repeat on purpose.
+use crate::generation::long_enough_quote;
 use crate::lessons::same_text::fold;
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -146,7 +147,7 @@ pub(crate) fn comparable(text: &str) -> Vec<String> {
                 .into_iter()
                 .filter_map(|(from, to)| prose.get(from..to))
                 .map(|sentence| sentence.trim().to_owned())
-                .filter(|sentence| has_prose_letter(sentence)),
+                .filter(|sentence| has_prose_letter(sentence) && long_enough_quote(sentence)),
         );
     }
     found

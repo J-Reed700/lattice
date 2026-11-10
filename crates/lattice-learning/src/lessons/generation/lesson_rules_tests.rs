@@ -763,7 +763,7 @@ fn lines_inside_tilde_fences_are_no_repeated_sentences() {
 fn prose_after_a_list_has_ended_is_compared_again() {
     const STEP: &str =
         "1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`.";
-    const SAID: &str = "Say this once here.";
+    const SAID: &str = "Say this one thing only once here.";
     let mut candidate = lesson();
     candidate["blocks"][1]["body"] = json!(format!("{SAID}\n\n{STEP}"));
     candidate["blocks"][4]["body"] = json!(format!("{STEP}\n\n{SAID}"));
