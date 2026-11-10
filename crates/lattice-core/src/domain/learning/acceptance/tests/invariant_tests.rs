@@ -306,6 +306,33 @@ fn a_ceiling_that_rises_breaks_the_seventh_invariant() {
 }
 
 #[test]
+fn a_ceiling_that_ignores_the_successor_of_an_ended_statement_breaks_the_seventh_invariant() {
+    let policy = StandardPolicy::new();
+    assert_eq!(violations(&policy), Vec::<Violation>::new());
+
+    // The ceiling before a statement's rewrites were counted: it holds no
+    // rewrite for any statement, so a statement that ends with one left and
+    // continues as a successor that reads again rises.
+    let mut blind = |at: Position| {
+        most_calls(
+            &policy,
+            Position {
+                rewrites_left: 0,
+                ..at
+            },
+        )
+    };
+    let rises = ceiling_rises(&policy, &mut blind);
+    assert!(
+        rises.contains(&Violation::CeilingRises {
+            class: Class::Reasoning,
+            node: id("r.reveto"),
+        }),
+        "{rises:?}"
+    );
+}
+
+#[test]
 fn a_policy_that_loops_is_not_also_held_to_a_ceiling() {
     // `most_calls` is finite on it, but its figures are not a longest path.
     let policy = changed(Sourced, "s.recite", |node| {

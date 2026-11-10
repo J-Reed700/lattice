@@ -17,7 +17,10 @@ pub use ceiling::{after_rewrite_calls, most_calls};
 pub use graph::{Graph, Node};
 pub use invariants::{violations, Violation};
 pub use standard::{StandardPolicy, STANDARD_POLICY};
-pub use walk::{check_record, decide, rewrite_ahead, walk, walk_from, RecordFault};
+pub use walk::{
+    check_record, decide, next_rewrite, rewrite_ahead, rewrites_given, start, stepped, successor,
+    walk, walk_from, RecordFault,
+};
 
 use serde::{Deserialize, Serialize};
 
@@ -268,6 +271,10 @@ pub struct Position {
     /// The statement's one re-ask of an unreadable answer is spent.
     pub reasked: bool,
     pub node: NodeId,
+    /// The rewrites its sentence can still be given: a rewrite step it takes
+    /// spends one, and so does each machine change of its sentence it
+    /// continues after.
+    pub rewrites_left: u8,
 }
 
 /// One step a statement took and what came of it.

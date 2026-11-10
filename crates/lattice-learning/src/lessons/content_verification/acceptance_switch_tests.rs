@@ -17,8 +17,8 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::ClaimReviewService;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::acceptance::{
-    decide, rewrite_ahead, AcceptancePolicy, End, Goal, Outcome, Position, Reading, Step, Taken,
-    Then, Walked,
+    decide, rewrite_ahead, start, AcceptancePolicy, End, Goal, Outcome, Position, Reading, Step,
+    Taken, Then, Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry,
@@ -117,12 +117,7 @@ pub(super) async fn walk_because(
     steps: &[(Step, Outcome, &str)],
 ) -> Result<()> {
     let policy = StandardPolicy::new();
-    let mut here = Some(Position {
-        class,
-        changed_class: false,
-        reasked: false,
-        node: policy.graph(class).entry(),
-    });
+    let mut here = Some(start(&policy, class));
     for &(step, outcome, reason) in steps {
         let at = here.expect("a step after the statement ended");
         let (then, next) = decide(&policy, at, Taken { step, outcome }).expect("an edge");
@@ -149,12 +144,7 @@ pub(super) async fn stood(
     (reading, finding): (Reading, Finding),
 ) -> Result<()> {
     let policy = StandardPolicy::new();
-    let at = Position {
-        class,
-        changed_class: false,
-        reasked: false,
-        node: policy.graph(class).entry(),
-    };
+    let at = start(&policy, class);
     let taken = Taken {
         step: Step::Read(reading),
         outcome: Outcome::Stands,
@@ -1241,7 +1231,10 @@ async fn a_claim_that_ended_at_a_node_of_its_graph_is_planned_as_ended() -> Resu
     // Its rewrite was asked for and it went with its sentence: the plan holds
     // nothing more for it, so the call it made is not counted twice.
     let planned = ledger.planned(&policy, &lesson_of(SENTENCE), std::slice::from_ref(&target));
-    assert_eq!(planned[0].at, crate::lessons::call_plan::PlannedAt::Ended);
+    assert_eq!(
+        planned[0].at,
+        crate::lessons::call_plan::PlannedAt::Ended(None)
+    );
     Ok(())
 }
 
@@ -2584,6 +2577,7 @@ async fn a_run_stopped_on_a_second_unreadable_answer_is_resumed_by_the_next_run_
             changed_class: false,
             reasked: true,
             node: policy.graph(Class::Sourced).entry(),
+            rewrites_left: 2,
         }))
     );
 

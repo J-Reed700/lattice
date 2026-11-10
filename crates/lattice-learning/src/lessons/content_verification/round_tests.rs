@@ -6,7 +6,8 @@
 use super::*;
 use async_trait::async_trait;
 use lattice_core::domain::learning::acceptance::{
-    decide, End, NodeId, Outcome, Position, StandardPolicy, Step, Taken, Then, Walked, CLASSES,
+    decide, start, End, NodeId, Outcome, Position, StandardPolicy, Step, Taken, Then, Walked,
+    CLASSES,
 };
 use std::collections::VecDeque;
 
@@ -36,6 +37,7 @@ impl Scripted {
                 changed_class: false,
                 reasked: false,
                 node: NodeId(node),
+                rewrites_left: 2,
             }),
             script: outcomes.into_iter().collect(),
             stuck: false,
@@ -466,12 +468,7 @@ struct Path {
 fn paths(policy: &dyn AcceptancePolicy) -> Vec<Path> {
     let mut found = Vec::new();
     for class in CLASSES {
-        let entry = Position {
-            class,
-            changed_class: false,
-            reasked: false,
-            node: policy.graph(class).entry(),
-        };
+        let entry = start(policy, class);
         extend(policy, (class, entry), &mut Vec::new(), &mut found);
     }
     found

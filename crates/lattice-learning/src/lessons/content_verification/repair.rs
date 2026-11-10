@@ -420,7 +420,7 @@ pub(super) async fn teaching_protected(
     targets: &[ClaimId],
 ) -> Result<Vec<Protected>> {
     let released = ledger.releasable(policy, targets);
-    ledger.begin_teaching(candidate, &released).await?;
+    ledger.begin_teaching(policy, candidate, &released).await?;
     Ok(Protected::releasing(ledger, targets, &released))
 }
 

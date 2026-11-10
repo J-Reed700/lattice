@@ -47,7 +47,11 @@ async fn taught(
     (from, to): (&str, &str),
 ) -> Result<ClaimId> {
     ledger
-        .begin_teaching(&lesson_of(from), std::slice::from_ref(id))
+        .begin_teaching(
+            &StandardPolicy::new(),
+            &lesson_of(from),
+            std::slice::from_ref(id),
+        )
         .await?;
     let pass = identified(ledger, &Classes::new(&[]), &lesson_of(to), &[(to, to)], &[]).await?;
     let [kept] = pass.statements.as_slice() else {
