@@ -485,15 +485,16 @@ async fn reviewed_round(
             })),
         };
         async move {
-            batch
-                .author(llm, collection)
-                .await
-                .ok()
-                .flatten()
-                .and_then(|items| items.into_iter().find_map(std::result::Result::ok))
+            match batch.author(llm, collection).await {
+                Ok(items) => Ok(items.and_then(|items| {
+                    items.into_iter().find_map(std::result::Result::ok)
+                })),
+                Err(AppError::InvalidInput(_) | AppError::ModelAnswerUnusable(_)) => Ok(None),
+                Err(error) => Err(error),
+            }
         }
     });
-    let repaired = futures::future::join_all(repairs).await;
+    let repaired = futures::future::try_join_all(repairs).await?;
     let mut dropped = Vec::new();
     let mut again = Vec::new();
     for ((_, findings), repair) in flawed.into_iter().zip(repaired) {
