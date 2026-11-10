@@ -216,6 +216,23 @@ impl ClaimReviewStore for MemoryLedger {
         ledger.revision = Revision(ledger.revision.0 + 1);
         Ok(ledger.revision)
     }
+
+    async fn hold_lesson_review(
+        &self,
+        _lesson_id: &str,
+        stop_reason: Option<lattice_core::domain::learning::claim_review::StopReason>,
+    ) -> Result<Option<Revision>> {
+        let mut ledger = self.ledger.lock().unwrap();
+        let Some(review) = ledger.review.as_mut() else {
+            return Ok(None);
+        };
+        review.state = lattice_core::domain::learning::claim_review::LessonReviewState::NeedsReview;
+        if stop_reason.is_some() {
+            review.stop_reason = stop_reason;
+        }
+        ledger.revision = Revision(ledger.revision.0 + 1);
+        Ok(Some(ledger.revision))
+    }
 }
 
 /// The page or the error the web service answers with.

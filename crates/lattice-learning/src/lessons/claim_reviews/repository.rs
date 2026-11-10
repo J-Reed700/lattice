@@ -13,7 +13,7 @@ use lattice_core::domain::learning::claim_review::{
     Ledger, LessonReview, LessonReviewState, RecordedEvent, Revision, StopReason, UnitKind,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
@@ -55,6 +55,10 @@ pub struct ClaimReviewRepository {
 impl ClaimReviewRepository {
     pub fn new(pool: SqlitePool) -> Self {
         Self { pool }
+    }
+
+    pub(super) async fn begin_write(&self) -> Result<WriteTx> {
+        self.pool.begin_write().await.map_err(db)
     }
 
     /// The passages each claim's latest check compared, as shown on its card.
@@ -171,6 +175,37 @@ impl ClaimReviewStore for ClaimReviewRepository {
         .map_err(db)?;
         Ok(Revision(revision))
     }
+
+    async fn hold_lesson_review(
+        &self,
+        lesson_id: &str,
+        stop_reason: Option<StopReason>,
+    ) -> Result<Option<Revision>> {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        hold_in(&mut connection, lesson_id, stop_reason.as_ref()).await
+    }
+}
+
+/// Sends the review to Needs review in one statement, keeping its other
+/// fields; `None` keeps the stored stop reason. `None` back: no review row.
+pub(super) async fn hold_in(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+    stop_reason: Option<&StopReason>,
+) -> Result<Option<Revision>> {
+    let stop_reason = stop_reason.map(encode).transpose()?;
+    let revision: Option<i64> = sqlx::query_scalar(
+        "UPDATE learning_lesson_reviews SET state=?,stop_reason_json=COALESCE(?,stop_reason_json),\
+         revision=revision+1,updated_at=? WHERE lesson_id=? RETURNING revision",
+    )
+    .bind(LessonReviewState::NeedsReview.as_str())
+    .bind(stop_reason)
+    .bind(now())
+    .bind(lesson_id)
+    .fetch_optional(&mut *connection)
+    .await
+    .map_err(db)?;
+    Ok(revision.map(Revision))
 }
 
 /// [`ClaimReviewRepository::shown_passages`] inside the caller's unit of work.

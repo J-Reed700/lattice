@@ -11,7 +11,7 @@
 use async_trait::async_trait;
 
 use crate::domain::learning::claim_review::{
-    ClaimEvent, ClaimId, EventProvenance, Ledger, LessonReview, Revision,
+    ClaimEvent, ClaimId, EventProvenance, Ledger, LessonReview, Revision, StopReason,
 };
 use crate::shared::error::Result;
 
@@ -40,4 +40,11 @@ pub trait ClaimReviewStore: Send + Sync {
     /// Creates or replaces the lesson's review row and returns the new
     /// revision. Claims and their events are untouched.
     async fn set_lesson_review(&self, lesson_id: &str, review: LessonReview) -> Result<Revision>;
+
+    /// Sends the review back to Needs review in one write, keeping every other field; `Some` replaces the stop reason.
+    async fn hold_lesson_review(
+        &self,
+        lesson_id: &str,
+        stop_reason: Option<StopReason>,
+    ) -> Result<Option<Revision>>;
 }
