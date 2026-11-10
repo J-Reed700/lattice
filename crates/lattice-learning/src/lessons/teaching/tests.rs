@@ -146,7 +146,7 @@ fn a_block_without_a_body_is_a_finding_at_its_place() {
             "Practice block 3 needs two to four observable, task-specific rubric criteria."
         ]
     );
-    let sites: Vec<_> = found.iter().map(|finding| finding.key().site).collect();
+    let sites: Vec<_> = found.iter().map(|finding| finding.place().site).collect();
     assert_eq!(
         sites,
         [

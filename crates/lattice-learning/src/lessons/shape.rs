@@ -12,7 +12,7 @@
 //! since the previous check). The phase is the caller's to name; nothing infers
 //! it from the lesson.
 use crate::dto::LessonQuestionKind;
-use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding, Rule};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -333,8 +333,8 @@ fn text<'a>(item: &'a Value, field: &str) -> &'a str {
     item.get(field).and_then(Value::as_str).unwrap_or_default()
 }
 
-fn structure(site: FindingSite, summary: String, note: String) -> ReviewFinding {
-    ReviewFinding::new(FindingKind::Structure, Some(site), note).with_summary(summary)
+fn structure(rule: Rule, site: FindingSite, summary: String, note: String) -> ReviewFinding {
+    ReviewFinding::rule(rule, FindingKind::Structure, site, note).with_summary(summary)
 }
 
 fn kind_count(items: &[Value], kind: &str) -> usize {
@@ -435,6 +435,7 @@ fn order_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
     for index in unshown_checks(blocks) {
         let section = format!("Section {} (candidate blocks-{index})", index + 1);
         found.push(structure(
+            Rule::UnshownCheck,
             FindingSite::Section(index),
             format!("Section {} is a check on an idea that no worked example has shown since the previous check.", index + 1),
             format!("{section} checks an idea no worked example has shown since the previous check; place each check after the example of the idea it asks the learner to apply."),
@@ -444,6 +445,7 @@ fn order_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
     if let (Some(reflection), Some(recap)) = (first("reflection"), first("recap")) {
         if reflection > recap {
             found.push(structure(
+                Rule::RecapFirst,
                 FindingSite::Section(recap),
                 format!("Section {} recaps the lesson before the learner is asked to explain it from memory.", recap + 1),
                 format!("Section {} (candidate blocks-{recap}) recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", recap + 1),
@@ -473,6 +475,7 @@ fn section_mix_finding(blocks: &[Value]) -> Option<ReviewFinding> {
         .map(|(kind, count, _, _)| counted(*count, &kind.replace('_', " ")))
         .collect();
     Some(structure(
+        Rule::SectionMix,
         FindingSite::Lesson,
         format!(
             "The lesson should have {}. It has {}.",
@@ -507,6 +510,7 @@ fn question_count_finding(questions: &[Value]) -> Option<ReviewFinding> {
         .map(|(kind, count)| counted(*count, &format!("{kind} question")))
         .collect();
     Some(structure(
+        Rule::QuestionCount,
         FindingSite::Lesson,
         format!(
             "The lesson needs {}. It has {}.",
@@ -526,6 +530,7 @@ fn explanation_finding(blocks: &[Value]) -> Option<ReviewFinding> {
         return None;
     }
     Some(structure(
+        Rule::NoExplanation,
         FindingSite::Lesson,
         "The lesson has no explanation.".to_owned(),
         "The lesson has no explanation section; it needs one, which teaches an idea before a check or a question asks about it.".to_owned(),
@@ -542,6 +547,7 @@ fn question_kinds_finding(questions: &[Value]) -> Option<ReviewFinding> {
         return None;
     }
     Some(structure(
+        Rule::QuestionKinds,
         FindingSite::Lesson,
         format!(
             "The lesson has no {} question, and it needs one of each kind.",

@@ -3,7 +3,7 @@ use super::copied_wording::{self, Wording};
 use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::shape::LessonShape;
-use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding, Rule};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -125,9 +125,10 @@ pub(crate) fn structural_findings(
     let value: Value = match serde_json::from_str(candidate) {
         Ok(value) => value,
         Err(_) => {
-            return Ok(vec![ReviewFinding::new(
+            return Ok(vec![ReviewFinding::rule(
+                Rule::Unreadable,
                 FindingKind::Structure,
-                Some(FindingSite::Lesson),
+                FindingSite::Lesson,
                 "The material could not be read as a whole. Supply the complete material.",
             )
             .with_summary("The lesson could not be read as a whole.")])
@@ -138,16 +139,14 @@ pub(crate) fn structural_findings(
     let mut issues = Vec::new();
     if let Err(errors) = validator.validate(&value) {
         issues.extend(errors.map(|error| {
-            ReviewFinding::new(
+            let (at, rule_at) = (error.instance_path.to_string(), error.schema_path.to_string());
+            let rule = plain_rule(schema.value().pointer(&rule_at));
+            ReviewFinding::rule_about(
+                Rule::Schema,
                 FindingKind::Structure,
-                Some(FindingSite::of_pointer(&error.instance_path.to_string())),
-                format!(
-                    "Fix the schema violation at {}: {}",
-                    error.instance_path, error
-                )
-                .chars()
-                .take(650)
-                .collect::<String>(),
+                FindingSite::of_pointer(&at),
+                &format!("{at} {rule_at}"),
+                format!("Fix the schema violation at {at}: the value there does not meet {rule_at}{rule}."),
             )
         }));
     }
@@ -156,9 +155,10 @@ pub(crate) fn structural_findings(
             let kind = block["kind"].as_str().unwrap_or_default();
             if block["body"].as_str().unwrap_or_default().trim().is_empty() {
                 issues.push(
-                    ReviewFinding::new(
+                    ReviewFinding::rule(
+                        Rule::BlockBody,
                         FindingKind::Structure,
-                        Some(FindingSite::Section(index)),
+                        FindingSite::Section(index),
                         format!("Teaching block {} has no body.", index + 1),
                     )
                     .with_summary(format!("Section {} has no text.", index + 1)),
@@ -168,7 +168,7 @@ pub(crate) fn structural_findings(
                 && block["rubric"].as_array().is_none_or(|r| r.len() < 2)
             {
                 issues.push(
-                    ReviewFinding::new(FindingKind::Structure, Some(FindingSite::Section(index)), format!("Practice block {} needs two to four observable, task-specific rubric criteria.", index + 1))
+                    ReviewFinding::rule(Rule::PracticeRubric, FindingKind::Structure, FindingSite::Section(index), format!("Practice block {} needs two to four observable, task-specific rubric criteria.", index + 1))
                         .with_summary(format!("Section {} is a practice section and needs two to four clear criteria for judging an answer.", index + 1)),
                 );
             }
@@ -179,6 +179,23 @@ pub(crate) fn structural_findings(
         issues.extend(shape.policy.rules(&value, shape.phase()));
     }
     Ok(issues)
+}
+
+/// A schema rule as a note quotes it: a scalar, or a list of scalars. A rule
+/// that holds more is left to the schema path.
+fn plain_rule(rule: Option<&Value>) -> String {
+    let scalar = |value: &Value| !matches!(value, Value::Array(_) | Value::Object(_));
+    match rule {
+        Some(rule)
+            if scalar(rule)
+                || rule
+                    .as_array()
+                    .is_some_and(|items| items.iter().all(scalar)) =>
+        {
+            format!(" ({rule})")
+        }
+        _ => String::new(),
+    }
 }
 
 /// What material is reviewed against. Only a lesson's schema, with the policy
@@ -212,22 +229,22 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
         .map(|check| {
             let path = check["path"].as_str().unwrap_or_default();
             let site = FindingSite::of_part(path).unwrap_or(FindingSite::Lesson);
-            ReviewFinding::new(
+            let quote = check["quote"].as_str().unwrap_or_default();
+            ReviewFinding::rule_about(
+                Rule::Quotation,
                 FindingKind::Quotation,
-                Some(site),
+                site,
+                quote,
                 format!(
                     "The source quotation at {path} does not match its saved reference: {} Copy a relevant exact span from the cited source, including its punctuation and formatting; quotes contain at least {MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words.",
                     check["error"].as_str().unwrap_or("it was not found.")
-                )
-                .chars()
-                .take(700)
-                .collect::<String>(),
+                ),
             )
             .with_summary(format!(
                 "The quotation cited in {} could not be found in its source.",
                 plain_part(site)
             ))
-            .with_passage(check["quote"].as_str().unwrap_or_default())
+            .with_passage(quote)
         })
         .collect()
 }
@@ -244,8 +261,7 @@ fn whole_repairs(structure: &[ReviewFinding]) -> impl Iterator<Item = &ReviewFin
 /// Whether the structure findings hold up the content review. Structure the
 /// machine stopped repairing no longer does.
 fn holds_up_review(structure: &[ReviewFinding], passes: Option<&Passes>) -> bool {
-    whole_repairs(structure)
-        .any(|finding| passes.is_none_or(|passes| passes.repairable(&finding.key())))
+    whole_repairs(structure).any(|finding| passes.is_none_or(|passes| passes.repairable(finding)))
 }
 
 /// A second model call critiques the actual candidate. One targeted repair is

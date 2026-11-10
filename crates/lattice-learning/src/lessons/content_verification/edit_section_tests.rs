@@ -14,7 +14,7 @@ use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::{ClaimReviewService, SectionEdit, SectionEditOutcome};
 use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, SetAside};
+use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule, SetAside};
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimId, ClaimLedgerEntry, ClaimState, Ledger,
@@ -608,7 +608,7 @@ async fn three_notes(course: &Course) -> Result<TeachingFindingsRepository> {
         {"title":"Section 1","body":section(&figure(7))}
     ],"questions":[]});
     let note = |kind, site, text: &str| SetAside {
-        finding: ReviewFinding::new(kind, Some(site), text),
+        finding: ReviewFinding::rule(Rule::Quotation, kind, site, text),
         repairs: 0,
     };
     store

@@ -22,7 +22,7 @@ fn check_lesson() -> Value {
 }
 
 fn finding(site: FindingSite, passage: &str) -> ReviewFinding {
-    ReviewFinding::new(FindingKind::Teaching, Some(site), "the key is wrong").with_passage(passage)
+    ReviewFinding::reviewer(Some(site), "the key is wrong").with_passage(passage)
 }
 
 fn kept(
@@ -218,9 +218,10 @@ fn cited_lesson() -> Value {
 }
 
 fn uncited(site: FindingSite) -> ReviewFinding {
-    ReviewFinding::new(
+    ReviewFinding::rule(
+        Rule::Uncited,
         FindingKind::Quotation,
-        Some(site),
+        site,
         "states a detail without citing it",
     )
 }

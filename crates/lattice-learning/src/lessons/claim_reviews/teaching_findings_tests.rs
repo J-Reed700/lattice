@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::review_findings::ReviewFinding;
+use crate::review_findings::{ReviewFinding, Rule};
 use serde_json::json;
 
 async fn pool() -> SqlitePool {
@@ -27,7 +27,7 @@ fn lesson() -> Value {
 
 fn set_aside(kind: FindingKind, site: FindingSite, note: &str, repairs: u8) -> SetAside {
     SetAside {
-        finding: ReviewFinding::new(kind, Some(site), note),
+        finding: ReviewFinding::rule(Rule::Quotation, kind, site, note),
         repairs,
     }
 }

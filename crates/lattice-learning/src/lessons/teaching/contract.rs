@@ -6,7 +6,7 @@ use super::protected;
 use crate::lessons::content_verification::{unit_fields, Protected};
 use crate::lessons::same_text;
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::{subject_of, FindingSite, PlanCheck, ReviewFinding};
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -350,9 +350,10 @@ fn findings(
             "The quoted name is a short label for it, not wording for the lesson: teach what it names in the lesson's own sentences, worked into what the part already says, without copying the label. "
         };
         found.push(
-            ReviewFinding::new(
-                FindingKind::Teaching,
-                Some(site),
+            ReviewFinding::plan(
+                PlanCheck::Planned,
+                &item.id,
+                site,
                 format!(
                     "The lesson does not yet teach the {} \"{}\". {label}Teach it in the lesson's own words: {}",
                     item.kind,
@@ -369,9 +370,10 @@ fn findings(
     for used in &settled.uses {
         let (part, passage) = (used.hit.part, &used.hit.found.exact);
         found.push(
-            ReviewFinding::new(
-                FindingKind::Teaching,
-                Some(part.site),
+            ReviewFinding::plan(
+                PlanCheck::Used,
+                subject_of(passage),
+                part.site,
                 format!(
                     concat!("{} asks the learner to use {} (\"{passage}\"), and nothing before this point in the lesson, the earlier lessons or the learner's prior knowledge has taught it. Teach it in this step, where it is first used (", shown!(), "), or change the step to use only what the lesson has taught."),
                     label(part.site),
@@ -399,10 +401,13 @@ fn findings(
         } else {
             (first.part, one)
         };
+        let mut digests = [subject_of(one), subject_of(other)];
+        digests.sort();
         found.push(
-            ReviewFinding::new(
-                FindingKind::Teaching,
-                Some(at.site),
+            ReviewFinding::plan(
+                PlanCheck::Contradiction,
+                digests.join("-"),
+                at.site,
                 format!(
                     "The lesson contradicts itself: {} says \"{one}\" and {} says \"{other}\". Correct the one that is wrong so the lesson says one thing.",
                     label(first.part.site),
@@ -421,9 +426,10 @@ fn findings(
         for hit in hits(parts, &pointer.quote) {
             let (part, passage) = (hit.part, &hit.found.exact);
             found.push(
-                ReviewFinding::new(
-                    FindingKind::Teaching,
-                    Some(part.site),
+                ReviewFinding::plan(
+                    PlanCheck::Unseen,
+                    subject_of(passage),
+                    part.site,
                     format!(
                         "{} points the learner at something the lesson does not contain (\"{passage}\": {}). Put what is meant in the lesson's own words, or remove the reference.",
                         label(part.site),

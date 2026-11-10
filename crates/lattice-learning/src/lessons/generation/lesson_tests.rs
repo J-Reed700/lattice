@@ -97,7 +97,7 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
         &Default::default(),
     )
     .unwrap();
-    let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.key().id()).collect();
+    let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.place().id()).collect();
     let expected = [
         "structure:lesson",
         "structure:section-1",
@@ -127,9 +127,10 @@ fn the_publication_check_reports_a_question_kind_the_lesson_lacks() {
     )
     .unwrap();
     assert!(
-        findings.iter().any(
-            |finding| finding.key().id() == "structure:lesson" && finding.note.contains("test")
-        ),
+        findings
+            .iter()
+            .any(|finding| finding.place().id() == "structure:lesson"
+                && finding.note.contains("test")),
         "{findings:?}"
     );
 }
@@ -142,7 +143,7 @@ fn a_quotation_that_does_not_match_keeps_its_source_and_waits_for_the_user() {
     let (prepared, citations) = assemble(lesson, &sources, &HashSet::from(["source-a"])).unwrap();
     assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
     assert_eq!(citations.len(), 1);
-    assert_eq!(citations[0].key().id(), "quotation:section-2");
+    assert_eq!(citations[0].place().id(), "quotation:section-2");
     assert!(citations[0].note.contains("blocks[2]"));
     assert_eq!(
         citations[0].summary,
@@ -185,7 +186,7 @@ fn a_cited_sentence_adds_its_source_and_one_that_cannot_be_confirmed_is_a_findin
     assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
     assert_eq!(prepared.blocks[3].source_ids, ["source-a"]);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().id(), "quotation:section-2");
+    assert_eq!(findings[0].place().id(), "quotation:section-2");
     assert!(findings[0].note.contains("Water boils at 50 degrees"));
     assert_eq!(
         findings[0].summary,
@@ -262,7 +263,7 @@ fn a_quotation_with_different_words_is_still_a_finding_beside_a_curly_source() {
     let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
 
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().id(), "quotation:section-2");
+    assert_eq!(findings[0].place().id(), "quotation:section-2");
     assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
 }
 
@@ -409,7 +410,7 @@ fn an_invented_citation_in_a_course_without_sources_is_dropped_and_reported() {
     lesson.questions[0].quote = "An imaginary textbook says this is true.".into();
     let (prepared, citations) = assemble(lesson, &[], &HashSet::new()).unwrap();
     assert!(prepared.questions[0].source_ids.is_empty());
-    assert_eq!(citations[0].key().id(), "quotation:question-0");
+    assert_eq!(citations[0].place().id(), "quotation:question-0");
 }
 
 #[test]

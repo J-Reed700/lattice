@@ -13,7 +13,10 @@ use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::content_verification::Protected;
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{FindingKey, FindingKind, ReviewFinding, SetAside};
+use crate::review_findings::{
+    new_sentences, part_at, sentences_of, FindingKey, FindingKind, FindingSite, ReviewFinding,
+    Rule, SetAside,
+};
 use crate::teaching_review::LengthRule;
 use lattice_core::{
     application::ports::LLMPort,
@@ -101,8 +104,13 @@ pub(super) trait Subject: Send + Sync {
     ) -> Result<Vec<Value>>;
     /// Every check of one pass.
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found>;
-    /// What to do with a pass's findings.
-    fn decide(&mut self, attempt: usize, found: Vec<ReviewFinding>) -> Result<Decision>;
+    /// What to do with a pass's findings, raised on `candidate`.
+    fn decide(
+        &mut self,
+        attempt: usize,
+        candidate: &Value,
+        found: Vec<ReviewFinding>,
+    ) -> Result<Decision>;
     /// Takes one repair call's result into the candidate.
     fn settle_repair(
         &mut self,
@@ -232,7 +240,7 @@ async fn closed_find(
     // Machine-checked failures are additional findings, not replacements
     // for an instructional issue the reviewer already reported.
     if pass.attempt == 0 && !pass.quote_checks.is_empty() {
-        findings.insert(0, ReviewFinding::new(FindingKind::Quotation, None, format!(
+        findings.insert(0, ReviewFinding::rule(Rule::QuoteChecks, FindingKind::Quotation, FindingSite::Lesson, format!(
             "Source quote validation found {} invalid citations. Fix every field listed in sourceQuoteChecks by copying a relevant exact source span, including its punctuation and formatting. Do not turn actual line breaks into literal backslash-n text. Quotes must contain at least {MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words. An approval cannot override this deterministic check.", pass.quote_checks.len()
         )));
     }
@@ -371,7 +379,7 @@ impl Subject for LessonSubject<'_> {
         // for the user (claim classes design §3.10).
         if !self.protected.is_empty() {
             self.passes
-                .hold(whole_repairs(&structure).map(ReviewFinding::key));
+                .hold(whole_repairs(&structure).map(ReviewFinding::id));
         }
         let blocking = holds_up_review(&structure, Some(&self.passes));
         let issues = if !blocking {
@@ -440,8 +448,13 @@ impl Subject for LessonSubject<'_> {
         })
     }
 
-    fn decide(&mut self, attempt: usize, found: Vec<ReviewFinding>) -> Result<Decision> {
-        match self.passes.next(found) {
+    fn decide(
+        &mut self,
+        attempt: usize,
+        candidate: &Value,
+        found: Vec<ReviewFinding>,
+    ) -> Result<Decision> {
+        match self.passes.next(candidate, found) {
             Next::Done(set_aside) => {
                 if !set_aside.is_empty() {
                     tracing::info!(
@@ -513,7 +526,42 @@ impl Subject for LessonSubject<'_> {
                 Ok(Settled::Publish(self.passes.set_aside()))
             }
             Err(error) => Err(error),
-            Ok(text) => Ok(Settled::Changed(text)),
+            Ok(text) => {
+                record_work(&mut self.passes, previous, send, &text);
+                Ok(Settled::Changed(text))
+            }
+        }
+    }
+}
+
+/// What an applied repair puts its findings' words through: the sentences it
+/// wrote count for the findings it was sent for, and each finding whose part
+/// it changed counts the words it was applied for.
+fn record_work(passes: &mut Passes, previous: &Value, send: &[ReviewFinding], text: &str) {
+    let Ok(repaired) = serde_json::from_str::<Value>(text) else {
+        return;
+    };
+    for (site, sentences) in new_sentences(previous, &repaired) {
+        let owners: Vec<&ReviewFinding> = send
+            .iter()
+            .filter(|finding| {
+                matches!(finding.site, None | Some(FindingSite::Lesson))
+                    || finding.site == Some(site)
+            })
+            .collect();
+        let owners = if owners.is_empty() {
+            send.iter().collect()
+        } else {
+            owners
+        };
+        for owner in owners {
+            passes.worked_on(&owner.id(), sentences.clone());
+        }
+    }
+    for finding in send {
+        let site = finding.site.unwrap_or(FindingSite::Lesson);
+        if part_at(previous, site) != part_at(&repaired, site) {
+            passes.worked_on(&finding.id(), sentences_of(previous, finding));
         }
     }
 }
@@ -614,7 +662,12 @@ impl Subject for OutlineSubject<'_> {
         .await
     }
 
-    fn decide(&mut self, attempt: usize, found: Vec<ReviewFinding>) -> Result<Decision> {
+    fn decide(
+        &mut self,
+        attempt: usize,
+        _candidate: &Value,
+        found: Vec<ReviewFinding>,
+    ) -> Result<Decision> {
         closed_decide(&mut self.original_issues, attempt, found)
     }
 
@@ -695,7 +748,12 @@ impl Subject for MaterialSubject {
         .await
     }
 
-    fn decide(&mut self, attempt: usize, found: Vec<ReviewFinding>) -> Result<Decision> {
+    fn decide(
+        &mut self,
+        attempt: usize,
+        _candidate: &Value,
+        found: Vec<ReviewFinding>,
+    ) -> Result<Decision> {
         closed_decide(&mut self.original_issues, attempt, found)
     }
 

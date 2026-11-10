@@ -1,7 +1,7 @@
 //! Bind review findings to app-owned passages, not model-transcribed quotations.
 use crate::lessons::structured_call::{CallKind, ReasonFirst};
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::{FindingSite, ReviewFinding};
 use crate::{generation, outline_progress::OutlineProgress};
 use lattice_core::{
     application::ports::LLMPort,
@@ -164,7 +164,7 @@ pub async fn review(
 ) -> Result<Vec<ReviewFinding>> {
     // Save findings, including defects, before the later grounding/repair step.
     // Reusing a completed review never approves the lesson or skips grounding.
-    let key = format!("teaching-review-findings-v2:{}", crate::content_verification::digest(
+    let key = format!("teaching-review-findings-v3:{}", crate::content_verification::digest(
         &json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":prompt,"candidate":candidate}).to_string()
     ));
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
@@ -265,7 +265,7 @@ async fn review_sections(
                     } else if !blank && !issues.iter().any(|known| known.note == issue) {
                         let summary = issue.trim().to_owned();
                         issues.push(
-                            ReviewFinding::new(FindingKind::Teaching, None, issue)
+                            ReviewFinding::reviewer(None, issue)
                                 .with_summary(summary),
                         );
                     }
@@ -307,7 +307,7 @@ async fn review_sections(
                         if indices.contains(&index) && !finding.trim().is_empty() {
                             let note = format!("Section {} (candidate blocks-{index}): {}", index + 1, finding);
                             if !issues.iter().any(|known| known.note == note) {
-                                let mut issue = ReviewFinding::new(FindingKind::Teaching, Some(FindingSite::Section(index)), note)
+                                let mut issue = ReviewFinding::reviewer(Some(FindingSite::Section(index)), note)
                                     .with_summary(finding.trim());
                                 issue.passage = value.get("passageId").and_then(Value::as_str).and_then(|id| passage_text(&shown, index, id));
                                 issues.push(issue);
@@ -376,6 +376,7 @@ mod tests {
     use super::test_support::candidate;
     use super::*;
     use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
+    use crate::review_findings::FindingKind;
 
     fn check(index: usize) -> Value {
         json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})

@@ -6,7 +6,7 @@
 //! one reverted and every protected one byte-identical.
 
 use crate::lessons::content_verification::{confine, unit_fields, Protected};
-use crate::review_findings::{FindingKey, FindingSite, ReviewFinding};
+use crate::review_findings::{FindingId, FindingSite, ReviewFinding};
 use lattice_core::shared::error::Result;
 use serde_json::Value;
 
@@ -34,7 +34,7 @@ fn blocks_in(lesson: &Value) -> usize {
 /// The unit index of a finding in the lesson candidate.
 fn unit_of(candidate: &Value, finding: &ReviewFinding) -> Option<usize> {
     let blocks = blocks_in(candidate);
-    match finding.key().site {
+    match finding.site.unwrap_or(FindingSite::Lesson) {
         FindingSite::Section(section) => Some(section),
         FindingSite::Question(question) => Some(blocks + question),
         FindingSite::Lesson => None,
@@ -75,12 +75,7 @@ pub(super) fn guards(
     passage: &str,
     protected: &[Protected],
 ) -> bool {
-    let finding = ReviewFinding::new(
-        crate::review_findings::FindingKind::Teaching,
-        Some(site),
-        "",
-    )
-    .with_passage(passage);
+    let finding = ReviewFinding::reviewer(Some(site), "").with_passage(passage);
     unit_of(candidate, &finding)
         .is_some_and(|unit| overlapping_quote(&finding, &in_unit(protected, unit)))
 }
@@ -91,14 +86,14 @@ pub(super) fn on_protected(
     candidate: &Value,
     findings: &[ReviewFinding],
     protected: &[Protected],
-) -> Vec<FindingKey> {
+) -> Vec<FindingId> {
     if protected.is_empty() {
         return Vec::new();
     }
     let mut held = Vec::new();
     for finding in findings {
-        if finding.key().site == FindingSite::Lesson {
-            held.push(finding.key());
+        if finding.site.unwrap_or(FindingSite::Lesson) == FindingSite::Lesson {
+            held.push(finding.id());
             continue;
         }
         let Some(unit) = unit_of(candidate, finding) else {
@@ -122,7 +117,7 @@ pub(super) fn on_protected(
             .into_iter()
             .any(|target| text_fields.contains(&target.field));
         if overlapping_quote(finding, &fixed) || !editable {
-            held.push(finding.key());
+            held.push(finding.id());
         }
     }
     held
@@ -284,7 +279,7 @@ pub(super) fn confine_review(
     repaired: &str,
     sent: &[ReviewFinding],
     protected: &[Protected],
-) -> Result<(Option<String>, Vec<FindingKey>)> {
+) -> Result<(Option<String>, Vec<FindingId>)> {
     let mut lesson: Value = crate::generation::parse_json(repaired)?;
     let blocks = blocks_in(previous);
     for (unit, (field, index)) in sections(previous).into_iter().enumerate() {
@@ -322,16 +317,16 @@ pub(super) fn confine_review(
             .collect();
         *after = confine(before, after, &targets, &kept)?.section;
     }
-    let unchanged: Vec<FindingKey> = sent
+    let unchanged: Vec<FindingId> = sent
         .iter()
         .filter(|finding| match unit_of(previous, finding) {
             Some(unit) => section_at(previous, unit) == section_at(&lesson, unit),
             None => true,
         })
-        .map(ReviewFinding::key)
+        .map(ReviewFinding::id)
         .collect();
     if lesson == *previous {
-        Ok((None, sent.iter().map(ReviewFinding::key).collect()))
+        Ok((None, sent.iter().map(ReviewFinding::id).collect()))
     } else {
         Ok((Some(lesson.to_string()), unchanged))
     }

@@ -23,7 +23,7 @@ use crate::lessons::claim_reviews::service::{
 use crate::lessons::claim_reviews::teaching_findings::{
     TeachingFindingSiteDto, TeachingFindingsRepository,
 };
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, SetAside};
+use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule, SetAside};
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EventProvenance,
@@ -925,7 +925,7 @@ async fn notes(course: &Course) -> Result<TeachingFindingsRepository> {
         {"prompt":P1,"options":C1,"explanation":E1}
     ]});
     let note = |kind, site, text: &str| SetAside {
-        finding: ReviewFinding::new(kind, Some(site), text),
+        finding: ReviewFinding::rule(Rule::Quotation, kind, site, text),
         repairs: 0,
     };
     store

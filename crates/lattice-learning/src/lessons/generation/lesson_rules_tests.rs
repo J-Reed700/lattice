@@ -61,7 +61,7 @@ fn a_teaching_sentence_in_two_sections_is_a_finding_at_the_later_one() {
     candidate["blocks"][4]["body"] = json!(format!("Closing.  {SHARED}"));
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].place().site, FindingSite::Section(4));
     assert_eq!(findings[0].kind, FindingKind::Teaching);
     assert_eq!(findings[0].passage.as_deref(), Some(SHARED));
 }
@@ -74,7 +74,7 @@ fn each_broken_rule_is_a_finding_at_its_place() {
     candidate["questions"][3]["prompt"] = json!("q1?");
     candidate["questions"][4]["options"] = json!(["Yes", "yes", "Maybe", "No way"]);
     let findings = lesson_rules(&candidate);
-    let sites: Vec<_> = findings.iter().map(|f| f.key().site).collect();
+    let sites: Vec<_> = findings.iter().map(|f| f.place().site).collect();
     assert_eq!(
         sites,
         [
@@ -109,7 +109,7 @@ fn a_check_holds_its_answer_back_under_one_reveal_line() {
         candidate["blocks"][3]["body"] = json!(body);
         let findings = lesson_rules(&candidate);
         assert_eq!(findings.len(), 1, "{body}");
-        assert_eq!(findings[0].key().site, FindingSite::Section(3));
+        assert_eq!(findings[0].place().site, FindingSite::Section(3));
         assert!(findings[0].note.contains(CHECK_REVEAL));
     }
 }
@@ -123,7 +123,7 @@ fn checks_follow_an_example_and_recall_comes_before_the_recap() {
     blocks.swap(1, 3);
     blocks.swap(9, 10);
     let findings = lesson_rules(&candidate);
-    let sites: Vec<_> = findings.iter().map(|f| f.key().site).collect();
+    let sites: Vec<_> = findings.iter().map(|f| f.place().site).collect();
     assert_eq!(sites, [FindingSite::Section(1), FindingSite::Section(9)]);
     assert!(findings[0].note.contains("no worked example has shown"));
     assert!(findings[1].note.contains("from memory"));
@@ -136,7 +136,7 @@ fn a_check_needs_its_own_ideas_example_since_the_last_check() {
     let mut candidate = lesson();
     candidate["blocks"].as_array_mut().unwrap().swap(5, 6);
     let findings = lesson_rules(&candidate);
-    let sites: Vec<_> = findings.iter().map(|f| f.key().site).collect();
+    let sites: Vec<_> = findings.iter().map(|f| f.place().site).collect();
     assert_eq!(sites, [FindingSite::Section(5)]);
 }
 
@@ -156,7 +156,7 @@ fn a_specific_without_a_citation_is_a_finding_at_its_section() {
     let findings = lesson_rules(&candidate);
 
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Section(0));
+    assert_eq!(findings[0].place().site, FindingSite::Section(0));
     assert_eq!(findings[0].kind, FindingKind::Quotation);
     assert!(findings[0].note.contains("without citing it"));
     assert!(findings[0].note.contains(TIMEOUT));
@@ -438,7 +438,7 @@ fn a_question_needs_one_reason_per_choice() {
         candidate["questions"][1]["rationales"] = reasons.clone();
         let findings = lesson_rules(&candidate);
         assert_eq!(findings.len(), 1, "{reasons}");
-        assert_eq!(findings[0].key().site, FindingSite::Question(1));
+        assert_eq!(findings[0].place().site, FindingSite::Question(1));
         assert_eq!(findings[0].kind, FindingKind::Structure);
     }
     let mut missing = lesson();
@@ -455,7 +455,7 @@ fn a_wrong_choice_without_a_reason_is_a_finding_and_the_right_choices_empty_entr
     candidate["questions"][2]["rationales"] = json!(["", "", "Three fails.", "  "]);
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(2));
+    assert_eq!(findings[0].place().site, FindingSite::Question(2));
     assert_eq!(findings[0].kind, FindingKind::Structure);
     assert!(
         findings[0].summary.contains("choice 2"),
@@ -488,7 +488,7 @@ fn a_reason_is_held_to_the_citation_rule_like_the_explanation() {
     ]);
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(3));
+    assert_eq!(findings[0].place().site, FindingSite::Question(3));
     assert_eq!(findings[0].kind, FindingKind::Quotation);
 
     candidate["questions"][3]["citations"] = json!([
@@ -505,7 +505,7 @@ fn a_question_explanation_is_held_to_the_same_rule() {
     let findings = lesson_rules(&candidate);
 
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(2));
+    assert_eq!(findings[0].place().site, FindingSite::Question(2));
 }
 
 /// What a section is left to teach with: prose, not headings, markers or
@@ -538,7 +538,7 @@ fn a_question_prompt_longer_than_1200_characters_is_no_finding() {
     candidate["questions"][1]["prompt"] = json!("  ");
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(1));
+    assert_eq!(findings[0].place().site, FindingSite::Question(1));
 }
 
 #[test]
@@ -590,7 +590,7 @@ fn a_check_with_a_few_words_on_each_side_of_its_reveal_is_held_back() {
         candidate["blocks"][3]["body"] = json!(body);
         let findings = lesson_rules(&candidate);
         assert_eq!(findings.len(), 1, "{body}");
-        assert_eq!(findings[0].key().site, FindingSite::Section(3));
+        assert_eq!(findings[0].place().site, FindingSite::Section(3));
     }
 }
 
@@ -638,7 +638,7 @@ fn a_sentence_naming_a_source_by_number_is_a_finding_with_its_whole_sentence() {
 
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].kind, FindingKind::Quotation);
-    assert_eq!(findings[0].key().site, FindingSite::Section(0));
+    assert_eq!(findings[0].place().site, FindingSite::Section(0));
     assert_eq!(
         findings[0].summary,
         format!("This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}")
@@ -653,7 +653,7 @@ fn a_source_named_in_a_question_is_a_finding_at_the_question() {
     candidate["questions"][0]["prompt"] = json!("What does source 1 say the shell does?");
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(0));
+    assert_eq!(findings[0].place().site, FindingSite::Question(0));
     assert!(findings[0]
         .summary
         .starts_with("This sentence names a source by its number"));
@@ -725,7 +725,7 @@ fn a_prose_sentence_after_a_label_is_still_compared() {
     candidate["blocks"][4]["body"] = json!(format!("**Case.** Fresh start here. {SHARED}"));
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].place().site, FindingSite::Section(4));
     assert_eq!(findings[0].passage.as_deref(), Some(SHARED));
 }
 
@@ -769,7 +769,7 @@ fn prose_after_a_list_has_ended_is_compared_again() {
     candidate["blocks"][4]["body"] = json!(format!("{STEP}\n\n{SAID}"));
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].place().site, FindingSite::Section(4));
     assert_eq!(findings[0].passage.as_deref(), Some(SAID));
 }
 
@@ -882,7 +882,7 @@ fn question_case(prompt: &str, options: [&str; 4], key: usize) -> Value {
 fn first_question_notes(candidate: &Value) -> Vec<String> {
     lesson_rules(candidate)
         .into_iter()
-        .filter(|finding| finding.key().site == FindingSite::Question(0))
+        .filter(|finding| finding.place().site == FindingSite::Question(0))
         .map(|finding| finding.note)
         .collect()
 }

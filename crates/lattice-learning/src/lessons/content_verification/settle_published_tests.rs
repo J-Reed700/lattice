@@ -18,7 +18,7 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::ClaimReviewService;
 use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
 use crate::repository::LearningRepository;
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, SetAside};
+use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule, SetAside};
 use async_trait::async_trait;
 use lattice_core::application::contracts::web::{
     FetchUrlContentOutput, WebSearchInput, WebSearchOutput,
@@ -1331,9 +1331,10 @@ async fn note_about(course: &Course, section: usize, sentence: Option<&str>) -> 
     let candidate = json!({"blocks":[
         {"title":"One","body":"Body."},{"title":"Two","body":"Body."}
     ],"questions":[]});
-    let mut finding = ReviewFinding::new(
+    let mut finding = ReviewFinding::rule(
+        Rule::Quotation,
         FindingKind::Quotation,
-        Some(FindingSite::Section(section)),
+        FindingSite::Section(section),
         "A note.",
     )
     .with_summary("No source is cited for this sentence.");
@@ -1827,9 +1828,13 @@ async fn notes_about(course: &Course, notes: &[(usize, FindingKind, &str)]) -> R
     let set_aside: Vec<SetAside> = notes
         .iter()
         .map(|(section, kind, sentence)| {
-            let mut finding =
-                ReviewFinding::new(*kind, Some(FindingSite::Section(*section)), "A note.")
-                    .with_summary("No source is cited for this sentence.");
+            let mut finding = ReviewFinding::rule(
+                Rule::Quotation,
+                *kind,
+                FindingSite::Section(*section),
+                "A note.",
+            )
+            .with_summary("No source is cited for this sentence.");
             finding.sentence = Some((*sentence).to_owned());
             SetAside {
                 finding,
