@@ -1,4 +1,19 @@
+use super::protocol::protocol_for;
 use super::*;
+use lattice_core::application::contracts::settings::LLMProvider;
+use lattice_core::application::ports::llm_port::{ThinkingMode, ToolChoice};
+use serde_json::json;
+
+fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionResponse> {
+    protocol_for(provider)?.parse_reply(value)
+}
+
+fn claude_thinks_unasked(model: &str) -> bool {
+    protocol_for(LLMProvider::Anthropic)
+        .unwrap()
+        .thinks_unasked(model)
+}
+
 #[test]
 fn typed_tool_calls_keep_ids_and_usage() {
     let result = parse_completion(LLMProvider::Openai, json!({"status":"completed","output":[{"type":"function_call","call_id":"call_123","name":"search","arguments":"{\"q\":\"rust\"}"}],"usage":{"input_tokens":12,"output_tokens":3}})).unwrap();
@@ -269,7 +284,7 @@ fn a_schema_asked_for_again_in_words_keeps_the_cached_system_prompt() {
         "output_config": {"format": {"type": "json_schema", "schema": {"type": "object"}}},
         "messages": [],
     });
-    let body = schema::in_words(body);
+    let body = protocol::anthropic::schema::in_words(body);
     let system = body["system"][0]["text"].as_str().unwrap();
     assert!(system.starts_with("Check one claim.\n\n"), "{system}");
     assert!(system.contains("JSON Schema"), "{system}");
@@ -795,7 +810,7 @@ async fn a_streamed_answer_is_timed_from_its_first_delta() {
     ]);
     let sent = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
     let response = streaming::drain(
-        LLMProvider::Openai,
+        protocol_for(LLMProvider::Openai).unwrap(),
         futures::stream::iter([Ok::<_, String>(bytes)]),
         Duration::from_secs(1),
         sent,

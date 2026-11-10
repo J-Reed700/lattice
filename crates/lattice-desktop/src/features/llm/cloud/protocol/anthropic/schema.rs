@@ -3,34 +3,15 @@
 //! schema is too large to send as a format at all, and the retry in words when
 //! Claude refuses one anyway.
 
-use std::time::Instant;
-
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::AppError;
 use serde_json::{json, Value};
-
-use super::CloudLlm;
 
 /// The rejection that stands for Claude refusing a request's response schema.
 const REFUSAL: &str = "Claude could not compile this request's response schema.";
 
-impl CloudLlm {
-    /// Sends `body`, and once more with its schema asked for in words when
-    /// Claude refuses to compile it. How large a grammar a schema compiles to
-    /// cannot be told from its shape ("The compiled grammar is too large").
-    pub(super) async fn send_with_schema(
-        &self,
-        body: Value,
-        deadline: Option<Instant>,
-        bound_body: bool,
-    ) -> Result<reqwest::Response> {
-        match self.send(&body, deadline, bound_body).await {
-            Err(AppError::ModelRejected(message)) if message == REFUSAL => {
-                tracing::info!("Claude refused the response schema; asking for it in words");
-                self.send(&in_words(body), deadline, bound_body).await
-            }
-            sent => sent,
-        }
-    }
+/// Whether `error` is the rejection that stands for a refused response schema.
+pub(super) fn is_refusal(error: &AppError) -> bool {
+    matches!(error, AppError::ModelRejected(message) if message == REFUSAL)
 }
 
 /// Whether `body` asks Claude for a structured response format.
@@ -66,7 +47,7 @@ pub(super) fn log_refusal(body: &Value, reason: &str) {
 
 /// `body` with its response schema asked for in the system prompt instead of
 /// as a format. The caller's parser checks the reply as it would any other.
-pub(super) fn in_words(mut body: Value) -> Value {
+pub(in crate::features::llm::cloud) fn in_words(mut body: Value) -> Value {
     let Some(format) = body
         .get_mut("output_config")
         .and_then(Value::as_object_mut)

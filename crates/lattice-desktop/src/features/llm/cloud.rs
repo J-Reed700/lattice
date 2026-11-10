@@ -3,39 +3,27 @@
 use crate::features::llm::engine::vision::not_set_up_to_see;
 use async_trait::async_trait;
 use lattice_core::application::{
-    contracts::settings::{LLMProvider, LLMSettingsDto},
+    contracts::settings::LLMSettingsDto,
     ports::llm_port::{
-        tool_specs, CompletionInput, CompletionRequest, CompletionResponse, LLMPort, ThinkingMode,
-        ToolChoice, TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
+        tool_specs, CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
+        TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
     },
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
-use reply::parse_completion;
-use schema::{anthropic_schema, anthropic_schema_compiles};
-use serde_json::{json, Value};
+use protocol::{protocol_for, ProviderProtocol, Rooms};
+use serde_json::Value;
 use std::time::{Duration, Instant};
 
 pub mod catalog;
 pub(crate) mod limits;
-mod messages;
+mod protocol;
 mod reply;
-mod schema;
 mod streaming;
 mod timing;
 
-/// The provider's API root. An evaluation run sends every request through a
-/// local recording proxy, named by `variable` in place of the `public` host.
-fn api_base(variable: &str, public: &str) -> String {
-    std::env::var(variable)
-        .ok()
-        .map(|base| base.trim().trim_end_matches('/').to_owned())
-        .filter(|base| !base.is_empty())
-        .unwrap_or_else(|| public.to_owned())
-}
-
 pub struct CloudLlm {
-    provider: LLMProvider,
+    protocol: &'static dyn ProviderProtocol,
     model: String,
     key: String,
     endpoint: String,
@@ -59,7 +47,7 @@ impl CloudLlm {
         self,
         schedulers: &crate::features::llm::scheduler::SchedulerRegistry,
     ) -> std::sync::Arc<dyn LLMPort> {
-        let scheduler = schedulers.cloud(self.provider_name());
+        let scheduler = schedulers.cloud(self.protocol.name());
         let output_limit = self.default_ceiling();
         std::sync::Arc::new(crate::features::llm::scheduler::ScheduledLlm::new(
             std::sync::Arc::new(self),
@@ -74,29 +62,8 @@ impl CloudLlm {
                 "Cloud model and API key are required".into(),
             ));
         }
-        let (variable, public, path) = match settings.provider {
-            LLMProvider::Openai => (
-                "LATTICE_OPENAI_BASE_URL",
-                "https://api.openai.com",
-                "/v1/responses",
-            ),
-            LLMProvider::Anthropic => (
-                "LATTICE_ANTHROPIC_BASE_URL",
-                "https://api.anthropic.com",
-                "/v1/messages",
-            ),
-            LLMProvider::Google => (
-                "LATTICE_GOOGLE_BASE_URL",
-                "https://generativelanguage.googleapis.com",
-                "/v1beta/openai/chat/completions",
-            ),
-            _ => {
-                return Err(AppError::InvalidConfig(
-                    "Expected an explicit cloud provider".into(),
-                ))
-            }
-        };
-        let endpoint = format!("{}{path}", api_base(variable, public));
+        let protocol = protocol_for(settings.provider)?;
+        let endpoint = format!("{}{}", protocol.api_base(), protocol.completion_path());
         // No client-wide timeout: a long answer is bounded by the request's time
         // budget, and a streamed one additionally by stall detection.
         let client = lattice_core::shared::http::reqwest_client_builder()
@@ -105,7 +72,7 @@ impl CloudLlm {
             .build()
             .map_err(|e| AppError::InvalidConfig(e.to_string()))?;
         Ok(Self {
-            provider: settings.provider,
+            protocol,
             model: settings.model.clone(),
             key,
             endpoint,
@@ -151,8 +118,7 @@ impl CloudLlm {
     /// What is sent when a request sets no ceiling: `None` when no one knows
     /// this model's and the provider does not require one.
     fn default_ceiling(&self) -> Option<u32> {
-        (self.output_ceiling_known || self.provider == LLMProvider::Anthropic)
-            .then_some(self.max_tokens)
+        (self.output_ceiling_known || self.protocol.requires_ceiling()).then_some(self.max_tokens)
     }
 
     /// The ceiling sent to a provider that does not require one, if any.
@@ -219,217 +185,12 @@ impl CloudLlm {
         if request.has_images() && self.vision.is_none() {
             return Err(not_set_up_to_see(&self.model));
         }
-        if self.provider == LLMProvider::Openai {
-            let input = messages::openai_input(&request.input)?;
-            let mut body = json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
-            if let Some(max_output) = self.optional_output_room(request) {
-                set_field(&mut body, "max_output_tokens", json!(max_output))?;
-            }
-            if !request.tools.is_empty() {
-                set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"type":"function","name":t.name,"description":t.description,"parameters":t.parameters,"strict":false})).collect::<Vec<_>>()))?;
-                if let Some(choice) = request.tool_choice {
-                    set_field(&mut body, "tool_choice", json!(choice.as_str()))?;
-                }
-            }
-            if let Some(schema) = &request.json_schema {
-                set_field(
-                    &mut body,
-                    "text",
-                    json!({"format":{"type":"json_schema","name":"response","schema":schema,"strict":true}}),
-                )?;
-            }
-            // The Responses API takes no stop sequences, so `request.stop` is
-            // not sent; the output ceiling above still bounds the answer.
-            // `request.thinking` is deliberately not read here: an OpenAI
-            // reasoning model always reasons and a chat model never does, so
-            // the effort level below is the only control the API offers.
-            let effort = openai_reasoning_effort(&self.model, request.reasoning_effort.as_deref());
-            if is_openai_reasoning_model(&self.model)
-                && (effort.is_some() || request.include_reasoning)
-            {
-                let mut reasoning = json!({});
-                if let Some(effort) = effort {
-                    set_field(&mut reasoning, "effort", json!(effort))?;
-                }
-                if request.include_reasoning {
-                    // Raw reasoning tokens are not exposed by the Responses
-                    // API. `auto` asks for the most detailed supported summary.
-                    set_field(&mut reasoning, "summary", json!("auto"))?;
-                }
-                set_field(&mut body, "reasoning", reasoning)?;
-            }
-            // Reasoning models reject both knobs outright, so an override that
-            // would 400 the request is dropped rather than sent: the caller
-            // wanted determinism, not a failed call.
-            if let Some(sampling) = request
-                .sampling
-                .filter(|_| !is_openai_reasoning_model(&self.model))
-            {
-                if let Some(temperature) = sampling.temperature {
-                    set_field(&mut body, "temperature", json!(temperature))?;
-                }
-                if let Some(top_p) = sampling.top_p {
-                    set_field(&mut body, "top_p", json!(top_p))?;
-                }
-            }
-            Ok(body)
-        } else if self.provider == LLMProvider::Google {
-            let messages = messages::chat_messages(&request.input)?;
-            let model = self.model.strip_prefix("models/").unwrap_or(&self.model);
-            let mut body = json!({
-                "model": model,
-                "messages": messages,
-                "stream": stream,
-            });
-            if let Some(max_output) = self.optional_output_room(request) {
-                set_field(&mut body, "max_tokens", json!(max_output))?;
-            }
-            if stream {
-                set_field(&mut body, "stream_options", json!({"include_usage": true}))?;
-            }
-            if let Some(sampling) = request.sampling {
-                if let Some(temperature) = sampling.temperature {
-                    set_field(&mut body, "temperature", json!(temperature))?;
-                }
-                if let Some(top_p) = sampling.top_p {
-                    set_field(&mut body, "top_p", json!(top_p))?;
-                }
-            }
-            if let Some(effort) = request.reasoning_effort.as_deref() {
-                set_field(&mut body, "reasoning_effort", json!(effort))?;
-            }
-            if !request.stop.is_empty() {
-                set_field(&mut body, "stop", json!(request.stop))?;
-            }
-            if !request.tools.is_empty() {
-                set_field(
-                    &mut body,
-                    "tools",
-                    json!(request
-                        .tools
-                        .iter()
-                        .map(|t| json!({
-                            "type": "function",
-                            "function": {
-                                "name": t.name,
-                                "description": t.description,
-                                "parameters": t.parameters,
-                            }
-                        }))
-                        .collect::<Vec<_>>()),
-                )?;
-                if let Some(choice) = request.tool_choice {
-                    let choice_str = match choice {
-                        ToolChoice::Auto => "auto",
-                        ToolChoice::Required => "required",
-                        ToolChoice::None => "none",
-                    };
-                    set_field(&mut body, "tool_choice", json!(choice_str))?;
-                }
-            }
-            if let Some(schema) = &request.json_schema {
-                set_field(
-                    &mut body,
-                    "response_format",
-                    json!({
-                        "type": "json_schema",
-                        "json_schema": {
-                            "name": "response",
-                            "schema": schema,
-                            "strict": true
-                        }
-                    }),
-                )?;
-            }
-            Ok(body)
-        } else {
-            let (system, messages) = messages::anthropic_messages(&request.input)?;
-            // No sampling knobs are sent: current Claude models reject `temperature`,
-            // `top_p` and `top_k` with a 400 (some for any non-default value, all
-            // while thinking). Claude thinks unasked from the 5 family on, and "none"
-            // is expressed by leaving the thinking block out, since asking for
-            // adaptive thinking means think.
-            let effort = request.reasoning_effort.as_deref();
-            // A request for no thinking at all turns it off where the model
-            // allows that; elsewhere it thinks at the lowest effort.
-            let thinking_off = (effort == Some("none") && request.thinking != ThinkingMode::On)
-                .then(|| claude_thinking_off(&self.model))
-                .flatten();
-            let thinks = thinking_off.is_none()
-                && (claude_thinks_unasked(&self.model)
-                    || request.thinking == ThinkingMode::On
-                    || effort.is_some_and(|effort| effort != "none"));
-            let max_tokens = if thinks {
-                self.thinking_room(request)
-            } else {
-                self.output_room(request)
-            };
-            let mut body = json!({"model":self.model,"messages":messages,"max_tokens":max_tokens,"stream":stream});
-            if !system.is_empty() {
-                set_field(&mut body, "system", json!(system.join("\n\n")))?;
-            }
-            if !request.stop.is_empty() {
-                set_field(&mut body, "stop_sequences", json!(request.stop))?;
-            }
-            // A block asks for the thinking; on a model that thinks unasked
-            // it is the same request, and says how its thinking is shown.
-            if thinks {
-                // Thinking is not shown unless asked for: summaries are what a
-                // caller that displays reasoning gets back.
-                let thinking = if request.include_reasoning {
-                    json!({"type":"adaptive","display":"summarized"})
-                } else {
-                    json!({"type":"adaptive"})
-                };
-                set_field(&mut body, "thinking", thinking)?;
-            } else if let Some(off) = thinking_off {
-                set_field(&mut body, "thinking", off)?;
-            }
-            if let Some(effort) = effort {
-                // Anthropic has no "none" effort of its own, so the answer
-                // itself is held at the lowest setting instead.
-                let effort = if effort == "none" { "low" } else { effort };
-                set_field(&mut body, "output_config", json!({"effort":effort}))?;
-            }
-            if !request.tools.is_empty() {
-                set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"name":t.name,"description":t.description,"input_schema":t.parameters})).collect::<Vec<_>>()))?;
-                // A forced call is never sent: models refuse one while extended thinking
-                // is on, and the newest refuse it outright with a 400, so the choice is
-                // left to the model.
-                let choice = match request.tool_choice {
-                    Some(ToolChoice::Auto | ToolChoice::Required) => Some("auto"),
-                    Some(ToolChoice::None) => Some("none"),
-                    None => None,
-                };
-                if let Some(choice) = choice {
-                    set_field(&mut body, "tool_choice", json!({"type": choice}))?;
-                }
-            }
-            if let Some(schema) = &request.json_schema {
-                let schema = anthropic_schema(schema);
-                let compiles = anthropic_schema_compiles(&schema);
-                let mut config = field(&body, "output_config").clone();
-                if config.is_null() {
-                    config = json!({});
-                }
-                set_field(
-                    &mut config,
-                    "format",
-                    json!({"type":"json_schema","schema":schema}),
-                )?;
-                set_field(&mut body, "output_config", config)?;
-                if !compiles {
-                    body = schema::in_words(body);
-                }
-            }
-            // Requests that share a cache key share a prompt prefix, so Claude is
-            // asked to cache it; a one-off request is not, since a cache write costs
-            // more than a plain input token.
-            if request.cache_key.is_some() {
-                body = with_cache_breakpoints(body, continues_an_exchange(&request.input))?;
-            }
-            Ok(body)
-        }
+        self.protocol.body(
+            &self.model,
+            request,
+            stream,
+            &RoomsFor { llm: self, request },
+        )
     }
 
     /// All three attempts and their backoffs share one `deadline`, so a retry
@@ -454,16 +215,7 @@ impl CloudLlm {
                 Some(remaining) => request.timeout(remaining),
                 None => request,
             };
-            let request = match self.provider {
-                LLMProvider::Openai => request.bearer_auth(&self.key),
-                LLMProvider::Anthropic => request
-                    .header("x-api-key", &self.key)
-                    .header("anthropic-version", "2023-06-01"),
-                LLMProvider::Google => request
-                    .bearer_auth(&self.key)
-                    .header("x-goog-api-key", &self.key),
-                _ => request,
-            };
+            let request = self.protocol.sign(request, &self.key);
             let send = request.send();
             let response = if let Some(remaining) = remaining.filter(|_| !bound_body) {
                 tokio::time::timeout(remaining, send)
@@ -485,13 +237,13 @@ impl CloudLlm {
             }
             // Avoid echoing provider bodies which can contain submitted user text.
             if status == reqwest::StatusCode::BAD_REQUEST {
-                let error = status_error(&self.provider, self.provider_name(), status, "");
+                let error = status_error(self.protocol, status, "");
                 let reason = rejection_reason(response).await;
-                schema::log_refusal(body, &reason);
+                let refusal = self.protocol.format_refusal(body, &reason);
                 return Err(bad_request_error(
-                    shown_name(&self.provider, self.provider_name()),
+                    self.protocol.shown_name(),
                     &reason,
-                    schema::asks_for_format(body),
+                    refusal,
                     error,
                 ));
             }
@@ -507,7 +259,7 @@ impl CloudLlm {
             } else {
                 String::new()
             };
-            let error = status_error(&self.provider, self.provider_name(), status, &refusal);
+            let error = status_error(self.protocol, status, &refusal);
             let resend =
                 matches!(error, AppError::RateLimitExceeded(_)) || status.is_server_error();
             if attempt == 2 || !resend {
@@ -531,8 +283,43 @@ impl CloudLlm {
     fn budget_error(&self) -> AppError {
         AppError::ServiceNotAvailable(format!(
             "{} did not respond within the request's time budget",
-            self.provider_name()
+            self.protocol.name()
         ))
+    }
+
+    /// Sends `body`, and once more with what the provider's fallback makes of
+    /// it when the provider refuses it in a way the fallback answers.
+    async fn send_with_fallback(
+        &self,
+        body: Value,
+        deadline: Option<Instant>,
+        bound_body: bool,
+    ) -> Result<reqwest::Response> {
+        match self.send(&body, deadline, bound_body).await {
+            Err(error) => match self.protocol.resend_after(&error, &body) {
+                Some(rewritten) => self.send(&rewritten, deadline, bound_body).await,
+                None => Err(error),
+            },
+            sent => sent,
+        }
+    }
+}
+
+/// The output ceilings of one request, worked out when a protocol asks.
+struct RoomsFor<'a> {
+    llm: &'a CloudLlm,
+    request: &'a CompletionRequest,
+}
+
+impl Rooms for RoomsFor<'_> {
+    fn optional(&self) -> Option<u32> {
+        self.llm.optional_output_room(self.request)
+    }
+    fn answer(&self) -> u32 {
+        self.llm.output_room(self.request)
+    }
+    fn thinking(&self) -> u32 {
+        self.llm.thinking_room(self.request)
     }
 }
 
@@ -545,7 +332,7 @@ impl LLMPort for CloudLlm {
         true
     }
     fn thinks_before_answering(&self) -> bool {
-        self.provider == LLMProvider::Anthropic && claude_thinks_unasked(&self.model)
+        self.protocol.thinks_unasked(&self.model)
     }
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let deadline = request
@@ -560,7 +347,7 @@ impl LLMPort for CloudLlm {
             .map_err(|e| AppError::Network(format!("Invalid cloud response: {e}")))?;
         // Without the server's own timings a whole answer at once has no
         // edge between reading and writing, so it is not timed.
-        parse_completion(self.provider, value)
+        self.protocol.parse_reply(value)
     }
     async fn complete_with_progress(
         &self,
@@ -587,7 +374,7 @@ impl LLMPort for CloudLlm {
                     .send_with_schema(self.body(request, true)?, deadline, false)
                     .await?;
                 streaming::drain(
-                    self.provider,
+                    self.protocol,
                     response.bytes_stream(),
                     self.stall_timeout,
                     sent,
@@ -604,12 +391,7 @@ impl LLMPort for CloudLlm {
         &self.model
     }
     fn provider_name(&self) -> &str {
-        match self.provider {
-            LLMProvider::Openai => "openai",
-            LLMProvider::Anthropic => "anthropic",
-            LLMProvider::Google => "google",
-            _ => "unknown",
-        }
+        self.protocol.name()
     }
     fn max_context_tokens(&self) -> usize {
         self.context_window
@@ -623,40 +405,6 @@ fn field<'a>(value: &'a Value, key: &str) -> &'a Value {
     value.get(key).unwrap_or(&Value::Null)
 }
 
-/// The system prompt is what every call of one step shares, so it is cached on
-/// its own. The whole prompt is cached only when the request continues an
-/// exchange, since the next request repeats it and adds to it; a single
-/// exchange ends in its own task, and a write of that would never be read.
-fn with_cache_breakpoints(mut body: Value, continues: bool) -> Result<Value> {
-    if let Some(system) = body
-        .get("system")
-        .and_then(Value::as_str)
-        .map(str::to_owned)
-    {
-        set_field(
-            &mut body,
-            "system",
-            json!([{"type": "text", "text": system, "cache_control": {"type": "ephemeral"}}]),
-        )?;
-    }
-    if continues {
-        set_field(&mut body, "cache_control", json!({"type": "ephemeral"}))?;
-    }
-    Ok(body)
-}
-
-fn continues_an_exchange(input: &[CompletionInput]) -> bool {
-    input.iter().any(|item| match item {
-        CompletionInput::Message { role, .. } | CompletionInput::Multimodal { role, .. } => {
-            role == "assistant"
-        }
-        CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. } => true,
-        CompletionInput::Native { value } => {
-            value.get("role").and_then(Value::as_str) == Some("assistant")
-        }
-    })
-}
-
 fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
     value
         .as_object_mut()
@@ -665,70 +413,8 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
     Ok(())
 }
 
-/// Whether this Claude model thinks with no `thinking` block asking: every
-/// model from the 5 family on, where omitting the block runs adaptive
-/// thinking (and Opus 5.5 refuses to have it turned off). The family is the
-/// first number in the id, so `claude-opus-4-8` and `claude-3-5-sonnet` do
-/// not and `claude-sonnet-5-5` does.
-/// How a Claude model is asked not to think, where it can be: Sonnet 5.5
-/// takes `between_tools` and refuses `disabled`; Haiku 5.5, Opus 5 and
-/// Sonnet 5 take `disabled`. Opus 5.5 and Fable cannot turn thinking off.
-fn claude_thinking_off(model: &str) -> Option<Value> {
-    let mut parts = model.strip_prefix("claude-")?.split('-');
-    let family = parts.next()?;
-    let version: Vec<&str> = parts
-        .take_while(|part| part.len() <= 2 && part.chars().all(|c| c.is_ascii_digit()))
-        .collect();
-    match (family, version.as_slice()) {
-        ("sonnet", ["5", "5"]) => Some(json!({"type": "between_tools"})),
-        ("haiku", ["5", "5"]) | ("opus", ["5"]) | ("sonnet", ["5"]) => {
-            Some(json!({"type": "disabled"}))
-        }
-        _ => None,
-    }
-}
-
-fn claude_thinks_unasked(model: &str) -> bool {
-    model
-        .strip_prefix("claude-")
-        .and_then(|rest| rest.split('-').find_map(|part| part.parse::<u32>().ok()))
-        .is_some_and(|family| family >= 5)
-}
-
-/// Whether this OpenAI model is a reasoning model, which takes an effort
-/// setting in place of sampling knobs and rejects `temperature`/`top_p`.
-fn is_openai_reasoning_model(model: &str) -> bool {
-    model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with('o')
-}
-
-/// What, if anything, belongs in the Responses API's `reasoning` block. Only
-/// models with reasoning controls get one: others reject the whole request
-/// with a 400. There is no "off": a request for none is clamped to `minimal`
-/// (gpt-5) or `low` (o-series).
-fn openai_reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str> {
-    let effort = effort?;
-    let floor = if model.starts_with("gpt-5") || model.starts_with("gpt-6") {
-        "minimal"
-    } else if model.starts_with('o') {
-        "low"
-    } else {
-        return None;
-    };
-    Some(if effort == "none" { floor } else { effort })
-}
-
 #[cfg(test)]
 mod tests;
-
-/// The provider's name as the user knows it.
-fn shown_name<'a>(provider: &LLMProvider, name: &'a str) -> &'a str {
-    match provider {
-        LLMProvider::Openai => "OpenAI",
-        LLMProvider::Anthropic => "Anthropic",
-        LLMProvider::Google => "Google",
-        _ => name,
-    }
-}
 
 /// A 400's own reason. It is read to tell its causes apart and is never
 /// shown, since a provider's error can quote what was sent; it is logged only
@@ -752,7 +438,7 @@ async fn rejection_reason(response: reqwest::Response) -> String {
 fn bad_request_error(
     shown: &str,
     reason: &str,
-    asked_for_format: bool,
+    format_refusal: Option<AppError>,
     error: AppError,
 ) -> AppError {
     if reason.to_ascii_lowercase().contains("credit balance") {
@@ -761,10 +447,7 @@ fn bad_request_error(
              (HTTP 400): add credits to the account, or choose another model in Settings → AI"
         ));
     }
-    asked_for_format
-        .then(|| schema::refusal(reason))
-        .flatten()
-        .unwrap_or(error)
+    format_refusal.unwrap_or(error)
 }
 
 /// Whether a 429's body says the account has no quota left, by its error's
@@ -782,12 +465,11 @@ fn out_of_quota(body: &str) -> bool {
 /// an unknown model is a setting to fix, a rate limit or server error is an
 /// outage, and any other refusal would be refused again.
 fn status_error(
-    provider: &LLMProvider,
-    name: &str,
+    protocol: &dyn ProviderProtocol,
     status: reqwest::StatusCode,
     body: &str,
 ) -> AppError {
-    let shown = shown_name(provider, name);
+    let (shown, name) = (protocol.shown_name(), protocol.name());
     match status.as_u16() {
         401 => AppError::InvalidConfig(format!(
             "{shown} rejected the saved API key (HTTP {status}): replace it in Settings → AI"

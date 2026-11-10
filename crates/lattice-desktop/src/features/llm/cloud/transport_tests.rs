@@ -1,4 +1,7 @@
+use super::protocol::protocol_for;
 use super::*;
+use lattice_core::application::contracts::settings::LLMProvider;
+use serde_json::json;
 use wiremock::{
     matchers::{body_string_contains, header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -204,8 +207,7 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
 }
 fn openai_status(status: u16, body: &str) -> AppError {
     status_error(
-        &LLMProvider::Openai,
-        "openai",
+        protocol_for(LLMProvider::Openai).unwrap(),
         reqwest::StatusCode::from_u16(status).unwrap(),
         body,
     )
