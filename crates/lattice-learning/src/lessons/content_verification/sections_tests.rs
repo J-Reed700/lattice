@@ -210,18 +210,18 @@ fn a_section_that_took_a_cut_with_fewer_than_two_teaching_sentences_left_is_too_
     let mut cuts = Cuts::default();
     cuts.take(0, "First idea".into(), (Vec::new(), false));
     // Only the section that took a cut is judged.
-    assert_eq!(too_little(&lesson, &cuts), [0]);
+    assert_eq!(too_little(&lesson, &cuts, shape::policy()), [0]);
 
     // Headings and code are no teaching; two sentences are enough.
     lesson["blocks"][0]["body"] = json!("### Title\n```python\nprint(1)\n```\nOne.\nTwo.");
-    assert!(too_little(&lesson, &cuts).is_empty());
+    assert!(too_little(&lesson, &cuts, shape::policy()).is_empty());
 
     // A check whose answer went is too little however much is left.
     cuts.take(3, "Recap".into(), (Vec::new(), true));
-    assert_eq!(too_little(&lesson, &cuts), [3]);
+    assert_eq!(too_little(&lesson, &cuts, shape::policy()), [3]);
     // A question is never too little: its cut leaves its options.
     cuts.take(4, "Which?".into(), (Vec::new(), true));
-    assert_eq!(too_little(&lesson, &cuts), [3]);
+    assert_eq!(too_little(&lesson, &cuts, shape::policy()), [3]);
 }
 
 #[test]
