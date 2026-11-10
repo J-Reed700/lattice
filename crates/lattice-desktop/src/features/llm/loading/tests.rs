@@ -525,6 +525,68 @@ fn the_utility_role_keeps_its_own_output_ceiling() {
     assert_eq!(connection.max_tokens, 8_192);
 }
 
+/// The Messages API refuses a request without a ceiling, and Settings' default
+/// is not a fact about the model.
+#[test]
+fn a_model_whose_provider_needs_a_ceiling_is_not_run_on_a_guess() {
+    let outcome = cloud_client(
+        &LLMSettingsDto::default(),
+        &claude(),
+        Tuning::Standard,
+        &ModelWindowDto::default(),
+        "test-key".into(),
+    );
+    let error = outcome.err();
+    assert!(
+        matches!(&error, Some(AppError::InvalidConfig(text)) if text.contains("Max output")),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn a_provider_that_could_not_be_asked_is_why_a_model_that_needs_it_does_not_run() {
+    let down = || Err(AppError::Network("down".into()));
+    let outcome = cloud_client_after(
+        &LLMSettingsDto::default(),
+        &claude(),
+        Tuning::Standard,
+        down(),
+        "test-key".into(),
+    );
+    let error = outcome.err();
+    assert!(matches!(&error, Some(AppError::Network(_))), "{error:?}");
+
+    let mut chosen = LLMSettingsDto::default();
+    chosen.model_windows.insert(
+        claude().to_string(),
+        ModelWindowDto {
+            context_window: None,
+            max_output_tokens: Some(4_096),
+        },
+    );
+    let with_a_chosen_ceiling = cloud_client_after(
+        &chosen,
+        &claude(),
+        Tuning::Standard,
+        down(),
+        "test-key".into(),
+    );
+    assert!(with_a_chosen_ceiling.is_ok());
+
+    let openai = ModelRef::Cloud {
+        provider: CloudProvider::Openai,
+        model: "gpt-4.1".into(),
+    };
+    let needing_none = cloud_client_after(
+        &LLMSettingsDto::default(),
+        &openai,
+        Tuning::Standard,
+        down(),
+        "test-key".into(),
+    );
+    assert!(needing_none.is_ok());
+}
+
 #[test]
 fn a_bundled_server_that_cannot_run_is_an_install_problem_the_learner_can_act_on() {
     use lattice_core::shared::runtime::jobs::JobFailure;
