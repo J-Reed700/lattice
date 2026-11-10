@@ -221,7 +221,10 @@ fn prompts(authored: &Authored) -> Vec<&str> {
 async fn a_flawed_item_is_repaired_alone_and_the_others_are_kept_as_written() -> Result<()> {
     const FINDING: &str = "The question depends on a value it never gives.";
     let llm = Script::new(
-        vec![written(&[FIRST, SECOND, "A third case."]), written(&[SECOND_FIXED])],
+        vec![
+            written(&[FIRST, SECOND, "A third case."]),
+            written(&[SECOND_FIXED]),
+        ],
         agrees(),
         finds(|item| {
             if item["prompt"] == SECOND {
