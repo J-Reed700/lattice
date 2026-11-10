@@ -8,6 +8,7 @@
 //! off the lock.
 use std::ops::{Deref, DerefMut};
 
+use super::error::PersistenceError;
 use async_trait::async_trait;
 use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
 
@@ -18,22 +19,22 @@ pub struct WriteTx(Transaction<'static, Sqlite>);
 pub struct ReadTx(Transaction<'static, Sqlite>);
 
 impl WriteTx {
-    pub async fn commit(self) -> Result<(), sqlx::Error> {
-        self.0.commit().await
+    pub async fn commit(self) -> Result<(), PersistenceError> {
+        Ok(self.0.commit().await?)
     }
 
-    pub async fn rollback(self) -> Result<(), sqlx::Error> {
-        self.0.rollback().await
+    pub async fn rollback(self) -> Result<(), PersistenceError> {
+        Ok(self.0.rollback().await?)
     }
 }
 
 impl ReadTx {
-    pub async fn commit(self) -> Result<(), sqlx::Error> {
-        self.0.commit().await
+    pub async fn commit(self) -> Result<(), PersistenceError> {
+        Ok(self.0.commit().await?)
     }
 
-    pub async fn rollback(self) -> Result<(), sqlx::Error> {
-        self.0.rollback().await
+    pub async fn rollback(self) -> Result<(), PersistenceError> {
+        Ok(self.0.rollback().await?)
     }
 }
 
@@ -68,19 +69,21 @@ impl DerefMut for ReadTx {
 #[async_trait]
 pub trait Transactions {
     /// Begins a transaction that writes, holding the write lock from the start.
-    async fn begin_write(&self) -> Result<WriteTx, sqlx::Error>;
+    async fn begin_write(&self) -> Result<WriteTx, PersistenceError>;
 
     /// Begins a transaction that never writes.
-    async fn begin_read(&self) -> Result<ReadTx, sqlx::Error>;
+    async fn begin_read(&self) -> Result<ReadTx, PersistenceError>;
 }
 
 #[async_trait]
 impl Transactions for SqlitePool {
-    async fn begin_write(&self) -> Result<WriteTx, sqlx::Error> {
-        self.begin_with("BEGIN IMMEDIATE").await.map(WriteTx)
+    async fn begin_write(&self) -> Result<WriteTx, PersistenceError> {
+        let tx = self.begin_with("BEGIN IMMEDIATE").await?;
+        Ok(WriteTx(tx))
     }
 
-    async fn begin_read(&self) -> Result<ReadTx, sqlx::Error> {
-        self.begin().await.map(ReadTx)
+    async fn begin_read(&self) -> Result<ReadTx, PersistenceError> {
+        let tx = self.begin().await?;
+        Ok(ReadTx(tx))
     }
 }

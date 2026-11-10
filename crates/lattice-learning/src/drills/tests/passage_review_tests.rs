@@ -21,6 +21,7 @@ use lattice_core::domain::learning::drills::{
     targets, Assessment, FindingOutcome, IssueOutcome, Material,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
@@ -41,7 +42,14 @@ async fn started() -> Result<(SqlitePool, String, String, Value)> {
     let program = course(&pool).await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
     drilled(&pool, "passage", &program, &lesson, &spacing_passage()).await?;
-    let started = review::start(&pool, &passage(&program), AttemptMode::Practice, 4, 2).await?;
+    let started = review::start(
+        &Database::from(pool.clone()),
+        &passage(&program),
+        AttemptMode::Practice,
+        4,
+        2,
+    )
+    .await?;
     let shown = serde_json::to_value(&started.dto).expect("a DTO is JSON");
     let StartedCodeReviewDto::Started { attempt_id, .. } = started.dto else {
         panic!("a drill was ready");
@@ -74,7 +82,14 @@ async fn asking_for_a_passage_with_none_ready_queues_a_build_on_the_course() -> 
     let pool = pool().await?;
     let program = course(&pool).await?;
     let lessons = lessons_of(&pool, &program).await?;
-    let started = review::start(&pool, &passage(&program), AttemptMode::Practice, 6, 2).await?;
+    let started = review::start(
+        &Database::from(pool.clone()),
+        &passage(&program),
+        AttemptMode::Practice,
+        6,
+        2,
+    )
+    .await?;
     let StartedCodeReviewDto::Building { job_id } = &started.dto else {
         panic!("none was ready");
     };
@@ -99,7 +114,14 @@ async fn a_passage_request_that_cannot_make_a_build_is_refused() -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
     for (material, lines, count) in [(passage(&program), 0, 2), (passage(&program), 4, 0)] {
-        let result = review::start(&pool, &material, AttemptMode::Practice, lines, count).await;
+        let result = review::start(
+            &Database::from(pool.clone()),
+            &material,
+            AttemptMode::Practice,
+            lines,
+            count,
+        )
+        .await;
         assert!(
             matches!(result, Err(AppError::InvalidInput(_))),
             "{material:?} {lines} {count}: {result:?}"
@@ -116,12 +138,26 @@ async fn a_passage_drill_is_started_from_its_course_s_shelf_and_the_next_is_buil
     let other = course(&pool).await?;
     let lessons = lessons_of(&pool, &program).await?;
     drilled(&pool, "passage", &program, &lessons[0], &spacing_passage()).await?;
-    let elsewhere = review::start(&pool, &passage(&other), AttemptMode::Practice, 4, 2).await?;
+    let elsewhere = review::start(
+        &Database::from(pool.clone()),
+        &passage(&other),
+        AttemptMode::Practice,
+        4,
+        2,
+    )
+    .await?;
     assert!(matches!(
         elsewhere.dto,
         StartedCodeReviewDto::Building { .. }
     ));
-    let started = review::start(&pool, &passage(&program), AttemptMode::Interview, 4, 2).await?;
+    let started = review::start(
+        &Database::from(pool.clone()),
+        &passage(&program),
+        AttemptMode::Interview,
+        4,
+        2,
+    )
+    .await?;
     let StartedCodeReviewDto::Started { mode, drill, .. } = started.dto else {
         panic!("a drill was ready");
     };
@@ -156,7 +192,8 @@ async fn the_learners_view_of_a_passage_drill_holds_nothing_of_its_source() -> R
         json!({"kind": "passage", "sourceTitle": "Spacing and memory"})
     );
     let open =
-        serde_json::to_value(review::result(&pool, &attempt_id).await?).expect("a DTO is JSON");
+        serde_json::to_value(review::result(&Database::from(pool.clone()), &attempt_id).await?)
+            .expect("a DTO is JSON");
     assert!(open["reveal"].is_null());
     assert_none_of_the_source(&open);
     let finding = CodeReviewFindingDto {
@@ -168,7 +205,14 @@ async fn the_learners_view_of_a_passage_drill_holds_nothing_of_its_source() -> R
         text: "The figure is wrong.".into(),
         severity: None,
     };
-    let acted = review::submit(&pool, &attempt_id, vec![finding], None, 1_000).await?;
+    let acted = review::submit(
+        &Database::from(pool.clone()),
+        &attempt_id,
+        vec![finding],
+        None,
+        1_000,
+    )
+    .await?;
     assert_eq!(acted.dto.status, AttemptStatus::Submitted);
     assert_none_of_the_source(&serde_json::to_value(&acted.dto).expect("a DTO is JSON"));
     Ok(())
@@ -179,7 +223,7 @@ async fn the_reveal_of_a_passage_drill_holds_the_source_and_the_quote_behind_eac
 ) -> Result<()> {
     let (pool, _, attempt_id, _) = started().await?;
     let acted = review::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt_id,
         vec![CodeReviewFindingDto {
             span: Some(CodeReviewSpanDto {
@@ -197,7 +241,7 @@ async fn the_reveal_of_a_passage_drill_holds_the_source_and_the_quote_behind_eac
     let job = acted.job.expect("a grading job");
     let store = JobStore::new(pool.clone());
     store.claim(&job).await?.expect("the job is claimed");
-    let (attempt, stored) = attempts::waiting(&pool, &attempt_id)
+    let (attempt, stored) = attempts::waiting(&Database::from(pool.clone()), &attempt_id)
         .await?
         .expect("the attempt is waiting");
     let context = JobContext::detached(&store, &job).await?;
@@ -217,13 +261,13 @@ async fn the_reveal_of_a_passage_drill_holds_the_source_and_the_quote_behind_eac
         &model,
         Box::new(PassageMaterial::new(&check)),
         &grader,
-        &pool,
+        &Database::from(pool.clone()),
         CancellationToken::new(),
     )
     .run(&context, &attempt, &stored)
     .await?;
 
-    let result = review::result(&pool, &attempt_id).await?;
+    let result = review::result(&Database::from(pool.clone()), &attempt_id).await?;
     assert_eq!(result.status, AttemptStatus::Graded);
     let reveal = result.reveal.expect("a graded review is revealed");
     let source = reveal

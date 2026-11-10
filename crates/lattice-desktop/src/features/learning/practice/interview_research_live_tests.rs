@@ -16,6 +16,7 @@ use lattice_core::application::{
 };
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use std::{
     collections::HashSet,
@@ -120,7 +121,7 @@ async fn live_interview_research_keeps_queries_public_and_captures_real_page_bod
 {
     let llm = live_client().await?;
     let (pool, program_id, _, _) = fixture().await?;
-    let library = LearningSourceLibraryRepository::new(pool);
+    let library = LearningSourceLibraryRepository::new(Database::from(pool));
     let web = RecordedWeb {
         inner: MockWebService::new(),
         searches: Mutex::new(Vec::new()),

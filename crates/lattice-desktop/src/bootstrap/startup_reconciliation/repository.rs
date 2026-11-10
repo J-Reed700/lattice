@@ -1,6 +1,8 @@
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::driver::DriverPool;
 
-pub async fn mark_interrupted_verifications(pool: &sqlx::SqlitePool) -> Result<u64, sqlx::Error> {
+pub async fn mark_interrupted_verifications(pool: &impl DriverPool) -> Result<u64, AppError> {
+    let pool = pool.sqlx_pool();
     let result = sqlx::query(
         "UPDATE conversation_messages \
          SET metadata = json_set(metadata, '$.verification.pending', json('false'), \
@@ -14,9 +16,10 @@ pub async fn mark_interrupted_verifications(pool: &sqlx::SqlitePool) -> Result<u
 }
 
 pub async fn fail_unfinished_turns(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DriverPool,
     resuming_json: String,
 ) -> Result<u64, AppError> {
+    let pool = pool.sqlx_pool();
     let result = sqlx::query(
         "UPDATE conversation_messages SET status = 'failed' \
          WHERE status IN ('pending', 'streaming') \

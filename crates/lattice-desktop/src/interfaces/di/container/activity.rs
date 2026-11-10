@@ -12,10 +12,10 @@ impl Container {
     /// Every source of the activity view. Each is a read of state its
     /// feature already holds; building them costs a few handles.
     pub fn activity_sources(&self) -> Vec<Arc<dyn ActivitySource>> {
-        let pool = self.db_pool().clone();
+        let database = self.database().clone();
         let mut sources: Vec<Arc<dyn ActivitySource>> = vec![
             Arc::new(crate::features::learning::activity::LearningActivity::new(
-                pool.clone(),
+                database.clone(),
                 Arc::clone(&self.jobs),
                 self.course_indexes.clone(),
                 crate::features::learning::outline_progress::OutlineRunRegistry::clone(
@@ -24,7 +24,7 @@ impl Container {
             )),
             Arc::new(
                 crate::features::conversation::activity::ConversationActivity::new(
-                    pool,
+                    database,
                     Arc::clone(&self.jobs),
                 ),
             ),

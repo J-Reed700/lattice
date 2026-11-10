@@ -3,6 +3,7 @@ use chrono::Utc;
 use lattice_core::domain::entities::model_file::ModelFile;
 use lattice_core::domain::models::downloaded::ModelLocation;
 use lattice_core::domain::value_objects::model_status::FileStatus;
+use lattice_core::shared::persistence::Database;
 use std::path::PathBuf;
 
 fn make_file(file_name: &str, file_path: &str) -> ModelFile {
@@ -151,7 +152,7 @@ async fn complete_gguf_embedding_download(
     let downloaded_models = Arc::new(DownloadedModelRepository::new(pool.clone()));
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        pool.clone(),
+        Database::from(pool.clone()),
         Arc::clone(&downloaded_models),
     );
 
@@ -264,7 +265,7 @@ async fn saga_with_one_file(
 
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        pool.clone(),
+        Database::from(pool.clone()),
         Arc::new(DownloadedModelRepository::new(pool.clone())),
     );
     (saga, pool)
@@ -386,7 +387,7 @@ async fn complete_chat_download(
     let settings = Arc::new(MockSettingsRepository::with_settings(initial));
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        pool.clone(),
+        Database::from(pool.clone()),
         Arc::new(DownloadedModelRepository::new(pool.clone())),
     )
     .with_settings(settings.clone());

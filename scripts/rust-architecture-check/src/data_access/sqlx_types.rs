@@ -1,35 +1,25 @@
-//! Rule 4: sqlx's unit-of-work types are named only in data modules; everything
-//! else takes `WriteTx` or `ReadTx`.
-use super::{use_leaves, Violation};
+//! Rule 4: sqlx and the driver trait are named only in data modules; everything else
+//! holds a `Database` or takes `WriteTx` or `ReadTx`.
+use super::{handouts::import_leaves, Violation};
 use crate::{
     item_attrs,
     ratchet::{impl_item_attrs, token_paths, trait_item_attrs},
     test_only,
 };
+use proc_macro2::TokenStream;
 use syn::{
     visit::{self, Visit},
     ImplItem, Item, TraitItem,
 };
 
-const TYPES: [&str; 7] = [
-    "Transaction",
-    "SqliteTransaction",
-    "SqliteConnection",
-    "PoolConnection",
-    "Executor",
-    "SqliteExecutor",
-    "Acquire",
-];
-
-/// The index of the unit-of-work type in a sqlx path, and the path as written up to it.
-fn named(segments: &[String]) -> Option<(usize, String)> {
-    if segments.first()? != "sqlx" {
-        return None;
-    }
-    let index = segments
-        .iter()
-        .position(|segment| TYPES.contains(&segment.as_str()))?;
-    Some((index, segments.get(..=index)?.join("::")))
+/// Whether a path names the driver trait: `DriverPool`, the `persistence::driver` module,
+/// or a `sqlx_pool` item.
+fn driver_path(segments: &[String]) -> bool {
+    segments.iter().any(|segment| segment == "DriverPool")
+        || segments
+            .windows(2)
+            .any(|pair| matches!(pair, [a, b] if a == "persistence" && b == "driver"))
+        || (segments.len() >= 2 && segments.last().is_some_and(|last| last == "sqlx_pool"))
 }
 
 struct Scan<'a> {
@@ -44,10 +34,19 @@ impl Scan<'_> {
             path: self.path.to_string(),
             line,
             message: format!(
-                "names {what} outside a data module; use WriteTx or ReadTx, \
-                 or move the code into a data module"
+                "names {what} outside a data module; hold a Database, take WriteTx or \
+                 ReadTx, or move the code into a data module"
             ),
         });
+    }
+
+    fn tokens(&mut self, stream: TokenStream) {
+        for (segments, _, line) in token_paths(stream) {
+            let sqlx = segments.len() >= 2 && segments.first().is_some_and(|first| first == "sqlx");
+            if sqlx || driver_path(&segments) {
+                self.add(line, &segments.join("::"));
+            }
+        }
     }
 }
 
@@ -76,39 +75,56 @@ impl<'ast> Visit<'ast> for Scan<'_> {
         visit::visit_stmt(self, stmt);
     }
     fn visit_item_use(&mut self, item: &'ast syn::ItemUse) {
-        let mut leaves = Vec::new();
-        use_leaves(&item.tree, Vec::new(), &mut leaves);
-        let mut names: Vec<String> = Vec::new();
-        for (leaf, _) in &leaves {
-            if let Some((_, name)) = named(leaf) {
-                if !names.contains(&name) {
-                    names.push(name);
-                }
+        let (mut sqlx, mut driver): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        for leaf in import_leaves(&item.tree) {
+            let name = leaf.text();
+            let names = if leaf.path.first().is_some_and(|first| first == "sqlx") {
+                &mut sqlx
+            } else if driver_path(&leaf.path) {
+                &mut driver
+            } else {
+                continue;
+            };
+            if !names.contains(&name) {
+                names.push(name);
             }
         }
-        if !names.is_empty() {
-            self.add(item.use_token.span.start().line, &names.join(", "));
+        for names in [sqlx, driver] {
+            if !names.is_empty() {
+                self.add(item.use_token.span.start().line, &names.join(", "));
+            }
+        }
+    }
+    fn visit_item_extern_crate(&mut self, item: &'ast syn::ItemExternCrate) {
+        if item.ident == "sqlx" {
+            self.add(item.ident.span().start().line, "sqlx");
         }
     }
     fn visit_path(&mut self, path: &'ast syn::Path) {
         let segments: Vec<String> = path.segments.iter().map(|s| s.ident.to_string()).collect();
-        if let Some((index, name)) = named(&segments) {
-            let line = path
-                .segments
-                .iter()
-                .nth(index)
-                .map_or(1, |segment| segment.ident.span().start().line);
-            self.add(line, &name);
+        if let Some(first) = path.segments.first() {
+            if first.ident == "sqlx" || driver_path(&segments) {
+                self.add(first.ident.span().start().line, &segments.join("::"));
+            }
         }
         visit::visit_path(self, path);
     }
-    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
-        visit::visit_macro(self, mac);
-        for (segments, _, line) in token_paths(mac.tokens.clone()) {
-            if let Some((_, name)) = named(&segments) {
-                self.add(line, &name);
+    fn visit_attribute(&mut self, attribute: &'ast syn::Attribute) {
+        let path = attribute.path();
+        if let Some(first) = path.segments.first() {
+            if first.ident == "sqlx" {
+                let segments: Vec<String> =
+                    path.segments.iter().map(|s| s.ident.to_string()).collect();
+                self.add(first.ident.span().start().line, &segments.join("::"));
             }
         }
+        if let syn::Meta::List(list) = &attribute.meta {
+            self.tokens(list.tokens.clone());
+        }
+    }
+    fn visit_macro(&mut self, mac: &'ast syn::Macro) {
+        visit::visit_macro(self, mac);
+        self.tokens(mac.tokens.clone());
     }
 }
 

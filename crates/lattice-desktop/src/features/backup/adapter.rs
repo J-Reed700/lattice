@@ -18,8 +18,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use lattice_core::application::ports::backup_port::{BackupInfoData, BackupPort};
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::sqlite::SqliteConnectOptions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 #[cfg(test)]
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -121,14 +120,6 @@ fn validate_sql_safe_path(path: &str) -> Result<()> {
     Ok(())
 }
 
-/// Connection options for opening an existing backup file read-only, built
-/// from `SqliteConnectOptions` rather than a `sqlite://…?mode=ro` DSN: a
-/// canonical Windows path (`\\?\C:\...`) contains a `?`, where sqlx splits a
-/// DSN. The `Path` goes to sqlx as is, with no quoting or escaping involved.
-fn read_only_backup_options(path: &Path) -> SqliteConnectOptions {
-    SqliteConnectOptions::new().filename(path).read_only(true)
-}
-
 /// Put the pre-restore safety copy back as the live database. Returns what to
 /// tell the user when that fails, including the path to inspect for recovery.
 pub(crate) async fn roll_back_database(safety: &Path, db_path: &Path) -> Option<String> {
@@ -154,7 +145,7 @@ pub(crate) async fn roll_back_database(safety: &Path, db_path: &Path) -> Option<
 
 /// Backup adapter using SQLite backup API.
 pub struct BackupAdapter {
-    pool: SqlitePool,
+    database: Database,
     db_path: PathBuf,
 }
 
@@ -177,18 +168,14 @@ impl BackupAdapter {
         let _temporary_snapshot = TemporarySnapshot(temp_path.clone());
         let temp_str = temp_path.to_string_lossy().to_string();
         validate_sql_safe_path(&temp_str)?;
-        let mut connection = self.pool.acquire().await.map_err(|error| {
-            error!("Failed to create safety backup: {}", error);
-            AppError::Database(format!("Failed to create safety backup: {error}"))
-        })?;
-        if let Err(error) = database_repository::vacuum_into(&mut connection, &temp_str).await {
+        if let Err(error) =
+            database_repository::vacuum_database_into(&self.database, &temp_str).await
+        {
             error!("Failed to create safety backup: {}", error);
             return Err(AppError::Database(format!(
                 "Failed to create safety backup: {error}"
             )));
         }
-        drop(connection);
-
         self.validate_backup(&temp_path).await?;
 
         // The temporary lives beside the destination, so replacement is one
@@ -202,8 +189,8 @@ impl BackupAdapter {
         Ok(())
     }
 
-    pub fn new(pool: SqlitePool, db_path: PathBuf) -> Self {
-        Self { pool, db_path }
+    pub fn new(database: Database, db_path: PathBuf) -> Self {
+        Self { database, db_path }
     }
 
     /// Generate timestamped backup filename
@@ -254,25 +241,21 @@ impl BackupAdapter {
     /// Get file count from backup database
     async fn get_backup_file_count(&self, path: &Path) -> Option<usize> {
         // Open backup database read-only
-        let pool = SqlitePool::connect_with(read_only_backup_options(path))
+        let database = database_repository::open_read_only(path).await.ok()?;
+
+        let count = database_repository::database_document_count(&database)
             .await
             .ok()?;
 
-        let mut connection = pool.acquire().await.ok()?;
-        let count = database_repository::document_count(&mut connection)
-            .await
-            .ok()?;
-        drop(connection);
-
-        pool.close().await;
+        database.close().await;
 
         Some(count as usize)
     }
 
     /// Get version from backup metadata
     async fn get_backup_version(&self, path: &Path) -> Option<String> {
-        let pool = match SqlitePool::connect_with(read_only_backup_options(path)).await {
-            Ok(pool) => pool,
+        let database = match database_repository::open_read_only(path).await {
+            Ok(database) => database,
             Err(error) => {
                 warn!(
                     "Failed to open backup database for version lookup ({}): {}",
@@ -283,55 +266,29 @@ impl BackupAdapter {
             }
         };
 
-        let mut connection = match pool.acquire().await {
-            Ok(connection) => connection,
-            Err(error) => {
+        let lookup = database_repository::backup_schema_version(&database).await;
+        database.close().await;
+
+        let version = match lookup {
+            Ok(database_repository::SchemaVersion::NoTable) => return None,
+            Ok(database_repository::SchemaVersion::Table(version)) => version,
+            Err(database_repository::SchemaVersionError::Check(error)) => {
                 warn!(
                     "Failed to check schema_version table in backup ({}): {}",
                     path.display(),
                     error
                 );
-                pool.close().await;
                 return None;
             }
-        };
-
-        let has_table = match database_repository::has_schema_version_table(&mut connection).await {
-            Ok(has_table) => has_table,
-            Err(error) => {
+            Err(database_repository::SchemaVersionError::Read(error)) => {
                 warn!(
-                    "Failed to check schema_version table in backup ({}): {}",
+                    "Failed to read backup schema version ({}): {}",
                     path.display(),
                     error
                 );
-                drop(connection);
-                pool.close().await;
                 return None;
             }
         };
-
-        if !has_table {
-            drop(connection);
-            pool.close().await;
-            return None;
-        }
-
-        let version: Option<i64> =
-            match database_repository::latest_schema_version(&mut connection).await {
-                Ok(value) => value,
-                Err(error) => {
-                    warn!(
-                        "Failed to read backup schema version ({}): {}",
-                        path.display(),
-                        error
-                    );
-                    drop(connection);
-                    pool.close().await;
-                    return None;
-                }
-            };
-
-        drop(connection);
 
         if version.is_none() {
             warn!(
@@ -339,8 +296,6 @@ impl BackupAdapter {
                 path.display()
             );
         }
-
-        pool.close().await;
 
         version.map(|value| value.to_string())
     }
@@ -355,20 +310,15 @@ impl BackupAdapter {
         }
 
         // Try to open the backup database
-        let pool = SqlitePool::connect_with(read_only_backup_options(path))
+        let database = database_repository::open_read_only(path)
             .await
             .map_err(|e| AppError::Database(format!("Invalid backup file: {}", e)))?;
 
-        let mut connection = pool
-            .acquire()
+        let result = database_repository::database_integrity_check(&database)
             .await
             .map_err(|e| AppError::Database(format!("Backup integrity check failed: {}", e)))?;
-        let result = database_repository::integrity_check(&mut connection)
-            .await
-            .map_err(|e| AppError::Database(format!("Backup integrity check failed: {}", e)))?;
-        drop(connection);
 
-        pool.close().await;
+        database.close().await;
 
         if result != "ok" {
             return Err(AppError::Database(format!(
@@ -478,11 +428,7 @@ impl BackupPort for BackupAdapter {
         validate_sql_safe_path(&backup_path_str)?;
 
         // Defense in depth: the repository escapes single quotes as well.
-        let mut connection = self.pool.acquire().await.map_err(|e| {
-            error!("Backup failed: {}", e);
-            AppError::Database(format!("Failed to create backup: {}", e))
-        })?;
-        database_repository::vacuum_into(&mut connection, &backup_path_str)
+        database_repository::vacuum_database_into(&self.database, &backup_path_str)
             .await
             .map_err(|e| {
                 error!("Backup failed: {}", e);
@@ -506,7 +452,7 @@ impl BackupPort for BackupAdapter {
         // 1. Validate backup before restore
         self.validate_backup(&path).await?;
 
-        // 2. Create safety backup of current database. Through the open pool,
+        // 2. Create safety backup of current database. Through the open database,
         // not a file copy: the database runs in WAL mode, and a copy of the
         // main file alone leaves out every committed transaction not yet
         // checkpointed — the most recent chats and imports.
@@ -518,7 +464,7 @@ impl BackupPort for BackupAdapter {
 
         // 3. Close all database connections
         info!("Closing database connections...");
-        self.pool.close().await;
+        self.database.close().await;
 
         // 4. Replace database file atomically
         // Use temp file + rename for atomicity

@@ -3,7 +3,8 @@
 use std::collections::BTreeSet;
 
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::driver::DriverPool;
+use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::db;
 
@@ -51,9 +52,10 @@ pub(in crate::lessons::claim_reviews) struct FindingWrite<'a> {
 }
 
 pub(in crate::lessons::claim_reviews) async fn held_rows(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     lesson_id: &str,
 ) -> Result<Vec<HeldRow>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT kind, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=?",
     )
@@ -130,9 +132,10 @@ pub(in crate::lessons::claim_reviews) async fn upsert(
 
 /// The lesson's findings: by place, then kind.
 pub(in crate::lessons::claim_reviews) async fn stored_findings(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     lesson_id: &str,
 ) -> Result<Vec<StoredFinding>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT finding_key, kind, site, unit_index, unit_title, note, summary, passage, sentence, repairs, state, resolution, resolved_at, \
          part_changed_at IS NOT NULL AND part_changed_at >= found_at AS part_changed \

@@ -41,9 +41,9 @@ struct Published {
 
 impl Published {
     fn hold(&self) -> tokio::task::JoinHandle<Result<()>> {
-        let store = self.store.clone();
+        let database = Database::from(self.pool.clone());
         let lesson_id = self.lesson_id.clone();
-        tokio::spawn(async move { hold_if_published(&store, &lesson_id).await })
+        tokio::spawn(async move { hold_if_published(&database, &lesson_id).await })
     }
 
     async fn review(&self) -> LessonReview {

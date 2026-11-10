@@ -4,17 +4,19 @@ use std::collections::HashSet;
 
 use lattice_core::domain::learning::claim_review::LessonReviewState;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::db;
 
 /// The course's lessons held for review: waiting for the user, or being
 /// verified.
 pub(in crate::lessons::claim_reviews) async fn held_lessons(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<String>> {
+    let pool = pool.sqlx_pool();
     sqlx::query_scalar(
         "SELECT lesson_id FROM learning_lesson_reviews WHERE program_id=? AND state IN (?,?) ORDER BY opened_at,lesson_id",
     )
@@ -60,9 +62,10 @@ pub(in crate::lessons::claim_reviews) async fn source_versions(
 
 /// The versions of the program's deleted sources.
 pub(in crate::lessons::claim_reviews) async fn deleted_versions(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<HashSet<String>> {
+    let pool = pool.sqlx_pool();
     let mut read = pool.begin_read().await.map_err(db)?;
     let versions = deleted_versions_in(&mut read, program_id).await?;
     read.commit().await.map_err(db)?;
@@ -105,8 +108,9 @@ pub(in crate::lessons::claim_reviews) async fn mark_needs_review(
 /// Lessons with a claim the gate weighed: the only ones a trust change can
 /// touch.
 pub(in crate::lessons::claim_reviews) async fn weighed_lessons(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
 ) -> Result<Vec<String>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT DISTINCT c.lesson_id FROM learning_lesson_claim_events e \
          JOIN learning_lesson_claims c ON c.claim_id = e.claim_id \

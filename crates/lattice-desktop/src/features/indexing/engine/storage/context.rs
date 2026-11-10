@@ -6,9 +6,10 @@ use chrono::Utc;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::domain::value_objects::ContextualizedChunk;
 use lattice_core::shared::fs::path::path_to_string;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use serde::Deserialize;
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqliteConnection;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -256,12 +257,13 @@ async fn insert_chunks_and_embeddings(
 
 /// Store document with contextualized chunks.
 pub async fn store_document_with_context(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     path: &Path,
     mime_type: &str,
     chunks: Vec<ContextualizedChunk>,
     embeddings: Vec<Vec<f32>>,
 ) -> Result<String> {
+    let pool = pool.sqlx_pool();
     if chunks.len() != embeddings.len() {
         return Err(IndexingError::InvalidConfig(format!(
             "Chunks and embeddings must have same length: {} chunks vs {} embeddings",
@@ -284,13 +286,14 @@ pub async fn store_document_with_context(
 
 /// Store document with context and file ID.
 pub async fn store_document_with_context_and_file(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     path: &Path,
     _file_id: &str,
     mime_type: &str,
     chunks: Vec<ContextualizedChunk>,
     embeddings: Vec<Vec<f32>>,
 ) -> Result<String> {
+    let pool = pool.sqlx_pool();
     if chunks.len() != embeddings.len() {
         return Err(IndexingError::InvalidConfig(format!(
             "Chunks and embeddings must have same length: {} chunks vs {} embeddings",
@@ -341,6 +344,7 @@ pub async fn store_document_with_context_and_file_tx(
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
 
     async fn setup_pool() -> SqlitePool {
         let pool = SqlitePoolOptions::new()

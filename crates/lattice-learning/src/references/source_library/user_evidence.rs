@@ -38,7 +38,7 @@ impl LearningSourceLibraryRepository {
 
     async fn live_sources(&self, program_id: &str) -> Result<Vec<stored::LiveSource>> {
         Self::validate_program_id(program_id)?;
-        stored::live_sources(&self.pool, program_id).await
+        stored::live_sources(&self.database, program_id).await
     }
 
     /// Who added each live source, keyed by its active version: what the
@@ -60,7 +60,7 @@ impl LearningSourceLibraryRepository {
     /// judgements by, without a model.
     pub async fn chosen_versions(&self, program_id: &str) -> Result<Vec<ChosenVersion>> {
         Self::validate_program_id(program_id)?;
-        stored::chosen_versions(&self.pool, program_id).await
+        stored::chosen_versions(&self.database, program_id).await
     }
 
     /// One version of a program's source with its text, who added the
@@ -73,7 +73,7 @@ impl LearningSourceLibraryRepository {
         version_id: &str,
     ) -> Result<Option<ChosenVersion>> {
         Self::validate_program_id(program_id)?;
-        stored::chosen_version(&self.pool, program_id, version_id).await
+        stored::chosen_version(&self.database, program_id, version_id).await
     }
 
     /// The live web source the user already saved for `url`, by the address
@@ -149,7 +149,7 @@ impl LearningSourceLibraryRepository {
         version_id: &str,
         sha256: &str,
     ) -> Result<()> {
-        stored::set_snapshot_hash(&self.pool, program_id, version_id, sha256).await
+        stored::set_snapshot_hash(&self.database, program_id, version_id, sha256).await
     }
 }
 

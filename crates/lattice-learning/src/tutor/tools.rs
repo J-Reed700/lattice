@@ -287,7 +287,7 @@ impl CourseTurn {
     async fn outline(&self) -> Result<String> {
         let program = self.program().await?;
         let quizzes: HashMap<String, LearningQuizStatusDto> =
-            match LearningAssessmentRepository::new(self.pool.clone())
+            match LearningAssessmentRepository::new(self.database.clone())
                 .overview(&self.program_id)
                 .await
             {
@@ -328,7 +328,7 @@ impl CourseTurn {
                 );
             }
         }
-        let sources = LearningSourceLibraryRepository::new(self.pool.clone())
+        let sources = LearningSourceLibraryRepository::new(self.database.clone())
             .active_versions(&self.program_id)
             .await?;
         if !sources.is_empty() {

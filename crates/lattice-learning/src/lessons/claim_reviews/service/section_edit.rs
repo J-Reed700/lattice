@@ -125,7 +125,7 @@ impl ClaimReviewService {
         if body.trim().is_empty() {
             return Err(AppError::InvalidInput(NO_TEXT.into()));
         }
-        let mut read = self.pool().begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await.map_err(db)?;
         let current = blocks::section_title_body(&mut read, &lesson_id, unit).await?;
         read.commit().await.map_err(db)?;
         let (old_title, old_body) =
@@ -216,7 +216,7 @@ impl ClaimReviewService {
             at,
         } = *write;
         let user = ledger.review.as_ref().map(provenance);
-        let mut tx = self.pool().begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         if ledger.review.is_some() {
             check_revision(&mut tx, lesson_id, ledger.revision).await?;
         }
@@ -307,7 +307,7 @@ impl ClaimReviewService {
     }
 
     pub(super) async fn ensure_in_course(&self, program_id: &str, lesson_id: &str) -> Result<()> {
-        if !blocks::lesson_in_course(self.pool(), program_id, lesson_id).await? {
+        if !blocks::lesson_in_course(&self.database, program_id, lesson_id).await? {
             return Err(AppError::NotFound(NOT_IN_COURSE.into()));
         }
         Ok(())

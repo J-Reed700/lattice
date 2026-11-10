@@ -14,6 +14,7 @@ use crate::{
     source_selector::{create_quote_selector, match_quote_selector, LearningQuoteMatch},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashSet;
@@ -70,7 +71,8 @@ pub struct LearningRecallRepository {
     pool: SqlitePool,
 }
 impl LearningRecallRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

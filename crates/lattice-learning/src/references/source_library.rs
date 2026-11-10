@@ -10,7 +10,8 @@ use crate::{
 use futures::TryStreamExt;
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
+#[cfg(test)]
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -115,7 +116,7 @@ fn check_name(value: &LearningSourceCheckStatus) -> &'static str {
 
 #[derive(Clone)]
 pub struct LearningSourceLibraryRepository {
-    pool: SqlitePool,
+    database: Database,
 }
 
 /// Who is adding a source and where it came from. Source capture owns this
@@ -170,8 +171,8 @@ impl LearningSourceLibraryRepository {
             )),
         }
     }
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
     /// Captures a source research found (`added_by = research`); a source the
@@ -198,7 +199,7 @@ impl LearningSourceLibraryRepository {
         payload_hash: &str,
     ) -> Result<bool> {
         uuid(operation_id, "operation")?;
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await.map_err(db)?;
         let seen = source_operation(operation_id, program_id, source_id, kind, payload_hash)
             .seen(&mut read)
             .await?;
@@ -215,7 +216,7 @@ impl LearningSourceLibraryRepository {
         Self::validate_program_id(program_id)?;
         uuid(source_id, "source")?;
         uuid(version_id, "source version")?;
-        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let mut read = self.database.begin_read().await.map_err(db)?;
         if !repository::active_program_exists(&mut read, program_id).await? {
             return Err(AppError::NotFound(
                 "Active learning program not found".into(),
@@ -233,7 +234,7 @@ impl LearningSourceLibraryRepository {
     /// Finalize SQL-migrated legacy snapshots before exposing metadata. This is
     /// idempotent and only touches rows explicitly marked as legacy bounded.
     async fn backfill_legacy(&self, program_id: &str) -> Result<()> {
-        repository::backfill_legacy(&self.pool, program_id).await
+        repository::backfill_legacy(&self.database, program_id).await
     }
 }
 

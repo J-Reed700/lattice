@@ -2,6 +2,7 @@
 //! and its staged result saved to the Journal once.
 use super::*;
 use crate::features::conversation::dto::MessageDto;
+use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::Notify;
@@ -144,7 +145,8 @@ pub(super) async fn finished(jobs: &JobRuntime, id: &str) -> JobRecord {
 }
 
 async fn runtime_with(pool: &sqlx::SqlitePool, work: Arc<FakeWork>) -> Arc<JobRuntime> {
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     jobs.register(
         JOURNAL_SYNTHESIS,
         Arc::new(JournalSynthesisJob::with(work)),

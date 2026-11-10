@@ -1,18 +1,20 @@
 use crate::features::search::engine::fts_query::{FtsIndex, FtsQuery};
 use lattice_core::application::contracts::search::SearchResultRecord;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 use std::collections::HashSet;
 
 pub(super) async fn scoped_hits(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     header_weight: f64,
     query: &FtsQuery,
     top_k: usize,
     space_id: Option<&str>,
     allowed_document_ids: Option<&HashSet<String>>,
 ) -> Result<Vec<SearchResultRecord>> {
+    let pool = pool.sqlx_pool();
     let rows = scoped_rows(
         pool,
         header_weight,
@@ -127,7 +129,8 @@ fn rows_to_results(rows: Vec<sqlx::sqlite::SqliteRow>) -> Vec<SearchResultRecord
         .collect()
 }
 
-pub(super) async fn clear_chunk_indexes(pool: &SqlitePool) -> Result<()> {
+pub(super) async fn clear_chunk_indexes(pool: &impl DriverPool) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let mut tx = pool.begin_write().await?;
     sqlx::query("DELETE FROM chunks_fts")
         .execute(&mut *tx)
@@ -139,7 +142,8 @@ pub(super) async fn clear_chunk_indexes(pool: &SqlitePool) -> Result<()> {
     Ok(())
 }
 
-pub(super) async fn chunk_index_count(pool: &SqlitePool) -> Result<usize> {
+pub(super) async fn chunk_index_count(pool: &impl DriverPool) -> Result<usize> {
+    let pool = pool.sqlx_pool();
     use sqlx::Row;
     let row = sqlx::query("SELECT COUNT(*) as count FROM chunks_fts")
         .fetch_one(pool)

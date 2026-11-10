@@ -26,7 +26,7 @@ pub async fn get_conversation_memory_impl(
         ));
     }
     let repository = crate::features::conversation::repository::ConversationRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     // Whether the staged-rollout switch is on is part of the answer: the UI must
     // not describe memory as active while it is off.
@@ -176,7 +176,7 @@ pub async fn manage_knowledge_impl(
     container: &Container,
 ) -> Result<crate::features::conversation::knowledge_dto::KnowledgeResponseDto, ApiError> {
     let repository = crate::features::conversation::repository::ConversationRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     let response = repository
         .knowledge(&request)

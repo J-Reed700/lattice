@@ -1,5 +1,6 @@
 //! The persistent half of the owner cache: `sourcing_owner_cache`.
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::persistence::driver::DriverPool;
+use sqlx::Row;
 
 pub(super) struct CachedOwnerRow {
     pub origins_json: String,
@@ -8,9 +9,10 @@ pub(super) struct CachedOwnerRow {
 }
 
 pub(super) async fn find(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     cache_key: &str,
 ) -> Result<Option<CachedOwnerRow>, sqlx::Error> {
+    let pool = pool.sqlx_pool();
     let row = sqlx::query(
         "SELECT origins_json, resolved_by, updated_at FROM sourcing_owner_cache WHERE cache_key = ?",
     )
@@ -25,7 +27,7 @@ pub(super) async fn find(
 }
 
 pub(super) async fn upsert(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     cache_key: &str,
     subject_name: &str,
     subject_kind: &str,
@@ -33,6 +35,7 @@ pub(super) async fn upsert(
     resolved_by: &str,
     updated_at: i64,
 ) -> Result<(), sqlx::Error> {
+    let pool = pool.sqlx_pool();
     sqlx::query(
         r#"INSERT INTO sourcing_owner_cache
            (cache_key, subject_name, subject_kind, origins_json, resolved_by, updated_at)

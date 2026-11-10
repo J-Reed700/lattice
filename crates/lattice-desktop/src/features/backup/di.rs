@@ -3,8 +3,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use crate::features::backup::adapter::BackupAdapter;
 use crate::features::backup::archive::key_store::MasterKeyStore;
 use crate::features::backup::archive::restore::ArchiveRestorer;
@@ -17,6 +15,7 @@ use crate::features::backup::use_cases::{
 };
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::{BackupPort, BackupSchedulerPort, SettingsRepositoryPort};
+use lattice_core::shared::persistence::Database;
 
 #[derive(Clone)]
 pub struct BackupDi {
@@ -33,14 +32,14 @@ pub struct BackupDi {
 }
 
 pub fn build(
-    db_pool: SqlitePool,
+    database: Database,
     db_path: PathBuf,
     app_data_dir: PathBuf,
     settings_repo: Arc<dyn SettingsRepositoryPort>,
     background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
 ) -> BackupDi {
     let backup =
-        Arc::new(BackupAdapter::new(db_pool.clone(), db_path.clone())) as Arc<dyn BackupPort>;
+        Arc::new(BackupAdapter::new(database.clone(), db_path.clone())) as Arc<dyn BackupPort>;
 
     let key_store = Arc::new(MasterKeyStore::new(app_data_dir.clone()));
     // Resolved once at wiring time. `Err` only means "no home directory",
@@ -48,7 +47,7 @@ pub fn build(
     let files_root = lattice_core::shared::fs::roots::library_root().ok();
     let web_archive_root = lattice_core::shared::fs::roots::web_archive_root().ok();
     let archive_writer = Arc::new(ArchiveWriter::new(
-        db_pool.clone(),
+        database.clone(),
         app_data_dir.clone(),
         settings_repo.clone(),
         key_store.clone(),
@@ -60,7 +59,7 @@ pub fn build(
         .map(Path::to_path_buf)
         .unwrap_or_else(|| app_data_dir.clone());
     let archive_restorer = Arc::new(ArchiveRestorer::new(
-        db_pool,
+        database,
         db_path,
         app_data_dir.clone(),
         settings_repo.clone(),

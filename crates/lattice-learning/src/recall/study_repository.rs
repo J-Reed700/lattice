@@ -5,6 +5,7 @@ use super::{
 };
 use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use serde::Deserialize;
 use sqlx::sqlite::SqliteRow;
@@ -475,7 +476,8 @@ async fn set_target_in(
 }
 
 impl StudyRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

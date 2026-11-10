@@ -3,7 +3,7 @@
 use super::document_references::document_references_of;
 use super::messages::messages_of;
 use super::ConversationRepository;
-use crate::features::conversation::persistence_mapper::{
+use crate::features::conversation::repository::mapper::{
     ConversationModel, ConversationRowMapper, ConversationSummaryMapper, ConversationSummaryModel,
     ModelChoiceColumn,
 };

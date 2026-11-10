@@ -6,6 +6,7 @@ use crate::{
     repository::LearningRepository,
     tests::fixture,
 };
+use sqlx::SqlitePool;
 use std::time::Duration;
 
 async fn setup() -> Result<(tempfile::TempDir, SqlitePool, LearningProgramDto, String)> {

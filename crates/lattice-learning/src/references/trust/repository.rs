@@ -16,11 +16,11 @@ use lattice_core::domain::provenance::{
     SubjectKey, TrackRecord, TrustLevel, TrustOverride,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{driver::DriverPool, Transactions};
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
-pub(super) mod capture;
+pub(crate) mod capture;
 pub(super) mod eval_export;
 pub(super) mod judgements;
 pub(super) mod outcomes;
@@ -41,12 +41,9 @@ pub struct SqliteSourceTrustStore {
 }
 
 impl SqliteSourceTrustStore {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
-    }
-
-    pub(crate) fn pool(&self) -> &SqlitePool {
-        &self.pool
     }
 
     /// Records the outcomes together: all or none.

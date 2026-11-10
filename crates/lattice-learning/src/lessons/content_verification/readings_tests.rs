@@ -698,7 +698,7 @@ async fn a_second_reading_restores_its_own_receipt_and_never_one_an_earlier_comp
     let references = ReferenceCollection::lexical(&sources)?;
     let citations = citing(&references)?;
     let model = ScriptedBridge::new(vec![half_stated()]);
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let mut page = citations.of(0).to_vec();
         canonicalize_evidence(&mut page);
         // The earlier part-wise comparison asked the specifics guard with no
@@ -1129,7 +1129,7 @@ async fn a_page_read_twice_is_asked_once_and_its_receipt_is_keyed_by_the_claim_a
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let references = ReferenceCollection::lexical(&marker_collection())?;
     let model = PagingModel::new(32_000);
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let world = world_of(&references, citing_the_wrong_passage(&references)?);
 
         let first = read_one(Reading::Page, &model, &world, CLAIM).await?;
@@ -1318,7 +1318,7 @@ async fn parts_reads_only_what_its_section_cites_and_keys_its_receipt_by_the_cla
     let references = ReferenceCollection::lexical(&marker_collection())?;
     let model = PagingModel::new(6_000);
     let world = world_of(&references, citing_marker(&references)?);
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let read = read_one(Reading::Parts, &model, &world, CLAIM).await?;
 
         assert_eq!(read.outcome, Outcome::Stands);
@@ -1459,7 +1459,7 @@ async fn a_parts_receipt_survives_a_change_in_the_course_ranking_and_the_page_is
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let mut sources = marker_collection();
     let model = PagingModel::new(32_000);
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let references = ReferenceCollection::lexical(&sources)?;
         let world = world_of(&references, citing_marker(&references)?);
         read_one(Reading::Parts, &model, &world, CLAIM).await?;
@@ -1566,7 +1566,7 @@ async fn told_after(
 ) -> Result<Vec<(usize, bool, usize)>> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let saved = [(0, claim(saved[0])), (0, claim(saved[1]))];
         read_all(reading, model, world, &saved).await?;
         let before = requests();
@@ -1651,7 +1651,7 @@ async fn parts_tells_of_each_statement_of_its_batch_once_at_its_own_place_whoeve
     // Parts hands its statements to the page.
     let world = world_of(&references, citing(&references)?);
     let model = ScriptedBridge::new(vec![half_stated(), half_stated()]);
-    lesson_drafts::run(&repo, &job, &lesson, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let before = [
             (0, claim("Quillet is a lexer that reads characters.")),
             (1, claim("Quillet is a lexer that emits tokens.")),

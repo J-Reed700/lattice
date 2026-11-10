@@ -47,7 +47,7 @@ impl VerifierAccess for ContainerVerifier {
 
     fn web(&self, program_id: &str) -> Option<Arc<dyn VerifierWeb>> {
         Some(Arc::new(VerifierPages {
-            pool: self.0.db_pool().clone(),
+            database: self.0.database().clone(),
             program_id: program_id.to_owned(),
             web: self.0.web_service(),
             snapshots: self.0.reference_snapshots(),
@@ -79,12 +79,14 @@ async fn verifier_audit_dto(
     container: &Container,
     program_id: &str,
 ) -> CoreResult<LearningVerifierAuditDto> {
-    let pool = container.db_pool().clone();
-    let setting = LearningCurriculumRepository::new(pool.clone())
+    let database = container.database().clone();
+    let setting = LearningCurriculumRepository::new(database.clone())
         .verifier_audit(program_id)
         .await?;
     let verifier = container.verifier_model().await?;
-    let usage = SqliteAuditRuns::new(pool).course_usage(program_id).await?;
+    let usage = SqliteAuditRuns::new(database)
+        .course_usage(program_id)
+        .await?;
     let (consent_required_for, blocked) = match &verifier {
         None => (
             None,
@@ -145,7 +147,7 @@ pub async fn set_learning_program_verifier_audit(
     container: State<'_, Container>,
 ) -> Result<LearningVerifierAuditDto, ApiError> {
     let container = container.inner();
-    let programs = LearningCurriculumRepository::new(container.db_pool().clone());
+    let programs = LearningCurriculumRepository::new(container.database().clone());
     let mut setting = ProgramVerifierAudit {
         on,
         web_search,
@@ -219,7 +221,7 @@ pub async fn get_learning_lesson_audit(
     container: State<'_, Container>,
 ) -> Result<Option<LearningLessonAuditDto>, ApiError> {
     tracing::debug!(program_id, lesson_id, "learning.audit.read");
-    SqliteAuditRuns::new(container.db_pool().clone())
+    SqliteAuditRuns::new(container.database().clone())
         .latest(&lesson_id)
         .await
         .map(|run| run.map(lesson_audit_dto))
@@ -248,14 +250,14 @@ pub async fn audit_learning_lesson_now(
     container: State<'_, Container>,
 ) -> Result<LearningLessonAuditResultDto, ApiError> {
     let container = container.inner();
-    let pool = container.db_pool().clone();
-    let material = AuditMaterial::of_lesson(&pool, &program_id, &lesson_id).await?;
+    let database = container.database().clone();
+    let material = AuditMaterial::of_lesson(&database, &program_id, &lesson_id).await?;
     let progress = |progress: AuditProgress| {
         tracing::info!(operation_id, lesson_id, step = %progress.label(), "learning.audit.progress");
     };
     let audit = audit_lesson(
         &ContainerVerifier(container.clone()),
-        &pool,
+        &database,
         &LessonAuditRequest {
             program_id: &program_id,
             lesson_id: &lesson_id,
@@ -295,10 +297,10 @@ pub async fn audit_learning_lesson_now(
         ),
     };
     if !outcome.publishable() {
-        let store = ClaimReviewRepository::new(pool.clone());
+        let store = ClaimReviewRepository::new(database.clone());
         hold_for_review(&store, &lesson_id, &outcome, progress).await?;
     }
-    let audit = SqliteAuditRuns::new(pool)
+    let audit = SqliteAuditRuns::new(database)
         .latest(&lesson_id)
         .await?
         .map(|run| {

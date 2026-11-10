@@ -13,9 +13,9 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::{document_scope::DocumentScopePort, EmbeddingPort};
 use lattice_core::shared::{
     error::{AppError, Result},
+    persistence::Database,
     runtime::jobs::JobContext,
 };
-use sqlx::SqlitePool;
 use std::sync::Arc;
 
 pub(super) type EmbeddingLoader =
@@ -37,7 +37,7 @@ pub(super) struct FileImportRequest {
 
 pub(crate) struct FileImporter {
     pub index_file: Arc<IndexFileUseCase>,
-    pub pool: SqlitePool,
+    pub database: Database,
     pub document_scope: Arc<dyn DocumentScopePort>,
     /// Loads the active embedding model; imports wait for it.
     pub load_embedding: EmbeddingLoader,
@@ -156,7 +156,9 @@ impl ItemImporter for FileImporter {
             }
             Ok(PrepareForIndexingOutcome::Prepared(prepared)) => {
                 stamp_owner = true;
-                self.index_file.commit_prepared(*prepared, &self.pool).await
+                self.index_file
+                    .commit_prepared(*prepared, &self.database)
+                    .await
             }
             Err(error) => Err(error),
         };

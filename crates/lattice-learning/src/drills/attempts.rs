@@ -12,9 +12,8 @@ use lattice_core::domain::learning::drills::{
     Assessment, DrillFile, Finding, IssueFix, IssueRating, Score,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 pub(crate) mod repository;
 pub(crate) use repository::recent_in;
@@ -140,12 +139,12 @@ pub struct Begun {
 /// Takes the oldest ready drill of `shelf` built from a lesson, from `lesson` when one is given, and opens an attempt
 /// on it, in one transaction. `None` when no such drill is ready.
 pub async fn start(
-    pool: &SqlitePool,
+    database: &Database,
     shelf: Shelf<'_>,
     lesson: Option<&str>,
     mode: AttemptMode,
 ) -> Result<Option<Begun>> {
-    let mut transaction = pool.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await.map_err(db)?;
     let Some(taken) = bank::take_in(&mut transaction, shelf, lesson).await? else {
         transaction.commit().await.map_err(db)?;
         return Ok(None);
@@ -163,8 +162,8 @@ pub async fn start(
 /// transaction. Asking again with what was already handed in finds the same job; asking with anything else is refused.
 /// A finding is refused only when it has no text or its lines are none of the drill's, and a fix that leaves every
 /// file of the drill as it was is no fix.
-pub async fn submit(pool: &SqlitePool, id: &str, submission: Submission) -> Result<Queued> {
-    let mut transaction = pool.begin_write().await.map_err(db)?;
+pub async fn submit(database: &Database, id: &str, submission: Submission) -> Result<Queued> {
+    let mut transaction = database.begin_write().await.map_err(db)?;
     let attempt = repository::find_in(&mut transaction, id)
         .await?
         .ok_or_else(not_found)?;
@@ -207,8 +206,8 @@ pub async fn submit(pool: &SqlitePool, id: &str, submission: Submission) -> Resu
 
 /// Asks for the grade of an attempt that could not be graded again: it waits for a new grading job, and the error of
 /// the last try is cleared. Asking while it already waits finds that job. An attempt that is open or graded is refused.
-pub async fn regrade(pool: &SqlitePool, id: &str) -> Result<Queued> {
-    let mut transaction = pool.begin_write().await.map_err(db)?;
+pub async fn regrade(database: &Database, id: &str) -> Result<Queued> {
+    let mut transaction = database.begin_write().await.map_err(db)?;
     let attempt = repository::find_in(&mut transaction, id)
         .await?
         .ok_or_else(not_found)?;
@@ -235,8 +234,8 @@ pub async fn regrade(pool: &SqlitePool, id: &str) -> Result<Queued> {
 }
 
 /// The attempt, and the drill it is on.
-pub async fn get(pool: &SqlitePool, id: &str) -> Result<(Attempt, StoredDrill)> {
-    let mut tx = pool.begin_read().await.map_err(db)?;
+pub async fn get(database: &Database, id: &str) -> Result<(Attempt, StoredDrill)> {
+    let mut tx = database.begin_read().await.map_err(db)?;
     let attempt = repository::find_in(&mut tx, id)
         .await?
         .ok_or_else(not_found)?;
@@ -249,8 +248,11 @@ pub async fn get(pool: &SqlitePool, id: &str) -> Result<(Attempt, StoredDrill)> 
 
 /// The attempt, and the drill it is on, when the attempt is submitted and waits for its grade. `None` when it is gone
 /// or in any other state.
-pub(crate) async fn waiting(pool: &SqlitePool, id: &str) -> Result<Option<(Attempt, StoredDrill)>> {
-    match get(pool, id).await {
+pub(crate) async fn waiting(
+    database: &Database,
+    id: &str,
+) -> Result<Option<(Attempt, StoredDrill)>> {
+    match get(database, id).await {
         Ok((attempt, drill)) if attempt.status == AttemptStatus::Submitted => {
             Ok(Some((attempt, drill)))
         }

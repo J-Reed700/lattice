@@ -20,7 +20,7 @@ impl CourseIndexes {
             .iter()
             .filter_map(|job| job.subject_id.clone())
             .collect();
-        let titles = course_titles(&self.pool, &programs).await?;
+        let titles = course_titles(&self.database, &programs).await?;
         Ok(jobs
             .iter()
             .map(|job| {

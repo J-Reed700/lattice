@@ -13,8 +13,7 @@ use lattice_core::domain::provenance::{
     ClaimKind, LabelSource, OriginKey, OutcomeRecord, TRUST_POLICY_VERSION,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 
 use super::calibration::{bars_of, moved_kinds};
 use super::repository::outcomes as stored;
@@ -31,7 +30,7 @@ pub struct VerdictScope<'a> {
 /// before the verdict) and returns the kinds whose bar the new outcomes
 /// moved. A claim the gate did not decide gives none.
 pub async fn record(
-    pool: &SqlitePool,
+    database: &Database,
     scope: VerdictScope<'_>,
     entry: &ClaimLedgerEntry,
     verdict: TrustVerdict,
@@ -40,7 +39,7 @@ pub async fn record(
     if outcomes.is_empty() {
         return Ok(Vec::new());
     }
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let moved = write_in(&mut tx, scope, entry, outcomes).await?;
     tx.commit().await.map_err(db)?;
     Ok(moved)
@@ -94,11 +93,11 @@ async fn write_in(
 /// §5.1 Undo, as `CheckerExamples::forget` does) and returns the kinds whose
 /// bar that moved.
 pub async fn forget(
-    pool: &SqlitePool,
+    database: &Database,
     claim_id: &str,
     verdict: TrustVerdict,
 ) -> Result<Vec<ClaimKind>> {
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let moved = forget_in(&mut tx, claim_id, verdict).await?;
     tx.commit().await.map_err(db)?;
     Ok(moved)

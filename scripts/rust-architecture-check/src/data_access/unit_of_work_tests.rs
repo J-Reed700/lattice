@@ -14,8 +14,8 @@ fn found(path: &str, source: &str) -> Vec<String> {
 
 fn unit_type(path: &str, line: usize, what: &str) -> String {
     format!(
-        "rule 4: {path}:{line} names {what} outside a data module; use WriteTx or ReadTx, \
-         or move the code into a data module"
+        "rule 4: {path}:{line} names {what} outside a data module; hold a Database, \
+         take WriteTx or ReadTx, or move the code into a data module"
     )
 }
 
@@ -75,7 +75,7 @@ pub async fn go(tx: &mut sqlx::Transaction<'_, Sqlite>, c: &mut sqlx::sqlite::Sq
     assert_eq!(
         found(SERVICE, source),
         vec![
-            unit_type(SERVICE, 1, "sqlx::Transaction"),
+            unit_type(SERVICE, 1, "sqlx::Sqlite, sqlx::Transaction"),
             unit_type(SERVICE, 2, "sqlx::sqlite::SqliteConnection"),
             unit_type(SERVICE, 3, "sqlx::Transaction"),
             unit_type(SERVICE, 3, "sqlx::sqlite::SqliteConnection"),
@@ -110,22 +110,29 @@ fn e() { let _ = <sqlx::Transaction<'static, sqlx::Sqlite> as Default>::default(
         vec![
             unit_type(SERVICE, 1, "sqlx::Executor"),
             unit_type(SERVICE, 2, "sqlx::pool::PoolConnection"),
+            unit_type(SERVICE, 2, "sqlx::Sqlite"),
             unit_type(SERVICE, 3, "sqlx::SqliteConnection"),
             unit_type(SERVICE, 4, "sqlx::SqliteTransaction"),
             unit_type(SERVICE, 5, "sqlx::Transaction"),
+            unit_type(SERVICE, 5, "sqlx::Sqlite"),
         ]
     );
 }
 
 #[test]
-fn the_same_types_are_fine_in_a_data_module_test_code_and_the_sync_server() {
+fn the_same_types_are_fine_in_a_data_module_and_test_code_and_refused_in_the_sync_server() {
     let source = r#"use sqlx::{Sqlite, Transaction};
 pub async fn go(tx: &mut sqlx::Transaction<'_, Sqlite>, c: &mut sqlx::SqliteConnection) {}
 "#;
     assert_eq!(found(REPOSITORY, source), Vec::<String>::new());
+    let sync = "crates/lattice-sync/src/service.rs";
     assert_eq!(
-        found("crates/lattice-sync/src/service.rs", source),
-        Vec::<String>::new()
+        found(sync, source),
+        vec![
+            unit_type(sync, 1, "sqlx::Sqlite, sqlx::Transaction"),
+            unit_type(sync, 2, "sqlx::Transaction"),
+            unit_type(sync, 2, "sqlx::SqliteConnection"),
+        ]
     );
     let tests = r#"#[cfg(test)]
 mod tests {
@@ -137,12 +144,24 @@ mod tests {
 }
 
 #[test]
-fn the_pool_errors_rows_and_other_sqlx_names_are_not_refused() {
+fn the_pool_errors_rows_and_other_sqlx_names_are_refused_too() {
     let source = r#"use sqlx::{Error, FromRow, Pool, Row, Sqlite, SqlitePool, Type};
 use sqlx::sqlite::SqliteRow;
 fn f(p: &SqlitePool, q: &Pool<Sqlite>, e: sqlx::Error, r: SqliteRow) {}
 "#;
-    assert_eq!(found(SERVICE, source), Vec::<String>::new());
+    assert_eq!(
+        found(SERVICE, source),
+        vec![
+            unit_type(
+                SERVICE,
+                1,
+                "sqlx::Error, sqlx::FromRow, sqlx::Pool, sqlx::Row, sqlx::Sqlite, \
+                 sqlx::SqlitePool, sqlx::Type"
+            ),
+            unit_type(SERVICE, 2, "sqlx::sqlite::SqliteRow"),
+            unit_type(SERVICE, 3, "sqlx::Error"),
+        ]
+    );
 }
 
 #[test]

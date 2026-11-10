@@ -15,8 +15,7 @@ use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::domain::value_objects::ArtifactIdentity;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, Transactions};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,7 +26,7 @@ use uuid::Uuid;
 
 pub struct DownloadSaga {
     event_bus: Arc<EventBus<ModelDownloadEvent>>,
-    pool: SqlitePool,
+    database: Database,
     downloaded_model_repo: Arc<DownloadedModelRepository>,
     settings: Option<Arc<dyn SettingsRepositoryPort>>,
 }
@@ -77,12 +76,12 @@ impl DownloadSaga {
 
     pub fn new(
         event_bus: Arc<EventBus<ModelDownloadEvent>>,
-        pool: SqlitePool,
+        database: Database,
         downloaded_model_repo: Arc<DownloadedModelRepository>,
     ) -> Self {
         Self {
             event_bus,
-            pool,
+            database,
             downloaded_model_repo,
             settings: None,
         }
@@ -209,7 +208,7 @@ impl DownloadSaga {
         &self,
         event: &FileDownloadCompletedEvent,
     ) -> Result<Option<CompletedModel>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.database.begin_write().await?;
         let file_size = event.file_size as i64;
         model_file_ops::update_file_status_by_model_and_name(
             &mut tx,
@@ -437,7 +436,7 @@ impl DownloadSaga {
         &self,
         event: &FileDownloadFailedEvent,
     ) -> Result<Option<Model>, Box<dyn std::error::Error + Send + Sync>> {
-        let mut tx = self.pool.begin_write().await?;
+        let mut tx = self.database.begin_write().await?;
 
         // A file already on disk and recorded as complete stays that way: the
         // failure can belong to a different session for the same file.

@@ -17,7 +17,7 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{driver::DriverPool, Transactions};
 #[cfg(test)]
 use lattice_core::shared::runtime::jobs::JobStore;
 use sqlx::{Row, SqlitePool};
@@ -107,14 +107,9 @@ pub struct LearningCurriculumRepository {
 }
 
 impl LearningCurriculumRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
-    }
-
-    /// The database the repository writes, for the lesson's claim ledger,
-    /// which a preparation job writes beside its drafts.
-    pub(crate) fn pool(&self) -> &SqlitePool {
-        &self.pool
     }
 
     pub(crate) async fn seed_accepted(&self, program_id: &str) -> Result<()> {

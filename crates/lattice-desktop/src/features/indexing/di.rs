@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use crate::features::indexing::engine::extraction::{ContentExtractor, ExtractionWorkers};
@@ -74,7 +74,7 @@ pub struct IndexingPorts {
 }
 
 pub fn build(
-    db_pool: SqlitePool,
+    database: Database,
     ports: IndexingPorts,
     vector_search: Arc<dyn VectorSearchPort>,
     web_archive: Arc<dyn ArticleArchive>,
@@ -93,10 +93,10 @@ pub fn build(
         transcription,
     } = ports;
     let document_repo =
-        Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
+        Arc::new(DocumentRepositoryImpl::new(database.clone())) as Arc<dyn DocumentRepository>;
     let chunk_repo =
-        Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn ChunkRepositoryPort>;
-    let file_intents = FileIntents::new(db_pool.clone());
+        Arc::new(ChunkRepositoryImpl::new(database.clone())) as Arc<dyn ChunkRepositoryPort>;
+    let file_intents = FileIntents::new(database.clone());
 
     let content_storage =
         Arc::new(ContentAddressedStorage::new()?) as Arc<dyn ContentAddressedStoragePort>;
@@ -129,7 +129,7 @@ pub fn build(
             indexing_embedding.clone(),
             document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
             embedding_repo,
-            db_pool.clone(),
+            database.clone(),
         )
         .with_vector_search(vector_search.clone())
         .with_query_cache(Arc::clone(&query_cache))
@@ -145,7 +145,7 @@ pub fn build(
             file_storage.clone(),
             indexing_embedding,
             document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
-            db_pool.clone(),
+            database.clone(),
             vector_search.clone(),
         )
         .with_content_extractor(content_extractor.clone())
@@ -154,7 +154,7 @@ pub fn build(
     let delete_document_use_case = Arc::new(
         DeleteDocumentUseCase::new(
             vector_search,
-            db_pool,
+            database,
             content_storage,
             Arc::clone(&library_gc),
             web_archive,

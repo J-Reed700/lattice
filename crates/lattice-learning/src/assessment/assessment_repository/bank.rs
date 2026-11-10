@@ -10,9 +10,10 @@ use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
 /// An item on its way into the bank.
@@ -269,11 +270,12 @@ impl LearningAssessmentRepository {
     /// [`Self::bank_needs_in`] as a unit of work of its own: working out a
     /// need stores the outcomes and the blueprint revision it reads.
     pub(crate) async fn bank_needs(
-        pool: &SqlitePool,
+        pool: &impl DriverPool,
         program_id: &str,
         scope: &LearningQuizScopeDto,
         top_up: bool,
     ) -> Result<Vec<AuthoringNeed>> {
+        let pool = pool.sqlx_pool();
         let mut tx = pool.begin_write().await.map_err(db)?;
         let needs = Self::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
         tx.commit().await.map_err(db)?;
@@ -282,11 +284,12 @@ impl LearningAssessmentRepository {
 
     /// [`insert_bank_items_in`] as a unit of work of its own.
     pub(crate) async fn insert_bank_items(
-        pool: &SqlitePool,
+        pool: &impl DriverPool,
         program_id: &str,
         items: &[BankItem],
         author_model: Option<&str>,
     ) -> Result<usize> {
+        let pool = pool.sqlx_pool();
         let mut tx = pool.begin_write().await.map_err(db)?;
         let stored = insert_bank_items_in(&mut tx, program_id, items, author_model).await?;
         tx.commit().await.map_err(db)?;

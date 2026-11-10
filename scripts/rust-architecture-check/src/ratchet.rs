@@ -209,7 +209,8 @@ pub struct SourceFile {
 
 type Error = Box<dyn std::error::Error>;
 
-/// Production files reachable from the crate roots through `mod` declarations.
+/// Production files reachable from the crate roots through `mod` declarations; examples,
+/// tests, benches and `build.rs` are not production and stay unscanned.
 pub fn production_files(root: &Path) -> Result<(Vec<SourceFile>, HashSet<Vec<String>>), Error> {
     let mut crates = vec![(root.join("lib.rs"), true), (root.join("main.rs"), false)];
     let bin = root.join("bin");

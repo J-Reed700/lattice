@@ -62,7 +62,7 @@ impl ClaimReviewService {
     /// Re-decides the claims of every kind whose bar a settlement moved;
     /// whether that re-decided one of this lesson's claims.
     pub(super) async fn redecide(&self, lesson_id: &str, moved: Vec<ClaimKind>) -> Result<bool> {
-        let redecided = redecide_kinds(&self.pool, moved).await?;
+        let redecided = redecide_kinds(&self.database, moved).await?;
         Ok(redecided.lessons.iter().any(|lesson| lesson == lesson_id))
     }
 }

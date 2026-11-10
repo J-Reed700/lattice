@@ -10,7 +10,7 @@ pub struct CreateTangentRequestDto {
     pub selected_text: String,
 }
 
-#[derive(Debug, Clone, Serialize, sqlx::FromRow, specta::Type)]
+#[derive(Debug, Clone, Serialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationTangentDto {
     pub conversation_id: String,

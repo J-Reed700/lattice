@@ -1,5 +1,6 @@
 //! The startup sweep deletes only rows still unclaimed when it takes the
 //! write lock.
+use lattice_core::shared::persistence::Database;
 use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
@@ -38,7 +39,7 @@ async fn fixture() -> (SqlitePool, Arc<ChatImageService>, tempfile::TempDir) {
     let gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     gate.open();
     let service = Arc::new(ChatImageService::new(
-        pool.clone(),
+        Database::from(pool.clone()),
         dir.path().join("chat-images"),
         Arc::new(NoNetwork),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),

@@ -14,6 +14,7 @@ use sqlx::{QueryBuilder, Row, Sqlite, SqliteConnection, SqlitePool};
 use crate::features::summaries::entity::DocumentSummary;
 use lattice_core::application::ports::summary_search::SummaryLevel;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 
 /// Port for persisting and reading document/section summaries.
@@ -104,8 +105,10 @@ pub struct SqliteSummaryRepository {
 }
 
 impl SqliteSummaryRepository {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: impl DriverPool) -> Self {
+        Self {
+            pool: pool.sqlx_pool().clone(),
+        }
     }
 
     fn row_to_summary(row: &sqlx::sqlite::SqliteRow) -> Result<DocumentSummary> {
@@ -399,23 +402,26 @@ impl SummaryRepositoryPort for SqliteSummaryRepository {
 
 /// Queue identities only; repeated indexing replaces one revision atomically.
 pub(crate) async fn enqueue_work(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DriverPool,
     id: &str,
 ) -> lattice_core::shared::error::Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query("INSERT INTO summary_work_queue(document_id, revision, requested_at) SELECT id, lower(hex(randomblob(16))), unixepoch() FROM documents WHERE id = ? ON CONFLICT(document_id) DO UPDATE SET revision = excluded.revision, requested_at = excluded.requested_at, retry_at = 0")
         .bind(id).execute(pool).await?;
     Ok(())
 }
 pub(crate) async fn next_work(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DriverPool,
 ) -> lattice_core::shared::error::Result<Option<(String, String)>> {
+    let pool = pool.sqlx_pool();
     Ok(sqlx::query_as("SELECT document_id, revision FROM summary_work_queue WHERE retry_at <= unixepoch() ORDER BY requested_at, document_id LIMIT 1").fetch_optional(pool).await?)
 }
 pub(crate) async fn acknowledge_work(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DriverPool,
     id: &str,
     revision: &str,
 ) -> lattice_core::shared::error::Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query("DELETE FROM summary_work_queue WHERE document_id = ? AND revision = ?")
         .bind(id)
         .bind(revision)
@@ -424,9 +430,10 @@ pub(crate) async fn acknowledge_work(
     Ok(())
 }
 pub(crate) async fn remove_work(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DriverPool,
     id: &str,
 ) -> lattice_core::shared::error::Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query("DELETE FROM summary_work_queue WHERE document_id = ?")
         .bind(id)
         .execute(pool)
@@ -434,9 +441,10 @@ pub(crate) async fn remove_work(
     Ok(())
 }
 pub(crate) async fn document_id_at_path(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DriverPool,
     path: &std::path::Path,
 ) -> lattice_core::shared::error::Result<Option<String>> {
+    let pool = pool.sqlx_pool();
     Ok(
         sqlx::query_scalar("SELECT id FROM documents WHERE file_path = ?")
             .bind(path.to_string_lossy().as_ref())
@@ -449,19 +457,21 @@ pub(crate) async fn document_id_at_path(
 /// the back of the queue, so other documents get their turn before it
 /// resumes.
 pub(crate) async fn requeue_work(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DriverPool,
     id: &str,
     revision: &str,
 ) -> lattice_core::shared::error::Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query("UPDATE summary_work_queue SET requested_at = unixepoch(), retry_at = 0 WHERE document_id = ? AND revision = ?").bind(id).bind(revision).execute(pool).await?;
     Ok(())
 }
 
 pub(crate) async fn defer_work(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DriverPool,
     id: &str,
     revision: &str,
 ) -> lattice_core::shared::error::Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query("UPDATE summary_work_queue SET retry_at = unixepoch() + 60 WHERE document_id = ? AND revision = ?").bind(id).bind(revision).execute(pool).await?;
     Ok(())
 }
@@ -477,9 +487,10 @@ pub(crate) struct SourceParts {
 /// unit so a re-index between them cannot mix two versions. `None` when the
 /// document is gone.
 pub(crate) async fn source_parts(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     document_id: &str,
 ) -> Result<Option<SourceParts>> {
+    let pool = pool.sqlx_pool();
     let mut tx = pool
         .begin_read()
         .await

@@ -3,6 +3,7 @@ use crate::features::file::custom_collections::dto::{
 };
 use chrono::Utc;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
@@ -13,7 +14,8 @@ pub struct CustomCollectionsRepository {
 }
 
 impl CustomCollectionsRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

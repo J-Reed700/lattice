@@ -7,10 +7,10 @@ async fn repository() -> (tempfile::TempDir, ConversationRepository) {
     let database = DatabaseConnection::new(directory.path().join("workspace.db"))
         .await
         .unwrap();
-    initialize_database(database.pool()).await.unwrap();
+    initialize_database(database.database()).await.unwrap();
     (
         directory,
-        ConversationRepository::new(database.pool().clone()),
+        ConversationRepository::new(database.database().clone()),
     )
 }
 

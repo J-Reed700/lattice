@@ -14,9 +14,8 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use serde_json::Value;
-use sqlx::SqlitePool;
 
 use super::actions::{in_section_body, refusal, whole_sentence, ONLY_SECTION};
 use super::checker_examples::LabelSource;
@@ -62,7 +61,7 @@ const NOT_A_SENTENCE: &str =
 
 #[derive(Clone)]
 pub struct ClaimReviewService {
-    pool: SqlitePool,
+    pub(super) database: Database,
     store: ClaimReviewRepository,
     drafts: LearningCurriculumRepository,
     checker_model: Option<String>,
@@ -94,12 +93,12 @@ struct Planned<'a> {
 }
 
 impl ClaimReviewService {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(database: Database) -> Self {
         Self {
-            store: ClaimReviewRepository::new(pool.clone()),
-            drafts: LearningCurriculumRepository::new(pool.clone()),
+            store: ClaimReviewRepository::new(database.clone()),
+            drafts: LearningCurriculumRepository::new(database.clone()),
             checker_model: None,
-            pool,
+            database,
         }
     }
 
@@ -108,10 +107,6 @@ impl ClaimReviewService {
     pub fn with_checker_model(mut self, model: Option<String>) -> Self {
         self.checker_model = model;
         self
-    }
-
-    pub(super) fn pool(&self) -> &SqlitePool {
-        &self.pool
     }
 
     pub(super) fn store(&self) -> &ClaimReviewRepository {
@@ -336,10 +331,10 @@ impl ClaimReviewService {
         if review.state != LessonReviewState::Ready {
             return Err(AppError::InvalidState(ONLY_PUBLISHED.into()));
         }
-        let mut findings = TeachingFindingsRepository::new(self.pool.clone())
+        let mut findings = TeachingFindingsRepository::new(self.database.clone())
             .list(lesson_id)
             .await?;
-        let bodies = blocks::section_bodies(&self.pool, lesson_id).await?;
+        let bodies = blocks::section_bodies(&self.database, lesson_id).await?;
         name_claims(&ledger, &bodies, &mut findings);
         let mut chosen: Vec<&TeachingFindingDto> = Vec::new();
         for key in finding_keys {
@@ -392,7 +387,7 @@ impl ClaimReviewService {
     ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>)> {
         let lesson_id = ledger.lesson_id.as_str();
         let user = provenance(review);
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         check_revision(&mut tx, lesson_id, ledger.revision).await?;
         let mut ended: Vec<ClaimId> = Vec::new();
         let mut through_claims: Vec<ClaimId> = Vec::new();
@@ -515,7 +510,7 @@ impl ClaimReviewService {
     ) -> Result<(Revision, Vec<ClaimKind>)> {
         let published = review.state == LessonReviewState::Ready;
         let user = provenance(review);
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         check_revision(&mut tx, lesson_id, revision).await?;
         let mut ended: HashSet<ClaimId> = HashSet::new();
         for item in planned {
@@ -633,7 +628,7 @@ impl ClaimReviewService {
                 source_version_ids,
             } => {
                 let quote = self.bound_quote(review, lesson_id, entry).await;
-                let deleted = reviews::deleted_versions(&self.pool, &review.program_id).await?;
+                let deleted = reviews::deleted_versions(&self.database, &review.program_id).await?;
                 let source_version_ids = source_version_ids
                     .into_iter()
                     .filter(|id| !deleted.contains(id))

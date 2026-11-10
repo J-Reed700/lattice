@@ -13,9 +13,9 @@ use lattice_core::application::contracts::notes::WorkspaceNoteDto;
 use lattice_core::application::contracts::notes::WorkspaceNoteRecord;
 use lattice_core::application::contracts::sources::SourceDto;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
 
 async fn capture_target(
     tx: &mut sqlx::SqliteConnection,
@@ -68,9 +68,10 @@ async fn capture_target(
 }
 
 pub(super) async fn capture_reference(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     request: CaptureReferenceRequestDto,
 ) -> Result<CaptureReferenceResultDto> {
+    let pool = pool.sqlx_pool();
     capture_snippet(&request.message_content)?;
     if request.conversation_id.trim().is_empty()
         || request.message_id.trim().is_empty()
@@ -107,12 +108,13 @@ pub(super) async fn capture_reference(
 }
 
 pub(super) async fn quick_capture(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     title: &str,
     content: &str,
     sources: Vec<SourceDto>,
     conversation_ids: Vec<String>,
 ) -> Result<QuickCaptureResultDto> {
+    let pool = pool.sqlx_pool();
     let snippet = capture_snippet(content)?;
     let mut tx = pool.begin_write().await?;
     let journal_id: Option<String> = sqlx::query_scalar("SELECT j.id FROM journals j LEFT JOIN daily_notes_workspace n ON n.journal_id = j.id WHERE j.is_archived = 0 GROUP BY j.id ORDER BY MAX(n.updated_at) DESC, j.sort_order, j.created_at, j.id LIMIT 1")

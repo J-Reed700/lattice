@@ -65,11 +65,12 @@ pub(in super::super) async fn mark_admission(
 }
 
 pub(in super::super) async fn admitted_under(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     policy: &str,
     words: i64,
 ) -> Result<Vec<ShortSource>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT s.id AS source_id, v.id AS version_id, v.title, v.word_count, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL AND v.admission_policy=? AND v.word_count<? ORDER BY v.word_count, s.created_at, s.id",
     )
@@ -92,9 +93,10 @@ pub(in super::super) async fn admitted_under(
 }
 
 pub(in super::super) async fn refused_sources(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<RefusedSource>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT s.id AS source_id, s.revision, v.id AS version_id, v.title, v.not_a_source AS reason, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NOT NULL ORDER BY s.created_at,s.id",
     )
@@ -116,10 +118,11 @@ pub(in super::super) async fn refused_sources(
 }
 
 pub(in super::super) async fn job_running(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     kind: &str,
     subject_id: &str,
 ) -> Result<bool> {
+    let pool = pool.sqlx_pool();
     let running: Option<i64> = sqlx::query_scalar(
         "SELECT 1 FROM jobs WHERE kind=? AND subject_id=? AND status IN ('pending','running') LIMIT 1",
     )
@@ -132,9 +135,10 @@ pub(in super::super) async fn job_running(
 }
 
 pub(in super::super) async fn cited_by_reports(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<HashSet<String>> {
+    let pool = pool.sqlx_pool();
     Ok(sqlx::query_scalar::<_, Option<String>>(
         "SELECT DISTINCT json_extract(e.value, '$.source_id') FROM learning_lesson_verifications r, json_each(r.report_json, '$.findings') f, json_each(f.value, '$.evidence') e WHERE r.program_id=?",
     )
@@ -148,10 +152,11 @@ pub(in super::super) async fn cited_by_reports(
 }
 
 pub(in super::super) async fn admitted_added_by(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     added_by: &str,
 ) -> Result<Vec<ResearchSource>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT s.id AS source_id, s.revision, v.id AS version_id, v.title, COALESCE(v.resolved_url, v.requested_url) AS url FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND s.added_by=? AND v.not_a_source IS NULL ORDER BY s.created_at,s.id",
     )

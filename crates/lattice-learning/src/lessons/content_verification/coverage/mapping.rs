@@ -163,6 +163,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
     use crate::lessons::course_generation_tests::ScriptedModel;
+    use lattice_core::shared::persistence::Database;
     use std::sync::Mutex;
 
     fn units() -> Vec<Value> {
@@ -251,13 +252,13 @@ mod tests {
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
         let first = model(vec![listed(&[("p0", missing()), ("p1", empty())])]);
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             assert!(review(&first, &units(), None).await.is_err());
             Ok(())
         })
         .await?;
         let next = model(vec![listed(&[("p1", label())])]);
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             let raw = review(&next, &units(), None).await?;
             assert!(!resolve(&raw, &units())?[0].complete);
             assert_eq!(requested(&next.prompts.lock().unwrap()[0]), vec!["p1"]);

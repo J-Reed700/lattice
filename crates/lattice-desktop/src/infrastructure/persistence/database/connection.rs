@@ -1,11 +1,12 @@
 use lattice_core::shared::error::{AppError, Result, ResultExt};
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePool, SqlitePoolOptions};
 use std::future::Future;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 pub struct DatabaseConnection {
-    pool: SqlitePool,
+    database: Database,
     /// Where a corrupt database was moved before a fresh one was created, when
     /// that happened on this open. The user otherwise sees only an empty
     /// library; this is what lets the app say why.
@@ -82,7 +83,7 @@ impl DatabaseConnection {
         }
 
         Ok(Self {
-            pool,
+            database: pool.into(),
             recovered_from,
         })
     }
@@ -196,12 +197,12 @@ impl DatabaseConnection {
         }
     }
 
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
+    pub fn database(&self) -> &Database {
+        &self.database
     }
 
     pub async fn close(self) -> Result<()> {
-        self.pool.close().await;
+        self.database.close().await;
         Ok(())
     }
 }
@@ -257,13 +258,14 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::persistence::driver::DriverPool;
 
     #[tokio::test]
     async fn file_backed_pool_applies_connection_pragmas_and_closes_with_a_clone() {
         let dir = tempfile::tempdir().unwrap();
         let db = dir.path().join("settings.db");
         let connection = DatabaseConnection::new(db).await.unwrap();
-        let pool = connection.pool();
+        let pool = connection.database().sqlx_pool();
 
         // Holding two connections at once verifies these settings are applied
         // to every SQLite connection, rather than one arbitrary pooled handle.
@@ -436,7 +438,7 @@ mod tests {
         // closed. What matters here is that nothing was replayed into the
         // fresh file.
         let fresh: (i32,) = sqlx::query_as("PRAGMA schema_version")
-            .fetch_one(connection.pool())
+            .fetch_one(connection.database().sqlx_pool())
             .await
             .unwrap();
         assert_eq!(

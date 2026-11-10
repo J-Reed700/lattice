@@ -5,6 +5,7 @@ use super::{
     study_service::create_interview_deck,
 };
 use crate::practice::practical_generation::INTERVIEW_PLAN_FILE_PATH;
+use lattice_core::shared::persistence::Database;
 use sqlx::{sqlite::SqlitePoolOptions, SqlitePool};
 
 const PLAN: &str = r#"{
@@ -87,7 +88,12 @@ async fn a_target_that_cannot_be_saved_leaves_no_deck_behind() {
         .await
         .unwrap();
     let repo = StudyRepository::new(pool.clone());
-    let result = create_interview_deck(&repo, &pool, request(Some(tomorrow()))).await;
+    let result = create_interview_deck(
+        &repo,
+        &Database::from(pool.clone()),
+        request(Some(tomorrow())),
+    )
+    .await;
     assert!(result.is_err());
     assert_eq!(count(&pool, "study_decks").await, 0);
     assert_eq!(count(&pool, "study_cards").await, 0);
@@ -102,7 +108,7 @@ async fn making_the_same_deck_at_once_makes_one_deck() {
         let pool = pool.clone();
         calls.spawn(async move {
             let repo = StudyRepository::new(pool.clone());
-            create_interview_deck(&repo, &pool, request(Some(target))).await
+            create_interview_deck(&repo, &Database::from(pool.clone()), request(Some(target))).await
         });
     }
     while let Some(done) = calls.join_next().await {

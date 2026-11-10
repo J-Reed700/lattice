@@ -1,5 +1,6 @@
 //! Store, repository, job and protocol tests (§12).
 
+use lattice_core::shared::persistence::Database;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, SystemTime};
 
@@ -70,11 +71,12 @@ async fn fixture_with(register: bool) -> Fixture {
     let dir = tempfile::tempdir().unwrap();
     let capture = Arc::new(MockPageCapture::new());
     let events = Arc::new(RecordingEvents::default());
-    let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone());
+    let database = Database::from(pool.clone());
+    let jobs = lattice_core::shared::runtime::jobs::JobRuntime::new(database.clone());
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
     let service = Arc::new(WebPageSnapshotService::new(
-        pool.clone(),
+        database,
         dir.path().join("web-snapshots"),
         capture.clone(),
         jobs,

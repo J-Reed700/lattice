@@ -18,8 +18,7 @@ use lattice_core::domain::models::validation::ModelFileValidator;
 use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, Transactions};
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -39,7 +38,7 @@ pub struct DownloadModelUseCase {
     credentials: Arc<dyn CredentialsPort>,
     checksum_service: Arc<dyn ChecksumService>,
     file_system_access: Arc<dyn FileSystemAccess>,
-    pool: SqlitePool,
+    database: Database,
 }
 
 impl DownloadModelUseCase {
@@ -51,7 +50,7 @@ impl DownloadModelUseCase {
         credentials: Arc<dyn CredentialsPort>,
         checksum_service: Arc<dyn ChecksumService>,
         file_system_access: Arc<dyn FileSystemAccess>,
-        pool: SqlitePool,
+        database: Database,
     ) -> Self {
         Self {
             catalog,
@@ -61,13 +60,13 @@ impl DownloadModelUseCase {
             credentials,
             checksum_service,
             file_system_access,
-            pool,
+            database,
         }
     }
 
     /// Writes the pending model row and its file rows in one unit of work.
     async fn record_pending(&self, model: &Model, files: &[ModelFile]) -> Result<(), AppError> {
-        let mut tx = self.pool.begin_write().await.map_err(|e| {
+        let mut tx = self.database.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to begin model record transaction: {}", e))
         })?;
         model_ops::upsert_model(&mut tx, model)
@@ -89,7 +88,7 @@ impl DownloadModelUseCase {
         model_id: &str,
         files: &[(&str, Option<i64>)],
     ) -> Result<(), AppError> {
-        let mut tx = self.pool.begin_write().await.map_err(|e| {
+        let mut tx = self.database.begin_write().await.map_err(|e| {
             AppError::Database(format!("Failed to begin failure transaction: {}", e))
         })?;
         model_ops::update_status_failed(&mut tx, model_id).await?;

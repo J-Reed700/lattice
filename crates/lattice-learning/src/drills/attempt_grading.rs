@@ -17,9 +17,8 @@ use lattice_core::domain::learning::drills::{
     lesson_rating, ratings, score, validate, IssueRating, PatternRating,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
-use sqlx::SqlitePool;
 use tokio_util::sync::CancellationToken;
 
 /// Grades attempts. The model, the material, the grader and the database are the grading's own; the job runtime's
@@ -28,7 +27,7 @@ pub(crate) struct AttemptGrading<'a> {
     llm: &'a dyn LLMPort,
     material: Box<dyn DrillMaterial + 'a>,
     grader: &'a dyn ReviewGrader,
-    pool: &'a SqlitePool,
+    database: Database,
     cancel: CancellationToken,
 }
 
@@ -38,14 +37,14 @@ impl<'a> AttemptGrading<'a> {
         llm: &'a dyn LLMPort,
         material: Box<dyn DrillMaterial + 'a>,
         grader: &'a dyn ReviewGrader,
-        pool: &'a SqlitePool,
+        database: &Database,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             llm,
             material,
             grader,
-            pool,
+            database: database.clone(),
             cancel,
         }
     }
@@ -125,7 +124,16 @@ impl<'a> AttemptGrading<'a> {
             model: self.llm.model_name(),
         };
         let lesson = lesson_rating(&stored.drill.material, key, &assessment);
-        save_grade(self.pool, context, attempt, stored, &graded, &rated, lesson).await
+        save_grade(
+            &self.database,
+            context,
+            attempt,
+            stored,
+            &graded,
+            &rated,
+            lesson,
+        )
+        .await
     }
 
     async fn give_up(
@@ -135,7 +143,7 @@ impl<'a> AttemptGrading<'a> {
         error: &AppError,
     ) -> Result<JobOutcome> {
         give_up(
-            self.pool,
+            &self.database,
             context,
             &attempt.id,
             Some(self.llm.model_name()),
@@ -148,7 +156,7 @@ impl<'a> AttemptGrading<'a> {
 /// Stores the grade of `attempt`, a submitted attempt at `stored`, and the schedules it moves, and completes the job,
 /// in one transaction.
 async fn save_grade(
-    pool: &SqlitePool,
+    database: &Database,
     context: &JobContext,
     attempt: &Attempt,
     stored: &StoredDrill,
@@ -156,7 +164,7 @@ async fn save_grade(
     rated: &[IssueRating],
     lesson: Option<PatternRating>,
 ) -> Result<JobOutcome> {
-    let mut transaction = pool.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await.map_err(db)?;
     let recorded =
         attempts::repository::record_graded_in(&mut transaction, &attempt.id, graded).await?;
     if recorded {
@@ -186,7 +194,7 @@ async fn save_grade(
 /// completes the job with it: the learner reads "Couldn't grade yet" and may ask again. `Stopped` when the job was
 /// cancelled, which is no reason to give up on the review.
 pub(crate) async fn give_up(
-    pool: &SqlitePool,
+    database: &Database,
     context: &JobContext,
     attempt_id: &str,
     model: Option<&str>,
@@ -196,7 +204,7 @@ pub(crate) async fn give_up(
         return Ok(JobOutcome::Stopped);
     }
     tracing::warn!(attempt = attempt_id, %error, "A drill attempt could not be graded");
-    let mut transaction = pool.begin_write().await.map_err(db)?;
+    let mut transaction = database.begin_write().await.map_err(db)?;
     let recorded = attempts::repository::record_ungraded_in(
         &mut transaction,
         attempt_id,

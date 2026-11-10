@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::persistence::Database;
 
 /// A restore whose database swap fails has already placed the files, and left
 /// the old database as it was: the files of a backup land before the rows
@@ -22,7 +23,7 @@ async fn a_restore_that_stops_at_the_database_swap_has_already_placed_its_files(
     let key_store = isolated_key_store(&app_data);
     let service = ArchiveService::new(
         Arc::new(ArchiveWriter::new(
-            pool.clone(),
+            Database::from(pool.clone()),
             app_data.clone(),
             settings.clone(),
             key_store.clone(),
@@ -30,7 +31,7 @@ async fn a_restore_that_stops_at_the_database_swap_has_already_placed_its_files(
             None,
         )),
         Arc::new(ArchiveRestorer::new(
-            pool.clone(),
+            Database::from(pool.clone()),
             db_path.clone(),
             app_data.clone(),
             settings.clone(),
@@ -66,7 +67,7 @@ async fn a_restore_that_stops_at_the_database_swap_has_already_placed_its_files(
     let target_pool = seeded_pool(&target_db, 1).await;
     std::fs::create_dir_all(target_app_data.join("lattice.db.restoring")).unwrap();
     let restorer = ArchiveRestorer::new(
-        target_pool,
+        Database::from(target_pool),
         target_db.clone(),
         target_app_data.clone(),
         Arc::new(MockSettingsRepository::new()),

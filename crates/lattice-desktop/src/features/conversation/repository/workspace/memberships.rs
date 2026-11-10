@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::conversation::repository::space_rows::ConversationSpaceMemberRow;
 use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -24,7 +25,7 @@ impl ConversationRepository {
         &self,
         space_id: String,
     ) -> Result<Vec<ConversationSpaceMemberDto>, AppError> {
-        let members = sqlx::query_as::<_, ConversationSpaceMemberDto>(
+        let members = sqlx::query_as::<_, ConversationSpaceMemberRow>(
             r#"
         SELECT
             sm.space_id AS space_id,
@@ -54,7 +55,7 @@ impl ConversationRepository {
             AppError::Database(format!("Failed to list conversation space members: {}", e))
         })?;
 
-        Ok(members)
+        Ok(members.into_iter().map(Into::into).collect())
     }
 
     pub async fn upsert_conversation_space_member(
@@ -137,7 +138,7 @@ impl ConversationRepository {
             AppError::Database(format!("Failed to upsert conversation space member: {}", e))
         })?;
 
-        let member = sqlx::query_as::<_, ConversationSpaceMemberDto>(
+        let member = sqlx::query_as::<_, ConversationSpaceMemberRow>(
             r#"
         SELECT
             sm.space_id AS space_id,
@@ -172,7 +173,7 @@ impl ConversationRepository {
             ))
         })?;
 
-        Ok(member)
+        Ok(member.into())
     }
 
     pub async fn remove_conversation_space_member(

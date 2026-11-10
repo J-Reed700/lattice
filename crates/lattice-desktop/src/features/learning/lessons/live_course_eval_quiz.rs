@@ -25,6 +25,7 @@ use crate::features::learning::assessment_repository::{
 };
 use crate::features::learning::grade_rationale::{self, Checked, Grader, GraderVerdict, Reference};
 use crate::features::learning::{quiz_bank_jobs, quiz_blueprints};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::persistence::Transactions;
 
 const BANK_SCHEMA: &str = "course-eval-quiz-bank/1";
@@ -58,8 +59,14 @@ pub(super) async fn quiz_stage(
     };
     let first_call = run.calls();
     let started = std::time::Instant::now();
-    let written =
-        quiz_bank_jobs::prepare_bank_now(pool, &*run.model, program_id, &scope, false).await;
+    let written = quiz_bank_jobs::prepare_bank_now(
+        &Database::from(pool.clone()),
+        &*run.model,
+        program_id,
+        &scope,
+        false,
+    )
+    .await;
     let seconds = started.elapsed().as_secs_f64();
     let report = match written {
         Ok(report) => report,

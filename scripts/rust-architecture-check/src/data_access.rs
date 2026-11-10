@@ -1,11 +1,13 @@
-//! The four data-access rules, held at zero: one way to begin a transaction,
+//! The five data-access rules, held at zero: one way to begin a transaction,
 //! SQL only in data modules, one transaction for a function that runs several statements
-//! or is a unit of work, and sqlx's unit-of-work types only in data modules.
+//! or is a unit of work, sqlx named only in data modules, and the driver's handles kept
+//! inside data modules (no handout, and `sqlx_pool()` called only there).
 use crate::{
     item_attrs,
     ratchet::{impl_item_attrs, production_files, token_paths, trait_item_attrs},
     test_only,
 };
+mod handouts;
 mod rule3;
 mod sqlx_types;
 mod unit_of_work;
@@ -19,6 +21,7 @@ use syn::{
 type Error = Box<dyn std::error::Error>;
 
 const TRANSACTIONS: &str = "crates/lattice-core/src/shared/persistence/transactions.rs";
+const DRIVER: &str = "crates/lattice-core/src/shared/persistence/driver.rs";
 const POSTGRES: &str = "crates/lattice-sync/";
 const STORE_CRATE: &str = "crates/lattice-store/";
 const DATA_NAMES: [&str; 7] = [
@@ -71,6 +74,63 @@ pub const EXCEPTIONS: &[Exception<'static>] = &[
     ),
 ];
 
+/// `(file, owner, item, reason)`: an item rule 5(b) would flag, with the reason it must hand
+/// out a handle. The owner is `trait T` for a trait declaration, `impl T for S` for a trait
+/// impl, `impl S` for an inherent impl and empty for a free item; an item of `*` covers the
+/// whole owner.
+pub type Exemption<'a> = (&'a str, &'a str, &'a str, &'a str);
+
+pub const HANDOUT_EXEMPTIONS: &[Exemption<'static>] = &[
+    (
+        DRIVER,
+        "trait DriverPool",
+        "sqlx_pool",
+        "the one sanctioned door to the driver's pool; rule 4 keeps the trait out of code outside data modules",
+    ),
+    (
+        DRIVER,
+        "impl DriverPool for Database",
+        "sqlx_pool",
+        "the one sanctioned door to the pool inside a Database",
+    ),
+    (
+        DRIVER,
+        "impl DriverPool for SqlitePool",
+        "sqlx_pool",
+        "the one sanctioned door to a raw pool, for tests and data modules",
+    ),
+    (
+        TRANSACTIONS,
+        "impl Deref for WriteTx",
+        "*",
+        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+    ),
+    (
+        TRANSACTIONS,
+        "impl DerefMut for WriteTx",
+        "*",
+        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+    ),
+    (
+        TRANSACTIONS,
+        "impl Deref for ReadTx",
+        "*",
+        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+    ),
+    (
+        TRANSACTIONS,
+        "impl DerefMut for ReadTx",
+        "*",
+        "the unit-of-work guard: data functions take &mut SqliteConnection and services pass &mut tx by coercion, because services cannot name the type",
+    ),
+    (
+        "crates/lattice-sync/src/persistence/db.rs",
+        "impl Database",
+        "sqlx_pool",
+        "the sync server's own accessor, through which its data modules reach the Postgres pool",
+    ),
+];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
     pub rule: u8,
@@ -99,13 +159,38 @@ pub fn is_data_module(path: &str) -> bool {
         })
 }
 
+/// Violations of a file whose enclosing modules are all declared `pub`, except the file's own inline modules.
+#[cfg(test)]
 pub fn file_violations(path: &str, ast: &syn::File) -> Vec<Violation> {
     file_violations_with(path, ast, EXCEPTIONS)
 }
 
+#[cfg(test)]
 pub fn file_violations_with(
     path: &str,
     ast: &syn::File,
+    exceptions: &[Exception],
+) -> Vec<Violation> {
+    let module = handouts::module_of(path);
+    let modules = handouts::module_scopes([(path, module.as_slice(), ast)]);
+    scan_file(path, &module, ast, &modules, exceptions)
+}
+
+/// Violations of a file in `module`, given where every `mod` of the crate is declared visible.
+fn file_violations_in(
+    path: &str,
+    module: &[String],
+    ast: &syn::File,
+    modules: &handouts::ModuleScopes,
+) -> Vec<Violation> {
+    scan_file(path, module, ast, modules, EXCEPTIONS)
+}
+
+fn scan_file(
+    path: &str,
+    module: &[String],
+    ast: &syn::File,
+    modules: &handouts::ModuleScopes,
     exceptions: &[Exception],
 ) -> Vec<Violation> {
     if test_only(&ast.attrs) {
@@ -122,8 +207,17 @@ pub fn file_violations_with(
     };
     scan.visit_file(ast);
     let mut found = scan.found;
-    if !data && !postgres {
+    if data {
+        found.extend(handouts::handouts(
+            path,
+            module,
+            ast,
+            modules,
+            HANDOUT_EXEMPTIONS,
+        ));
+    } else {
         found.extend(sqlx_types::violations(path, ast));
+        found.extend(handouts::calls(path, ast));
     }
     found.extend(rule3::violations(path, ast, exceptions, data));
     found.extend(unit_of_work::violations(path, ast, exceptions));
@@ -131,7 +225,8 @@ pub fn file_violations_with(
     found
 }
 
-/// Checks the production files below every source root; a root named twice counts once.
+/// Checks the production files below every source root (examples, tests, benches and
+/// `build.rs` are not production and stay unscanned); a root named twice counts once.
 pub fn check(roots: &[&Path], failures: &mut usize) -> Result<(), Error> {
     let mut seen = HashSet::new();
     let mut found = Vec::new();
@@ -144,9 +239,28 @@ pub fn check(roots: &[&Path], failures: &mut usize) -> Result<(), Error> {
         }
         let label = repository_label(&canonical)?;
         let (files, _) = production_files(root)?;
+        let paths: Vec<String> = files
+            .iter()
+            .map(|file| format!("{label}/{}", file.relative))
+            .collect();
+        let scopes = |library: bool| {
+            handouts::module_scopes(
+                files
+                    .iter()
+                    .zip(&paths)
+                    .filter(|(file, _)| file.library == library)
+                    .map(|(file, path)| (path.as_str(), file.module.as_slice(), &file.ast)),
+            )
+        };
+        let (library_scopes, binary_scopes) = (scopes(true), scopes(false));
         for file in &files {
             let path = format!("{label}/{}", file.relative);
-            found.extend(file_violations(&path, &file.ast));
+            let modules = if file.library {
+                &library_scopes
+            } else {
+                &binary_scopes
+            };
+            found.extend(file_violations_in(&path, &file.module, &file.ast, modules));
         }
     }
     found.sort_by(|a, b| (&a.path, a.rule, a.line).cmp(&(&b.path, b.rule, b.line)));
@@ -457,6 +571,8 @@ impl<'ast> Visit<'ast> for Scan<'_> {
     }
 }
 
+#[cfg(test)]
+mod driver_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

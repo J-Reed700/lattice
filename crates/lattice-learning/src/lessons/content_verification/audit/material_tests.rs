@@ -2,6 +2,7 @@
 use super::*;
 use crate::assessment::assessment_tests::{placed_questions, PLACED_PROMPTS};
 use crate::dto::AcceptLearningProgramRequestDto;
+use lattice_core::shared::persistence::Database;
 
 #[tokio::test]
 async fn the_published_lessons_units_keep_each_questions_place() -> Result<()> {
@@ -30,7 +31,7 @@ async fn the_published_lessons_units_keep_each_questions_place() -> Result<()> {
             &crate::tests::prepared_with_questions(&lesson_id, &placed_questions()),
         )
         .await?;
-    let draft = published(&pool, &program_id, &lesson_id).await?;
+    let draft = published(&Database::from(pool.clone()), &program_id, &lesson_id).await?;
     let sections = draft["blocks"].as_array().map_or(0, Vec::len);
     let units = units(&draft);
     let title = |unit: usize| units.get(unit).map(|u| u.title.as_str());

@@ -22,8 +22,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, Transactions};
 use std::sync::Arc;
 
 use self::acquire::Acquired;
@@ -100,7 +99,7 @@ pub struct LessonSourceRequest<'a> {
 
 /// What the attach works with; the command assembles it from the container.
 pub struct AttachDeps<'a> {
-    pub pool: &'a SqlitePool,
+    pub database: &'a Database,
     pub store: &'a dyn ClaimReviewStore,
     pub web: &'a dyn WebServiceTrait,
     pub snapshots: &'a dyn ReferenceSnapshotPort,
@@ -251,7 +250,7 @@ async fn record_check(
         })
         .collect();
     let moved = write_check(
-        deps.pool,
+        deps.database,
         (program_id, lesson_id),
         flagged,
         &shown,
@@ -260,13 +259,13 @@ async fn record_check(
         count_verdict,
     )
     .await?;
-    redecide_kinds(deps.pool, moved).await
+    redecide_kinds(deps.database, moved).await
 }
 
 /// The unit of work of [`record_check`]; returns the kinds whose bar the
 /// outcome moved.
 async fn write_check(
-    pool: &SqlitePool,
+    database: &Database,
     (program_id, lesson_id): (&str, &str),
     flagged: &ClaimLedgerEntry,
     shown: &[ShownPassage],
@@ -274,7 +273,7 @@ async fn write_check(
     in_collection: bool,
     count_verdict: bool,
 ) -> Result<Vec<ClaimKind>> {
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     ClaimReviewRepository::show_passages_in(&mut tx, lesson_id, flagged.claim_id(), shown).await?;
     let mut moved = Vec::new();
     if matches!(check.result, CheckResult::Supported { .. }) {
@@ -311,7 +310,7 @@ pub(super) async fn course_material(
     deps: &AttachDeps<'_>,
     program_id: &str,
 ) -> Result<(Vec<LearningSourceDto>, Option<CourseSearch>)> {
-    let sources = LearningSourceLibraryRepository::new(deps.pool.clone())
+    let sources = LearningSourceLibraryRepository::new(deps.database.clone())
         .verification_sources(program_id)
         .await?;
     let course = match deps.courses {
@@ -584,7 +583,7 @@ async fn put_back_for(
     if !supported {
         return Ok(PutBackOutcomeDto::StaysOut);
     }
-    let service = super::service::ClaimReviewService::new(deps.pool.clone());
+    let service = super::service::ClaimReviewService::new(deps.database.clone());
     let back = service.put_back_for_source(lesson_id, claim_id).await?;
     Ok(if back.is_some() {
         PutBackOutcomeDto::Back

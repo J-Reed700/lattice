@@ -2,15 +2,20 @@
 //! and the lesson's quiz bank.
 
 use serde_json::{json, Value};
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 
 use super::runs::{AuditRun, BatchRecord, CourseAuditUsage, RunKey, RunState};
 use crate::persistence::{db, decode, encode};
 
-pub(super) async fn latest_run(pool: &SqlitePool, lesson_id: &str) -> Result<Option<AuditRun>> {
+pub(super) async fn latest_run(
+    pool: &impl DriverPool,
+    lesson_id: &str,
+) -> Result<Option<AuditRun>> {
+    let pool = pool.sqlx_pool();
     sqlx::query(
         "SELECT * FROM learning_lesson_audits WHERE lesson_id=? \
          ORDER BY started_at DESC, rowid DESC LIMIT 1",
@@ -23,7 +28,11 @@ pub(super) async fn latest_run(pool: &SqlitePool, lesson_id: &str) -> Result<Opt
     .transpose()
 }
 
-pub(super) async fn course_usage(pool: &SqlitePool, program_id: &str) -> Result<CourseAuditUsage> {
+pub(super) async fn course_usage(
+    pool: &impl DriverPool,
+    program_id: &str,
+) -> Result<CourseAuditUsage> {
+    let pool = pool.sqlx_pool();
     let row = sqlx::query(
         "SELECT count(*) AS audits, coalesce(sum(a.input_tokens),0) AS input_tokens, \
          coalesce(sum(a.output_tokens),0) AS output_tokens \
@@ -67,11 +76,12 @@ fn signed(tokens: u64) -> i64 {
 /// Opens the run for `key`, or reopens it keeping its batches, as running,
 /// and returns it.
 pub(super) async fn open_run(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     key: &RunKey,
     policy: &str,
     at: i64,
 ) -> Result<AuditRun> {
+    let pool = pool.sqlx_pool();
     let mut tx = pool.begin_write().await.map_err(db)?;
     sqlx::query(
         "INSERT INTO learning_lesson_audits \
@@ -105,10 +115,11 @@ pub(super) async fn open_run(
 }
 
 pub(super) async fn append_batch(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     key: &RunKey,
     batch: &BatchRecord,
 ) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let written = sqlx::query(
         "UPDATE learning_lesson_audits \
          SET batches_json=json_insert(batches_json, '$[#]', json(?)), \
@@ -131,11 +142,12 @@ pub(super) async fn append_batch(
 }
 
 pub(super) async fn finish_run(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     key: &RunKey,
     state: RunState,
     at: i64,
 ) -> Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query(
         "UPDATE learning_lesson_audits SET state=?, finished_at=? \
          WHERE lesson_id=? AND draft_sha256=? AND verifier_model=?",
@@ -154,10 +166,11 @@ pub(super) async fn finish_run(
 /// The lesson's own reviewed questions in its quiz bank, in the shape the
 /// draft holds them.
 pub(super) async fn lesson_questions(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<Vec<Value>> {
+    let pool = pool.sqlx_pool();
     Ok(sqlx::query("SELECT c.prompt,c.options_json,k.explanation,k.distractor_rationales_json FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin IN ('lesson','migrated') ORDER BY c.rowid")
         .bind(program_id)
         .bind(lesson_id)

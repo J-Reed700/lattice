@@ -6,6 +6,7 @@ use lattice_core::application::ports::ImportedBlob;
 use lattice_core::application::ports::{ContentAddressedStoragePort, EmbeddingRepositoryPort};
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
+use sqlx::SqlitePool;
 use std::path::Path;
 
 /// Library that indexes files where they already are: every source path
@@ -375,7 +376,7 @@ async fn test_index_file_execution() {
         Arc::new(MockEmbedder),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        pool.clone(),
+        Database::from(pool.clone()),
     );
 
     let request = IndexFileRequestDto {
@@ -421,7 +422,7 @@ async fn test_index_file_with_chunking() {
         Arc::new(MockSplittingEmbedder { window: 100 }),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        pool.clone(),
+        Database::from(pool.clone()),
     );
 
     let request = IndexFileRequestDto {
@@ -500,7 +501,7 @@ async fn prepare_for_indexing_records_library_blob_hash_when_source_mutates_duri
         Arc::new(MockEmbedder),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        test_pool().await,
+        Database::from(test_pool().await),
     );
 
     let outcome = use_case
@@ -619,7 +620,7 @@ async fn reimport_of_a_file_edited_during_the_copy(edited_content_indexed: bool)
         Arc::new(MockEmbedder),
         repo.clone(),
         Arc::new(MockEmbeddingRepo),
-        test_pool().await,
+        Database::from(test_pool().await),
     );
     let request = IndexFileRequestDto {
         path: source.to_str().unwrap().to_string(),
@@ -779,7 +780,7 @@ async fn prepare_for_indexing_preserves_tokenizer_counts_code_flags_and_avoids_f
         Arc::new(TokenizerCountEmbedder { token_count: 14 }),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        test_pool().await,
+        Database::from(test_pool().await),
     );
 
     // 1. C code with #include must not get a fake section label "include <stdio.h>"

@@ -10,8 +10,7 @@ use lattice_core::domain::learning::claim_review::{
     LessonReview, LessonReviewState, NewInformation, ReopenCause, SourceChange,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Transactions, WriteTx};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 
 use super::repository::{append_in, bump_revision, check_revision, load_in, reviews};
 use super::trust_changed::machine;
@@ -44,7 +43,7 @@ pub(crate) async fn reopen_for_deleted_source(
 /// ledger again: something was written, or the review moved meanwhile and
 /// nothing was.
 pub(super) async fn reopen_lost(
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
     ledger: &Ledger,
 ) -> Result<bool> {
@@ -55,14 +54,14 @@ pub(super) async fn reopen_lost(
     else {
         return Ok(false);
     };
-    let mut read = pool.begin_read().await.map_err(db)?;
+    let mut read = database.begin_read().await.map_err(db)?;
     let deleted = reviews::deleted_versions_in(&mut read, program_id).await?;
     read.commit().await.map_err(db)?;
     let planned = reopens(&ledger.claims, &deleted);
     if planned.is_empty() {
         return Ok(false);
     }
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     match check_revision(&mut tx, &ledger.lesson_id, ledger.revision).await {
         Ok(()) => {}
         Err(AppError::InvalidState(_)) => return Ok(true),

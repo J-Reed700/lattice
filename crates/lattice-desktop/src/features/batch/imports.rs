@@ -9,7 +9,7 @@ use super::items::{BatchItem, ItemCounts};
 use super::repository::BatchItems;
 use crate::features::web::services::web::check_public_url;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRecord, JobRuntime, JobStore, NewJob},
@@ -88,6 +88,7 @@ pub struct FileImport {
 #[derive(Clone)]
 pub struct BatchImports {
     jobs: Arc<JobRuntime>,
+    database: Database,
     items: BatchItems,
     document_scope: Arc<dyn DocumentScopePort>,
 }
@@ -95,11 +96,13 @@ pub struct BatchImports {
 impl BatchImports {
     pub fn new(
         jobs: Arc<JobRuntime>,
+        database: Database,
         items: BatchItems,
         document_scope: Arc<dyn DocumentScopePort>,
     ) -> Self {
         Self {
             jobs,
+            database,
             items,
             document_scope,
         }
@@ -128,8 +131,7 @@ impl BatchImports {
             message: "Queued".into(),
         };
         let mut tx = self
-            .items
-            .pool()
+            .database
             .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -251,8 +253,7 @@ impl BatchImports {
             return Err(AppError::InvalidInput("Job ID cannot be empty".into()));
         }
         let mut tx = self
-            .items
-            .pool()
+            .database
             .begin_read()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -319,8 +320,7 @@ impl BatchImports {
     /// items that stopped; an import that already ended stops none.
     pub async fn cancel(&self, job_id: &str) -> Result<usize> {
         let mut tx = self
-            .items
-            .pool()
+            .database
             .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -355,8 +355,7 @@ impl BatchImports {
         replacement: Option<&str>,
     ) -> Result<(String, usize)> {
         let mut tx = self
-            .items
-            .pool()
+            .database
             .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;

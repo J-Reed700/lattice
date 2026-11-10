@@ -1,7 +1,7 @@
 //! The indexing module: indexing files and web pages, transcription and OCR.
 
 use super::CoreModule;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - Indexing
@@ -51,7 +51,7 @@ pub struct IndexingModule {
 impl IndexingModule {
     /// Build IndexingModule by composing the indexing and web features.
     pub async fn new(
-        db_pool: SqlitePool,
+        database: Database,
         core: Arc<CoreModule>,
         model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
         vector_search: Arc<dyn VectorSearchPort>,
@@ -63,33 +63,33 @@ impl IndexingModule {
         let web = crate::features::web::di::build(
             &model_dir,
             Arc::new(DynamicEmbedding::new(Arc::clone(&model_provider))),
-            Arc::new(IndexStorage::new(db_pool.clone())),
+            Arc::new(IndexStorage::new(database.clone())),
             Arc::clone(&vector_search),
             Arc::clone(&shared.query_cache),
         )?;
         let ocr = crate::features::ocr::di::build(
             Arc::new(
                 crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository::new(
-                    db_pool.clone(),
+                    database.clone(),
                 ),
             ),
             Arc::clone(core.background()),
         );
-        let embedding_repo =
-            Arc::new(EmbeddingRepository::new(db_pool.clone())) as Arc<dyn EmbeddingRepositoryPort>;
+        let embedding_repo = Arc::new(EmbeddingRepository::new(database.clone()))
+            as Arc<dyn EmbeddingRepositoryPort>;
         let ports = IndexingPorts {
             embedding: Arc::new(DynamicEmbedding::new(model_provider)),
             embedding_repo: Arc::clone(&embedding_repo),
             // Built once: the extraction adapter and the transcribe command
             // share this engine.
             transcription: crate::features::transcription::di::build(
-                db_pool.clone(),
+                database.clone(),
                 Arc::clone(core.background()),
             )
             .port,
         };
         let indexing = crate::features::indexing::di::build(
-            db_pool,
+            database,
             ports,
             vector_search,
             web.web_archive.clone(),

@@ -8,6 +8,7 @@ use super::*;
 use crate::content_verification::research::{self, tests as research_tests};
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::repository::LearningRepository;
+use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 
 fn scripted(outputs: Vec<String>) -> ScriptedModel {
@@ -183,7 +184,7 @@ async fn an_uncovered_topic_triggers_one_research_round_before_writing() -> Resu
     ]);
 
     let gathered = research::run(
-        pool,
+        Database::from(pool.clone()),
         program.summary.id.clone(),
         program.summary.goal.clone(),
         Some(research_tests::web(false)),

@@ -122,11 +122,12 @@ pub(in super::super) struct StoredVersion {
 }
 
 pub(in super::super) async fn stored_version(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     source_id: &str,
     version_id: &str,
 ) -> Result<Option<StoredVersion>> {
+    let pool = pool.sqlx_pool();
     let row = sqlx::query(
         "SELECT * FROM learning_source_versions WHERE program_id=? AND source_id=? AND id=?",
     )
@@ -143,10 +144,11 @@ pub(in super::super) async fn stored_version(
 }
 
 pub(in super::super) async fn version_usage(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     version_id: &str,
 ) -> Result<Vec<LearningSourceUsageDto>> {
+    let pool = pool.sqlx_pool();
     let mut read = pool.begin_read().await.map_err(db)?;
     let usage = version_usage_on(&mut read, program_id, version_id).await?;
     read.commit().await.map_err(db)?;
@@ -212,9 +214,10 @@ pub(in super::super) struct SearchedVersion {
 
 /// Every version of the program, newest first, read as the caller pulls them.
 pub(in super::super) fn searchable_versions<'a>(
-    pool: &'a SqlitePool,
+    pool: &'a impl DriverPool,
     program_id: &'a str,
 ) -> BoxStream<'a, Result<SearchedVersion>> {
+    let pool = pool.sqlx_pool();
     sqlx::query("SELECT source_id,id,title,full_text FROM learning_source_versions WHERE program_id=? ORDER BY acquired_at DESC,id")
         .bind(program_id)
         .fetch(pool)
@@ -243,27 +246,30 @@ fn source_dto(r: &sqlx::sqlite::SqliteRow) -> LearningSourceDto {
 }
 
 pub(in super::super) async fn excerpted_sources(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<LearningSourceDto>> {
+    let pool = pool.sqlx_pool();
     let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id).fetch_all(pool).await.map_err(db)?;
     Ok(rows.iter().map(source_dto).collect())
 }
 
 pub(in super::super) async fn full_text_sources(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<LearningSourceDto>> {
+    let pool = pool.sqlx_pool();
     let rows=sqlx::query("SELECT v.id,v.title,v.resolved_url,v.requested_url,v.full_text AS excerpt,v.acquired_at FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id).fetch_all(pool).await.map_err(db)?;
     Ok(rows.iter().map(source_dto).collect())
 }
 
 pub(in super::super) async fn active_versions(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<ActiveVersion>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query("SELECT v.id,v.title,v.content_sha256 FROM learning_source_library s JOIN learning_source_versions v ON v.program_id=s.program_id AND v.id=s.active_version_id WHERE s.program_id=? AND s.deleted_at IS NULL AND v.not_a_source IS NULL ORDER BY s.created_at,s.id")
         .bind(program_id)
         .fetch_all(pool)
@@ -280,10 +286,11 @@ pub(in super::super) async fn active_versions(
 }
 
 pub(in super::super) async fn version_text(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<String>> {
+    let pool = pool.sqlx_pool();
     sqlx::query_scalar("SELECT full_text FROM learning_source_versions WHERE program_id=? AND id=?")
         .bind(program_id)
         .bind(version_id)
@@ -293,9 +300,10 @@ pub(in super::super) async fn version_text(
 }
 
 pub(in super::super) async fn version_texts(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<HashMap<String, String>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
         .bind(program_id)
         .fetch_all(pool)

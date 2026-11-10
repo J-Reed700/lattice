@@ -11,9 +11,9 @@ use lattice_core::domain::learning::drills::{
     per_pattern, IssueRating, LessonStanding, Material, PatternDue, PatternRating,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::driver::DriverPool;
 use serde_json::json;
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqliteConnection;
 use std::collections::BTreeSet;
 
 /// The schedule at `key`, or one never reviewed when there is none.
@@ -226,7 +226,7 @@ pub(crate) async fn fit_basis_in(
 
 /// [`fit_basis_in`] as a unit of work of its own.
 pub(crate) async fn fit_basis(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<String> {
@@ -238,7 +238,7 @@ pub(crate) async fn fit_basis(
 
 /// [`record_fit_in`] as a unit of work of its own.
 pub(crate) async fn record_fit(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     lesson_id: &str,
     material: &Material,

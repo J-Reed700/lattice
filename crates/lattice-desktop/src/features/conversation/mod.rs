@@ -36,6 +36,5 @@ pub mod workspace_dto;
 pub mod mocks;
 
 pub use trait_def::ConversationServiceTrait;
-pub mod persistence_mapper;
 pub mod repository;
 pub mod service;

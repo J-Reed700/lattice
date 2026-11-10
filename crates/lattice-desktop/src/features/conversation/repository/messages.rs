@@ -1,7 +1,7 @@
 //! Conversation messages: append, read and two-phase-commit status changes.
 
 use super::ConversationRepository;
-use crate::features::conversation::persistence_mapper::{
+use crate::features::conversation::repository::mapper::{
     ConversationMessageMapper, ConversationMessageModel,
 };
 use chrono::Utc;

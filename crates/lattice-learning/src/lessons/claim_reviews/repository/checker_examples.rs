@@ -1,15 +1,17 @@
 //! The `learning_checker_examples` table.
 
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::driver::DriverPool;
+use sqlx::{Row, SqliteConnection};
 
 use crate::lessons::claim_reviews::checker_examples::{CheckerExample, Label, LabelSource};
 use crate::persistence::{db, decode, encode};
 
 pub(in crate::lessons::claim_reviews) async fn insert(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     example: &CheckerExample,
 ) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let mut connection = pool.acquire().await.map_err(db)?;
     insert_in(&mut connection, example).await
 }
@@ -39,10 +41,11 @@ pub(in crate::lessons::claim_reviews) async fn insert_in(
 }
 
 pub(in crate::lessons::claim_reviews) async fn delete_for_claim(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     claim_id: &str,
     source: LabelSource,
 ) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let mut connection = pool.acquire().await.map_err(db)?;
     delete_for_claim_in(&mut connection, claim_id, source).await
 }
@@ -62,9 +65,10 @@ pub(in crate::lessons::claim_reviews) async fn delete_for_claim_in(
 }
 
 pub(in crate::lessons::claim_reviews) async fn list(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: Option<&str>,
 ) -> Result<Vec<CheckerExample>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query("SELECT * FROM learning_checker_examples WHERE ?1 IS NULL OR program_id=?1 ORDER BY at,rowid")
         .bind(program_id)
         .fetch_all(pool)

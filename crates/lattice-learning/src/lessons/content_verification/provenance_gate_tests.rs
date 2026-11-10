@@ -16,6 +16,7 @@ use lattice_core::domain::provenance::{
     POLICY,
 };
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Database;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn bars() -> EffectiveBars {
@@ -832,7 +833,8 @@ impl LLMPort for SecondUnitFails {
 async fn a_unit_profiled_before_another_unit_fails_keeps_its_profiles() -> Result<()> {
     let pool = crate::test_support::pool().await?;
     let mut judgements =
-        context::Judgements::cached(pool.clone(), "program", "profile-model").await?;
+        context::Judgements::cached(Database::from(pool.clone()), "program", "profile-model")
+            .await?;
     let claims = [
         (0, "The first unit states one claim."),
         (1, "The second unit states another claim."),
@@ -1047,9 +1049,12 @@ async fn weighed_by(
             (ordinal, statement, claim, false)
         })
         .collect();
-    context::with_trust(pool, program_id, "Topic".into(), async {
-        weigh(&model, &mut results, &HashSet::new()).await
-    })
+    context::with_trust(
+        Database::from(pool.clone()),
+        program_id,
+        "Topic".into(),
+        async { weigh(&model, &mut results, &HashSet::new()).await },
+    )
     .await?;
     assert!(results.iter().all(|(_, _, claim, _)| claim.trust.is_some()));
     Ok(model)

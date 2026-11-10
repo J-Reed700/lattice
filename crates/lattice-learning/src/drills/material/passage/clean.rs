@@ -46,16 +46,16 @@ impl PassageMaterial<'_> {
                 "A drill on a passage is built from a lesson of its course.".into(),
             ));
         };
-        let context = LessonContext::load(ctx.pool, program_id, lesson_id).await?;
-        let basis = schedules::fit_basis(ctx.pool, program_id, lesson_id).await?;
+        let context = LessonContext::load(ctx.database, program_id, lesson_id).await?;
+        let basis = schedules::fit_basis(ctx.database, program_id, lesson_id).await?;
         let mut trail = Trail::default();
-        let picked = pick::pick(ctx.pool, ctx.llm, &context, spec.lines).await?;
+        let picked = pick::pick(ctx.database, ctx.llm, &context, spec.lines).await?;
         for _ in 0..picked.asked {
             trail.call("passage check", ctx.llm.model_name());
         }
         let Some(source) = picked.passage else {
             schedules::record_fit(
-                ctx.pool,
+                ctx.database,
                 program_id,
                 lesson_id,
                 &Material::Passage,

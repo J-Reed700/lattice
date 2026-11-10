@@ -27,7 +27,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use serde_json::json;
-use sqlx::SqlitePool;
 
 pub use dto::{
     WebPageSnapshotChangedEvent, WebPageSnapshotDto, WebPageSnapshotLinkEvent,
@@ -39,7 +38,7 @@ use crate::features::web::traits::page_snapshot::PageCapturePort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::http::normalize_web_source_url;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, JobStore, NewJob};
 use repository::{SnapshotRepository, SnapshotRow};
@@ -184,7 +183,7 @@ pub(crate) fn to_dto(
 
 /// The frozen-copy feature: one per process.
 pub struct WebPageSnapshotService {
-    pool: SqlitePool,
+    database: Database,
     shared: Arc<Shared>,
     jobs: Arc<JobRuntime>,
     gc: WebSnapshotGc,
@@ -193,7 +192,7 @@ pub struct WebPageSnapshotService {
 
 impl WebPageSnapshotService {
     pub fn new(
-        pool: SqlitePool,
+        database: Database,
         root: PathBuf,
         capture: Arc<dyn PageCapturePort>,
         jobs: Arc<JobRuntime>,
@@ -201,13 +200,13 @@ impl WebPageSnapshotService {
         background: Arc<BackgroundTasks>,
         sweep_gate: Arc<SweepGate>,
     ) -> Self {
-        let repository = SnapshotRepository::new(pool.clone());
+        let repository = SnapshotRepository::new(database.clone());
         let store = SnapshotStore::new(root);
         Self {
             gc: WebSnapshotGc::new(
                 store.clone(),
                 repository.clone(),
-                crate::infrastructure::storage::FileIntents::new(pool.clone()),
+                crate::infrastructure::storage::FileIntents::new(database.clone()),
                 sweep_gate,
             ),
             shared: Arc::new(Shared {
@@ -216,7 +215,7 @@ impl WebPageSnapshotService {
                 capture,
                 events,
             }),
-            pool,
+            database,
             jobs,
             background,
         }
@@ -267,7 +266,7 @@ impl WebPageSnapshotService {
             .resolve_conversation_for_capture(conversation_id, &normalized)
             .await?;
         let mut tx = self
-            .pool
+            .database
             .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
