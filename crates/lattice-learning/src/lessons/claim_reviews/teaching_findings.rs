@@ -13,7 +13,7 @@
 //! before finding ids is stored by its kind and place (`FindingKey`) and
 //! stands for every finding of that kind at that place until the text
 //! changes.
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, Transactions};
@@ -400,14 +400,6 @@ impl TeachingFindingsRepository {
         }
         tx.commit().await.map_err(db)
     }
-}
-
-/// The (lesson, question index) pairs of a program whose question finding waits and whose part is unchanged.
-pub(crate) async fn waiting_questions_in(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-) -> Result<HashSet<(String, usize)>> {
-    table::waiting_questions(connection, program_id).await
 }
 
 #[cfg(test)]

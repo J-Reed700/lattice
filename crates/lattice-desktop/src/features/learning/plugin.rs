@@ -184,7 +184,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 JobKindRegistration {
                     kind: super::course_plan::COURSE_PLAN.into(),
                     handler: std::sync::Arc::new(super::course_plan::CoursePlanWorker {
-                        pool: container.db_pool().clone(),
+                        database: container.database().clone(),
                         load_llm: course_plan_model(&container),
                         course_setups,
                     }),

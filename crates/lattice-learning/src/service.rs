@@ -3,6 +3,7 @@ use super::{dto::*, outline_draft::DraftRunRegistry, repository::LearningReposit
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
+    shared::persistence::Database,
 };
 
 fn bounded(value: &str, name: &str, max: usize, required: bool) -> Result<()> {
@@ -290,6 +291,7 @@ pub async fn accept(
     repo.get(&request.program_id).await
 }
 pub async fn prepare(
+    database: &Database,
     repo: &LearningRepository,
     llm: &dyn LLMPort,
     runtimes: &super::embedded_runtime::BuiltinRuntimes,
@@ -328,9 +330,9 @@ pub async fn prepare(
         ));
     }
     let outline_revision =
-        super::lessons::course_plan::outline_revision(&repo.pool, &request.program_id).await?;
+        super::lessons::course_plan::outline_revision(database, &request.program_id).await?;
     let plan =
-        super::lessons::course_plan::ensure(&repo.pool, llm, &program, outline_revision, setups)
+        super::lessons::course_plan::ensure(database, llm, &program, outline_revision, setups)
             .await?;
     let prepared =
         super::generation::prepare_lesson(llm, runtimes, &program, lesson, &plan).await?;

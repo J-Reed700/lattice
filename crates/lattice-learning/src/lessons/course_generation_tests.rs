@@ -213,6 +213,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         }
     }
     let prepared = service::prepare(
+        &Database::from(pool.clone()),
         &repo,
         &Model(lesson_candidate.to_string()),
         &crate::embedded_runtime::BuiltinRuntimes::for_tests(),

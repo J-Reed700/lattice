@@ -862,6 +862,7 @@ async fn a_sourced_statement_the_passages_do_not_state_but_every_sample_confirms
     .finds_unstated(&[COMMON]);
 
     let (raw, _) = prepare(
+        &Database::from(pool.clone()),
         &repo,
         &job,
         &lesson_id,

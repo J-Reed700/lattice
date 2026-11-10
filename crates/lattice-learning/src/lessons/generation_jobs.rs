@@ -222,7 +222,7 @@ impl LessonGenerationWorker {
             ));
         }
         let outline_revision =
-            crate::lessons::course_plan::outline_revision(&self.pool, &job.program_id).await?;
+            crate::lessons::course_plan::outline_revision(&self.database, &job.program_id).await?;
         self.set_up_course(repo, &job.program_id).await?;
         let had_sources = program_repo.has_source_history(&job.program_id).await?;
         program.sources = program_repo.verification_sources(&job.program_id).await?;
@@ -310,7 +310,7 @@ impl LessonGenerationWorker {
                 let sources = program_repo.verification_sources(&job.program_id).await?;
                 program.sources = sources;
                 let current_plan =
-                    crate::lessons::course_plan::stored(&self.pool, &program, outline_revision)
+                    crate::lessons::course_plan::stored(&self.database, &program, outline_revision)
                         .await?
                         .map(|plan| plan_digest(&plan))
                         .transpose()?;
@@ -336,7 +336,7 @@ impl LessonGenerationWorker {
                     // Made once for the outline revision and read by every
                     // lesson after it: a lesson never waits on another's output.
                     let plan = crate::lessons::course_plan::ensure(
-                        &self.pool,
+                        &self.database,
                         llm.as_ref(),
                         &program,
                         outline_revision,

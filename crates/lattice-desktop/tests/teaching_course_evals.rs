@@ -300,6 +300,7 @@ async fn live_complete_python_course() -> Result<()> {
         }
         println!("Preparing lesson {}/{}", index + 1, lesson_ids.len());
         program = service::prepare(
+            &Database::from(pool.clone()),
             &repo,
             &model,
             &runtimes,

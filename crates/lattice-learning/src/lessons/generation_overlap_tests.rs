@@ -122,9 +122,17 @@ pub(crate) async fn plan_course(
     let program = LearningRepository::new(pool.clone())
         .get(program_id)
         .await?;
-    let revision = crate::lessons::course_plan::outline_revision(pool, program_id).await?;
-    crate::lessons::course_plan::ensure(pool, planner, &program, revision, &Default::default())
-        .await?;
+    let revision =
+        crate::lessons::course_plan::outline_revision(&Database::from(pool.clone()), program_id)
+            .await?;
+    crate::lessons::course_plan::ensure(
+        &Database::from(pool.clone()),
+        planner,
+        &program,
+        revision,
+        &Default::default(),
+    )
+    .await?;
     Ok(program)
 }
 
@@ -137,10 +145,13 @@ pub(crate) async fn save_verified(
     planner: &dyn LLMPort,
 ) -> Result<String> {
     let program = plan_course(pool, program_id, planner).await?;
-    let revision = crate::lessons::course_plan::outline_revision(pool, program_id).await?;
-    let plan = crate::lessons::course_plan::stored(pool, &program, revision)
-        .await?
-        .unwrap();
+    let revision =
+        crate::lessons::course_plan::outline_revision(&Database::from(pool.clone()), program_id)
+            .await?;
+    let plan =
+        crate::lessons::course_plan::stored(&Database::from(pool.clone()), &program, revision)
+            .await?
+            .unwrap();
     let sources = LearningRepository::new(pool.clone())
         .verification_sources(program_id)
         .await?;

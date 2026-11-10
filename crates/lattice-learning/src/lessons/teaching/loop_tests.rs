@@ -2309,9 +2309,13 @@ async fn a_repair_s_answer_is_kept_as_it_was_given() -> Result<()> {
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let model = model(defect_no_repair_fixes());
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
-        run(&model, lesson(EXCERPT)).await
-    })
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async { run(&model, lesson(EXCERPT)).await },
+    )
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
     assert!(kept.iter().all(|row| row["answer"].is_string()), "{kept:?}");
@@ -2349,9 +2353,13 @@ async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
         unusable.clone(),
         unusable,
     ]);
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
-        run(&model, lesson(EXCERPT)).await
-    })
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async { run(&model, lesson(EXCERPT)).await },
+    )
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
     assert_eq!(kept.len(), 2, "{kept:?}");
@@ -2420,13 +2428,21 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
         ]),
         rest: model(rest),
     };
-    let first = lesson_drafts::run(&repo, &job, &lesson_id, async {
-        run(&llm, lesson(EXCERPT)).await
-    })
+    let first = lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async { run(&llm, lesson(EXCERPT)).await },
+    )
     .await?;
-    let second = lesson_drafts::run(&repo, &job, &lesson_id, async {
-        run(&llm, lesson(EXCERPT)).await
-    })
+    let second = lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async { run(&llm, lesson(EXCERPT)).await },
+    )
     .await?;
     assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 2);
     assert_eq!(second.candidate, first.candidate);
@@ -2466,7 +2482,7 @@ async fn keeping_one_finding_leaves_another_finding_in_its_section_repairable() 
             .fetch_one(&pool)
             .await
             .unwrap();
-    let store = TeachingFindingsRepository::new(pool);
+    let store = TeachingFindingsRepository::new(Database::from(pool));
     let candidate = lesson(EXCERPT);
     let first = plan_at("aaaa000000000001", FindingSite::Section(0));
     let set_aside = [SetAside {
@@ -2502,7 +2518,7 @@ async fn a_row_stored_by_place_holds_every_finding_of_its_kind_there() -> Result
     .execute(&pool)
     .await
     .unwrap();
-    let store = TeachingFindingsRepository::new(pool);
+    let store = TeachingFindingsRepository::new(Database::from(pool));
     let passes = Passes::new(store.held(&lesson_id, &candidate).await?);
     assert!(!passes.repairable(&plan_at("aaaa000000000001", FindingSite::Section(0))));
     assert!(!passes.repairable(&plan_at("aaaa000000000002", FindingSite::Section(0))));
@@ -3100,7 +3116,7 @@ async fn a_stored_reviewer_finding_is_judged_again_by_the_first_review_and_is_no
             .fetch_one(&pool)
             .await
             .unwrap();
-    let store = TeachingFindingsRepository::new(pool);
+    let store = TeachingFindingsRepository::new(Database::from(pool));
     let before = parts_lesson(2);
     let stored = ReviewFinding::reviewer(
         1,
@@ -3224,18 +3240,28 @@ async fn a_draft_the_reviewer_saw_under_one_authoring_context_is_reviewed_again_
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let first = ByRequest::new(part_a_is_wrong, |_, _| Vec::new());
-    let before = lesson_drafts::run(&repo, &job, &lesson_id, async {
-        review_in_the_job(&first, &context(), parts_lesson(2)).await
-    })
+    let before = lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async { review_in_the_job(&first, &context(), parts_lesson(2)).await },
+    )
     .await?;
     assert_eq!(before.set_aside.len(), 1);
     let other =
         json!({"sources":[{"sourceIndex":0,"excerpt":EXCERPT}],"lessonShape":["Two sections."]})
             .to_string();
     let second = ByRequest::new(part_a_is_wrong, |_, _| Vec::new());
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
-        review_in_the_job(&second, &other, serde_json::from_str(&before.candidate)?).await
-    })
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async {
+            review_in_the_job(&second, &other, serde_json::from_str(&before.candidate)?).await
+        },
+    )
     .await?;
     let reviews = second.reviews();
     assert!(

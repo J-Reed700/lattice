@@ -6,6 +6,7 @@ use crate::repository::LearningRepository;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use sqlx::SqlitePool;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -155,9 +156,10 @@ async fn two_overlapping_calls_with_different_answers_save_one_plan_and_both_ret
     let second = Planner::answering(vec![answer_of(&all, "an idea from the second model")]);
 
     let (one_lock, other_lock) = (CourseSetups::default(), CourseSetups::default());
+    let database = Database::from(pool.clone());
     let (one, other) = tokio::join!(
-        ensure(&pool, &first, &program, 1, &one_lock),
-        ensure(&pool, &second, &program, 1, &other_lock)
+        ensure(&database, &first, &program, 1, &one_lock),
+        ensure(&database, &second, &program, 1, &other_lock)
     );
 
     let (one, other) = (one.unwrap(), other.unwrap());
@@ -189,9 +191,15 @@ async fn the_call_is_background_work_asked_under_the_plans_schema() {
     let program = saved_program(&pool).await;
     let llm = Planner::new();
 
-    ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
 
     let sent = llm.request(0);
     assert_eq!(sent.priority, InferencePriority::Background);
@@ -212,16 +220,34 @@ async fn a_new_outline_revision_is_planned_again() {
     let program = saved_program(&pool).await;
     let llm = Planner::new();
 
-    ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
-    ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(llm.calls(), 1);
-    ensure(&pool, &llm, &program, 2, &Default::default())
-        .await
-        .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        2,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(llm.calls(), 2);
 }
 
@@ -230,14 +256,26 @@ async fn after_a_restart_the_plan_is_read_from_the_database_with_no_call() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
     let before = Planner::new();
-    let made = ensure(&pool, &before, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    let made = ensure(
+        &Database::from(pool.clone()),
+        &before,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
 
     let after = Planner::answering(vec!["not a plan".into()]);
-    let read = ensure(&pool, &after, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    let read = ensure(
+        &Database::from(pool.clone()),
+        &after,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(after.calls(), 0);
     assert_eq!(read, made);
@@ -251,9 +289,15 @@ async fn a_gap_in_the_plan_is_asked_for_again_with_the_lesson_it_left_out() {
     let gap: Vec<&str> = order[1..].iter().map(String::as_str).collect();
     let llm = Planner::answering(vec![answer(&gap)]);
 
-    let plan = ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    let plan = ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(llm.calls(), 2);
     assert_eq!(plan.lessons.len(), 4);
@@ -281,18 +325,30 @@ async fn a_plan_that_stays_wrong_is_not_saved_and_the_next_caller_asks_again() {
     let gap: Vec<&str> = order[1..].iter().map(String::as_str).collect();
     let llm = Planner::answering(vec![answer(&gap), answer(&gap)]);
 
-    let error = ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap_err();
+    let error = ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap_err();
     assert!(
         matches!(error, AppError::ModelAnswerUnusable(_)),
         "{error:?}"
     );
     assert_eq!(llm.calls(), 2);
 
-    ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(llm.calls(), 3);
 }
 
@@ -307,11 +363,13 @@ async fn the_outline_revision_is_the_programs_content_revision() {
             .await
             .unwrap();
     assert_eq!(
-        outline_revision(&pool, &program.summary.id).await.unwrap(),
+        outline_revision(&Database::from(pool.clone()), &program.summary.id)
+            .await
+            .unwrap(),
         stored
     );
     assert!(matches!(
-        outline_revision(&pool, "no-such-program").await,
+        outline_revision(&Database::from(pool.clone()), "no-such-program").await,
         Err(AppError::NotFound(_))
     ));
 }
@@ -321,9 +379,15 @@ async fn one_lessons_entry_is_replaced_without_touching_the_others_and_the_next_
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
     let llm = Planner::new();
-    let made = ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    let made = ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     let target = ids(&program)[1].clone();
     let edited = PlannedLesson {
         lesson_id: target.clone(),
@@ -340,9 +404,15 @@ async fn one_lessons_entry_is_replaced_without_touching_the_others_and_the_next_
         .await
         .unwrap();
 
-    let read = ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    let read = ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(llm.calls(), 1, "an edit is no reason to plan again");
     assert_eq!(read.lesson(&target), Some(&edited));
@@ -358,9 +428,15 @@ async fn a_course_missing_one_entry_is_planned_again() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
     let llm = Planner::new();
-    ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     sqlx::query("DELETE FROM learning_course_plan_lessons WHERE program_id=? AND lesson_id=?")
         .bind(&program.summary.id)
         .bind(&ids(&program)[0])
@@ -368,9 +444,15 @@ async fn a_course_missing_one_entry_is_planned_again() {
         .await
         .unwrap();
 
-    ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(llm.calls(), 2);
 }
@@ -380,10 +462,18 @@ async fn a_plan_made_before_accept_is_reused_after_it_with_no_call() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
     let llm = Planner::new();
-    let before = outline_revision(&pool, &program.summary.id).await.unwrap();
-    let made = ensure(&pool, &llm, &program, before, &Default::default())
+    let before = outline_revision(&Database::from(pool.clone()), &program.summary.id)
         .await
         .unwrap();
+    let made = ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        before,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
 
     LearningRepository::new(pool.clone())
         .accept(&crate::dto::AcceptLearningProgramRequestDto {
@@ -394,15 +484,23 @@ async fn a_plan_made_before_accept_is_reused_after_it_with_no_call() {
         .await
         .unwrap();
 
-    let after = outline_revision(&pool, &program.summary.id).await.unwrap();
+    let after = outline_revision(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
     assert_eq!(after, before, "accepting does not change the outline");
     let accepted = LearningRepository::new(pool.clone())
         .get(&program.summary.id)
         .await
         .unwrap();
-    let read = ensure(&pool, &llm, &accepted, after, &Default::default())
-        .await
-        .unwrap();
+    let read = ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &accepted,
+        after,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     assert_eq!(llm.calls(), 1);
     assert_eq!(read, made);
 }
@@ -412,9 +510,15 @@ async fn an_unreadable_entry_is_an_error_naming_its_lesson_and_costs_no_call() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
     let llm = Planner::new();
-    ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     let target = ids(&program)[2].clone();
     sqlx::query("UPDATE learning_course_plan_lessons SET entry_json='{\"x\":1}' WHERE program_id=? AND lesson_id=?")
         .bind(&program.summary.id)
@@ -423,9 +527,15 @@ async fn an_unreadable_entry_is_an_error_naming_its_lesson_and_costs_no_call() {
         .await
         .unwrap();
 
-    let error = ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap_err();
+    let error = ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap_err();
 
     assert!(matches!(error, AppError::InternalError(_)), "{error:?}");
     assert!(error.to_string().contains(&target), "{error}");
@@ -468,9 +578,15 @@ async fn a_written_lesson_is_planned_from_what_it_taught() {
     }
     let llm = Planner::new();
 
-    ensure(&pool, &llm, &program, 1, &Default::default())
-        .await
-        .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &llm,
+        &program,
+        1,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
 
     let sent = llm.request(0);
     let (system, user) = crate::lessons::structured_call::task_messages(&sent);

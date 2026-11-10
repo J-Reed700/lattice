@@ -282,7 +282,7 @@ pub async fn prepare_learning_ahead(
     container: State<'_, Container>,
 ) -> Result<LearningProgramDto, ApiError> {
     let jobs = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .start_jobs_ahead(&request.program_id, &request.lesson_id)
     .await
@@ -290,7 +290,7 @@ pub async fn prepare_learning_ahead(
     for job in &jobs {
         container.jobs().submitted(&job.id).await;
     }
-    LearningRepository::new(container.db_pool().clone())
+    LearningRepository::new(container.database().clone())
         .get(&request.program_id)
         .await
         .map_err(ApiError::from)

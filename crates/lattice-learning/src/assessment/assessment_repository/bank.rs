@@ -7,7 +7,7 @@ use super::{
 use crate::assessment_engine::{self as engine, LearningBlueprintRequirement};
 use crate::assessment_generation::{AuthoringNeed, MaterialPassage, StoredItem};
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
-use crate::lessons::claim_reviews::teaching_findings::waiting_questions_in;
+use crate::lessons::claim_reviews::repository::waiting_questions_in;
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;

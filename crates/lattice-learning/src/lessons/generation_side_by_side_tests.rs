@@ -39,7 +39,7 @@ impl lattice_core::shared::runtime::jobs::JobHandler for Meet {
 #[tokio::test]
 async fn two_lesson_jobs_of_one_course_run_at_the_same_time() -> Result<()> {
     let pool = crate::tests::pool().await?;
-    let runtime = JobRuntime::new(pool);
+    let runtime = JobRuntime::new(Database::from(pool));
     let meet = Arc::new(Meet {
         barrier: tokio::sync::Barrier::new(2),
         met: AtomicUsize::new(0),
@@ -132,7 +132,7 @@ fn lesson_worker(
     LessonGenerationWorker {
         course_setups: setups.clone(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        database: Database::from(pool.clone()),
         load_llm: loader(llm.clone()),
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -147,7 +147,7 @@ fn plan_worker(
     setups: &CourseSetups,
 ) -> CoursePlanWorker {
     CoursePlanWorker {
-        pool: pool.clone(),
+        database: Database::from(pool.clone()),
         load_llm: loader(llm.clone()),
         course_setups: setups.clone(),
     }
@@ -159,7 +159,7 @@ async fn plan_from_both_paths(pool: &SqlitePool, planner: &Arc<SlowPlanner>) -> 
     let (_, lesson) = repository_tests::queued_job(pool).await;
     let llm: Arc<dyn LLMPort> = planner.clone();
     let setups = CourseSetups::default();
-    let runtime = JobRuntime::new(pool.clone());
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     runtime
         .register(
             LESSON_PREPARATION,
@@ -174,9 +174,10 @@ async fn plan_from_both_paths(pool: &SqlitePool, planner: &Arc<SlowPlanner>) -> 
             course_plan_job_config(),
         )
         .await?;
-    let plan_job = crate::lessons::course_plan::queue(pool, &lesson.program_id)
-        .await?
-        .unwrap();
+    let plan_job =
+        crate::lessons::course_plan::queue(&Database::from(pool.clone()), &lesson.program_id)
+            .await?
+            .unwrap();
     runtime.dispatch(&plan_job);
     runtime.dispatch(&lesson.id);
     for id in [&plan_job, &lesson.id] {
@@ -232,7 +233,7 @@ async fn a_lesson_job_of_a_course_with_no_plan_plans_it_and_finishes() -> Result
     });
     let (_, lesson) = repository_tests::queued_job(&pool).await;
     let llm: Arc<dyn LLMPort> = planner;
-    let runtime = JobRuntime::new(pool.clone());
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     runtime
         .register(
             LESSON_PREPARATION,
