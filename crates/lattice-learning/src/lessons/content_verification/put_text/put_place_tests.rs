@@ -5,11 +5,11 @@
 
 use super::*;
 
-const A: &str = "Alpha comes first.";
-const B: &str = "Bravo comes second.";
-const C: &str = "Charlie comes third.";
-const D: &str = "Delta comes fourth.";
-const E: &str = "Echo comes last.";
+const A: &str = "Alpha comes first in the list.";
+const B: &str = "Bravo comes second in the list.";
+const C: &str = "Charlie comes third in the list.";
+const D: &str = "Delta comes fourth in the list.";
+const E: &str = "Echo comes last in the list.";
 
 fn cut(sentence: &str, before: &str, after: &str) -> CutPlace {
     CutPlace {

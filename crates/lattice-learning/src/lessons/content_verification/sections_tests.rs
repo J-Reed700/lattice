@@ -631,13 +631,17 @@ async fn a_lesson_with_nothing_cut_is_settled_without_a_call() -> Result<()> {
 }
 
 /// A section the cut left with a claim beside the gap.
-const AFTER_CUT: &str = "Intro. This follows from it. Kept claim. Closing note.";
+const AFTER_CUT: &str =
+    "An intro to the whole idea. This follows from it. Kept claim. Closing note.";
 
 fn mended_section() -> (Value, Taken, Vec<Protected>) {
     let section = block("explanation", "Idea", AFTER_CUT);
     let taken = Taken {
         label: "Idea".into(),
-        gaps: vec![gap(Some("Intro."), Some("This follows from it."))],
+        gaps: vec![gap(
+            Some("An intro to the whole idea."),
+            Some("This follows from it."),
+        )],
         answer_lost: false,
     };
     let protected = vec![Protected {
@@ -679,16 +683,16 @@ async fn a_flow_repair_that_inserts_a_sentence_the_lesson_already_has_gives_no_e
 {
     let (section, taken, protected) = mended_section();
     let own = json!({"edits":[
-        {"path":"/blocks/0/body","before":"This follows from it.","after":"Intro."}
+        {"path":"/blocks/0/body","before":"This follows from it.","after":"An intro to the whole idea."}
     ]});
     let llm = model(&[own]);
     assert_eq!(
         mend(&llm, &taken, &protected).await?,
         None,
-        "the section already has Intro."
+        "the section already has An intro to the whole idea."
     );
 
-    let elsewhere = "Another section says this.";
+    let elsewhere = "Another section says exactly this.";
     let lesson = json!({"blocks":[section, block("explanation","Other",elsewhere)],"questions":[]});
     let other = json!({"edits":[
         {"path":"/blocks/0/body","before":"This follows from it.","after":elsewhere}
@@ -715,7 +719,7 @@ async fn a_flow_repair_changes_the_sentences_beside_a_gap_and_nothing_else() -> 
     // The edit beside the gap stands; the one outside it is taken back.
     assert_eq!(
         repaired["body"],
-        "Intro. That follows from the setup. Kept claim. Closing note."
+        "An intro to the whole idea. That follows from the setup. Kept claim. Closing note."
     );
     let prompts = llm.prompts.lock().unwrap();
     assert_eq!(prompts.len(), 1);
@@ -770,7 +774,10 @@ async fn each_section_that_took_a_cut_gets_one_flow_repair_and_never_a_second() 
         2,
         "Second idea".into(),
         (
-            vec![gap(Some("Intro."), Some("This follows from it."))],
+            vec![gap(
+                Some("An intro to the whole idea."),
+                Some("This follows from it."),
+            )],
             false,
         ),
     );
