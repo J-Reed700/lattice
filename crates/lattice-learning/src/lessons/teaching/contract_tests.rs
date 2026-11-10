@@ -198,6 +198,16 @@ fn retitle_at(section: usize) -> String {
     }]))
 }
 
+/// A second retitle of `section`, after `retitle_at`'s.
+fn retitle_again_at(section: usize) -> String {
+    let before = ["Opening", "Listing", "Reading"][section];
+    edits(json!([{
+        "path": format!("/blocks/{section}/title"),
+        "before": format!("{before}, revised"),
+        "after": format!("{before}, revised again"),
+    }]))
+}
+
 fn answer(planned: Value, used: Value, contradictions: Value, unseen: Value) -> String {
     json!({"planned":planned,"usedBeforeTaught":used,"contradictions":contradictions,"unseen":unseen})
         .to_string()
@@ -283,14 +293,20 @@ fn body(reviewed: &Reviewed, section: usize) -> String {
 
 #[tokio::test]
 async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed(3),
+        retitle_again_at(1),
+        reviewed(3),
+    ]);
     let missing = answer(
         json!([not_taught("action-0")]),
         json!([]),
         json!([]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![missing.clone(), missing]).confirming(
+    let model = Routed::new(&scripted, vec![missing.clone(), missing.clone(), missing]).confirming(
         OPEN_TERMINAL,
         json!({"taught":false,"quote":"","belongs":"section-1"}),
     );
@@ -317,7 +333,7 @@ async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section(
     assert!(!repair.contains("Teach it here"));
     drop(prompts);
     let asked = model.asked();
-    assert_eq!(asked.len(), 2);
+    assert_eq!(asked.len(), 3);
     for expected in [
         "action-0",
         OPEN_TERMINAL,
@@ -337,7 +353,13 @@ async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section(
 #[tokio::test]
 async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_lesson() -> Result<()>
 {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed(3),
+        retitle_again_at(1),
+        reviewed(3),
+    ]);
     let found = answer(
         json!([]),
         json!([
@@ -347,7 +369,7 @@ async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_l
         json!([]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![found.clone(), found]);
+    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
     let candidate = lesson([
         "A terminal takes typed commands.",
         "Type `ls -l`\nto see sizes in the list.",
@@ -373,7 +395,13 @@ async fn a_use_before_it_is_taught_is_a_finding_only_when_its_words_are_in_the_l
 
 #[tokio::test]
 async fn a_planned_item_reported_taught_with_words_not_in_the_lesson_is_not_taught() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed(3),
+        retitle_again_at(1),
+        reviewed(3),
+    ]);
     let reported = answer(
         json!([
             taught("idea-0", "A terminal takes typed commands."),
@@ -383,7 +411,10 @@ async fn a_planned_item_reported_taught_with_words_not_in_the_lesson_is_not_taug
         json!([]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![reported.clone(), reported]);
+    let model = Routed::new(
+        &scripted,
+        vec![reported.clone(), reported.clone(), reported],
+    );
     let candidate = lesson([
         "A terminal takes typed commands.",
         "The list shows names.",
@@ -398,7 +429,13 @@ async fn a_planned_item_reported_taught_with_words_not_in_the_lesson_is_not_taug
 
 #[tokio::test]
 async fn a_planned_item_missing_from_the_answer_is_not_taught() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed(3),
+        retitle_again_at(1),
+        reviewed(3),
+    ]);
     let model = Routed::new(&scripted, vec![]);
     let candidate = lesson([
         "A terminal takes typed commands.",
@@ -413,7 +450,13 @@ async fn a_planned_item_missing_from_the_answer_is_not_taught() -> Result<()> {
 
 #[tokio::test]
 async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle(), retitle()]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle(),
+        retitle(),
+        retitle(),
+        retitle(),
+    ]);
     let clash = answer(
         json!([]),
         json!([]),
@@ -456,7 +499,13 @@ async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Re
 
 #[tokio::test]
 async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(2), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(2),
+        reviewed(3),
+        retitle_again_at(2),
+        reviewed(3),
+    ]);
     let clash = answer(
         json!([]),
         json!([]),
@@ -466,7 +515,7 @@ async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Re
         }]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![clash.clone(), clash]);
+    let model = Routed::new(&scripted, vec![clash.clone(), clash.clone(), clash]);
     let candidate = lesson([
         "Commands like ls take no folder name.",
         "The list shows names.",
@@ -478,7 +527,7 @@ async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Re
     assert_eq!(found.site, Some(FindingSite::Section(0)));
     assert_eq!(found.also, Some(FindingSite::Section(2)));
     let after: Value = serde_json::from_str(&result.candidate)?;
-    assert_eq!(after["blocks"][2]["title"], "Reading, revised");
+    assert_eq!(after["blocks"][2]["title"], "Reading, revised again");
     Ok(())
 }
 
@@ -793,14 +842,23 @@ async fn a_defect_in_words_a_repair_wrote_continues_that_repair_s_count() -> Res
 
 #[tokio::test]
 async fn words_that_point_at_what_the_learner_never_sees_are_a_finding() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(2), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(2),
+        reviewed(3),
+        retitle_again_at(2),
+        reviewed(3),
+    ]);
     let pointing = answer(
         json!([]),
         json!([]),
         json!([]),
         json!([{"quote":"which the excerpt does not describe","what":"an excerpt the learner is never shown"}]),
     );
-    let model = Routed::new(&scripted, vec![pointing.clone(), pointing]);
+    let model = Routed::new(
+        &scripted,
+        vec![pointing.clone(), pointing.clone(), pointing],
+    );
     let candidate = lesson([
         "A terminal takes typed commands.",
         "The list shows names.",
@@ -1049,9 +1107,15 @@ async fn finding_note_in(
     used: Value,
     marker: &str,
 ) -> Result<String> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed(3),
+        retitle_again_at(1),
+        reviewed(3),
+    ]);
     let found = answer(planned, used, json!([]), json!([]));
-    let model = Routed::new(&scripted, vec![found.clone(), found]);
+    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
     let candidate = lesson([
         "The first step is shown.",
         "Apply the second method\nto the first item.",
@@ -1238,14 +1302,20 @@ async fn an_item_is_taught_wherever_in_the_lesson_its_words_are() -> Result<()> 
 
 #[tokio::test]
 async fn a_use_is_a_finding_at_the_part_that_holds_its_words() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed(3),
+        retitle_again_at(1),
+        reviewed(3),
+    ]);
     let found = answer(
         json!([]),
         json!([used("Type ls -l to see sizes", "the -l option of ls")]),
         json!([]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![found.clone(), found]);
+    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
     let candidate = lesson([
         TYPED,
         "Type ls -l to see sizes in the list.",
@@ -1370,14 +1440,20 @@ async fn a_confirming_read_that_finds_a_planned_items_words_settles_it() -> Resu
 #[tokio::test]
 async fn a_planned_item_the_confirming_read_does_not_find_is_a_finding_where_it_belongs(
 ) -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(2), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(2),
+        reviewed(3),
+        retitle_again_at(2),
+        reviewed(3),
+    ]);
     let missing = answer(
         json!([not_taught("idea-0")]),
         json!([]),
         json!([]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![missing.clone(), missing]).confirming(
+    let model = Routed::new(&scripted, vec![missing.clone(), missing.clone(), missing]).confirming(
         "Typing commands",
         json!({"taught":false,"quote":"","belongs":"section-2"}),
     );
@@ -1394,15 +1470,21 @@ const USED_IN: &str = "Use the list command. Type ls -l to see sizes. Then read 
 /// What waits after the check finds a use and `reply` answers the
 /// confirming read of it.
 async fn waiting_after_confirming(reply: Value) -> Result<Vec<(String, Option<String>)>> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed(3),
+        retitle_again_at(1),
+        reviewed(3),
+    ]);
     let found = answer(
         json!([]),
         json!([used("Type ls -l to see sizes", "the -l option of ls")]),
         json!([]),
         json!([]),
     );
-    let model =
-        Routed::new(&scripted, vec![found.clone(), found]).confirming("the -l option of ls", reply);
+    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found])
+        .confirming("the -l option of ls", reply);
     let candidate = lesson([TYPED, USED_IN, "Read the names."]);
     let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
     Ok(waiting(&result))
@@ -1449,14 +1531,20 @@ async fn a_confirming_read_that_does_not_check_out_leaves_the_finding_standing()
 #[tokio::test]
 async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_to_it() -> Result<()>
 {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed(3),
+        retitle_again_at(1),
+        reviewed(3),
+    ]);
     let found = answer(
         json!([not_taught("idea-0"), not_taught("idea-1")]),
         json!([used("Type ls -l to see sizes", "the -l option of ls")]),
         json!([]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![found.clone(), found]);
+    let model = Routed::new(&scripted, vec![found.clone(), found.clone(), found]);
     let candidate = lesson([TYPED, "Type ls -l to see sizes.", "Read the names."]);
     let ctx = context(&["A first idea", "A second idea"], &[]);
     run(&model, &candidate, &ctx, &[]).await?;
@@ -1483,14 +1571,23 @@ async fn every_negative_is_read_again_once_and_a_use_is_shown_only_the_parts_up_
 #[tokio::test]
 async fn words_pointing_at_what_is_never_seen_are_a_finding_in_every_part_that_holds_them(
 ) -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1), reviewed(3)]);
+    let scripted = scripted(vec![
+        reviewed(3),
+        retitle_at(1),
+        reviewed(3),
+        retitle_again_at(1),
+        reviewed(3),
+    ]);
     let pointing = answer(
         json!([]),
         json!([]),
         json!([]),
         json!([{"quote":"see the excerpt above","what":"an excerpt the learner is never shown"}]),
     );
-    let model = Routed::new(&scripted, vec![pointing.clone(), pointing]);
+    let model = Routed::new(
+        &scripted,
+        vec![pointing.clone(), pointing.clone(), pointing],
+    );
     let candidate = lesson([
         TYPED,
         "For sizes, see the excerpt above.",

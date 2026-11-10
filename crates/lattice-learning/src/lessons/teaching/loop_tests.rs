@@ -37,6 +37,10 @@ fn retitle(after: &str) -> String {
     json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":after}]}).to_string()
 }
 
+fn retitle_from(before: &str, after: &str) -> String {
+    json!({"edits":[{"path":"/blocks/0/title","before":before,"after":after}]}).to_string()
+}
+
 fn references() -> Vec<crate::dto::LearningSourceDto> {
     vec![crate::dto::LearningSourceDto {
         id: "saved-reference".into(),
@@ -209,6 +213,8 @@ async fn a_revised_quotation_that_still_matches_no_reference_waits_instead_of_fa
     let model = model(vec![
         review(None),
         retitle("Example, revised"),
+        review(None),
+        retitle_from("Example, revised", "Example, revised again"),
         review(None),
     ]);
     let reviewed = run(
@@ -1054,6 +1060,99 @@ async fn findings_whose_repair_does_not_fit_wait_and_the_others_are_still_repair
         .as_str()
         .unwrap()
         .contains("better idea"));
+    Ok(())
+}
+
+/// `run` under a schema of the test's own.
+async fn run_with_schema(
+    model: &dyn LLMPort,
+    candidate: Value,
+    schema: &Value,
+) -> Result<Reviewed> {
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    review_material(
+        model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        ReviewSchema::Other(schema),
+        candidate.to_string(),
+        4000,
+        &mut LessonSubject::new(&references, &[], Held::default()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_rewrite_that_cannot_be_used_is_asked_again_whole_not_in_halves() -> Result<()> {
+    let schema = json!({
+        "type": "object",
+        "required": ["blocks", "questions", "title"],
+        "properties": {"questions": {"type": "array", "minItems": 1}},
+    });
+    let model = Answering::new(vec![parts_review(2, &[])], |_| {
+        Err(AppError::ModelAnswerUnusable("it was empty.".into()))
+    });
+    let reviewed = run_with_schema(&model, parts_lesson(2), &schema).await?;
+    let requests = model.requests.lock().unwrap();
+    assert!(
+        requests.iter().all(|request| ids_of(request).len() == 2),
+        "{:?}",
+        requests.iter().map(ids_of).collect::<Vec<_>>()
+    );
+    assert_eq!(requests.len(), 2);
+    assert_eq!(ids_of(&requests[0]), ids_of(&requests[1]));
+    for entry in requests[1]["issuesToFix"].as_array().unwrap() {
+        assert!(entry["lastAttempt"].as_str().is_some_and(
+            |attempt| attempt.starts_with("The last repair's answer could not be used")
+        ));
+    }
+    assert_eq!(reviewed.set_aside.len(), 2);
+    assert!(reviewed
+        .set_aside
+        .iter()
+        .all(|waiting| waiting.repairs == 2));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_whose_structure_no_repair_fixes_still_has_its_content_reviewed() -> Result<()> {
+    let schema = json!({"type": "object", "required": ["blocks", "questions", "title"]});
+    let model = Answering::new(
+        vec![
+            parts_review(2, &[0]),
+            parts_evidence(&[0]),
+            parts_review(2, &[]),
+        ],
+        |ids| {
+            if ids.contains(&section_id(0)) {
+                Ok(better_ideas(ids))
+            } else {
+                Ok(parts_lesson(2).to_string())
+            }
+        },
+    );
+    let reviewed = run_with_schema(&model, parts_lesson(2), &schema).await?;
+    let after: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert!(after["blocks"][0]["body"]
+        .as_str()
+        .unwrap()
+        .contains("better idea"));
+    assert_eq!(reviewed.set_aside.len(), 1);
+    assert_ne!(
+        reviewed.set_aside[0].finding.id().as_str(),
+        "reviewer/section-0"
+    );
+    assert_eq!(reviewed.set_aside[0].repairs, 2);
+    let reviews = model
+        .review
+        .prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|prompt| prompt.starts_with("Review instructional quality."))
+        .count();
+    assert_eq!(reviews, 2);
     Ok(())
 }
 
@@ -2013,6 +2112,8 @@ async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
         )),
         actionable(),
         unusable.clone(),
+        unusable.clone(),
+        unusable.clone(),
         unusable,
     ]);
     lesson_drafts::run(&repo, &job, &lesson_id, async {
@@ -2020,14 +2121,16 @@ async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
     })
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
-    assert_eq!(kept.len(), 1, "{kept:?}");
-    assert!(kept[0].get("answer").is_none(), "{kept:?}");
-    assert!(
-        kept[0]["refused"]
-            .as_str()
-            .is_some_and(|reason| !reason.is_empty()),
-        "{kept:?}"
-    );
+    assert_eq!(kept.len(), 2, "{kept:?}");
+    for row in &kept {
+        assert!(row.get("answer").is_none(), "{kept:?}");
+        assert!(
+            row["refused"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty()),
+            "{kept:?}"
+        );
+    }
     Ok(())
 }
 
@@ -2068,18 +2171,24 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let script = defect_no_repair_fixes();
-    // The reviews of the second run are read from their checkpoints; its two
+    // The reviews of the second run are read from their checkpoints; its three
     // rechecks of the findings are asked again.
     let rest = vec![
         script[0].clone(),
         script[1].clone(),
         script[3].clone(),
         script[4].clone(),
+        script[6].clone(),
+        script[7].clone(),
         script[1].clone(),
         script[4].clone(),
+        script[7].clone(),
     ];
     let llm = RepairsApart {
-        repairs: model(vec![retitle("Corrected example"); 2]),
+        repairs: model(vec![
+            retitle("Corrected example"),
+            retitle_again("Corrected twice"),
+        ]),
         rest: model(rest),
     };
     let first = lesson_drafts::run(&repo, &job, &lesson_id, async {
@@ -2090,7 +2199,7 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
         run(&llm, lesson(EXCERPT)).await
     })
     .await?;
-    assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 1);
+    assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 2);
     assert_eq!(second.candidate, first.candidate);
     let waiting = |reviewed: &Reviewed| -> Vec<(String, _)> {
         reviewed
