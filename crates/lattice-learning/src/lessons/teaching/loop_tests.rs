@@ -1544,3 +1544,88 @@ fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall()
     fewer_sections["blocks"].as_array_mut().unwrap().remove(5);
     assert_eq!(at_lesson(&fewer_sections), 1);
 }
+
+#[tokio::test]
+async fn a_lesson_a_cut_left_without_a_test_question_waits_for_one_after_a_protected_review(
+) -> Result<()> {
+    let mut candidate = shaped_lesson_after_a_cut();
+    candidate["questions"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|question| question["kind"] != "test");
+    assert_eq!(candidate["questions"].as_array().unwrap().len(), 4);
+    let waiting = waiting_after_review(&candidate, true).await?;
+    assert!(
+        waiting.iter().any(|id| id == "structure:lesson"),
+        "{waiting:?}"
+    );
+    Ok(())
+}
+
+/// Records the schema of every request it passes on.
+struct RecordsSchemas<'a> {
+    inner: &'a ScriptedModel,
+    schemas: Mutex<Vec<Value>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for RecordsSchemas<'_> {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if let Some(schema) = &request.json_schema {
+            self.schemas.lock().unwrap().push(schema.clone());
+        }
+        self.inner.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.inner.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.inner.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.inner.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_repair_of_a_lesson_the_cuts_left_five_questions_is_not_asked_for_six() {
+    let mut candidate = shaped_lesson_after_a_cut();
+    candidate["questions"][0]["options"] = json!(["One", "Two", "Three"]);
+    let scripted = model(vec![candidate.to_string()]);
+    let recorder = RecordsSchemas {
+        inner: &scripted,
+        schemas: Mutex::new(Vec::new()),
+    };
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+    let _ = review_material(
+        &recorder,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &crate::generation::lesson_schema(1),
+        candidate.to_string(),
+        4000,
+        ReviewContext {
+            outline: None,
+            protected: &[],
+            lesson_references: Some(&references),
+            held: BTreeSet::new(),
+        },
+    )
+    .await;
+    let schemas = recorder.schemas.lock().unwrap();
+    let asked = |pointer: &str| -> Vec<u64> {
+        schemas
+            .iter()
+            .filter_map(|schema| schema.pointer(pointer)?.as_u64())
+            .collect()
+    };
+    let questions = asked("/properties/questions/minItems");
+    assert!(!questions.is_empty(), "the lesson was not sent to a repair");
+    assert!(questions.iter().all(|least| *least <= 5), "{questions:?}");
+    let sections = asked("/properties/blocks/minItems");
+    assert!(sections.iter().all(|least| *least < 10), "{sections:?}");
+}
