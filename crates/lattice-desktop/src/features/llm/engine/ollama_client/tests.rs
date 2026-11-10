@@ -10,7 +10,7 @@ trait UncutChatRequest {
 
 impl UncutChatRequest for OllamaClient {
     fn uncut_chat_request(&self, request: &CompletionRequest) -> Result<OllamaChatRequest> {
-        self.uncut_chat_request(&Fitted::uncut(self, request))
+        self.chat_request(&Fitted::uncut(self, request))
     }
 }
 
