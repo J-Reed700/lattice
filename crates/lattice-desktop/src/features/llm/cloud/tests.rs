@@ -1,6 +1,7 @@
 use super::protocol::protocol_for;
 use super::*;
 use lattice_core::application::contracts::settings::LLMProvider;
+use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::llm_port::{ThinkingMode, ToolChoice};
 use serde_json::json;
 
@@ -867,7 +868,7 @@ fn each_provider_is_sent_no_more_than_the_window_has_left() {
             provider,
             model: "model".into(),
             max_tokens: 4_096,
-            context_window: 3_000,
+            context_window: 16_000,
             ..Default::default()
         };
         let cloud = CloudLlm::new(&settings, "test".into()).unwrap();
@@ -884,8 +885,9 @@ fn each_provider_is_sent_no_more_than_the_window_has_left() {
                 content: "When did the bridge open?".into(),
             }],
             max_output_tokens,
+            reasoning_effort: Some("none".into()),
             window_fit: Some(WindowFit {
-                prompt_tokens: 3_000 - room as usize,
+                prompt_tokens: 16_000 - room as usize,
                 counted_exactly: false,
                 room,
             }),

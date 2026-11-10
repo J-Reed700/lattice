@@ -248,7 +248,7 @@ impl LLMPort for CloudLlm {
             .wall_clock_budget()
             .map(|budget| Instant::now() + budget);
         let response = self
-            .send_with_schema(self.body(request, false)?, deadline, true)
+            .send_with_fallback(self.body(request, false)?, deadline, true)
             .await?;
         let value: Value = response
             .json()
@@ -280,7 +280,7 @@ impl LLMPort for CloudLlm {
             .within_time_budget(async {
                 let sent = Instant::now();
                 let response = self
-                    .send_with_schema(self.body(request, true)?, deadline, false)
+                    .send_with_fallback(self.body(request, true)?, deadline, false)
                     .await?;
                 streaming::drain(
                     self.protocol,

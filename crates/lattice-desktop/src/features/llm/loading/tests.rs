@@ -742,10 +742,21 @@ mod output_ceiling_on_the_wire {
             CloudProvider::Google,
             &LLMSettingsDto::default(),
             &ModelWindowDto::default(),
-            request,
+            CompletionRequest {
+                reasoning_effort: Some("none".into()),
+                ..request
+            },
         )
         .await;
         assert_eq!(google["max_tokens"], json!(512));
+        let reasoning = sent_body(
+            CloudProvider::Google,
+            &LLMSettingsDto::default(),
+            &ModelWindowDto::default(),
+            ask(),
+        )
+        .await;
+        assert!(reasoning.get("max_tokens").is_none(), "{reasoning}");
     }
 
     fn small_window() -> LLMSettingsDto {

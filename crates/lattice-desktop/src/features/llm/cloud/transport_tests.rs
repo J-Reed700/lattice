@@ -1,6 +1,7 @@
 use super::protocol::protocol_for;
 use super::*;
 use lattice_core::application::contracts::settings::LLMProvider;
+use lattice_core::application::ports::llm_port::CompletionInput;
 use serde_json::json;
 use wiremock::{
     matchers::{body_string_contains, header, method, path},
