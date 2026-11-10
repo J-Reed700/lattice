@@ -1063,6 +1063,99 @@ async fn findings_whose_repair_does_not_fit_wait_and_the_others_are_still_repair
     Ok(())
 }
 
+/// `run` under a schema of the test's own.
+async fn run_with_schema(
+    model: &dyn LLMPort,
+    candidate: Value,
+    schema: &Value,
+) -> Result<Reviewed> {
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    review_material(
+        model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        ReviewSchema::Other(schema),
+        candidate.to_string(),
+        4000,
+        &mut LessonSubject::new(&references, &[], Held::default()),
+    )
+    .await
+}
+
+#[tokio::test]
+async fn a_rewrite_that_cannot_be_used_is_asked_again_whole_not_in_halves() -> Result<()> {
+    let schema = json!({
+        "type": "object",
+        "required": ["blocks", "questions", "title"],
+        "properties": {"questions": {"type": "array", "minItems": 1}},
+    });
+    let model = Answering::new(vec![parts_review(2, &[])], |_| {
+        Err(AppError::ModelAnswerUnusable("it was empty.".into()))
+    });
+    let reviewed = run_with_schema(&model, parts_lesson(2), &schema).await?;
+    let requests = model.requests.lock().unwrap();
+    assert!(
+        requests.iter().all(|request| ids_of(request).len() == 2),
+        "{:?}",
+        requests.iter().map(ids_of).collect::<Vec<_>>()
+    );
+    assert_eq!(requests.len(), 2);
+    assert_eq!(ids_of(&requests[0]), ids_of(&requests[1]));
+    for entry in requests[1]["issuesToFix"].as_array().unwrap() {
+        assert!(entry["lastAttempt"].as_str().is_some_and(
+            |attempt| attempt.starts_with("The last repair's answer could not be used")
+        ));
+    }
+    assert_eq!(reviewed.set_aside.len(), 2);
+    assert!(reviewed
+        .set_aside
+        .iter()
+        .all(|waiting| waiting.repairs == 2));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_lesson_whose_structure_no_repair_fixes_still_has_its_content_reviewed() -> Result<()> {
+    let schema = json!({"type": "object", "required": ["blocks", "questions", "title"]});
+    let model = Answering::new(
+        vec![
+            parts_review(2, &[0]),
+            parts_evidence(&[0]),
+            parts_review(2, &[]),
+        ],
+        |ids| {
+            if ids.contains(&section_id(0)) {
+                Ok(better_ideas(ids))
+            } else {
+                Ok(parts_lesson(2).to_string())
+            }
+        },
+    );
+    let reviewed = run_with_schema(&model, parts_lesson(2), &schema).await?;
+    let after: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert!(after["blocks"][0]["body"]
+        .as_str()
+        .unwrap()
+        .contains("better idea"));
+    assert_eq!(reviewed.set_aside.len(), 1);
+    assert_ne!(
+        reviewed.set_aside[0].finding.id().as_str(),
+        "reviewer/section-0"
+    );
+    assert_eq!(reviewed.set_aside[0].repairs, 2);
+    let reviews = model
+        .review
+        .prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|prompt| prompt.starts_with("Review instructional quality."))
+        .count();
+    assert_eq!(reviews, 2);
+    Ok(())
+}
+
 const INPUT: &str = "teaching-review-resume";
 
 /// The scripted review, its connection lost on the first call after its first
