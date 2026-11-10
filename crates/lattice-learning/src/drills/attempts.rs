@@ -5,20 +5,19 @@
 
 use super::bank::{self, Shelf};
 use super::build::ask::normalise;
-use super::jobs::{DRILL_GRADING, GRADING_STEPS};
+use super::jobs::DRILL_GRADING;
 use super::repository::{self as drill_repository, StoredDrill};
-use crate::persistence::{db, hash};
+use crate::persistence::db;
 use lattice_core::domain::learning::drills::{
     Assessment, DrillFile, Finding, IssueFix, IssueRating, Score,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
-use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
 use serde::{Deserialize, Serialize};
-use serde_json::json;
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqlitePool;
 
 pub(crate) mod repository;
+pub(crate) use repository::recent_in;
 
 /// How a drill is practised.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -151,26 +150,13 @@ pub async fn start(
         transaction.commit().await.map_err(db)?;
         return Ok(None);
     };
-    let attempt = insert_in(&mut transaction, &taken.drill.drill.id, mode).await?;
+    let attempt = repository::open_in(&mut transaction, &taken.drill.drill.id, mode).await?;
     transaction.commit().await.map_err(db)?;
     Ok(Some(Begun {
         attempt,
         drill: taken.drill,
         next_build: taken.next_build,
     }))
-}
-
-/// Opens an attempt on a drill the caller has taken from the bank.
-pub(crate) async fn insert_in(
-    connection: &mut SqliteConnection,
-    drill_id: &str,
-    mode: AttemptMode,
-) -> Result<Attempt> {
-    let id = uuid::Uuid::new_v4().to_string();
-    repository::insert_in(connection, &id, drill_id, mode).await?;
-    repository::find_in(connection, &id)
-        .await?
-        .ok_or_else(|| AppError::InternalError("The attempt just opened is not there.".into()))
 }
 
 /// Hands in an open attempt: its findings and fix are stored, and the job that grades it is queued, in one
@@ -192,7 +178,7 @@ pub async fn submit(pool: &SqlitePool, id: &str, submission: Submission) -> Resu
             let attempt = repository::find_in(&mut transaction, id)
                 .await?
                 .ok_or_else(not_found)?;
-            let job = queue_grading_in(&mut transaction, &attempt).await?;
+            let job = repository::queue_grading_in(&mut transaction, &attempt).await?;
             Queued {
                 attempt,
                 job: Some(job),
@@ -203,7 +189,7 @@ pub async fn submit(pool: &SqlitePool, id: &str, submission: Submission) -> Resu
         {
             let job = match attempt.status {
                 AttemptStatus::Submitted => {
-                    Some(queue_grading_in(&mut transaction, &attempt).await?)
+                    Some(repository::queue_grading_in(&mut transaction, &attempt).await?)
                 }
                 _ => None,
             };
@@ -240,7 +226,7 @@ pub async fn regrade(pool: &SqlitePool, id: &str) -> Result<Queued> {
             ))
         }
     };
-    let job = queue_grading_in(&mut transaction, &attempt).await?;
+    let job = repository::queue_grading_in(&mut transaction, &attempt).await?;
     transaction.commit().await.map_err(db)?;
     Ok(Queued {
         attempt,
@@ -250,13 +236,14 @@ pub async fn regrade(pool: &SqlitePool, id: &str) -> Result<Queued> {
 
 /// The attempt, and the drill it is on.
 pub async fn get(pool: &SqlitePool, id: &str) -> Result<(Attempt, StoredDrill)> {
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let attempt = repository::find_in(&mut connection, id)
+    let mut tx = pool.begin_read().await.map_err(db)?;
+    let attempt = repository::find_in(&mut tx, id)
         .await?
         .ok_or_else(not_found)?;
-    let drill = drill_repository::find_in(&mut connection, &attempt.drill_id)
+    let drill = drill_repository::find_in(&mut tx, &attempt.drill_id)
         .await?
         .ok_or_else(|| AppError::InternalError("The attempt's drill is not there.".into()))?;
+    tx.commit().await.map_err(db)?;
     Ok((attempt, drill))
 }
 
@@ -283,26 +270,6 @@ pub(crate) struct Graded<'a> {
     pub model: &'a str,
 }
 
-/// The latest attempts on drills of the course, newest first, at most `limit`, each with the drill it is on.
-pub(crate) async fn recent_in(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-    limit: u32,
-) -> Result<Vec<(Attempt, StoredDrill)>> {
-    let ids = repository::recent_ids_in(connection, program_id, limit).await?;
-    let mut recent = Vec::with_capacity(ids.len());
-    for id in ids {
-        let Some(attempt) = repository::find_in(connection, &id).await? else {
-            continue;
-        };
-        let Some(drill) = drill_repository::find_in(connection, &attempt.drill_id).await? else {
-            continue;
-        };
-        recent.push((attempt, drill));
-    }
-    Ok(recent)
-}
-
 /// The operation ID of the job that grades an attempt after it has been asked for again `regrades` times.
 pub(crate) fn operation_id(attempt: &str, regrades: u32) -> String {
     uuid::Uuid::new_v5(
@@ -310,27 +277,6 @@ pub(crate) fn operation_id(attempt: &str, regrades: u32) -> String {
         format!("{DRILL_GRADING}:{attempt}:{regrades}").as_bytes(),
     )
     .to_string()
-}
-
-/// Queues the job that grades `attempt` as it stands. The operation ID derives from the attempt and the times it was
-/// asked for again, so queueing it twice finds the same job.
-async fn queue_grading_in(connection: &mut SqliteConnection, attempt: &Attempt) -> Result<String> {
-    let requested = json!({"attemptId": attempt.id, "regrades": attempt.regrades});
-    let payload_hash = hash(&requested)?;
-    let admitted = JobStore::submit_in(
-        connection,
-        &NewJob {
-            kind: DRILL_GRADING.into(),
-            subject_id: Some(attempt.id.clone()),
-            operation_id: operation_id(&attempt.id, attempt.regrades),
-            payload_hash,
-            requested,
-            progress_total: GRADING_STEPS,
-            message: "Waiting to grade your review".into(),
-        },
-    )
-    .await?;
-    Ok(admitted.id)
 }
 
 /// The submission with its fix as the learner's files, or the reason it is refused.

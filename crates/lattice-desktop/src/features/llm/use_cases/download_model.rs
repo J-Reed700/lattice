@@ -2,6 +2,8 @@
 
 use crate::features::llm::dto::{DownloadModelRequestDto, DownloadModelResponseDto};
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
+use crate::infrastructure::persistence::repositories::model::ops as model_ops;
+use crate::infrastructure::persistence::repositories::model_file::ops as model_file_ops;
 use lattice_core::application::ports::credentials_port::CredentialsPort;
 use lattice_core::application::ports::download_manager::{
     DownloadBatchItem, DownloadManager, DownloadRequest,
@@ -9,11 +11,15 @@ use lattice_core::application::ports::download_manager::{
 use lattice_core::application::ports::file_system_port::FileSystemPort;
 use lattice_core::application::ports::model_catalog::ModelCatalogPort;
 use lattice_core::application::ports::model_storage::ModelStoragePort;
-use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::domain::download::DownloadOperationState;
+use lattice_core::domain::entities::model::Model;
+use lattice_core::domain::entities::model_file::ModelFile;
 use lattice_core::domain::models::validation::ModelFileValidator;
 use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
+use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Transactions;
+use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -21,6 +27,9 @@ use tracing::{info, warn};
 mod metadata;
 mod multi_file;
 mod single_file;
+
+#[cfg(test)]
+mod write_tests;
 
 pub struct DownloadModelUseCase {
     catalog: Arc<dyn ModelCatalogPort>,
@@ -30,7 +39,7 @@ pub struct DownloadModelUseCase {
     credentials: Arc<dyn CredentialsPort>,
     checksum_service: Arc<dyn ChecksumService>,
     file_system_access: Arc<dyn FileSystemAccess>,
-    uow_factory: Arc<dyn UnitOfWorkFactory>,
+    pool: SqlitePool,
 }
 
 impl DownloadModelUseCase {
@@ -42,7 +51,7 @@ impl DownloadModelUseCase {
         credentials: Arc<dyn CredentialsPort>,
         checksum_service: Arc<dyn ChecksumService>,
         file_system_access: Arc<dyn FileSystemAccess>,
-        uow_factory: Arc<dyn UnitOfWorkFactory>,
+        pool: SqlitePool,
     ) -> Self {
         Self {
             catalog,
@@ -52,8 +61,51 @@ impl DownloadModelUseCase {
             credentials,
             checksum_service,
             file_system_access,
-            uow_factory,
+            pool,
         }
+    }
+
+    /// Writes the pending model row and its file rows in one unit of work.
+    async fn record_pending(&self, model: &Model, files: &[ModelFile]) -> Result<(), AppError> {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
+            AppError::Database(format!("Failed to begin model record transaction: {}", e))
+        })?;
+        model_ops::upsert_model(&mut tx, model)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to create model record: {}", e)))?;
+        for file in files {
+            model_file_ops::create(&mut tx, file).await.map_err(|e| {
+                AppError::Database(format!("Failed to create model_file record: {}", e))
+            })?;
+        }
+        tx.commit().await.map_err(|e| {
+            AppError::Database(format!("Failed to commit model record transaction: {}", e))
+        })
+    }
+
+    /// Marks the model and the given files (name, size) failed in one unit of work.
+    async fn record_failed(
+        &self,
+        model_id: &str,
+        files: &[(&str, Option<i64>)],
+    ) -> Result<(), AppError> {
+        let mut tx = self.pool.begin_write().await.map_err(|e| {
+            AppError::Database(format!("Failed to begin failure transaction: {}", e))
+        })?;
+        model_ops::update_status_failed(&mut tx, model_id).await?;
+        for (file_name, size_bytes) in files {
+            model_file_ops::update_file_status_by_model_and_name(
+                &mut tx,
+                model_id,
+                file_name,
+                FileStatus::Failed,
+                *size_bytes,
+            )
+            .await?;
+        }
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to mark download failed: {}", e)))
     }
 
     /// Verifies all required files exist on disk for a model

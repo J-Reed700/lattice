@@ -1,11 +1,14 @@
-//! The three data-access rules, held at zero: one way to begin a transaction,
-//! SQL only in data modules, and one transaction for a function that runs several statements.
+//! The four data-access rules, held at zero: one way to begin a transaction,
+//! SQL only in data modules, one transaction for a function that runs several statements
+//! or is a unit of work, and sqlx's unit-of-work types only in data modules.
 use crate::{
     item_attrs,
     ratchet::{impl_item_attrs, production_files, token_paths, trait_item_attrs},
     test_only,
 };
 mod rule3;
+mod sqlx_types;
+mod unit_of_work;
 use proc_macro2::{Delimiter, TokenStream, TokenTree};
 use std::{collections::HashSet, fmt, path::Path};
 use syn::{
@@ -41,12 +44,32 @@ const SQL_MACROS: [&str; 3] = ["query", "query_as", "query_scalar"];
 const DEFERRED: &str = "begins a deferred transaction; use begin_write() or begin_read()";
 const BEGIN_WITH: &str = "begins with begin_with(); use begin_write() or begin_read()";
 
-/// `(file, function, reason)`: a function rule 3 would flag, with the reason it must not be one transaction.
-pub const EXCEPTIONS: &[(&str, &str, &str)] = &[(
-    "crates/lattice-desktop/src/infrastructure/persistence/database/migrate.rs",
-    "run_migrations",
-    "sqlx's migrator runs each migration in its own transaction, and PRAGMA optimize after it refreshes planner statistics only",
-)];
+/// The part of rule 3 an exception exempts a function from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Exempt {
+    /// 3(a) to (d): one transaction, in order.
+    Shape,
+    /// 3(e): awaits while the write transaction is open.
+    Awaits,
+}
+
+/// `(file, function, exempt part, reason)`: a function rule 3 would flag, with the reason it must not be one transaction.
+pub type Exception<'a> = (&'a str, &'a str, Exempt, &'a str);
+
+pub const EXCEPTIONS: &[Exception<'static>] = &[
+    (
+        "crates/lattice-desktop/src/infrastructure/persistence/database/migrate.rs",
+        "run_migrations",
+        Exempt::Shape,
+        "sqlx's migrator runs each migration in its own transaction, and PRAGMA optimize after it refreshes planner statistics only",
+    ),
+    (
+        "crates/lattice-desktop/src/features/indexing/library_owner.rs",
+        "adopt",
+        Exempt::Awaits,
+        "The owner file is created (create_new, never replacing) while the owner id is uncommitted: a file that cannot be created, or that another instance created first, rolls the id back, so the id and the file always agree.",
+    ),
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Violation {
@@ -83,23 +106,27 @@ pub fn file_violations(path: &str, ast: &syn::File) -> Vec<Violation> {
 pub fn file_violations_with(
     path: &str,
     ast: &syn::File,
-    exceptions: &[(&str, &str, &str)],
+    exceptions: &[Exception],
 ) -> Vec<Violation> {
     if test_only(&ast.attrs) {
         return Vec::new();
     }
     let data = is_data_module(path);
+    let postgres = path.starts_with(POSTGRES);
     let mut scan = Scan {
         path,
-        begins: path != TRANSACTIONS && !path.starts_with(POSTGRES),
+        begins: path != TRANSACTIONS && !postgres,
         sql: !data,
+        own: own_methods(ast),
         found: Vec::new(),
     };
     scan.visit_file(ast);
     let mut found = scan.found;
-    if data {
-        found.extend(rule3::violations(path, ast, exceptions));
+    if !data && !postgres {
+        found.extend(sqlx_types::violations(path, ast));
     }
+    found.extend(rule3::violations(path, ast, exceptions, data));
+    found.extend(unit_of_work::violations(path, ast, exceptions));
     found.sort_by_key(|violation| (violation.rule, violation.line));
     found
 }
@@ -228,7 +255,30 @@ struct Scan<'a> {
     path: &'a str,
     begins: bool,
     sql: bool,
+    /// Names of the methods the file's own impls define.
+    own: HashSet<String>,
     found: Vec<Violation>,
+}
+
+#[derive(Default)]
+struct OwnMethods(HashSet<String>);
+
+impl<'ast> Visit<'ast> for OwnMethods {
+    fn visit_impl_item(&mut self, item: &'ast ImplItem) {
+        if !impl_item_attrs(item).is_some_and(test_only) {
+            visit::visit_impl_item(self, item);
+        }
+    }
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        self.0.insert(item.sig.ident.to_string());
+        visit::visit_impl_item_fn(self, item);
+    }
+}
+
+fn own_methods(ast: &syn::File) -> HashSet<String> {
+    let mut methods = OwnMethods::default();
+    methods.visit_file(ast);
+    methods.0
 }
 
 impl Scan<'_> {
@@ -283,7 +333,11 @@ impl Scan<'_> {
             let dotted = index
                 .checked_sub(1)
                 .is_some_and(|before| is_punct(tokens.get(before), '.'));
-            if name == "begin" && empty_call && dotted && awaited {
+            let own = dotted
+                && matches!(index.checked_sub(2).and_then(|i| tokens.get(i)),
+                    Some(TokenTree::Ident(receiver)) if receiver == "self")
+                && self.own.contains(&name);
+            if name == "begin" && empty_call && dotted && awaited && !own {
                 self.deferred(line);
             }
             if follows_sqlx(tokens, index) {
@@ -328,7 +382,9 @@ impl<'ast> Visit<'ast> for Scan<'_> {
     }
     fn visit_expr_await(&mut self, expr: &'ast syn::ExprAwait) {
         if let Expr::MethodCall(call) = &*expr.base {
-            if call.method == "begin" && call.args.is_empty() {
+            let own = matches!(&*call.receiver, Expr::Path(path) if path.path.is_ident("self"))
+                && self.own.contains(&call.method.to_string());
+            if call.method == "begin" && call.args.is_empty() && !own {
                 self.deferred(call.method.span().start().line);
             }
         }
@@ -403,3 +459,5 @@ impl<'ast> Visit<'ast> for Scan<'_> {
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod unit_of_work_tests;

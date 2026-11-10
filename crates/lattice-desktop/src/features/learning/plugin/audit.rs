@@ -25,7 +25,6 @@ use lattice_core::application::ports::ClaimReviewStore;
 use lattice_core::application::services::chat_model_resolution::{
     cloud_provider_id, cloud_provider_name,
 };
-use lattice_core::domain::learning::claim_review::{LessonReview, LessonReviewState};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result as CoreResult};
 
@@ -325,22 +324,14 @@ async fn hold_for_review(
     outcome: &AuditOutcome,
     progress: Option<(usize, usize)>,
 ) -> CoreResult<()> {
-    let Some(review) = store.load(lesson_id).await?.review else {
-        return Ok(());
-    };
     let stop_reason = match outcome {
         AuditOutcome::Stopped { stop, .. } => Some(stop.stop_reason(progress, now())),
-        AuditOutcome::Completed(_) | AuditOutcome::Deferred { .. } => review.stop_reason.clone(),
+        AuditOutcome::Completed(_) | AuditOutcome::Deferred { .. } => None,
     };
-    store
-        .set_lesson_review(
-            lesson_id,
-            LessonReview {
-                state: LessonReviewState::NeedsReview,
-                stop_reason,
-                ..review
-            },
-        )
-        .await?;
+    store.hold_lesson_review(lesson_id, stop_reason).await?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "audit_tests.rs"]
+mod tests;

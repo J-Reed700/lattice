@@ -1,15 +1,13 @@
 use crate::features::embedding::repository::EmbeddingRepository;
-use crate::infrastructure::persistence::repositories::embedding::SqliteEmbeddingRepositoryTx;
 use crate::tests::common::query_counts::count_reads;
 use lattice_core::application::ports::EmbeddingRepositoryPort;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::shared::persistence::embedding_encoding::encode_embedding;
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::ChunkId;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 #[tokio::test]
-async fn vector_batches_are_scoped_ordered_and_shared_by_both_adapters() {
+async fn vector_batches_are_scoped_ordered_and_shared_by_the_pool_and_a_unit_of_work() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .connect("sqlite::memory:")
@@ -42,21 +40,14 @@ async fn vector_batches_are_scoped_ordered_and_shared_by_both_adapters() {
     assert_eq!(vectors.len(), 2);
     assert_eq!(vectors["a"], [vec![1.0, 2.0], vec![2.0, 3.0]]);
     assert_eq!(vectors["b"], [vec![4.0, 5.0]]);
-    let transaction = Arc::new(Mutex::new(pool.begin().await.unwrap()));
-    let transactional = SqliteEmbeddingRepositoryTx::new(transaction.clone());
-    let (loaded, reads) = count_reads(transactional.vectors_by_document_ids(&ids)).await;
+    let mut tx = pool.begin_read().await.unwrap();
+    let (loaded, reads) = count_reads(super::vectors_by_document_ids(&mut tx, &ids)).await;
     assert_eq!(loaded.unwrap(), vectors);
     assert_eq!(reads, 1);
-    let (empty, reads) = count_reads(transactional.vectors_by_document_ids(&[])).await;
+    let (empty, reads) = count_reads(super::vectors_by_document_ids(&mut tx, &[])).await;
     assert!(empty.unwrap().is_empty());
     assert_eq!(reads, 0);
-    drop(transactional);
-    Arc::try_unwrap(transaction)
-        .unwrap()
-        .into_inner()
-        .commit()
-        .await
-        .unwrap();
+    tx.commit().await.unwrap();
     sqlx::query("UPDATE text_embeddings SET embedding=x'010203' WHERE chunk_id='a1'")
         .execute(&pool)
         .await

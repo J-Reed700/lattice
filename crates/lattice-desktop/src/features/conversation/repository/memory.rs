@@ -379,7 +379,7 @@ impl ConversationRepository {
     }
 
     async fn load_memory_state_tx(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
     ) -> Result<ConversationMemoryState> {
         let row = sqlx::query_as::<_, MemoryStateRow>(
@@ -390,7 +390,7 @@ impl ConversationRepository {
              FROM conversation_memory_state WHERE conversation_id = ?",
         )
         .bind(conversation_id)
-        .fetch_optional(&mut **tx)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to load memory state: {}", e)))?;
 

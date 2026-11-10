@@ -159,7 +159,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let container = app.state::<Container>().inner().clone();
             let files = FileImporter {
                 index_file: Arc::clone(container.indexing.index_file_use_case()),
-                uow_factory: Arc::clone(container.indexing.uow_factory()),
+                pool: container.db_pool().clone(),
                 document_scope: Arc::new(SqliteDocumentScope::new(container.db_pool().clone())),
                 load_embedding: embedding_loader(&container),
             };

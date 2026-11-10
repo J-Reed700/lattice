@@ -16,12 +16,12 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
 use super::format::ArchiveError;
 use crate::features::backup::database_repository;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 
 mod extract;
 mod payload;
@@ -165,10 +165,10 @@ fn fts_external_content_table(sql: &str) -> Option<String> {
 /// handles a future external-content index over an excluded table by
 /// rebuilding it.
 async fn reconcile_fts_tables(
-    connection: &mut SqliteConnection,
+    tx: &mut WriteTx,
     cleared: &[String],
 ) -> Result<Vec<String>, ArchiveError> {
-    let rows = database_repository::fts5_tables(&mut *connection)
+    let rows = database_repository::fts5_tables(&mut *tx)
         .await
         .map_err(db_err)?;
 
@@ -192,7 +192,7 @@ async fn reconcile_fts_tables(
             content = %content_table,
             "external-content fts5 index over a cleared table; rebuilding it empty"
         );
-        database_repository::rebuild_fts5_index(&mut *connection, &name)
+        database_repository::rebuild_fts5_index(&mut *tx, &name)
             .await
             .map_err(db_err)?;
         rebuilt.push(name);
@@ -252,7 +252,7 @@ pub async fn snapshot_database(
             ArchiveError::Database(format!("failed to open snapshot copy: {error}"))
         })?;
 
-    let outcome = clear_snapshot(&scratch).await;
+    let outcome = finish_snapshot(&scratch).await;
     scratch.close().await;
     let (excluded_tables, migration_version) = match outcome {
         Ok(value) => value,
@@ -283,25 +283,8 @@ pub async fn snapshot_database(
 
 /// Everything that happens on the scratch pool, so the caller can always
 /// close it afterwards.
-async fn clear_snapshot(pool: &SqlitePool) -> Result<(Vec<String>, Option<i64>), ArchiveError> {
-    let mut tx = pool.begin_write().await.map_err(db_err)?;
-    let mut cleared: Vec<String> = Vec::new();
-    for table in EXCLUDED_TABLES {
-        if !database_repository::table_exists(&mut tx, table)
-            .await
-            .map_err(db_err)?
-        {
-            debug!(table = %table, "excluded table absent from snapshot; skipping");
-            continue;
-        }
-        database_repository::clear_table(&mut tx, table)
-            .await
-            .map_err(|error| ArchiveError::Database(format!("failed to clear {table}: {error}")))?;
-        cleared.push((*table).to_string());
-    }
-
-    reconcile_fts_tables(&mut tx, &cleared).await?;
-    tx.commit().await.map_err(db_err)?;
+async fn finish_snapshot(pool: &SqlitePool) -> Result<(Vec<String>, Option<i64>), ArchiveError> {
+    let cleared = clear_snapshot_tables(pool).await?;
 
     // Reclaim the pages the deletes freed. SQLite refuses VACUUM inside a
     // transaction, so it runs after the commit.
@@ -321,6 +304,29 @@ async fn clear_snapshot(pool: &SqlitePool) -> Result<(Vec<String>, Option<i64>),
     };
 
     Ok((cleared, migration_version))
+}
+
+/// Empties the excluded tables in one unit of work and returns the ones cleared.
+async fn clear_snapshot_tables(pool: &SqlitePool) -> Result<Vec<String>, ArchiveError> {
+    let mut tx = pool.begin_write().await.map_err(db_err)?;
+    let mut cleared: Vec<String> = Vec::new();
+    for table in EXCLUDED_TABLES {
+        if !database_repository::table_exists(&mut tx, table)
+            .await
+            .map_err(db_err)?
+        {
+            debug!(table = %table, "excluded table absent from snapshot; skipping");
+            continue;
+        }
+        database_repository::clear_table(&mut tx, table)
+            .await
+            .map_err(|error| ArchiveError::Database(format!("failed to clear {table}: {error}")))?;
+        cleared.push((*table).to_string());
+    }
+
+    reconcile_fts_tables(&mut tx, &cleared).await?;
+    tx.commit().await.map_err(db_err)?;
+    Ok(cleared)
 }
 
 /// Does `table` have a column called `column`?

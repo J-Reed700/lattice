@@ -1,8 +1,9 @@
 //! The lesson a drill is built from: its course, its module, and what the lesson teaches, read from the course.
 
-use crate::persistence::decode;
+use crate::persistence::{db, decode};
 use lattice_core::domain::learning::drills::{LessonBrief, LessonSentence};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
 pub(crate) mod repository;
@@ -36,7 +37,8 @@ pub(crate) struct LessonContext {
 impl LessonContext {
     /// The lesson `lesson_id` of the course `program_id`. An error when the lesson is not one of the course's.
     pub async fn load(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<Self> {
-        let row = repository::lesson_in(pool, program_id, lesson_id).await?;
+        let mut tx = pool.begin_read().await.map_err(db)?;
+        let row = repository::lesson_in(&mut tx, program_id, lesson_id).await?;
         let Some((
             course,
             goal,
@@ -54,7 +56,8 @@ impl LessonContext {
                 "The lesson is not one of the course's.".into(),
             ));
         };
-        let blocks = repository::blocks_in(pool, lesson_id).await?;
+        let blocks = repository::blocks_in(&mut tx, lesson_id).await?;
+        tx.commit().await.map_err(db)?;
         let prepared = preparation == "ready";
         let mut teaching = Vec::new();
         let mut cited_versions: Vec<String> = Vec::new();

@@ -79,48 +79,12 @@ pub(super) async fn quiz_stage(
         .join("\n\n");
     let mut sources = BTreeMap::new();
     sources.insert(format!("lesson:{lesson_id}"), lesson_text);
-    for source in LearningRepository::new(pool.clone())
-        .verification_sources(program_id)
-        .await?
-    {
-        sources.insert(source.id.clone(), source.excerpt.clone());
-    }
-
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT id,origin,review_status FROM learning_assessment_candidates WHERE program_id=? AND lesson_id=? ORDER BY id",
-    )
-    .bind(program_id)
-    .bind(&lesson_id)
-    .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?;
-    let mut review = BTreeMap::<String, usize>::new();
-    let mut items = Vec::new();
-    for (id, origin, status) in &rows {
-        *review.entry(status.clone()).or_default() += 1;
-        if status == "agreed" {
-            let stored =
-                LearningAssessmentRepository::stored_candidate_in(&mut connection, program_id, id)
-                    .await?;
-            items.push(eval_item(&stored, origin, &lesson_id, &sources));
-        }
-    }
-    drop(connection);
-    let mut tx = pool.begin_write().await.map_err(db)?;
-    let requirements =
-        match quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, &scope).await? {
-            Some((blueprint, _)) => quiz_blueprints::requirements_in(&mut tx, &blueprint).await?,
-            None => vec![],
-        };
-    tx.commit().await.map_err(db)?;
-    let mut mix = BTreeMap::<String, usize>::new();
-    for requirement in &requirements {
-        *mix.entry(format_name(requirement.format)).or_default() += requirement.count;
-    }
+    sources.extend(lesson_sources(pool, program_id).await?);
+    let (review, items) = read_bank(pool, program_id, &lesson_id, &sources).await?;
+    let (target, mix) = blueprint_mix(pool, program_id, &scope).await?;
     let authored = report.written + report.dropped.len();
     let mut metrics = json!({
-        "target": requirements.iter().map(|r| 3 * r.count).sum::<usize>(),
+        "target": target,
         "bank_size": items.len(), "blueprint_mix": mix,
         "written": report.written, "dropped": report.dropped,
         "key_review": review, "calls": cost["calls"], "seconds": seconds, "cost": cost,
@@ -137,6 +101,68 @@ pub(super) async fn quiz_stage(
             "lesson_id": lesson_id, "sources": sources, "metrics": metrics, "items": items,
         }),
     )
+}
+
+async fn lesson_sources(
+    pool: &sqlx::SqlitePool,
+    program_id: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut sources = BTreeMap::new();
+    for source in LearningRepository::new(pool.clone())
+        .verification_sources(program_id)
+        .await?
+    {
+        sources.insert(source.id.clone(), source.excerpt.clone());
+    }
+    Ok(sources)
+}
+
+async fn read_bank(
+    pool: &sqlx::SqlitePool,
+    program_id: &str,
+    lesson_id: &str,
+    sources: &BTreeMap<String, String>,
+) -> Result<(BTreeMap<String, usize>, Vec<Value>)> {
+    let mut tx = pool.begin_read().await.map_err(db)?;
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id,origin,review_status FROM learning_assessment_candidates WHERE program_id=? AND lesson_id=? ORDER BY id",
+    )
+    .bind(program_id)
+    .bind(lesson_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(db)?;
+    let mut review = BTreeMap::<String, usize>::new();
+    let mut items = Vec::new();
+    for (id, origin, status) in &rows {
+        *review.entry(status.clone()).or_default() += 1;
+        if status == "agreed" {
+            let stored =
+                LearningAssessmentRepository::stored_candidate_in(&mut tx, program_id, id).await?;
+            items.push(eval_item(&stored, origin, lesson_id, sources));
+        }
+    }
+    tx.commit().await.map_err(db)?;
+    Ok((review, items))
+}
+
+async fn blueprint_mix(
+    pool: &sqlx::SqlitePool,
+    program_id: &str,
+    scope: &LearningQuizScopeDto,
+) -> Result<(usize, BTreeMap<String, usize>)> {
+    let mut tx = pool.begin_write().await.map_err(db)?;
+    let requirements =
+        match quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, scope).await? {
+            Some((blueprint, _)) => quiz_blueprints::requirements_in(&mut tx, &blueprint).await?,
+            None => vec![],
+        };
+    tx.commit().await.map_err(db)?;
+    let mut mix = BTreeMap::<String, usize>::new();
+    for requirement in &requirements {
+        *mix.entry(format_name(requirement.format)).or_default() += requirement.count;
+    }
+    Ok((requirements.iter().map(|r| 3 * r.count).sum(), mix))
 }
 
 fn format_name(format: LearningItemFormat) -> String {

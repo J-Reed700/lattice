@@ -2166,3 +2166,28 @@ async fn a_sentence_holding_a_smaller_claim_ends_that_claim_and_the_undo_brings_
     );
     Ok(())
 }
+
+async fn refuse_examples(course: &Course) -> Result<()> {
+    sqlx::query(
+        "CREATE TRIGGER refuse_for_test BEFORE INSERT ON learning_checker_examples BEGIN SELECT RAISE(ABORT, 'refused for the test'); END",
+    )
+    .execute(&course.pool)
+    .await?;
+    Ok(())
+}
+
+#[tokio::test]
+async fn removing_a_notes_sentence_whose_example_cannot_be_recorded_removes_nothing() -> Result<()>
+{
+    let course = unchecked().await?;
+    course.flag_locally(GOOD).await?;
+    notes_about(&course, &[(0, FindingKind::Quotation, GOOD)]).await?;
+    let before = stored(&course).await?;
+    refuse_examples(&course).await?;
+
+    let result = remove_notes(&course, &["quotation:section-0"], before.ledger_revision).await;
+
+    assert!(result.is_err());
+    assert_eq!(stored(&course).await?, before);
+    Ok(())
+}

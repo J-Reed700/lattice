@@ -237,11 +237,11 @@ impl LearningCurriculumRepository {
 
     async fn accepted_tx(
         &self,
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         program_id: &str,
     ) -> Result<(String, LearningCurriculumRevision)> {
         let row = sqlx::query("SELECT id,snapshot_json FROM learning_curriculum_revisions WHERE program_id=? AND status='accepted'")
-            .bind(program_id).fetch_optional(&mut **tx).await.map_err(db)?
+            .bind(program_id).fetch_optional(&mut *tx).await.map_err(db)?
             .ok_or_else(|| AppError::NotFound("Accepted curriculum not found".into()))?;
         let mut snapshot: LearningCurriculumRevision = decode(row.get("snapshot_json"))?;
         for lesson in snapshot
@@ -253,7 +253,7 @@ impl LearningCurriculumRepository {
                 sqlx::query("SELECT completed FROM learning_lessons WHERE id=? AND program_id=?")
                     .bind(&lesson.id)
                     .bind(program_id)
-                    .fetch_optional(&mut **tx)
+                    .fetch_optional(&mut *tx)
                     .await
                     .map_err(db)?;
             if let Some(row) = row {
@@ -261,16 +261,16 @@ impl LearningCurriculumRepository {
                     lesson.state = LearningCurriculumLessonState::Completed;
                 }
             }
-            let practice:i64=sqlx::query_scalar("SELECT count(*) FROM learning_practice_sessions WHERE program_id=? AND lesson_id=?").bind(program_id).bind(&lesson.id).fetch_one(&mut **tx).await.map_err(db)?;
+            let practice:i64=sqlx::query_scalar("SELECT count(*) FROM learning_practice_sessions WHERE program_id=? AND lesson_id=?").bind(program_id).bind(&lesson.id).fetch_one(&mut *tx).await.map_err(db)?;
             let module_id: String = sqlx::query_scalar(
                 "SELECT module_id FROM learning_lessons WHERE id=? AND program_id=?",
             )
             .bind(&lesson.id)
             .bind(program_id)
-            .fetch_one(&mut **tx)
+            .fetch_one(&mut *tx)
             .await
             .map_err(db)?;
-            let forms:i64=sqlx::query_scalar("SELECT count(*) FROM learning_assessment_form_item_outcomes fio JOIN learning_assessment_forms f ON f.id=fio.form_id JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE f.program_id=? AND (o.lesson_id=? OR (o.lesson_id IS NULL AND o.module_id=?))").bind(program_id).bind(&lesson.id).bind(&module_id).fetch_one(&mut **tx).await.map_err(db)?;
+            let forms:i64=sqlx::query_scalar("SELECT count(*) FROM learning_assessment_form_item_outcomes fio JOIN learning_assessment_forms f ON f.id=fio.form_id JOIN learning_outcome_definitions o ON o.id=fio.outcome_id WHERE f.program_id=? AND (o.lesson_id=? OR (o.lesson_id IS NULL AND o.module_id=?))").bind(program_id).bind(&lesson.id).bind(&module_id).fetch_one(&mut *tx).await.map_err(db)?;
             lesson.assessment_started |= practice > 0 || forms > 0;
         }
         Ok((row.get("id"), snapshot))
@@ -571,52 +571,52 @@ impl LearningCurriculumRepository {
 }
 
 async fn materialize(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut sqlx::SqliteConnection,
     revision: &LearningCurriculumRevision,
 ) -> Result<()> {
     // Stage ordinals out of the target range before applying the reordered
     // snapshot; SQLite checks both unique keys per row, not at commit time.
     sqlx::query("UPDATE learning_modules SET ordinal=ordinal+1000000 WHERE program_id=?")
         .bind(&revision.program_id)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(db)?;
     sqlx::query("UPDATE learning_lessons SET ordinal=ordinal+1000000 WHERE program_id=?")
         .bind(&revision.program_id)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(db)?;
     for (mi, module) in revision.modules.iter().enumerate() {
         let mut outcome_labels = Vec::new();
         for outcome_id in &module.outcome_ids {
-            let title:Option<String>=sqlx::query_scalar("SELECT title FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND id=?").bind(&revision.program_id).bind(&module.id).bind(outcome_id).fetch_optional(&mut **tx).await.map_err(db)?;
+            let title:Option<String>=sqlx::query_scalar("SELECT title FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND id=?").bind(&revision.program_id).bind(&module.id).bind(outcome_id).fetch_optional(&mut *tx).await.map_err(db)?;
             let title = title.ok_or_else(|| {
                 AppError::InvalidInput("Curriculum outcome must be a saved program outcome.".into())
             })?;
             outcome_labels.push(title);
         }
         sqlx::query("UPDATE learning_modules SET ordinal=?,title=?,summary=?,outcomes_json=? WHERE id=? AND program_id=?")
-            .bind(mi as i64).bind(&module.title).bind(&module.purpose).bind(encode(&outcome_labels)?).bind(&module.id).bind(&revision.program_id).execute(&mut **tx).await.map_err(db)?;
+            .bind(mi as i64).bind(&module.title).bind(&module.purpose).bind(encode(&outcome_labels)?).bind(&module.id).bind(&revision.program_id).execute(&mut *tx).await.map_err(db)?;
         for (li, lesson) in module.lessons.iter().enumerate() {
             let old = sqlx::query("SELECT id FROM learning_lessons WHERE id=? AND program_id=?")
                 .bind(&lesson.id)
                 .bind(&revision.program_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
             if old.is_none() {
                 sqlx::query("INSERT INTO learning_lessons(id,program_id,module_id,ordinal,title,objective,estimated_minutes,preparation,completed,curriculum_state,replacement_lesson_id) VALUES(?,?,?,?,?,?,?,'outline',0,?,?)")
-                    .bind(&lesson.id).bind(&revision.program_id).bind(&module.id).bind(li as i64).bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes as i64).bind(state_name(lesson.state)).bind(&lesson.replacement_lesson_id).execute(&mut **tx).await.map_err(db)?;
+                    .bind(&lesson.id).bind(&revision.program_id).bind(&module.id).bind(li as i64).bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes as i64).bind(state_name(lesson.state)).bind(&lesson.replacement_lesson_id).execute(&mut *tx).await.map_err(db)?;
             } else {
                 let protected: i64 =
                     sqlx::query_scalar("SELECT completed FROM learning_lessons WHERE id=?")
                         .bind(&lesson.id)
-                        .fetch_one(&mut **tx)
+                        .fetch_one(&mut *tx)
                         .await
                         .map_err(db)?;
                 if protected == 0 && !lesson.assessment_started {
                     sqlx::query("UPDATE learning_lessons SET module_id=?,ordinal=?,title=?,objective=?,estimated_minutes=?,curriculum_state=?,replacement_lesson_id=? WHERE id=? AND program_id=?")
-                    .bind(&module.id).bind(li as i64).bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes as i64).bind(state_name(lesson.state)).bind(&lesson.replacement_lesson_id).bind(&lesson.id).bind(&revision.program_id).execute(&mut **tx).await.map_err(db)?;
+                    .bind(&module.id).bind(li as i64).bind(&lesson.title).bind(&lesson.objective).bind(lesson.estimated_minutes as i64).bind(state_name(lesson.state)).bind(&lesson.replacement_lesson_id).bind(&lesson.id).bind(&revision.program_id).execute(&mut *tx).await.map_err(db)?;
                 } else {
                     sqlx::query(
                         "UPDATE learning_lessons SET ordinal=? WHERE id=? AND program_id=?",
@@ -624,7 +624,7 @@ async fn materialize(
                     .bind(li as i64)
                     .bind(&lesson.id)
                     .bind(&revision.program_id)
-                    .execute(&mut **tx)
+                    .execute(&mut *tx)
                     .await
                     .map_err(db)?;
                 }

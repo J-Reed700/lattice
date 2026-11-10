@@ -100,8 +100,6 @@ async fn complete_gguf_embedding_download(
     use crate::features::download::events::model_download_events::FileDownloadCompletedEvent;
     use crate::infrastructure::events::event_bus::EventBus;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
-    use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
-    use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use std::sync::Arc;
 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -153,8 +151,7 @@ async fn complete_gguf_embedding_download(
     let downloaded_models = Arc::new(DownloadedModelRepository::new(pool.clone()));
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        Arc::new(SqliteModelFileRepository::new(pool.clone())),
-        Arc::new(SqliteUnitOfWorkFactory::new(pool.clone())),
+        pool.clone(),
         Arc::clone(&downloaded_models),
     );
 
@@ -235,8 +232,6 @@ async fn saga_with_one_file(
 ) -> (DownloadSaga, sqlx::SqlitePool) {
     use crate::infrastructure::events::event_bus::EventBus;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
-    use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
-    use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use std::sync::Arc;
 
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
@@ -269,8 +264,7 @@ async fn saga_with_one_file(
 
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        Arc::new(SqliteModelFileRepository::new(pool.clone())),
-        Arc::new(SqliteUnitOfWorkFactory::new(pool.clone())),
+        pool.clone(),
         Arc::new(DownloadedModelRepository::new(pool.clone())),
     );
     (saga, pool)
@@ -353,8 +347,6 @@ async fn complete_chat_download(
     use crate::features::download::events::model_download_events::FileDownloadCompletedEvent;
     use crate::infrastructure::events::event_bus::EventBus;
     use crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository;
-    use crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository;
-    use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use lattice_core::application::contracts::settings::SettingsDto;
     use lattice_core::application::ports::{MockSettingsRepository, SettingsRepositoryPort};
     use std::sync::Arc;
@@ -394,8 +386,7 @@ async fn complete_chat_download(
     let settings = Arc::new(MockSettingsRepository::with_settings(initial));
     let saga = DownloadSaga::new(
         Arc::new(EventBus::new()),
-        Arc::new(SqliteModelFileRepository::new(pool.clone())),
-        Arc::new(SqliteUnitOfWorkFactory::new(pool.clone())),
+        pool.clone(),
         Arc::new(DownloadedModelRepository::new(pool.clone())),
     )
     .with_settings(settings.clone());

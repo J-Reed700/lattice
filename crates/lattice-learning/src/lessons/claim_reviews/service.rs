@@ -12,13 +12,14 @@ use lattice_core::domain::learning::claim_review::{
     Actor, ClaimActionKind, ClaimCounts, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance,
     HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
+use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use serde_json::Value;
 use sqlx::SqlitePool;
 
 use super::actions::{in_section_body, refusal, whole_sentence, ONLY_SECTION};
-use super::checker_examples::{CheckerExamples, LabelSource};
+use super::checker_examples::LabelSource;
 use super::dto::ClaimActionRequestDto;
 use super::published_edit::{self, PublishedEdit};
 use super::published_remove;
@@ -30,16 +31,15 @@ use super::repository::{
 };
 use super::teaching_claims::{name_claims, removable_span};
 use super::teaching_findings::{TeachingFindingDto, TeachingFindingsRepository};
-use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 
 mod question_edit;
 mod section_edit;
+mod settle;
 use crate::content_verification::located_quote;
 use crate::curriculum::{LearningGenerationJob, LearningGenerationJobStatus};
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::persistence::{db, now};
 use crate::plan_dto::LearningGenerationJobActionRequestDto;
-use crate::references::trust::outcomes::VerdictScope;
 use lattice_core::shared::text::plain_text;
 pub use question_edit::{QuestionEdit, QuestionEditOutcome, QuestionText};
 pub use section_edit::{SectionEdit, SectionEditOutcome};
@@ -64,7 +64,6 @@ const NOT_A_SENTENCE: &str =
 pub struct ClaimReviewService {
     pool: SqlitePool,
     store: ClaimReviewRepository,
-    pub(super) examples: CheckerExamples,
     drafts: LearningCurriculumRepository,
     checker_model: Option<String>,
 }
@@ -98,7 +97,6 @@ impl ClaimReviewService {
     pub fn new(pool: SqlitePool) -> Self {
         Self {
             store: ClaimReviewRepository::new(pool.clone()),
-            examples: CheckerExamples::new(pool.clone()),
             drafts: LearningCurriculumRepository::new(pool.clone()),
             checker_model: None,
             pool,
@@ -371,13 +369,35 @@ impl ClaimReviewService {
             ));
         }
 
-        let user = provenance(&review);
+        let (ended, moved) = self.remove_sentences(&review, &ledger, &chosen).await?;
+        let mut revision = Revision(expected_revision + 1);
+        if self.redecide(lesson_id, moved).await? {
+            revision = self.store.load(lesson_id).await?.revision;
+        }
+        Ok(NoteSentencesRemoved {
+            revision: revision.0,
+            claim_ids: ended.into_iter().map(|id| id.0).collect(),
+        })
+    }
+
+    /// Takes the chosen notes' sentences out of the published text, ends the
+    /// claims they stood on and settles what the removals give the checker
+    /// examples and calibration, in one unit of work under the ledger's
+    /// revision. Returns the claims it ended and the kinds whose bar moved.
+    async fn remove_sentences(
+        &self,
+        review: &LessonReview,
+        ledger: &Ledger,
+        chosen: &[&TeachingFindingDto],
+    ) -> Result<(Vec<ClaimId>, Vec<ClaimKind>)> {
+        let lesson_id = ledger.lesson_id.as_str();
+        let user = provenance(review);
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         check_revision(&mut tx, lesson_id, ledger.revision).await?;
         let mut ended: Vec<ClaimId> = Vec::new();
         let mut through_claims: Vec<ClaimId> = Vec::new();
         let mut taken: HashSet<(u32, String)> = HashSet::new();
-        for finding in chosen {
+        for &finding in chosen {
             let (Some(unit), Some(sentence)) = (finding.unit_index, finding.sentence.as_deref())
             else {
                 continue;
@@ -418,26 +438,18 @@ impl ClaimReviewService {
             }
         }
         bump_revision(&mut tx, lesson_id).await?;
-        tx.commit().await.map_err(db)?;
-
-        let mut revision = Revision(expected_revision + 1);
-        let mut redecided = false;
+        let mut moved = Vec::new();
         for id in &through_claims {
             if let Some(entry) = ledger.claims.iter().find(|entry| entry.claim_id() == id) {
                 let resolution =
                     user_resolution(UserAction::Remove, None, Some(LabelSource::UserRemove));
-                redecided |= self
-                    .settle(&review, lesson_id, Planned { entry, resolution })
-                    .await?;
+                let item = Planned { entry, resolution };
+                let kinds = self.settle_in(&mut tx, review, lesson_id, &item).await?;
+                add_kinds(&mut moved, kinds);
             }
         }
-        if redecided {
-            revision = self.store.load(lesson_id).await?.revision;
-        }
-        Ok(NoteSentencesRemoved {
-            revision: revision.0,
-            claim_ids: ended.into_iter().map(|id| id.0).collect(),
-        })
+        tx.commit().await.map_err(db)?;
+        Ok((ended, moved))
     }
 
     /// One claim's action checked against the claim and, in a published
@@ -471,9 +483,10 @@ impl ClaimReviewService {
             .await
     }
 
-    /// Writes the planned claims' events and text changes in one
-    /// transaction under `revision`, then records what each gave the checker
-    /// examples and trust calibration. Returns the review's revision after.
+    /// Writes the planned claims' events and text changes, and what each
+    /// gives the checker examples and trust calibration, in one unit of work
+    /// under `revision`, then re-decides the claims a moved bar touches.
+    /// Returns the review's revision after.
     async fn carry_out(
         &self,
         review: &LessonReview,
@@ -481,28 +494,25 @@ impl ClaimReviewService {
         revision: Revision,
         planned: Vec<Planned<'_>>,
     ) -> Result<i64> {
-        let written = self.commit(review, lesson_id, revision, &planned).await?;
-        let mut redecided = false;
-        for item in planned {
-            redecided |= self.settle(review, lesson_id, item).await?;
-        }
+        let (written, moved) = self.commit(review, lesson_id, revision, &planned).await?;
         // A bar the verdicts moved may have re-decided this lesson's claims.
-        if redecided {
+        if self.redecide(lesson_id, moved).await? {
             return Ok(self.store.load(lesson_id).await?.revision.0);
         }
         Ok(written.0)
     }
 
     /// The planned claims' events, and in a published lesson the edits and
-    /// removals of its text, written in one transaction that checks the
-    /// review's revision and advances it once.
+    /// removals of its text, written with their settlement in one
+    /// transaction that checks the review's revision and advances it once.
+    /// Returns the revision after and the kinds whose bar the verdicts moved.
     async fn commit(
         &self,
         review: &LessonReview,
         lesson_id: &str,
         revision: Revision,
         planned: &[Planned<'_>],
-    ) -> Result<Revision> {
+    ) -> Result<(Revision, Vec<ClaimKind>)> {
         let published = review.state == LessonReviewState::Ready;
         let user = provenance(review);
         let mut tx = self.pool.begin_write().await.map_err(db)?;
@@ -563,42 +573,13 @@ impl ClaimReviewService {
             }
         }
         bump_revision(&mut tx, lesson_id).await?;
+        let mut moved = Vec::new();
+        for item in planned {
+            let kinds = self.settle_in(&mut tx, review, lesson_id, item).await?;
+            add_kinds(&mut moved, kinds);
+        }
         tx.commit().await.map_err(db)?;
-        Ok(Revision(revision.0 + 1))
-    }
-
-    /// What a written claim gives the checker examples and trust
-    /// calibration; whether it moved a bar that re-decided this lesson's
-    /// claims.
-    async fn settle(
-        &self,
-        review: &LessonReview,
-        lesson_id: &str,
-        item: Planned<'_>,
-    ) -> Result<bool> {
-        let Planned { entry, resolution } = item;
-        if let Some(source) = resolution.unlabel {
-            self.examples.forget(&entry.claim_id().0, source).await?;
-        }
-        if let Some(label) = resolution.label {
-            let shown = self.store.shown_passages(lesson_id).await?;
-            let passages = shown.get(entry.claim_id()).cloned().unwrap_or_default();
-            self.examples
-                .record_human_verdict(&review.program_id, lesson_id, entry, &passages, label)
-                .await?;
-        }
-        let scope = VerdictScope {
-            program_id: &review.program_id,
-            lesson_id,
-        };
-        let mut redecided = Redecided::default();
-        if let Some(verdict) = resolution.trust {
-            redecided = record_verdict(&self.pool, scope, entry, verdict).await?;
-        }
-        if let Some(verdict) = resolution.forget {
-            redecided = forget_verdict(&self.pool, &entry.claim_id().0, verdict).await?;
-        }
-        Ok(redecided.lessons.iter().any(|lesson| lesson == lesson_id))
+        Ok((Revision(revision.0 + 1), moved))
     }
 
     /// Whether claim activity or a different checker gives verification new
@@ -870,6 +851,15 @@ fn user_resolution(
         unlabel: None,
         trust,
         forget: None,
+    }
+}
+
+/// Adds the kinds in `more` that `kinds` lacks.
+pub(super) fn add_kinds(kinds: &mut Vec<ClaimKind>, more: Vec<ClaimKind>) {
+    for kind in more {
+        if !kinds.contains(&kind) {
+            kinds.push(kind);
+        }
     }
 }
 

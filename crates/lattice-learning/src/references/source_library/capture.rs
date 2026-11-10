@@ -9,7 +9,7 @@ use super::repository::{
 use super::*;
 use crate::references::trust;
 use lattice_core::shared::http::url_identity::identity;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 
 impl LearningSourceLibraryRepository {
     /// Captures a source research selected, with the planner's reason for
@@ -127,9 +127,11 @@ impl LearningSourceLibraryRepository {
             LearningSourceKind::Document => "document",
             LearningSourceKind::Pasted => "pasted",
         };
-        let comparison = trust::capture::compare(
-            &self.pool,
-            program_id,
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let saved = trust::capture::saved_texts(&mut read, program_id).await?;
+        read.commit().await.map_err(db)?;
+        let comparison = trust::capture::compare_saved(
+            saved,
             trust::capture::VersionText {
                 source_id,
                 version_id,
@@ -304,18 +306,22 @@ impl LearningSourceLibraryRepository {
         let payload_hash = hash(req)?;
         let version_id = uuid::Uuid::new_v4().to_string();
         let comparison = match captured.as_ref().filter(|_| failure.is_none()) {
-            Some(captured) => Some(
-                trust::capture::compare(
-                    &self.pool,
-                    &req.program_id,
-                    trust::capture::VersionText {
-                        source_id: &req.source_id,
-                        version_id: &version_id,
-                        text: &normalized(&captured.text),
-                    },
+            Some(captured) => {
+                let mut read = self.pool.begin_read().await.map_err(db)?;
+                let saved = trust::capture::saved_texts(&mut read, &req.program_id).await?;
+                read.commit().await.map_err(db)?;
+                Some(
+                    trust::capture::compare_saved(
+                        saved,
+                        trust::capture::VersionText {
+                            source_id: &req.source_id,
+                            version_id: &version_id,
+                            text: &normalized(&captured.text),
+                        },
+                    )
+                    .await?,
                 )
-                .await?,
-            ),
+            }
             None => None,
         };
         let mut tx = self.pool.begin_write().await.map_err(db)?;
@@ -520,7 +526,7 @@ struct Selection<'a> {
 /// same address (without its fragment) as either of the capture's, or the
 /// same text.
 async fn held_page(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut WriteTx,
     program_id: &str,
     addresses: [Option<&str>; 2],
     text_digest: &str,

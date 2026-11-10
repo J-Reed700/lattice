@@ -163,28 +163,12 @@ pub async fn store_document(
         .collect::<Vec<_>>()
         .join(" ");
 
-    tx.commit().await?;
-
-    // Mentions are written *after* the commit, deliberately.
-    // `MentionRepository` works through the pool, i.e. on a different pooled
-    // connection. Calling it while the transaction above was still open meant
-    // a second connection asking for SQLite's single writer lock that this
-    // very task was holding — a guaranteed self-deadlock that burned the full
-    // 5-second `busy_timeout` on *every indexed document*, then failed with
-    // SQLITE_BUSY and dropped the mentions via a warning nobody reads.
-    // Indexing a 500-file folder spent ~42 minutes purely waiting on a lock
-    // it could never acquire.
-    // Never open a second connection inside a write transaction on SQLite.
-    // Mentions are derived data, so recomputing them outside the transaction
-    // costs only that they aren't atomic with the document — far better than
-    // never being persisted at all.
-    let mention_repo = MentionRepository::new(pool.clone());
-    if let Err(e) = mention_repo
-        .extract_and_store_mentions(&doc_id, &full_text)
+    MentionRepository::new(pool.clone())
+        .extract_and_store_mentions_in(&mut tx, &doc_id, &full_text)
         .await
-    {
-        tracing::warn!("Failed to extract mentions for document {}: {}", doc_id, e);
-    }
+        .map_err(|e| IndexingError::InvalidData(format!("mentions for {doc_id}: {e}")))?;
+
+    tx.commit().await?;
 
     Ok(doc_id)
 }

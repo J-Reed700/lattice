@@ -7,7 +7,7 @@ use super::recall::{
 };
 use super::references::trust::capture;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
@@ -347,7 +347,7 @@ pub(super) async fn compare_sources(
 }
 
 pub(super) async fn insert_source(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut WriteTx,
     program_id: &str,
     source: &LearningSourceDto,
     reference: Option<&super::sources::InitialReference>,

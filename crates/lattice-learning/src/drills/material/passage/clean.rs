@@ -11,7 +11,7 @@ use crate::drills::schedules;
 use crate::drills::spec::DrillSpec;
 use crate::generation::parse_json;
 use crate::model_call;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use lattice_core::domain::learning::drills::{DrillFile, Material};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::text::segmentation::sentences;
@@ -47,19 +47,15 @@ impl PassageMaterial<'_> {
             ));
         };
         let context = LessonContext::load(ctx.pool, program_id, lesson_id).await?;
-        let basis = {
-            let mut connection = ctx.pool.acquire().await.map_err(db)?;
-            schedules::fit_basis_in(&mut connection, program_id, lesson_id).await?
-        };
+        let basis = schedules::fit_basis(ctx.pool, program_id, lesson_id).await?;
         let mut trail = Trail::default();
         let picked = pick::pick(ctx.pool, ctx.llm, &context, spec.lines).await?;
         for _ in 0..picked.asked {
             trail.call("passage check", ctx.llm.model_name());
         }
         let Some(source) = picked.passage else {
-            let mut connection = ctx.pool.acquire().await.map_err(db)?;
-            schedules::record_fit_in(
-                &mut connection,
+            schedules::record_fit(
+                ctx.pool,
                 program_id,
                 lesson_id,
                 &Material::Passage,

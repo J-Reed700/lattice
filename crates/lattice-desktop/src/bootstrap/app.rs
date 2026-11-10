@@ -423,23 +423,10 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         ),
     );
 
-    let model_file_repository = Arc::new(
-        crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository::new(
-            container.db_pool().clone()
-        )
-    ) as Arc<dyn lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort>;
-
-    let uow_factory = Arc::new(
-        crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory::new(
-            container.db_pool().clone()
-        )
-    ) as Arc<dyn lattice_core::application::ports::UnitOfWorkFactory>;
-
     let download_saga = Arc::new(
         DownloadSaga::new(
             Arc::clone(&event_bus),
-            Arc::clone(&model_file_repository),
-            Arc::clone(&uow_factory),
+            container.db_pool().clone(),
             Arc::clone(&downloaded_model_repository),
         )
         .with_settings(Arc::clone(container.settings_repository())),

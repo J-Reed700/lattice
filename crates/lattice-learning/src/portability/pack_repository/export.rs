@@ -20,7 +20,7 @@ use crate::{
     portability_dto::LearningPackExportOptionsDto,
     practical_repository::LearningPracticalRepository,
     repository::LearningRepository,
-    source_library::LearningSourceLibraryRepository,
+    source_library::workspace_in,
 };
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -220,8 +220,7 @@ pub(super) async fn source_library(
     tx: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
-    let mut source_workspace =
-        LearningSourceLibraryRepository::workspace_on(tx, program_id, true).await?;
+    let mut source_workspace = workspace_in(tx, program_id, true).await?;
     let source_rows =
         sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)
@@ -308,8 +307,7 @@ pub(super) async fn source_bodies(
     tx: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<LearningPackEntry>> {
-    let source_workspace =
-        LearningSourceLibraryRepository::workspace_on(tx, program_id, true).await?;
+    let source_workspace = workspace_in(tx, program_id, true).await?;
     let source_rows =
         sqlx::query("SELECT id,full_text FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)

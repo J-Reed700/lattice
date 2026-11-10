@@ -377,14 +377,14 @@ impl ConversationRepository {
 
     /// `(memory_revision, transcript_revision, processed_through_sequence)`.
     async fn state_revisions(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
     ) -> std::result::Result<(i64, i64, i64), MemoryCommitError> {
         let db = |error: sqlx::Error| MemoryCommitError::Database(error.to_string());
         let transcript_revision: Option<i64> =
             sqlx::query_scalar("SELECT transcript_revision FROM conversations WHERE id = ?")
                 .bind(conversation_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
         let transcript_revision = transcript_revision
@@ -400,7 +400,7 @@ impl ConversationRepository {
              FROM conversation_memory_state WHERE conversation_id = ?",
         )
         .bind(conversation_id)
-        .fetch_optional(&mut **tx)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
 
@@ -416,7 +416,7 @@ impl ConversationRepository {
 
     /// `(mandatory, optional)` active item counts.
     async fn count_active(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
     ) -> std::result::Result<(usize, usize), MemoryCommitError> {
         let db = |error: sqlx::Error| MemoryCommitError::Database(error.to_string());
@@ -430,7 +430,7 @@ impl ConversationRepository {
              WHERE conversation_id = ? AND state = 'active' GROUP BY kind",
         )
         .bind(conversation_id)
-        .fetch_all(&mut **tx)
+        .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
 
@@ -451,7 +451,7 @@ impl ConversationRepository {
     }
 
     async fn insert_memory_item(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         item: &MemoryItem,
         revision: i64,
         now: &str,
@@ -475,7 +475,7 @@ impl ConversationRepository {
         .bind(related_ids_to_json(&item.related_item_ids))
         .bind(now)
         .bind(now)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await?;
         Self::replace_evidence(tx, item).await
     }
@@ -485,7 +485,7 @@ impl ConversationRepository {
     /// summary repeating the old value do not survive it, as with a correction
     /// made by hand.
     async fn retire_shared_item(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         item: &MemoryItem,
         now: &str,
     ) -> std::result::Result<(), sqlx::Error> {
@@ -500,7 +500,7 @@ impl ConversationRepository {
         .bind(now)
         .bind(item.id.as_str())
         .bind(source)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await?;
         sqlx::query(
             "UPDATE conversation_memory_state SET memory_revision = memory_revision + 1, \
@@ -508,17 +508,17 @@ impl ConversationRepository {
         )
         .bind(now)
         .bind(source)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await?;
         sqlx::query("DELETE FROM conversation_summaries WHERE conversation_id = ?")
             .bind(source)
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await?;
         Ok(())
     }
 
     async fn update_memory_item(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         item: &MemoryItem,
         revision: i64,
         now: &str,
@@ -539,7 +539,7 @@ impl ConversationRepository {
         .bind(now)
         .bind(item.id.as_str())
         .bind(&item.conversation_id)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await?;
         Self::replace_evidence(tx, item).await
     }
@@ -551,12 +551,12 @@ impl ConversationRepository {
     /// the item's original assertions — an update never narrows the evidence a
     /// requirement rests on.
     async fn replace_evidence(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         item: &MemoryItem,
     ) -> std::result::Result<(), sqlx::Error> {
         sqlx::query("DELETE FROM conversation_memory_evidence WHERE item_id = ?")
             .bind(item.id.as_str())
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await?;
         for (ordinal, span) in item.evidence.iter().enumerate() {
             sqlx::query(
@@ -574,7 +574,7 @@ impl ConversationRepository {
             .bind(span.end_byte as i64)
             .bind(&span.content_digest)
             .bind(span.purpose.as_str())
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await?;
         }
         Ok(())

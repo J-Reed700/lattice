@@ -228,7 +228,6 @@ impl ArchiveRestorer {
                     "could not clear the restored database's file records: {e}"
                 ))
             })?;
-        self.swap_database(&extracted.db_path).await?;
 
         let files_restored = self
             .merge_files_library(extracted.files_dir.as_deref())
@@ -239,6 +238,8 @@ impl ArchiveRestorer {
             .await;
         self.merge_chat_images(extracted.chat_images_dir.as_deref())
             .await;
+        self.swap_database(&extracted.db_path).await?;
+
         let vault_restored_to = self.restore_vault(extracted.vault_dir.as_deref()).await?;
         self.restore_settings_file(extracted.settings_file.as_deref())
             .await;

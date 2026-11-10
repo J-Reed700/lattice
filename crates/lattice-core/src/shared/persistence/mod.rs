@@ -7,6 +7,6 @@ pub mod embedding_encoding;
 pub mod sql_like;
 pub mod timestamps;
 pub mod transactions;
-pub use transactions::Transactions;
+pub use transactions::{ReadTx, Transactions, WriteTx};
 #[cfg(test)]
 mod transactions_tests;

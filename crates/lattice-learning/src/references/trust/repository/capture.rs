@@ -13,11 +13,19 @@ pub(in crate::references::trust) async fn active_texts(
     pool: &SqlitePool,
     program_id: &str,
 ) -> Result<Vec<CourseText>> {
+    let mut connection = pool.acquire().await.map_err(db)?;
+    active_texts_in(&mut connection, program_id).await
+}
+
+pub(in crate::references::trust) async fn active_texts_in(
+    conn: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<Vec<CourseText>> {
     let saved = sqlx::query(
         "SELECT l.id AS source_id, v.id, v.full_text FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.deleted_at IS NULL",
     )
     .bind(program_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(db)?;
     Ok(saved

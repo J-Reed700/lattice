@@ -10,13 +10,12 @@ use crate::features::indexing::use_cases::{
 };
 use async_trait::async_trait;
 use futures::future::BoxFuture;
-use lattice_core::application::ports::{
-    document_scope::DocumentScopePort, EmbeddingPort, UnitOfWorkFactory,
-};
+use lattice_core::application::ports::{document_scope::DocumentScopePort, EmbeddingPort};
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::JobContext,
 };
+use sqlx::SqlitePool;
 use std::sync::Arc;
 
 pub(super) type EmbeddingLoader =
@@ -38,7 +37,7 @@ pub(super) struct FileImportRequest {
 
 pub(crate) struct FileImporter {
     pub index_file: Arc<IndexFileUseCase>,
-    pub uow_factory: Arc<dyn UnitOfWorkFactory>,
+    pub pool: SqlitePool,
     pub document_scope: Arc<dyn DocumentScopePort>,
     /// Loads the active embedding model; imports wait for it.
     pub load_embedding: EmbeddingLoader,
@@ -80,26 +79,20 @@ impl FileImporter {
         stamp_owner: bool,
     ) -> std::result::Result<String, (AppError, Option<String>)> {
         // A chat's attachment is owned by that chat: out of the library, out
-        // of every other conversation's retrieval, and deleted with it.
-        if let Some(conversation) = request
+        // of every other conversation's retrieval, and deleted with it. The
+        // owner and the space land together.
+        let owner = request
             .owner_conversation_id
             .as_deref()
-            .filter(|_| stamp_owner)
-        {
-            if let Err(error) = self
-                .document_scope
-                .set_conversation_owner(std::slice::from_ref(&document_id), Some(conversation))
-                .await
-            {
-                return Err((error, Some(document_id)));
-            }
-        }
-        if let Some(space) = request.space_id.as_deref() {
-            self.document_scope
-                .assign_documents(std::slice::from_ref(&document_id), space)
-                .await
-                .map_err(|error| (error, None))?;
-        }
+            .filter(|_| stamp_owner);
+        self.document_scope
+            .file_documents(
+                std::slice::from_ref(&document_id),
+                owner,
+                request.space_id.as_deref(),
+            )
+            .await
+            .map_err(|error| (error, Some(document_id.clone())))?;
         Ok(document_id)
     }
 }
@@ -163,9 +156,7 @@ impl ItemImporter for FileImporter {
             }
             Ok(PrepareForIndexingOutcome::Prepared(prepared)) => {
                 stamp_owner = true;
-                self.index_file
-                    .commit_prepared(*prepared, self.uow_factory.as_ref())
-                    .await
+                self.index_file.commit_prepared(*prepared, &self.pool).await
             }
             Err(error) => Err(error),
         };

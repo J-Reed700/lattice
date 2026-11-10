@@ -1,7 +1,50 @@
 use super::Operation;
-use crate::persistence::{db, now};
+use crate::persistence::{db, decode, encode, now};
 use lattice_core::shared::error::Result;
+use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{Row, SqliteConnection};
+
+impl Operation<'_> {
+    /// The stored result of an earlier identical request, or `None` when the
+    /// ID is new.
+    pub(crate) async fn replay<T>(&self, connection: &mut SqliteConnection) -> Result<Option<T>>
+    where
+        T: DeserializeOwned,
+    {
+        let Some(recorded) = find(connection, self.id).await? else {
+            return Ok(None);
+        };
+        self.check(&recorded)?;
+        decode(&recorded.result_json).map(Some)
+    }
+
+    /// Whether an identical request was already recorded, ignoring its result.
+    pub(crate) async fn seen(&self, connection: &mut SqliteConnection) -> Result<bool> {
+        Ok(self
+            .replay::<serde::de::IgnoredAny>(connection)
+            .await?
+            .is_some())
+    }
+
+    /// Record this request and what it produced.
+    pub(crate) async fn record<T>(
+        &self,
+        connection: &mut SqliteConnection,
+        result: &T,
+    ) -> Result<()>
+    where
+        T: Serialize + ?Sized,
+    {
+        insert(connection, self, &encode(result)?).await
+    }
+
+    /// Drop this identical request's row once what it produced is gone, so
+    /// the same ID can do the work again inside the caller's transaction. A
+    /// row recorded for any other request is left alone.
+    pub(crate) async fn forget(&self, connection: &mut SqliteConnection) -> Result<()> {
+        delete(connection, self).await
+    }
+}
 
 /// A ledger row as stored.
 #[derive(Debug, Clone)]

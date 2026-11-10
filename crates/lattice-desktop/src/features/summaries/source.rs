@@ -102,14 +102,17 @@ impl SqliteSummarySource {
 #[async_trait]
 impl SummarySourcePort for SqliteSummarySource {
     async fn load(&self, document_id: &str) -> Result<Option<SummarySource>> {
-        let Some(title) = repository::document_title(&self.pool, document_id).await? else {
-            return Ok(None);
-        };
         // The newest cluster run wins; older runs describe a corpus shape that
         // no longer exists. Absent clustering simply contributes no label.
-        let cluster_label = repository::latest_cluster_label(&self.pool, document_id).await?;
-        let chunks = repository::document_chunks(&self.pool, document_id).await?;
-        Ok(Some(assemble(document_id, &title, cluster_label, chunks)))
+        let Some(parts) = repository::source_parts(&self.pool, document_id).await? else {
+            return Ok(None);
+        };
+        Ok(Some(assemble(
+            document_id,
+            &parts.title,
+            parts.cluster_label,
+            parts.chunks,
+        )))
     }
 }
 

@@ -401,6 +401,16 @@ impl ImageRepository {
     /// files were let go of: what lets a sweep free a file whose removal does
     /// not finish now.
     pub async fn delete_ids(&self, ids: &[String]) -> Result<u64> {
+        self.delete_where(ids, "").await
+    }
+
+    /// [`Self::delete_ids`] for rows that still no message holds when the
+    /// write lock is taken: one attached since they were read stays.
+    pub async fn delete_orphan_ids(&self, ids: &[String]) -> Result<u64> {
+        self.delete_where(ids, " AND message_id IS NULL").await
+    }
+
+    async fn delete_where(&self, ids: &[String], condition: &str) -> Result<u64> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -409,14 +419,14 @@ impl ImageRepository {
         let record_sql = record_releases_sql(
             FileStore::ChatImage,
             "id || '.' || ext",
-            &format!("chat_images WHERE id IN ({placeholders})"),
+            &format!("chat_images WHERE id IN ({placeholders}){condition}"),
         );
         let mut record = sqlx::query(&record_sql).bind(run_id());
         for id in ids {
             record = record.bind(id);
         }
         record.execute(&mut *tx).await.map_err(db)?;
-        let delete_sql = format!("DELETE FROM chat_images WHERE id IN ({placeholders})");
+        let delete_sql = format!("DELETE FROM chat_images WHERE id IN ({placeholders}){condition}");
         let mut delete = sqlx::query(&delete_sql);
         for id in ids {
             delete = delete.bind(id);

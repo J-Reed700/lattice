@@ -42,7 +42,8 @@ use crate::lesson_evidence::LearningEvidencePassageDto;
 use crate::persistence::db;
 use crate::references::trust::dto_map;
 use crate::repository::LearningRepository;
-use crate::source_library::LearningSourceLibraryRepository;
+use crate::source_library::{workspace_in, LearningSourceLibraryRepository};
+use lattice_core::shared::persistence::Transactions;
 
 /// A stored location's quote and span narrowed to the claim's sentence in
 /// the lesson's current text; as stored when its field is gone.
@@ -272,10 +273,9 @@ impl ClaimReviewService {
     /// Every version of the course's sources, deleted ones included: a card
     /// still names a source the user removed.
     async fn sources(&self, program_id: &str) -> Result<HashMap<String, SourceFacts>> {
-        let mut connection = self.pool().acquire().await.map_err(db)?;
-        let workspace =
-            LearningSourceLibraryRepository::workspace_on(&mut connection, program_id, true)
-                .await?;
+        let mut read = self.pool().begin_read().await.map_err(db)?;
+        let workspace = workspace_in(&mut read, program_id, true).await?;
+        read.commit().await.map_err(db)?;
         Ok(workspace
             .sources
             .into_iter()

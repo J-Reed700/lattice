@@ -9,8 +9,8 @@
 //! shows.
 
 use super::repository::capture::{
-    active_texts, captured_version_of, other_active_version_ids, signals_json, version_text,
-    CourseText,
+    active_texts, active_texts_in, captured_version_of, other_active_version_ids, signals_json,
+    version_text, CourseText,
 };
 use super::repository::rows::{from_json, write_provenance, write_relations};
 use super::repository::unix_seconds;
@@ -24,7 +24,8 @@ use lattice_core::domain::provenance::{
     RelationTarget, ShingleSet, Sketch, SourceDates, SourceRelation, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Sqlite, SqliteConnection, SqlitePool, Transaction};
+use lattice_core::shared::persistence::{ReadTx, WriteTx};
+use sqlx::SqlitePool;
 use std::collections::BTreeSet;
 
 /// The extraction version of a library document's signals.
@@ -184,13 +185,28 @@ pub struct Comparison {
     relations: Vec<SourceRelation>,
 }
 
+/// The texts of a course's active sources, read ahead of comparing a
+/// version with them.
+pub struct SavedTexts(Vec<CourseText>);
+
+/// Reads the texts of the course's active sources.
+pub async fn saved_texts(conn: &mut ReadTx, program_id: &str) -> Result<SavedTexts> {
+    Ok(SavedTexts(active_texts_in(conn, program_id).await?))
+}
+
 /// Compares a version with the course's active sources.
 pub async fn compare(
     pool: &SqlitePool,
     program_id: &str,
     version: VersionText<'_>,
 ) -> Result<Comparison> {
-    compare_all(pool, program_id, &[version])
+    let saved = SavedTexts(active_texts(pool, program_id).await?);
+    compare_saved(saved, version).await
+}
+
+/// [`compare`] against texts already read.
+pub async fn compare_saved(saved: SavedTexts, version: VersionText<'_>) -> Result<Comparison> {
+    compare_all_saved(saved, &[version])
         .await?
         .pop()
         .ok_or_else(|| AppError::InternalError("A version went uncompared.".into()))
@@ -203,7 +219,15 @@ pub async fn compare_all(
     program_id: &str,
     versions: &[VersionText<'_>],
 ) -> Result<Vec<Comparison>> {
-    let saved = active_texts(pool, program_id).await?;
+    let saved = SavedTexts(active_texts(pool, program_id).await?);
+    compare_all_saved(saved, versions).await
+}
+
+async fn compare_all_saved(
+    saved: SavedTexts,
+    versions: &[VersionText<'_>],
+) -> Result<Vec<Comparison>> {
+    let saved = saved.0;
     let versions: Vec<CourseText> = versions
         .iter()
         .map(|version| CourseText {
@@ -256,7 +280,7 @@ pub struct Recorded {
 /// Writes a newly inserted version's provenance row and its relations to
 /// the course's other sources, in the version's transaction.
 pub async fn record(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut WriteTx,
     version: &CapturedVersion<'_>,
     signals: &ProvenanceSignals,
     comparison: &Comparison,
@@ -282,7 +306,7 @@ pub async fn record(
 /// The signals a version's earlier version recorded, for a version that
 /// restores it with the same provenance (a re-import).
 pub async fn carried_forward(
-    conn: &mut SqliteConnection,
+    conn: &mut WriteTx,
     program_id: &str,
     version_id: &str,
 ) -> Result<ProvenanceSignals> {
@@ -341,7 +365,7 @@ fn extraction_version(signals: &ProvenanceSignals) -> String {
 /// The copies are `comparison`'s, for the sources still active; only one
 /// saved since it ran is read here.
 async fn relate(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut WriteTx,
     version: &CapturedVersion<'_>,
     record: &ProvenanceRecord,
     comparison: &Comparison,
@@ -403,7 +427,7 @@ fn other_end<'a>(relation: &'a SourceRelation, version_id: &str) -> &'a str {
 
 /// The course's captured version of `url` from another source, else the URL.
 async fn target(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut WriteTx,
     version: &CapturedVersion<'_>,
     url: &str,
 ) -> Result<RelationTarget> {

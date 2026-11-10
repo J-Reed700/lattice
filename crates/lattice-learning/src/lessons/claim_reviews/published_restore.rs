@@ -9,7 +9,7 @@ use lattice_core::domain::learning::claim_review::{
     span_of, Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, EventProvenance, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqliteConnection;
+use lattice_core::shared::persistence::WriteTx;
 
 use super::actions::{in_section_body, ONLY_SECTION};
 use super::published_edit::{gone, placed, section_body, update_report, CHANGED, UNDO_BLOCKED};
@@ -27,7 +27,7 @@ const RESTORED_REASON: &str = "You restored the original sentence; it was not ch
 /// `connection`: the text, the claim's event, and the report. The claims it
 /// ended or restored are the ones it returns.
 pub(super) async fn apply_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     lesson_id: &str,
     claim_id: &ClaimId,
     event: &ClaimEvent,
@@ -284,7 +284,7 @@ pub(super) fn undoable_in_published(entry: &ClaimLedgerEntry) -> bool {
 /// `connection`. The claims it took the event back from are the ones it
 /// returns.
 pub(super) async fn undo_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     lesson_id: &str,
     claim_id: &ClaimId,
     user: &EventProvenance,

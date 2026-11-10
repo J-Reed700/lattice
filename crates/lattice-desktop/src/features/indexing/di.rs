@@ -12,14 +12,12 @@ use crate::features::indexing::use_cases::{
 };
 use crate::features::indexing::LibraryGc;
 use crate::infrastructure::file_system::{FileSystemAdapter, SecureFileStorage};
-use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::infrastructure::persistence::repositories::{
     ChunkRepositoryImpl, DocumentRepositoryImpl,
 };
 use crate::infrastructure::storage::content_addressed_storage::ContentAddressedStorage;
 use crate::infrastructure::storage::FileIntents;
 use crate::interfaces::di::Container;
-use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
     ChunkRepositoryPort, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
     DocumentRepository, DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort,
@@ -48,7 +46,6 @@ pub struct IndexingDi {
     pub document_repo: Arc<dyn DocumentRepository>,
     pub file_storage: Arc<dyn FileStoragePort>,
     pub file_system: Arc<dyn FileSystemPort>,
-    pub uow_factory: Arc<dyn UnitOfWorkFactory>,
 
     /// On-device speech-to-text, shared with the content-extraction adapter so
     /// audio ingest and the explicit `transcribe_file` command use one engine.
@@ -100,7 +97,6 @@ pub fn build(
     let chunk_repo =
         Arc::new(ChunkRepositoryImpl::new(db_pool.clone())) as Arc<dyn ChunkRepositoryPort>;
     let file_intents = FileIntents::new(db_pool.clone());
-    let uow_factory = Arc::new(SqliteUnitOfWorkFactory::new(db_pool)) as Arc<dyn UnitOfWorkFactory>;
 
     let content_storage =
         Arc::new(ContentAddressedStorage::new()?) as Arc<dyn ContentAddressedStoragePort>;
@@ -133,7 +129,7 @@ pub fn build(
             indexing_embedding.clone(),
             document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
             embedding_repo,
-            uow_factory.clone(),
+            db_pool.clone(),
         )
         .with_vector_search(vector_search.clone())
         .with_query_cache(Arc::clone(&query_cache))
@@ -149,7 +145,7 @@ pub fn build(
             file_storage.clone(),
             indexing_embedding,
             document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
-            uow_factory.clone(),
+            db_pool.clone(),
             vector_search.clone(),
         )
         .with_content_extractor(content_extractor.clone())
@@ -157,9 +153,8 @@ pub fn build(
     );
     let delete_document_use_case = Arc::new(
         DeleteDocumentUseCase::new(
-            document_repo.clone() as Arc<dyn DocumentRepositoryPort>,
             vector_search,
-            uow_factory.clone(),
+            db_pool,
             content_storage,
             Arc::clone(&library_gc),
             web_archive,
@@ -183,7 +178,6 @@ pub fn build(
         document_repo,
         file_storage,
         file_system,
-        uow_factory,
         transcription,
     })
 }

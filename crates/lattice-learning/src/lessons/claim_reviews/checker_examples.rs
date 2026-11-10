@@ -12,6 +12,7 @@ use lattice_core::domain::learning::claim_review::{
     AttachOutcome, Checker, ClaimEvent, ClaimLedgerEntry, VerdictKind,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -148,6 +149,93 @@ fn local_flag(entry: &ClaimLedgerEntry) -> Option<&VerdictKind> {
         .flatten()
 }
 
+/// The example evidence that supports a flagged claim gives, when the local
+/// checker's latest judgement of it was a scored flag.
+fn evidence_added_example(
+    program_id: &str,
+    lesson_id: &str,
+    flagged: &ClaimLedgerEntry,
+    passages: &[ShownPassage],
+    passage_was_in_collection: bool,
+) -> Option<CheckerExample> {
+    let local_verdict = match local_flag(flagged) {
+        Some(VerdictKind::Unsupported) => "unsupported",
+        Some(VerdictKind::Contradicted) => "contradicted",
+        Some(VerdictKind::NoSource) if !passage_was_in_collection => "no_source",
+        _ => return None,
+    };
+    let basis = flagged.basis()?;
+    Some(CheckerExample {
+        id: uuid::Uuid::new_v4().to_string(),
+        program_id: program_id.into(),
+        lesson_id: lesson_id.into(),
+        claim_id: flagged.claim_id().0.clone(),
+        checker_model: basis.checker_model.clone(),
+        context_window: i64::try_from(basis.window_tokens).unwrap_or(i64::MAX),
+        policy: crate::content_verification::evidence_policy().into(),
+        claim: flagged.statement().into(),
+        passages: passages
+            .iter()
+            .map(|passage| passage.text.clone())
+            .collect(),
+        local_verdict: local_verdict.into(),
+        label: if passage_was_in_collection {
+            Label::True
+        } else {
+            Label::RetrievalMiss
+        },
+        label_source: LabelSource::EvidenceAdded,
+        at: now(),
+    })
+}
+
+/// The example a human verdict on `entry` gives, when the local checker's
+/// latest judgement of it was a scored flag.
+fn human_example(
+    program_id: &str,
+    lesson_id: &str,
+    entry: &ClaimLedgerEntry,
+    passages: &[ShownPassage],
+    source: LabelSource,
+) -> Result<Option<CheckerExample>> {
+    let local_verdict = match local_flag(entry) {
+        Some(VerdictKind::Unsupported) => "unsupported",
+        Some(VerdictKind::Contradicted) => "contradicted",
+        _ => return Ok(None),
+    };
+    let Some(basis) = entry.basis() else {
+        return Ok(None);
+    };
+    let label = match source {
+        LabelSource::UserConfirm => Label::True,
+        LabelSource::UserRemove | LabelSource::UserEdit => Label::False,
+        other => {
+            return Err(AppError::InvalidInput(format!(
+                "{} is not a human verdict on a flagged statement.",
+                other.as_str()
+            )))
+        }
+    };
+    Ok(Some(CheckerExample {
+        id: uuid::Uuid::new_v4().to_string(),
+        program_id: program_id.into(),
+        lesson_id: lesson_id.into(),
+        claim_id: entry.claim_id().0.clone(),
+        checker_model: basis.checker_model.clone(),
+        context_window: i64::try_from(basis.window_tokens).unwrap_or(i64::MAX),
+        policy: crate::content_verification::evidence_policy().into(),
+        claim: entry.statement().into(),
+        passages: passages
+            .iter()
+            .map(|passage| passage.text.clone())
+            .collect(),
+        local_verdict: local_verdict.into(),
+        label,
+        label_source: source,
+        at: now(),
+    }))
+}
+
 /// The file an export writes, under `evals/grounding/` (§15).
 pub fn export_file_name(date: &str) -> String {
     format!("lesson-claims-{date}.jsonl")
@@ -181,98 +269,68 @@ impl CheckerExamples {
         passages: &[ShownPassage],
         source: LabelSource,
     ) -> Result<bool> {
-        let local_verdict = match local_flag(entry) {
-            Some(VerdictKind::Unsupported) => "unsupported",
-            Some(VerdictKind::Contradicted) => "contradicted",
-            _ => return Ok(false),
-        };
-        let Some(basis) = entry.basis() else {
+        let Some(example) = human_example(program_id, lesson_id, entry, passages, source)? else {
             return Ok(false);
         };
-        let label = match source {
-            LabelSource::UserConfirm => Label::True,
-            LabelSource::UserRemove | LabelSource::UserEdit => Label::False,
-            other => {
-                return Err(AppError::InvalidInput(format!(
-                    "{} is not a human verdict on a flagged statement.",
-                    other.as_str()
-                )))
-            }
+        self.record(&example).await?;
+        Ok(true)
+    }
+
+    /// [`Self::record_human_verdict`] inside the caller's unit of work.
+    pub(super) async fn record_human_verdict_in(
+        tx: &mut WriteTx,
+        program_id: &str,
+        lesson_id: &str,
+        entry: &ClaimLedgerEntry,
+        passages: &[ShownPassage],
+        source: LabelSource,
+    ) -> Result<bool> {
+        let Some(example) = human_example(program_id, lesson_id, entry, passages, source)? else {
+            return Ok(false);
         };
-        self.record(&CheckerExample {
-            id: uuid::Uuid::new_v4().to_string(),
-            program_id: program_id.into(),
-            lesson_id: lesson_id.into(),
-            claim_id: entry.claim_id().0.clone(),
-            checker_model: basis.checker_model.clone(),
-            context_window: i64::try_from(basis.window_tokens).unwrap_or(i64::MAX),
-            policy: crate::content_verification::evidence_policy().into(),
-            claim: entry.statement().into(),
-            passages: passages
-                .iter()
-                .map(|passage| passage.text.clone())
-                .collect(),
-            local_verdict: local_verdict.into(),
-            label,
-            label_source: source,
-            at: now(),
-        })
-        .await?;
+        repository::checker_examples::insert_in(tx, &example).await?;
         Ok(true)
     }
 
     /// Records evidence the user added that the checker then found to
-    /// support a claim it had flagged (§15, second row; the attach pipeline
-    /// calls this with the check's passages). A flag over a passage the
+    /// support a claim it had flagged (§15, second row), inside the caller's unit
+    /// of work. A flag over a passage the
     /// collection already held was the judge's error (`true`); one the
     /// collection could not have supported was retrieval's
     /// (`retrieval_miss`).
-    pub async fn record_evidence_added(
-        &self,
+    pub(super) async fn record_evidence_added_in(
+        tx: &mut WriteTx,
         program_id: &str,
         lesson_id: &str,
         flagged: &ClaimLedgerEntry,
         passages: &[ShownPassage],
         passage_was_in_collection: bool,
     ) -> Result<bool> {
-        let local_verdict = match local_flag(flagged) {
-            Some(VerdictKind::Unsupported) => "unsupported",
-            Some(VerdictKind::Contradicted) => "contradicted",
-            Some(VerdictKind::NoSource) if !passage_was_in_collection => "no_source",
-            _ => return Ok(false),
-        };
-        let Some(basis) = flagged.basis() else {
+        let Some(example) = evidence_added_example(
+            program_id,
+            lesson_id,
+            flagged,
+            passages,
+            passage_was_in_collection,
+        ) else {
             return Ok(false);
         };
-        self.record(&CheckerExample {
-            id: uuid::Uuid::new_v4().to_string(),
-            program_id: program_id.into(),
-            lesson_id: lesson_id.into(),
-            claim_id: flagged.claim_id().0.clone(),
-            checker_model: basis.checker_model.clone(),
-            context_window: i64::try_from(basis.window_tokens).unwrap_or(i64::MAX),
-            policy: crate::content_verification::evidence_policy().into(),
-            claim: flagged.statement().into(),
-            passages: passages
-                .iter()
-                .map(|passage| passage.text.clone())
-                .collect(),
-            local_verdict: local_verdict.into(),
-            label: if passage_was_in_collection {
-                Label::True
-            } else {
-                Label::RetrievalMiss
-            },
-            label_source: LabelSource::EvidenceAdded,
-            at: now(),
-        })
-        .await?;
+        repository::checker_examples::insert_in(tx, &example).await?;
         Ok(true)
     }
 
     /// Forgets the examples an undone verdict gave (§5.1 Undo).
     pub async fn forget(&self, claim_id: &str, source: LabelSource) -> Result<()> {
         repository::checker_examples::delete_for_claim(&self.pool, claim_id, source).await
+    }
+
+    /// [`Self::forget`] inside the caller's unit of work.
+    pub(super) async fn forget_in(
+        tx: &mut WriteTx,
+        claim_id: &str,
+        source: LabelSource,
+    ) -> Result<()> {
+        repository::checker_examples::delete_for_claim_in(tx, claim_id, source).await
     }
 
     /// Every example, oldest first; one program's with `program_id`.

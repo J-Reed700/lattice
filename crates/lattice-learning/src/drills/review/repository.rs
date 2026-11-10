@@ -3,13 +3,16 @@
 
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqliteConnection;
 
 /// Whether the course is there.
-pub(super) async fn course_exists(pool: &SqlitePool, program_id: &str) -> Result<bool> {
+pub(super) async fn course_exists_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<bool> {
     sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_programs WHERE id=?)")
         .bind(program_id)
-        .fetch_one(pool)
+        .fetch_one(&mut *connection)
         .await
         .map_err(db)
 }

@@ -19,14 +19,16 @@ use std::path::Path;
 use std::sync::Arc;
 
 use crate::features::indexing::LibraryGc;
-use lattice_core::application::ports::UnitOfWorkFactory;
+use crate::infrastructure::persistence::repositories::{chunk, document};
 use lattice_core::application::ports::{
-    ContentAddressedStoragePort, DocumentIndexObserver, DocumentRepositoryPort,
-    SearchResultCachePort, VectorSearchPort,
+    ContentAddressedStoragePort, DocumentIndexObserver, SearchResultCachePort, VectorSearchPort,
 };
+use lattice_core::domain::entities::Chunk;
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 use serde::{Deserialize, Serialize};
+use sqlx::SqlitePool;
 
 /// Request to delete a document.
 ///
@@ -64,9 +66,8 @@ pub struct DeleteDocumentResponseDto {
 /// - Vector keys and the artifact on disk are removed only after that commit
 /// - A file Lattice does not own is never deleted
 pub struct DeleteDocumentUseCase {
-    document_repo: Arc<dyn DocumentRepositoryPort>,
     vector_search: Arc<dyn VectorSearchPort>,
-    uow_factory: Arc<dyn UnitOfWorkFactory>,
+    pool: SqlitePool,
     library: Arc<dyn ContentAddressedStoragePort>,
     library_gc: Arc<LibraryGc>,
     web_archive: Arc<dyn ArticleArchive>,
@@ -80,17 +81,15 @@ pub struct DeleteDocumentUseCase {
 impl DeleteDocumentUseCase {
     /// Create a new delete document use case.
     pub fn new(
-        document_repo: Arc<dyn DocumentRepositoryPort>,
         vector_search: Arc<dyn VectorSearchPort>,
-        uow_factory: Arc<dyn UnitOfWorkFactory>,
+        pool: SqlitePool,
         library: Arc<dyn ContentAddressedStoragePort>,
         library_gc: Arc<LibraryGc>,
         web_archive: Arc<dyn ArticleArchive>,
     ) -> Self {
         Self {
-            document_repo,
             vector_search,
-            uow_factory,
+            pool,
             library,
             library_gc,
             web_archive,
@@ -124,15 +123,11 @@ impl DeleteDocumentUseCase {
     /// - Chunk deletion fails (AppError::Database)
     /// - Document deletion fails (AppError::Database)
     pub async fn execute(&self, document_id: String) -> Result<DeleteDocumentResponseDto> {
-        // 1. Read what the artifact is before the row that describes it goes.
-        //    Both lookups are metadata-only: a document that failed before it
-        //    was ever chunked must still be deletable.
-        let file_path = self
-            .document_repo
-            .find_file_path_by_id(&document_id)
-            .await?;
-        let checksum = self.document_repo.find_checksum_by_id(&document_id).await?;
-        let releases_blob = self.library.owns(Path::new(&file_path));
+        // 1. Fail fast on a missing document before anyone is told about it;
+        //    the write below checks again.
+        let mut read = self.pool.begin_read().await?;
+        document::ops::find_file_path_by_id(&mut read, &document_id).await?;
+        read.commit().await?;
 
         // Drop summary vectors before the rows go so the summary index never
         // keeps a dead entry (rows themselves cascade on delete).
@@ -140,46 +135,16 @@ impl DeleteDocumentUseCase {
             observer.document_deleted(&document_id).await;
         }
 
-        // 2. Chunks and the document row in one transaction.
-        let mut uow = self.uow_factory.create().await?;
-        let db_result = {
-            let chunk_repo = uow.chunk_repository()?;
-            let document_repo = uow.document_repository()?;
-
-            let exists = document_repo.document_exists(&document_id).await?;
-            if !exists {
-                return Err(AppError::NotFound(format!(
-                    "Document not found: {}",
-                    document_id
-                )));
-            }
-
-            let chunks = chunk_repo.find_by_document(&document_id).await?;
-
-            chunk_repo.delete_by_document(&document_id).await?;
-            if releases_blob {
-                document_repo.delete_and_release_blob(&document_id).await?;
-            } else {
-                DocumentRepositoryPort::delete(&*document_repo, &document_id).await?;
-            }
-            Ok::<_, AppError>(chunks)
-        };
-
-        let chunks = match db_result {
-            Ok(chunks) => {
-                uow.commit().await?;
-                chunks
-            }
-            Err(err) => {
-                if let Err(rollback_err) = uow.rollback().await {
-                    return Err(AppError::Database(format!(
-                        "Delete failed: {}; rollback failed: {}",
-                        err, rollback_err
-                    )));
-                }
-                return Err(err);
-            }
-        };
+        // 2. What the artifact is, the chunks and the document row in one
+        //    transaction. Both lookups are metadata-only: a document that
+        //    failed before it was ever chunked must still be deletable.
+        let mut tx = self.pool.begin_write().await?;
+        let DeletedRows {
+            file_path,
+            checksum,
+            chunks,
+        } = delete_rows(&mut tx, self.library.as_ref(), &document_id).await?;
+        tx.commit().await?;
 
         let chunks_count = chunks.len();
 
@@ -271,15 +236,50 @@ impl DeleteDocumentUseCase {
     }
 }
 
+/// What the delete transaction read before the rows went.
+struct DeletedRows {
+    file_path: String,
+    checksum: String,
+    chunks: Vec<Chunk>,
+}
+
+async fn delete_rows(
+    tx: &mut WriteTx,
+    library: &dyn ContentAddressedStoragePort,
+    document_id: &str,
+) -> Result<DeletedRows> {
+    if !document::ops::exists(tx, document_id).await? {
+        return Err(AppError::NotFound(format!(
+            "Document not found: {}",
+            document_id
+        )));
+    }
+    let file_path = document::ops::find_file_path_by_id(tx, document_id).await?;
+    let checksum = document::ops::find_checksum_by_id(tx, document_id).await?;
+    let releases_blob = library.owns(Path::new(&file_path));
+    let chunks = chunk::ops::find_by_document(tx, document_id).await?;
+    chunk::ops::delete_by_document(tx, document_id).await?;
+    if releases_blob {
+        document::ops::delete_and_release_blob(tx, document_id).await?;
+    } else {
+        document::ops::delete(tx, document_id).await?;
+    }
+    Ok(DeletedRows {
+        file_path,
+        checksum,
+        chunks,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::features::web::mocks::MockWebArchiveService;
-    use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
     use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
     use crate::infrastructure::storage::{ContentAddressedStorage, FileIntents};
     use lattice_core::application::contracts::search::SearchResultRecord;
     use lattice_core::application::contracts::web::CleanArticle;
+    use lattice_core::application::ports::DocumentRepositoryPort;
     use parking_lot::Mutex;
     use sqlx::sqlite::SqlitePoolOptions;
     use sqlx::SqlitePool;
@@ -382,9 +382,8 @@ mod tests {
             let documents = Arc::clone(&self.documents) as Arc<dyn DocumentRepositoryPort>;
             let library = Arc::clone(&self.library) as Arc<dyn ContentAddressedStoragePort>;
             DeleteDocumentUseCase::new(
-                Arc::clone(&documents),
                 Arc::clone(&self.vectors) as Arc<dyn VectorSearchPort>,
-                Arc::new(SqliteUnitOfWorkFactory::new(self.pool.clone())),
+                self.pool.clone(),
                 Arc::clone(&library),
                 Arc::new(
                     LibraryGc::new(library, documents, {
@@ -464,16 +463,11 @@ mod tests {
         fixture.register("doc-1", &blob_path, &hash).await;
 
         // The record commits in the delete's own transaction.
-        let mut uow = SqliteUnitOfWorkFactory::new(fixture.pool.clone())
-            .create()
+        let mut tx = fixture.pool.begin_write().await.unwrap();
+        document::ops::delete_and_release_blob(&mut tx, "doc-1")
             .await
             .unwrap();
-        uow.document_repository()
-            .unwrap()
-            .delete_and_release_blob("doc-1")
-            .await
-            .unwrap();
-        uow.commit().await.unwrap();
+        tx.commit().await.unwrap();
         assert_eq!(
             fixture.records().await,
             [("release".to_string(), hash.clone())]

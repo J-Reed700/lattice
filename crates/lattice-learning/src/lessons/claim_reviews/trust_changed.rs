@@ -16,9 +16,9 @@ use lattice_core::shared::error::{AppError, Result};
 use serde::Serialize;
 use sqlx::SqlitePool;
 
-use super::repository::{reviews, ClaimReviewRepository};
+use super::repository::{hold_in, load_in, reviews, ClaimReviewRepository};
 use crate::content_verification::{gate_reason, relevel};
-use crate::persistence::now;
+use crate::persistence::{db, now};
 use crate::references::trust::outcomes::{self, VerdictScope};
 use crate::references::trust::{calibration, overrides};
 
@@ -218,7 +218,7 @@ pub async fn record_verifier_agreements(
     Ok(report)
 }
 
-async fn redecide_kinds(pool: &SqlitePool, kinds: Vec<ClaimKind>) -> Result<Redecided> {
+pub(super) async fn redecide_kinds(pool: &SqlitePool, kinds: Vec<ClaimKind>) -> Result<Redecided> {
     let mut report = Redecided::default();
     for kind in kinds {
         report.merge(trust_changed(pool, &TrustCause::Bar { kind }).await?);
@@ -321,25 +321,21 @@ async fn redecide_lesson(
 /// A published lesson with a claim reopened needs the user's review again,
 /// as a Verifier dispute on demand does; the lesson stays published.
 async fn hold_if_published(store: &ClaimReviewRepository, lesson_id: &str) -> Result<()> {
-    let ledger = store.load(lesson_id).await?;
-    let Some(review) = ledger.review else {
-        return Ok(());
-    };
-    if review.state == LessonReviewState::Ready
+    let mut tx = store.begin_write().await?;
+    let ledger = load_in(&mut tx, lesson_id).await?;
+    if ledger
+        .review
+        .is_some_and(|review| review.state == LessonReviewState::Ready)
         && end_state(&ledger.claims) == LessonReviewState::NeedsReview
     {
-        store
-            .set_lesson_review(
-                lesson_id,
-                LessonReview {
-                    state: LessonReviewState::NeedsReview,
-                    ..review
-                },
-            )
-            .await?;
+        hold_in(&mut tx, lesson_id, None).await?;
     }
+    tx.commit().await.map_err(db)?;
     Ok(())
 }
+
+#[cfg(test)]
+mod tests;
 
 fn tally(report: &mut Redecided, before: &ClaimState, verdict: &GateVerdict) {
     let verified = matches!(before, ClaimState::ResolvedByEvidence { .. });

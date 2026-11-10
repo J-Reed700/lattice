@@ -1,13 +1,21 @@
 //! The `learning_checker_examples` table.
 
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 
 use crate::lessons::claim_reviews::checker_examples::{CheckerExample, Label, LabelSource};
 use crate::persistence::{db, decode, encode};
 
 pub(in crate::lessons::claim_reviews) async fn insert(
     pool: &SqlitePool,
+    example: &CheckerExample,
+) -> Result<()> {
+    let mut connection = pool.acquire().await.map_err(db)?;
+    insert_in(&mut connection, example).await
+}
+
+pub(in crate::lessons::claim_reviews) async fn insert_in(
+    connection: &mut SqliteConnection,
     example: &CheckerExample,
 ) -> Result<()> {
     sqlx::query("INSERT INTO learning_checker_examples(id,program_id,lesson_id,claim_id,checker_model,context_window,policy,claim,passages_json,local_verdict,label,label_source,at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
@@ -24,7 +32,7 @@ pub(in crate::lessons::claim_reviews) async fn insert(
         .bind(example.label.as_str())
         .bind(example.label_source.as_str())
         .bind(example.at)
-        .execute(pool)
+        .execute(&mut *connection)
         .await
         .map_err(db)?;
     Ok(())
@@ -35,10 +43,19 @@ pub(in crate::lessons::claim_reviews) async fn delete_for_claim(
     claim_id: &str,
     source: LabelSource,
 ) -> Result<()> {
+    let mut connection = pool.acquire().await.map_err(db)?;
+    delete_for_claim_in(&mut connection, claim_id, source).await
+}
+
+pub(in crate::lessons::claim_reviews) async fn delete_for_claim_in(
+    connection: &mut SqliteConnection,
+    claim_id: &str,
+    source: LabelSource,
+) -> Result<()> {
     sqlx::query("DELETE FROM learning_checker_examples WHERE claim_id=? AND label_source=?")
         .bind(claim_id)
         .bind(source.as_str())
-        .execute(pool)
+        .execute(&mut *connection)
         .await
         .map_err(db)?;
     Ok(())

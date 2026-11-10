@@ -1,4 +1,6 @@
 use crate::persistence::db;
+use crate::references::trust::overrides::CoveredVersion;
+use lattice_core::domain::provenance::OverrideScope;
 use lattice_core::shared::error::Result;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
@@ -58,4 +60,31 @@ pub(in crate::references::trust) async fn site_outcome_counts(
     .fetch_all(pool)
     .await
     .map_err(db)
+}
+
+/// A source scope covers every version of that source in its course; a
+/// site scope (with or without a subject class) covers every captured
+/// version whose origin is that site, in every course: the class narrows
+/// which claims the level applies to, which the gate decides.
+pub(in crate::references::trust) async fn covered_in(
+    conn: &mut SqliteConnection,
+    scope: &OverrideScope,
+) -> Result<Vec<CoveredVersion>> {
+    let rows = match scope {
+        OverrideScope::Source {
+            program_id,
+            source_id,
+        } => source_versions(conn, program_id, source_id).await?,
+        OverrideScope::Site { registrable_domain }
+        | OverrideScope::SiteSubject {
+            registrable_domain, ..
+        } => site_versions(conn, registrable_domain).await?,
+    };
+    Ok(rows
+        .into_iter()
+        .map(|(program_id, source_version_id)| CoveredVersion {
+            program_id,
+            source_version_id,
+        })
+        .collect())
 }

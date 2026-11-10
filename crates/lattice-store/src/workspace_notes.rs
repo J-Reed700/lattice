@@ -275,7 +275,7 @@ impl DailyNotesRepository {
     /// Insert a canonical workspace note inside a caller-owned transaction.
     /// Learning Studio uses this to commit a lesson-note link and page together.
     pub async fn insert_in_transaction(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         note: &WorkspaceNoteRecord,
     ) -> Result<()> {
         sqlx::query(
@@ -297,7 +297,7 @@ impl DailyNotesRepository {
         .bind(&note.sources_json)
         .bind(&note.created_at)
         .bind(&note.updated_at)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map(|_| ())
         .map_err(|error| AppError::Database(format!("Failed to create workspace note: {error}")))
@@ -317,7 +317,7 @@ impl DailyNotesRepository {
     }
 
     pub async fn update_in_transaction(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         note: &WorkspaceNoteRecord,
     ) -> Result<()> {
         let result = sqlx::query(
@@ -340,7 +340,7 @@ impl DailyNotesRepository {
         .bind(&note.updated_at)
         .bind(&note.id)
         .bind(note.revision)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(|error| {
             AppError::Database(format!(
@@ -353,7 +353,7 @@ impl DailyNotesRepository {
                 "SELECT EXISTS(SELECT 1 FROM daily_notes_workspace WHERE id = ?)",
             )
             .bind(&note.id)
-            .fetch_one(&mut **tx)
+            .fetch_one(&mut *tx)
             .await?;
             return Err(if exists {
                 AppError::InvalidState("This page changed elsewhere. Your draft is still here; reload the saved page before merging your edits.".into())

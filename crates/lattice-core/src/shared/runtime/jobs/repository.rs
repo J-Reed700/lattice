@@ -7,7 +7,7 @@
 use super::attempt::Attempt;
 use super::{Admitted, Backoff, Deferral, JobRecord, JobStatus, NewJob, RecoveryPolicy};
 use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::Transactions;
+use crate::shared::persistence::{Transactions, WriteTx};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 
 const SUSPENDED: &str = "Saved; resumes when the app opens";
@@ -119,7 +119,7 @@ impl JobStore {
         Self { pool }
     }
 
-    async fn immediate(&self) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
+    async fn immediate(&self) -> Result<WriteTx> {
         // Reserve the write lock before reading: upgrading a deferred WAL read
         // transaction can fail at once with SQLITE_BUSY instead of waiting.
         self.pool.begin_write().await.map_err(db)

@@ -4,6 +4,7 @@
 //! guide is studied as feedback on an attempt rather than read in advance.
 use super::recall_repository::interview;
 use super::study_dto::{StudyCardDto, StudyCardFormat, StudyDeckDto, StudySourceDto};
+use crate::persistence::db;
 use crate::practice::{
     interview_answers::{InterviewAnswerGuide, InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH},
     practical_dto::{
@@ -12,6 +13,7 @@ use crate::practice::{
     practical_generation::INTERVIEW_PLAN_FILE_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 use std::collections::HashMap;
 
@@ -36,7 +38,8 @@ pub(crate) async fn load(
     program_id: &str,
     activity_id: &str,
 ) -> Result<InterviewMaterial> {
-    let activity = interview::activity(pool, program_id, activity_id)
+    let mut read = pool.begin_read().await.map_err(db)?;
+    let activity = interview::activity(&mut read, program_id, activity_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Interview activity not found".into()))?;
     if activity.kind != "interview" {
@@ -50,7 +53,7 @@ pub(crate) async fn load(
         ));
     }
     let files = interview::files(
-        pool,
+        &mut read,
         activity_id,
         [INTERVIEW_PLAN_FILE_PATH, INTERVIEW_ANSWERS_FILE_PATH],
     )
@@ -79,12 +82,13 @@ pub(crate) async fn load(
                 continue;
             }
             if let Some(source) =
-                interview::source_title_and_link(pool, program_id, version).await?
+                interview::source_title_and_link(&mut read, program_id, version).await?
             {
                 sources.insert(version.to_owned(), source);
             }
         }
     }
+    read.commit().await.map_err(db)?;
     Ok(InterviewMaterial {
         activity_id: activity_id.to_owned(),
         title: activity.title,

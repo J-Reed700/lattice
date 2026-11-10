@@ -27,6 +27,7 @@ use lattice_core::domain::provenance::{
     TrackRecord, TrustOverride, POLICY,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 use std::collections::BTreeSet;
 
@@ -144,8 +145,10 @@ impl Course<'_> {
     }
 
     async fn text(&self, version_id: &str) -> Result<String> {
-        let mut connection = self.pool().acquire().await.map_err(db)?;
-        version_text(&mut connection, self.program_id, version_id).await
+        let mut read = self.pool().begin_read().await.map_err(db)?;
+        let text = version_text(&mut read, self.program_id, version_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(text)
     }
 
     async fn claim(&self, claim: &LearningTrustClaimRequestDto) -> Result<LearningClaimTrustDto> {
