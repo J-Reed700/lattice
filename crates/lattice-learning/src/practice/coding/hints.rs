@@ -842,3 +842,6 @@ mod tests {
         assert!(!request.task.contains("sessionId"));
     }
 }
+
+#[cfg(test)]
+mod golden;

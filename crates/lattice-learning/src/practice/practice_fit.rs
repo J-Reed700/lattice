@@ -153,3 +153,6 @@ pub async fn check_practice_fit(
     .await?;
     Ok(fit(judgement.course_teaches_program_code, judgement.reason))
 }
+
+#[cfg(test)]
+mod golden;

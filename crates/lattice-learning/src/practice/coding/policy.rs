@@ -578,3 +578,6 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod golden;

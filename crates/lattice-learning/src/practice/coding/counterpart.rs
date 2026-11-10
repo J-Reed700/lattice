@@ -556,3 +556,6 @@ mod tests {
         assert!(plain["properties"].get("path").is_some());
     }
 }
+
+#[cfg(test)]
+mod golden;
