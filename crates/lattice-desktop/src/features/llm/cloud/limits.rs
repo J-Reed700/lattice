@@ -33,21 +33,14 @@ impl ReportedLimits {
         provider: CloudProvider,
         model: &str,
         key: &str,
-    ) -> ModelWindowDto {
+    ) -> Result<ModelWindowDto> {
         let id = (provider, model.to_owned());
         if let Some(known) = self.known().get(&id) {
-            return *known;
+            return Ok(*known);
         }
-        match report(provider, model, key).await {
-            Ok(reported) => {
-                self.known().insert(id, reported);
-                reported
-            }
-            Err(error) => {
-                tracing::warn!(model, %error, "Running without the provider's limits");
-                ModelWindowDto::default()
-            }
-        }
+        let reported = report(provider, model, key).await?;
+        self.known().insert(id, reported);
+        Ok(reported)
     }
 
     fn known(&self) -> std::sync::MutexGuard<'_, HashMap<(CloudProvider, String), ModelWindowDto>> {

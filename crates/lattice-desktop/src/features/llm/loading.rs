@@ -236,16 +236,18 @@ impl ModelLoader {
                         .await,
                 ))
             }
-            ModelRef::Cloud {
-                provider,
-                model: name,
-            } => {
+            ModelRef::Cloud { provider, .. } => {
                 let key = cloud_api_key(*provider)?;
-                let reported = self.runtime.reported_limits.of(*provider, name, &key).await;
-                Ok(remote(
-                    cloud_client(settings, model, tuning, &reported, key)?
-                        .schedule(&self.runtime.schedulers),
-                ))
+                load_cloud(
+                    settings,
+                    model,
+                    tuning,
+                    key,
+                    &self.runtime.reported_limits,
+                    &self.runtime.schedulers,
+                )
+                .await
+                .map(remote)
             }
         }
     }
@@ -428,6 +430,48 @@ fn cloud_connection(
     (connection, known_ceiling)
 }
 
+/// A cloud `model` behind its provider's scheduler: the provider is asked what
+/// the model can take, and a model it cannot be asked about runs on the
+/// Settings numbers.
+pub(crate) async fn load_cloud(
+    settings: &LLMSettingsDto,
+    model: &ModelRef,
+    tuning: Tuning,
+    key: String,
+    reported_limits: &ReportedLimits,
+    schedulers: &SchedulerRegistry,
+) -> Result<Arc<dyn LLMPort>> {
+    let (provider, name) = cloud_ref(model)?;
+    let lookup = reported_limits.of(provider, name, &key).await;
+    Ok(cloud_client_after(settings, model, tuning, lookup, key)?.schedule(schedulers))
+}
+
+fn cloud_ref(model: &ModelRef) -> Result<(CloudProvider, &str)> {
+    match model {
+        ModelRef::Cloud {
+            provider,
+            model: name,
+        } => Ok((*provider, name)),
+        _ => Err(AppError::InvalidConfig("Not a cloud model".into())),
+    }
+}
+
+/// The unscheduled client of a cloud `model` once its limits were asked for.
+fn cloud_client_after(
+    settings: &LLMSettingsDto,
+    model: &ModelRef,
+    tuning: Tuning,
+    lookup: Result<ModelWindowDto>,
+    key: String,
+) -> Result<crate::features::llm::cloud::CloudLlm> {
+    let (_, name) = cloud_ref(model)?;
+    let reported = lookup.unwrap_or_else(|error| {
+        tracing::warn!(model = %name, %error, "Running without the provider's limits");
+        ModelWindowDto::default()
+    });
+    cloud_client(settings, model, tuning, &reported, key)
+}
+
 /// The unscheduled client of a cloud `model`, as the loader builds it.
 fn cloud_client(
     settings: &LLMSettingsDto,
@@ -436,16 +480,10 @@ fn cloud_client(
     reported: &ModelWindowDto,
     key: String,
 ) -> Result<crate::features::llm::cloud::CloudLlm> {
-    let ModelRef::Cloud {
-        provider,
-        model: name,
-    } = model
-    else {
-        return Err(AppError::InvalidConfig("Not a cloud model".into()));
-    };
+    let (provider, name) = cloud_ref(model)?;
     let (mut connection, known_ceiling) = cloud_connection(settings, model, tuning, reported);
-    connection.provider = llm_provider(*provider);
-    connection.model = name.clone();
+    connection.provider = llm_provider(provider);
+    connection.model = name.to_owned();
     Ok(
         crate::features::llm::cloud::CloudLlm::new(&connection, key)?
             .with_output_ceiling(known_ceiling)
