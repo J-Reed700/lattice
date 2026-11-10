@@ -119,17 +119,13 @@ pub(super) trait ProviderProtocol: Send + Sync {
     fn limits_api(&self) -> Option<LimitsApi>;
 }
 
-static OPENAI: openai::OpenAi = openai::OpenAi;
-static ANTHROPIC: anthropic::Anthropic = anthropic::Anthropic;
-static GOOGLE: google::Google = google::Google;
-
 /// The protocol of a cloud provider: the only place the cloud code tells
 /// providers apart.
 pub(super) fn protocol_for(provider: LLMProvider) -> Result<&'static dyn ProviderProtocol> {
     match provider {
-        LLMProvider::Openai => Ok(&OPENAI),
-        LLMProvider::Anthropic => Ok(&ANTHROPIC),
-        LLMProvider::Google => Ok(&GOOGLE),
+        LLMProvider::Openai => Ok(&openai::OpenAi),
+        LLMProvider::Anthropic => Ok(&anthropic::Anthropic),
+        LLMProvider::Google => Ok(&google::Google),
         _ => Err(AppError::InvalidConfig(
             "Expected an explicit cloud provider".into(),
         )),
@@ -139,9 +135,9 @@ pub(super) fn protocol_for(provider: LLMProvider) -> Result<&'static dyn Provide
 /// [`protocol_for`], for a provider already known to be a cloud one.
 pub(super) fn protocol_for_cloud(provider: CloudProvider) -> &'static dyn ProviderProtocol {
     match provider {
-        CloudProvider::Openai => &OPENAI,
-        CloudProvider::Anthropic => &ANTHROPIC,
-        CloudProvider::Google => &GOOGLE,
+        CloudProvider::Openai => &openai::OpenAi,
+        CloudProvider::Anthropic => &anthropic::Anthropic,
+        CloudProvider::Google => &google::Google,
     }
 }
 
