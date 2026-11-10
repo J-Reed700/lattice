@@ -140,16 +140,17 @@ fn a_check_needs_its_own_ideas_example_since_the_last_check() {
     assert_eq!(sites, [FindingSite::Section(5)]);
 }
 
-const TIMEOUT: &str = "The default timeout is 30 seconds.";
+const WAITS: &str = "every request waits thirty seconds";
+const TIMEOUT: &str = "The guide says \"every request waits thirty seconds\" before it fails.";
 
 fn cited(candidate: &mut Value, quote: &str) {
     candidate["blocks"][0]["citations"] =
         json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":quote}]);
 }
 
-/// A specific stands only in a sentence the writer cited.
+/// Quoted wording stands only in a sentence the writer cited.
 #[test]
-fn a_specific_without_a_citation_is_a_finding_at_its_section() {
+fn quoted_wording_without_a_citation_is_a_finding_at_its_section() {
     let mut candidate = lesson();
     candidate["blocks"][0]["body"] = json!(format!("{TIMEOUT} It is set for each request."));
 
@@ -164,12 +165,13 @@ fn a_specific_without_a_citation_is_a_finding_at_its_section() {
 
     cited(
         &mut candidate,
-        "A timeout of 30 seconds applies to each request.",
+        "The guide: every request waits thirty seconds before failing.",
     );
     assert!(lesson_rules(&candidate).is_empty());
 }
 
-const LONG_SENTENCE: &str = "The default timeout for every outgoing request in the client library is 30 seconds unless the caller sets another value.";
+const LONG_WAIT: &str = "thirty seconds of waiting each time";
+const LONG_SENTENCE: &str = "The default timeout for every outgoing request in the client library is \"thirty seconds of waiting each time\" unless the caller sets another value.";
 
 /// The user and the repair both read the whole sentence.
 #[test]
@@ -189,7 +191,7 @@ fn an_uncited_specific_is_summarised_with_its_whole_sentence() {
 }
 
 #[test]
-fn a_quote_that_lacks_the_figure_is_summarised_with_what_it_lacks_and_the_whole_sentence() {
+fn a_quote_that_lacks_the_wording_is_summarised_with_what_it_lacks_and_the_whole_sentence() {
     let mut candidate = lesson();
     candidate["blocks"][0]["body"] = json!(LONG_SENTENCE);
     candidate["blocks"][0]["citations"] = json!([{
@@ -201,7 +203,7 @@ fn a_quote_that_lacks_the_figure_is_summarised_with_what_it_lacks_and_the_whole_
     assert_eq!(findings.len(), 1);
     assert_eq!(
         findings[0].summary,
-        format!("The quotation cited for this sentence does not contain 30: \u{201c}{LONG_SENTENCE}\u{201d}")
+        format!("The quotation cited for this sentence does not contain {LONG_WAIT}: \u{201c}{LONG_SENTENCE}\u{201d}")
     );
     assert_eq!(
         findings[0].passage.as_deref(),
@@ -306,7 +308,7 @@ fn too_few_questions_of_a_kind_are_named_in_plain_words() {
 }
 
 #[test]
-fn a_quote_that_lacks_the_figure_does_not_cite_it() {
+fn a_quote_that_lacks_the_wording_does_not_cite_it() {
     let mut candidate = lesson();
     candidate["blocks"][0]["body"] = json!(TIMEOUT);
     cited(
@@ -317,11 +319,12 @@ fn a_quote_that_lacks_the_figure_does_not_cite_it() {
     let findings = lesson_rules(&candidate);
 
     assert_eq!(findings.len(), 1);
-    assert!(findings[0].note.contains("does not contain 30"));
+    assert!(findings[0]
+        .note
+        .contains(&format!("does not contain {WAITS}")));
 }
 
-/// A worked example's case, code and a list's markers are not specifics a
-/// source has to hold.
+/// A worked example's case, code and a list's markers need no citation.
 #[test]
 fn hypothetical_cases_code_and_list_markers_need_no_citation() {
     let mut candidate = lesson();
@@ -332,11 +335,10 @@ fn hypothetical_cases_code_and_list_markers_need_no_citation() {
     assert!(lesson_rules(&candidate).is_empty());
 }
 
-/// An answer explanation reasons from its question's givens: the figures
-/// its prompt and options state need no citation there, and a figure of
-/// its own still does.
+/// A figure is the classifier's question, never a citation finding: not the
+/// question's givens an answer restates, nor one of its own.
 #[test]
-fn an_answer_that_restates_its_questions_figures_needs_no_citation_for_them() {
+fn an_answer_s_figures_are_no_citation_finding() {
     let mut candidate = lesson();
     candidate["questions"][0]["prompt"] = json!(
         "A classifier outputs a confidence score of 0.75. Your threshold for automatic routing is 0.80. What should the system do?"
@@ -355,10 +357,10 @@ fn an_answer_that_restates_its_questions_figures_needs_no_citation_for_them() {
     candidate["questions"][0]["explanation"] = json!(
         "Since 0.75 is below the 0.80 threshold, the document goes to review, as 30% of documents do."
     );
-    assert_eq!(lesson_rules(&candidate).len(), 1);
+    assert!(lesson_rules(&candidate).is_empty());
 }
 
-const SOURCE_SAYS: &str = "A timeout of 30 seconds applies to each request.";
+const SOURCE_SAYS: &str = "The guide: every request waits thirty seconds before failing.";
 
 fn uncited_lesson() -> Value {
     let mut candidate = lesson();
@@ -371,10 +373,10 @@ fn patch(patch: Value) -> Value {
     crate::lessons::text_edits::apply(&uncited_lesson(), &patch.to_string()).unwrap()
 }
 
-/// An uncited figure the supplied excerpt states ends cited, its sentence
+/// Uncited wording the supplied excerpt holds ends cited, its sentence
 /// as it was.
 #[test]
-fn an_uncited_figure_a_source_contains_is_settled_by_citing_it() {
+fn uncited_wording_a_source_contains_is_settled_by_citing_it() {
     let before = uncited_lesson();
     assert_eq!(lesson_rules(&before).len(), 1);
 
@@ -389,9 +391,9 @@ fn an_uncited_figure_a_source_contains_is_settled_by_citing_it() {
     assert!(lesson_rules(&revised).is_empty());
 }
 
-/// One no excerpt states ends in the general form, with nothing cited.
+/// Wording no excerpt holds ends as the lesson's own sentence, with nothing cited.
 #[test]
-fn an_uncited_figure_no_source_contains_is_settled_by_the_general_form() {
+fn uncited_wording_no_source_contains_is_settled_by_removing_the_quotation_marks() {
     let revised = patch(json!({"edits":[
         {"path":"/blocks/0/body","before":TIMEOUT,"after":"The default timeout is set by the caller."}],
         "citations":[]}));
@@ -403,7 +405,7 @@ fn an_uncited_figure_no_source_contains_is_settled_by_the_general_form() {
 /// A citation whose quote lacks the figure settles nothing: the quote
 /// has to contain what the sentence states, whoever appended it.
 #[test]
-fn a_citation_appended_with_a_quote_that_lacks_the_figure_settles_nothing() {
+fn a_citation_appended_with_a_quote_that_lacks_the_wording_settles_nothing() {
     let revised = patch(json!({"edits":[],"citations":[
         {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,
          "quote":"A timeout applies to each request, in seconds."}]}));
@@ -411,7 +413,9 @@ fn a_citation_appended_with_a_quote_that_lacks_the_figure_settles_nothing() {
     let findings = lesson_rules(&revised);
 
     assert_eq!(findings.len(), 1);
-    assert!(findings[0].note.contains("does not contain 30"));
+    assert!(findings[0]
+        .note
+        .contains(&format!("does not contain {WAITS}")));
     // A second citation whose quote holds the figure settles it.
     let mut again = revised;
     again["blocks"][0]["citations"]
@@ -848,18 +852,6 @@ fn a_misconception_without_quotation_marks_is_no_finding() {
     candidate["blocks"][10]["body"] =
         json!("Tempting wrong guess: the projects folder is where notes.txt always lives.");
     assert!(lesson_rules(&candidate).is_empty());
-}
-
-#[test]
-fn an_uncited_figure_keeps_the_note_without_the_quotation_mark_direction() {
-    let mut candidate = lesson();
-    candidate["blocks"][0]["body"] = json!(format!("{TIMEOUT} It is set for each request."));
-
-    let findings = lesson_rules(&candidate);
-
-    assert_eq!(findings.len(), 1);
-    assert!(findings[0].note.contains("without citing it"));
-    assert!(!findings[0].note.contains("quotation marks"));
 }
 
 fn question_case(prompt: &str, options: [&str; 4], key: usize) -> Value {
