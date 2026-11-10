@@ -457,22 +457,22 @@ fn pictures_outside_a_user_message_are_refused() {
 }
 
 #[test]
-fn a_pictures_bytes_never_count_as_prompt_text() {
-    // The prompt measures 1,282 for the picture, 7 estimated for the role and
-    // the picture's alt and caption, and 24 for the template. 400 KB of base64
-    // read as text would be 100,000 tokens.
+fn a_pictures_declared_tokens_are_prefilled_on_top_of_one_batch_of_text() {
+    // 3,000 text tokens and 24 of template framing, over one batch, plus a
+    // picture of 1,282 declared tokens.
     let size = RequestSize {
-        prompt_tokens: 1_313,
+        prompt_tokens: 3_000 + 24 + 1_282,
         image_tokens: 1_282,
         image_count: 1,
         ..Default::default()
     };
-    // The prefill allowance adds the picture's declared tokens, not its bytes.
-    let allowance = retry::prefill_allowance(&size);
     assert_eq!(
-        allowance,
+        retry::prefill_allowance(&size),
         retry::FIRST_FRAME_FLOOR
-            + Duration::from_secs(((1_282 + 31) / retry::PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
+            + Duration::from_secs(
+                ((retry::PREFILL_BATCH_TOKENS + 1_282) / retry::PREFILL_FLOOR_TOKENS_PER_SEC)
+                    as u64
+            )
     );
 }
 
