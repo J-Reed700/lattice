@@ -1710,3 +1710,144 @@ async fn a_repair_edit_that_drops_a_sentences_markers_is_asked_again_with_the_ex
     );
     Ok(())
 }
+
+/// What a job kept of its lesson's repairs: each `teaching-repair-answer`
+/// checkpoint's value.
+async fn kept_repairs(pool: &sqlx::SqlitePool, job: &str, lesson_id: &str) -> Vec<Value> {
+    sqlx::query_scalar::<_, String>(
+        "SELECT data_json FROM job_checkpoints WHERE job_id = ?1 AND key LIKE ?2 ORDER BY key",
+    )
+    .bind(job)
+    .bind(format!("{lesson_id}/teaching-repair-answer:%"))
+    .fetch_all(pool)
+    .await
+    .unwrap()
+    .iter()
+    .map(|data| serde_json::from_str(data).unwrap())
+    .collect()
+}
+
+#[tokio::test]
+async fn a_repair_s_answer_is_kept_as_it_was_given() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) =
+        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+    let model = model(defect_no_repair_fixes());
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        run(&model, lesson(EXCERPT)).await
+    })
+    .await?;
+    let kept = kept_repairs(&pool, &job, &lesson_id).await;
+    assert!(kept.iter().all(|row| row["answer"].is_string()), "{kept:?}");
+    let first = retitle("Corrected example");
+    assert_eq!(
+        kept.iter().filter(|row| row["answer"] == first).count(),
+        1,
+        "{kept:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) =
+        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+    let unusable =
+        json!({"edits":[{"path":"/blocks/0/title","before":"Missing text","after":"X"}]})
+            .to_string();
+    let model = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        unusable.clone(),
+        unusable,
+    ]);
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        run(&model, lesson(EXCERPT)).await
+    })
+    .await?;
+    let kept = kept_repairs(&pool, &job, &lesson_id).await;
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(kept[0].get("answer").is_none(), "{kept:?}");
+    assert!(
+        kept[0]["refused"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty()),
+        "{kept:?}"
+    );
+    Ok(())
+}
+
+/// The scripted review with its repair requests answered from a script of
+/// their own, so the order of the other calls does not depend on how many
+/// repairs are asked.
+struct RepairsApart {
+    repairs: ScriptedModel,
+    rest: ScriptedModel,
+}
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::llm_port::LLMPort for RepairsApart {
+    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
+        if asks_for_repair(request) {
+            self.repairs.complete(request).await
+        } else {
+            self.rest.complete(request).await
+        }
+    }
+    fn model_name(&self) -> &str {
+        self.rest.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.rest.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.rest.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) =
+        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+    let script = defect_no_repair_fixes();
+    // The reviews of the second run are read from their checkpoints; its two
+    // rechecks of the findings are asked again.
+    let rest = vec![
+        script[0].clone(),
+        script[1].clone(),
+        script[3].clone(),
+        script[4].clone(),
+        script[1].clone(),
+        script[4].clone(),
+    ];
+    let llm = RepairsApart {
+        repairs: model(vec![retitle("Corrected example"); 2]),
+        rest: model(rest),
+    };
+    let first = lesson_drafts::run(&repo, &job, &lesson_id, async {
+        run(&llm, lesson(EXCERPT)).await
+    })
+    .await?;
+    let second = lesson_drafts::run(&repo, &job, &lesson_id, async {
+        run(&llm, lesson(EXCERPT)).await
+    })
+    .await?;
+    assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 1);
+    assert_eq!(second.candidate, first.candidate);
+    let waiting = |reviewed: &Reviewed| -> Vec<(String, _)> {
+        reviewed
+            .set_aside
+            .iter()
+            .map(|waiting| (waiting.finding.note.clone(), waiting.repairs))
+            .collect()
+    };
+    assert_eq!(waiting(&second), waiting(&first));
+    Ok(())
+}
