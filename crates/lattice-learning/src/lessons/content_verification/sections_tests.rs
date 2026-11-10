@@ -669,7 +669,7 @@ async fn mend_in(
         (&json!({"type":"object"}), 4_000),
         (0, true, &section),
         (taken, protected),
-        lesson,
+        (lesson, &[]),
     )
     .await
 }

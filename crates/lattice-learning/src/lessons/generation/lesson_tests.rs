@@ -94,6 +94,7 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
             &schema, policy,
         )),
         &off_shape_value(true).to_string(),
+        &Default::default(),
     )
     .unwrap();
     let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.key().id()).collect();
@@ -122,6 +123,7 @@ fn the_publication_check_reports_a_question_kind_the_lesson_lacks() {
             &schema, policy,
         )),
         &lesson.to_string(),
+        &Default::default(),
     )
     .unwrap();
     assert!(
@@ -467,6 +469,7 @@ fn a_lessons_text_of_any_length_is_no_schema_finding() {
                 &schema, policy,
             )),
             &lesson.to_string(),
+            &Default::default(),
         )
         .unwrap()
         .into_iter()

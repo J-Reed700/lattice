@@ -105,7 +105,7 @@ async fn a_section_whose_edits_cannot_be_applied_is_asked_for_in_the_same_conver
     let (repaired, put_back) = repair_group(
         &model,
         "Repair the section.",
-        (&local, &original, &original),
+        (&local, &original, &original, &[]),
         &schema,
         "blocks",
         4_000,
@@ -725,7 +725,7 @@ async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncite
     let (repaired, _) = repair_group(
         &model,
         "system",
-        (&local, &original, &original),
+        (&local, &original, &original, &[]),
         &schema,
         "blocks",
         4_000,

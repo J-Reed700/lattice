@@ -572,6 +572,7 @@ pub async fn prepare_lesson_with_references<'a>(
     let mut findings = crate::teaching::structural_findings(
         crate::teaching::ReviewSchema::Lesson(LessonShape::new(&kept_schema, policy)),
         &raw,
+        &crate::lessons::copied_wording::Wording::of(references),
     )?;
     let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;

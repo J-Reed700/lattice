@@ -1539,6 +1539,7 @@ fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall()
         structural_findings(
             ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
             &lesson.to_string(),
+            &Default::default(),
         )
         .unwrap()
         .iter()

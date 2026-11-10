@@ -102,6 +102,7 @@ fn structure(blocks: Value) -> Vec<ReviewFinding> {
     structural_findings(
         ReviewSchema::Other(&json!({"type":"object"})),
         &candidate.to_string(),
+        &Default::default(),
     )
     .unwrap()
 }
@@ -179,8 +180,12 @@ fn a_block_without_a_body_or_a_rubric_is_named_in_plain_words() {
 
 #[test]
 fn material_that_cannot_be_read_is_named_in_plain_words() {
-    let found =
-        structural_findings(ReviewSchema::Other(&json!({"type":"object"})), "not json").unwrap();
+    let found = structural_findings(
+        ReviewSchema::Other(&json!({"type":"object"})),
+        "not json",
+        &Default::default(),
+    )
+    .unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].summary, "The lesson could not be read as a whole.");
 }

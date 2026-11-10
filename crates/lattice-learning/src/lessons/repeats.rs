@@ -1,8 +1,10 @@
 //! Whether a sentence a repair writes is one the lesson already has. Two
-//! sentences are the same when they are equal after trimming and collapsing
-//! whitespace runs. Only the sentences of a paragraph are compared: not
-//! headings, list items, table rows, code, or the strong label that opens a
-//! paragraph, which lessons repeat on purpose.
+//! sentences are the same when they are the same text ([`fold`]). Only the
+//! sentences of a paragraph are compared: not headings, list items, table
+//! rows, code, a sentence that is only code (a command shown on a line of its
+//! own), or the strong label that opens a paragraph, which lessons repeat on
+//! purpose.
+use crate::lessons::same_text::fold;
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::HashMap;
@@ -12,7 +14,30 @@ pub(crate) type Counts = HashMap<String, usize>;
 
 /// `sentence` as sentences are compared.
 pub(crate) fn key(sentence: &str) -> String {
-    sentence.split_whitespace().collect::<Vec<_>>().join(" ")
+    fold(sentence)
+}
+
+/// Whether `sentence` has a letter outside its inline code spans: a span is
+/// opened by a run of backticks and closed by the next run of as many.
+fn has_prose_letter(sentence: &str) -> bool {
+    let mut rest = sentence;
+    while let Some(open) = rest.find('`') {
+        if rest
+            .get(..open)
+            .is_some_and(|prose| prose.chars().any(char::is_alphabetic))
+        {
+            return true;
+        }
+        let after = rest.get(open..).unwrap_or_default();
+        let ticks = after.chars().take_while(|c| *c == '`').count();
+        let marker = "`".repeat(ticks);
+        let body = after.get(ticks..).unwrap_or_default();
+        match body.find(&marker) {
+            Some(close) => rest = body.get(close + ticks..).unwrap_or_default(),
+            None => return body.chars().any(char::is_alphabetic),
+        }
+    }
+    rest.chars().any(char::is_alphabetic)
 }
 
 fn is_item(line: &str) -> bool {
@@ -121,7 +146,7 @@ pub(crate) fn comparable(text: &str) -> Vec<String> {
                 .into_iter()
                 .filter_map(|(from, to)| prose.get(from..to))
                 .map(|sentence| sentence.trim().to_owned())
-                .filter(|sentence| sentence.chars().any(char::is_alphabetic)),
+                .filter(|sentence| has_prose_letter(sentence)),
         );
     }
     found

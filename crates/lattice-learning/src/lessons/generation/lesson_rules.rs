@@ -5,12 +5,13 @@
 //! broken rule is a finding: the teaching repair is given it, and what the
 //! repairs cannot settle waits for the user. It never stops the lesson from
 //! publishing.
-use super::{normalize, validate_text};
+use super::validate_text;
 use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
 use crate::content_verification::{
     names_a_source, needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS,
 };
 use crate::lessons::repeats;
+use crate::lessons::same_text::{fold, overlap};
 use crate::lessons::shape;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
@@ -140,11 +141,6 @@ pub(crate) fn prose_sentences(text: &str) -> Vec<String> {
         .collect()
 }
 
-fn same_sentence(a: &str, b: &str) -> bool {
-    let (a, b) = (normalize(a), normalize(b));
-    !a.is_empty() && !b.is_empty() && (a == b || a.contains(&b) || b.contains(&a))
-}
-
 /// A specific stands only in a sentence the writer lists in the part's
 /// citations, with a quote that contains it. Otherwise it is cited, when a
 /// supplied excerpt states it, or the part is written in its general form,
@@ -172,20 +168,19 @@ fn uncited_specifics(
         if !needs_citation(&sentence, &givens) {
             continue;
         }
-        let shown: String = sentence.chars().take(90).collect();
         let quotes: Vec<&str> = cited
             .iter()
-            .filter(|(cited, _)| same_sentence(cited, &sentence))
+            .filter(|(cited, _)| overlap(cited, &sentence))
             .map(|(_, quote)| *quote)
             .collect();
         let wanted: Vec<String> = specifics_in(&sentence, &givens)
             .map(str::to_owned)
             .collect();
         let lacking = |quote: &str| -> Vec<String> {
-            let held = normalize(quote);
+            let held = fold(quote);
             wanted
                 .iter()
-                .filter(|specific| !held.contains(&normalize(specific)))
+                .filter(|specific| !held.contains(&fold(specific)))
                 .cloned()
                 .collect()
         };
@@ -197,7 +192,7 @@ fn uncited_specifics(
             } else {
                 ""
             };
-            let note = format!("{label} states a specific in \"{shown}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.{unquoted}");
+            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.{unquoted}");
             (summary, note, "")
         } else {
             let (missing, quote) = quotes
@@ -212,7 +207,7 @@ fn uncited_specifics(
                 "The quotation cited for this sentence does not contain {}: \u{201c}{sentence}\u{201d}",
                 join_plain(&missing)
             );
-            let note = format!("{label}: the quote cited for \"{shown}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "));
+            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "));
             (summary, note, quote)
         };
         findings.push(citation(site, summary, note, (quote, sentence.as_str())));
@@ -318,14 +313,14 @@ pub(crate) fn lesson_rules(
                 format!("{plain} needs a title."),
                 format!("{section} needs a title."),
             ));
-        } else if let Some(first) = titles.get(&normalize(title)) {
+        } else if let Some(first) = titles.get(&fold(title)) {
             findings.push(structure(
                 FindingSite::Section(index),
                 format!("{plain} has the same title as section {}.", first + 1),
                 format!("{section} repeats the title of section {}; give each section a distinct title.", first + 1),
             ));
         } else {
-            titles.insert(normalize(title), index);
+            titles.insert(fold(title), index);
         }
     }
     let mut seen = HashSet::new();
@@ -374,7 +369,7 @@ pub(crate) fn lesson_rules(
                 format!("{label} needs a prompt."),
                 format!("{label} needs a prompt."),
             ));
-        } else if let Some(first) = prompts.get(&normalize(prompt)) {
+        } else if let Some(first) = prompts.get(&fold(prompt)) {
             findings.push(structure(
                 site,
                 format!("{label} asks the same thing as question {}.", first + 1),
@@ -384,7 +379,7 @@ pub(crate) fn lesson_rules(
                 ),
             ));
         } else {
-            prompts.insert(normalize(prompt), index);
+            prompts.insert(fold(prompt), index);
         }
         if !validate_text(text(question, "explanation")) {
             findings.push(structure(

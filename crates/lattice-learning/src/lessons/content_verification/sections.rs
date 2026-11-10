@@ -12,6 +12,7 @@ use super::claim_ledger::ClaimLedger;
 use super::repair_work::rejected;
 use super::*;
 use crate::generation::{parse_json, split_check, teaching_sentences};
+use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::text_edits;
 use lattice_core::domain::learning::claim_review::ClaimId;
@@ -419,7 +420,7 @@ async fn mend_section(
     (schema, output_tokens): (&Value, usize),
     (unit, block, section): (usize, bool, &Value),
     (taken, protected): (&Taken, &[Protected]),
-    lesson: &Value,
+    (lesson, wording): (&Value, &Wording),
 ) -> Result<Option<Value>> {
     let stands = |gap: &Gap, sentence: &Option<String>| -> Option<String> {
         let text = section.pointer(&format!("/{}", gap.field))?.as_str()?;
@@ -483,7 +484,7 @@ async fn mend_section(
     if !asked("edits") && !asked("citations") {
         return Ok(None);
     }
-    let repaired = match text_edits::apply_in(&original, &raw, lesson) {
+    let repaired = match text_edits::apply_in(&original, &raw, lesson, wording) {
         Ok(repaired) => repaired,
         Err(error) if rejected(&error) => {
             tracing::info!(%error, "claim.state: a flow repair's edits could not stand; the section keeps the text as cut");
@@ -560,6 +561,7 @@ pub(super) async fn settle(
         .get("blocks")
         .and_then(Value::as_array)
         .map_or(0, Vec::len);
+    let wording = Wording::of(references);
     let mut edited = lesson.clone();
     for (position, unit) in todo.into_iter().enumerate() {
         crate::lesson_progress::phase(
@@ -586,7 +588,7 @@ pub(super) async fn settle(
             (shape.value(), output_tokens),
             (unit, unit < blocks, &section),
             (&taken, &protected),
-            &edited,
+            (&edited, &wording),
         )
         .await
         {
