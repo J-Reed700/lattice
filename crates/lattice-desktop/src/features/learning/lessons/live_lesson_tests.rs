@@ -1056,7 +1056,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),
         verifier: None,
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })

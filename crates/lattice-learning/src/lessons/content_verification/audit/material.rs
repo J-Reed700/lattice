@@ -18,7 +18,7 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::persistence::db;
 use crate::repository::LearningRepository;
 use crate::source_library::workspace_in;
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::DatabaseHandle;
 
 pub struct AuditMaterial {
     pub draft_sha256: String,

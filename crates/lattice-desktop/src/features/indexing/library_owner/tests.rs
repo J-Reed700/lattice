@@ -2,6 +2,7 @@
 //! and a real migrated database.
 
 use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::SqlitePool;
 use tempfile::TempDir;
 
 use super::*;

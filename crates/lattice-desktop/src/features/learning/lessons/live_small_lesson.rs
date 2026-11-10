@@ -417,7 +417,7 @@ pub(super) fn worker(
     LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::features::learning::tests::runtimes(),
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm: Arc::new(move || {
             let llm: Arc<dyn LLMPort> = model.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })

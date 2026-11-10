@@ -423,6 +423,37 @@ pub fn o() -> Db {
         found(REPOSITORY, alias),
         vec![hands(REPOSITORY, 2, "Db", "fn", "o")]
     );
+    let renamed_module = "use sqlx::sqlite as s;
+pub fn o() -> s::SqliteConnectOptions {
+    todo!()
+}
+";
+    assert_eq!(
+        found(REPOSITORY, renamed_module),
+        vec![hands(REPOSITORY, 2, "s::SqliteConnectOptions", "fn", "o")]
+    );
+    let nested = "use sqlx::{sqlite::SqliteConnectOptions as Opts};
+pub fn o() -> Opts {
+    todo!()
+}
+";
+    assert_eq!(
+        found(REPOSITORY, nested),
+        vec![hands(REPOSITORY, 2, "Opts", "fn", "o")]
+    );
+    let foreign = "use sqlx::prelude::*;
+use crate::shared::persistence::Database as Pool;
+pub fn o() -> Pool {
+    todo!()
+}
+";
+    assert_eq!(found(REPOSITORY, foreign), none());
+    let not_a_handle = "use sqlx::Error as Pool;
+pub fn o() -> Pool {
+    todo!()
+}
+";
+    assert_eq!(found(REPOSITORY, not_a_handle), none());
 }
 
 #[test]

@@ -11,7 +11,7 @@ use lattice_core::domain::learning::drills::{
     per_pattern, IssueRating, LessonStanding, Material, PatternDue, PatternRating,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::DatabaseHandle;
 use serde_json::json;
 use sqlx::SqliteConnection;
 use std::collections::BTreeSet;

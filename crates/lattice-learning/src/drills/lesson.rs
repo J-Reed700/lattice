@@ -3,7 +3,7 @@
 use crate::persistence::{db, decode};
 use lattice_core::domain::learning::drills::{LessonBrief, LessonSentence};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::DatabaseHandle;
 
 pub(crate) mod repository;
 

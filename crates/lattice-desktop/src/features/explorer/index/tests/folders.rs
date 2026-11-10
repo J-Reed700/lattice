@@ -6,6 +6,7 @@ use super::*;
 use crate::features::conversation::repository::ConversationRepository;
 use crate::features::explorer::{folders, repository};
 use lattice_core::domain::conversation::MessageRole;
+use lattice_core::shared::persistence::DatabaseHandle;
 use lattice_core::shared::AppError;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
@@ -270,7 +271,7 @@ async fn a_building_folder_lists_live_open_or_not_and_a_stopped_build_as_paused(
 #[tokio::test(flavor = "multi_thread")]
 async fn removing_a_folder_keeps_its_threads_unless_asked() {
     let container = crate::tests::common::setup_test_container().await.unwrap();
-    let pool = container.db_pool().clone();
+    let pool = DatabaseHandle::sqlx_pool(container.db_pool()).clone();
     let rig = Rig::new();
     let embedder = FakeEmbedder::new("model-a");
     let manager = rig.manager(&embedder).await;

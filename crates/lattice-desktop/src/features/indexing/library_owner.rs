@@ -15,7 +15,7 @@ use tokio::io::AsyncWriteExt;
 
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::roots;
-use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::DatabaseHandle;
 
 mod repository;
 use repository::{holds_documents, recorded_owner};

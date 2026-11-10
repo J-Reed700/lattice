@@ -6,6 +6,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{FileMetadata, Filter};
 use lattice_core::domain::entities::Document;
 use lattice_core::shared::types::ValidatedFilePath;
+use sqlx::SqlitePool;
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;

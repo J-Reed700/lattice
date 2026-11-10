@@ -458,7 +458,7 @@ async fn save_together(pages: [(&str, &str); 2]) -> Result<(usize, usize)> {
     repo.create(&program).await?;
     let before = repo.verification_sources(&program.summary.id).await?.len();
     let context = Context {
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         program_id: program.summary.id.clone(),
         topic: program.summary.goal.clone(),
         web: web(false),

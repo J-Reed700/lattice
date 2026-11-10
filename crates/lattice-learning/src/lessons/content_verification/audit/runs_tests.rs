@@ -3,6 +3,7 @@
 use std::str::FromStr;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::SqlitePool;
 
 use super::*;
 use crate::curriculum_repository::ProgramVerifierAudit;

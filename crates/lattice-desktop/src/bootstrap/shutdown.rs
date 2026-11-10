@@ -112,15 +112,9 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
 
                 tracing::info!("Closing database connections");
 
-                // Log connection count before closing
-                let pool = container.db_pool();
-                let conn_count = pool.size();
-                tracing::debug!(
-                    active_connections = conn_count,
-                    "Database connection pool status before close"
-                );
+                let database = container.db_pool();
 
-                match tokio::time::timeout(DB_CLOSE_TIMEOUT, pool.close()).await {
+                match tokio::time::timeout(DB_CLOSE_TIMEOUT, database.close()).await {
                     Ok(_) => {
                         tracing::info!("Database connections closed successfully");
                         cleanup_results.push("database: ok");
@@ -128,7 +122,6 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
                     Err(_) => {
                         tracing::warn!(
                             timeout_secs = DB_CLOSE_TIMEOUT.as_secs(),
-                            connection_count = conn_count,
                             "Database close timed out, will attempt forced cleanup"
                         );
                         cleanup_results.push("database: timeout");

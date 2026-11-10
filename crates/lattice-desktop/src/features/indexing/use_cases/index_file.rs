@@ -25,7 +25,7 @@ use lattice_core::application::services::live_index::{
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use tracing::instrument;
 
 mod prepare;

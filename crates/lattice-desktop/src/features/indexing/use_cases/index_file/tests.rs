@@ -6,6 +6,7 @@ use lattice_core::application::ports::ImportedBlob;
 use lattice_core::application::ports::{ContentAddressedStoragePort, EmbeddingRepositoryPort};
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
+use sqlx::SqlitePool;
 use std::path::Path;
 
 /// Library that indexes files where they already are: every source path

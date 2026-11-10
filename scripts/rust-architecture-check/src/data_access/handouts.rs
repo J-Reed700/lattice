@@ -206,18 +206,25 @@ struct Imports {
 
 impl Imports {
     fn is_handle(&self, segments: &[String]) -> bool {
-        let (Some(first), Some(last)) = (segments.first(), segments.last()) else {
+        let Some(first) = segments.first() else {
             return false;
         };
-        if !HANDLES.contains(&last.as_str()) {
-            return false;
+        if let Some(target) = self.named.get(first) {
+            return target
+                .iter()
+                .chain(segments.iter().skip(1))
+                .last()
+                .is_some_and(|last| HANDLES.contains(&last.as_str()));
         }
-        first == "sqlx"
-            || self.named.contains_key(first)
-            || (segments.len() == 1
-                && self.globs > 0
-                && !self.foreign.contains(first)
-                && !self.local.contains(first))
+        let Some(last) = segments.last() else {
+            return false;
+        };
+        HANDLES.contains(&last.as_str())
+            && (first == "sqlx"
+                || (segments.len() == 1
+                    && self.globs > 0
+                    && !self.foreign.contains(first)
+                    && !self.local.contains(first)))
     }
 }
 
