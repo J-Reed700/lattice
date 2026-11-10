@@ -88,6 +88,15 @@ pub fn rubric(
         .collect()
 }
 
+/// Whether the criteria a section was written with are saved: the question
+/// `rubric` itself answers, so a practice section waits whenever they are not.
+fn rubric_is_kept(written: &Value) -> bool {
+    match serde_json::from_value::<Vec<GeneratedCriterion>>(written.clone()) {
+        Ok(criteria) => rubric(criteria, true).is_ok(),
+        Err(_) => false,
+    }
+}
+
 pub fn validate_saved_rubric(criteria: &[LearningPracticeCriterionDto]) -> Result<()> {
     let mut ids = std::collections::HashSet::new();
     if criteria.len() > 4
@@ -166,7 +175,7 @@ pub(crate) fn structural_findings(
                 );
             }
             if ["guided_practice", "independent_practice"].contains(&kind)
-                && block["rubric"].as_array().is_none_or(|r| r.len() < 2)
+                && !rubric_is_kept(&block["rubric"])
             {
                 issues.push(
                     ReviewFinding::rule(Rule::PracticeRubric, FindingKind::Structure, FindingSite::Section(index), format!("Practice block {} needs two to four observable, task-specific rubric criteria.", index + 1))

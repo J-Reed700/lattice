@@ -213,7 +213,7 @@ loop {
 
 ### 2.8 The lesson's shape (Strategy)
 
-One `ShapePolicy` answers, for a lesson: what the writer must produce (question kinds and counts, a first explanation), whether a cut may be taken (`admits_cut`), which sections go (too little to teach), and whether what is left can be published (a third of its sections, its first explanation, all its questions, every question of a kind it asks). The writer's rules, the cut, `validate_prepared`, `sections::settle` and the publication gate read it; `LessonQuestionKind::ALL` was its first piece.
+One `ShapePolicy` answers, for a lesson: what the writer must produce (question kinds and counts, a first explanation), whether a cut may be taken (`admits_cut`), which sections go (too little to teach), and whether what is left can be published (a third of its sections, its first explanation, all its questions, every question of a kind it asks). The writer's rules, the cut, `sections::settle` and the publication gate read it; `LessonQuestionKind::ALL` was its first piece.
 
 ### 2.9 Where a statement is
 
