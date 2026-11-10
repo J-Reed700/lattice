@@ -271,8 +271,8 @@ fn a_lesson_is_saved_with_a_question_of_every_kind() {
 
 #[test]
 fn the_sections_asked_for_are_the_mix_at_its_least_and_the_ideas_at_their_most() {
-    assert_eq!(policy().ideas(), (2, 3));
-    assert_eq!(policy().sections(), (11, 16));
+    assert_eq!(IDEAS, (2, 3));
+    assert_eq!(SECTIONS, (11, 16));
     let schema = policy().schema(Phase::Draft, 1);
     let blocks = |limit: &str| {
         schema
@@ -299,7 +299,7 @@ fn a_draft_of_the_most_sections_the_writer_may_give_breaks_no_rule() {
         block("reflection", "From memory"),
         block("recap", "Recap"),
     ]);
-    assert_eq!(blocks.len(), policy().sections().1);
+    assert_eq!(blocks.len(), SECTIONS.1);
     let draft = json!({"blocks":blocks,"questions":lesson()["questions"]});
     assert!(found(&draft, Phase::Draft).is_empty());
 }
@@ -364,4 +364,47 @@ fn numbering_more_sources_rebuilds_the_schema_of_the_same_phase() {
             }
         }
     }
+}
+
+#[test]
+fn the_draft_s_words_carry_the_counts_the_draft_is_held_to() {
+    let words = policy().asked(Phase::Draft);
+    let [ideas, questions] = words.as_slice() else {
+        panic!("the draft's words are two lines: {words:?}");
+    };
+    assert!(ideas.contains(&number(IDEAS.0)), "{ideas}");
+    assert!(ideas.contains(&number(IDEAS.1)), "{ideas}");
+    assert!(
+        ideas.contains(&format!("{} to {} blocks", SECTIONS.0, SECTIONS.1)),
+        "{ideas}"
+    );
+    assert!(
+        questions.contains(&number(QUESTIONS_PER_KIND)),
+        "{questions}"
+    );
+    for kind in LessonQuestionKind::ALL {
+        assert!(questions.contains(kind.as_str()), "{questions}");
+    }
+}
+
+#[test]
+fn the_kept_words_ask_for_one_question_of_each_kind_and_no_count_of_the_draft_s() {
+    let kept = policy().asked(Phase::Kept);
+    let draft = policy().asked(Phase::Draft);
+    let words = kept.join("\n");
+    for kind in LessonQuestionKind::ALL {
+        assert!(words.contains(kind.as_str()), "{words}");
+    }
+    assert!(
+        words.contains("at least one question of each kind"),
+        "{words}"
+    );
+    assert!(kept.iter().all(|line| !draft.contains(line)));
+
+    let floor = json!({
+        "blocks":[block("explanation","Idea")],
+        "questions":[question("practice","P?"), question("quiz","Q?"), question("test","T?")]
+    });
+    let findings = found(&floor, Phase::Kept);
+    assert!(findings.is_empty(), "{:?}", ids(&findings));
 }

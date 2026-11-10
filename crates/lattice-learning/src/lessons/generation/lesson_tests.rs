@@ -921,3 +921,14 @@ fn the_writer_is_told_the_lesson_s_shape_under_its_own_key() {
         assert!(!requirement.contains("multiple-choice items of each kind"));
     }
 }
+
+#[test]
+fn the_writer_s_shape_is_the_draft_s_in_the_policy_s_words() {
+    use crate::lessons::shape::{self, Phase, ShapePolicy};
+    let program = crate::tests::fixture();
+    let lesson = program.modules[0].lessons[0].clone();
+    assert_eq!(
+        writer_prompt(&program, &lesson)[shape::WORDS],
+        json!(shape::policy().asked(Phase::Draft))
+    );
+}
