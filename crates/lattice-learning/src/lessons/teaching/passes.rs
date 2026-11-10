@@ -1,28 +1,22 @@
-//! When a lesson's teaching review stops repairing. Every finding gets a
-//! repair. A repair is charged to each finding it was sent (`charge`, with
-//! what became of its attempt at it), not when it is sent: a finding charged
-//! `REPAIRS_PER_FINDING` repairs stops being repaired; when a repair fixes
-//! none of the open findings, the findings that repair was sent stop, and
-//! every finding not yet sent to a repair still gets one. The review ends
-//! when no repairable finding is left. Stopped
-//! findings wait for the user, and the lesson publishes: no teaching-review
-//! finding fails a lesson job.
+//! When a lesson's teaching review stops repairing. Every open finding is sent
+//! to one repair. A repair is charged to each finding it was sent (`charge`,
+//! with what became of its attempt at it), not when it is sent: a finding
+//! charged `REPAIRS_PER_FINDING` repairs stops being repaired, as does one the
+//! user holds or one held during this review. The review ends when no
+//! repairable finding is left. Stopped findings wait for the user, and the
+//! lesson publishes: no teaching-review finding fails a lesson job.
 //!
 //! A finding is followed by its id (`FindingId`): what raised it and what it
 //! is about, never its wording. Findings with one id are one finding; each id
 //! has its own count of repairs. Every repair can leave a new defect with a
 //! new id, so a new finding about words an earlier repair already worked on
-//! starts at that repair's count, and the review still ends. Each repair is
-//! sent at most `PER_REPAIR` findings; the others carry to the next pass.
-use std::collections::{BTreeMap, BTreeSet};
+//! starts at that repair's count, and the review still ends.
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::review_findings::{sentences_of, subject_of, FindingId, Held, ReviewFinding, SetAside};
-
-/// Findings sent to one repair, as many as one request handles well.
-pub(super) const PER_REPAIR: usize = 6;
 
 /// Attempts one finding is given: a first, and one retry that is told what
 /// became of the first. The loop must end on a defect no repair fixes.
@@ -46,11 +40,8 @@ pub(super) enum Outcome {
 pub(super) enum Next {
     /// Nothing is left to repair; these findings wait for the user.
     Done(Vec<SetAside>),
-    /// Repair `send`; `carried` waits for the next pass. Both are rechecked.
-    Repair {
-        send: Vec<ReviewFinding>,
-        carried: Vec<ReviewFinding>,
-    },
+    /// Repair these: every finding that can still be repaired.
+    Repair(Vec<ReviewFinding>),
 }
 
 #[derive(Default)]
@@ -65,12 +56,6 @@ pub(super) struct Passes {
     last: BTreeMap<FindingId, Outcome>,
     /// Sentence digest to the repairs those words have been through.
     worked: BTreeMap<String, u8>,
-    /// The findings that were open when the last repair ran.
-    open_at_repair: Option<BTreeSet<FindingId>>,
-    /// The findings the last repair was sent.
-    sent_at_repair: BTreeSet<FindingId>,
-    /// Findings a repair was sent and fixed none of the open findings.
-    stalled: BTreeSet<FindingId>,
     /// The latest pass's findings, one per id.
     latest: Vec<ReviewFinding>,
 }
@@ -81,9 +66,6 @@ struct Kept {
     spent: Vec<(FindingId, u8)>,
     last: Vec<(FindingId, Outcome)>,
     worked: BTreeMap<String, u8>,
-    open_at_repair: Option<BTreeSet<FindingId>>,
-    sent_at_repair: BTreeSet<FindingId>,
-    stalled: BTreeSet<FindingId>,
 }
 
 impl Passes {
@@ -109,9 +91,6 @@ impl Passes {
                 .map(|(id, outcome)| (id.clone(), outcome.clone()))
                 .collect(),
             worked: self.worked.clone(),
-            open_at_repair: self.open_at_repair.clone(),
-            sent_at_repair: self.sent_at_repair.clone(),
-            stalled: self.stalled.clone(),
         })
     }
 
@@ -122,9 +101,6 @@ impl Passes {
             self.spent = kept.spent.into_iter().collect();
             self.last = kept.last.into_iter().collect();
             self.worked = kept.worked;
-            self.open_at_repair = kept.open_at_repair;
-            self.sent_at_repair = kept.sent_at_repair;
-            self.stalled = kept.stalled;
         }
     }
 
@@ -133,7 +109,6 @@ impl Passes {
         let id = finding.id();
         self.held.ids.contains(&id)
             || self.held.places.contains(&finding.place())
-            || self.stalled.contains(&id)
             || self.spent.get(&id).copied().unwrap_or_default() >= REPAIRS_PER_FINDING
     }
 
@@ -189,17 +164,8 @@ impl Passes {
                 self.spent.insert(id, start);
             }
         }
-        let ids: BTreeSet<_> = current.iter().map(ReviewFinding::id).collect();
-        let fixed = self
-            .open_at_repair
-            .take()
-            .is_none_or(|open| open.iter().any(|id| !ids.contains(id)));
         self.latest = current;
-        let last_sent = std::mem::take(&mut self.sent_at_repair);
-        if !fixed {
-            self.stalled.extend(last_sent);
-        }
-        let mut open: Vec<_> = self
+        let open: Vec<_> = self
             .latest
             .iter()
             .filter(|finding| !self.stopped(finding))
@@ -208,15 +174,7 @@ impl Passes {
         if open.is_empty() {
             return Next::Done(self.set_aside());
         }
-        // Findings not yet repaired go first, so carried ones get their turn.
-        open.sort_by_key(|finding| self.spent.get(&finding.id()).copied());
-        self.open_at_repair = Some(open.iter().map(ReviewFinding::id).collect());
-        let carried = open.split_off(open.len().min(PER_REPAIR));
-        self.sent_at_repair = open.iter().map(ReviewFinding::id).collect();
-        Next::Repair {
-            send: open,
-            carried,
-        }
+        Next::Repair(open)
     }
 
     /// A repair was sent `finding` and this became of its attempt at it: the
@@ -254,17 +212,8 @@ impl Passes {
         }
     }
 
-    /// The last repair's answer could not be used: the findings it was sent
-    /// stop, and the others still get theirs. Whether any such finding is left.
-    pub fn stop_sent(&mut self) -> bool {
-        self.stalled
-            .extend(std::mem::take(&mut self.sent_at_repair));
-        self.open_at_repair = None;
-        self.latest.iter().any(|finding| !self.stopped(finding))
-    }
-
-    /// Stop now: the latest pass's findings wait for the user, as when a
-    /// repair's answer cannot be used.
+    /// The latest pass's findings, each with the repairs it was charged: what
+    /// waits for the user when the review stops.
     pub fn set_aside(&self) -> Vec<SetAside> {
         self.latest
             .iter()
@@ -281,6 +230,7 @@ mod tests {
     #![allow(clippy::panic, clippy::indexing_slicing)]
     use super::*;
     use crate::review_findings::{FindingSite, PlanCheck};
+    use std::collections::BTreeSet;
 
     fn section(index: usize, note: &str) -> ReviewFinding {
         ReviewFinding::reviewer(Some(FindingSite::Section(index)), note)
@@ -304,7 +254,7 @@ mod tests {
         findings: Vec<ReviewFinding>,
     ) -> Vec<FindingId> {
         match passes.next(candidate, findings) {
-            Next::Repair { send, .. } => {
+            Next::Repair(send) => {
                 for finding in &send {
                     passes.charge(finding, Outcome::Applied);
                 }
@@ -320,7 +270,7 @@ mod tests {
                 .iter()
                 .map(|s| (s.finding.id(), s.repairs))
                 .collect(),
-            Next::Repair { .. } => panic!("expected the review to stop"),
+            Next::Repair(_) => panic!("expected the review to stop"),
         }
     }
 
@@ -405,45 +355,6 @@ mod tests {
     }
 
     #[test]
-    fn a_repair_that_fixes_nothing_stops_only_the_findings_it_was_sent() {
-        let mut passes = Passes::default();
-        sent(
-            &mut passes,
-            &Value::Null,
-            vec![section(0, "A"), section(1, "B")],
-        );
-        let third = sent(
-            &mut passes,
-            &Value::Null,
-            vec![section(0, "A"), section(1, "B"), section(2, "C, new")],
-        );
-        assert_eq!(third, vec![section(2, "").id()]);
-        assert_eq!(
-            done(passes.next(&Value::Null, vec![section(0, "A"), section(1, "B")])),
-            vec![(section(0, "").id(), 1), (section(1, "").id(), 1)]
-        );
-    }
-
-    #[test]
-    fn findings_carried_past_a_repair_that_fixes_nothing_still_get_theirs() {
-        let mut passes = Passes::default();
-        let findings: Vec<_> = (0..9).map(|i| section(i, "x")).collect();
-        assert_eq!(
-            sent(&mut passes, &Value::Null, findings.clone()).len(),
-            PER_REPAIR
-        );
-        let second = sent(&mut passes, &Value::Null, findings);
-        assert_eq!(
-            second,
-            vec![
-                section(6, "").id(),
-                section(7, "").id(),
-                section(8, "").id()
-            ]
-        );
-    }
-
-    #[test]
     fn state_saved_before_finding_ids_resumes_with_fresh_budgets() {
         let key = section(3, "").place();
         let old = serde_json::to_string(&serde_json::json!({
@@ -455,24 +366,11 @@ mod tests {
         passes.resume(&old);
         assert!(passes.spent.is_empty());
         assert!(passes.worked.is_empty());
-        assert!(passes.open_at_repair.is_none());
-        assert!(passes.sent_at_repair.is_empty());
         // Nothing was kept, so the finding gets a repair as a new one.
         assert_eq!(
             sent(&mut passes, &Value::Null, vec![section(3, "x")]),
             vec![section(3, "").id()]
         );
-    }
-
-    #[test]
-    fn an_unusable_repair_stops_what_it_was_sent_and_leaves_the_rest() {
-        let mut passes = Passes::default();
-        let findings: Vec<_> = (0..8).map(|i| section(i, "x")).collect();
-        sent(&mut passes, &Value::Null, findings.clone());
-        assert!(passes.stop_sent());
-        let next = sent(&mut passes, &Value::Null, findings);
-        assert_eq!(next, vec![section(6, "").id(), section(7, "").id()]);
-        assert!(!passes.stop_sent());
     }
 
     #[test]
@@ -488,30 +386,6 @@ mod tests {
         let mut resumed = Passes::default();
         resumed.resume(&saved);
         assert!(!resumed.repairable(&section(0, "")));
-    }
-
-    #[test]
-    fn nothing_is_dropped_findings_beyond_one_repair_carry_to_the_next() {
-        let mut passes = Passes::default();
-        let findings: Vec<_> = (0..9).map(|i| section(i, "x")).collect();
-        let Next::Repair { send, carried } = passes.next(&Value::Null, findings.clone()) else {
-            panic!("expected a repair");
-        };
-        assert_eq!(send.len(), PER_REPAIR);
-        assert_eq!(carried.len(), 3);
-        for finding in &send {
-            passes.charge(finding, Outcome::Applied);
-        }
-        // One fixed: the carried three are sent before any second attempt.
-        let second = sent(&mut passes, &Value::Null, findings[1..].to_vec());
-        assert_eq!(
-            &second[..3],
-            &[
-                section(6, "").id(),
-                section(7, "").id(),
-                section(8, "").id()
-            ]
-        );
     }
 
     #[test]
@@ -543,7 +417,7 @@ mod tests {
     #[test]
     fn two_notes_about_one_place_are_one_finding() {
         let mut passes = Passes::default();
-        let Next::Repair { send, .. } = passes.next(
+        let Next::Repair(send) = passes.next(
             &Value::Null,
             vec![section(0, "First."), section(0, "Second.")],
         ) else {
@@ -609,7 +483,7 @@ mod tests {
     #[test]
     fn the_summaries_of_two_notes_about_one_place_stay_together() {
         let mut passes = Passes::default();
-        let Next::Repair { send, .. } = passes.next(
+        let Next::Repair(send) = passes.next(
             &Value::Null,
             vec![
                 section(0, "First.").with_summary("One problem."),
@@ -631,7 +505,7 @@ mod tests {
         let about = |sentence: &str| section(0, "A note.").with_sentence(sentence);
         let merged = |findings: Vec<ReviewFinding>| {
             let mut passes = Passes::default();
-            let Next::Repair { send, .. } = passes.next(&Value::Null, findings) else {
+            let Next::Repair(send) = passes.next(&Value::Null, findings) else {
                 panic!("expected a repair");
             };
             assert_eq!(send.len(), 1);
@@ -649,7 +523,7 @@ mod tests {
     #[test]
     fn a_finding_that_was_sent_is_not_charged_until_the_repair_is_settled() {
         let mut passes = Passes::default();
-        let Next::Repair { send, .. } = passes.next(&Value::Null, vec![section(0, "A")]) else {
+        let Next::Repair(send) = passes.next(&Value::Null, vec![section(0, "A")]) else {
             panic!("expected a repair");
         };
         assert!(passes.spent.is_empty());

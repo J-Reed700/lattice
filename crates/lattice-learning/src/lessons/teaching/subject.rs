@@ -66,10 +66,10 @@ pub(super) struct Pass<'a> {
 pub(super) enum Settled {
     /// The candidate after the repair.
     Changed(String),
-    /// Nothing to save; the loop goes on to the next pass.
+    /// The material is as it was; what the repair came to is kept with it.
     Unchanged,
-    /// Stop: publish with these waiting.
-    Publish(Vec<SetAside>),
+    /// The repair could not be made for these together: send each half as its own repair.
+    Split(Vec<ReviewFinding>, Vec<ReviewFinding>),
 }
 
 #[async_trait::async_trait]
@@ -116,7 +116,7 @@ pub(super) trait Subject: Send + Sync {
     fn last_attempt(&self, _finding: &ReviewFinding) -> Option<String> {
         None
     }
-    /// Takes one repair call's result into the candidate.
+    /// Takes one repair call's result into the candidate, or says how to send its findings again.
     fn settle_repair(
         &mut self,
         previous: &Value,
@@ -477,12 +477,8 @@ impl Subject for LessonSubject<'_> {
                 }
                 Ok(Decision::Publish(set_aside))
             }
-            Next::Repair { send, carried } => {
-                self.original_issues = send
-                    .iter()
-                    .chain(&carried)
-                    .map(|finding| finding.note.clone())
-                    .collect();
+            Next::Repair(send) => {
+                self.original_issues = send.iter().map(|finding| finding.note.clone()).collect();
                 Ok(Decision::Repair(send))
             }
         }
@@ -504,28 +500,37 @@ impl Subject for LessonSubject<'_> {
             Ok(Made::Nothing) => {
                 tracing::warn!(
                     sent = send.len(),
-                    "The teaching repair changed nothing that could stay; the findings it was sent wait for the user"
+                    "The teaching repair changed nothing that could stay"
                 );
-                Ok(self.after_nothing())
+                Ok(Settled::Unchanged)
             }
-            // A repair whose answer cannot be used fixed nothing: the
-            // findings it was sent wait for the user instead of failing the
-            // job, and the others still get a repair.
-            Err(AppError::ModelAnswerUnusable(reason)) => {
-                tracing::warn!(%reason, "The teaching repair could not be used; the findings it was sent wait for the user");
-                for finding in send {
-                    self.passes
-                        .charge(finding, Outcome::Unusable(reason.clone()));
+            // An answer that cannot be used, or a request that does not fit
+            // the window, is a repair that could not be made, not a lesson
+            // that cannot be published: it fails no job.
+            Err(
+                error @ (AppError::ModelAnswerUnusable(_)
+                | AppError::PromptExceedsWindow { .. }
+                | AppError::InvalidConfig(_)),
+            ) => {
+                let (first, second) = send.split_at(send.len() / 2);
+                if !first.is_empty() {
+                    tracing::info!(%error, findings = send.len(), "The teaching repair could not be made for these findings together; each half is repaired on its own");
+                    return Ok(Settled::Split(first.to_vec(), second.to_vec()));
                 }
-                Ok(self.after_nothing())
-            }
-            // A repair prompt carries the whole authoring context, the
-            // candidate and a full answer's room; on a small window it does
-            // not fit. That is a repair that could not run, not a lesson that
-            // cannot be published: its findings wait for the user too.
-            Err(error @ (AppError::PromptExceedsWindow { .. } | AppError::InvalidConfig(_))) => {
-                tracing::warn!(%error, "The teaching repair did not fit the window; its findings wait for the user");
-                Ok(Settled::Publish(self.passes.set_aside()))
+                match error {
+                    AppError::ModelAnswerUnusable(reason) => {
+                        tracing::warn!(%reason, "The teaching repair could not be used");
+                        for finding in send {
+                            self.passes
+                                .charge(finding, Outcome::Unusable(reason.clone()));
+                        }
+                    }
+                    error => {
+                        tracing::warn!(%error, "The teaching repair did not fit the window; its finding waits for the user");
+                        self.passes.hold(send.iter().map(ReviewFinding::id));
+                    }
+                }
+                Ok(Settled::Unchanged)
             }
             Err(error) => Err(error),
         }
@@ -540,21 +545,11 @@ impl Subject for LessonSubject<'_> {
 enum Made {
     /// The candidate after the repair.
     Changed(String),
-    /// Confinement put every change back.
+    /// The repair left the lesson as it was.
     Nothing,
 }
 
 impl LessonSubject<'_> {
-    /// A repair that changed nothing fixed nothing: the findings it was sent
-    /// stop, and the others still get a repair.
-    fn after_nothing(&mut self) -> Settled {
-        if self.passes.stop_sent() {
-            Settled::Unchanged
-        } else {
-            Settled::Publish(self.passes.set_aside())
-        }
-    }
-
     /// A repair's edits: each finding is charged with what became of the
     /// edits that named it.
     fn settle_patch(

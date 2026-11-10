@@ -37,6 +37,10 @@ fn retitle(after: &str) -> String {
     json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":after}]}).to_string()
 }
 
+fn retitle_from(before: &str, after: &str) -> String {
+    json!({"edits":[{"path":"/blocks/0/title","before":before,"after":after}]}).to_string()
+}
+
 fn references() -> Vec<crate::dto::LearningSourceDto> {
     vec![crate::dto::LearningSourceDto {
         id: "saved-reference".into(),
@@ -209,6 +213,8 @@ async fn a_revised_quotation_that_still_matches_no_reference_waits_instead_of_fa
     let model = model(vec![
         review(None),
         retitle("Example, revised"),
+        review(None),
+        retitle_from("Example, revised", "Example, revised again"),
         review(None),
     ]);
     let reviewed = run(
@@ -2013,6 +2019,8 @@ async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
         )),
         actionable(),
         unusable.clone(),
+        unusable.clone(),
+        unusable.clone(),
         unusable,
     ]);
     lesson_drafts::run(&repo, &job, &lesson_id, async {
@@ -2020,14 +2028,16 @@ async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
     })
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
-    assert_eq!(kept.len(), 1, "{kept:?}");
-    assert!(kept[0].get("answer").is_none(), "{kept:?}");
-    assert!(
-        kept[0]["refused"]
-            .as_str()
-            .is_some_and(|reason| !reason.is_empty()),
-        "{kept:?}"
-    );
+    assert_eq!(kept.len(), 2, "{kept:?}");
+    for row in &kept {
+        assert!(row.get("answer").is_none(), "{kept:?}");
+        assert!(
+            row["refused"]
+                .as_str()
+                .is_some_and(|reason| !reason.is_empty()),
+            "{kept:?}"
+        );
+    }
     Ok(())
 }
 
@@ -2068,18 +2078,24 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let script = defect_no_repair_fixes();
-    // The reviews of the second run are read from their checkpoints; its two
+    // The reviews of the second run are read from their checkpoints; its three
     // rechecks of the findings are asked again.
     let rest = vec![
         script[0].clone(),
         script[1].clone(),
         script[3].clone(),
         script[4].clone(),
+        script[6].clone(),
+        script[7].clone(),
         script[1].clone(),
         script[4].clone(),
+        script[7].clone(),
     ];
     let llm = RepairsApart {
-        repairs: model(vec![retitle("Corrected example"); 2]),
+        repairs: model(vec![
+            retitle("Corrected example"),
+            retitle_again("Corrected twice"),
+        ]),
         rest: model(rest),
     };
     let first = lesson_drafts::run(&repo, &job, &lesson_id, async {
@@ -2090,7 +2106,7 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
         run(&llm, lesson(EXCERPT)).await
     })
     .await?;
-    assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 1);
+    assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 2);
     assert_eq!(second.candidate, first.candidate);
     let waiting = |reviewed: &Reviewed| -> Vec<(String, _)> {
         reviewed
