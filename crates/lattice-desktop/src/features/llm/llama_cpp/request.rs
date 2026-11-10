@@ -5,25 +5,6 @@ use crate::features::llm::engine::vision::not_set_up_to_see;
 use crate::features::llm::fitting::Fitted;
 use lattice_core::application::ports::llm_port::{tool_specs, ThinkingMode};
 
-/// The characters a tokenizer reads in `input`: each message's role and
-/// text, each call's name and arguments, each result, and opaque provider
-/// state as its JSON. A picture's bytes are not characters; its tokens come
-/// from the model's declared geometry (see [`CompletionInput::image_tokens`]).
-pub(super) fn input_chars(input: &[CompletionInput]) -> usize {
-    input
-        .iter()
-        .map(|item| match item {
-            CompletionInput::Native { value } => value.to_string().chars().count(),
-            CompletionInput::Message { role, .. } | CompletionInput::Multimodal { role, .. } => {
-                role.chars().count() + item.text().chars().count()
-            }
-            CompletionInput::ToolCall { .. } | CompletionInput::ToolResult { .. } => {
-                item.text().chars().count()
-            }
-        })
-        .sum()
-}
-
 impl LlamaCppLlm {
     /// The mode the model runs `request` in: the user's pin first, then the
     /// model's own, then the request.

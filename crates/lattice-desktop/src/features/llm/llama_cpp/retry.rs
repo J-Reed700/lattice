@@ -7,6 +7,7 @@
 use super::*;
 use crate::features::llm::fitting::Fitted;
 use crate::features::llm::scheduler::rejection;
+use lattice_core::application::ports::llm_port::RequestSize;
 
 const MAX_ATTEMPTS: usize = 5;
 
@@ -25,7 +26,8 @@ pub(super) const PREFILL_BATCH_TOKENS: usize = 2048;
 pub(super) const PREFILL_FLOOR_TOKENS_PER_SEC: usize = 20;
 
 /// How long a bundled server may stay silent before it starts generating:
-/// the floor plus one batch of this prompt at the slowest prefill rate.
+/// the floor plus one batch of the prompt the fit measured at the slowest
+/// prefill rate.
 /// Progress frames restart the wait, so it only has to cover the gap between
 /// two of them — or, from a server that sends none, the whole prompt, which is
 /// why short prompts are not given the full batch.
@@ -33,13 +35,11 @@ pub(super) const PREFILL_FLOOR_TOKENS_PER_SEC: usize = 20;
 /// Pictures are counted by their declared tokens, never their bytes, and on
 /// top of the batch: the server encodes each picture whole before it reports
 /// progress on the text after it.
-pub(super) fn prefill_allowance(input: &[CompletionInput]) -> Duration {
-    let images: usize = input.iter().map(CompletionInput::image_tokens).sum();
-    let text_tokens = lattice_core::application::ports::llm_port::tokens_for_chars(
-        request::input_chars(input),
-        lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
-    );
-    let tokens = text_tokens.min(PREFILL_BATCH_TOKENS).saturating_add(images);
+pub(super) fn prefill_allowance(size: &RequestSize) -> Duration {
+    let text_tokens = size.prompt_tokens.saturating_sub(size.image_tokens);
+    let tokens = text_tokens
+        .min(PREFILL_BATCH_TOKENS)
+        .saturating_add(size.image_tokens);
     FIRST_FRAME_FLOOR + Duration::from_secs((tokens / PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
 }
 
@@ -127,10 +127,7 @@ impl LlamaCppLlm {
             slot = fitted.slot(),
             "llm.request"
         );
-        let first_frame = self
-            .config
-            .prefill_guard
-            .then(|| prefill_allowance(&request.input));
+        let first_frame = self.config.prefill_guard.then(|| prefill_allowance(&size));
         let deadline = request
             .wall_clock_budget()
             .map(|budget| tokio::time::Instant::now() + budget);

@@ -3,7 +3,8 @@ use super::*;
 use crate::features::llm::fitting::PromptMeasure;
 use lattice_core::application::contracts::settings::ThinkingOverrideDto;
 use lattice_core::application::ports::llm_port::{
-    SamplingOverride, ServedTiming, ThinkingMode, ThinkingPolicy, ToolChoice, ToolDefinition,
+    RequestSize, SamplingOverride, ServedTiming, ThinkingMode, ThinkingPolicy, ToolChoice,
+    ToolDefinition,
 };
 
 /// The body `request` becomes, with no window to cut it to.
@@ -457,13 +458,21 @@ fn pictures_outside_a_user_message_are_refused() {
 
 #[test]
 fn a_pictures_bytes_never_count_as_prompt_text() {
-    let request = picture_request("user", "What is this?", 1_282);
+    // The prompt measures 1,282 for the picture, 7 estimated for the role and
+    // the picture's alt and caption, and 24 for the template. 400 KB of base64
+    // read as text would be 100,000 tokens.
+    let size = RequestSize {
+        prompt_tokens: 1_313,
+        image_tokens: 1_282,
+        image_count: 1,
+        ..Default::default()
+    };
     // The prefill allowance adds the picture's declared tokens, not its bytes.
-    let allowance = retry::prefill_allowance(&request.input);
+    let allowance = retry::prefill_allowance(&size);
     assert_eq!(
         allowance,
         retry::FIRST_FRAME_FLOOR
-            + Duration::from_secs((1_282 / retry::PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
+            + Duration::from_secs(((1_282 + 31) / retry::PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
     );
 }
 

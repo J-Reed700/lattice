@@ -1,6 +1,6 @@
 use super::*;
 use crate::features::llm::fitting::SendUnscheduled;
-use lattice_core::application::ports::llm_port::invalid_tool_call_problem;
+use lattice_core::application::ports::llm_port::{invalid_tool_call_problem, RequestSize};
 use wiremock::{
     matchers::{body_partial_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -1658,14 +1658,16 @@ fn slow_prefill() -> Vec<(u64, String)> {
 /// A flat first-token wait failed this turn; progress frames are liveness.
 #[tokio::test(start_paused = true)]
 async fn a_bundled_servers_prompt_progress_keeps_its_first_frame_wait_alive() {
-    let allowance = retry::prefill_allowance(&[CompletionInput::Message {
-        role: "user".into(),
-        content: "hi".into(),
-    }]);
+    // "user" and "hi" are 2 estimated tokens; the template adds 8 for the
+    // message and 16 for the answer.
+    let allowance = retry::prefill_allowance(&RequestSize {
+        prompt_tokens: 26,
+        ..Default::default()
+    });
     assert_eq!(
         allowance,
-        retry::FIRST_FRAME_FLOOR,
-        "a short prompt gets the floor"
+        retry::FIRST_FRAME_FLOOR + Duration::from_secs(1),
+        "a short prompt gets the floor and the seconds of its few tokens"
     );
     let response = read(slow_prefill(), Some(allowance)).await.ok().unwrap();
     assert_eq!(response.text, "Answer");
@@ -1699,12 +1701,13 @@ async fn silence_after_generation_starts_is_still_a_stall() {
 /// A long prompt with no progress frames gets one batch at the floor rate.
 #[test]
 fn a_long_prompt_gets_a_batch_of_prefill_on_top_of_the_floor() {
-    let long = CompletionInput::Message {
-        role: "user".into(),
-        content: "x".repeat(40_000),
+    // 40,004 characters are 10,001 estimated tokens, and the template adds 24.
+    let long = RequestSize {
+        prompt_tokens: 10_025,
+        ..Default::default()
     };
     assert_eq!(
-        retry::prefill_allowance(&[long]),
+        retry::prefill_allowance(&long),
         retry::FIRST_FRAME_FLOOR
             + Duration::from_secs(
                 (retry::PREFILL_BATCH_TOKENS / retry::PREFILL_FLOOR_TOKENS_PER_SEC) as u64
