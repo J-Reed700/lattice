@@ -23,6 +23,13 @@ pub enum Proof {
 /// Proves a draft. A draft that does not hold is `Proof::Unproven`; a form the kind does not support, a missing
 /// starter or a cancelled build is an error.
 pub async fn prove(kind: &Kind, draft: Draft, cancel: CancellationToken) -> Result<Proof> {
+    if draft.kind != kind.id {
+        return Err(AppError::InvalidState(format!(
+            "The draft is for the kind {}, not {}.",
+            draft.kind.as_str(),
+            kind.id.as_str()
+        )));
+    }
     if !kind.supports(draft.form) {
         return Err(AppError::InvalidState(format!(
             "The kind {} does not support the form {:?}.",
