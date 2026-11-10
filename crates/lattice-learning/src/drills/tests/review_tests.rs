@@ -229,7 +229,7 @@ async fn starting_a_drill_gives_the_attempt_and_the_drill_as_the_learner_may_see
 async fn the_learners_view_of_a_drill_holds_nothing_of_its_key() -> Result<()> {
     let (pool, attempt_id, shown) = started().await?;
     assert_nothing_of_the_key(&shown);
-    let (_, stored) = attempts::get(&pool, &attempt_id).await?;
+    let (_, stored) = attempts::get(&Database::from(pool.clone()), &attempt_id).await?;
     let planted = stored
         .drill
         .key
@@ -1092,7 +1092,8 @@ async fn an_issue_a_blind_review_raised_is_revealed_as_also_valid_and_a_planted_
 async fn the_learner_is_told_how_many_issues_were_planted_and_not_how_many_were_found_in_review(
 ) -> Result<()> {
     let waiting = Waiting::new(vec![operator_finding()], None).await?;
-    let (_, mut stored) = attempts::get(&waiting.pool, &waiting.attempt).await?;
+    let (_, mut stored) =
+        attempts::get(&Database::from(waiting.pool.clone()), &waiting.attempt).await?;
     let planted = stored.drill.key[0].clone();
     let mut found = planted.clone();
     found.origin = Origin::FoundInReview;
