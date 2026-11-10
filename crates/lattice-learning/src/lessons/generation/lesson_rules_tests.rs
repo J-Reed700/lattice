@@ -823,6 +823,18 @@ fn a_real_quotation_is_still_quoted_wording_to_cite() {
     }
 }
 
+#[test]
+fn a_sentence_that_only_names_a_source_is_no_specific_to_cite() {
+    for sentence in [
+        "The documentation is available without leaving the program.",
+        "According to the survey, most readers skim.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        assert!(lesson_rules(&candidate).is_empty(), "{sentence}");
+    }
+}
+
 const MISCONCEPTION: &str =
     "Tempting wrong guess: \"the projects folder is where notes.txt always lives\".";
 
