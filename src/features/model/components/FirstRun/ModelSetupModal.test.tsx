@@ -192,7 +192,6 @@ describe('ModelSetupModal with an API key', () => {
       updates: {
         provider: 'anthropic',
         model: 'claude-haiku-5-5',
-        maxTokens: 8192,
         learningModel: { kind: 'cloud', provider: 'anthropic', model: 'claude-haiku-5-5' },
       },
     });

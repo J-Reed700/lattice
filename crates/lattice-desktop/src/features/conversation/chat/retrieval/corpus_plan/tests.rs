@@ -587,10 +587,10 @@ async fn live_corpus_retrieval_and_answer() {
     .unwrap();
     let config: lattice_core::application::contracts::settings::LLMSettingsDto =
         serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
-    let llm = LlamaCppLlm::new(&config).unwrap();
+    let llm = LlamaCppLlm::new(&config).unwrap().into_port().await;
     let started = Instant::now();
     let plan = plan(
-        &llm,
+        llm.as_ref(),
         &question,
         None,
         &catalog,

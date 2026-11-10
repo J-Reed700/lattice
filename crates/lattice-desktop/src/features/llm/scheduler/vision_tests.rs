@@ -3,6 +3,8 @@
 //! refusal.
 
 use super::*;
+use crate::features::llm::backend::{ModelBackend, Progress};
+use crate::features::llm::fitting::{Fitted, OutputLimits, Sent, Thinking};
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ContentPart, ImagePart,
@@ -15,26 +17,48 @@ use parking_lot::Mutex;
 /// A model with an 8,192-token window that records what reaches it.
 #[derive(Default)]
 struct Recorder {
-    seen: Mutex<Vec<CompletionRequest>>,
+    seen: Mutex<Vec<Sent>>,
 }
 
 #[async_trait]
-impl LLMPort for Recorder {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.seen.lock().push(request.clone());
-        Ok(CompletionResponse::from_text("ok"))
-    }
+impl ModelBackend for Recorder {
     fn model_name(&self) -> &str {
         "recorder"
     }
-    fn max_context_tokens(&self) -> usize {
+    fn provider_name(&self) -> &str {
+        "recorder"
+    }
+    fn window(&self) -> usize {
         8_192
+    }
+    fn thinking(&self, _request: &CompletionRequest) -> Thinking {
+        Thinking::Off
+    }
+    fn output_limits(&self) -> OutputLimits {
+        OutputLimits::of(None)
+    }
+    fn supports_tool_calling(&self) -> bool {
+        false
+    }
+    fn vision(&self) -> Option<VisionGeometry> {
+        Some(VisionPreset::Qwen25Vl.geometry())
+    }
+    fn keeps_read_prompts(&self) -> bool {
+        false
+    }
+    fn is_alive(&self) -> bool {
+        true
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
     }
-    fn vision(&self) -> Option<VisionGeometry> {
-        Some(VisionPreset::Qwen25Vl.geometry())
+    async fn send(
+        &self,
+        fitted: &Fitted<'_>,
+        _progress: Progress<'_>,
+    ) -> Result<CompletionResponse> {
+        self.seen.lock().push(fitted.sent());
+        Ok(CompletionResponse::from_text("ok"))
     }
 }
 
@@ -43,7 +67,7 @@ fn scheduled(model: Arc<Recorder>) -> ScheduledLlm {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    ScheduledLlm::new(model, scheduler, 512)
+    ScheduledLlm::new(model, scheduler)
 }
 
 /// `text` from the user with one picture of 400 KB of base64 costing `tokens`.
@@ -122,7 +146,7 @@ async fn the_exact_count_adds_the_pictures_to_the_counted_text() {
     llm.complete(&with_picture(&text, 4_000)).await.unwrap();
     let refused = llm.complete(&with_picture(&text, 5_200)).await.unwrap_err();
     let told = refused.to_string();
-    assert!(told.contains("prompt is 8200 tokens"), "{told}");
+    assert!(told.contains("prompt is 8224 tokens"), "{told}");
     assert!(told.contains("text counted exactly; 5200 tokens"), "{told}");
     assert_eq!(model.seen.lock().len(), 1);
 }

@@ -1,4 +1,10 @@
+use super::protocol::protocols;
 use super::*;
+use crate::features::llm::fitting::SendUnscheduled;
+use lattice_core::application::contracts::settings::LLMProvider;
+use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::domain::models::model_ref::CloudProvider;
+use serde_json::json;
 use wiremock::{
     matchers::{body_string_contains, header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -9,7 +15,8 @@ async fn client(server: &MockServer) -> CloudLlm {
         model: "test-model".into(),
         ..Default::default()
     };
-    let mut client = CloudLlm::new(&settings, "test-secret".into()).unwrap();
+    let mut client =
+        CloudLlm::new(&settings, "test-secret".into(), Some(settings.max_tokens)).unwrap();
     client.endpoint = format!("{}/responses", server.uri());
     client
 }
@@ -204,10 +211,9 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
 }
 fn openai_status(status: u16, body: &str) -> AppError {
     status_error(
-        &LLMProvider::Openai,
-        "openai",
+        protocols(CloudProvider::Openai).completion,
         reqwest::StatusCode::from_u16(status).unwrap(),
-        body,
+        &serde_json::from_str(body).unwrap_or(Value::Null),
     )
 }
 
@@ -322,7 +328,8 @@ async fn anthropic_client(server: &MockServer) -> CloudLlm {
         model: "claude-test".into(),
         ..Default::default()
     };
-    let mut client = CloudLlm::new(&settings, "test-secret".into()).unwrap();
+    let mut client =
+        CloudLlm::new(&settings, "test-secret".into(), Some(settings.max_tokens)).unwrap();
     client.endpoint = format!("{}/messages", server.uri());
     client
 }
