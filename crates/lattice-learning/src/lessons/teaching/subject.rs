@@ -8,9 +8,9 @@ use super::{
     holds_up_review, quotation_findings, structural_findings, whole_repairs, OutlineReviewContext,
     ReviewSchema, LESSON_REVIEW_EVIDENCE_SCOPE,
 };
-use crate::copied_wording::Wording;
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::content_verification::Protected;
+use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits::{self, Named};
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;

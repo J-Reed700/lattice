@@ -1,5 +1,5 @@
 //! The repair call: the model's answer to a review's findings.
-use crate::copied_wording::Wording;
+use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits;
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::outline_progress::OutlineProgress;
