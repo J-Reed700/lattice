@@ -19,7 +19,7 @@ use crate::features::llm::engine::vision::local_vision;
 #[cfg(test)]
 use crate::features::llm::engine::ModelInfo;
 use crate::features::llm::engine::{GenerationConfig, OllamaClient};
-use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
+use crate::features::llm::scheduler::SchedulerRegistry;
 use lattice_core::application::contracts::settings::{
     LLMSettingsDto, ModelWindowDto, SpeculativeDecodingDto,
 };
@@ -561,7 +561,6 @@ pub(crate) async fn create_ollama_llm(
         }
     })?;
 
-    let output_limit = u32::try_from(generation_config.max_tokens).unwrap_or(u32::MAX);
     let client = client
         .with_generation_config(generation_config)
         .with_vision(vision);
@@ -582,15 +581,7 @@ pub(crate) async fn create_ollama_llm(
     let client = client.with_context_window(window);
 
     info!("Ollama LLM client created successfully");
-    let scheduler = schedulers.ollama(
-        endpoint,
-        crate::features::llm::engine::ollama_client::ollama_max_concurrency(),
-    );
-    Ok(Arc::new(ScheduledLlm::new(
-        Arc::new(client),
-        scheduler,
-        output_limit,
-    )))
+    Ok(client.schedule(schedulers))
 }
 
 /// Infer model information from file path.

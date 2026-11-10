@@ -5,7 +5,7 @@ use anyhow::Context;
 use lattice_sync::config::AppConfig;
 use lattice_sync::http::router;
 use lattice_sync::http::state::AppState;
-use lattice_sync::persistence::db::create_pool;
+use lattice_sync::persistence::db::Database;
 use lattice_sync::persistence::sync_repository::PgSyncRepository;
 use lattice_sync::sync::service::SyncServiceImpl;
 use tracing::info;
@@ -16,21 +16,21 @@ async fn main() -> anyhow::Result<()> {
     init_tracing();
 
     let config = AppConfig::from_env()?;
-    let pool = create_pool(&config.database_url, config.max_db_connections)
+    let database = Database::connect(&config.database_url, config.max_db_connections)
         .await
         .context("failed to initialize postgres pool")?;
 
     if config.run_migrations {
-        sqlx::migrate!("./migrations")
-            .run(&pool)
+        database
+            .migrate()
             .await
             .context("failed to run database migrations")?;
     }
 
-    let sync_repo = Arc::new(PgSyncRepository::new(pool.clone()));
+    let sync_repo = Arc::new(PgSyncRepository::new(database.clone()));
     let sync_service = Arc::new(SyncServiceImpl::new(sync_repo));
     let state = AppState::new(
-        pool,
+        database,
         sync_service,
         config.auth.clone(),
         config.cors_allowed_origins.clone(),

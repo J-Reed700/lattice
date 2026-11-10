@@ -6,7 +6,7 @@ use crate::references::trust::capture;
 use lattice_core::application::ports::LibraryPassagesPort;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ pub struct SourceDeps {
     /// The host's safe web service for URL references.
     pub web: Arc<dyn WebServiceTrait>,
     /// Source-library rows: before-use refreshes persist here.
-    pub pool: SqlitePool,
+    pub database: Database,
 }
 
 #[derive(Debug, Clone)]
@@ -215,7 +215,7 @@ pub async fn ensure_before_use_sources(
     deps: &SourceDeps,
     program_id: &str,
 ) -> lattice_core::shared::error::Result<()> {
-    let repo = crate::source_library::LearningSourceLibraryRepository::new(deps.pool.clone());
+    let repo = crate::source_library::LearningSourceLibraryRepository::new(deps.database.clone());
     let workspace = repo.workspace(program_id).await?;
     for source in workspace.sources.iter().filter(|s| {
         s.kind == LearningSourceKind::Web && s.freshness_policy == LearningSourcePolicy::BeforeUse

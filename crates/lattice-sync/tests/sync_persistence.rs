@@ -2,7 +2,7 @@
 //! Run with DATABASE_URL set and `cargo test --test sync_persistence -- --ignored`.
 use lattice_sync::{
     error::AppError,
-    persistence::sync_repository::PgSyncRepository,
+    persistence::{db::Database, sync_repository::PgSyncRepository},
     sync::{
         repository::SyncRepository,
         types::{PushChange, SyncAction},
@@ -64,7 +64,7 @@ async fn device(repo: &PgSyncRepository, user: i64) -> Uuid {
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
 async fn pull_cursors_skip_own_history_without_skipping_another_devices_page(pool: PgPool) {
-    let repo = PgSyncRepository::new(pool);
+    let repo = PgSyncRepository::new(Database::from(pool));
     let first = device(&repo, 42).await;
     let second = device(&repo, 42).await;
     let outsider = device(&repo, 43).await;
@@ -107,7 +107,7 @@ async fn pull_cursors_skip_own_history_without_skipping_another_devices_page(poo
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
 async fn retry_is_idempotent_and_pull_is_tenant_scoped(pool: PgPool) {
-    let repo = PgSyncRepository::new(pool.clone());
+    let repo = PgSyncRepository::new(Database::from(pool.clone()));
     let writer = device(&repo, 42).await;
     let reader = device(&repo, 42).await;
     let outsider = device(&repo, 43).await;
@@ -163,7 +163,7 @@ async fn retry_is_idempotent_and_pull_is_tenant_scoped(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
 async fn failed_batch_rolls_back_operations_and_heads(pool: PgPool) {
-    let repo = PgSyncRepository::new(pool.clone());
+    let repo = PgSyncRepository::new(Database::from(pool.clone()));
     let writer = device(&repo, 42).await;
     let valid = change("valid.md");
     let mut invalid = change("invalid.md");
@@ -195,7 +195,7 @@ async fn failed_batch_rolls_back_operations_and_heads(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
 async fn concurrent_first_writes_preserve_optimistic_conflict_detection(pool: PgPool) {
-    let repo = PgSyncRepository::new(pool.clone());
+    let repo = PgSyncRepository::new(Database::from(pool.clone()));
     let first_device = device(&repo, 42).await;
     let second_device = device(&repo, 42).await;
     // Widen the empty-head race; row locks alone cannot lock a row that is absent.
@@ -220,7 +220,7 @@ async fn concurrent_first_writes_preserve_optimistic_conflict_detection(pool: Pg
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
 async fn retry_preserves_conflict_after_head_advances(pool: PgPool) {
-    let repo = PgSyncRepository::new(pool.clone());
+    let repo = PgSyncRepository::new(Database::from(pool.clone()));
     let writer = device(&repo, 42).await;
     repo.push_changes(42, writer, vec![change("note.md")])
         .await
@@ -251,7 +251,7 @@ async fn retry_preserves_conflict_after_head_advances(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
 async fn reused_operation_id_rejects_changed_payload_and_rolls_back_batch(pool: PgPool) {
-    let repo = PgSyncRepository::new(pool.clone());
+    let repo = PgSyncRepository::new(Database::from(pool.clone()));
     let writer = device(&repo, 42).await;
     let original = change("note.md");
     repo.push_changes(42, writer, vec![original.clone()])

@@ -300,7 +300,8 @@ pub(crate) trait SynthesisWork: Send + Sync {
     /// A conversation for one part, removed once the part is written.
     async fn open_scratch(&self) -> Result<String>;
     async fn answer(&self, conversation_id: &str, prompt: &str) -> Result<ChatResponse>;
-    async fn remove_scratch(&self, conversation_id: String);
+    /// Removes it; a conversation already gone counts as removed.
+    async fn remove_scratch(&self, conversation_id: String) -> Result<()>;
 }
 
 /// The app's entries and models.
@@ -339,9 +340,10 @@ impl SynthesisWork for AppSynthesis {
         .await
     }
 
-    async fn remove_scratch(&self, conversation_id: String) {
-        if let Err(error) = self.runtime.delete_conversation(&conversation_id).await {
-            warn!(%error, "Could not remove a synthesis scratch conversation");
+    async fn remove_scratch(&self, conversation_id: String) -> Result<()> {
+        match self.runtime.delete_conversation(&conversation_id).await {
+            Ok(()) | Err(AppError::NotFound(_)) => Ok(()),
+            Err(error) => Err(error),
         }
     }
 }
@@ -391,7 +393,7 @@ impl JournalSynthesisJob {
             .transpose()?
             .unwrap_or_default();
         if let Some(id) = scratch.conversation_id {
-            self.work.remove_scratch(id).await;
+            self.work.remove_scratch(id).await?;
             context
                 .put_checkpoint(SCRATCH, &encode(&Scratch::default())?)
                 .await?;
@@ -403,18 +405,22 @@ impl JournalSynthesisJob {
     /// job stopped first.
     async fn write(&self, context: &JobContext, prompt: &str) -> Result<Option<String>> {
         let scratch = self.work.open_scratch().await?;
-        context
-            .put_checkpoint(
-                SCRATCH,
-                &encode(&Scratch {
-                    conversation_id: Some(scratch.clone()),
-                })?,
-            )
-            .await?;
+        let tracked = match encode(&Scratch {
+            conversation_id: Some(scratch.clone()),
+        }) {
+            Ok(saved) => context.put_checkpoint(SCRATCH, &saved).await,
+            Err(error) => Err(error),
+        };
+        if let Err(error) = tracked {
+            if let Err(removal) = self.work.remove_scratch(scratch).await {
+                warn!(%removal, "Could not remove an untracked synthesis scratch conversation");
+            }
+            return Err(error);
+        }
         let answered = context
             .until_cancelled(self.work.answer(&scratch, prompt))
             .await;
-        self.work.remove_scratch(scratch).await;
+        self.work.remove_scratch(scratch).await?;
         context
             .put_checkpoint(SCRATCH, &encode(&Scratch::default())?)
             .await?;
@@ -691,6 +697,8 @@ pub async fn retry_journal_synthesis_impl(
 
 #[cfg(test)]
 mod job_tests;
+#[cfg(test)]
+mod scratch_tests;
 
 #[cfg(test)]
 mod week_scope_tests;

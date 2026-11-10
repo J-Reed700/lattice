@@ -7,10 +7,12 @@
 use chrono::Utc;
 use sqlx::SqlitePool;
 
+use crate::features::conversation::repository::space_rows::ConversationSpaceRow;
 use crate::features::conversation::space_dto::{
     ConversationSpaceDto, CreateConversationSpaceRequestDto,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 
 /// Synthetic single-user owner. Spaces always have an "owner" membership
@@ -24,7 +26,8 @@ pub struct ConversationSpaceRepository {
 }
 
 impl ConversationSpaceRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -109,11 +112,7 @@ impl ConversationSpaceRepository {
             ))
         })?;
 
-        tx.commit()
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to commit space create: {}", e)))?;
-
-        sqlx::query_as::<_, ConversationSpaceDto>(
+        let space = sqlx::query_as::<_, ConversationSpaceRow>(
             r#"
             SELECT
                 id, name, description, icon, accent_color, space_prompt,
@@ -123,8 +122,14 @@ impl ConversationSpaceRepository {
             "#,
         )
         .bind(&id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
-        .map_err(|e| AppError::Database(format!("Failed to fetch created space: {}", e)))
+        .map_err(|e| AppError::Database(format!("Failed to fetch created space: {}", e)))?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit space create: {}", e)))?;
+
+        Ok(space.into())
     }
 }

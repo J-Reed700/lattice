@@ -10,7 +10,7 @@ use tauri::State;
 pub async fn list_custom_collections(
     container: State<'_, Container>,
 ) -> std::result::Result<Vec<CustomCollectionDto>, String> {
-    CustomCollectionsRepository::new(container.db_pool().clone())
+    CustomCollectionsRepository::new(container.database().clone())
         .list()
         .await
         .map_err(|error| error.to_string())
@@ -22,7 +22,7 @@ pub async fn create_custom_collection(
     request: CreateCustomCollectionRequest,
     container: State<'_, Container>,
 ) -> std::result::Result<String, String> {
-    CustomCollectionsRepository::new(container.db_pool().clone())
+    CustomCollectionsRepository::new(container.database().clone())
         .create(request)
         .await
         .map_err(|error| error.to_string())
@@ -35,7 +35,7 @@ pub async fn rename_custom_collection(
     name: String,
     container: State<'_, Container>,
 ) -> std::result::Result<(), String> {
-    CustomCollectionsRepository::new(container.db_pool().clone())
+    CustomCollectionsRepository::new(container.database().clone())
         .rename(&collection_id, &name)
         .await
         .map_err(|error| error.to_string())
@@ -48,7 +48,7 @@ pub async fn move_custom_collection(
     parent_id: Option<String>,
     container: State<'_, Container>,
 ) -> std::result::Result<(), String> {
-    CustomCollectionsRepository::new(container.db_pool().clone())
+    CustomCollectionsRepository::new(container.database().clone())
         .move_to(&collection_id, parent_id.as_deref())
         .await
         .map_err(|error| error.to_string())
@@ -60,7 +60,7 @@ pub async fn delete_custom_collection(
     collection_id: String,
     container: State<'_, Container>,
 ) -> std::result::Result<(), String> {
-    CustomCollectionsRepository::new(container.db_pool().clone())
+    CustomCollectionsRepository::new(container.database().clone())
         .delete(&collection_id)
         .await
         .map_err(|error| error.to_string())
@@ -73,7 +73,7 @@ pub async fn add_documents_to_custom_collection(
     document_ids: Vec<String>,
     container: State<'_, Container>,
 ) -> std::result::Result<(), String> {
-    CustomCollectionsRepository::new(container.db_pool().clone())
+    CustomCollectionsRepository::new(container.database().clone())
         .add_documents(&collection_id, &document_ids)
         .await
         .map_err(|error| error.to_string())
@@ -86,7 +86,7 @@ pub async fn remove_documents_from_custom_collection(
     document_ids: Vec<String>,
     container: State<'_, Container>,
 ) -> std::result::Result<(), String> {
-    CustomCollectionsRepository::new(container.db_pool().clone())
+    CustomCollectionsRepository::new(container.database().clone())
         .remove_documents(&collection_id, &document_ids)
         .await
         .map_err(|error| error.to_string())

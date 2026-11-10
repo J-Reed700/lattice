@@ -19,6 +19,7 @@ use crate::features::search::trait_def::HybridSearchUseCaseFactory;
 use crate::infrastructure::passage_index::testing::{FakeEmbedder, FixedEmbedders};
 use crate::infrastructure::passage_index::vectors::vectors_path;
 use crate::infrastructure::passage_index::PassageStore;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::JobRuntime;
 use lattice_core::shared::Result;
@@ -35,12 +36,13 @@ pub(in crate::features::learning) fn indexes(
     base: &Path,
     embedders: Arc<FixedEmbedders>,
 ) -> Arc<CourseIndexes> {
+    let database = Database::from(pool.clone());
     CourseIndexes::new(
         base.to_path_buf(),
-        pool.clone(),
+        database.clone(),
         embedders,
         Arc::new(HybridSearchUseCaseFactory),
-        JobRuntime::new(pool.clone()),
+        JobRuntime::new(database),
         Arc::new(BackgroundTasks::default()),
         Arc::default(),
     )
@@ -103,7 +105,7 @@ pub(super) fn pages(count: usize) -> Vec<String> {
 }
 
 async fn active(pool: &SqlitePool, program: &str) -> Vec<LearningSourceDto> {
-    LearningSourceLibraryRepository::new(pool.clone())
+    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .verification_sources(program)
         .await
         .unwrap()
@@ -304,7 +306,7 @@ async fn a_replaced_version_leaves_the_index_and_its_replacement_is_searched() -
     );
     let (program, source_ids) = course(&pool, &pages(2)).await?;
     courses.ensure_current_quietly(&program).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     // The version the replaced source has now; sources created together list
     // in id order, so it is looked up by its source.
     let old_version = library
@@ -444,7 +446,7 @@ async fn startup_queues_builds_for_stale_courses_and_none_for_current_ones() -> 
         IndexMode::Hybrid
     );
     // A source deleted since the index was last current.
-    LearningSourceLibraryRepository::new(pool.clone())
+    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .delete_source(&DeleteLearningSourceRequestDto {
             operation_id: uuid::Uuid::new_v4().to_string(),
             program_id: changed.clone(),

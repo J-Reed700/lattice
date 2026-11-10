@@ -19,6 +19,7 @@ use lattice_core::domain::learning::claim_review::{
     CheckResult, ClaimEvent, ClaimLedgerEntry, ClaimState, ReopenCause, UnverifiedReason,
     VerdictKind,
 };
+use lattice_core::shared::persistence::Database;
 
 /// The draft's input hash in these fixtures, as `prepare` resumes it.
 const INPUT: &str = "ledger-fixture";
@@ -138,7 +139,7 @@ async fn hinted_in(
         .unwrap_or_default()
         .to_owned();
     let raw = lesson.to_string();
-    lesson_drafts::run(repo, job, lesson_id, async {
+    lesson_drafts::run(&Database::from(pool.clone()), repo, job, lesson_id, async {
         lesson_drafts::resume(INPUT.into()).await?;
         lesson_drafts::save(&raw).await?;
         let mut ledger = open().await?;
@@ -161,7 +162,7 @@ async fn hinted_in(
             .await?
             .revision
             .0;
-        ClaimReviewService::new(pool.clone())
+        ClaimReviewService::new(Database::from(pool.clone()))
             .resolve(
                 lesson_id,
                 &id.0,
@@ -186,7 +187,7 @@ async fn reopened_and_hinted(
     const LOST: &str = "a-lost-source";
     let body = section(statement);
     let raw = lesson_of(&body).to_string();
-    lesson_drafts::run(repo, job, lesson_id, async {
+    lesson_drafts::run(&Database::from(pool.clone()), repo, job, lesson_id, async {
         lesson_drafts::resume(INPUT.into()).await?;
         lesson_drafts::save(&raw).await?;
         let mut ledger = open().await?;
@@ -215,7 +216,7 @@ async fn reopened_and_hinted(
             .await?
             .revision
             .0;
-        ClaimReviewService::new(pool.clone())
+        ClaimReviewService::new(Database::from(pool.clone()))
             .resolve(
                 lesson_id,
                 &id.0,
@@ -249,12 +250,13 @@ async fn resumed_over(
     sources: &[LearningSourceDto],
 ) -> Result<Result<(String, LessonVerificationReport)>> {
     let program_id = repo.job(job).await?.program_id;
+    let database = Database::from(pool.clone());
     Ok(research::run(
-        pool.clone(),
+        database.clone(),
         program_id,
         "Research methods".into(),
         Some(research::tests::web(false)),
-        prepare(repo, job, lesson_id, model, first, sources),
+        prepare(&database, repo, job, lesson_id, model, first, sources),
     )
     .await)
 }

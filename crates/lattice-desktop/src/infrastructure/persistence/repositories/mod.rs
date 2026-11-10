@@ -16,13 +16,11 @@ pub mod downloaded_models;
 pub mod embedding;
 pub mod model;
 pub mod model_file;
-pub mod system;
 
 // Shared repository support.
 #[cfg(any(test, feature = "test-utils"))]
 pub mod mocks;
 pub mod traits;
-pub mod unit_of_work;
 
 // Chunk removed - use lattice_core::domain::entities::chunk::Chunk (DDD)
 pub use chunk_repository::ChunkRepository; // Repository only, not the old Chunk type

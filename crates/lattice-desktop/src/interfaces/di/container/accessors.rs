@@ -4,13 +4,13 @@
 use super::Container;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
 use crate::infrastructure::storage::ContentAddressedStorage;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 impl Container {
-    pub fn db_pool(&self) -> &SqlitePool {
-        self.core.db_pool()
+    pub fn database(&self) -> &Database {
+        self.core.database()
     }
 
     pub fn settings_repository(
@@ -190,9 +190,10 @@ impl Container {
 
         // Folders being watched are also legitimately readable, and the watch
         // list is authoritative in the database rather than in settings.
-        match sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
-            .fetch_all(self.db_pool())
-            .await
+        match crate::infrastructure::persistence::repositories::file_library::watch_folder_paths(
+            self.database(),
+        )
+        .await
         {
             Ok(paths) => roots.extend(paths.into_iter().map(PathBuf::from)),
             Err(e) => tracing::warn!(

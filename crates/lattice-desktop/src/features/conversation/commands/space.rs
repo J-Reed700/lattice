@@ -28,7 +28,7 @@ pub async fn create_conversation_space_impl(
     };
 
     crate::features::conversation::space_repository::ConversationSpaceRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .create(request)
     .await

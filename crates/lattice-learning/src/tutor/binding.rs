@@ -1,10 +1,11 @@
 //! Which course a conversation teaches from: `conversations.program_id` and
 //! `conversations.lesson_id`.
 
+use super::repository;
 use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::{Database, Transactions};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -25,15 +26,11 @@ pub(super) struct CourseBinding {
 /// Binds a conversation to an accepted course and, optionally, one of its
 /// lessons. A conversation reads one source, so a folder's thread is refused.
 pub async fn bind_conversation(
-    pool: &SqlitePool,
+    database: &Database,
     request: &SetConversationCourseRequestDto,
 ) -> Result<()> {
-    let status: Option<String> =
-        sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
-            .bind(&request.program_id)
-            .fetch_optional(pool)
-            .await
-            .map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
+    let status = repository::program_status(&mut tx, &request.program_id).await?;
     match status.as_deref() {
         Some("active") => {}
         Some(_) => {
@@ -44,52 +41,24 @@ pub async fn bind_conversation(
         None => return Err(AppError::NotFound("Learning program not found.".into())),
     }
     if let Some(lesson_id) = &request.lesson_id {
-        let owned: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM learning_lessons WHERE id=? AND program_id=?")
-                .bind(lesson_id)
-                .bind(&request.program_id)
-                .fetch_optional(pool)
-                .await
-                .map_err(db)?;
-        if owned.is_none() {
+        if !repository::lesson_in_program(&mut tx, lesson_id, &request.program_id).await? {
             return Err(AppError::NotFound(
                 "Lesson does not belong to this learning program.".into(),
             ));
         }
     }
-    let bound = sqlx::query(
-        "UPDATE conversations SET program_id=?, lesson_id=? WHERE id=? AND explorer_root IS NULL",
+    let bound = repository::bind_course(
+        &mut tx,
+        &request.conversation_id,
+        &request.program_id,
+        request.lesson_id.as_deref(),
     )
-    .bind(&request.program_id)
-    .bind(&request.lesson_id)
-    .bind(&request.conversation_id)
-    .execute(pool)
-    .await
-    .map_err(db)?;
-    if bound.rows_affected() == 0 {
+    .await?;
+    if !bound {
         return Err(AppError::NotFound(format!(
             "No conversation to bind to a course: {}",
             request.conversation_id
         )));
     }
-    Ok(())
-}
-
-/// The course `conversation_id` is bound to; `None` for every other chat.
-pub(super) async fn conversation_course(
-    pool: &SqlitePool,
-    conversation_id: &str,
-) -> Result<Option<CourseBinding>> {
-    let row = sqlx::query("SELECT program_id, lesson_id FROM conversations WHERE id=?")
-        .bind(conversation_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(db)?;
-    Ok(row.and_then(|row| {
-        let program_id: Option<String> = row.get("program_id");
-        program_id.map(|program_id| CourseBinding {
-            program_id,
-            lesson_id: row.get("lesson_id"),
-        })
-    }))
+    tx.commit().await.map_err(db)
 }

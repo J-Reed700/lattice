@@ -7,6 +7,7 @@ use crate::{
     plan_dto::LearningGenerationJobActionRequestDto,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobStore, RecoveryPolicy};
 use serde_json::json;
 
@@ -45,7 +46,7 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
         let worker = LessonGenerationWorker {
             course_setups: Default::default(),
             runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-            pool: pool.clone(),
+            database: pool.clone().into(),
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })
             }),
@@ -151,11 +152,17 @@ async fn outage_schedule_and_checkpoints_survive_reopen_and_cancellation_wins() 
         .await?;
     let lesson_id = &program.modules[0].lessons[0].id;
     assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
-    lesson_drafts::run(&repo, &job.id, lesson_id, async {
-        lesson_drafts::resume("fixture-inputs".into()).await?;
-        lesson_drafts::save("saved candidate").await?;
-        lesson_drafts::record_checkpoint("fixture-comparison", json!({"complete": true})).await
-    })
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job.id,
+        lesson_id,
+        async {
+            lesson_drafts::resume("fixture-inputs".into()).await?;
+            lesson_drafts::save("saved candidate").await?;
+            lesson_drafts::record_checkpoint("fixture-comparison", json!({"complete": true})).await
+        },
+    )
     .await?;
     defer(
         &pool,
@@ -321,7 +328,7 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
         .get(&job.program_id)
         .await?;
     let lesson_id = program.modules[0].lessons[0].id.clone();
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     for index in 1..100 {
         library
             .add(
@@ -351,15 +358,21 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
             .await?;
     }
     assert!(JobStore::new(pool.clone()).claim(&job.id).await?.is_some());
-    lesson_drafts::run(&repo, &job.id, &lesson_id, async {
-        lesson_drafts::resume("unchanged-inputs".into()).await?;
-        lesson_drafts::save("Saved exact candidate").await?;
-        lesson_drafts::record_checkpoint(
-            "completed-claim",
-            json!({"claim":"unchanged","result":"supported","evidence":"saved exact passage"}),
-        )
-        .await
-    })
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job.id,
+        &lesson_id,
+        async {
+            lesson_drafts::resume("unchanged-inputs".into()).await?;
+            lesson_drafts::save("Saved exact candidate").await?;
+            lesson_drafts::record_checkpoint(
+                "completed-claim",
+                json!({"claim":"unchanged","result":"supported","evidence":"saved exact passage"}),
+            )
+            .await
+        },
+    )
     .await?;
     JobStore::new(pool.clone())
         .fail(
@@ -400,7 +413,7 @@ async fn source_limit_failure_retries_after_restart_without_losing_saved_checks(
         repo.lesson_checkpoint(&job.id, &lesson_id, "completed-claim")
             .await?
     );
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let source = uuid::Uuid::new_v4().to_string();
     let version = uuid::Uuid::new_v4().to_string();
     library
@@ -477,7 +490,7 @@ async fn run_with_model(load_llm: super::ModelLoader) -> crate::curriculum::Lear
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm,
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -599,7 +612,7 @@ async fn a_lesson_job_for_a_course_without_sources_asks_for_them_in_plain_words(
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -625,7 +638,7 @@ async fn a_failed_lesson_job_records_the_code_of_its_error() {
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -664,7 +677,7 @@ async fn a_lesson_job_waiting_out_an_outage_records_the_code_of_its_cause() {
         let worker = LessonGenerationWorker {
             course_setups: Default::default(),
             runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-            pool: pool.clone(),
+            database: pool.clone().into(),
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })
             }),
@@ -698,4 +711,34 @@ async fn a_job_stored_without_a_code_reads_null() {
     let old = repo.job(&job.id).await.unwrap();
     assert_eq!(old.error.as_deref(), Some("old failure"));
     assert_eq!(old.error_code, None);
+}
+
+#[tokio::test]
+async fn a_deferred_lesson_says_what_it_waits_on() {
+    let pool = crate::tests::pool().await.unwrap();
+    let (_, job) = repository_tests::queued_job(&pool).await;
+    let job = JobStore::new(pool).get(&job.id).await.unwrap();
+    for (error, code, progress) in [
+        (
+            AppError::Database("error returned from database: (code: 5) database is locked".into()),
+            "temporarily_unavailable",
+            "Another task is using the database; preparation will retry automatically",
+        ),
+        (
+            AppError::Network("connection lost".into()),
+            "temporarily_unavailable",
+            "Connection interrupted; saved work will resume automatically",
+        ),
+        (
+            AppError::RateLimitExceeded("provider busy".into()),
+            "temporarily_unavailable",
+            "The model service is rate limiting requests; preparation will retry automatically",
+        ),
+    ] {
+        let JobFailure::Defer(deferral) = lesson_failure(&job, &error) else {
+            panic!("{error} is deferred, not failed");
+        };
+        assert_eq!(deferral.code, code, "{error}");
+        assert_eq!(deferral.progress_message, progress, "{error}");
+    }
 }

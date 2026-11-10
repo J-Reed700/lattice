@@ -15,7 +15,7 @@ use crate::practice::coding::problem::{Problem, PROBLEM_FILE_PATH};
 use crate::practice::interview_answers::{InterviewAnswerGuides, INTERVIEW_ANSWERS_FILE_PATH};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, Sqlite, Transaction};
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashSet;
 
 impl LearningPracticalRepository {
@@ -41,7 +41,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different runtime setup data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&request.program_id).await.map(Some);
         }
@@ -99,7 +99,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different runtime profile data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&request.program_id).await;
         }
@@ -122,7 +122,7 @@ impl LearningPracticalRepository {
                 .bind(timestamp).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
             0
         };
-        operation.record(&mut *tx, &result_revision).await?;
+        operation.record(&mut tx, &result_revision).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&request.program_id).await
     }
@@ -251,7 +251,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different practical activity data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&request.program_id).await;
         }
@@ -348,7 +348,7 @@ impl LearningPracticalRepository {
                 .bind(&file.content).bind(hash_text(&file.content))
                 .bind(file.editable as i64).execute(&mut *tx).await.map_err(db)?;
         }
-        operation.record(&mut *tx, &0_i64).await?;
+        operation.record(&mut tx, &0_i64).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&request.program_id).await
     }
@@ -436,12 +436,12 @@ impl LearningPracticalRepository {
     }
 
     pub(super) async fn internal_activity(
-        tx: &mut Transaction<'_, Sqlite>,
+        tx: &mut SqliteConnection,
         program_id: &str,
         activity_id: &str,
     ) -> Result<InternalActivitySnapshot> {
         let row = sqlx::query("SELECT a.*,p.enabled AS runtime_enabled FROM learning_practical_activities a LEFT JOIN learning_runtime_profiles p ON p.id=a.runtime_profile_id WHERE a.program_id=? AND a.id=?")
-            .bind(program_id).bind(activity_id).fetch_optional(&mut **tx).await.map_err(db)?
+            .bind(program_id).bind(activity_id).fetch_optional(&mut *tx).await.map_err(db)?
             .ok_or_else(||AppError::NotFound("Practical activity not found".into()))?;
         if row.get::<String, _>("status") != "ready" {
             return Err(invalid("Only ready practical activities can be used."));
@@ -450,7 +450,7 @@ impl LearningPracticalRepository {
             "SELECT * FROM learning_practical_files WHERE activity_id=? ORDER BY ordinal",
         )
         .bind(activity_id)
-        .fetch_all(&mut **tx)
+        .fetch_all(&mut *tx)
         .await
         .map_err(db)?;
         let mut interview_plan = None;

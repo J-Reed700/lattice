@@ -7,7 +7,7 @@ pub async fn get_learning_canvas_workspace(
     container: State<'_, Container>,
 ) -> Result<LearningCanvasWorkspaceDto, ApiError> {
     crate::features::learning::canvas_repository::LearningCanvasRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .workspace(&id)
     .await
@@ -23,7 +23,7 @@ pub async fn create_learning_canvas(
     let scene = crate::features::learning::canvas_repository::validate_scene(&request.scene_json)
         .map_err(ApiError::from)?;
     let repo = crate::features::learning::canvas_repository::LearningCanvasRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     repo.create(&request, &scene)
         .await
@@ -42,7 +42,7 @@ pub async fn save_learning_canvas(
     let scene = crate::features::learning::canvas_repository::validate_scene(&request.scene_json)
         .map_err(ApiError::from)?;
     let repo = crate::features::learning::canvas_repository::LearningCanvasRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     repo.save(&request, &scene).await.map_err(ApiError::from)?;
     repo.workspace(&request.program_id)
@@ -57,7 +57,7 @@ pub async fn create_learning_canvas_snapshot(
     container: State<'_, Container>,
 ) -> Result<LearningCanvasWorkspaceDto, ApiError> {
     let repo = crate::features::learning::canvas_repository::LearningCanvasRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     repo.create_snapshot(&request)
         .await
@@ -74,7 +74,7 @@ pub async fn restore_learning_canvas_snapshot(
     container: State<'_, Container>,
 ) -> Result<LearningCanvasWorkspaceDto, ApiError> {
     let repo = crate::features::learning::canvas_repository::LearningCanvasRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     repo.restore(&request).await.map_err(ApiError::from)?;
     repo.workspace(&request.program_id)

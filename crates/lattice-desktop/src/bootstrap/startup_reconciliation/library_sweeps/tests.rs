@@ -2,6 +2,7 @@
 //! database: which files they leave alone and which they collect, at start and
 //! after a chat is deleted, and the model cleanup that reads the same decision.
 
+use lattice_core::shared::persistence::Database;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -32,6 +33,7 @@ use crate::infrastructure::storage::{ContentAddressedStorage, FileIntents};
 use lattice_core::application::ports::ChatImagesPort;
 use lattice_core::shared::constants::RERANKER_MODEL_DIR;
 use lattice_core::shared::fs::SweepGate;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::JobRuntime;
 
@@ -83,6 +85,7 @@ fn sweeps_over(
     gate: &Arc<SweepGate>,
     background: &Arc<BackgroundTasks>,
 ) -> LibrarySweeps {
+    let database = Database::from(pool.clone());
     LibrarySweeps {
         library_gc: Arc::new(
             LibraryGc::new(
@@ -93,16 +96,16 @@ fn sweeps_over(
             .with_intents(FileIntents::new(pool.clone())),
         ),
         snapshots: Arc::new(WebPageSnapshotService::new(
-            pool.clone(),
+            database.clone(),
             home.join("web-snapshots"),
             Arc::new(MockPageCapture::new()),
-            JobRuntime::new(pool.clone()),
+            JobRuntime::new(database.clone()),
             Arc::new(AppEvents::default()),
             Arc::clone(background),
             Arc::clone(gate),
         )),
         images: Arc::new(ChatImageService::new(
-            pool.clone(),
+            database,
             home.join("chat-images"),
             Arc::new(NoNetwork),
             Arc::clone(background),
@@ -123,7 +126,7 @@ async fn start_up(pool: &SqlitePool, home: &Path) -> Run {
     let gate = Arc::new(SweepGate::default());
     let background = Arc::new(BackgroundTasks::default());
     let sweeps = sweeps_over(pool, home, &gate, &background);
-    open_gate_if_owner(pool, &files_in(home), &gate).await;
+    open_gate_if_owner(&Database::from(pool.clone()), &files_in(home), &gate).await;
     sweeps.start(&gate, &background, async { Ok(HashSet::new()) });
     background.close();
     background.wait().await;
@@ -359,21 +362,21 @@ async fn the_library_survives_corruption_recovery_even_once_the_new_database_has
 
     // The database that imported the library takes it at its first start.
     let database = setup_database(db_path.clone()).await.unwrap();
-    start_up(database.pool(), home.path()).await;
+    start_up(database.database().sqlx_pool(), home.path()).await;
     let (_, paper) = imported_file(home.path(), "an imported paper");
     let library = [paper, snapshot(home.path()), picture(home.path())];
     let owner = filed(home.path());
 
     let database = corrupt_and_recover(database, &db_path).await;
 
-    start_up(database.pool(), home.path()).await;
+    start_up(database.database().sqlx_pool(), home.path()).await;
     let gone = deleted(&library);
     assert!(gone.is_empty(), "the sweep after recovery deleted {gone:?}");
 
     // A document is added to the new database; it is not one of the library's.
     let (hash, newer) = imported_file(home.path(), "a paper imported since");
-    reference(database.pool(), &hash, &newer).await;
-    start_up(database.pool(), home.path()).await;
+    reference(database.database().sqlx_pool(), &hash, &newer).await;
+    start_up(database.database().sqlx_pool(), home.path()).await;
     let gone = deleted(&library);
     assert!(
         gone.is_empty(),
@@ -381,7 +384,7 @@ async fn the_library_survives_corruption_recovery_even_once_the_new_database_has
     );
     assert!(newer.exists());
     assert_eq!(filed(home.path()), owner, "the owner file is untouched");
-    assert_eq!(recorded(database.pool()).await, None);
+    assert_eq!(recorded(database.database().sqlx_pool()).await, None);
     database.close().await.unwrap();
 }
 
@@ -393,16 +396,16 @@ async fn deleting_a_chat_after_corruption_recovery_leaves_the_old_snapshots_and_
 
     // The database that imported the library takes it at its first start.
     let database = setup_database(db_path.clone()).await.unwrap();
-    start_up(database.pool(), home.path()).await;
+    start_up(database.database().sqlx_pool(), home.path()).await;
     let library = [snapshot(home.path()), picture(home.path())];
 
     let database = corrupt_and_recover(database, &db_path).await;
 
-    let run = start_up(database.pool(), home.path()).await;
+    let run = start_up(database.database().sqlx_pool(), home.path()).await;
     let gone = deleted(&library);
     assert!(gone.is_empty(), "the start after recovery deleted {gone:?}");
 
-    run.delete_a_chat(database.pool()).await;
+    run.delete_a_chat(database.database().sqlx_pool()).await;
 
     let gone = deleted(&library);
     assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");

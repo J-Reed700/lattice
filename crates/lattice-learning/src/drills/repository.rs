@@ -9,7 +9,9 @@ use super::spec::DrillSpec;
 use crate::persistence::{db, decode, encode, now};
 use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue, Material};
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::driver::DriverPool;
+use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
+use std::collections::HashMap;
 
 /// Whether a drill is waiting in the bank or a learner has it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -205,9 +207,10 @@ pub(crate) async fn any_ready_in(
 
 /// The source passages the drills of the course `program_id` were built on, ready or taken.
 pub(crate) async fn drilled_passages(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
 ) -> Result<Vec<SourcePassage>> {
+    let pool = pool.sqlx_pool();
     let stored: Vec<String> = sqlx::query_scalar(
         "SELECT source_json FROM learning_drills WHERE material='passage' AND program_id=? AND source_json IS NOT NULL ORDER BY created_at,rowid",
     )
@@ -216,6 +219,21 @@ pub(crate) async fn drilled_passages(
     .await
     .map_err(db)?;
     stored.iter().map(|json| decode(json)).collect()
+}
+
+/// For each version of the course's sources, the source it is a version of.
+pub(crate) async fn source_owners(
+    pool: &impl DriverPool,
+    program_id: &str,
+) -> Result<HashMap<String, String>> {
+    let pool = pool.sqlx_pool();
+    let rows: Vec<(String, String)> =
+        sqlx::query_as("SELECT id,source_id FROM learning_source_versions WHERE program_id=?")
+            .bind(program_id)
+            .fetch_all(pool)
+            .await
+            .map_err(db)?;
+    Ok(rows.into_iter().collect())
 }
 
 /// A drill by its id, ready or taken.

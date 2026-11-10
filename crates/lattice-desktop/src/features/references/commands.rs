@@ -1,6 +1,6 @@
 //! Pure command implementations for passage references.
 //!
-//! Repository access is always on demand from `container.db_pool()` (the
+//! Repository access is always on demand from `container.database()` (the
 //! `features::daily_notes` pattern). No filesystem access anywhere in this
 //! slice — the repository is the only source of truth.
 
@@ -75,7 +75,7 @@ fn record_to_dto(record: PassageReferenceRecord) -> PassageReferenceDto {
 }
 
 fn repository(container: &Container) -> PassageReferenceRepository {
-    PassageReferenceRepository::new(container.db_pool().clone())
+    PassageReferenceRepository::new(container.database().clone())
 }
 
 /// Validates and trims a create request into a storable record.

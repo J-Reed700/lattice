@@ -65,3 +65,17 @@ describe('a website that answered with an error status', () => {
       .toBe('The website is busy. Lattice tries again shortly.');
   });
 });
+
+describe('what a wait is on', () => {
+  it('names a busy database as the database', () => {
+    const busy: string = 'DATABASE_BUSY';
+    expect(waitingSentence(busy as ErrorCode))
+      .toBe('Another task is using the database. Lattice keeps trying.');
+  });
+
+  it('claims no cause for a code with no sentence', () => {
+    for (const code of [undefined, 'UNKNOWN', 'temporarily_unavailable']) {
+      expect(waitingSentence(code as ErrorCode | undefined)).toBe('Lattice is waiting to try again.');
+    }
+  });
+});

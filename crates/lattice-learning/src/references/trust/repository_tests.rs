@@ -517,7 +517,7 @@ async fn site_lists_batch_history_and_count_an_origin_once_across_snapshots() ->
         course.store.set_override(&entry).await?;
     }
     let (listed, reads) = lattice_core::shared::testing::query_counts::count_reads(
-        super::override_changes::list(&course.store),
+        super::override_changes::list(&course.database, &course.store),
     )
     .await;
     assert_eq!(reads, 2);

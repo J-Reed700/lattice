@@ -129,9 +129,7 @@ async fn a_source_added_after_the_lesson_was_verified_does_not_stop_it_publishin
     )
     .await?;
 
-    let mut tx = course
-        .pool
-        .begin()
+    let mut tx = lattice_core::shared::persistence::Transactions::begin_write(&course.pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     persist_report(&mut tx, &course.program_id, &course.lesson_id, &prepared).await?;
@@ -151,9 +149,7 @@ async fn a_source_the_report_is_bound_to_changing_still_stops_publication() -> R
         report.sources[0].sha256.push('x');
     }
 
-    let mut tx = course
-        .pool
-        .begin()
+    let mut tx = lattice_core::shared::persistence::Transactions::begin_write(&course.pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
     let error = persist_report(&mut tx, &course.program_id, &course.lesson_id, &prepared)

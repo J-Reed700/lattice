@@ -3,15 +3,14 @@
 //! and shaped as a citation the turn can number.
 
 use super::course_turn::{place, CourseTurn};
+use super::repository::source_text;
 use crate::dto::{LearningProgramDto, LearningSourceDto};
-use crate::persistence::db;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage, Scope};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::contracts::sources::{SourceDto, COURSE_SOURCE_PREFIX};
 use lattice_core::application::ports::turn_source::{SourcePassage, SourcePassages};
 use lattice_core::shared::error::Result;
 use lattice_core::shared::text::build_excerpt;
-use sqlx::Row;
 use std::collections::{HashMap, HashSet};
 use tokio_util::sync::CancellationToken;
 
@@ -133,7 +132,7 @@ impl CourseTurn {
     }
 
     async fn sources(&self) -> Result<Vec<LearningSourceDto>> {
-        LearningSourceLibraryRepository::new(self.pool.clone())
+        LearningSourceLibraryRepository::new(self.database.clone())
             .verification_sources(&self.program_id)
             .await
     }
@@ -211,19 +210,10 @@ impl CourseTurn {
         offset: usize,
         max_chars: usize,
     ) -> Result<Option<SourcePassages>> {
-        let row = sqlx::query(
-            "SELECT title, full_text FROM learning_source_versions WHERE program_id=? AND id=?",
-        )
-        .bind(&self.program_id)
-        .bind(version_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
-        let Some(row) = row else {
+        let Some((title, text)) = source_text(&self.database, &self.program_id, version_id).await?
+        else {
             return Ok(None);
         };
-        let title: String = row.get("title");
-        let text: String = row.get("full_text");
         let total = text.chars().count();
         let start = offset.min(total);
         let room = max_chars.saturating_sub(READ_FRAMING_CHARS).max(1);

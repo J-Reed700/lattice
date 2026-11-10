@@ -1,7 +1,7 @@
 //! Preparing for: course-level practice profiles.
 use super::*;
-use crate::recall::{study_repository::StudyRepository, study_service};
-use lattice_core::shared::persistence::Transactions;
+use crate::recall::{study_repository::set_target_in, study_service};
+use lattice_core::shared::persistence::{Database, Transactions};
 use sqlx::SqliteConnection;
 
 async fn require_program(connection: &mut SqliteConnection, program_id: &str) -> Result<()> {
@@ -43,7 +43,9 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeProfileDto> {
         let program_id = request.program_id.as_str();
         uuid(program_id, "program")?;
-        let decks = study_service::interview_deck_ids(&self.pool, program_id).await?;
+        let decks =
+            study_service::interview_deck_ids(&Database::from(self.pool.clone()), program_id)
+                .await?;
         let now = now();
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, program_id).await?;
@@ -59,7 +61,7 @@ impl LearningPracticeRepository {
         if saved_date != request.interview_at {
             study_service::validate_target(request.interview_at, now)?;
             for deck_id in &decks {
-                StudyRepository::set_target_in(&mut tx, deck_id, request.interview_at, now).await?;
+                set_target_in(&mut tx, deck_id, request.interview_at, now).await?;
             }
         }
         let revision = current_revision + 1;

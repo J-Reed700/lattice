@@ -96,7 +96,7 @@ fn resolver(
     OwnerResolver::new(
         wikidata,
         Arc::new(Wikipedia::new(http())),
-        pool,
+        pool.map(Into::into),
         SourcingPolicy::default(),
         clock,
     )

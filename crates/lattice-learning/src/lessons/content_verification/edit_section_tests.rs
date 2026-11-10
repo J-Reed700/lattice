@@ -20,6 +20,7 @@ use lattice_core::domain::learning::claim_review::{
     Actor, ClaimId, ClaimLedgerEntry, ClaimState, Ledger,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -146,7 +147,7 @@ async fn rewrite(
     dry_run: bool,
 ) -> Result<SectionEditOutcome> {
     let before = text_of(course, i64::try_from(section).unwrap()).await?;
-    ClaimReviewService::new(course.pool.clone())
+    ClaimReviewService::new(Database::from(course.pool.clone()))
         .edit_section(request(course, section, before, title, body, dry_run))
         .await
 }
@@ -431,7 +432,7 @@ async fn a_section_changed_since_it_was_opened_is_refused_and_nothing_is_written
         .await?;
     let seen = snapshot(&course).await?;
 
-    let error = ClaimReviewService::new(course.pool.clone())
+    let error = ClaimReviewService::new(Database::from(course.pool.clone()))
         .edit_section(request(
             &course,
             0,
@@ -568,7 +569,7 @@ async fn a_lesson_from_another_course_is_refused() -> Result<()> {
     let mut edit = request(&course, 0, before, "Section 0", &written_over(), false);
     edit.program_id = "another-course".into();
 
-    let error = ClaimReviewService::new(course.pool.clone())
+    let error = ClaimReviewService::new(Database::from(course.pool.clone()))
         .edit_section(edit)
         .await
         .unwrap_err();
@@ -602,7 +603,7 @@ async fn a_lesson_still_being_prepared_is_refused() -> Result<()> {
 }
 
 async fn three_notes(course: &Course) -> Result<TeachingFindingsRepository> {
-    let store = TeachingFindingsRepository::new(course.pool.clone());
+    let store = TeachingFindingsRepository::new(Database::from(course.pool.clone()));
     let candidate = json!({"blocks":[
         {"title":"Section 0","body":section(GOOD)},
         {"title":"Section 1","body":section(&figure(7))}
@@ -880,7 +881,7 @@ const EDITED_THE_SECTION: &str =
     "This changed when you edited the section. Edit the section again to change it back.";
 
 async fn offered_for(course: &Course, claim: &ClaimId) -> Result<Vec<String>> {
-    let review = ClaimReviewService::new(course.pool.clone())
+    let review = ClaimReviewService::new(Database::from(course.pool.clone()))
         .review(&course.program_id, &course.lesson_id)
         .await?
         .expect("the published lesson has its review");
@@ -901,7 +902,7 @@ async fn offered_for(course: &Course, claim: &ClaimId) -> Result<Vec<String>> {
 
 async fn undo(course: &Course, claim: &ClaimId) -> Result<i64> {
     let revision = ledger(course).await?.revision.0;
-    ClaimReviewService::new(course.pool.clone())
+    ClaimReviewService::new(Database::from(course.pool.clone()))
         .resolve(
             &course.lesson_id,
             &claim.0,
@@ -941,4 +942,22 @@ async fn a_statement_a_section_edit_changed_offers_no_undo_and_an_undo_is_refuse
 #[tokio::test]
 async fn a_statement_a_section_edit_deleted_offers_no_undo_and_an_undo_is_refused() -> Result<()> {
     assert_no_undo_after(&without_statement(), GOOD).await
+}
+
+#[tokio::test]
+async fn a_rewrite_whose_example_cannot_be_recorded_writes_nothing() -> Result<()> {
+    let course = unchecked().await?;
+    course.flag_locally(GOOD).await?;
+    let before = snapshot(&course).await?;
+    sqlx::query(
+        "CREATE TRIGGER refuse_for_test BEFORE INSERT ON learning_checker_examples BEGIN SELECT RAISE(ABORT, 'refused for the test'); END",
+    )
+    .execute(&course.pool)
+    .await?;
+
+    let result = rewrite(&course, 0, "Section 0", &written_over(), false).await;
+
+    assert!(result.is_err());
+    assert_eq!(snapshot(&course).await?, before);
+    Ok(())
 }

@@ -8,6 +8,8 @@ mod index;
 mod service;
 
 #[cfg(test)]
+mod archive_tests;
+#[cfg(test)]
 mod tests;
 
 pub use config::{WebIngestionConfig, WebIngestionServiceBuilder};

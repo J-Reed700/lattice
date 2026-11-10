@@ -21,9 +21,11 @@ pub async fn setup_database(db_path: PathBuf) -> Result<db::DatabaseConnection> 
             ))
         })?;
 
-    db::initialize_database(conn.pool()).await.map_err(|e| {
-        AppError::Migration(format!(
-            "Failed to initialize database schema.\n\n\
+    db::initialize_database(conn.database())
+        .await
+        .map_err(|e| {
+            AppError::Migration(format!(
+                "Failed to initialize database schema.\n\n\
                               Possible causes:\n\
                               - Corrupted database file\n\
                               - Insufficient disk space (need ~100MB free)\n\
@@ -33,9 +35,9 @@ pub async fn setup_database(db_path: PathBuf) -> Result<db::DatabaseConnection> 
                               - Delete lattice.db to recreate (WARNING: loses data)\n\
                               - Reinstall the application\n\n\
                               Error: {}",
-            e
-        ))
-    })?;
+                e
+            ))
+        })?;
 
     Ok(conn)
 }

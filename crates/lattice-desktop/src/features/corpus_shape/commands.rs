@@ -73,8 +73,8 @@ pub async fn cluster_vault_run<R: tauri::Runtime>(
 #[tauri::command]
 #[specta::specta]
 pub async fn list_clusters(container: State<'_, Container>) -> Result<Vec<ClusterDto>> {
-    let pool = container.db_pool().clone();
-    let repo = SqliteClusterRepository::new(pool);
+    let database = container.database().clone();
+    let repo = SqliteClusterRepository::new(database);
     let run = repo.get_latest_run().await?;
     let Some(run) = run else {
         return Ok(Vec::new());
@@ -113,8 +113,9 @@ pub async fn list_clusters(container: State<'_, Container>) -> Result<Vec<Cluste
 }
 
 async fn build_use_case(container: &Container) -> Result<RunClusteringUseCase> {
-    let pool = container.db_pool().clone();
-    let cluster_repo: Arc<dyn ClusterRepositoryPort> = Arc::new(SqliteClusterRepository::new(pool));
+    let database = container.database().clone();
+    let cluster_repo: Arc<dyn ClusterRepositoryPort> =
+        Arc::new(SqliteClusterRepository::new(database));
 
     let content_preview: Arc<dyn DocumentContentPreviewPort> =
         Arc::new(ChunkBackedContentPreview::new(

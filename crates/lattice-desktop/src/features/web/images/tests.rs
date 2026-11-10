@@ -3,6 +3,7 @@
 //! serves canned bodies; the guarded client is exercised only on requests
 //! it refuses before sending anything.
 
+use lattice_core::shared::persistence::Database;
 use std::collections::{HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -412,7 +413,7 @@ async fn fixture() -> Fixture {
     let sweep_gate = Arc::new(lattice_core::shared::fs::SweepGate::default());
     sweep_gate.open();
     let service = Arc::new(ChatImageService::new(
-        pool.clone(),
+        Database::from(pool.clone()),
         dir.path().join("chat-images"),
         network.clone(),
         Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),

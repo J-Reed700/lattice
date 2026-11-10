@@ -224,7 +224,10 @@ impl LearningPracticalRepository {
         op: &CodingOp<'_>,
     ) -> Result<bool> {
         uuid(op.operation_id, "operation")?;
-        op.operation(program_id, subject_id).seen(&self.pool).await
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        op.operation(program_id, subject_id)
+            .seen(&mut connection)
+            .await
     }
 
     /// Creates the simulation session and the coding session on it. Returns the session's id and whether this call
@@ -239,7 +242,7 @@ impl LearningPracticalRepository {
         uuid(new.activity_id, "activity")?;
         let mut tx = self.begin_coding_write(new.program_id).await?;
         let operation = op.operation(new.program_id, new.activity_id);
-        if let Some(session_id) = operation.replay::<String, _>(&mut *tx).await? {
+        if let Some(session_id) = operation.replay::<String>(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok((session_id, false));
         }

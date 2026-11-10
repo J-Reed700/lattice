@@ -198,6 +198,8 @@ pub enum ErrorCode {
     DatabaseConnectionError,
     /// Database migration failed
     MigrationError,
+    /// Another connection held the database; a later attempt gets it
+    DatabaseBusy,
 
     // Network Errors
     /// Network operation failed
