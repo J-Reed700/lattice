@@ -223,3 +223,6 @@ pub(crate) fn findings(candidate: &Value, wording: &Wording) -> Vec<ReviewFindin
     }
     found
 }
+
+#[cfg(test)]
+mod tests;
