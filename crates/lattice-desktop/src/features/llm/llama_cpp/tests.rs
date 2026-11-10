@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::ports::llm_port::invalid_tool_call_problem;
 use wiremock::{
     matchers::{body_partial_json, header, method, path},
@@ -28,15 +29,27 @@ fn assistant(response: &CompletionResponse) -> Value {
     }
 }
 
+/// The body `request` becomes, with no window to cut it to.
+fn body_of(client: &LlamaCppLlm, request: &CompletionRequest) -> Result<Value> {
+    client.body(&Fitted::uncut(client, request))
+}
+
 /// Plain text through the typed path, as string-only callers make it.
 async fn text(client: &LlamaCppLlm, prompt: &str, context: &[String]) -> Result<String> {
-    lattice_core::application::services::completion_input::complete_text(
-        client,
-        prompt,
-        context,
-        Default::default(),
-    )
-    .await
+    let response = client
+        .complete(&CompletionRequest {
+            input: lattice_core::application::services::completion_input::from_context(
+                "", context, prompt,
+            ),
+            ..Default::default()
+        })
+        .await?;
+    if !response.tool_calls.is_empty() {
+        return Err(AppError::InvalidState(
+            "Unexpected tool call in text generation".into(),
+        ));
+    }
+    Ok(response.text)
 }
 
 fn stream_reply(mut message: Value, reason: &str) -> String {
@@ -144,7 +157,7 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
         ],
         ..Default::default()
     };
-    let body = client.body(&request).unwrap();
+    let body = body_of(&client, &request).unwrap();
     assert_eq!(
         body["messages"],
         json!([
@@ -169,7 +182,7 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
         ],
         ..Default::default()
     };
-    let body = client.body(&image_request).unwrap();
+    let body = body_of(&client, &image_request).unwrap();
     assert_eq!(
         body["messages"],
         json!([{"role":"system","content":"Image instructions"}, image])
@@ -1243,15 +1256,17 @@ fn a_logprobs_request_reads_the_first_tokens_alternatives_back() {
         want_logprobs: true,
         ..Default::default()
     };
-    let body = client.body(&request).unwrap();
+    let body = body_of(&client, &request).unwrap();
     assert_eq!(body["logprobs"], true);
     assert!(body["top_logprobs"].as_u64().unwrap() > 1);
-    let plain = client
-        .body(&CompletionRequest {
+    let plain = body_of(
+        &client,
+        &CompletionRequest {
             want_logprobs: false,
             ..request.clone()
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     assert!(plain.get("logprobs").is_none());
 
     // Streamed: the first chunk carries the first token's alternatives; later
@@ -1401,19 +1416,15 @@ fn a_scheduled_request_carries_its_slot_and_reuses_the_cached_prefix() {
             role: "user".into(),
             content: "Hello".into(),
         }],
-        assigned_slot: Some(1),
         ..Default::default()
     };
-    let body = client.body(&request).unwrap();
+    let body = client
+        .body(&Fitted::uncut(&client, &request).in_slot(Some(1)))
+        .unwrap();
     assert_eq!(body["id_slot"], 1);
     assert_eq!(body["cache_prompt"], true);
 
-    let unscheduled = client
-        .body(&CompletionRequest {
-            assigned_slot: None,
-            ..request
-        })
-        .unwrap();
+    let unscheduled = body_of(&client, &request).unwrap();
     assert!(unscheduled.get("id_slot").is_none());
 }
 
@@ -1526,11 +1537,18 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
         ),
         max_output_tokens: Some(512),
         want_logprobs: true,
-        assigned_slot: Some(2),
         ..Default::default()
     };
-    assert_eq!(remote.complete(&request).await.unwrap().text, "Answer");
-    assert_eq!(sidecar.complete(&request).await.unwrap().text, "Answer");
+    let fitted = Fitted::uncut(&remote, &request).in_slot(Some(2));
+    assert_eq!(
+        remote.send(&fitted, Progress::None).await.unwrap().text,
+        "Answer"
+    );
+    let fitted = Fitted::uncut(&sidecar, &request).in_slot(Some(2));
+    assert_eq!(
+        sidecar.send(&fitted, Progress::None).await.unwrap().text,
+        "Answer"
+    );
     let sent = |requests: Vec<wiremock::Request>| -> Value {
         serde_json::from_slice(&requests[0].body).unwrap()
     };
@@ -1562,7 +1580,7 @@ fn a_model_without_a_tool_template_refuses_tool_traffic() {
         }],
         ..Default::default()
     };
-    assert!(client.body(&plain).is_ok());
+    assert!(body_of(&client, &plain).is_ok());
     let replayed_result = CompletionRequest {
         input: vec![CompletionInput::ToolResult {
             id: "call_1".into(),
@@ -1571,7 +1589,7 @@ fn a_model_without_a_tool_template_refuses_tool_traffic() {
         ..Default::default()
     };
     assert!(matches!(
-        client.body(&replayed_result),
+        body_of(&client, &replayed_result),
         Err(AppError::InvalidConfig(_))
     ));
     assert!(!client.supports_tool_calling());
