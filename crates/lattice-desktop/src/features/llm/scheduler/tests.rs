@@ -1083,6 +1083,106 @@ async fn an_open_answer_is_given_the_room_the_prompt_leaves_and_never_more() {
     );
 }
 
+/// A prompt not worth counting is recorded at its estimate plus the
+/// template's framing (8 for the message, 16 for the answer), with or without
+/// a tokenizer behind the port.
+#[tokio::test]
+async fn a_prompt_not_worth_counting_is_recorded_at_its_estimate_and_framing() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "tokens": [1] })),
+        )
+        .expect(0)
+        .mount(&server)
+        .await;
+    let without = GatedModel::new();
+    without.gate.add_permits(1);
+    let with = GatedModel::new();
+    with.gate.add_permits(1);
+    let llms = [
+        (scheduled(without.clone()), without),
+        (
+            scheduled(with.clone())
+                .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri())),
+            with,
+        ),
+    ];
+    for (llm, model) in &llms {
+        // "user" and "hello!!!" are 12 characters: 3 tokens.
+        llm.complete(&CompletionRequest {
+            max_output_tokens: Some(512),
+            ..request("hello!!!", None)
+        })
+        .await
+        .unwrap();
+        let fit = model.seen.lock()[0].window_fit.unwrap();
+        assert_eq!(fit.prompt_tokens, 3 + 8 + 16);
+        assert!(!fit.counted_exactly);
+    }
+}
+
+/// Admission reserves the prompt the server counted, not the larger estimate
+/// the count replaced.
+#[tokio::test]
+async fn a_counted_prompt_reserves_its_counted_size() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "tokens": vec![1; 2_000] })),
+        )
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::llama_server(2, 8_192),
+    ));
+    let llm = Arc::new(
+        ScheduledLlm::new(model.clone(), scheduler)
+            .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri())),
+    );
+    // About 10 000 tokens by the estimate each; the server counts 2 000.
+    let calls: Vec<_> = ["first", "second"]
+        .into_iter()
+        .map(|key| {
+            let llm = Arc::clone(&llm);
+            tokio::spawn(async move {
+                llm.complete(&CompletionRequest {
+                    max_output_tokens: Some(512),
+                    cache_key: Some(key.into()),
+                    ..request(&"x".repeat(40_000), None)
+                })
+                .await
+            })
+        })
+        .collect();
+    let both_started = tokio::time::timeout(Duration::from_secs(1), async {
+        while model.started.load(Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .is_ok();
+    model.gate.add_permits(2);
+    for call in calls {
+        call.await.unwrap().unwrap();
+    }
+    assert!(
+        both_started,
+        "both calls fit the window by their counted size and run together"
+    );
+}
+
 fn ranked(priority: InferencePriority, scope: &Arc<RankScope>) -> AdmissionRequest {
     AdmissionRequest {
         rank: Some(RankTicket::new(scope)),
