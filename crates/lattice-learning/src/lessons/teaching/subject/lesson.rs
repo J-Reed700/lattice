@@ -239,14 +239,14 @@ impl Subject for LessonSubject<'_> {
             // Stopped structure stays among the findings, so it is still
             // set aside when the review ends.
             issues.extend(structure);
-            issues
+            // Every non-blocking pass rechecks quotations, placed at the part that cites them.
+            let mut findings = quotation_findings(pass.quote_checks);
+            findings.extend(issues);
+            findings
         } else {
             whole_repairs(&structure).cloned().collect()
         };
-        // Every pass rechecks quotations; a mismatch is a finding like
-        // any other, placed at the part that cites it.
-        let mut findings = quotation_findings(pass.quote_checks);
-        findings.extend(issues);
+        let mut findings = issues;
         findings.retain(|finding| !finding.note.trim().is_empty());
         // A finding about a sentence a live claim stands on waits for
         // the user: the review does not rewrite what passed (§10.3).

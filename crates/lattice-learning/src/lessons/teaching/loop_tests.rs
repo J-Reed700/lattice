@@ -3625,3 +3625,44 @@ fn a_finding_whose_edit_overlapped_another_findings_is_not_charged_and_is_told_t
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_whole_repair_is_neither_sent_nor_charged_a_failing_quotation() -> Result<()> {
+    const BAD: &str = "An imaginary handbook says this widget behaves in a different way entirely.";
+    let mut full = shaped_lesson();
+    full["blocks"][0]["quote"] = json!(BAD);
+    let mut cut = full.clone();
+    cut["questions"].as_array_mut().unwrap().pop();
+    let quotation_id = format!(
+        "rule/quotation/section-0/{}",
+        crate::review_findings::subject_of(BAD)
+    );
+    let fix = json!({"edits":[{"finding":quotation_id,"path":"/blocks/0/quote","before":BAD,"after":EXCERPT}]}).to_string();
+    let model = model(vec![
+        full.to_string(),
+        shaped_answers(&full),
+        shaped_review(&full),
+        fix,
+        shaped_answers(&full),
+        crate::lessons::course_generation_tests::clean_review(&[0], &[]),
+    ]);
+
+    let reviewed = review_shaped(&model, &cut, &[]).await;
+
+    let asked = repair_requests(&model);
+    assert!(!asked.is_empty(), "no repair was asked");
+    let first = ids_of(&asked[0]);
+    assert!(
+        first.iter().any(|id| id == "rule/question-count/lesson"),
+        "{first:?}"
+    );
+    assert!(
+        first.iter().all(|id| !id.starts_with("rule/quotation")),
+        "the whole rewrite was sent the quotation: {first:?}"
+    );
+    assert_eq!(asked.len(), 2);
+    assert_eq!(ids_of(&asked[1]), [quotation_id]);
+    assert!(asked[1]["issuesToFix"][0]["lastAttempt"].is_null());
+    assert!(reviewed?.set_aside.is_empty());
+    Ok(())
+}
