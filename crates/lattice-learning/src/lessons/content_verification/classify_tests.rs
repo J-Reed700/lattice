@@ -599,14 +599,18 @@ async fn a_figure_in_a_part_that_states_what_is_so_is_the_model_s_to_sort() -> R
 
 #[tokio::test]
 async fn a_figure_statement_the_model_calls_internal_is_read_as_reasoning() -> Result<()> {
-    let model = scripted(vec![json!({"s0": "internal"})]);
+    let model = scripted(vec![json!({"s0": "internal"}), json!({"s0": "reasoning"})]);
     let sorted = classify(
         &model,
         &[body("The sample batch holds 12 of the 48 units.")],
     )
     .await?;
     assert_eq!(sorted, vec![(Class::Reasoning, ClassifiedBy::Model)]);
-    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+    assert_eq!(
+        model.prompts.lock().unwrap().len(),
+        1,
+        "the model was asked again"
+    );
     Ok(())
 }
 
