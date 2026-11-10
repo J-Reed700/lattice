@@ -59,16 +59,16 @@ fn a_first_review_covers_every_section_and_asks_about_nothing() {
     let round = standing.round(&lesson(&[FIRST, SECOND])).unwrap();
     assert_eq!(round.sections, vec![0, 1]);
     assert!(round.whole);
-    assert!(round.asked.is_none());
+    assert!(round.first);
+    assert!(round.asked.is_empty());
     assert!(round.known.is_empty());
-    assert!(!standing.seen());
+    assert!(round.scope().asked.is_none());
 }
 
 #[test]
 fn material_the_reviewer_has_seen_gives_no_round() {
     let candidate = lesson(&[FIRST, SECOND]);
     let (standing, _) = reviewed(&candidate, Vec::new());
-    assert!(standing.seen());
     assert!(standing.round(&candidate).is_none());
 }
 
@@ -87,11 +87,31 @@ fn a_changed_section_is_the_only_one_in_the_round_and_its_finding_is_asked_with_
     let round = standing.round(&changed).unwrap();
     assert_eq!(round.sections, vec![0]);
     assert!(!round.whole);
-    let asked = round.asked.unwrap();
+    let asked = round.asked;
     assert_eq!(asked.len(), 1);
     assert_eq!(asked[0].id, fresh[0].id());
     assert_eq!(asked[0].site, FindingSite::Section(0));
     assert_eq!(asked[0].passage_id.as_deref(), Some("section-0-passage-0"));
+    assert!(round.known.is_empty());
+}
+
+#[test]
+fn a_finding_with_a_second_part_is_asked_again_when_only_the_second_part_changed() {
+    let candidate = lesson(&[FIRST, SECOND]);
+    let (_, fresh) = reviewed(
+        &candidate,
+        vec![report(Some(FindingSite::Section(0)), "Clash.", Some(FIRST))],
+    );
+    let both = fresh[0].clone().with_also(FindingSite::Section(1));
+    let mut standing = Standing::new(&Held::default());
+    standing.admit(&candidate, vec![both.clone()]);
+    let round = standing
+        .round(&lesson(&[FIRST, "The second part now states a third."]))
+        .unwrap();
+    assert_eq!(round.sections, vec![1]);
+    let asked = round.asked;
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0].id, both.id());
     assert!(round.known.is_empty());
 }
 
@@ -106,7 +126,8 @@ fn a_finding_in_a_part_that_did_not_change_is_known_and_not_asked() {
         .round(&lesson(&[FIRST, "The second part now states a third."]))
         .unwrap();
     assert_eq!(round.sections, vec![1]);
-    assert_eq!(round.asked.unwrap().len(), 0);
+    assert!(round.asked.is_empty());
+    assert!(!round.first);
     assert_eq!(round.known.len(), 1);
     assert_eq!(round.known[0].id, fresh[0].id());
 }
@@ -245,24 +266,34 @@ fn a_findings_passage_follows_the_sentence_a_repair_wrote_for_it_and_is_none_whe
     let id = fresh[0].id();
     let moved = lesson(&["Alpha two.\n\nAlpha one rewritten."]);
     standing.worked_on(&id, ["Alpha one rewritten.".to_owned()]);
-    let asked = standing.round(&moved).unwrap().asked.unwrap();
+    let asked = standing.round(&moved).unwrap().asked;
     assert_eq!(asked[0].passage_id.as_deref(), Some("section-0-passage-1"));
     let gone = lesson(&["Beta."]);
-    let asked = standing.round(&gone).unwrap().asked.unwrap();
+    let asked = standing.round(&gone).unwrap().asked;
     assert_eq!(asked[0].passage_id, None);
 }
 
 #[test]
 fn worked_on_a_finding_that_is_not_open_changes_nothing() {
-    let candidate = lesson(&[FIRST]);
-    let (mut standing, _) = reviewed(&candidate, Vec::new());
+    let candidate = lesson(&["Alpha one.\n\nAlpha two."]);
+    let (mut standing, _) = reviewed(
+        &candidate,
+        vec![report(
+            Some(FindingSite::Section(0)),
+            "Wrong.",
+            Some("Alpha one."),
+        )],
+    );
     let other = ReviewFinding::reviewer(9, Some(FindingSite::Section(0)), "x");
-    standing.worked_on(&other.id(), ["Anything.".to_owned()]);
-    assert!(standing.open().is_empty());
+    standing.worked_on(&other.id(), ["Alpha two.".to_owned()]);
+    let moved = lesson(&["Alpha two.\n\nAlpha one."]);
+    let asked = standing.round(&moved).unwrap().asked;
+    assert_eq!(asked[0].passage_id.as_deref(), Some("section-0-passage-1"));
 }
 
 #[test]
-fn a_standing_seeded_from_stored_findings_does_not_review_their_section_and_numbers_after_them() {
+fn a_standing_seeded_from_stored_findings_asks_about_them_in_a_first_review_and_numbers_after_them()
+{
     let candidate = lesson(&[FIRST, SECOND]);
     let stored =
         ReviewFinding::reviewer(3, Some(FindingSite::Section(0)), "Stored.").with_passage(FIRST);
@@ -276,11 +307,13 @@ fn a_standing_seeded_from_stored_findings_does_not_review_their_section_and_numb
     };
     let mut standing = Standing::new(&held);
     let round = standing.round(&candidate).unwrap();
-    assert_eq!(round.sections, vec![1]);
-    assert!(!round.whole);
-    assert!(round.asked.is_none());
-    assert_eq!(round.known.len(), 1);
-    assert_eq!(round.known[0].id, stored.id());
+    assert!(round.first);
+    assert_eq!(round.sections, vec![0, 1]);
+    assert!(round.whole);
+    assert_eq!(round.asked.len(), 1);
+    assert_eq!(round.asked[0].id, stored.id());
+    assert!(round.known.is_empty());
+    assert_eq!(round.scope().asked.map(<[_]>::len), Some(1));
     let (_, new) = answer(
         &mut standing,
         &candidate,
@@ -300,7 +333,6 @@ fn saved_state_round_trips_and_a_saved_string_without_the_key_leaves_the_seeded_
     let saved = json!({"reviewer": standing.saved().unwrap(), "spent": []}).to_string();
     let mut resumed = Standing::new(&Held::default());
     resumed.resume(&saved);
-    assert!(resumed.seen());
     assert!(resumed.round(&candidate).is_none());
     assert_eq!(resumed.open(), standing.open());
     let (_, new) = answer(
@@ -319,7 +351,7 @@ fn saved_state_round_trips_and_a_saved_string_without_the_key_leaves_the_seeded_
     };
     let mut seeded = Standing::new(&held);
     seeded.resume(&json!({"spent": []}).to_string());
-    assert!(!seeded.seen());
+    assert!(seeded.round(&candidate).unwrap().first);
     assert_eq!(seeded.open().len(), 1);
 }
 
@@ -344,7 +376,7 @@ fn a_stored_finding_follows_its_passage_when_its_section_changes_around_it() {
 {FIRST}"
     )]);
     let round = standing.round(&longer).unwrap();
-    let asked = round.asked.as_ref().unwrap();
+    let asked = &round.asked;
     assert_eq!(asked[0].passage_id.as_deref(), Some("section-0-passage-1"));
     let fresh = standing.judged(
         &longer,

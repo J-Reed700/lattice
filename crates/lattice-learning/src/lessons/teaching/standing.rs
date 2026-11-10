@@ -1,7 +1,7 @@
 //! The reviewer's findings on one material across the passes of a review: a
-//! verdict stands while its text is unchanged. After the reviewer has seen the
-//! material it is asked only about what changed since, by each part's digest;
-//! no wording is read.
+//! verdict stands while its text is unchanged and the reviewer is given the
+//! same inputs. After the reviewer has seen the material it is asked only
+//! about what changed since, by each part's digest; no wording is read.
 use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
@@ -11,7 +11,7 @@ use crate::review_findings::{
     sentences_in, sentences_of, site_sha256, subject_of, FindingId, FindingSite, Held,
     ReviewFinding,
 };
-use crate::teaching_review::{passages_of, Asked, Judged, Scope};
+use crate::teaching_review::{label, passages_of, Asked, Judged, Scope};
 
 /// What the reviewer is asked in one pass.
 pub(super) struct Round {
@@ -19,9 +19,12 @@ pub(super) struct Round {
     pub sections: Vec<usize>,
     /// Whether those are every section.
     pub whole: bool,
-    /// The open findings to judge again; none on a first review.
-    pub asked: Option<Vec<Asked>>,
-    /// The open findings whose part did not change.
+    /// Whether no verdict stands, so this is a first review of the material
+    /// under what the reviewer is given.
+    pub first: bool,
+    /// The open findings to judge again.
+    pub asked: Vec<Asked>,
+    /// The open findings whose parts did not change.
     pub known: Vec<Asked>,
 }
 
@@ -29,7 +32,7 @@ impl Round {
     pub fn scope(&self) -> Scope<'_> {
         Scope {
             sections: (!self.whole).then_some(self.sections.as_slice()),
-            asked: self.asked.as_deref(),
+            asked: (!(self.first && self.asked.is_empty())).then_some(self.asked.as_slice()),
             known: &self.known,
         }
     }
@@ -37,10 +40,11 @@ impl Round {
 
 /// The reviewer's findings on one material.
 pub(super) struct Standing {
-    /// Whether the reviewer has reviewed this material.
-    seen: bool,
     /// Each part's digest when the reviewer last saw it.
     reviewed: BTreeMap<FindingSite, String>,
+    /// The digest of what the reviewer was given besides the material; empty
+    /// until a review.
+    basis: String,
     /// The reviewer's findings that are open, in the order raised.
     open: Vec<ReviewFinding>,
     /// For each open finding, the digests of the sentences it is about: its
@@ -52,8 +56,9 @@ pub(super) struct Standing {
 /// The state kept with a draft: maps are pairs, as JSON keys are strings.
 #[derive(Deserialize, Serialize)]
 struct Saved {
-    seen: bool,
     reviewed: Vec<(FindingSite, String)>,
+    #[serde(default)]
+    basis: String,
     open: Vec<ReviewFinding>,
     about: Vec<(FindingId, Vec<String>)>,
     next_number: u32,
@@ -87,17 +92,13 @@ fn sentence_digests<'a>(sentences: impl IntoIterator<Item = &'a String>) -> BTre
 }
 
 impl Standing {
-    /// A material whose stored reviewer findings, `held`, still stand: their
-    /// parts are not reviewed again, and they are neither asked about nor
-    /// raised twice.
+    /// A material whose stored reviewer findings, `held`, are open. What their
+    /// review was given is not recorded, so the job's first review judges
+    /// them again; none is raised twice.
     pub fn new(held: &Held) -> Self {
         Self {
-            seen: false,
-            reviewed: held
-                .reviewer
-                .iter()
-                .map(|(finding, digest)| (site_of(finding), digest.clone()))
-                .collect(),
+            reviewed: BTreeMap::new(),
+            basis: String::new(),
             open: held
                 .reviewer
                 .iter()
@@ -121,12 +122,12 @@ impl Standing {
     /// The state to keep with the draft a repair produced.
     pub fn saved(&self) -> serde_json::Result<Value> {
         serde_json::to_value(Saved {
-            seen: self.seen,
             reviewed: self
                 .reviewed
                 .iter()
                 .map(|(site, digest)| (*site, digest.clone()))
                 .collect(),
+            basis: self.basis.clone(),
             open: self.open.clone(),
             about: self
                 .about
@@ -148,8 +149,8 @@ impl Standing {
         let Some(kept) = kept else {
             return;
         };
-        self.seen = kept.seen;
         self.reviewed = kept.reviewed.into_iter().collect();
+        self.basis = kept.basis;
         self.open = kept.open;
         self.about = kept
             .about
@@ -159,9 +160,14 @@ impl Standing {
         self.next_number = self.next_number.max(kept.next_number);
     }
 
-    /// Whether the reviewer has reviewed this material.
-    pub fn seen(&self) -> bool {
-        self.seen
+    /// Notes what the reviewer is given besides the material. When that is
+    /// not what its verdicts were given, none stands: every part is
+    /// reviewed again, and every open finding is asked about.
+    pub fn under(&mut self, basis: &str) {
+        if self.basis != basis {
+            self.reviewed.clear();
+            self.basis = basis.to_owned();
+        }
     }
 
     /// Whether the part at `site` is not as the reviewer last saw it.
@@ -187,6 +193,16 @@ impl Standing {
             })
     }
 
+    /// Whether the reviewer's verdict on `finding` no longer stands: a part
+    /// it is about changed since the reviewer saw it. A finding about the
+    /// whole material is touched whenever the material changed.
+    fn touched(&self, candidate: &Value, finding: &ReviewFinding) -> bool {
+        self.changed(candidate, site_of(finding))
+            || finding
+                .also
+                .is_some_and(|also| self.changed(candidate, also))
+    }
+
     fn shown(&self, candidate: &Value, finding: &ReviewFinding) -> Asked {
         Asked {
             id: finding.id(),
@@ -197,9 +213,9 @@ impl Standing {
     }
 
     /// What the reviewer is asked of `candidate`; none when it has seen
-    /// exactly this material, so its findings stand.
+    /// exactly this material under what it is given, so its findings stand.
     pub fn round(&self, candidate: &Value) -> Option<Round> {
-        if self.seen && !self.changed(candidate, FindingSite::Lesson) {
+        if !self.changed(candidate, FindingSite::Lesson) {
             return None;
         }
         let count = candidate
@@ -213,7 +229,7 @@ impl Standing {
         let (mut asked, mut known) = (Vec::new(), Vec::new());
         for finding in &self.open {
             let shown = self.shown(candidate, finding);
-            if self.seen && self.changed(candidate, site_of(finding)) {
+            if self.touched(candidate, finding) {
                 asked.push(shown);
             } else {
                 known.push(shown);
@@ -222,7 +238,8 @@ impl Standing {
         Some(Round {
             sections,
             whole,
-            asked: self.seen.then_some(asked),
+            first: self.reviewed.is_empty(),
+            asked,
             known,
         })
     }
@@ -265,7 +282,7 @@ impl Standing {
         let mut fresh = Vec::new();
         for report in judged.reported {
             let folded = report.passage_id.as_deref().and_then(|passage| {
-                round.asked.iter().flatten().find(|asked| {
+                round.asked.iter().find(|asked| {
                     asked.passage_id.as_deref() == Some(passage)
                         && settled
                             .iter()
@@ -296,12 +313,15 @@ impl Standing {
 
     /// Opens the new findings that are to be kept, and notes the material as
     /// the reviewer has now seen it. A finding is kept when it is about the
-    /// whole material or about a part that changed since the reviewer last
-    /// saw it.
+    /// whole material or about a part, or a second part, that changed since
+    /// the reviewer last saw it.
     pub fn admit(&mut self, candidate: &Value, established: Vec<ReviewFinding>) {
         for finding in established {
-            let site = site_of(&finding);
-            if site != FindingSite::Lesson && !self.changed(candidate, site) {
+            if !self.touched(candidate, &finding) {
+                tracing::info!(
+                    part = %label(site_of(&finding)),
+                    "A new finding is about text the reviewer had already judged and is not kept"
+                );
                 continue;
             }
             self.about.insert(
@@ -311,7 +331,6 @@ impl Standing {
             self.open.push(finding);
         }
         self.reviewed = digests(candidate);
-        self.seen = true;
     }
 
     /// The reviewer's open findings, in the order raised.

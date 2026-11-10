@@ -3119,6 +3119,25 @@ async fn a_closed_review_s_recheck_takes_a_resolved_verdict_not_an_issue() -> Re
 }
 
 #[tokio::test]
+async fn material_that_fails_closed_and_comes_back_unchanged_fails_without_another_review() {
+    let model =
+        ByRequest::new(|_| false, |_, _| Vec::new()).about_the_whole(|_, _| vec![WRONG_COMPARISON]);
+    let result = review_and_repair(
+        &model,
+        "Author quiz questions",
+        "Require a correct comparison",
+        &json!({"type":"object"}),
+        json!({"wrong":true}).to_string(),
+        2000,
+    )
+    .await;
+    let error = result.unwrap_err().to_string();
+    assert!(error.contains("still found an issue"), "{error}");
+    assert_eq!(model.reviews().len(), 1);
+    assert_eq!(model.repairs().len(), 1);
+}
+
+#[tokio::test]
 async fn a_present_finding_its_section_check_reports_again_is_one_finding() -> Result<()> {
     let model = ByRequest::new(|text| text.contains("first idea"), reword_every_part).restating();
     let reviewed = run(&model, parts_lesson(1)).await?;

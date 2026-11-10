@@ -236,9 +236,20 @@ fn decided(
             "an actionable decision requires partId: a candidate ID (blocks-N or questions-N) or lesson.",
         ));
     };
+    // An issue the check places is about every candidate part its evidence
+    // cites, the first other than partId its second.
+    let second = finding
+        .evidence_ids
+        .iter()
+        .filter(|id| evidence.get(*id) == Some(&EvidenceKind::Candidate))
+        .filter_map(|id| FindingSite::of_part(id))
+        .find(|site| *site != part);
     let mut finding = issue.clone();
     if finding.site.is_none() {
         finding.site = Some(part);
+        if let Some(second) = second {
+            finding = finding.with_also(second);
+        }
     }
     Ok(Some(finding))
 }

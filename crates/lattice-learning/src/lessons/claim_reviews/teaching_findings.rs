@@ -7,10 +7,12 @@
 //! to the text of that part (`unit_sha256`): while the text is unchanged the
 //! machine does not repair it again and a "keep as written" stands; once the
 //! text changes, both lapse. A reviewer's finding is stored with its number,
-//! note, summary and passage: while its part is unchanged the reviewer is not
-//! asked about it again, and the number is never used twice for one lesson. A row from before finding ids is stored by its
-//! kind and place (`FindingKey`) and stands for every finding of that kind at
-//! that place until the text changes.
+//! note, summary and passage: while its part is unchanged the machine does not
+//! repair it again, a later job's first review asks the reviewer about it by
+//! its number, and the number is not given to another finding. A row from
+//! before finding ids is stored by its kind and place (`FindingKey`) and
+//! stands for every finding of that kind at that place until the text
+//! changes.
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use lattice_core::shared::error::{AppError, Result};

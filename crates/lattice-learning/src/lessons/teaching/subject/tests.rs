@@ -1,7 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::lessons::teaching::standing::Standing;
-use crate::review_findings::{FindingSite, Held};
+use crate::review_findings::{FindingSite, Held, ReviewFinding};
 use crate::teaching_review::{Asked, Judged, Reported};
 
 /// `SHARED_CHECKS` as it was written out in full before it was built from
@@ -98,4 +98,30 @@ fn known_findings_are_explained_only_when_there_are_some() {
         ..round
     };
     assert!(!review_instructions(REVIEW_SYSTEM, &alone, true, "A scope.").contains(KNOWN_FINDINGS));
+}
+
+#[test]
+fn a_first_review_with_findings_open_is_the_first_review_told_how_to_judge_them() {
+    let stored = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "Stored.");
+    let held = Held {
+        reviewer: vec![(stored, String::new())],
+        next_number: 2,
+        ..Held::default()
+    };
+    let round = Standing::new(&held).round(&lesson(2)).unwrap();
+    assert!(round.first);
+    assert_eq!(round.asked.len(), 1);
+    let text = review_instructions(REVIEW_SYSTEM, &round, true, "A scope.");
+    assert!(text.starts_with(REVIEW_SYSTEM));
+    assert!(text.contains(OPEN_VERDICTS));
+    assert!(text.contains(SHARED_CHECKS));
+    assert!(!text.contains(RECHECK_SYSTEM));
+    assert!(!text.contains("reviewed and then corrected"));
+}
+
+#[test]
+fn the_verdict_sentence_is_the_same_words_in_both_instructions() {
+    let sentence = open_verdicts!();
+    assert!(RECHECK_SYSTEM.contains(sentence));
+    assert!(OPEN_VERDICTS.starts_with(sentence));
 }
