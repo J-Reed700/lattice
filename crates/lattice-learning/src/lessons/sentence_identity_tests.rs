@@ -166,3 +166,28 @@ fn the_writer_and_the_repairs_are_told_never_to_paste_the_quote_as_the_sentence(
         );
     }
 }
+
+#[test]
+fn a_sentence_too_short_to_quote_is_no_sentence_the_lesson_repeats() {
+    let candidate = lesson(vec![
+        section("First step", "Predict the result first. No."),
+        section("Second step", "Predict the next result. No."),
+    ]);
+    let found = teaching(&candidate);
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_sentence_just_at_the_quote_floor_is_still_a_repeat() {
+    use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
+    const SHARED: &str = "Show the folder name now.";
+    assert_eq!(SHARED.chars().count(), MIN_QUOTE_CHARS);
+    assert_eq!(SHARED.split_whitespace().count(), MIN_QUOTE_WORDS);
+    let candidate = lesson(vec![
+        section("First step", &format!("Begin here. {SHARED}")),
+        section("Second step", &format!("Again here. {SHARED}")),
+    ]);
+    let found = teaching(&candidate);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].passage.as_deref(), Some(SHARED));
+}
