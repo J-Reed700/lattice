@@ -1851,3 +1851,76 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
     assert_eq!(waiting(&second), waiting(&first));
     Ok(())
 }
+
+use crate::lessons::claim_reviews::teaching_findings::{
+    TeachingFindingsRepository, TeachingSettleDto,
+};
+use crate::review_findings::{PlanCheck, SetAside};
+
+fn plan_at(subject: &str, site: FindingSite) -> ReviewFinding {
+    ReviewFinding::plan(
+        PlanCheck::Used,
+        subject,
+        site,
+        "An idea is used before it is shown.",
+    )
+}
+
+#[tokio::test]
+async fn keeping_one_finding_leaves_the_other_in_its_section_waiting_and_repairable() -> Result<()>
+{
+    let pool = crate::tests::pool().await?;
+    let (_, job, lesson_id) =
+        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+    let program_id: String =
+        sqlx::query_scalar("SELECT program_id FROM learning_lessons WHERE id=?")
+            .bind(&lesson_id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let store = TeachingFindingsRepository::new(pool);
+    let candidate = lesson(EXCERPT);
+    let first = plan_at("aaaa000000000001", FindingSite::Section(0));
+    let second = plan_at("aaaa000000000002", FindingSite::Section(0));
+    let set_aside: Vec<_> = [&first, &second]
+        .into_iter()
+        .map(|finding| SetAside {
+            finding: finding.clone(),
+            repairs: 2,
+        })
+        .collect();
+    store
+        .record(&lesson_id, &job, &candidate, &set_aside, true)
+        .await?;
+    let listed = store.list(&lesson_id).await?;
+    let key = listed.first().unwrap().finding_key.clone();
+    store
+        .settle(&program_id, &lesson_id, &[key], TeachingSettleDto::Keep)
+        .await?;
+    let passes = Passes::new(store.held(&lesson_id, &candidate).await?);
+    assert!(!passes.repairable(&first));
+    assert!(passes.repairable(&second));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_row_stored_by_place_holds_every_finding_of_its_kind_there() -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (_, _, lesson_id) =
+        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+    let candidate = lesson(EXCERPT);
+    sqlx::query(
+        "INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, passage, repairs, state, job_id, found_at, kept_at)          VALUES (?, 'teaching:section-0', 'teaching', 'section', 0, 'T', ?, 'A note.', NULL, 0, 'kept', NULL, 1, 5)",
+    )
+    .bind(&lesson_id)
+    .bind(crate::review_findings::site_sha256(&candidate, FindingSite::Section(0)))
+    .execute(&pool)
+    .await
+    .unwrap();
+    let store = TeachingFindingsRepository::new(pool);
+    let passes = Passes::new(store.held(&lesson_id, &candidate).await?);
+    assert!(!passes.repairable(&plan_at("aaaa000000000001", FindingSite::Section(0))));
+    assert!(!passes.repairable(&plan_at("aaaa000000000002", FindingSite::Section(0))));
+    assert!(passes.repairable(&plan_at("aaaa000000000003", FindingSite::Section(1))));
+    Ok(())
+}
