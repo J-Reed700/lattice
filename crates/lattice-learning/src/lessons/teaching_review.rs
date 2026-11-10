@@ -260,6 +260,63 @@ fn schema(indices: &[usize], passages: &[Vec<String>], verdict_ids: &[&str]) -> 
     json!({"type":"object","additionalProperties":false,"required":required,"properties":properties})
 }
 
+/// What a review's verdicts stand under, besides its text: the policy, the
+/// model and its window.
+fn run_inputs(llm: &dyn LLMPort) -> serde_json::Map<String, Value> {
+    let mut inputs = serde_json::Map::new();
+    inputs.insert("policy".into(), json!(POLICY));
+    inputs.insert("model".into(), json!(llm.model_name()));
+    inputs.insert("context".into(), json!(llm.max_context_tokens()));
+    inputs
+}
+
+/// The digest of what a review's reviewer is given besides the material:
+/// `run_inputs`, the subject's first-review `system` and evidence `scope`, and
+/// the review's `inputs`.
+pub(crate) fn basis(llm: &dyn LLMPort, system: &str, scope: &str, inputs: &Value) -> String {
+    let mut given = run_inputs(llm);
+    for (name, value) in [
+        ("system", json!(system)),
+        ("scope", json!(scope)),
+        ("inputs", inputs.clone()),
+    ] {
+        given.insert(name.into(), value);
+    }
+    crate::content_verification::digest(&Value::Object(given).to_string())
+}
+
+/// The entries of `openFindings`: the findings to be judged.
+fn open_entries<'a>(asked: impl IntoIterator<Item = &'a Asked>) -> Value {
+    let entries: Vec<Value> = asked
+        .into_iter()
+        .map(|finding| {
+            let mut entry = serde_json::Map::new();
+            entry.insert("id".into(), json!(finding.id.as_str()));
+            entry.insert("part".into(), json!(label(finding.site)));
+            if let Some(passage_id) = &finding.passage_id {
+                entry.insert("passageId".into(), json!(passage_id));
+            }
+            entry.insert("note".into(), json!(finding.note));
+            Value::Object(entry)
+        })
+        .collect();
+    json!(entries)
+}
+
+/// A finding shown by the part it is about (none: the material as a whole)
+/// and its note.
+fn part_note(site: Option<FindingSite>, note: &str) -> Value {
+    json!({"part": site.map(label), "note": note})
+}
+
+/// The note of a defect a section's check reports.
+fn section_note(index: usize, finding: &str) -> String {
+    format!(
+        "Section {} (candidate blocks-{index}): {finding}",
+        index + 1
+    )
+}
+
 /// What the reviewer found: its verdict on each finding in `scope.asked`,
 /// and the defects it reports beyond those. A defect of a section's check is
 /// placed in that section; a reviewer's issue is placed later, by the
@@ -280,34 +337,31 @@ pub async fn review(
         ));
     };
     if let Some(asked) = scope.asked {
-        let entries: Vec<Value> = asked
-            .iter()
-            .map(|finding| {
-                let mut entry = serde_json::Map::new();
-                entry.insert("id".into(), json!(finding.id.as_str()));
-                entry.insert("part".into(), json!(label(finding.site)));
-                if let Some(passage_id) = &finding.passage_id {
-                    entry.insert("passageId".into(), json!(passage_id));
-                }
-                entry.insert("note".into(), json!(finding.note));
-                Value::Object(entry)
-            })
-            .collect();
-        prompt.insert("openFindings".into(), json!(entries));
+        prompt.insert("openFindings".into(), open_entries(asked));
     }
     if !scope.known.is_empty() {
         let entries: Vec<Value> = scope
             .known
             .iter()
-            .map(|finding| json!({"part":label(finding.site),"note":finding.note}))
+            .map(|finding| part_note(Some(finding.site), &finding.note))
             .collect();
         prompt.insert("knownFindings".into(), json!(entries));
     }
     // Save findings, including defects, before the later grounding/repair step.
     // Reusing a completed review never approves the lesson or skips grounding.
-    let key = format!("teaching-review-findings-v4:{}", crate::content_verification::digest(
-        &json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":prompt,"candidate":candidate,"sections":scope.sections}).to_string()
-    ));
+    let mut inputs = run_inputs(llm);
+    for (name, value) in [
+        ("system", json!(system)),
+        ("prompt", json!(prompt)),
+        ("candidate", json!(candidate)),
+        ("sections", json!(scope.sections)),
+    ] {
+        inputs.insert(name.into(), value);
+    }
+    let key = format!(
+        "teaching-review-findings-v4:{}",
+        crate::content_verification::digest(&Value::Object(inputs).to_string())
+    );
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
         .await?
         .and_then(|v| serde_json::from_value::<Judged>(v).ok())
@@ -384,12 +438,22 @@ async fn review_sections(
                 )
             });
             prompt.insert("reviewResponseProblems".into(), json!(problems));
-            prompt.insert("retainedIssues".into(), json!(reported));
+            prompt.insert(
+                "retainedIssues".into(),
+                json!(reported
+                    .iter()
+                    .map(|report| part_note(report.site, &report.note))
+                    .collect::<Vec<_>>()),
+            );
             prompt.insert(
                 "acceptedBlockChecks".into(),
                 json!(accepted.values().collect::<Vec<_>>()),
             );
             if scope.asked.is_some() {
+                prompt.insert(
+                    "openFindings".into(),
+                    open_entries(remaining.iter().copied()),
+                );
                 prompt.insert(
                     "acceptedVerdicts".into(),
                     json!(verdicts.values().collect::<Vec<_>>()),
@@ -510,7 +574,7 @@ async fn review_sections(
                         value.get("finding").and_then(Value::as_str), value.get("hasDefect").and_then(Value::as_bool),
                     ) {
                         if indices.contains(&index) && !finding.trim().is_empty() {
-                            let note = format!("Section {} (candidate blocks-{index}): {}", index + 1, finding);
+                            let note = section_note(index, finding);
                             if !reported.iter().any(|known| known.note == note) {
                                 let chosen = value.get("passageId").and_then(Value::as_str);
                                 reported.push(Reported {
@@ -544,6 +608,17 @@ async fn review_sections(
                     } else if check.finding.trim().is_empty() && !settle {
                         problems.push(format!("Section {}: finding must not be blank.", check.index));
                     } else {
+                        if check.has_defect {
+                            let note = section_note(check.index, &check.finding);
+                            let site = Some(FindingSite::Section(check.index));
+                            if let Some(report) = reported
+                                .iter_mut()
+                                .find(|known| known.site == site && known.note == note)
+                            {
+                                report.passage = passage_text(&shown, check.index, &check.passage_id);
+                                report.passage_id = Some(check.passage_id.clone());
+                            }
+                        }
                         accepted.insert(check.index, check);
                     }
                 }

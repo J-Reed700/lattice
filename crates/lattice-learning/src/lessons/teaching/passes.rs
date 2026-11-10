@@ -14,13 +14,14 @@
 //! starts at that repair's count, and the review still ends. A new reviewer
 //! finding with no passage has no words to count, so it starts at the count
 //! of the reviewer's findings with no passage already at its place.
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::review_findings::{
-    sentences_of, subject_of, FindingId, FindingSite, Held, Origin, ReviewFinding, SetAside,
+    sentences_in, sentences_of, subject_of, FindingId, FindingSite, Held, Origin, ReviewFinding,
+    SetAside,
 };
 
 /// Attempts one finding is given: a first, and one retry that is told what
@@ -66,6 +67,11 @@ pub(super) struct Passes {
     passage_less: BTreeMap<FindingSite, u8>,
     /// The latest pass's findings, one per id.
     latest: Vec<ReviewFinding>,
+    /// The digests of the sentences each of the latest findings is about.
+    words: BTreeMap<FindingId, Vec<String>>,
+    /// The digests of the sentences the user's stored reviewer findings are
+    /// about: the machine does not repair a finding about them.
+    stored: BTreeSet<String>,
 }
 
 /// What decides stopping, kept with the draft a repair produced.
@@ -85,8 +91,16 @@ fn passage_less(finding: &ReviewFinding) -> bool {
 
 impl Passes {
     pub fn new(held: Held) -> Self {
+        let stored = held
+            .reviewer
+            .iter()
+            .filter_map(|(finding, _)| finding.passage.as_deref())
+            .flat_map(|passage| sentences_in(&Value::String(passage.to_owned())))
+            .map(|sentence| subject_of(&sentence))
+            .collect();
         Self {
             held,
+            stored,
             ..Self::default()
         }
     }
@@ -171,16 +185,27 @@ impl Passes {
                 None => current.push(finding),
             }
         }
+        self.words.clear();
         for finding in &current {
             let id = finding.id();
+            let about: Vec<String> = sentences_of(candidate, finding)
+                .iter()
+                .map(|sentence| subject_of(sentence))
+                .collect();
+            let mut start = about
+                .iter()
+                .filter_map(|digest| self.worked.get(digest).copied())
+                .max()
+                .unwrap_or_default();
+            self.words.insert(id.clone(), about.clone());
             if self.spent.contains_key(&id) {
                 continue;
             }
-            let mut start = sentences_of(candidate, finding)
-                .iter()
-                .filter_map(|sentence| self.worked.get(&subject_of(sentence)).copied())
-                .max()
-                .unwrap_or_default();
+            if matches!(finding.origin, Origin::Reviewer { .. })
+                && about.iter().any(|digest| self.stored.contains(digest))
+            {
+                start = REPAIRS_PER_FINDING;
+            }
             if passage_less(finding) {
                 let site = finding.site.unwrap_or(FindingSite::Lesson);
                 start = start.max(self.passage_less.get(&site).copied().unwrap_or_default());
@@ -208,8 +233,12 @@ impl Passes {
         let id = finding.id();
         let spent = self.spent.entry(id.clone()).or_default();
         *spent += 1;
+        let own = *spent;
+        for digest in self.words.get(&id).into_iter().flatten() {
+            let held = self.worked.entry(digest.clone()).or_default();
+            *held = (*held).max(own);
+        }
         if passage_less(finding) {
-            let own = *spent;
             let site = finding.site.unwrap_or(FindingSite::Lesson);
             let known = self.passage_less.entry(site).or_default();
             *known = (*known).max(own);

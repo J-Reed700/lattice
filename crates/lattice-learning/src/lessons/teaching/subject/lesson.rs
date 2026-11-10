@@ -61,6 +61,13 @@ impl<'a> LessonSubject<'a> {
             held_up: false,
         }
     }
+
+    /// Each reference's id and the digest of its excerpt.
+    fn reference_versions(&self) -> Vec<Value> {
+        self.references.sources.iter().map(|source| {
+            json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
+        }).collect()
+    }
 }
 
 #[async_trait::async_trait]
@@ -100,6 +107,16 @@ impl Subject for LessonSubject<'_> {
         Ok(())
     }
 
+    fn given(&mut self, llm: &dyn LLMPort, authoring: &Value) {
+        let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY,"referenceVersions":self.reference_versions()});
+        self.standing.under(&crate::teaching_review::basis(
+            llm,
+            REVIEW_SYSTEM,
+            LESSON_REVIEW_EVIDENCE_SCOPE,
+            &inputs,
+        ));
+    }
+
     async fn save(&self, candidate: &str) -> Result<()> {
         let mut saved = self.passes.saved()?;
         if let Some(fields) = saved.as_object_mut() {
@@ -122,10 +139,7 @@ impl Subject for LessonSubject<'_> {
     }
 
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
-        let reference_versions: Vec<Value> = self.references.sources.iter().map(|source| {
-            json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
-        }).collect();
-        let review_prompt = review_prompt(pass, LESSON_PRIORITY, reference_versions);
+        let review_prompt = review_prompt(pass, LESSON_PRIORITY, self.reference_versions());
         let structure = structural_findings(pass.schema, pass.candidate, &self.wording)?;
         // A rewrite of the whole lesson changes the sentences its checked
         // claims stand on, so once there are any, what its shape asks waits
@@ -140,10 +154,10 @@ impl Subject for LessonSubject<'_> {
             self.step(Step::CheckingKeys);
             let answer_issues = crate::key_review::check(llm, pass.value).await?;
             let round = self.standing.round(pass.value);
-            self.step(if self.standing.seen() {
-                Step::Rechecking
-            } else {
+            self.step(if round.as_ref().is_some_and(|round| round.first) {
                 Step::Reviewing
+            } else {
+                Step::Rechecking
             });
             let against_plan = contract::check(
                 llm,

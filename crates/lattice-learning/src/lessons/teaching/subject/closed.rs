@@ -44,6 +44,28 @@ fn quiz_step(step: Step) {
     });
 }
 
+fn outline_lens(progress: &OutlineProgress) -> Lens<'_> {
+    Lens {
+        first_system: OUTLINE_REVIEW_SYSTEM,
+        block_checks: false,
+        scope: "",
+        priority: OUTLINE_PRIORITY,
+        edits: false,
+        progress: Some(progress),
+    }
+}
+
+fn material_lens() -> Lens<'static> {
+    Lens {
+        first_system: REVIEW_SYSTEM,
+        block_checks: true,
+        scope: LESSON_REVIEW_EVIDENCE_SCOPE,
+        priority: LESSON_PRIORITY,
+        edits: true,
+        progress: None,
+    }
+}
+
 /// How material that fails closed is reviewed.
 struct Lens<'a> {
     first_system: &'static str,
@@ -53,6 +75,17 @@ struct Lens<'a> {
     priority: &'static str,
     edits: bool,
     progress: Option<&'a OutlineProgress>,
+}
+
+/// Notes what the reviewer of material that fails closed is given.
+fn closed_given(standing: &mut Standing, llm: &dyn LLMPort, authoring: &Value, lens: &Lens<'_>) {
+    let inputs = json!({"authoringContext":authoring,"correctnessPriority":lens.priority,"referenceVersions":Vec::<Value>::new()});
+    standing.under(&crate::teaching_review::basis(
+        llm,
+        lens.first_system,
+        lens.scope,
+        &inputs,
+    ));
 }
 
 /// The checks of material that fails closed: the answer keys, then the reviewer.
@@ -69,10 +102,10 @@ async fn closed_find(
         quiz_step(Step::CheckingKeys);
         let mut findings = crate::key_review::check(llm, pass.value).await?;
         if let Some(round) = standing.round(pass.value) {
-            quiz_step(if standing.seen() {
-                Step::Rechecking
-            } else {
+            quiz_step(if round.first {
                 Step::Reviewing
+            } else {
+                Step::Rechecking
             });
             let instructions =
                 review_instructions(lens.first_system, &round, lens.block_checks, lens.scope);
@@ -214,15 +247,13 @@ impl Subject for OutlineSubject<'_> {
         )
     }
 
+    fn given(&mut self, llm: &dyn LLMPort, authoring: &Value) {
+        let lens = outline_lens(self.context.progress);
+        closed_given(&mut self.standing, llm, authoring, &lens);
+    }
+
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
-        let lens = Lens {
-            first_system: OUTLINE_REVIEW_SYSTEM,
-            block_checks: false,
-            scope: "",
-            priority: OUTLINE_PRIORITY,
-            edits: false,
-            progress: Some(self.context.progress),
-        };
+        let lens = outline_lens(self.context.progress);
         closed_find(&mut self.standing, llm, pass, &self.wording, lens).await
     }
 
@@ -293,16 +324,19 @@ impl Subject for MaterialSubject {
         revised_quotes("lesson", lesson_quote_checks(candidate, authoring), attempt)
     }
 
+    fn given(&mut self, llm: &dyn LLMPort, authoring: &Value) {
+        closed_given(&mut self.standing, llm, authoring, &material_lens());
+    }
+
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
-        let lens = Lens {
-            first_system: REVIEW_SYSTEM,
-            block_checks: true,
-            scope: LESSON_REVIEW_EVIDENCE_SCOPE,
-            priority: LESSON_PRIORITY,
-            edits: true,
-            progress: None,
-        };
-        closed_find(&mut self.standing, llm, pass, &self.wording, lens).await
+        closed_find(
+            &mut self.standing,
+            llm,
+            pass,
+            &self.wording,
+            material_lens(),
+        )
+        .await
     }
 
     fn decide(

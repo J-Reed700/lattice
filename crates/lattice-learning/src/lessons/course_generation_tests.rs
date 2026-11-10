@@ -50,9 +50,9 @@ impl Model {
         if prompt.starts_with("Review instructional quality.") {
             let context: serde_json::Value =
                 serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
-            // The outline review names its open findings; lesson reviews
-            // keep their own response shape.
-            if context.get("openFindings").is_some() {
+            // Only the outline plan review numbers the modules it shows;
+            // the teaching reviews keep their own response shape.
+            if context.get("moduleNumbering").is_some() {
                 return Ok(json!({"newFindings":[]}).to_string());
             }
             if context["candidate"].get("blocks").is_none() {

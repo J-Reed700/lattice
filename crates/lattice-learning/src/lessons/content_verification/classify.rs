@@ -122,7 +122,8 @@ impl Case {
     }
 }
 
-/// A mark of a specific in a text: what a quote cited for it must hold.
+/// A mark of a specific in a text: a figure beyond the part's givens, or quoted
+/// wording, which a quote cited for the sentence must hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum Marker<'a> {
     /// A figure the part's givens do not state.
