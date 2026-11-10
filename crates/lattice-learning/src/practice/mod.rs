@@ -16,6 +16,7 @@ pub mod practice_generation;
 pub mod practice_repository;
 #[cfg(test)]
 pub(crate) mod practice_tests;
+pub mod session;
 pub mod simulation_policy;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;
