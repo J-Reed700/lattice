@@ -932,3 +932,196 @@ fn the_writer_s_shape_is_the_draft_s_in_the_policy_s_words() {
         json!(shape::policy().asked(Phase::Draft))
     );
 }
+
+fn sweep_baseline() -> Value {
+    let kinds = [
+        "explanation",
+        "worked_example",
+        "contrast",
+        "check",
+        "explanation",
+        "worked_example",
+        "check",
+        "guided_practice",
+        "independent_practice",
+        "reflection",
+        "recap",
+    ];
+    let blocks: Vec<_> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            let title = format!("Part {i}");
+            let mut section = block(kind, &title, &format!("Body of part {i}."), false);
+            if kind.ends_with("practice") {
+                section["rubric"] = json!([
+                    {"title":"One","description":"Observable.","dimension":"recall"},
+                    {"title":"Two","description":"Observable.","dimension":"application"}
+                ]);
+            }
+            section
+        })
+        .collect();
+    let questions: Vec<_> = ["practice", "practice", "quiz", "quiz", "test", "test"]
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| question(kind, &format!("Question {i}?"), false))
+        .collect();
+    json!({"blocks":blocks,"questions":questions})
+}
+
+fn kept_rules(lesson: &Value) -> Vec<Rule> {
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Kept, 0);
+    crate::teaching::structural_findings(
+        crate::teaching::ReviewSchema::Lesson(crate::lessons::shape::LessonShape::new(
+            &schema, policy,
+        )),
+        &lesson.to_string(),
+        &Default::default(),
+    )
+    .unwrap()
+    .into_iter()
+    .filter_map(|finding| match finding.origin {
+        crate::review_findings::Origin::Rule { rule, .. } => Some(rule),
+        _ => None,
+    })
+    .collect()
+}
+
+/// One row for each rule a lesson can break: the defect and the rule that reports it.
+#[test]
+fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
+    type Mutation = fn(&mut Value);
+    let rows: [(&str, Mutation, Rule); 17] = [
+        (
+            "blank block title",
+            |l| l["blocks"][0]["title"] = json!("  "),
+            Rule::TitleMissing,
+        ),
+        (
+            "repeated block title",
+            |l| l["blocks"][1]["title"] = json!("Part 0"),
+            Rule::TitleRepeated,
+        ),
+        (
+            "blank block body",
+            |l| l["blocks"][0]["body"] = json!("  "),
+            Rule::BlockBody,
+        ),
+        (
+            "blank question prompt",
+            |l| l["questions"][0]["prompt"] = json!("  "),
+            Rule::PromptMissing,
+        ),
+        (
+            "repeated question prompt",
+            |l| l["questions"][1]["prompt"] = json!("Question 0?"),
+            Rule::PromptRepeated,
+        ),
+        (
+            "three choices",
+            |l| l["questions"][0]["options"] = json!(["One", "Two", "Three"]),
+            Rule::Choices,
+        ),
+        (
+            "an identical choice twice",
+            |l| l["questions"][0]["options"] = json!(["One", "Two", "Two", "Four"]),
+            Rule::Choices,
+        ),
+        (
+            "a blank choice",
+            |l| l["questions"][0]["options"] = json!(["One", "Two", "  ", "Four"]),
+            Rule::Choices,
+        ),
+        (
+            "correctIndex out of range",
+            |l| l["questions"][0]["correctIndex"] = json!(7),
+            Rule::Schema,
+        ),
+        (
+            "blank explanation",
+            |l| l["questions"][0]["explanation"] = json!("  "),
+            Rule::ExplanationMissing,
+        ),
+        (
+            "reasons count differs from the choices",
+            |l| {
+                l["questions"][0]["rationales"] =
+                    json!(["One fails here.", "", "Three fails here."])
+            },
+            Rule::RationaleCount,
+        ),
+        (
+            "a wrong choice with no reason",
+            |l| {
+                l["questions"][0]["rationales"] =
+                    json!(["", "", "Three fails here.", "Four fails here."])
+            },
+            Rule::RationaleMissing,
+        ),
+        (
+            "a question kind missing",
+            |l| {
+                l["questions"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|q| q["kind"] != "test")
+            },
+            Rule::QuestionKinds,
+        ),
+        (
+            "no questions at all",
+            |l| l["questions"] = json!([]),
+            Rule::QuestionKinds,
+        ),
+        (
+            "no explanation",
+            |l| {
+                l["blocks"][0]["kind"] = json!("contrast");
+                l["blocks"][4]["kind"] = json!("contrast");
+            },
+            Rule::NoExplanation,
+        ),
+        (
+            "a rubric with a repeated criterion",
+            |l| {
+                let criterion = json!({"title":"Names the step","description":"Says which step comes next.","dimension":"recall"});
+                l["blocks"][7]["rubric"] = json!([criterion.clone(), criterion]);
+            },
+            Rule::PracticeRubric,
+        ),
+        (
+            "a rubric with five criteria",
+            |l| {
+                let criteria: Vec<Value> = (0..5).map(|n| json!({"title":format!("Criterion {n}"),"description":"Says which step comes next.","dimension":"recall"})).collect();
+                l["blocks"][7]["rubric"] = json!(criteria);
+            },
+            Rule::PracticeRubric,
+        ),
+    ];
+    let mut program = crate::test_support::fixture();
+    program.sources.clear();
+    for (name, mutate, rule) in rows {
+        assert!(
+            !kept_rules(&sweep_baseline()).contains(&rule),
+            "{name}: the baseline already breaks {rule:?}"
+        );
+        let mut lesson = sweep_baseline();
+        mutate(&mut lesson);
+        assert!(
+            kept_rules(&lesson).contains(&rule),
+            "{name}: {rule:?} is not reported"
+        );
+        let generated: GeneratedLesson = serde_json::from_value(lesson).unwrap();
+        let (prepared, _) = match assemble(generated, &[], &HashSet::new()) {
+            Ok(assembled) => assembled,
+            Err(error) => panic!("{name}: the lesson is not saved: {error:?}"),
+        };
+        let checked = crate::service::validate_generated(&prepared, &program);
+        assert!(
+            checked.is_ok(),
+            "{name}: the save gate refuses it: {checked:?}"
+        );
+    }
+}
