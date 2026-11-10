@@ -1233,3 +1233,14 @@ fn a_part_of_a_sourced_course_naming_no_source_is_saved_with_none_and_waits() {
         );
     }
 }
+
+#[test]
+fn a_candidate_with_no_sections_does_not_read_as_a_lesson() {
+    assert!(crate::generation::reads_as_lesson(&sweep_baseline(false)));
+    let mut lesson = sweep_baseline(false);
+    lesson["blocks"] = json!([]);
+    assert!(!crate::generation::reads_as_lesson(&lesson));
+    assert!(!crate::generation::reads_as_lesson(
+        &json!({"blocks": [], "questions": []})
+    ));
+}
