@@ -177,7 +177,7 @@ pub fn file_violations_with(
 }
 
 /// Violations of a file in `module`, given where every `mod` of the crate is declared visible.
-pub fn file_violations_in(
+fn file_violations_in(
     path: &str,
     module: &[String],
     ast: &syn::File,
