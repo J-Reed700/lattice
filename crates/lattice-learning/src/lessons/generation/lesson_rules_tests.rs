@@ -976,3 +976,57 @@ fn the_prose_between_two_short_quotations_needs_no_citation() {
     );
     assert!(lesson_rules(&candidate).is_empty());
 }
+
+const OWN_CASE: &str = "Dividing 12 by 48 gives 0.25.";
+
+fn citation_findings(candidate: &Value) -> Vec<ReviewFinding> {
+    lesson_rules(candidate)
+        .into_iter()
+        .filter(|finding| finding.kind == FindingKind::Quotation)
+        .collect()
+}
+
+#[test]
+fn a_figure_without_a_citation_is_not_a_citation_finding() {
+    let mut section = lesson();
+    section["blocks"][0]["body"] = json!(OWN_CASE);
+    let found = citation_findings(&section);
+    assert!(found.is_empty(), "section: {found:?}");
+
+    let mut explanation = lesson();
+    explanation["questions"][0]["explanation"] = json!(OWN_CASE);
+    let found = citation_findings(&explanation);
+    assert!(found.is_empty(), "answer explanation: {found:?}");
+
+    let mut reason = lesson();
+    reason["questions"][0]["rationales"][1] = json!("This divides 12 by 48 and gets 0.25.");
+    let found = citation_findings(&reason);
+    assert!(found.is_empty(), "choice reason: {found:?}");
+}
+
+#[test]
+fn a_cited_sentence_s_quote_need_not_hold_its_figures() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(OWN_CASE);
+    candidate["blocks"][0]["citations"] = json!([{
+        "sentence":OWN_CASE,"sourceIndex":0,
+        "quote":"A ratio compares a part with a whole."}]);
+    let found = citation_findings(&candidate);
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn quoted_wording_without_a_citation_is_still_a_finding_and_names_no_general_form() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] =
+        json!("The page reads \"Total due on receipt of goods\" at the foot.");
+    let found = citation_findings(&candidate);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let note = &found[0].note;
+    assert!(
+        note.starts_with("Section 1 (candidate blocks-0) states a specific in \""),
+        "{note}"
+    );
+    assert!(note.contains("\" without citing it."), "{note}");
+    assert!(!note.contains("general form"), "{note}");
+}

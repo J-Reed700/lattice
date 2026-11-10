@@ -564,3 +564,106 @@ fn a_mark_at_the_start_of_the_text_or_after_an_opening_bracket_opens() {
         ["the page that reads text from images"]
     );
 }
+
+const OWN_FIGURES_SENTENCE: &str = "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.";
+
+#[tokio::test]
+async fn a_figure_in_a_part_that_states_what_is_so_is_the_model_s_to_sort() -> Result<()> {
+    let model = scripted(vec![json!({"s0": "reasoning"})]);
+    let sorted = classify(&model, &[body("Dividing 12 by 48 gives 0.25.")]).await?;
+    assert_eq!(sorted, vec![(Class::Reasoning, ClassifiedBy::Model)]);
+    Ok(())
+}
+
+struct Recording<'a> {
+    model: &'a crate::lessons::course_generation_tests::ScriptedModel,
+    schemas: Mutex<Vec<Value>>,
+}
+
+#[async_trait::async_trait]
+impl LLMPort for Recording<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        if let Some(schema) = &request.json_schema {
+            self.schemas.lock().unwrap().push(schema.clone());
+        }
+        self.model.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.model.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.model.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.model.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+#[tokio::test]
+async fn a_statement_with_such_a_figure_is_never_offered_internal() {
+    let model = scripted(vec![json!({"s0": "reasoning", "s1": "common"})]);
+    let recording = Recording {
+        model: &model,
+        schemas: Mutex::new(Vec::new()),
+    };
+    let _ = classify(
+        &recording,
+        &[
+            body("Dividing 12 by 48 gives 0.25."),
+            body("A stage hands its output to the next stage."),
+        ],
+    )
+    .await;
+    let schemas = recording.schemas.lock().unwrap();
+    let offered = |schema: &Value, id: &str| -> Option<Vec<String>> {
+        schema["properties"][id]["enum"].as_array().map(|classes| {
+            classes
+                .iter()
+                .filter_map(|class| class.as_str().map(str::to_owned))
+                .collect()
+        })
+    };
+    let first = schemas.first().cloned().unwrap_or(Value::Null);
+    let with_figure = offered(&first, "s0").unwrap_or_default();
+    assert!(
+        !with_figure.is_empty() && !with_figure.iter().any(|class| class == "internal"),
+        "a statement with a figure beyond the givens is offered {with_figure:?}"
+    );
+    assert_eq!(
+        offered(&first, "s1").unwrap_or_default().len(),
+        4,
+        "a statement without a figure is offered all four classes"
+    );
+}
+
+#[tokio::test]
+async fn quoted_wording_is_still_sourced_by_the_rule() -> Result<()> {
+    let model = scripted(vec![]);
+    let sorted = classify(
+        &model,
+        &[body(
+            "The page reads \"Total due on receipt of goods\" at the foot.",
+        )],
+    )
+    .await?;
+    assert_eq!(sorted, vec![(Class::Sourced, ClassifiedBy::Rule)]);
+    assert!(model.prompts.lock().unwrap().is_empty());
+    Ok(())
+}
+
+#[test]
+fn the_classifier_is_told_what_the_lesson_s_own_figures_are() {
+    assert!(SYSTEM.contains(OWN_FIGURES_SENTENCE), "{SYSTEM}");
+    assert!(
+        SYSTEM.contains(
+            "They are not specifics, and no source states them: a statement that calculates with them is reasoning, and one that only sets them is internal."
+        ),
+        "{SYSTEM}"
+    );
+}
