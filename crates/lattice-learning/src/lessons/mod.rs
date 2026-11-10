@@ -16,6 +16,8 @@ pub mod reference_collection;
 pub(crate) mod repeats;
 pub mod review_evidence;
 pub mod review_findings;
+#[cfg(test)]
+mod sentence_identity_tests;
 pub(crate) mod structured_call;
 pub mod teaching;
 pub mod teaching_review;

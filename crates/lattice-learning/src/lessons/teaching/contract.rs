@@ -479,3 +479,7 @@ pub(super) async fn check(
     };
     Ok(findings(&answer, &items, &parts, candidate, protected))
 }
+
+#[cfg(test)]
+#[path = "contract_identity_tests.rs"]
+mod identity_tests;
