@@ -4,17 +4,22 @@ use lattice_core::application::{
     contracts::settings::ModelWindowDto,
     ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse, ToolChoice},
 };
+use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::{AppError, Result};
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::listing::{invalid_list, is_text_model};
-use super::{api_base, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
+use super::{
+    api_base, insufficient_quota, CatalogProtocol, CompletionProtocol, EventDecoder, LimitsApi,
+    LimitsProtocol, ModelPage, ProviderApi,
+};
 use crate::features::llm::cloud::catalog::CloudModelDto;
 use crate::features::llm::cloud::reply::call_arguments;
 use crate::features::llm::cloud::{field, set_field, timing};
-use crate::features::llm::llama_cpp::openai_content_parts;
+use crate::features::llm::fitting::{Fitted, Thinking};
+use crate::features::llm::openai_chat::openai_content_parts;
 
 mod stream;
 
@@ -23,13 +28,9 @@ const LIST_PAGE_SIZE: &str = "1000";
 
 pub(super) struct Google;
 
-impl ProviderProtocol for Google {
-    fn name(&self) -> &'static str {
-        "google"
-    }
-
-    fn shown_name(&self) -> &'static str {
-        "Google"
+impl ProviderApi for Google {
+    fn provider(&self) -> CloudProvider {
+        CloudProvider::Google
     }
 
     fn api_base(&self) -> String {
@@ -39,6 +40,19 @@ impl ProviderProtocol for Google {
         )
     }
 
+    /// The native API takes the key as a header of its own, and refuses a
+    /// bearer token that is not OAuth.
+    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
+        request.header("x-goog-api-key", key)
+    }
+
+    /// Google answers in OpenAI's error shape.
+    fn out_of_credit(&self, status: StatusCode, reply: &Value) -> bool {
+        status == StatusCode::TOO_MANY_REQUESTS && insufficient_quota(reply)
+    }
+}
+
+impl CompletionProtocol for Google {
     fn completion_path(&self) -> &'static str {
         "/v1beta/openai/chat/completions"
     }
@@ -47,19 +61,19 @@ impl ProviderProtocol for Google {
         request.bearer_auth(key).header("x-goog-api-key", key)
     }
 
-    /// The native API takes the key as a header of its own, and refuses a
-    /// bearer token that is not OAuth.
-    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
-        request.header("x-goog-api-key", key)
+    /// Google thinks unless told not to. With no effort set nothing says
+    /// whether the model does, so the ceiling is the model's and the port does
+    /// not claim it reasons first.
+    fn thinking(&self, _model: &str, request: &CompletionRequest) -> Thinking {
+        match request.reasoning_effort.as_deref() {
+            Some("none") => Thinking::Off,
+            Some(_) => Thinking::On,
+            None => Thinking::Unknown,
+        }
     }
 
-    fn body(
-        &self,
-        model: &str,
-        request: &CompletionRequest,
-        stream: bool,
-        ceiling: Option<u32>,
-    ) -> Result<Value> {
+    fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
+        let request = fitted.request();
         let messages = chat_messages(&request.input)?;
         let model = model.strip_prefix("models/").unwrap_or(model);
         let mut body = json!({
@@ -67,7 +81,7 @@ impl ProviderProtocol for Google {
             "messages": messages,
             "stream": stream,
         });
-        if let Some(max_output) = ceiling {
+        if let Some(max_output) = fitted.ceiling() {
             set_field(&mut body, "max_tokens", json!(max_output))?;
         }
         if stream {
@@ -196,18 +210,21 @@ impl ProviderProtocol for Google {
         Box::new(stream::Events::default())
     }
 
-    fn thinks_unasked(&self, _model: &str) -> bool {
-        false
+    /// Chat completions count the cached tokens within `prompt_tokens`.
+    fn prompt_tokens_read(&self, reply: &Value) -> u64 {
+        let usage = field(reply, "usage");
+        field(usage, "prompt_tokens")
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_sub(
+                field(field(usage, "prompt_tokens_details"), "cached_tokens")
+                    .as_u64()
+                    .unwrap_or(0),
+            )
     }
+}
 
-    fn reasons(&self, _model: &str, request: &CompletionRequest) -> bool {
-        request.reasoning_effort.as_deref() != Some("none")
-    }
-
-    fn requires_ceiling(&self) -> bool {
-        false
-    }
-
+impl CatalogProtocol for Google {
     fn catalog_url(&self) -> &'static str {
         "https://generativelanguage.googleapis.com/v1beta/models"
     }
@@ -260,6 +277,12 @@ impl ProviderProtocol for Google {
             models,
             next: page.next_page_token,
         })
+    }
+}
+
+impl LimitsProtocol for Google {
+    fn requires_ceiling(&self) -> bool {
+        false
     }
 
     fn limits_api(&self) -> Option<LimitsApi> {

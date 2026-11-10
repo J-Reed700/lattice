@@ -33,11 +33,6 @@ impl ModelWindowDto {
             .map(|ceiling| within(ceiling, reported.max_output_tokens))
     }
 
-    /// The output ceiling this choice runs at, `fallback` when none is known.
-    pub fn max_output_within(&self, reported: &Self, fallback: u32) -> u32 {
-        self.max_output_known(reported).unwrap_or(fallback)
-    }
-
     /// What is wrong with this choice, as a sentence for the settings check.
     pub fn problem(&self) -> Option<&'static str> {
         (self.context_window == Some(0) || self.max_output_tokens == Some(0))
@@ -66,7 +61,6 @@ mod tests {
     fn with_no_choice_a_window_stays_at_the_default_and_output_follows_the_provider() {
         let chosen = ModelWindowDto::default();
         assert_eq!(chosen.context_window_within(&REPORTED, 131_072), 131_072);
-        assert_eq!(chosen.max_output_within(&REPORTED, 8_192), 128_000);
     }
 
     #[test]
@@ -86,7 +80,6 @@ mod tests {
             max_output_tokens: None,
         };
         assert_eq!(chosen.context_window_within(&NOT_REPORTED, 131_072), 40_000);
-        assert_eq!(chosen.max_output_within(&NOT_REPORTED, 8_192), 8_192);
     }
 
     #[test]
@@ -96,7 +89,6 @@ mod tests {
             max_output_tokens: Some(500_000),
         };
         assert_eq!(chosen.context_window_within(&REPORTED, 131_072), 200_000);
-        assert_eq!(chosen.max_output_within(&REPORTED, 131_072), 128_000);
     }
 
     #[test]

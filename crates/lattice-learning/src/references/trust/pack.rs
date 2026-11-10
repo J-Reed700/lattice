@@ -4,17 +4,14 @@
 //! and are re-derived after import), nor are site overrides (they are the
 //! user's own, across courses) or outcomes (calibration is the user's).
 
-use super::rows::{
-    override_from_row, provenance_from_row, relation_from_row, write_override, write_provenance,
-    write_relations, OVERRIDE_COLUMNS, PROVENANCE_COLUMNS, RELATION_COLUMNS,
-};
-use crate::persistence::db;
+use super::repository;
+use super::repository::rows::{write_override, write_provenance, write_relations};
 use lattice_core::domain::provenance::{
     Origin, ProvenanceRecord, RelationEvidence, RelationTarget, SourceRelation, TrustOverride,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 
 /// The layout of [`SourceTrustPackEntry`]; a pack with another is refused.
 pub const SOURCE_TRUST_PACK_VERSION: u32 = 1;
@@ -40,41 +37,16 @@ pub struct SourceTrustPackEntry {
 impl SourceTrustPackEntry {
     /// The course's trust rows, read in the export's snapshot transaction.
     pub async fn read(conn: &mut SqliteConnection, program_id: &str) -> Result<Self> {
-        let provenance = sqlx::query(&format!(
-            "SELECT {PROVENANCE_COLUMNS} FROM source_provenance WHERE program_id=? ORDER BY source_version_id"
-        ))
-        .bind(program_id)
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(db)?
-        .iter()
-        .map(provenance_from_row)
-        .collect::<Result<Vec<_>>>()?;
-        let relations = sqlx::query(&format!(
-            "SELECT {RELATION_COLUMNS},detected_at FROM source_relations WHERE program_id=? ORDER BY from_version_id,kind,COALESCE(to_version_id,to_url)"
-        ))
-        .bind(program_id)
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(db)?
-        .iter()
-        .map(|row| {
-            Ok(PackRelation {
-                relation: relation_from_row(row)?,
-                detected_at: row.get("detected_at"),
+        let provenance = repository::pack::provenance(conn, program_id).await?;
+        let relations = repository::pack::relations(conn, program_id)
+            .await?
+            .into_iter()
+            .map(|(relation, detected_at)| PackRelation {
+                relation,
+                detected_at,
             })
-        })
-        .collect::<Result<Vec<_>>>()?;
-        let overrides = sqlx::query(&format!(
-            "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides WHERE scope='source' AND program_id=? ORDER BY source_id"
-        ))
-        .bind(program_id)
-        .fetch_all(&mut *conn)
-        .await
-        .map_err(db)?
-        .iter()
-        .map(override_from_row)
-        .collect::<Result<Vec<_>>>()?;
+            .collect();
+        let overrides = repository::pack::source_overrides(conn, program_id).await?;
         Ok(Self {
             version: SOURCE_TRUST_PACK_VERSION,
             provenance,

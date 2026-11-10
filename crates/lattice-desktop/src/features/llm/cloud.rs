@@ -1,6 +1,8 @@
 //! Native OpenAI Responses and Anthropic Messages adapters.
 //! Explicit selection only; Auto never sends local documents to a cloud provider.
+use crate::features::llm::backend::{ignore_text, ModelBackend, Progress, TextSink};
 use crate::features::llm::engine::vision::not_set_up_to_see;
+use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use async_trait::async_trait;
 use lattice_core::application::{
     contracts::settings::LLMSettingsDto,
@@ -8,7 +10,7 @@ use lattice_core::application::{
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
-use protocol::{protocol_for, ProviderProtocol};
+use protocol::{cloud_provider, protocols, CompletionProtocol, ProviderApi};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
@@ -20,7 +22,7 @@ mod streaming;
 mod timing;
 
 pub struct CloudLlm {
-    protocol: &'static dyn ProviderProtocol,
+    protocol: &'static dyn CompletionProtocol,
     model: String,
     key: String,
     endpoint: String,
@@ -50,13 +52,27 @@ impl CloudLlm {
         ))
     }
 
-    pub fn new(settings: &LLMSettingsDto, key: String) -> Result<Self> {
+    /// This client as a port, behind a scheduler of its own.
+    pub fn into_port(self) -> std::sync::Arc<dyn LLMPort> {
+        self.schedule(&crate::features::llm::scheduler::SchedulerRegistry::default())
+    }
+
+    /// A client for `settings.model`, sending replies of at most
+    /// `output_ceiling` tokens. A model whose provider requires a ceiling is
+    /// not given one made up.
+    pub fn new(
+        settings: &LLMSettingsDto,
+        key: String,
+        output_ceiling: Option<u32>,
+    ) -> Result<Self> {
         if key.trim().is_empty() || settings.model.trim().is_empty() {
             return Err(AppError::InvalidConfig(
                 "Cloud model and API key are required".into(),
             ));
         }
-        let protocol = protocol_for(settings.provider)?;
+        let protocols = protocols(cloud_provider(settings.provider)?);
+        let protocol = protocols.completion;
+        let model_ceiling = limits::ceiling_for(protocols.limits, &settings.model, output_ceiling)?;
         let endpoint = format!("{}{}", protocol.api_base(), protocol.completion_path());
         // No client-wide timeout: a long answer is bounded by the request's time
         // budget, and a streamed one additionally by stall detection.
@@ -72,7 +88,7 @@ impl CloudLlm {
             endpoint,
             client,
             stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
-            model_ceiling: Some(settings.max_tokens),
+            model_ceiling,
             context_window: settings.context_window as usize,
             vision: None,
         })
@@ -84,17 +100,6 @@ impl CloudLlm {
         self
     }
 
-    /// This client told the model's output ceiling, when it is known. When it
-    /// is not, OpenAI and Google are sent no ceiling unless the request sets
-    /// one; a protocol that requires one is sent the Settings ceiling the
-    /// client was built from.
-    pub fn with_output_ceiling(mut self, known: Option<u32>) -> Self {
-        if known.is_some() || !self.protocol.requires_ceiling() {
-            self.model_ceiling = known;
-        }
-        self
-    }
-
     /// This client sending to `endpoint` instead of the provider's public
     /// API: a gateway that speaks the same format, or a stub server in tests.
     pub fn with_endpoint(mut self, endpoint: impl Into<String>) -> Self {
@@ -102,23 +107,18 @@ impl CloudLlm {
         self
     }
 
-    fn body(&self, request: &CompletionRequest, stream: bool) -> Result<Value> {
-        if request.has_images() && self.vision.is_none() {
+    fn body(&self, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
+        if fitted.request().has_images() && self.vision.is_none() {
             return Err(not_set_up_to_see(&self.model));
         }
-        self.protocol.body(
-            &self.model,
-            request,
-            stream,
-            self.output_ceiling_for(request),
-        )
+        self.protocol.body(&self.model, fitted, stream)
     }
 
     /// All three attempts and their backoffs share one `deadline`, so a retry
     /// never multiplies the caller's time budget. `bound_body` applies what is
     /// left of it to the whole exchange; without it only the wait for response
     /// headers is bounded and the streamed body is left to stall detection.
-    async fn send(
+    async fn post(
         &self,
         body: &Value,
         deadline: Option<Instant>,
@@ -158,29 +158,24 @@ impl CloudLlm {
             }
             // Avoid echoing provider bodies which can contain submitted user text.
             if status == reqwest::StatusCode::BAD_REQUEST {
-                let error = status_error(self.protocol, status, "");
-                let reason = rejection_reason(response).await;
-                let refusal = self.protocol.format_refusal(body, &reason);
-                return Err(bad_request_error(
-                    self.protocol.shown_name(),
-                    &reason,
-                    refusal,
-                    error,
-                ));
+                let error = status_error(self.protocol, status, &Value::Null);
+                let reply = response.json::<Value>().await.unwrap_or(Value::Null);
+                let reason = reply
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let refusal = self.protocol.format_refusal(body, reason);
+                if self.protocol.out_of_credit(status, &reply) {
+                    return Err(credit_balance_error(self.protocol.shown_name()));
+                }
+                return Err(refusal.unwrap_or(error));
             }
             let retry_after = response
                 .headers()
                 .get("retry-after")
                 .and_then(|h| h.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok());
-            // Only a 429's body is read: it alone tells an account with nothing
-            // left from a busy one.
-            let refusal = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                response.text().await.unwrap_or_default()
-            } else {
-                String::new()
-            };
-            let error = status_error(self.protocol, status, &refusal);
+            let error = refusal(self.protocol, response).await;
             let resend =
                 matches!(error, AppError::RateLimitExceeded(_)) || status.is_server_error();
             if attempt == 2 || !resend {
@@ -216,9 +211,9 @@ impl CloudLlm {
         deadline: Option<Instant>,
         bound_body: bool,
     ) -> Result<reqwest::Response> {
-        match self.send(&body, deadline, bound_body).await {
+        match self.post(&body, deadline, bound_body).await {
             Err(error) => match self.protocol.resend_after(&error, &body) {
-                Some(rewritten) => self.send(&rewritten, deadline, bound_body).await,
+                Some(rewritten) => self.post(&rewritten, deadline, bound_body).await,
                 None => Err(error),
             },
             sent => sent,
@@ -226,29 +221,15 @@ impl CloudLlm {
     }
 }
 
-#[async_trait]
-impl LLMPort for CloudLlm {
-    fn vision(&self) -> Option<VisionGeometry> {
-        self.vision
-    }
-    fn supports_tool_calling(&self) -> bool {
-        true
-    }
-    fn thinks_before_answering(&self) -> bool {
-        self.protocol.thinks_unasked(&self.model)
-    }
-    fn model_output_ceiling(&self) -> Option<u32> {
-        self.model_ceiling
-    }
-    fn reasons_for(&self, request: &CompletionRequest) -> bool {
-        self.protocol.reasons(&self.model, request)
-    }
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let deadline = request
+impl CloudLlm {
+    /// The whole answer at once.
+    async fn complete_whole(&self, fitted: &Fitted<'_>) -> Result<CompletionResponse> {
+        let deadline = fitted
+            .request()
             .wall_clock_budget()
             .map(|budget| Instant::now() + budget);
         let response = self
-            .send_with_fallback(self.body(request, false)?, deadline, true)
+            .send_with_fallback(self.body(fitted, false)?, deadline, true)
             .await?;
         let value: Value = response
             .json()
@@ -258,21 +239,15 @@ impl LLMPort for CloudLlm {
         // edge between reading and writing, so it is not timed.
         self.protocol.parse_reply(value)
     }
-    async fn complete_with_progress(
+
+    /// The answer as it is written, text and thinking handed on as they arrive.
+    async fn complete_streamed(
         &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        fitted: &Fitted<'_>,
+        on_text: &TextSink<'_>,
+        on_reasoning: &TextSink<'_>,
     ) -> Result<CompletionResponse> {
-        self.complete_with_reasoning_progress(request, on_text, &|_| Ok(()), &|_| Ok(()))
-            .await
-    }
-    async fn complete_with_reasoning_progress(
-        &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        _on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
-    ) -> Result<CompletionResponse> {
+        let request = fitted.request();
         let deadline = request
             .wall_clock_budget()
             .map(|budget| Instant::now() + budget);
@@ -280,7 +255,7 @@ impl LLMPort for CloudLlm {
             .within_time_budget(async {
                 let sent = Instant::now();
                 let response = self
-                    .send_with_fallback(self.body(request, true)?, deadline, false)
+                    .send_with_fallback(self.body(fitted, true)?, deadline, false)
                     .await?;
                 streaming::drain(
                     self.protocol,
@@ -295,18 +270,56 @@ impl LLMPort for CloudLlm {
             .await
             .map_err(|_| self.budget_error())?
     }
+}
 
+#[async_trait]
+impl ModelBackend for CloudLlm {
     fn model_name(&self) -> &str {
         &self.model
     }
     fn provider_name(&self) -> &str {
         self.protocol.name()
     }
-    fn max_context_tokens(&self) -> usize {
+    fn window(&self) -> usize {
         self.context_window
+    }
+    fn thinking(&self, request: &CompletionRequest) -> Thinking {
+        self.protocol.thinking(&self.model, request)
+    }
+    fn output_limits(&self) -> OutputLimits {
+        OutputLimits::of(self.model_ceiling)
+    }
+    fn supports_tool_calling(&self) -> bool {
+        true
+    }
+    fn vision(&self) -> Option<VisionGeometry> {
+        self.vision
+    }
+    fn keeps_read_prompts(&self) -> bool {
+        false
+    }
+    fn is_alive(&self) -> bool {
+        true
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(!self.key.is_empty())
+    }
+    async fn send(
+        &self,
+        fitted: &Fitted<'_>,
+        progress: Progress<'_>,
+    ) -> Result<CompletionResponse> {
+        match progress {
+            Progress::None => self.complete_whole(fitted).await,
+            Progress::Streamed {
+                on_text,
+                on_reasoning,
+                ..
+            } => {
+                self.complete_streamed(fitted, on_text, on_reasoning.unwrap_or(&ignore_text))
+                    .await
+            }
+        }
     }
 }
 
@@ -325,60 +338,32 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
 #[cfg(test)]
 mod tests;
 
-/// A 400's own reason. It is read to tell its causes apart and is never
-/// shown, since a provider's error can quote what was sent; it is logged only
-/// when it refuses a response schema.
-async fn rejection_reason(response: reqwest::Response) -> String {
-    response
-        .json::<Value>()
-        .await
-        .ok()
-        .and_then(|reply| {
-            reply
-                .pointer("/error/message")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_default()
+/// A 400 from an account out of credit is a setting to fix.
+fn credit_balance_error(shown: &str) -> AppError {
+    AppError::InvalidConfig(format!(
+        "{shown} refused the request because the account's credit balance is too low \
+         (HTTP 400): add credits to the account, or choose another model in Settings → AI"
+    ))
 }
 
-/// What a 400 is, by its reason: an account out of credit is a setting to
-/// fix, and a schema Claude cannot compile is retried in words.
-fn bad_request_error(
-    shown: &str,
-    reason: &str,
-    format_refusal: Option<AppError>,
-    error: AppError,
-) -> AppError {
-    if reason.to_ascii_lowercase().contains("credit balance") {
-        return AppError::InvalidConfig(format!(
-            "{shown} refused the request because the account's credit balance is too low \
-             (HTTP 400): add credits to the account, or choose another model in Settings → AI"
-        ));
-    }
-    format_refusal.unwrap_or(error)
-}
-
-/// Whether a 429's body says the account has no quota left, by its error's
-/// type or code. The body is read for this and is never shown.
-fn out_of_quota(body: &str) -> bool {
-    let Ok(reply) = serde_json::from_str::<Value>(body) else {
-        return false;
+/// The error for a refused response; only a 429's body is read, as it alone
+/// tells an account with nothing left from a busy one. The body is never
+/// shown.
+async fn refusal(api: &dyn ProviderApi, response: reqwest::Response) -> AppError {
+    let status = response.status();
+    let reply = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        response.json::<Value>().await.unwrap_or(Value::Null)
+    } else {
+        Value::Null
     };
-    ["/error/type", "/error/code"]
-        .iter()
-        .any(|field| reply.pointer(field).and_then(Value::as_str) == Some("insufficient_quota"))
+    status_error(api, status, &reply)
 }
 
 /// A provider's refusal, typed by what waiting can change: a rejected key or
 /// an unknown model is a setting to fix, a rate limit or server error is an
 /// outage, and any other refusal would be refused again.
-fn status_error(
-    protocol: &dyn ProviderProtocol,
-    status: reqwest::StatusCode,
-    body: &str,
-) -> AppError {
-    let (shown, name) = (protocol.shown_name(), protocol.name());
+fn status_error(api: &dyn ProviderApi, status: reqwest::StatusCode, reply: &Value) -> AppError {
+    let (shown, name) = (api.shown_name(), api.name());
     match status.as_u16() {
         401 => AppError::InvalidConfig(format!(
             "{shown} rejected the saved API key (HTTP {status}): replace it in Settings → AI"
@@ -391,7 +376,7 @@ fn status_error(
             "{shown} does not offer the configured model (HTTP {status}): choose another in \
              Settings → AI"
         )),
-        429 if out_of_quota(body) => AppError::InvalidConfig(format!(
+        429 if api.out_of_credit(status, reply) => AppError::InvalidConfig(format!(
             "{shown} says the account has no credit or quota left (HTTP 429): add credit to the \
              account, or choose another model in Settings → AI"
         )),

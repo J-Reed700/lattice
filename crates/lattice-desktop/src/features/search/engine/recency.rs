@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use lattice_core::shared::error::Result;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 /// The most a perfectly fresh document can gain, at the highest recency
@@ -91,48 +91,10 @@ impl RecencyScorer {
             return Ok(HashMap::new());
         }
 
-        let placeholders = document_ids
-            .iter()
-            .map(|_| "?")
-            .collect::<Vec<_>>()
-            .join(", ");
-
-        let query = format!(
-            r#"
-            SELECT id, updated_at
-            FROM documents
-            WHERE id IN ({})
-            "#,
-            placeholders
-        );
-
-        let mut query_builder = sqlx::query(&query);
-        for id in document_ids {
-            query_builder = query_builder.bind(id);
-        }
-
-        let rows = query_builder.fetch_all(pool).await.map_err(|e| {
-            lattice_core::shared::error::AppError::Database(format!(
-                "Failed to fetch timestamps: {}",
-                e
-            ))
-        })?;
+        let rows = super::repository::document_updated_at(pool, document_ids).await?;
 
         let mut timestamps = HashMap::new();
-        for row in rows {
-            let id: String = row.try_get("id").map_err(|e| {
-                lattice_core::shared::error::AppError::Database(format!(
-                    "Failed to get document id: {}",
-                    e
-                ))
-            })?;
-            let updated_at: String = row.try_get("updated_at").map_err(|e| {
-                lattice_core::shared::error::AppError::Database(format!(
-                    "Failed to get updated_at: {}",
-                    e
-                ))
-            })?;
-
+        for (id, updated_at) in rows {
             match lattice_core::shared::persistence::timestamps::parse_db_timestamp(&updated_at) {
                 Ok(datetime) => {
                     timestamps.insert(id, datetime);

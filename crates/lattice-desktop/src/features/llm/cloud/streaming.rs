@@ -1,8 +1,8 @@
 //! Typed cloud streams publish only displayable text through callbacks while
 //! retaining the exact native completion—including opaque replay state—in the
 //! returned response.
-use super::protocol::{EventDecoder, ProviderProtocol};
-use super::timing::{evaluated_prompt_tokens, StreamClock};
+use super::protocol::{CompletionProtocol, EventDecoder};
+use super::timing::StreamClock;
 use super::{field, CompletionResponse};
 use futures::{Stream, StreamExt};
 use lattice_core::shared::error::{AppError, Result};
@@ -16,7 +16,7 @@ pub(super) type Callback<'a> = &'a (dyn Fn(String) -> Result<()> + Send + Sync);
 /// the completion carries the server's own timings, the first streamed delta
 /// splits the time since into reading the prompt and writing the answer.
 pub(super) async fn drain<S, B, E>(
-    protocol: &'static dyn ProviderProtocol,
+    protocol: &'static dyn CompletionProtocol,
     mut bytes: S,
     stall_timeout: Duration,
     sent: Instant,
@@ -71,7 +71,7 @@ where
         }
     }
     let completed = decoder.into_completed(on_text, on_reasoning)?;
-    let prompt_tokens = evaluated_prompt_tokens(&completed);
+    let prompt_tokens = protocol.prompt_tokens_read(&completed);
     let mut response = protocol.parse_reply(completed)?;
     if response.timing.is_none() {
         response.timing = clock.timing(prompt_tokens, response.output_tokens);
@@ -83,7 +83,7 @@ where
 /// provider's decoder.
 struct Decoder {
     #[cfg(test)]
-    protocol: &'static dyn ProviderProtocol,
+    protocol: &'static dyn CompletionProtocol,
     events: Box<dyn EventDecoder>,
     buffer: Vec<u8>,
     data: String,
@@ -119,7 +119,7 @@ impl Decoder {
     const MAX_EVENT_BYTES: usize = 4 * 1024 * 1024;
     const MAX_RESPONSE_BYTES: usize = 16 * 1024 * 1024;
 
-    fn new(protocol: &'static dyn ProviderProtocol) -> Self {
+    fn new(protocol: &'static dyn CompletionProtocol) -> Self {
         Self {
             #[cfg(test)]
             protocol,
@@ -186,7 +186,7 @@ impl Decoder {
         let event: Value =
             serde_json::from_str(&data).map_err(|_| invalid("invalid event JSON"))?;
         let kind = field(&event, "type").as_str().unwrap_or("");
-        if matches!(kind, "error" | "response.failed") {
+        if self.events.is_failure(kind) {
             // Provider error text may contain the user's prompt.
             return Err(AppError::Network(format!("Cloud stream failed ({kind})")));
         }

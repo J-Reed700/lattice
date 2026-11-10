@@ -4,6 +4,7 @@ mod attachments;
 mod download_sessions;
 mod library_sweeps;
 mod model_files;
+mod repository;
 mod turns;
 
 pub use attachments::reconcile_orphaned_attachments;

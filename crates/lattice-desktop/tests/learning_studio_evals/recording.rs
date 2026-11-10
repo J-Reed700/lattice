@@ -8,13 +8,13 @@ use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
 
 pub(super) struct RecordingLlm {
-    inner: Box<dyn LLMPort>,
+    inner: std::sync::Arc<dyn LLMPort>,
     config: EvalConfig,
     sequence: AtomicU64,
 }
 
 impl RecordingLlm {
-    pub(super) fn new(inner: Box<dyn LLMPort>, config: EvalConfig) -> Self {
+    pub(super) fn new(inner: std::sync::Arc<dyn LLMPort>, config: EvalConfig) -> Self {
         Self {
             inner,
             config,

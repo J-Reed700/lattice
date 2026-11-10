@@ -100,6 +100,11 @@ impl EventDecoder for Events {
         false
     }
 
+    /// Chunks carry no `type`, so no event is a failure.
+    fn is_failure(&self, _kind: &str) -> bool {
+        false
+    }
+
     fn has_tool_output(&self) -> bool {
         !self.tool_calls.is_empty()
     }

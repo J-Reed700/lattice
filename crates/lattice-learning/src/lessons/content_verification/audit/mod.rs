@@ -14,6 +14,7 @@ pub mod lesson;
 pub mod material;
 pub mod pages;
 pub mod policy;
+mod repository;
 pub mod runs;
 pub mod tools;
 

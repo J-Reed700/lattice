@@ -26,23 +26,16 @@ pub(super) fn push_block_text(text: &mut String, block: &Value) {
 
 /// Usage, finish reason, reasoning and timing of a reply whose content
 /// blocks are already read into `response`. The finish reason is the
-/// reply's `status_key`.
+/// reply's `status_key`, and `input_tokens` the whole prompt as the provider
+/// counts it.
 pub(super) fn finish(
     response: &mut CompletionResponse,
     value: &Value,
     status_key: &str,
+    input_tokens: u64,
     reasoning_parts: &[String],
 ) {
-    // The whole prompt: Anthropic counts cache reads and writes apart from
-    // `input_tokens`.
-    response.input_tokens = [
-        "input_tokens",
-        "cache_creation_input_tokens",
-        "cache_read_input_tokens",
-    ]
-    .iter()
-    .filter_map(|key| field(field(value, "usage"), key).as_u64())
-    .sum();
+    response.input_tokens = input_tokens;
     response.output_tokens = field(field(value, "usage"), "output_tokens")
         .as_u64()
         .unwrap_or(0);
@@ -50,16 +43,6 @@ pub(super) fn finish(
         .as_str()
         .unwrap_or("unknown")
         .into();
-    if response.finish_reason == "refusal" {
-        // Claude's safety classifiers decline with a 200 and name the one
-        // that did; the reply itself says nothing worth logging.
-        tracing::warn!(
-            category = field(field(value, "stop_details"), "category")
-                .as_str()
-                .unwrap_or("unnamed"),
-            "The model declined the request"
-        );
-    }
     if !reasoning_parts.is_empty() {
         response.reasoning = Some(reasoning_parts.join("\n\n"));
     }

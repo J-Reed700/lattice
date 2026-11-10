@@ -1,9 +1,12 @@
 use super::*;
+use crate::features::llm::backend::{ModelBackend, Progress};
+use crate::features::llm::fitting::{Fitted, OutputLimits, PortBackend, Sent, Thinking};
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, InferencePriority, ServedTiming,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::runtime::jobs::{RankScope, RankTicket};
 use parking_lot::Mutex as SyncMutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -606,7 +609,10 @@ async fn a_scheduled_backend_measures_its_pace_from_its_own_answers() {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    let llm = ScheduledLlm::new(Arc::new(TimedModel(logged_run())), scheduler);
+    let llm = ScheduledLlm::new(
+        Arc::new(PortBackend(Arc::new(TimedModel(logged_run())))),
+        scheduler,
+    );
     assert_eq!(llm.pace(), None, "nothing is asked of the server");
     llm.complete(&request("hi", None)).await.unwrap();
     let pace = llm.pace().unwrap();
@@ -679,7 +685,7 @@ async fn exact_counts_come_from_the_server_once_per_text() {
 struct GatedModel {
     started: AtomicUsize,
     gate: tokio::sync::Semaphore,
-    seen: SyncMutex<Vec<CompletionRequest>>,
+    seen: SyncMutex<Vec<Sent>>,
 }
 
 impl GatedModel {
@@ -693,13 +699,44 @@ impl GatedModel {
 }
 
 #[async_trait]
-impl LLMPort for GatedModel {
-    async fn complete(
+impl ModelBackend for GatedModel {
+    fn model_name(&self) -> &str {
+        "gated"
+    }
+    fn provider_name(&self) -> &str {
+        "gated"
+    }
+    fn window(&self) -> usize {
+        8_192
+    }
+    fn thinking(&self, _request: &CompletionRequest) -> Thinking {
+        Thinking::Off
+    }
+    fn output_limits(&self) -> OutputLimits {
+        OutputLimits::of(None)
+    }
+    fn supports_tool_calling(&self) -> bool {
+        false
+    }
+    fn vision(&self) -> Option<VisionGeometry> {
+        None
+    }
+    fn keeps_read_prompts(&self) -> bool {
+        false
+    }
+    fn is_alive(&self) -> bool {
+        true
+    }
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
+        Ok(true)
+    }
+    async fn send(
         &self,
-        request: &CompletionRequest,
+        fitted: &Fitted<'_>,
+        _progress: Progress<'_>,
     ) -> lattice_core::shared::error::Result<CompletionResponse> {
         self.started.fetch_add(1, Ordering::SeqCst);
-        self.seen.lock().push(request.clone());
+        self.seen.lock().push(fitted.sent());
         let _released = self.gate.acquire().await.unwrap();
         Ok(CompletionResponse {
             text: "ok".into(),
@@ -707,15 +744,6 @@ impl LLMPort for GatedModel {
             finish_reason: "stop".into(),
             ..Default::default()
         })
-    }
-    fn model_name(&self) -> &str {
-        "gated"
-    }
-    fn max_context_tokens(&self) -> usize {
-        8_192
-    }
-    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
-        Ok(true)
     }
 }
 
@@ -781,8 +809,8 @@ async fn an_admitted_request_reaches_the_backend_pinned_to_its_slot() {
         .unwrap();
     let seen = model.seen.lock().clone();
     assert_eq!(seen.len(), 1);
-    assert_eq!(seen[0].assigned_slot, Some(0));
-    assert_eq!(seen[0].cache_key.as_deref(), Some("conversation"));
+    assert_eq!(seen[0].slot, Some(0));
+    assert_eq!(seen[0].request.cache_key.as_deref(), Some("conversation"));
 
     // 5 000 characters reported as 1 000 tokens moves the estimate off four.
     assert!(llm.chars_per_token() > 4.0, "{}", llm.chars_per_token());
@@ -860,7 +888,8 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     let model = GatedModel::new();
     model.gate.add_permits(2);
     let llm = scheduled(model.clone());
-    // "user" and 31 564 characters: 7 892 tokens by the estimate, 300 left.
+    // "user" and 31 564 characters: 7 892 tokens by the estimate and 24 of
+    // framing, 276 left.
     let prompt = "x".repeat(31_564);
     llm.complete(&CompletionRequest {
         max_output_tokens: Some(302),
@@ -877,12 +906,12 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     .unwrap();
     let seen = model.seen.lock();
     assert_eq!(
-        seen[0].max_output_tokens,
+        seen[0].request.max_output_tokens,
         Some(302),
         "the caller's cap is not rewritten"
     );
-    assert_eq!(seen[0].output_ceiling(None, false), Some(300));
-    assert_eq!(seen[1].output_ceiling(None, false), Some(256));
+    assert_eq!(seen[0].ceiling, Some(276));
+    assert_eq!(seen[1].ceiling, Some(256));
 }
 
 /// A server's own count sizes the room, and the request says it was counted.
@@ -914,11 +943,10 @@ async fn an_exact_count_sizes_the_room_the_backend_is_told() {
     .await
     .unwrap();
     let seen = model.seen.lock();
-    let fit = seen[0].window_fit.unwrap();
-    assert!(fit.counted_exactly);
-    assert_eq!(fit.prompt_tokens, 3_000 + 8 + 16);
-    assert_eq!(fit.room, 8_192 - 3_024);
-    assert_eq!(seen[0].output_ceiling(None, false), Some(5_168));
+    assert!(seen[0].size.counted_exactly);
+    assert_eq!(seen[0].size.prompt_tokens, 3_000 + 8 + 16);
+    assert_eq!(seen[0].room, 8_192 - 3_024);
+    assert_eq!(seen[0].ceiling, Some(5_168));
 }
 
 /// A prompt the margined estimate plainly fits is not worth a round trip.
@@ -947,10 +975,9 @@ async fn a_small_prompt_is_not_counted_by_the_server() {
     .await
     .unwrap();
     let seen = model.seen.lock();
-    let fit = seen[0].window_fit.unwrap();
-    assert!(!fit.counted_exactly);
-    assert!(fit.room > 512);
-    assert_eq!(seen[0].output_ceiling(None, false), Some(512));
+    assert!(!seen[0].size.counted_exactly);
+    assert!(seen[0].room > 512);
+    assert_eq!(seen[0].ceiling, Some(512));
 }
 
 /// The estimate never refuses what the backend's own tokenizer says fits.
@@ -983,11 +1010,7 @@ async fn an_exact_count_decides_before_a_request_is_refused() {
 /// A model with an 8,192-token window behind a tokenizer that answers
 /// `tokens`, or does not exist, sizing a request that asks `asked` tokens of
 /// answer. What the backend was sent, or the refusal.
-async fn measured(
-    tokens: Option<usize>,
-    content: &str,
-    asked: Option<u32>,
-) -> Result<CompletionRequest> {
+async fn measured(tokens: Option<usize>, content: &str, asked: Option<u32>) -> Result<Sent> {
     use wiremock::matchers::{method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 
@@ -1021,8 +1044,8 @@ async fn a_prompt_the_estimate_overcounts_keeps_the_output_it_asked_for() {
     let long = "word ".repeat(8_000);
     // The server counts 2,000 tokens, so 2,000 more still fit.
     let sent = measured(Some(2_000), &long, Some(2_000)).await.unwrap();
-    assert_eq!(sent.output_ceiling(None, false), Some(2_000));
-    assert!(sent.window_fit.unwrap().counted_exactly);
+    assert_eq!(sent.ceiling, Some(2_000));
+    assert!(sent.size.counted_exactly);
 }
 
 #[tokio::test]
@@ -1031,7 +1054,7 @@ async fn an_answer_the_window_cannot_hold_is_cut_to_the_room_the_count_leaves() 
     // The server counts 6,500 tokens and the framing 24 more: the answer gets
     // the 1,668 left, not the 2,000 asked.
     let sent = measured(Some(6_500), &long, Some(2_000)).await.unwrap();
-    assert_eq!(sent.output_ceiling(None, false), Some(1_668));
+    assert_eq!(sent.ceiling, Some(1_668));
     // Only a prompt that fills the window is refused.
     for (tokens, counted) in [(Some(8_200), "(counted exactly)"), (None, "(estimated)")] {
         let refused = measured(tokens, &long, Some(2_000)).await.unwrap_err();
@@ -1060,11 +1083,10 @@ async fn a_server_that_cannot_count_is_not_refused_on_the_estimates_margin() {
     // past the 8,192 window; the plain estimate leaves room.
     let prose = "word ".repeat(4_800);
     let sent = measured(None, &prose, Some(2_000)).await.unwrap();
-    assert_eq!(sent.output_ceiling(None, false), Some(2_000));
-    assert!(!sent.window_fit.unwrap().counted_exactly);
+    assert_eq!(sent.ceiling, Some(2_000));
+    assert!(!sent.size.counted_exactly);
     let sent = measured(None, &prose, None).await.unwrap();
-    let fit = sent.window_fit.unwrap();
-    assert_eq!(fit.prompt_tokens + fit.room as usize, 8_192);
+    assert_eq!(sent.size.prompt_tokens + sent.room as usize, 8_192);
 }
 
 #[tokio::test]
@@ -1072,9 +1094,8 @@ async fn an_open_answer_is_given_the_room_the_prompt_leaves_and_never_more() {
     let long = "word ".repeat(8_000);
     // The estimate leaves nothing; the exact count leaves 2,168 of the 8,192.
     let sent = measured(Some(6_000), &long, None).await.unwrap();
-    let fit = sent.window_fit.unwrap();
-    assert_eq!(fit.prompt_tokens + fit.room as usize, 8_192);
-    assert!(fit.counted_exactly);
+    assert_eq!(sent.size.prompt_tokens + sent.room as usize, 8_192);
+    assert!(sent.size.counted_exactly);
     // A prompt that fills the window leaves no room, and is refused.
     let refused = measured(Some(8_192), &long, None).await.unwrap_err();
     assert!(
@@ -1120,9 +1141,9 @@ async fn a_prompt_not_worth_counting_is_recorded_at_its_estimate_and_framing() {
         })
         .await
         .unwrap();
-        let fit = model.seen.lock()[0].window_fit.unwrap();
-        assert_eq!(fit.prompt_tokens, 3 + 8 + 16);
-        assert!(!fit.counted_exactly);
+        let sent = model.seen.lock()[0].clone();
+        assert_eq!(sent.size.prompt_tokens, 3 + 8 + 16);
+        assert!(!sent.size.counted_exactly);
     }
 }
 

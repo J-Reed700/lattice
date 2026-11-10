@@ -4,7 +4,8 @@
 use super::dto::FileIndexingOptionsDto;
 use super::file_job::{EmbeddingLoader, FileImporter};
 use super::imports::{BatchImports, FileImport, FILE_IMPORT};
-use super::items::{BatchItems, ItemState};
+use super::items::ItemState;
+use super::repository::BatchItems;
 use super::url_job::UrlImporter;
 use crate::features::embedding::repository::EmbeddingRepository;
 use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;

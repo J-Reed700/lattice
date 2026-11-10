@@ -5,7 +5,8 @@ use super::dto::{
     FileIndexingOptionsDto,
 };
 use super::file_job::FileImportRequest;
-use super::items::{BatchItem, BatchItems, ItemCounts};
+use super::items::{BatchItem, ItemCounts};
+use super::repository::BatchItems;
 use crate::features::web::services::web::check_public_url;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
 use lattice_core::shared::persistence::Transactions;
@@ -129,7 +130,7 @@ impl BatchImports {
         let mut tx = self
             .items
             .pool()
-            .begin_with("BEGIN IMMEDIATE")
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
         let admitted = JobStore::submit_in(&mut tx, &job).await?;
@@ -310,7 +311,7 @@ impl BatchImports {
         let mut tx = self
             .items
             .pool()
-            .begin_with("BEGIN IMMEDIATE")
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
         JobStore::cancel_in(&mut tx, job_id).await?;
@@ -361,7 +362,7 @@ impl BatchImports {
         let mut tx = self
             .items
             .pool()
-            .begin_with("BEGIN IMMEDIATE")
+            .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
         let attempt = JobStore::retry_in(

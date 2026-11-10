@@ -97,6 +97,54 @@ async fn anthropic_authenticates_and_follows_all_pages_preserving_display_names(
 }
 
 #[tokio::test]
+async fn a_model_list_of_any_length_is_read_to_its_end() {
+    const PAGES: usize = 40;
+    let server = MockServer::start().await;
+    for page in 1..=PAGES {
+        let last = page == PAGES;
+        let mut body = json!({
+            "data":[{"id":format!("model-{page}"), "display_name":format!("Model {page}")}],
+            "has_more":!last
+        });
+        if !last {
+            body["last_id"] = json!(format!("model-{page}"));
+        }
+        let response = ResponseTemplate::new(200).set_body_json(body);
+        if page == 1 {
+            Mock::given(method("GET"))
+                .respond_with(response)
+                .mount(&server)
+                .await;
+        } else {
+            Mock::given(method("GET"))
+                .and(query_param("after_id", format!("model-{}", page - 1)))
+                .respond_with(response)
+                .with_priority(1)
+                .mount(&server)
+                .await;
+        }
+    }
+    let result = catalog(
+        CloudProvider::Anthropic,
+        Some("secret"),
+        &format!("{}/models", server.uri()),
+    )
+    .await
+    .unwrap();
+    let mut ids = result
+        .models
+        .iter()
+        .map(|m| m.id.clone())
+        .collect::<Vec<_>>();
+    ids.sort();
+    let mut expected = (1..=PAGES)
+        .map(|n| format!("model-{n}"))
+        .collect::<Vec<_>>();
+    expected.sort();
+    assert_eq!(ids, expected);
+}
+
+#[tokio::test]
 async fn google_follows_page_tokens_and_only_offers_text_generation_models() {
     let server = MockServer::start().await;
     Mock::given(method("GET")).and(header("x-goog-api-key", "secret"))

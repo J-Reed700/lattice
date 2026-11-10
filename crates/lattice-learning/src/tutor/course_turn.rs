@@ -1,9 +1,9 @@
 //! The course a tutor chat is bound to, opened for one turn.
 
-use super::binding::conversation_course;
 use super::cards::DueCard;
 use super::facts::replies_since_check;
 use super::prompt::{self, TurnFacts, TUTOR_POLICY};
+use super::repository::conversation_course;
 use super::tools;
 use crate::dto::{LearningLessonDto, LearningModuleDto, LearningProgramDto};
 use crate::references::course_index::CourseIndexes;

@@ -145,7 +145,7 @@ export function RuntimeTuningSection({
 
       <SettingsRow
         label="Max tokens"
-        hint="For downloaded models. A connected model writes up to its provider's limit unless one is set under Configure in Settings → Downloaded. Anthropic needs a number, so this one stands in when Anthropic can't be asked."
+        hint="For downloaded models and models on your own llama.cpp or Ollama server. A cloud model writes up to its provider's limit unless one is set under Configure in Settings → Downloaded."
         htmlFor="tuning-max-tokens"
       >
         <input

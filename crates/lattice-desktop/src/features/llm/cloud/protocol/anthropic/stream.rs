@@ -181,6 +181,10 @@ impl EventDecoder for Events {
         self.completed.is_some()
     }
 
+    fn is_failure(&self, kind: &str) -> bool {
+        kind == "error"
+    }
+
     fn has_tool_output(&self) -> bool {
         !self.input_json.is_empty()
     }

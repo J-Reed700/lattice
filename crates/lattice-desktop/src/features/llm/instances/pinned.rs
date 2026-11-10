@@ -127,14 +127,6 @@ impl LLMPort for PinnedLlm {
         self.inner().thinks_before_answering()
     }
 
-    fn model_output_ceiling(&self) -> Option<u32> {
-        self.inner().model_output_ceiling()
-    }
-
-    fn reasons_for(&self, request: &CompletionRequest) -> bool {
-        self.inner().reasons_for(request)
-    }
-
     fn vision(&self) -> Option<lattice_core::domain::models::vision::VisionGeometry> {
         self.inner().vision()
     }

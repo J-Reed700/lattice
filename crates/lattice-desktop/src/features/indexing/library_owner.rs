@@ -18,6 +18,9 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::roots;
 use lattice_core::shared::persistence::Transactions;
 
+mod repository;
+use repository::{holds_documents, recorded_owner};
+
 /// Where the files the startup sweeps delete live, and the file that names
 /// their owner.
 #[derive(Debug, Clone)]
@@ -99,14 +102,6 @@ async fn claim(pool: &SqlitePool, files: &LibraryFiles) -> Result<Option<&'stati
 }
 
 /// The id this database holds, if it has one.
-async fn recorded_owner(pool: &SqlitePool) -> Result<Option<String>> {
-    Ok(
-        sqlx::query_scalar::<_, String>("SELECT owner_id FROM library_owner WHERE id = 1")
-            .fetch_optional(pool)
-            .await?,
-    )
-}
-
 /// The id in the owner file, if the file exists.
 async fn filed_owner(path: &Path) -> Result<Option<String>> {
     match tokio::fs::read_to_string(path).await {
@@ -114,14 +109,6 @@ async fn filed_owner(path: &Path) -> Result<Option<String>> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
         Err(error) => Err(file_error("read", path, &error)),
     }
-}
-
-async fn holds_documents(pool: &SqlitePool) -> Result<bool> {
-    Ok(
-        sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM documents)")
-            .fetch_one(pool)
-            .await?,
-    )
 }
 
 /// Whether any of `directories` holds a file, at any depth.
@@ -159,10 +146,7 @@ async fn holds_files(directories: &[PathBuf]) -> Result<bool> {
 async fn adopt(pool: &SqlitePool, owner_file: &Path) -> Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
     let mut tx = pool.begin_write().await?;
-    sqlx::query("INSERT INTO library_owner (id, owner_id) VALUES (1, ?)")
-        .bind(&id)
-        .execute(&mut *tx)
-        .await?;
+    repository::record_owner(&mut tx, &id).await?;
     write_owner_file(owner_file, &id).await?;
     tx.commit().await?;
     tracing::info!(

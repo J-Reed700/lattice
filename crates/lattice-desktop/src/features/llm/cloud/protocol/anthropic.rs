@@ -7,14 +7,20 @@ use lattice_core::application::{
         ToolChoice,
     },
 };
+use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::{AppError, Result};
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::listing;
-use super::{api_base, user_parts, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
+use super::{
+    api_base, CatalogProtocol, CompletionProtocol, EventDecoder, LimitsApi, LimitsProtocol,
+    ModelPage, ProviderApi,
+};
 use crate::features::llm::cloud::{field, reply, set_field};
+use crate::features::llm::engine::vision::user_parts;
+use crate::features::llm::fitting::{Fitted, Thinking};
 
 pub(in crate::features::llm::cloud) mod schema;
 mod stream;
@@ -27,19 +33,30 @@ const LIST_PAGE_SIZE: &str = "100";
 
 pub(super) struct Anthropic;
 
-impl ProviderProtocol for Anthropic {
-    fn name(&self) -> &'static str {
-        "anthropic"
-    }
-
-    fn shown_name(&self) -> &'static str {
-        "Anthropic"
+impl ProviderApi for Anthropic {
+    fn provider(&self) -> CloudProvider {
+        CloudProvider::Anthropic
     }
 
     fn api_base(&self) -> String {
         api_base("LATTICE_ANTHROPIC_BASE_URL", "https://api.anthropic.com")
     }
 
+    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
+        self.sign(request, key)
+    }
+
+    /// An account out of credit is refused with a 400, not a 429.
+    fn out_of_credit(&self, status: StatusCode, reply: &Value) -> bool {
+        status == StatusCode::BAD_REQUEST
+            && reply
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .is_some_and(|message| message.to_ascii_lowercase().contains("credit balance"))
+    }
+}
+
+impl CompletionProtocol for Anthropic {
     fn completion_path(&self) -> &'static str {
         "/v1/messages"
     }
@@ -50,17 +67,25 @@ impl ProviderProtocol for Anthropic {
             .header("anthropic-version", API_VERSION)
     }
 
-    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
-        self.sign(request, key)
+    fn thinking(&self, model: &str, request: &CompletionRequest) -> Thinking {
+        let effort = request.reasoning_effort.as_deref();
+        let asked = request.thinking == ThinkingMode::On;
+        // A request for no thinking at all turns it off where the model
+        // allows that; elsewhere it thinks at the lowest effort.
+        let turned_off = effort == Some("none") && !asked && claude_thinking_off(model).is_some();
+        let thinks = !turned_off
+            && (claude_thinks_unasked(model)
+                || asked
+                || effort.is_some_and(|effort| effort != "none"));
+        if thinks {
+            Thinking::On
+        } else {
+            Thinking::Off
+        }
     }
 
-    fn body(
-        &self,
-        model: &str,
-        request: &CompletionRequest,
-        stream: bool,
-        ceiling: Option<u32>,
-    ) -> Result<Value> {
+    fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
+        let request = fitted.request();
         let (system, messages) = messages(&request.input)?;
         // No sampling knobs are sent: current Claude models reject `temperature`,
         // `top_p` and `top_k` with a 400 (some for any non-default value, all
@@ -68,8 +93,7 @@ impl ProviderProtocol for Anthropic {
         // is expressed by leaving the thinking block out, since asking for
         // adaptive thinking means think.
         let effort = request.reasoning_effort.as_deref();
-        let thinking = Thinking::of(model, request);
-        let max_tokens = ceiling.ok_or_else(|| {
+        let max_tokens = fitted.ceiling().ok_or_else(|| {
             AppError::InvalidState("Anthropic needs a reply ceiling and none was set".into())
         })?;
         let mut body =
@@ -82,7 +106,7 @@ impl ProviderProtocol for Anthropic {
         }
         // A block asks for the thinking; on a model that thinks unasked
         // it is the same request, and says how its thinking is shown.
-        if thinking.on {
+        if fitted.thinking().is_on() {
             // Thinking is not shown unless asked for: summaries are what a
             // caller that displays reasoning gets back.
             let block = if request.include_reasoning {
@@ -91,8 +115,10 @@ impl ProviderProtocol for Anthropic {
                 json!({"type":"adaptive"})
             };
             set_field(&mut body, "thinking", block)?;
-        } else if let Some(off) = thinking.off {
-            set_field(&mut body, "thinking", off)?;
+        } else if effort == Some("none") {
+            if let Some(off) = claude_thinking_off(model) {
+                set_field(&mut body, "thinking", off)?;
+            }
         }
         if let Some(effort) = effort {
             // Anthropic has no "none" effort of its own, so the answer
@@ -175,7 +201,33 @@ impl ProviderProtocol for Anthropic {
                 _ => {}
             }
         }
-        reply::finish(&mut response, &value, "stop_reason", &reasoning_parts);
+        // The whole prompt: cache reads and writes are counted apart from
+        // `input_tokens`.
+        let input_tokens: u64 = [
+            "input_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        ]
+        .iter()
+        .filter_map(|key| field(field(&value, "usage"), key).as_u64())
+        .sum();
+        reply::finish(
+            &mut response,
+            &value,
+            "stop_reason",
+            input_tokens,
+            &reasoning_parts,
+        );
+        if response.finish_reason == "refusal" {
+            // Claude's safety classifiers decline with a 200 and name the one
+            // that did; the reply itself says nothing worth logging.
+            tracing::warn!(
+                category = field(field(&value, "stop_details"), "category")
+                    .as_str()
+                    .unwrap_or("unnamed"),
+                "The model declined the request"
+            );
+        }
         // The content blocks replay as the assistant message they were,
         // signed thinking included.
         response.replay = vec![CompletionInput::Native {
@@ -188,17 +240,14 @@ impl ProviderProtocol for Anthropic {
         Box::new(stream::Events::default())
     }
 
-    fn thinks_unasked(&self, model: &str) -> bool {
-        claude_thinks_unasked(model)
-    }
-
-    fn reasons(&self, model: &str, request: &CompletionRequest) -> bool {
-        Thinking::of(model, request).on
-    }
-
-    /// The Messages API refuses a request without `max_tokens`.
-    fn requires_ceiling(&self) -> bool {
-        true
+    /// Cache reads are counted apart from `input_tokens`, and cache writes
+    /// too, though the backend read those like any others.
+    fn prompt_tokens_read(&self, reply: &Value) -> u64 {
+        let usage = field(reply, "usage");
+        field(usage, "input_tokens").as_u64().unwrap_or(0)
+            + field(usage, "cache_creation_input_tokens")
+                .as_u64()
+                .unwrap_or(0)
     }
 
     fn format_refusal(&self, body: &Value, reason: &str) -> Option<AppError> {
@@ -216,7 +265,9 @@ impl ProviderProtocol for Anthropic {
             schema::in_words(body.clone())
         })
     }
+}
 
+impl CatalogProtocol for Anthropic {
     fn catalog_url(&self) -> &'static str {
         "https://api.anthropic.com/v1/models"
     }
@@ -258,6 +309,13 @@ impl ProviderProtocol for Anthropic {
             .collect();
         Ok(ModelPage { models, next })
     }
+}
+
+impl LimitsProtocol for Anthropic {
+    /// The Messages API refuses a request without `max_tokens`.
+    fn requires_ceiling(&self) -> bool {
+        true
+    }
 
     fn limits_api(&self) -> Option<LimitsApi> {
         Some(LimitsApi {
@@ -277,30 +335,6 @@ impl ProviderProtocol for Anthropic {
 struct ReportedModel {
     max_input_tokens: Option<u32>,
     max_tokens: Option<u32>,
-}
-
-/// How a request asks Claude to think.
-struct Thinking {
-    /// The `thinking` block that turns thinking off, where the model allows it.
-    off: Option<Value>,
-    /// Whether the reply is thought through first.
-    on: bool,
-}
-
-impl Thinking {
-    fn of(model: &str, request: &CompletionRequest) -> Self {
-        let effort = request.reasoning_effort.as_deref();
-        // A request for no thinking at all turns it off where the model
-        // allows that; elsewhere it thinks at the lowest effort.
-        let off = (effort == Some("none") && request.thinking != ThinkingMode::On)
-            .then(|| claude_thinking_off(model))
-            .flatten();
-        let on = off.is_none()
-            && (claude_thinks_unasked(model)
-                || request.thinking == ThinkingMode::On
-                || effort.is_some_and(|effort| effort != "none"));
-        Self { off, on }
-    }
 }
 
 /// How a Claude model is asked not to think, where it can be: Sonnet 5.5

@@ -60,6 +60,10 @@ impl EventDecoder for Events {
         self.completed.is_some()
     }
 
+    fn is_failure(&self, kind: &str) -> bool {
+        matches!(kind, "error" | "response.failed")
+    }
+
     fn has_tool_output(&self) -> bool {
         false
     }

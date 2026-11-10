@@ -13,7 +13,7 @@ use crate::drills::build::SourcePassage;
 use crate::drills::lesson::LessonContext;
 use crate::drills::repository;
 use crate::dto::LearningSourceDto;
-use crate::persistence::{db, now};
+use crate::persistence::now;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::LLMPort;
@@ -45,7 +45,7 @@ pub(super) async fn pick(
     context: &LessonContext,
     wanted: u32,
 ) -> Result<Picked> {
-    let owners = owners(pool, &context.program_id).await?;
+    let owners = repository::source_owners(pool, &context.program_id).await?;
     let owner = |version: &str| -> String {
         owners
             .get(version)
@@ -293,17 +293,6 @@ fn weight_of(text: &str, weights: &HashMap<String, f64>) -> f64 {
         .iter()
         .filter_map(|term| weights.get(term))
         .sum()
-}
-
-/// For each version of the course's sources, the source it is a version of.
-async fn owners(pool: &SqlitePool, program_id: &str) -> Result<HashMap<String, String>> {
-    let rows: Vec<(String, String)> =
-        sqlx::query_as("SELECT id,source_id FROM learning_source_versions WHERE program_id=?")
-            .bind(program_id)
-            .fetch_all(pool)
-            .await
-            .map_err(db)?;
-    Ok(rows.into_iter().collect())
 }
 
 /// The places of `text`: its paragraphs, a paragraph of at least twice `wanted` sentences cut into runs of at least

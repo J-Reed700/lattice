@@ -3,31 +3,43 @@
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ContentPart,
 };
+use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::{AppError, Result};
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client, RequestBuilder, StatusCode};
 use serde_json::{json, Value};
 
 use super::listing::{self, is_text_model};
-use super::{api_base, user_parts, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
+use super::{
+    api_base, insufficient_quota, CatalogProtocol, CompletionProtocol, EventDecoder, LimitsApi,
+    LimitsProtocol, ModelPage, ProviderApi,
+};
 use crate::features::llm::cloud::{field, reply, set_field};
+use crate::features::llm::engine::vision::user_parts;
+use crate::features::llm::fitting::{Fitted, Thinking};
 
 mod stream;
 
 pub(super) struct OpenAi;
 
-impl ProviderProtocol for OpenAi {
-    fn name(&self) -> &'static str {
-        "openai"
-    }
-
-    fn shown_name(&self) -> &'static str {
-        "OpenAI"
+impl ProviderApi for OpenAi {
+    fn provider(&self) -> CloudProvider {
+        CloudProvider::Openai
     }
 
     fn api_base(&self) -> String {
         api_base("LATTICE_OPENAI_BASE_URL", "https://api.openai.com")
     }
 
+    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
+        request.bearer_auth(key)
+    }
+
+    fn out_of_credit(&self, status: StatusCode, reply: &Value) -> bool {
+        status == StatusCode::TOO_MANY_REQUESTS && insufficient_quota(reply)
+    }
+}
+
+impl CompletionProtocol for OpenAi {
     fn completion_path(&self) -> &'static str {
         "/v1/responses"
     }
@@ -36,20 +48,20 @@ impl ProviderProtocol for OpenAi {
         request.bearer_auth(key)
     }
 
-    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
-        request.bearer_auth(key)
+    fn thinking(&self, model: &str, _request: &CompletionRequest) -> Thinking {
+        if is_reasoning_model(model) {
+            Thinking::On
+        } else {
+            Thinking::Off
+        }
     }
 
-    fn body(
-        &self,
-        model: &str,
-        request: &CompletionRequest,
-        stream: bool,
-        ceiling: Option<u32>,
-    ) -> Result<Value> {
+    fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
+        let request = fitted.request();
+        let reasons = fitted.thinking().is_on();
         let input = input_items(&request.input)?;
         let mut body = json!({"model":model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
-        if let Some(max_output) = ceiling {
+        if let Some(max_output) = fitted.ceiling() {
             set_field(&mut body, "max_output_tokens", json!(max_output))?;
         }
         if !request.tools.is_empty() {
@@ -71,7 +83,7 @@ impl ProviderProtocol for OpenAi {
         // reasoning model always reasons and a chat model never does, so
         // the effort level below is the only control the API offers.
         let effort = reasoning_effort(model, request.reasoning_effort.as_deref());
-        if is_reasoning_model(model) && (effort.is_some() || request.include_reasoning) {
+        if reasons && (effort.is_some() || request.include_reasoning) {
             let mut reasoning = json!({});
             if let Some(effort) = effort {
                 set_field(&mut reasoning, "effort", json!(effort))?;
@@ -86,7 +98,7 @@ impl ProviderProtocol for OpenAi {
         // Reasoning models reject both knobs outright, so an override that
         // would 400 the request is dropped rather than sent: the caller
         // wanted determinism, not a failed call.
-        if let Some(sampling) = request.sampling.filter(|_| !is_reasoning_model(model)) {
+        if let Some(sampling) = request.sampling.filter(|_| !reasons) {
             if let Some(temperature) = sampling.temperature {
                 set_field(&mut body, "temperature", json!(temperature))?;
             }
@@ -136,7 +148,16 @@ impl ProviderProtocol for OpenAi {
                 _ => {}
             }
         }
-        reply::finish(&mut response, &value, "status", &reasoning_parts);
+        let input_tokens = field(field(&value, "usage"), "input_tokens")
+            .as_u64()
+            .unwrap_or(0);
+        reply::finish(
+            &mut response,
+            &value,
+            "status",
+            input_tokens,
+            &reasoning_parts,
+        );
         // OpenAI replays its output items one by one.
         response.replay = blocks
             .iter()
@@ -150,18 +171,21 @@ impl ProviderProtocol for OpenAi {
         Box::new(stream::Events::default())
     }
 
-    fn thinks_unasked(&self, _model: &str) -> bool {
-        false
+    /// The Responses API counts the cached tokens within `input_tokens`.
+    fn prompt_tokens_read(&self, reply: &Value) -> u64 {
+        let usage = field(reply, "usage");
+        field(usage, "input_tokens")
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_sub(
+                field(field(usage, "input_tokens_details"), "cached_tokens")
+                    .as_u64()
+                    .unwrap_or(0),
+            )
     }
+}
 
-    fn reasons(&self, model: &str, _request: &CompletionRequest) -> bool {
-        is_reasoning_model(model)
-    }
-
-    fn requires_ceiling(&self) -> bool {
-        false
-    }
-
+impl CatalogProtocol for OpenAi {
     fn catalog_url(&self) -> &'static str {
         "https://api.openai.com/v1/models"
     }
@@ -190,6 +214,12 @@ impl ProviderProtocol for OpenAi {
             .collect();
         Ok(ModelPage { models, next: None })
     }
+}
+
+impl LimitsProtocol for OpenAi {
+    fn requires_ceiling(&self) -> bool {
+        false
+    }
 
     /// OpenAI's model object carries neither a window nor an output ceiling.
     fn limits_api(&self) -> Option<LimitsApi> {
@@ -200,7 +230,15 @@ impl ProviderProtocol for OpenAi {
 /// Whether this OpenAI model is a reasoning model, which takes an effort
 /// setting in place of sampling knobs and rejects `temperature`/`top_p`.
 fn is_reasoning_model(model: &str) -> bool {
+    let model = base_model(model);
     model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with('o')
+}
+
+/// A fine-tune answers as the model it was tuned from: `ft:<base>:<org>:...`.
+fn base_model(id: &str) -> &str {
+    id.strip_prefix("ft:")
+        .and_then(|id| id.split(':').next())
+        .unwrap_or(id)
 }
 
 /// What, if anything, belongs in the Responses API's `reasoning` block. Only
@@ -209,6 +247,7 @@ fn is_reasoning_model(model: &str) -> bool {
 /// (gpt-5) or `low` (o-series).
 fn reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str> {
     let effort = effort?;
+    let model = base_model(model);
     let floor = if model.starts_with("gpt-5") || model.starts_with("gpt-6") {
         "minimal"
     } else if model.starts_with('o') {
@@ -222,10 +261,7 @@ fn reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str>
 // OpenAI's model list has no endpoint capabilities. Recognize chat families,
 // including fine tunes, and exclude specialized audio/image/search endpoints.
 fn is_chat_model(id: &str) -> bool {
-    let base = id
-        .strip_prefix("ft:")
-        .and_then(|id| id.split(':').next())
-        .unwrap_or(id);
+    let base = base_model(id);
     (base.starts_with("gpt-")
         || base.starts_with("chatgpt-")
         || base.starts_with("chat-")

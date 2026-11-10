@@ -8,7 +8,7 @@ use super::dto::{
 };
 use super::file_job::{EmbeddingLoader, FileImporter};
 use super::imports::{BatchImports, FileImport};
-use super::items::BatchItems;
+use super::repository::BatchItems;
 use super::url_job::UrlImporter;
 use crate::infrastructure::persistence::repositories::document_scope::SqliteDocumentScope;
 use crate::interfaces::di::Container;

@@ -5,7 +5,9 @@
 //! second time is deterministic and ends as [`AppError::ModelRejected`], as
 //! does a server's refusal of the request itself.
 use super::*;
+use crate::features::llm::fitting::Fitted;
 use crate::features::llm::scheduler::rejection;
+use lattice_core::application::ports::llm_port::RequestSize;
 
 const MAX_ATTEMPTS: usize = 5;
 
@@ -24,7 +26,8 @@ pub(super) const PREFILL_BATCH_TOKENS: usize = 2048;
 pub(super) const PREFILL_FLOOR_TOKENS_PER_SEC: usize = 20;
 
 /// How long a bundled server may stay silent before it starts generating:
-/// the floor plus one batch of this prompt at the slowest prefill rate.
+/// the floor plus one batch of the prompt the fit measured at the slowest
+/// prefill rate.
 /// Progress frames restart the wait, so it only has to cover the gap between
 /// two of them — or, from a server that sends none, the whole prompt, which is
 /// why short prompts are not given the full batch.
@@ -32,11 +35,11 @@ pub(super) const PREFILL_FLOOR_TOKENS_PER_SEC: usize = 20;
 /// Pictures are counted by their declared tokens, never their bytes, and on
 /// top of the batch: the server encodes each picture whole before it reports
 /// progress on the text after it.
-pub(super) fn prefill_allowance(input: &[CompletionInput]) -> Duration {
-    let images: usize = input.iter().map(CompletionInput::image_tokens).sum();
-    let tokens = request::text_tokens(input)
+pub(super) fn prefill_allowance(size: &RequestSize) -> Duration {
+    let text_tokens = size.prompt_tokens.saturating_sub(size.image_tokens);
+    let tokens = text_tokens
         .min(PREFILL_BATCH_TOKENS)
-        .saturating_add(images);
+        .saturating_add(size.image_tokens);
     FIRST_FRAME_FLOOR + Duration::from_secs((tokens / PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
 }
 
@@ -105,14 +108,15 @@ impl ProgressWatch {
 impl LlamaCppLlm {
     pub(super) async fn complete_reliably(
         &self,
-        request: &CompletionRequest,
+        fitted: &Fitted<'_>,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_reasoning: Option<&(dyn Fn(String) -> Result<()> + Send + Sync)>,
         on_retry: Option<&(dyn Fn(usize) -> Result<()> + Send + Sync)>,
     ) -> Result<CompletionResponse> {
+        let request = fitted.request();
         // Failed drafts and partial tool calls must never enter history.
-        let mut body = self.body(request)?;
-        let size = self.request_size(request);
+        let mut body = self.body(fitted)?;
+        let size = fitted.size();
         let window = self.config.context_window;
         tracing::info!(
             model = %self.config.model,
@@ -120,13 +124,10 @@ impl LlamaCppLlm {
             counted_exactly = size.counted_exactly,
             output_reserved = size.output_tokens,
             window,
-            slot = request.assigned_slot,
+            slot = fitted.slot(),
             "llm.request"
         );
-        let first_frame = self
-            .config
-            .prefill_guard
-            .then(|| prefill_allowance(&request.input));
+        let first_frame = self.config.prefill_guard.then(|| prefill_allowance(&size));
         let deadline = request
             .wall_clock_budget()
             .map(|budget| tokio::time::Instant::now() + budget);

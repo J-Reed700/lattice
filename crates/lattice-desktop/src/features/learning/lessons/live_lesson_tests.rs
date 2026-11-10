@@ -216,18 +216,15 @@ impl ObservedModel {
         settings: &lattice_core::application::contracts::settings::LLMSettingsDto,
         directory: std::path::PathBuf,
     ) -> Result<Self> {
-        use lattice_core::application::contracts::settings::LLMProvider;
         use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
         let mut config = settings.clone();
         match &settings.learning_model {
             Some(ModelRef::Cloud { provider, model }) => {
-                let (name, provider) = match provider {
-                    CloudProvider::Openai => ("openai", LLMProvider::Openai),
-                    CloudProvider::Anthropic => ("anthropic", LLMProvider::Anthropic),
-                    CloudProvider::Google => ("google", LLMProvider::Google),
+                let name = match provider {
+                    CloudProvider::Openai => "openai",
+                    CloudProvider::Anthropic => "anthropic",
+                    CloudProvider::Google => "google",
                 };
-                config.provider = provider;
-                config.model = model.clone();
                 let key = crate::infrastructure::security::keyring_storage::SecureStorage::new()
                     .cloud_api_key(name)?
                     .ok_or_else(|| {
@@ -236,8 +233,18 @@ impl ObservedModel {
                         ))
                     })?;
                 let schedulers = crate::features::llm::scheduler::SchedulerRegistry::default();
-                let inner =
-                    crate::features::llm::cloud::CloudLlm::new(&config, key)?.schedule(&schedulers);
+                let inner = crate::features::llm::loading::load_cloud(
+                    &config,
+                    &ModelRef::Cloud {
+                        provider: *provider,
+                        model: model.clone(),
+                    },
+                    crate::features::llm::instances::Tuning::Standard,
+                    key,
+                    &crate::features::llm::cloud::limits::ReportedLimits::default(),
+                    &schedulers,
+                )
+                .await?;
                 Ok(Self::observing(inner, directory, 0))
             }
             Some(ModelRef::LlamaCpp { model }) => {
@@ -416,6 +423,7 @@ async fn a_saved_call_names_the_model_that_answered() -> Result<()> {
 #[tokio::test]
 async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()> {
     use crate::features::learning::content_verification::page_budget;
+    use crate::features::llm::fitting::PortBackend;
     use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler, ScheduledLlm};
     use lattice_core::application::ports::llm_port::CompletionInput;
     let directory = tempfile::tempdir()?;
@@ -424,7 +432,10 @@ async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()
         BackendCapacity::concurrent(1),
     ));
     let model = ObservedModel::observing(
-        Arc::new(ScheduledLlm::new(Arc::new(TimedBackend), scheduler)),
+        Arc::new(ScheduledLlm::new(
+            Arc::new(PortBackend(Arc::new(TimedBackend))),
+            scheduler,
+        )),
         directory.path().to_path_buf(),
         0,
     );

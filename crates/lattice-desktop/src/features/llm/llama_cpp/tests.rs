@@ -1,5 +1,6 @@
 use super::*;
-use lattice_core::application::ports::llm_port::invalid_tool_call_problem;
+use crate::features::llm::fitting::SendUnscheduled;
+use lattice_core::application::ports::llm_port::{invalid_tool_call_problem, RequestSize};
 use wiremock::{
     matchers::{body_partial_json, header, method, path},
     Mock, MockServer, ResponseTemplate,
@@ -28,15 +29,27 @@ fn assistant(response: &CompletionResponse) -> Value {
     }
 }
 
+/// The body `request` becomes, with no window to cut it to.
+fn body_of(client: &LlamaCppLlm, request: &CompletionRequest) -> Result<Value> {
+    client.body(&Fitted::uncut(client, request))
+}
+
 /// Plain text through the typed path, as string-only callers make it.
 async fn text(client: &LlamaCppLlm, prompt: &str, context: &[String]) -> Result<String> {
-    lattice_core::application::services::completion_input::complete_text(
-        client,
-        prompt,
-        context,
-        Default::default(),
-    )
-    .await
+    let response = client
+        .complete(&CompletionRequest {
+            input: lattice_core::application::services::completion_input::from_context(
+                "", context, prompt,
+            ),
+            ..Default::default()
+        })
+        .await?;
+    if !response.tool_calls.is_empty() {
+        return Err(AppError::InvalidState(
+            "Unexpected tool call in text generation".into(),
+        ));
+    }
+    Ok(response.text)
 }
 
 fn stream_reply(mut message: Value, reason: &str) -> String {
@@ -144,7 +157,7 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
         ],
         ..Default::default()
     };
-    let body = client.body(&request).unwrap();
+    let body = body_of(&client, &request).unwrap();
     assert_eq!(
         body["messages"],
         json!([
@@ -169,7 +182,7 @@ fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
         ],
         ..Default::default()
     };
-    let body = client.body(&image_request).unwrap();
+    let body = body_of(&client, &image_request).unwrap();
     assert_eq!(
         body["messages"],
         json!([{"role":"system","content":"Image instructions"}, image])
@@ -1243,15 +1256,17 @@ fn a_logprobs_request_reads_the_first_tokens_alternatives_back() {
         want_logprobs: true,
         ..Default::default()
     };
-    let body = client.body(&request).unwrap();
+    let body = body_of(&client, &request).unwrap();
     assert_eq!(body["logprobs"], true);
     assert!(body["top_logprobs"].as_u64().unwrap() > 1);
-    let plain = client
-        .body(&CompletionRequest {
+    let plain = body_of(
+        &client,
+        &CompletionRequest {
             want_logprobs: false,
             ..request.clone()
-        })
-        .unwrap();
+        },
+    )
+    .unwrap();
     assert!(plain.get("logprobs").is_none());
 
     // Streamed: the first chunk carries the first token's alternatives; later
@@ -1401,19 +1416,15 @@ fn a_scheduled_request_carries_its_slot_and_reuses_the_cached_prefix() {
             role: "user".into(),
             content: "Hello".into(),
         }],
-        assigned_slot: Some(1),
         ..Default::default()
     };
-    let body = client.body(&request).unwrap();
+    let body = client
+        .body(&Fitted::uncut(&client, &request).in_slot(Some(1)))
+        .unwrap();
     assert_eq!(body["id_slot"], 1);
     assert_eq!(body["cache_prompt"], true);
 
-    let unscheduled = client
-        .body(&CompletionRequest {
-            assigned_slot: None,
-            ..request
-        })
-        .unwrap();
+    let unscheduled = body_of(&client, &request).unwrap();
     assert!(unscheduled.get("id_slot").is_none());
 }
 
@@ -1526,11 +1537,18 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
         ),
         max_output_tokens: Some(512),
         want_logprobs: true,
-        assigned_slot: Some(2),
         ..Default::default()
     };
-    assert_eq!(remote.complete(&request).await.unwrap().text, "Answer");
-    assert_eq!(sidecar.complete(&request).await.unwrap().text, "Answer");
+    let fitted = Fitted::uncut(&remote, &request).in_slot(Some(2));
+    assert_eq!(
+        remote.send(&fitted, Progress::None).await.unwrap().text,
+        "Answer"
+    );
+    let fitted = Fitted::uncut(&sidecar, &request).in_slot(Some(2));
+    assert_eq!(
+        sidecar.send(&fitted, Progress::None).await.unwrap().text,
+        "Answer"
+    );
     let sent = |requests: Vec<wiremock::Request>| -> Value {
         serde_json::from_slice(&requests[0].body).unwrap()
     };
@@ -1562,7 +1580,7 @@ fn a_model_without_a_tool_template_refuses_tool_traffic() {
         }],
         ..Default::default()
     };
-    assert!(client.body(&plain).is_ok());
+    assert!(body_of(&client, &plain).is_ok());
     let replayed_result = CompletionRequest {
         input: vec![CompletionInput::ToolResult {
             id: "call_1".into(),
@@ -1571,7 +1589,7 @@ fn a_model_without_a_tool_template_refuses_tool_traffic() {
         ..Default::default()
     };
     assert!(matches!(
-        client.body(&replayed_result),
+        body_of(&client, &replayed_result),
         Err(AppError::InvalidConfig(_))
     ));
     assert!(!client.supports_tool_calling());
@@ -1640,14 +1658,16 @@ fn slow_prefill() -> Vec<(u64, String)> {
 /// A flat first-token wait failed this turn; progress frames are liveness.
 #[tokio::test(start_paused = true)]
 async fn a_bundled_servers_prompt_progress_keeps_its_first_frame_wait_alive() {
-    let allowance = retry::prefill_allowance(&[CompletionInput::Message {
-        role: "user".into(),
-        content: "hi".into(),
-    }]);
+    // "user" and "hi" are 2 estimated tokens; the template adds 8 for the
+    // message and 16 for the answer.
+    let allowance = retry::prefill_allowance(&RequestSize {
+        prompt_tokens: 26,
+        ..Default::default()
+    });
     assert_eq!(
         allowance,
-        retry::FIRST_FRAME_FLOOR,
-        "a short prompt gets the floor"
+        retry::FIRST_FRAME_FLOOR + Duration::from_secs(1),
+        "a short prompt gets the floor and the seconds of its few tokens"
     );
     let response = read(slow_prefill(), Some(allowance)).await.ok().unwrap();
     assert_eq!(response.text, "Answer");
@@ -1681,12 +1701,13 @@ async fn silence_after_generation_starts_is_still_a_stall() {
 /// A long prompt with no progress frames gets one batch at the floor rate.
 #[test]
 fn a_long_prompt_gets_a_batch_of_prefill_on_top_of_the_floor() {
-    let long = CompletionInput::Message {
-        role: "user".into(),
-        content: "x".repeat(40_000),
+    // 40,004 characters are 10,001 estimated tokens, and the template adds 24.
+    let long = RequestSize {
+        prompt_tokens: 10_025,
+        ..Default::default()
     };
     assert_eq!(
-        retry::prefill_allowance(&[long]),
+        retry::prefill_allowance(&long),
         retry::FIRST_FRAME_FLOOR
             + Duration::from_secs(
                 (retry::PREFILL_BATCH_TOKENS / retry::PREFILL_FLOOR_TOKENS_PER_SEC) as u64
@@ -1870,7 +1891,7 @@ async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
         matches!(
             error,
             AppError::PromptExceedsWindow {
-                prompt_tokens: 5_001,
+                prompt_tokens: 5_025,
                 window: 4_096,
                 counted_exactly: false,
                 ..
@@ -1880,7 +1901,7 @@ async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
     );
     let told = error.to_string();
     for expected in [
-        "prompt is 5001 tokens (estimated), which leaves no room for an answer",
+        "prompt is 5025 tokens (estimated), which leaves no room for an answer",
         "configured context window is 4096",
         "It was not sent",
     ] {
@@ -1889,9 +1910,9 @@ async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
 }
 
 /// The lesson check seen in production: the caller sized its answer to the
-/// room its own count of the prompt left, this client counts the prompt two
-/// tokens higher, and the request goes out with the answer two tokens
-/// shorter instead of being refused.
+/// room its own count of the prompt left, this client counts the prompt 26
+/// tokens higher (two, and 24 of framing), and the request goes out with the
+/// answer that much shorter instead of being refused.
 #[tokio::test]
 async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     let server = MockServer::start().await;
@@ -1904,7 +1925,8 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
         context_window: 4_096,
         ..settings(server.uri())
     };
-    // "user" and 11 996 characters: 3 000 tokens by the estimate, 1 096 left.
+    // "user" and 11 996 characters: 3 000 tokens by the estimate and 24 of
+    // framing, 1 072 left.
     LlamaCppLlm::new(&settings)
         .unwrap()
         .schedule(&SchedulerRegistry::default())
@@ -1925,5 +1947,5 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
         .find(|request| request.url.path() == "/v1/chat/completions")
         .unwrap();
     let body: Value = serde_json::from_slice(&sent.body).unwrap();
-    assert_eq!(body["max_tokens"], json!(1_096));
+    assert_eq!(body["max_tokens"], json!(1_072));
 }

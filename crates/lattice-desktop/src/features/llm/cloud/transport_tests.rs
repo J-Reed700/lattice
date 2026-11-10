@@ -1,7 +1,9 @@
-use super::protocol::protocol_for;
+use super::protocol::protocols;
 use super::*;
+use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::domain::models::model_ref::CloudProvider;
 use serde_json::json;
 use wiremock::{
     matchers::{body_string_contains, header, method, path},
@@ -13,7 +15,8 @@ async fn client(server: &MockServer) -> CloudLlm {
         model: "test-model".into(),
         ..Default::default()
     };
-    let mut client = CloudLlm::new(&settings, "test-secret".into()).unwrap();
+    let mut client =
+        CloudLlm::new(&settings, "test-secret".into(), Some(settings.max_tokens)).unwrap();
     client.endpoint = format!("{}/responses", server.uri());
     client
 }
@@ -208,9 +211,9 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
 }
 fn openai_status(status: u16, body: &str) -> AppError {
     status_error(
-        protocol_for(LLMProvider::Openai).unwrap(),
+        protocols(CloudProvider::Openai).completion,
         reqwest::StatusCode::from_u16(status).unwrap(),
-        body,
+        &serde_json::from_str(body).unwrap_or(Value::Null),
     )
 }
 
@@ -233,6 +236,27 @@ fn an_account_out_of_quota_is_a_setting_to_fix_not_an_outage() {
             "OpenAI says the account has no credit or quota left (HTTP 429): add credit to the account, or choose another model in Settings → AI"
         );
         assert!(!JobFailure::is_transient(&error), "{body}");
+    }
+}
+
+#[test]
+fn a_payment_required_refusal_says_the_accounts_billing_needs_fixing() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for protocol in [
+        protocols(CloudProvider::Openai).completion,
+        protocols(CloudProvider::Anthropic).completion,
+    ] {
+        let error = status_error(
+            protocol,
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            &Value::Null,
+        );
+        let AppError::InvalidConfig(text) = &error else {
+            panic!("{error:?}");
+        };
+        assert!(text.contains("HTTP 402"), "{text}");
+        assert!(text.contains("billing"), "{text}");
+        assert!(!JobFailure::is_transient(&error));
     }
 }
 
@@ -325,7 +349,8 @@ async fn anthropic_client(server: &MockServer) -> CloudLlm {
         model: "claude-test".into(),
         ..Default::default()
     };
-    let mut client = CloudLlm::new(&settings, "test-secret".into()).unwrap();
+    let mut client =
+        CloudLlm::new(&settings, "test-secret".into(), Some(settings.max_tokens)).unwrap();
     client.endpoint = format!("{}/messages", server.uri());
     client
 }

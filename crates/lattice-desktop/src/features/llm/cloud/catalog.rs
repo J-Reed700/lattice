@@ -3,7 +3,7 @@
 use std::{collections::HashSet, time::Duration};
 
 use lattice_core::{
-    application::services::chat_model_resolution::{cloud_provider_id, cloud_provider_name},
+    application::services::chat_model_resolution::cloud_provider_id,
     domain::models::model_ref::CloudProvider,
     shared::{
         error::{AppError, Result},
@@ -12,7 +12,7 @@ use lattice_core::{
 };
 use serde::{Deserialize, Serialize};
 
-use super::protocol::protocol_for_cloud;
+use super::protocol::protocols;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -43,7 +43,7 @@ pub async fn list_models(provider: CloudProvider) -> Result<CloudModelCatalogDto
     catalog(
         provider,
         key.as_deref(),
-        protocol_for_cloud(provider).catalog_url(),
+        protocols(provider).catalog.catalog_url(),
     )
     .await
 }
@@ -64,7 +64,7 @@ async fn catalog(
     .map_err(|_| {
         AppError::Network(format!(
             "{} model list timed out. Try refreshing.",
-            cloud_provider_name(provider)
+            protocols(provider).catalog.shown_name()
         ))
     })??;
     Ok(CloudModelCatalogDto {
@@ -78,7 +78,7 @@ async fn fetch_models(
     key: &str,
     endpoint: &str,
 ) -> Result<Vec<CloudModelDto>> {
-    let protocol = protocol_for_cloud(provider);
+    let protocol = protocols(provider).catalog;
     let label = protocol.shown_name();
     let client = reqwest_client_builder()
         .redirect(reqwest::redirect::Policy::none())

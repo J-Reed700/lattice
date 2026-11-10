@@ -25,12 +25,15 @@ use lattice_core::{
 use serde_json::{json, Value};
 use std::{
     path::PathBuf,
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::Instant,
 };
 
 struct ConfiguredModel {
-    inner: lattice::features::llm::llama_cpp::LlamaCppLlm,
+    inner: Arc<dyn LLMPort>,
     model: String,
     context: usize,
     output: u32,
@@ -38,7 +41,7 @@ struct ConfiguredModel {
     calls: AtomicUsize,
 }
 impl ConfiguredModel {
-    fn open(suite: &str) -> Self {
+    async fn open(suite: &str) -> Self {
         let path = std::env::var("LATTICE_TEACHING_CONFIG_PATH")
             .expect("Explicit provider config path required");
         let config: Value =
@@ -123,7 +126,9 @@ impl ConfiguredModel {
         };
         Self {
             inner: lattice::features::llm::llama_cpp::LlamaCppLlm::new(&settings)
-                .expect("Configured production adapter"),
+                .expect("Configured production adapter")
+                .into_port()
+                .await,
             model: model.into(),
             context,
             output,
@@ -140,6 +145,17 @@ impl ConfiguredModel {
         .expect("Save evaluation artifact");
     }
 }
+/// The cap a retained call is recorded under: the request's own within the
+/// model's output limit, or that limit.
+fn replay_cap(request: &CompletionRequest, output: u32) -> Option<u32> {
+    Some(
+        request
+            .max_output_tokens
+            .filter(|cap| *cap > 0)
+            .map_or(output, |cap| cap.min(output)),
+    )
+}
+
 #[async_trait]
 impl LLMPort for ConfiguredModel {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
@@ -172,8 +188,7 @@ impl LLMPort for ConfiguredModel {
                     && saved["model"] == self.model
                     && saved["input"] == json!(messages)
                     && saved["reasoningEffort"] == json!(request.reasoning_effort)
-                    && saved["maxOutputTokens"]
-                        == json!(request.output_ceiling(Some(self.output), false))
+                    && saved["maxOutputTokens"] == json!(replay_cap(request, self.output))
                     && saved["finishReason"] == "stop"
                 {
                     println!(
@@ -194,7 +209,7 @@ impl LLMPort for ConfiguredModel {
         let began = Instant::now();
         println!("Model call {number} started");
         let response = self.inner.complete(request).await?;
-        self.save(&format!("call-{number:03}.json"), &json!({"transport":"production llama.cpp streaming adapter","model":self.model,"reasoningEffort":request.reasoning_effort,"maxOutputTokens":request.output_ceiling(Some(self.output), false),"latencyMs":began.elapsed().as_millis(),"input":messages,"output":response.text,"finishReason":response.finish_reason,"usage":{"prompt_tokens":response.input_tokens,"completion_tokens":response.output_tokens}}));
+        self.save(&format!("call-{number:03}.json"), &json!({"transport":"production llama.cpp streaming adapter","model":self.model,"reasoningEffort":request.reasoning_effort,"maxOutputTokens":replay_cap(request, self.output),"latencyMs":began.elapsed().as_millis(),"input":messages,"output":response.text,"finishReason":response.finish_reason,"usage":{"prompt_tokens":response.input_tokens,"completion_tokens":response.output_tokens}}));
         println!(
             "Model call {number} completed in {}s ({})",
             began.elapsed().as_secs(),
@@ -220,7 +235,7 @@ impl LLMPort for ConfiguredModel {
 #[tokio::test]
 #[ignore = "Uses an explicitly configured provider and generates a complete synthetic course"]
 async fn live_complete_python_course() -> Result<()> {
-    let model = ConfiguredModel::open("course");
+    let model = ConfiguredModel::open("course").await;
     let database = model.directory.join("course.sqlite");
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -330,7 +345,7 @@ fn sample_session() -> LearningPracticeSessionDto {
 #[tokio::test]
 #[ignore = "Grades synthetic correct, incorrect, partial and uncertain work through the configured provider"]
 async fn live_feedback_and_hint_matrix() -> Result<()> {
-    let model = ConfiguredModel::open("feedback");
+    let model = ConfiguredModel::open("feedback").await;
     let cases=[("correct","def total(values):\n    result = 0\n    for value in values:\n        if value >= 0:\n            result += value\n    return result\nassert total([-3, 0, 2, 4]) == 6\nassert total([]) == 0\nThe initial zero remains unchanged for an empty list, so its total is zero."),("incorrect","def total(values):\n    result = 1\n    for value in values:\n        if value < 0:\n            result += value\n    return result\nassert total([-3, 0, 2, 4]) == -2\nassert total([]) == 1\nI add negative numbers and begin at one."),("partial","def total(values):\n    result = 0\n    for value in values:\n        if value >= 0:\n            result += value\n    return result\nassert total([1, -1]) == 1"),("uncertain","I am not sure how to start.")];
     let mut records = Vec::new();
     for (name, answer) in cases {
@@ -385,7 +400,7 @@ async fn live_saved_course_checkpoint() -> Result<()> {
     use lattice::features::learning::{
         assessment_repository::LearningAssessmentRepository, quiz_bank_jobs,
     };
-    let model = ConfiguredModel::open("checkpoint");
+    let model = ConfiguredModel::open("checkpoint").await;
     let course_dir = model.directory.parent().unwrap().join("course");
     let saved: LearningProgramDto = serde_json::from_slice(
         &std::fs::read(course_dir.join("course.json"))
@@ -438,7 +453,7 @@ async fn live_saved_course_checkpoint() -> Result<()> {
 #[tokio::test]
 #[ignore = "Rechecks a retained synthetic lesson through the production content review"]
 async fn live_retained_lesson_review() -> Result<()> {
-    let model = ConfiguredModel::open("content-review");
+    let model = ConfiguredModel::open("content-review").await;
     let path =
         std::env::var("LATTICE_TEACHING_REVIEW_CALL").expect("Explicit retained call required");
     let retained: Value =

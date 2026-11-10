@@ -15,40 +15,44 @@ use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqliteConnection};
 
 /// The columns `provenance_from_row` reads.
-pub(super) const PROVENANCE_COLUMNS: &str = "program_id,source_version_id,origin_json,signals_json,signals_sha256,sketch,links_json,extracted_from,extraction_version,extracted_at";
+pub(in crate::references::trust) const PROVENANCE_COLUMNS: &str = "program_id,source_version_id,origin_json,signals_json,signals_sha256,sketch,links_json,extracted_from,extraction_version,extracted_at";
 
 /// The columns `relation_from_row` reads.
-pub(super) const RELATION_COLUMNS: &str = "from_version_id,to_version_id,to_url,kind,evidence_json";
+pub(in crate::references::trust) const RELATION_COLUMNS: &str =
+    "from_version_id,to_version_id,to_url,kind,evidence_json";
 
 /// The columns `override_from_row` reads.
-pub(super) const OVERRIDE_COLUMNS: &str =
+pub(in crate::references::trust) const OVERRIDE_COLUMNS: &str =
     "scope,program_id,source_id,registrable_domain,class_json,level,standing,note,set_at";
 
-pub(super) fn to_json<T: Serialize>(value: &T) -> Result<String> {
+pub(in crate::references::trust) fn to_json<T: Serialize>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|e| AppError::Serialization(e.to_string()))
 }
 
-pub(super) fn from_json<T: DeserializeOwned>(text: &str, column: &str) -> Result<T> {
+pub(in crate::references::trust) fn from_json<T: DeserializeOwned>(
+    text: &str,
+    column: &str,
+) -> Result<T> {
     serde_json::from_str(text)
         .map_err(|e| AppError::Database(format!("Invalid stored {column}: {e}")))
 }
 
 /// A stored vocabulary value the table's CHECK should have refused.
-pub(super) fn unknown(column: &str, value: &str) -> AppError {
+pub(in crate::references::trust) fn unknown(column: &str, value: &str) -> AppError {
     AppError::Database(format!("Unknown stored {column}: {value}"))
 }
 
 /// Token counts are u64 in the domain and INTEGER in SQLite.
-pub(super) fn tokens_to_column(count: u64) -> Result<i64> {
+pub(in crate::references::trust) fn tokens_to_column(count: u64) -> Result<i64> {
     i64::try_from(count).map_err(|_| AppError::InvalidInput("Token count is out of range.".into()))
 }
 
-pub(super) fn tokens_from_column(count: i64) -> Result<u64> {
+pub(in crate::references::trust) fn tokens_from_column(count: i64) -> Result<u64> {
     u64::try_from(count).map_err(|_| AppError::Database("Negative stored token count".into()))
 }
 
 /// Creates or replaces one version's provenance row.
-pub(super) async fn write_provenance(
+pub(in crate::references::trust) async fn write_provenance(
     conn: &mut SqliteConnection,
     record: &ProvenanceRecord,
 ) -> Result<()> {
@@ -74,7 +78,9 @@ pub(super) async fn write_provenance(
     Ok(())
 }
 
-pub(super) fn provenance_from_row(row: &SqliteRow) -> Result<ProvenanceRecord> {
+pub(in crate::references::trust) fn provenance_from_row(
+    row: &SqliteRow,
+) -> Result<ProvenanceRecord> {
     let extracted_from: String = row.get("extracted_from");
     let sketch: Vec<u8> = row.get("sketch");
     Ok(ProvenanceRecord {
@@ -95,7 +101,7 @@ pub(super) fn provenance_from_row(row: &SqliteRow) -> Result<ProvenanceRecord> {
 
 /// Adds relations; an edge already recorded (`from`, `kind`, `to`) is
 /// replaced with the new evidence and time.
-pub(super) async fn write_relations(
+pub(in crate::references::trust) async fn write_relations(
     conn: &mut SqliteConnection,
     program_id: &str,
     relations: &[SourceRelation],
@@ -123,7 +129,7 @@ pub(super) async fn write_relations(
     Ok(())
 }
 
-pub(super) fn relation_from_row(row: &SqliteRow) -> Result<SourceRelation> {
+pub(in crate::references::trust) fn relation_from_row(row: &SqliteRow) -> Result<SourceRelation> {
     let kind: String = row.get("kind");
     let to_version: Option<String> = row.get("to_version_id");
     let to_url: Option<String> = row.get("to_url");
@@ -141,7 +147,9 @@ pub(super) fn relation_from_row(row: &SqliteRow) -> Result<SourceRelation> {
 }
 
 /// The row that holds `scope`, as a WHERE clause and its binds in order.
-pub(super) fn scope_filter(scope: &OverrideScope) -> (&'static str, Vec<String>) {
+pub(in crate::references::trust) fn scope_filter(
+    scope: &OverrideScope,
+) -> (&'static str, Vec<String>) {
     match scope {
         OverrideScope::Source {
             program_id,
@@ -165,7 +173,7 @@ pub(super) fn scope_filter(scope: &OverrideScope) -> (&'static str, Vec<String>)
 }
 
 /// Removes the override at `scope`; `false` when there was none.
-pub(super) async fn delete_override(
+pub(in crate::references::trust) async fn delete_override(
     conn: &mut SqliteConnection,
     scope: &OverrideScope,
 ) -> Result<bool> {
@@ -180,7 +188,7 @@ pub(super) async fn delete_override(
 }
 
 /// Creates or replaces the override at its scope.
-pub(super) async fn write_override(
+pub(in crate::references::trust) async fn write_override(
     conn: &mut SqliteConnection,
     trust_override: &TrustOverride,
 ) -> Result<()> {
@@ -242,7 +250,7 @@ pub(super) async fn write_override(
     Ok(())
 }
 
-pub(super) fn override_from_row(row: &SqliteRow) -> Result<TrustOverride> {
+pub(in crate::references::trust) fn override_from_row(row: &SqliteRow) -> Result<TrustOverride> {
     let scope: String = row.get("scope");
     let note: Option<String> = row.get("note");
     let set_at: i64 = row.get("set_at");

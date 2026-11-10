@@ -13,7 +13,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Instant;
 
-use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto};
+use lattice_core::application::contracts::settings::LLMSettingsDto;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{
     check_key, overlapping, pattern, validate, Assessment, Drill, DrillFile, Finding,
@@ -27,8 +27,10 @@ use serde_json::{json, Value};
 use super::JudgeGrader;
 use crate::features::learning::drills::build::SourcePassage;
 use crate::features::learning::drills::grader::{Review, ReviewGrader};
-use crate::features::llm::cloud::CloudLlm;
+use crate::features::llm::cloud::limits::ReportedLimits;
+use crate::features::llm::instances::Tuning;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
+use crate::features::llm::loading::load_cloud;
 use crate::features::llm::scheduler::SchedulerRegistry;
 
 /// A drill, a review of it and what a careful human made of every issue and every finding.
@@ -280,13 +282,11 @@ pub(in crate::features::learning::tests) async fn model() -> Result<Arc<dyn LLMP
     if std::env::var("LATTICE_USE_LEARNING_MODEL").as_deref() == Ok("1") {
         match config.learning_model.clone() {
             Some(ModelRef::Cloud { provider, model }) => {
-                let (name, provider) = match provider {
-                    CloudProvider::Openai => ("openai", LLMProvider::Openai),
-                    CloudProvider::Anthropic => ("anthropic", LLMProvider::Anthropic),
-                    CloudProvider::Google => ("google", LLMProvider::Google),
+                let name = match provider {
+                    CloudProvider::Openai => "openai",
+                    CloudProvider::Anthropic => "anthropic",
+                    CloudProvider::Google => "google",
                 };
-                config.provider = provider;
-                config.model = model;
                 let key = crate::infrastructure::security::keyring_storage::SecureStorage::new()
                     .cloud_api_key(name)?
                     .ok_or_else(|| {
@@ -294,7 +294,15 @@ pub(in crate::features::learning::tests) async fn model() -> Result<Arc<dyn LLMP
                             "No {name} API key saved for the Learning eval"
                         ))
                     })?;
-                return Ok(CloudLlm::new(&config, key)?.schedule(&schedulers));
+                return load_cloud(
+                    &config,
+                    &ModelRef::Cloud { provider, model },
+                    Tuning::Standard,
+                    key,
+                    &ReportedLimits::default(),
+                    &schedulers,
+                )
+                .await;
             }
             Some(ModelRef::LlamaCpp { model }) => config.llama_cpp.model = model,
             _ => {

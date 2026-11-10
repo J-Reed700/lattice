@@ -98,7 +98,7 @@ async fn a_failed_lookup_says_so_and_is_asked_again() {
     let failure = report_from(CloudProvider::Anthropic, &server.uri(), "model", "secret")
         .await
         .unwrap_err();
-    assert!(failure.to_string().contains("did not report limits"));
+    assert!(matches!(failure, AppError::Network(_)), "{failure:?}");
     assert!(!failure.to_string().contains("secret"));
 }
 

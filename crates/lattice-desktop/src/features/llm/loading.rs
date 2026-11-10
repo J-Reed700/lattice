@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::features::llm::cloud::limits::ReportedLimits;
+use crate::features::llm::cloud::limits::{ceiling_to_send, ReportedLimits};
 use crate::features::llm::engine::factory::{CreatedLlm, LLMConfig, LocalServerOptions};
 use crate::features::llm::engine::system::BackendDevices;
 use crate::features::llm::engine::types::LLMError;
@@ -404,8 +404,7 @@ fn with_generation(settings: &LLMSettingsDto, generation: &GenerationConfig) -> 
 /// `settings` for a client of `model`, at the window and output ceiling it
 /// runs with. A role with an output ceiling of its own keeps it, within what
 /// the model allows. Also the model's output ceiling when anyone knows one
-/// (chosen, the role's own, or reported), `None` otherwise: the connection's
-/// `max_tokens` then holds only the settings' fallback, which is not a ceiling.
+/// (chosen, the role's own, or reported), `None` otherwise.
 fn cloud_connection(
     settings: &LLMSettingsDto,
     model: &ModelRef,
@@ -424,7 +423,6 @@ fn cloud_connection(
     let known_ceiling = chosen.max_output_known(reported);
     let connection = LLMSettingsDto {
         context_window: chosen.context_window_within(reported, settings.context_window),
-        max_tokens: chosen.max_output_within(reported, settings.max_tokens),
         ..with_generation(settings, &generation)
     };
     (connection, known_ceiling)
@@ -464,11 +462,19 @@ fn cloud_client_after(
     lookup: Result<ModelWindowDto>,
     key: String,
 ) -> Result<crate::features::llm::cloud::CloudLlm> {
-    let (_, name) = cloud_ref(model)?;
-    let reported = lookup.unwrap_or_else(|error| {
-        tracing::warn!(model = %name, %error, "Running without the provider's limits");
-        ModelWindowDto::default()
-    });
+    let (provider, name) = cloud_ref(model)?;
+    let reported = match lookup {
+        Ok(reported) => reported,
+        Err(failure) => {
+            let unreported = ModelWindowDto::default();
+            let (_, known) = cloud_connection(settings, model, tuning, &unreported);
+            if ceiling_to_send(provider, name, known).is_err() {
+                return Err(failure);
+            }
+            tracing::warn!(model = %name, error = %failure, "Running without the provider's limits");
+            unreported
+        }
+    };
     cloud_client(settings, model, tuning, &reported, key)
 }
 
@@ -485,8 +491,7 @@ fn cloud_client(
     connection.provider = llm_provider(provider);
     connection.model = name.to_owned();
     Ok(
-        crate::features::llm::cloud::CloudLlm::new(&connection, key)?
-            .with_output_ceiling(known_ceiling)
+        crate::features::llm::cloud::CloudLlm::new(&connection, key, known_ceiling)?
             .with_vision(declared_vision(settings, model)),
     )
 }

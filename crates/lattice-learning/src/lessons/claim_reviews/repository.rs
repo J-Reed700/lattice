@@ -13,10 +13,17 @@ use lattice_core::domain::learning::claim_review::{
     Ledger, LessonReview, LessonReviewState, RecordedEvent, Revision, StopReason, UnitKind,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
 use crate::persistence::{db, decode, encode, now};
+
+pub(super) mod blocks;
+pub(super) mod checker_examples;
+pub(super) mod questions;
+pub(super) mod reviews;
+pub(super) mod teaching_findings;
 
 /// A passage as the review card shows it: what a check compared, with its
 /// text, so the card still shows it after its source is gone.
@@ -117,8 +124,10 @@ impl ClaimReviewRepository {
 #[async_trait]
 impl ClaimReviewStore for ClaimReviewRepository {
     async fn load(&self, lesson_id: &str) -> Result<Ledger> {
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        load_in(&mut connection, lesson_id).await
+        let mut read = self.pool.begin_read().await.map_err(db)?;
+        let ledger = load_in(&mut read, lesson_id).await?;
+        read.commit().await.map_err(db)?;
+        Ok(ledger)
     }
 
     async fn append(
@@ -129,7 +138,7 @@ impl ClaimReviewStore for ClaimReviewRepository {
         event: ClaimEvent,
         expected_revision: Revision,
     ) -> Result<Revision> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         check_revision(&mut tx, lesson_id, expected_revision).await?;
         append_in(&mut tx, lesson_id, claim_id, provenance, event).await?;
         bump_revision(&mut tx, lesson_id).await?;

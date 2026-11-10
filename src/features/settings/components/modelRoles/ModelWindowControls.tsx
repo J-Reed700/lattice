@@ -22,7 +22,6 @@ const MIN_OUTPUT_TOKENS = 128;
 
 type ConnectedModelRef = Extract<ModelRef, { kind: 'cloud' | 'ollama' }>;
 type Limit = keyof ModelWindowDto;
-type CloudProviderId = Extract<ConnectedModelRef, { kind: 'cloud' }>['provider'];
 
 interface LimitControlProps {
   label: string;
@@ -37,11 +36,6 @@ interface LimitControlProps {
   onSave: (value: number | null) => void;
   followLabel: string;
   placeholder?: string;
-}
-
-/** Anthropic requires a ceiling, so it follows the Settings number when its lookup fails. */
-function followedOutput(provider: CloudProviderId | null, reported: number | null, fallback: number): number | null {
-  return reported ?? (provider === 'anthropic' ? fallback : null);
 }
 
 function LimitControl({ label, help, min, reported, following, chosen, onSave, followLabel, placeholder }: LimitControlProps) {
@@ -126,8 +120,8 @@ export function ModelWindowControls({ modelRef, modelName }: { modelRef: Connect
           help="The most this model may write in one reply, thinking included. It is a ceiling, not a target: a short answer costs the same either way."
           min={MIN_OUTPUT_TOKENS}
           reported={reportedOutput}
-          following={followedOutput(isCloud ? modelRef.provider : null, reportedOutput, llm.maxTokens)}
-          placeholder="Model's own limit"
+          following={reportedOutput}
+          placeholder={limits.isError ? 'Not known' : "Model's own limit"}
           chosen={chosen.maxOutputTokens}
           onSave={(value) => void save('maxOutputTokens', value)}
           followLabel={reportedOutput !== null ? `Use the maximum ${provider} reports` : 'Use the model\'s own limit'}

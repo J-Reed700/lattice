@@ -116,16 +116,16 @@ impl EvalConfig {
         }
     }
 
-    fn client(&self) -> Box<dyn LLMPort> {
-        let inner = self.provider_client();
+    async fn client(&self) -> Arc<dyn LLMPort> {
+        let inner = self.provider_client().await;
         if std::env::var("LATTICE_LEARNING_EVAL_TRACE_CALLS").is_ok_and(|value| value == "1") {
-            Box::new(recording::RecordingLlm::new(inner, self.clone()))
+            Arc::new(recording::RecordingLlm::new(inner, self.clone()))
         } else {
             inner
         }
     }
 
-    fn provider_client(&self) -> Box<dyn LLMPort> {
+    async fn provider_client(&self) -> Arc<dyn LLMPort> {
         if self.provider == "llama_cpp" {
             let (name, value) = self.auth_header.clone().unwrap_or_default();
             let settings = LLMSettingsDto {
@@ -139,24 +139,24 @@ impl EvalConfig {
                 },
                 ..Default::default()
             };
-            return Box::new(
-                LlamaCppLlm::new(&settings).expect("valid llama.cpp evaluation client"),
-            );
+            return LlamaCppLlm::new(&settings)
+                .expect("valid llama.cpp evaluation client")
+                .into_port()
+                .await;
         }
         assert_eq!(
             self.provider, "ollama",
             "unsupported live evaluation provider"
         );
-        Box::new(
-            OllamaClient::with_model_and_timeouts_and_header(
-                &self.endpoint,
-                &self.model,
-                Duration::from_secs(30),
-                self.timeout,
-                self.auth_header.clone(),
-            )
-            .expect("valid Learning Studio evaluation client"),
+        OllamaClient::with_model_and_timeouts_and_header(
+            &self.endpoint,
+            &self.model,
+            Duration::from_secs(30),
+            self.timeout,
+            self.auth_header.clone(),
         )
+        .expect("valid Learning Studio evaluation client")
+        .into_port()
     }
 
     fn trace_path(&self) -> PathBuf {
@@ -347,7 +347,7 @@ fn leakage_canary_is_absent_from_the_committed_practical_fixture() {
 async fn live_learning_pipeline_benchmark_retains_reviewable_trace() {
     let _model_guard = LIVE_MODEL_LOCK.lock().await;
     let config = EvalConfig::from_env();
-    let client = config.client();
+    let client = config.client().await;
 
     let started = Instant::now();
     let sampler = MemorySampler::start();

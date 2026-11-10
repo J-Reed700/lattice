@@ -1,18 +1,32 @@
-use super::protocol::protocol_for;
+use super::protocol::{cloud_provider, protocols};
 use super::*;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::llm_port::{ThinkingMode, ToolChoice};
+use lattice_core::domain::models::model_ref::CloudProvider;
 use serde_json::json;
 
 fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionResponse> {
-    protocol_for(provider)?.parse_reply(value)
+    protocols(cloud_provider(provider)?)
+        .completion
+        .parse_reply(value)
+}
+
+trait UncutBody {
+    fn uncut_body(&self, request: &CompletionRequest, stream: bool) -> Result<Value>;
+}
+
+impl UncutBody for CloudLlm {
+    fn uncut_body(&self, request: &CompletionRequest, stream: bool) -> Result<Value> {
+        self.body(&Fitted::uncut(self, request), stream)
+    }
 }
 
 fn claude_thinks_unasked(model: &str) -> bool {
-    protocol_for(LLMProvider::Anthropic)
-        .unwrap()
-        .thinks_unasked(model)
+    protocols(CloudProvider::Anthropic)
+        .completion
+        .thinking(model, &CompletionRequest::default())
+        .is_on()
 }
 
 #[test]
@@ -54,21 +68,21 @@ fn provider_wire_formats_preserve_tool_results() {
         ..Default::default()
     };
     settings.provider = LLMProvider::Openai;
-    let openai = CloudLlm::new(&settings, "test".into()).unwrap();
+    let openai = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     assert_eq!(
-        openai.body(&request, false).unwrap()["input"][0]["call_id"],
+        openai.uncut_body(&request, false).unwrap()["input"][0]["call_id"],
         "abc"
     );
     settings.provider = LLMProvider::Anthropic;
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     assert_eq!(
-        anthropic.body(&request, false).unwrap()["messages"][0]["content"][0]["tool_use_id"],
+        anthropic.uncut_body(&request, false).unwrap()["messages"][0]["content"][0]["tool_use_id"],
         "abc"
     );
     settings.provider = LLMProvider::Google;
-    let google = CloudLlm::new(&settings, "test".into()).unwrap();
+    let google = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     assert_eq!(
-        google.body(&request, false).unwrap()["messages"][0]["tool_call_id"],
+        google.uncut_body(&request, false).unwrap()["messages"][0]["tool_call_id"],
         "abc"
     );
 }
@@ -88,7 +102,7 @@ fn each_provider_replays_its_own_turn_ahead_of_the_tool_results() {
             id: "call_7".into(),
             output: "found".into(),
         });
-        llm.body(
+        llm.uncut_body(
             &CompletionRequest {
                 input,
                 ..Default::default()
@@ -102,7 +116,7 @@ fn each_provider_replays_its_own_turn_ahead_of_the_tool_results() {
         provider: LLMProvider::Openai,
         ..Default::default()
     };
-    let openai = CloudLlm::new(&settings, "test".into()).unwrap();
+    let openai = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let reply = parse_completion(
         LLMProvider::Openai,
         json!({"status":"completed","output":[
@@ -117,7 +131,7 @@ fn each_provider_replays_its_own_turn_ahead_of_the_tool_results() {
     assert_eq!(body["input"][3]["type"], "function_call_output");
 
     settings.provider = LLMProvider::Anthropic;
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let reply = parse_completion(
         LLMProvider::Anthropic,
         json!({"stop_reason":"tool_use","content":[
@@ -133,7 +147,7 @@ fn each_provider_replays_its_own_turn_ahead_of_the_tool_results() {
     assert_eq!(body["messages"][2]["content"][0]["tool_use_id"], "call_7");
 
     settings.provider = LLMProvider::Google;
-    let google = CloudLlm::new(&settings, "test".into()).unwrap();
+    let google = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let reply = parse_completion(
         LLMProvider::Google,
         json!({
@@ -168,9 +182,9 @@ fn anthropic_body(effort: &str) -> Value {
         provider: LLMProvider::Anthropic,
         ..Default::default()
     };
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     anthropic
-        .body(
+        .uncut_body(
             &CompletionRequest {
                 reasoning_effort: Some(effort.into()),
                 ..Default::default()
@@ -198,14 +212,14 @@ fn anthropic_caches_the_system_prompt_and_a_continued_exchange_whole() {
         provider: LLMProvider::Anthropic,
         ..Default::default()
     };
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let message = |role: &str, content: &str| CompletionInput::Message {
         role: role.into(),
         content: content.into(),
     };
     let body = |cache_key: Option<&str>, input: Vec<CompletionInput>| {
         anthropic
-            .body(
+            .uncut_body(
                 &CompletionRequest {
                     cache_key: cache_key.map(str::to_owned),
                     input,
@@ -246,12 +260,12 @@ fn anthropic_caches_a_system_prompt_that_carries_a_schema_in_words() {
         provider: LLMProvider::Anthropic,
         ..Default::default()
     };
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let properties: serde_json::Map<String, Value> = (0..30)
         .map(|i| (format!("field{i}"), json!({"type":"string"})))
         .collect();
     let body = anthropic
-        .body(
+        .uncut_body(
             &CompletionRequest {
                 input: vec![
                     CompletionInput::Message {
@@ -301,9 +315,9 @@ fn anthropic_never_sends_sampling_knobs() {
         provider: LLMProvider::Anthropic,
         ..Default::default()
     };
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let body = anthropic
-        .body(
+        .uncut_body(
             &CompletionRequest {
                 sampling: Some(
                     lattice_core::application::ports::llm_port::SamplingOverride {
@@ -331,9 +345,9 @@ fn anthropic_moves_unsupported_schema_constraints_into_the_description() {
         provider: LLMProvider::Anthropic,
         ..Default::default()
     };
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let body = anthropic
-        .body(
+        .uncut_body(
             &CompletionRequest {
                 json_schema: Some(json!({"type":"object","required":["items","maximum"],"properties":{
                     "items":{"type":"array","minItems":2,"maxItems":6,"uniqueItems":true,
@@ -375,12 +389,12 @@ fn anthropic_asks_for_an_oversized_schema_in_words() {
         provider: LLMProvider::Anthropic,
         ..Default::default()
     };
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let properties: serde_json::Map<String, Value> = (0..30)
         .map(|i| (format!("field{i}"), json!({"type":"string"})))
         .collect();
     let body = anthropic
-        .body(
+        .uncut_body(
             &CompletionRequest {
                 json_schema: Some(json!({"type":"object","properties":properties})),
                 ..Default::default()
@@ -402,10 +416,10 @@ fn anthropic_asks_for_thinking_summaries_only_when_reasoning_is_shown() {
         provider: LLMProvider::Anthropic,
         ..Default::default()
     };
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let body = |include_reasoning| {
         anthropic
-            .body(
+            .uncut_body(
                 &CompletionRequest {
                     thinking: ThinkingMode::On,
                     include_reasoning,
@@ -432,7 +446,7 @@ fn anthropic_thinks_when_asked_and_maps_the_tool_choice() {
         provider: LLMProvider::Anthropic,
         ..Default::default()
     };
-    let anthropic = CloudLlm::new(&settings, "test".into()).unwrap();
+    let anthropic = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let tool = lattice_core::application::ports::ToolDefinition {
         name: "search".into(),
         description: "Search".into(),
@@ -440,7 +454,7 @@ fn anthropic_thinks_when_asked_and_maps_the_tool_choice() {
     };
     let body = |thinking, choice| {
         anthropic
-            .body(
+            .uncut_body(
                 &CompletionRequest {
                     tools: vec![tool.clone()],
                     thinking,
@@ -476,7 +490,7 @@ fn openai_sends_the_tool_choice_with_tools() {
         model: "gpt-5.1".into(),
         ..Default::default()
     };
-    let openai = CloudLlm::new(&settings, "test".into()).unwrap();
+    let openai = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let request = CompletionRequest {
         tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "search".into(),
@@ -486,13 +500,16 @@ fn openai_sends_the_tool_choice_with_tools() {
         tool_choice: Some(ToolChoice::None),
         ..Default::default()
     };
-    assert_eq!(openai.body(&request, false).unwrap()["tool_choice"], "none");
+    assert_eq!(
+        openai.uncut_body(&request, false).unwrap()["tool_choice"],
+        "none"
+    );
     let bare = CompletionRequest {
         tools: Vec::new(),
         ..request
     };
     assert!(openai
-        .body(&bare, false)
+        .uncut_body(&bare, false)
         .unwrap()
         .get("tool_choice")
         .is_none());
@@ -504,9 +521,9 @@ fn openai_body(model: &str, effort: Option<&str>) -> Value {
         model: model.into(),
         ..Default::default()
     };
-    let openai = CloudLlm::new(&settings, "test".into()).unwrap();
+    let openai = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     openai
-        .body(
+        .uncut_body(
             &CompletionRequest {
                 reasoning_effort: effort.map(str::to_owned),
                 ..Default::default()
@@ -554,9 +571,9 @@ fn openai_requests_a_displayable_summary_only_for_reasoning_models() {
             model: model.into(),
             ..Default::default()
         };
-        CloudLlm::new(&settings, "test".into())
+        CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
             .unwrap()
-            .body(
+            .uncut_body(
                 &CompletionRequest {
                     include_reasoning: true,
                     ..Default::default()
@@ -615,7 +632,7 @@ fn google_sends_the_tool_choice_with_tools() {
         model: "gemini-2.5-flash".into(),
         ..Default::default()
     };
-    let google = CloudLlm::new(&settings, "test".into()).unwrap();
+    let google = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
     let request = CompletionRequest {
         tools: vec![lattice_core::application::ports::ToolDefinition {
             name: "search".into(),
@@ -625,13 +642,16 @@ fn google_sends_the_tool_choice_with_tools() {
         tool_choice: Some(ToolChoice::None),
         ..Default::default()
     };
-    assert_eq!(google.body(&request, false).unwrap()["tool_choice"], "none");
+    assert_eq!(
+        google.uncut_body(&request, false).unwrap()["tool_choice"],
+        "none"
+    );
     let bare = CompletionRequest {
         tools: Vec::new(),
         ..request
     };
     assert!(google
-        .body(&bare, false)
+        .uncut_body(&bare, false)
         .unwrap()
         .get("tool_choice")
         .is_none());
@@ -660,14 +680,14 @@ fn each_provider_that_takes_stop_sequences_is_sent_them() {
             model: "model".into(),
             ..Default::default()
         };
-        let cloud = CloudLlm::new(&settings, "test".into()).unwrap();
+        let cloud = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
         assert_eq!(
-            cloud.body(&request, false).unwrap()[field],
+            cloud.uncut_body(&request, false).unwrap()[field],
             json!(["[5]", "\n5."]),
             "{provider:?}"
         );
         assert!(
-            cloud.body(&bare, false).unwrap().get(field).is_none(),
+            cloud.uncut_body(&bare, false).unwrap().get(field).is_none(),
             "{provider:?}"
         );
     }
@@ -676,8 +696,8 @@ fn each_provider_that_takes_stop_sequences_is_sent_them() {
         model: "gpt-5.1".into(),
         ..Default::default()
     };
-    let openai = CloudLlm::new(&settings, "test".into()).unwrap();
-    let body = openai.body(&request, false).unwrap();
+    let openai = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
+    let body = openai.uncut_body(&request, false).unwrap();
     assert!(
         body.get("stop").is_none() && body.get("stop_sequences").is_none(),
         "the Responses API takes no stop sequences"
@@ -714,7 +734,7 @@ fn seeing(provider: LLMProvider) -> CloudLlm {
         model: "vision-model".into(),
         ..Default::default()
     };
-    CloudLlm::new(&settings, "test".into())
+    CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
         .unwrap()
         .with_vision(Some(VisionPreset::OpenAi.geometry()))
 }
@@ -722,7 +742,9 @@ fn seeing(provider: LLMProvider) -> CloudLlm {
 #[test]
 fn each_provider_receives_a_picture_in_its_own_format_before_the_text() {
     let request = picture_request();
-    let openai = seeing(LLMProvider::Openai).body(&request, false).unwrap();
+    let openai = seeing(LLMProvider::Openai)
+        .uncut_body(&request, false)
+        .unwrap();
     assert_eq!(
         openai["input"][0],
         json!({"role":"user","content":[
@@ -731,7 +753,7 @@ fn each_provider_receives_a_picture_in_its_own_format_before_the_text() {
         ]})
     );
     let anthropic = seeing(LLMProvider::Anthropic)
-        .body(&request, false)
+        .uncut_body(&request, false)
         .unwrap();
     assert_eq!(
         anthropic["messages"][0],
@@ -740,7 +762,9 @@ fn each_provider_receives_a_picture_in_its_own_format_before_the_text() {
             {"type":"text","text":"What does it show?"}
         ]})
     );
-    let google = seeing(LLMProvider::Google).body(&request, false).unwrap();
+    let google = seeing(LLMProvider::Google)
+        .uncut_body(&request, false)
+        .unwrap();
     assert_eq!(
         google["messages"][0],
         json!({"role":"user","content":[
@@ -757,9 +781,9 @@ fn a_cloud_model_nobody_declared_able_to_see_refuses_pictures() {
         model: "gpt-3.5-turbo".into(),
         ..Default::default()
     };
-    let refused = CloudLlm::new(&settings, "test".into())
+    let refused = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
         .unwrap()
-        .body(&picture_request(), false)
+        .uncut_body(&picture_request(), false)
         .unwrap_err();
     assert!(matches!(refused, AppError::InvalidConfig(_)), "{refused}");
     assert!(refused
@@ -811,7 +835,7 @@ async fn a_streamed_answer_is_timed_from_its_first_delta() {
     ]);
     let sent = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
     let response = streaming::drain(
-        protocol_for(LLMProvider::Openai).unwrap(),
+        protocols(CloudProvider::Openai).completion,
         futures::stream::iter([Ok::<_, String>(bytes)]),
         Duration::from_secs(1),
         sent,
@@ -838,7 +862,7 @@ async fn a_streams_own_timings_win_over_the_clock() {
     ]);
     let sent = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
     let response = streaming::drain(
-        protocol_for(LLMProvider::Google).unwrap(),
+        protocols(CloudProvider::Google).completion,
         futures::stream::iter([Ok::<_, String>(bytes)]),
         Duration::from_secs(1),
         sent,
@@ -858,7 +882,7 @@ async fn a_streams_own_timings_win_over_the_clock() {
 /// sent as asked.
 #[test]
 fn each_provider_is_sent_no_more_than_the_window_has_left() {
-    use lattice_core::application::ports::llm_port::WindowFit;
+    use crate::features::llm::fitting::PromptMeasure;
     for provider in [
         LLMProvider::Openai,
         LLMProvider::Anthropic,
@@ -871,43 +895,40 @@ fn each_provider_is_sent_no_more_than_the_window_has_left() {
             context_window: 16_000,
             ..Default::default()
         };
-        let cloud = CloudLlm::new(&settings, "test".into()).unwrap();
-        let ceiling = |request: &CompletionRequest| {
-            let body = cloud.body(request, false).unwrap();
+        let cloud = CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens)).unwrap();
+        let ceiling = |max_output_tokens, room: u32| {
+            let request = CompletionRequest {
+                input: vec![CompletionInput::Message {
+                    role: "user".into(),
+                    content: "When did the bridge open?".into(),
+                }],
+                max_output_tokens,
+                reasoning_effort: Some("none".into()),
+                ..Default::default()
+            };
+            let prompt = PromptMeasure {
+                tokens: 16_000 - room as usize,
+                counted_exactly: false,
+            };
+            let body = cloud
+                .body(&Fitted::with_room(&cloud, &request, prompt, room), false)
+                .unwrap();
             match provider {
                 LLMProvider::Openai => body["max_output_tokens"].clone(),
                 _ => body["max_tokens"].clone(),
             }
         };
-        let fitted = |max_output_tokens, room| CompletionRequest {
-            input: vec![CompletionInput::Message {
-                role: "user".into(),
-                content: "When did the bridge open?".into(),
-            }],
-            max_output_tokens,
-            reasoning_effort: Some("none".into()),
-            window_fit: Some(WindowFit {
-                prompt_tokens: 16_000 - room as usize,
-                counted_exactly: false,
-                room,
-            }),
-            ..Default::default()
-        };
-        assert_eq!(ceiling(&fitted(None, 1_400)), json!(1_400), "{provider:?}");
-        assert_eq!(
-            ceiling(&fitted(Some(512), 2_000)),
-            json!(512),
-            "{provider:?}"
-        );
-        assert_eq!(ceiling(&fitted(None, 9_000)), json!(4_096), "{provider:?}");
+        assert_eq!(ceiling(None, 1_400), json!(1_400), "{provider:?}");
+        assert_eq!(ceiling(Some(512), 2_000), json!(512), "{provider:?}");
+        assert_eq!(ceiling(None, 9_000), json!(4_096), "{provider:?}");
     }
 }
 
 /// A model whose ceiling nobody knows is sent none by a provider that does not
 /// require one, whatever the Settings fallback says; Claude's API requires
-/// one, so it is sent the Settings ceiling.
+/// one, so no client is built for it.
 #[test]
-fn an_unknown_ceiling_is_not_made_up_unless_the_api_requires_one() {
+fn an_unknown_ceiling_is_never_made_up() {
     let sent = |provider, known: Option<u32>, asked: Option<u32>| {
         let settings = LLMSettingsDto {
             provider,
@@ -919,11 +940,9 @@ fn an_unknown_ceiling_is_not_made_up_unless_the_api_requires_one() {
             max_tokens: 8_192,
             ..Default::default()
         };
-        let cloud = CloudLlm::new(&settings, "test".into())
-            .unwrap()
-            .with_output_ceiling(known);
+        let cloud = CloudLlm::new(&settings, "test".into(), known).unwrap();
         let body = cloud
-            .body(
+            .uncut_body(
                 &CompletionRequest {
                     input: vec![CompletionInput::Message {
                         role: "user".into(),
@@ -949,7 +968,21 @@ fn an_unknown_ceiling_is_not_made_up_unless_the_api_requires_one() {
     let google = LLMProvider::Google;
     assert_eq!(sent(google, None, Some(300)), None);
     assert_eq!(sent(google, Some(4_000), Some(300)), Some(json!(4_000)));
-    assert_eq!(sent(LLMProvider::Anthropic, None, None), Some(json!(8_192)));
+    let unknown = CloudLlm::new(
+        &LLMSettingsDto {
+            provider: LLMProvider::Anthropic,
+            model: "claude-opus-4-8".into(),
+            max_tokens: 8_192,
+            ..Default::default()
+        },
+        "test".into(),
+        None,
+    )
+    .err();
+    assert!(
+        matches!(unknown, Some(AppError::InvalidConfig(_))),
+        "{unknown:?}"
+    );
     assert_eq!(
         sent(LLMProvider::Anthropic, Some(4_000), Some(9_000)),
         Some(json!(4_000))
@@ -970,9 +1003,9 @@ fn claude_that_thinks_is_given_room_to_think_and_answer() {
             context_window: 200_000,
             ..Default::default()
         };
-        CloudLlm::new(&settings, "test".into())
+        CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
             .unwrap()
-            .body(
+            .uncut_body(
                 &CompletionRequest {
                     input: vec![CompletionInput::Message {
                         role: "user".into(),
@@ -1011,9 +1044,9 @@ fn claude_turns_thinking_off_where_the_model_allows_it() {
             context_window: 200_000,
             ..Default::default()
         };
-        CloudLlm::new(&settings, "test".into())
+        CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
             .unwrap()
-            .body(
+            .uncut_body(
                 &CompletionRequest {
                     input: vec![CompletionInput::Message {
                         role: "user".into(),
@@ -1078,9 +1111,11 @@ fn claude_thinks_unasked_from_the_5_family_on() {
         ..Default::default()
     };
     let thinks = |model: &str| {
-        CloudLlm::new(&settings(model), "test".into())
+        let settings = settings(model);
+        CloudLlm::new(&settings, "test".into(), Some(settings.max_tokens))
             .unwrap()
-            .thinks_before_answering()
+            .thinking(&CompletionRequest::default())
+            .is_on()
     };
     assert!(thinks("claude-opus-5-5"));
     assert!(!thinks("claude-opus-4-8"));

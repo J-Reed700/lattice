@@ -13,16 +13,7 @@ use lattice_core::shared::runtime::jobs::JobStore;
 pub async fn reconcile_interrupted_verifications(
     pool: &sqlx::SqlitePool,
 ) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query(
-        "UPDATE conversation_messages \
-         SET metadata = json_set(metadata, '$.verification.pending', json('false'), \
-                                          '$.verification.interrupted', json('true')) \
-         WHERE json_valid(metadata) \
-           AND json_extract(metadata, '$.verification.pending') = 1",
-    )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
+    super::repository::mark_interrupted_verifications(pool).await
 }
 
 /// Close out turns the last run never finished.
@@ -41,15 +32,7 @@ pub async fn reconcile_stuck_turns(
     let resuming = resumable_research_questions(jobs).await?;
     let resuming = serde_json::to_string(&resuming)
         .map_err(|error| AppError::Serialization(error.to_string()))?;
-    let result = sqlx::query(
-        "UPDATE conversation_messages SET status = 'failed' \
-         WHERE status IN ('pending', 'streaming') \
-           AND id NOT IN (SELECT value FROM json_each(?))",
-    )
-    .bind(resuming)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
+    super::repository::fail_unfinished_turns(pool, resuming).await
 }
 
 #[cfg(test)]
