@@ -462,3 +462,152 @@ fn a_statement_whose_only_cue_is_single_quoted_wording_is_left_to_the_model() {
         Some(Class::Sourced)
     );
 }
+
+fn in_a_section() -> Case {
+    Case::Stated(Givens::NONE)
+}
+
+#[test]
+fn a_sentence_that_names_the_documentation_without_a_mark_is_the_models_to_sort() {
+    assert_eq!(
+        rule_class(
+            "The documentation is available from the tool's own help screen.",
+            "body",
+            &in_a_section()
+        ),
+        None
+    );
+}
+
+#[test]
+fn an_imperative_to_state_something_is_the_models_to_sort() {
+    assert_eq!(
+        rule_class(
+            "State your assumptions before you begin.",
+            "body",
+            &in_a_section()
+        ),
+        None
+    );
+}
+
+#[test]
+fn a_file_that_is_not_found_is_the_models_to_sort() {
+    assert_eq!(
+        rule_class(
+            "If the file is not found, the tool prints nothing.",
+            "body",
+            &in_a_section()
+        ),
+        None
+    );
+}
+
+#[test]
+fn a_remark_that_opens_the_sources_is_the_models_to_sort() {
+    for statement in [
+        "The sources do not cover this case.",
+        "  The sources state that the choice depends on document quality.",
+        "The other options each remove the evidence needed to check a table.",
+    ] {
+        assert_eq!(
+            rule_class(statement, "body", &in_a_section()),
+            None,
+            "{statement}"
+        );
+    }
+}
+
+#[test]
+fn a_span_between_double_quotes_under_the_quotation_floor_is_no_quotation() {
+    for statement in [
+        "The tool shows \"Changes saved\" when it is done.",
+        "The manual says \"rm deletes files permanently\".",
+    ] {
+        assert_eq!(
+            rule_class(statement, "body", &in_a_section()),
+            None,
+            "{statement}"
+        );
+        assert_eq!(
+            rule_class(statement, "body", &Case::Hypothetical),
+            None,
+            "{statement}"
+        );
+    }
+}
+
+#[test]
+fn a_figure_beyond_the_givens_is_a_mark_and_a_given_is_not() {
+    let givens = Givens::of(&json!({"prompt": "A score of 0.75 meets a threshold of 0.80."}));
+    let case = Case::Stated(givens);
+    assert_eq!(
+        rule_class("About 30 documents need review.", "explanation", &case),
+        Some(Class::Sourced)
+    );
+    assert_eq!(
+        rule_class("Since 0.75 is below 0.80, review it.", "explanation", &case),
+        None
+    );
+}
+
+#[test]
+fn in_a_hypothetical_case_a_figure_alone_is_no_mark_and_a_quotation_at_the_floor_is() {
+    assert_eq!(
+        rule_class(
+            "Suppose 5 documents score below 0.70.",
+            "body",
+            &Case::Hypothetical
+        ),
+        None
+    );
+    assert_eq!(
+        rule_class(
+            "The page reads \"alpha beta gamma delta eps\" at the top.",
+            "body",
+            &Case::Hypothetical
+        ),
+        Some(Class::Sourced)
+    );
+}
+
+#[test]
+fn the_prose_between_two_short_quotations_is_no_quotation() {
+    for row in [
+        "Choose \"Open\" from the menu and then pick \"Save as copy\" from the list that opens.",
+        "Choose \u{201c}Open\u{201d} from the menu and then pick \u{201c}Save as copy\u{201d} from the list that opens.",
+    ] {
+        assert_eq!(quoted_wording(row).next(), None, "{row}");
+        assert_eq!(rule_class(row, "body", &in_a_section()), None, "{row}");
+    }
+}
+
+#[test]
+fn a_mark_after_a_figure_closes_nothing() {
+    const S2: &str = "The screen is 27\" across, so the whole menu fits and shows \"Open\" first.";
+    assert_eq!(quoted_wording(S2).next(), None);
+    assert_eq!(rule_class(S2, "body", &Case::Hypothetical), None);
+}
+
+#[test]
+fn a_quotation_after_a_short_one_is_found_whole() {
+    const S3: &str =
+        "Choose \"Open\", then read \"the page that reads text from images\" at the top.";
+    assert_eq!(
+        quoted_wording(S3).collect::<Vec<_>>(),
+        ["the page that reads text from images"]
+    );
+}
+
+#[test]
+fn a_mark_at_the_start_of_the_text_or_after_an_opening_bracket_opens() {
+    assert_eq!(
+        quoted_wording("\"The shell keeps a working directory,\" the guide begins.")
+            .collect::<Vec<_>>(),
+        ["The shell keeps a working directory,"]
+    );
+    assert_eq!(
+        quoted_wording("(see \"the page that reads text from images\")").collect::<Vec<_>>(),
+        ["the page that reads text from images"]
+    );
+}

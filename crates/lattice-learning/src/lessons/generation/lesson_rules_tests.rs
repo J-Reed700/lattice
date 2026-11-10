@@ -960,3 +960,19 @@ fn path_like_choices_break_no_question_rule() {
     );
     assert!(first_question_notes(&candidate).is_empty());
 }
+
+#[test]
+fn a_span_between_double_quotes_under_the_quotation_floor_needs_no_citation() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] = json!("The tool shows \"Changes saved\" when it is done.");
+    assert!(lesson_rules(&candidate).is_empty());
+}
+
+#[test]
+fn the_prose_between_two_short_quotations_needs_no_citation() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] = json!(
+        "Choose \"Open\" from the menu and then pick \"Save as copy\" from the list that opens."
+    );
+    assert!(lesson_rules(&candidate).is_empty());
+}

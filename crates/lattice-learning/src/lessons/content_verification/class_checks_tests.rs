@@ -1726,3 +1726,36 @@ async fn the_plan_and_the_pass_agree_on_which_statements_are_checked_so_the_ceil
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_sentence_that_only_names_the_documentation_is_the_models_to_sort() -> Result<()> {
+    const NAMES: &str = "The documentation is available from the tool's own help screen.";
+    let model = Classes::new(&[NAMES]).classed(&[(NAMES, "common")]);
+    let claims = [(
+        0,
+        Claim {
+            quote: NAMES.to_owned(),
+            statement: NAMES.to_owned(),
+        },
+    )];
+
+    let classes = class_checks::sort(
+        &model,
+        &StandardPolicy::new(),
+        &lesson(NAMES),
+        &claims,
+        &[None],
+        &claim_ledger::Rewrites::default(),
+        &Citations::default(),
+    )
+    .await?;
+
+    assert_eq!(
+        classes,
+        [Classed {
+            class: Class::Common,
+            by: ClassifiedBy::Model
+        }]
+    );
+    Ok(())
+}
