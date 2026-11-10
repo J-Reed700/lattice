@@ -1023,3 +1023,10 @@ fn quoted_wording_without_a_citation_is_still_a_finding_and_names_no_general_for
     assert!(note.contains("\" without citing it."), "{note}");
     assert!(!note.contains("general form"), "{note}");
 }
+
+#[test]
+fn choices_that_differ_only_by_letter_case_are_not_a_finding() {
+    let mut candidate = lesson();
+    candidate["questions"][0]["options"] = json!(["Alpha", "alpha", "Bravo", "Charlie"]);
+    assert!(lesson_rules(&candidate).is_empty());
+}
