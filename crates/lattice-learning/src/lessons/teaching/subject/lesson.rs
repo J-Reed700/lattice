@@ -18,7 +18,8 @@ use crate::lessons::text_edits::{self, Named};
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{
-    new_sentences, part_at, sentences_of, FindingId, FindingSite, Held, Origin, ReviewFinding,
+    new_sentences, part_at, plain_part, sentences_of, FindingId, FindingSite, Held, Origin,
+    ReviewFinding, SetAside,
 };
 use crate::teaching_review::LengthRule;
 use lattice_core::{
@@ -27,6 +28,9 @@ use lattice_core::{
 };
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
+
+/// Why a finding about a sentence a live claim stands on is held.
+const PROTECTED_SENTENCE: &str = "a sentence a live claim stands on";
 
 /// A lesson: it publishes with what the repairs could not settle waiting for
 /// the user, and holds what its live claims stand on.
@@ -59,6 +63,26 @@ impl<'a> LessonSubject<'a> {
             wording: Wording::of(references),
             standing,
             held_up: false,
+        }
+    }
+
+    /// One line for each finding the repairs left for the user: what was tried.
+    fn log_waiting(&self, set_aside: &[SetAside]) {
+        let lesson = crate::lesson_drafts::scope()
+            .map(|scope| scope.lesson_id)
+            .unwrap_or_default();
+        for waiting in set_aside {
+            let account = self.passes.account(&waiting.finding);
+            tracing::info!(
+                lesson = %lesson,
+                finding = %waiting.finding.id().as_str(),
+                part = %plain_part(waiting.finding.site.unwrap_or(FindingSite::Lesson)),
+                repairs = waiting.repairs,
+                inherited = account.inherited,
+                held = %account.held,
+                attempts = %account.attempts,
+                "A teaching finding waits for the user"
+            );
         }
     }
 
@@ -142,11 +166,13 @@ impl Subject for LessonSubject<'_> {
         let review_prompt = review_prompt(pass, LESSON_PRIORITY, self.reference_versions());
         let structure = structural_findings(pass.schema, pass.candidate, &self.wording)?;
         // A rewrite of the whole lesson changes the sentences its checked
-        // claims stand on, so once there are any, what its shape asks waits
-        // for the user (claim classes design §3.10).
+        // claims stand on, so once there are any, what only a rewrite can
+        // answer waits for the user (claim classes design §3.10).
         if !self.protected.is_empty() {
-            self.passes
-                .hold(whole_repairs(&structure).map(ReviewFinding::id));
+            self.passes.hold(
+                whole_repairs(&structure).map(ReviewFinding::id),
+                PROTECTED_SENTENCE,
+            );
         }
         let blocking = holds_up_review(&structure, Some(&self.passes));
         self.held_up = blocking;
@@ -213,22 +239,21 @@ impl Subject for LessonSubject<'_> {
             // Stopped structure stays among the findings, so it is still
             // set aside when the review ends.
             issues.extend(structure);
-            issues
+            // Every non-blocking pass rechecks quotations, placed at the part that cites them.
+            let mut findings = quotation_findings(pass.quote_checks);
+            findings.extend(issues);
+            findings
         } else {
-            structure
+            whole_repairs(&structure).cloned().collect()
         };
-        // Every pass rechecks quotations; a mismatch is a finding like
-        // any other, placed at the part that cites it.
-        let mut findings = quotation_findings(pass.quote_checks);
-        findings.extend(issues);
+        let mut findings = issues;
         findings.retain(|finding| !finding.note.trim().is_empty());
         // A finding about a sentence a live claim stands on waits for
         // the user: the review does not rewrite what passed (§10.3).
-        self.passes.hold(super::super::protected::on_protected(
-            pass.value,
-            &findings,
-            self.protected,
-        ));
+        self.passes.hold(
+            super::super::protected::on_protected(pass.value, &findings, self.protected),
+            PROTECTED_SENTENCE,
+        );
         Ok(Found {
             findings,
             edits: !blocking,
@@ -256,6 +281,7 @@ impl Subject for LessonSubject<'_> {
                         passes = attempt + 1,
                         "Teaching findings the repairs did not settle wait for the user"
                     );
+                    self.log_waiting(&set_aside);
                 }
                 Ok(Decision::Publish(set_aside))
             }
@@ -308,7 +334,10 @@ impl Subject for LessonSubject<'_> {
                     }
                     error => {
                         tracing::warn!(%error, "The teaching repair did not fit the window; its findings wait for the user");
-                        self.passes.hold(send.iter().map(ReviewFinding::id));
+                        self.passes.hold(
+                            send.iter().map(ReviewFinding::id),
+                            "its repair did not fit the window",
+                        );
                     }
                 }
                 Ok(Settled::Unchanged)
@@ -494,7 +523,11 @@ fn outcome_of(
         return Outcome::Unnamed;
     };
     if named.applied.is_empty() {
-        Outcome::NotApplied(named.problems.clone())
+        if named.deferred {
+            Outcome::Deferred
+        } else {
+            Outcome::NotApplied(named.problems.clone())
+        }
     } else if named
         .applied
         .iter()
