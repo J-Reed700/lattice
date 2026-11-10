@@ -556,3 +556,6 @@ mod uncite_tests;
 
 #[cfg(test)]
 mod copied_tests;
+
+#[cfg(test)]
+mod locate_tests;

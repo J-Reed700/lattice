@@ -1631,3 +1631,77 @@ async fn a_repair_of_a_lesson_the_cuts_left_five_questions_is_not_asked_for_six(
     let sections = asked("/properties/blocks/minItems");
     assert!(sections.iter().all(|least| *least < 10), "{sections:?}");
 }
+
+/// The scripted review, keeping the text of every request it is sent.
+struct Recording<'a>(&'a ScriptedModel, Mutex<Vec<String>>);
+
+#[async_trait::async_trait]
+impl lattice_core::application::ports::llm_port::LLMPort for Recording<'_> {
+    async fn complete(
+        &self,
+        request: &lattice_core::application::ports::llm_port::CompletionRequest,
+    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
+        let text: Vec<&str> = request
+            .input
+            .iter()
+            .filter_map(|item| match item {
+                CompletionInput::Message { content, .. } => Some(content.as_str()),
+                _ => None,
+            })
+            .collect();
+        self.1
+            .lock()
+            .map_err(|_| AppError::InternalError("fixture lock".into()))?
+            .push(text.join("\n"));
+        self.0.complete(request).await
+    }
+    fn model_name(&self) -> &str {
+        self.0.model_name()
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        self.0.count_tokens(text)
+    }
+    fn max_context_tokens(&self) -> usize {
+        self.0.max_context_tokens()
+    }
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(true)
+    }
+}
+
+/// An edit that drops a sentence's emphasis markers was refused with a
+/// reason the model could not copy from, so its second answer failed the
+/// same way and the finding waited for the user.
+#[tokio::test]
+async fn a_repair_edit_that_drops_a_sentences_markers_is_asked_again_with_the_exact_sentence(
+) -> Result<()> {
+    const MARKED: &str = "The **function** returns the number 4 for the sum of two and two.";
+    let candidate = json!({"blocks":[{"kind":"explanation","title":"Example","body":format!("{MARKED} It never returns text."),"rubric":[],"sourceIndex":0,"quote":EXCERPT}],"questions":[]});
+    let edit = |before: &str| {
+        json!({"edits":[{"path":"/blocks/0/body","before":before,"after":"The function returns the number 4 for the sum of two and two, as the code shows."}]}).to_string()
+    };
+    let scripted = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        edit("The function returns the number 4 for the sum of two and two."),
+        edit(MARKED),
+        review(None),
+    ]);
+    let recording = Recording(&scripted, Mutex::new(Vec::new()));
+    let reviewed = run(&recording, candidate).await?;
+    let sent = recording.1.lock().unwrap().clone();
+    assert!(
+        sent.iter()
+            .any(|request| request.contains(&format!("its words stand there as \"{MARKED}\""))),
+        "the second request lacks the exact sentence"
+    );
+    assert!(reviewed.set_aside.is_empty(), "{:?}", reviewed.set_aside);
+    let after: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert_eq!(
+        after["blocks"][0]["body"],
+        "The function returns the number 4 for the sum of two and two, as the code shows. It never returns text."
+    );
+    Ok(())
+}
