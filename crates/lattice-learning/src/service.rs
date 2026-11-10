@@ -361,9 +361,9 @@ pub(super) fn validate_prepared(
     p: &PreparedLearningLesson,
     program: &LearningProgramDto,
 ) -> Result<()> {
-    if p.blocks.is_empty() || p.blocks.len() > 32 || p.questions.is_empty() {
+    if p.blocks.is_empty() || p.questions.is_empty() {
         return Err(AppError::InvalidInput(
-            "Prepared lesson needs bounded teaching blocks and assessment questions.".into(),
+            "Prepared lesson needs teaching blocks and assessment questions.".into(),
         ));
     }
     let source_ids: std::collections::HashSet<&str> =
@@ -447,9 +447,10 @@ pub(super) fn validate_prepared(
             "Every generated question needs exactly one answer key.".into(),
         ));
     }
-    if LessonQuestionKind::ALL
-        .iter()
-        .any(|kind| !p.questions.iter().any(|q| q.kind == *kind))
+    let asked: Vec<LessonQuestionKind> = p.questions.iter().map(|q| q.kind.clone()).collect();
+    if super::lessons::shape::policy()
+        .missing_question_kind(&asked)
+        .is_some()
     {
         return Err(AppError::InvalidInput(
             "Each prepared lesson needs practice, quiz, and test questions.".into(),

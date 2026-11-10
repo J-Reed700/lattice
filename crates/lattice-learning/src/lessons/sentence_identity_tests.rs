@@ -1,0 +1,196 @@
+//! What counts as a sentence the lesson says twice, and as source wording the
+//! lesson copies.
+#![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::copied_wording::{self, Wording};
+use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use serde_json::{json, Value};
+
+const QUOTE: &str = "All it does is print out the current folder name.";
+
+fn section(title: &str, body: &str) -> Value {
+    json!({"kind":"explanation","title":title,"body":body,"quote":"","citations":[]})
+}
+
+fn lesson(blocks: Vec<Value>) -> Value {
+    json!({"blocks":blocks,"questions":[]})
+}
+
+fn teaching(candidate: &Value) -> Vec<ReviewFinding> {
+    copied_wording::findings(candidate, &Wording::default())
+        .into_iter()
+        .chain(
+            crate::lessons::shape::policy().rules(candidate, crate::lessons::shape::Phase::Draft),
+        )
+        .filter(|finding| finding.kind == FindingKind::Teaching)
+        .collect()
+}
+
+fn cites(quote: &str) -> Value {
+    json!([{"sentence":"A sentence of the lesson.","sourceIndex":0,"quote":quote}])
+}
+
+#[test]
+fn a_command_on_a_line_of_its_own_is_no_sentence_the_lesson_repeats() {
+    let candidate = lesson(vec![
+        section("First step", "Look at the folder.\n\n`ls`"),
+        section("Second step", "Look again.\n\n`ls`"),
+    ]);
+    let found = teaching(&candidate);
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_prose_sentence_holding_code_is_still_a_repeat() {
+    const SHARED: &str = "Run `ls` to list the folder.";
+    let candidate = lesson(vec![
+        section("First step", &format!("Begin. {SHARED}")),
+        section("Second step", &format!("Again. {SHARED}")),
+    ]);
+    let found = teaching(&candidate);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].key().site, FindingSite::Section(1));
+    assert_eq!(found[0].passage.as_deref(), Some(SHARED));
+}
+
+#[test]
+fn a_sentence_equal_to_its_citations_quote_copies_the_source() {
+    let mut block = section("Printing", QUOTE);
+    block["citations"] = cites(QUOTE);
+    let found = teaching(&lesson(vec![block]));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].key().site, FindingSite::Section(0));
+    assert!(
+        found[0].note.contains("double quotation marks"),
+        "{}",
+        found[0].note
+    );
+}
+
+#[test]
+fn a_sentence_holding_the_quote_after_other_words_copies_the_source() {
+    let body = format!("The command prints that location: {QUOTE}");
+    let mut block = section("Printing", &body);
+    block["citations"] = cites(QUOTE);
+    let found = teaching(&lesson(vec![block]));
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].key().site, FindingSite::Section(0));
+}
+
+#[test]
+fn a_sentence_inside_a_longer_quote_copies_the_source() {
+    let mut block = section("Printing", "It prints the current folder name.");
+    block["citations"] = cites("It prints the current folder name and then exits.");
+    let found = teaching(&lesson(vec![block]));
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+#[test]
+fn a_sections_own_quote_is_held_to_the_same_rule() {
+    let mut block = section("Printing", QUOTE);
+    block["quote"] = json!(QUOTE);
+    let found = teaching(&lesson(vec![block]));
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+#[test]
+fn the_sources_words_in_double_quotation_marks_are_no_copy() {
+    let body = format!(
+        "The manual puts it this way: \"{QUOTE}\" The lesson says it again in its own words."
+    );
+    let mut block = section("Printing", &body);
+    block["citations"] = cites(QUOTE);
+    let found = teaching(&lesson(vec![block]));
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_sentence_that_says_it_differently_is_no_copy() {
+    let mut block = section(
+        "Printing",
+        "The command shows the name of the folder you are in.",
+    );
+    block["citations"] = cites(QUOTE);
+    let found = teaching(&lesson(vec![block]));
+    assert!(found.is_empty(), "{found:?}");
+}
+
+fn question(explanation: &str, reasons: [&str; 4]) -> Value {
+    json!({"kind":"practice","prompt":"Which choice prints the folder name?",
+        "options":["One","Two","Three","Four"],"correctIndex":0,
+        "rationales":reasons,"explanation":explanation,"quote":"","citations":cites(QUOTE)})
+}
+
+#[test]
+fn a_question_explanation_or_choice_reason_copying_the_quote_is_a_finding_at_the_question() {
+    for (explanation, reasons) in [
+        (
+            QUOTE,
+            ["", "Two is wrong.", "Three is wrong.", "Four is wrong."],
+        ),
+        ("Because.", ["", QUOTE, "Three is wrong.", "Four is wrong."]),
+    ] {
+        let mut candidate = lesson(vec![section("Printing", "Body of printing.")]);
+        candidate["questions"] = json!([question(explanation, reasons)]);
+        let found = teaching(&candidate);
+        assert_eq!(found.len(), 1, "{found:?}");
+        assert_eq!(found[0].key().site, FindingSite::Question(0));
+    }
+}
+
+#[test]
+fn the_prompts_state_the_floor_the_validator_enforces() {
+    use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
+    let schema = crate::generation::lesson_schema(2);
+    let floor = format!("{MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words");
+    for (who, text) in [
+        ("teaching repair", super::text_edits::instructions(&schema)),
+        (
+            "claim repair",
+            super::text_edits::rewrite_instructions(&schema),
+        ),
+    ] {
+        assert!(text.contains(&floor), "{who}: {text}");
+    }
+}
+
+#[test]
+fn the_writer_and_the_repairs_are_told_never_to_paste_the_quote_as_the_sentence() {
+    let schema = crate::generation::lesson_schema(2);
+    for (who, text) in [
+        ("teaching repair", super::text_edits::instructions(&schema)),
+        (
+            "claim repair",
+            super::text_edits::rewrite_instructions(&schema),
+        ),
+    ] {
+        assert!(
+            text.contains("never paste the quote as the sentence"),
+            "{who}"
+        );
+    }
+}
+
+#[test]
+fn a_sentence_too_short_to_quote_is_no_sentence_the_lesson_repeats() {
+    let candidate = lesson(vec![
+        section("First step", "Predict the result first. No."),
+        section("Second step", "Predict the next result. No."),
+    ]);
+    let found = teaching(&candidate);
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_sentence_just_at_the_quote_floor_is_still_a_repeat() {
+    use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
+    const SHARED: &str = "Show the folder name now.";
+    assert_eq!(SHARED.chars().count(), MIN_QUOTE_CHARS);
+    assert_eq!(SHARED.split_whitespace().count(), MIN_QUOTE_WORDS);
+    let candidate = lesson(vec![
+        section("First step", &format!("Begin here. {SHARED}")),
+        section("Second step", &format!("Again here. {SHARED}")),
+    ]);
+    let found = teaching(&candidate);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].passage.as_deref(), Some(SHARED));
+}

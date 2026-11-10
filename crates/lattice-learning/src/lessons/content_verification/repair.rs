@@ -8,6 +8,8 @@ use super::repair_work::{
     withdraw_resolved,
 };
 use super::*;
+use crate::lessons::copied_wording::Wording;
+use crate::lessons::shape::LessonShape;
 use crate::lessons::text_edits;
 use lattice_core::application::services::grounded_generation::{GroundedRequest, HistoryItem};
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal};
@@ -18,7 +20,7 @@ mod confine;
 mod cut;
 #[cfg(test)]
 pub(super) use citation::quotation;
-pub(super) use citation::{cite_where_supported, number_evidence, number_sources, uncite, Cited};
+pub(super) use citation::{cite_where_supported, number_evidence, uncite, Cited};
 use confine::PutBack;
 pub(crate) use confine::{confine, Protected};
 #[cfg(test)]
@@ -360,13 +362,13 @@ const WHOLE_SECTION: &str = "Give the corrected section itself instead: correct 
 async fn apply_or_replace_section(
     llm: &dyn LLMPort,
     (system, local): (&str, &Value),
-    (original, lesson): (&Value, &Value),
+    (original, lesson, wording): (&Value, &Value, &Wording),
     schema: &Value,
     field: &str,
     output_tokens: usize,
     edit_response: &str,
 ) -> Result<Value> {
-    let error = match text_edits::apply_in(original, edit_response, lesson) {
+    let error = match text_edits::apply_in(original, edit_response, lesson, wording) {
         Ok(repaired) => return Ok(repaired),
         Err(error) => error,
     };
@@ -418,7 +420,7 @@ pub(super) async fn teaching_protected(
     targets: &[ClaimId],
 ) -> Result<Vec<Protected>> {
     let released = ledger.releasable(policy, targets);
-    ledger.begin_teaching(candidate, &released).await?;
+    ledger.begin_teaching(policy, candidate, &released).await?;
     Ok(Protected::releasing(ledger, targets, &released))
 }
 
@@ -426,7 +428,7 @@ pub(crate) async fn candidate(
     llm: &dyn LLMPort,
     policy: &dyn AcceptancePolicy,
     prompt: &str,
-    schema: &Value,
+    shape: LessonShape<'_>,
     mut context: Value,
     output_tokens: usize,
     references: &ReferenceCollection<'_>,
@@ -436,7 +438,7 @@ pub(crate) async fn candidate(
     // A claim on its last attempt has its sentence taken out in code; the
     // model is asked only for the others, and for a statement whose cut is a
     // narrowing (`ClaimLedger::cut_of`).
-    let handled = cut::last_attempts(policy, &mut context, ledger).await?;
+    let handled = cut::last_attempts(policy, shape.policy, &mut context, ledger).await?;
     let candidate = if handled > 0 && targets(&context)?.is_empty() {
         let candidate = context
             .get("candidate")
@@ -449,7 +451,7 @@ pub(crate) async fn candidate(
             llm,
             policy,
             prompt,
-            schema,
+            shape.value(),
             context,
             output_tokens,
             references,
@@ -464,7 +466,7 @@ pub(crate) async fn candidate(
         llm,
         crate::teaching::LESSON_REPAIR_SYSTEM,
         prompt,
-        schema,
+        shape,
         candidate.to_string(),
         output_tokens,
         references,
@@ -493,6 +495,7 @@ async fn repair_sections(
     if pending.is_empty() {
         return Err(invalid("No affected sections were recorded for repair."));
     }
+    let wording = Wording::of(references);
     // Every claim this repair was sent for, and those standing on their
     // sentences, which it changes with them; the ledger's other live claims
     // are what it leaves as it is (claim sources design §18.5).
@@ -594,7 +597,7 @@ async fn repair_sections(
             let (repaired, put_back) = match repair_group(
                 llm,
                 &system,
-                (&local, original, &candidate),
+                (&local, original, &candidate, &wording),
                 schema,
                 field,
                 output_tokens,
@@ -654,7 +657,7 @@ async fn repair_sections(
 async fn repair_group(
     llm: &dyn LLMPort,
     system: &str,
-    (local, original, lesson): (&Value, &Value, &Value),
+    (local, original, lesson, wording): (&Value, &Value, &Value, &Wording),
     schema: &Value,
     field: &str,
     output_tokens: usize,
@@ -674,7 +677,7 @@ async fn repair_group(
     let mut repaired = apply_or_replace_section(
         llm,
         (system, local),
-        (original, lesson),
+        (original, lesson, wording),
         schema,
         field,
         output_tokens,

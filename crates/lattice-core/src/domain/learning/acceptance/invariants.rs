@@ -3,7 +3,7 @@
 use std::collections::HashSet;
 
 use super::ceiling::Ceiling;
-use super::walk::{follow, start, Moved};
+use super::walk::{follow, next_rewrite, start, stepped, Moved};
 use super::{
     AcceptancePolicy, End, Graph, Next, Node, NodeId, Otherwise, Outcome, Position, Reading, Step,
     Target, CLASSES,
@@ -129,10 +129,13 @@ fn reachable(policy: &dyn AcceptancePolicy) -> Vec<Position> {
             continue;
         };
         for &(_, next) in node.edges() {
-            if let Moved::To(to) = follow(policy, at, next) {
-                stack.push(to);
+            match follow(policy, at, next) {
+                Moved::To(to) => stack.push(to),
+                Moved::Ended(End::Removed { .. }) | Moved::Illegal => {}
+                Moved::Ended(_) => stack.extend(next_rewrite(policy, stepped(policy, at))),
             }
         }
+        stack.extend(next_rewrite(policy, at));
     }
     found
 }
@@ -459,6 +462,7 @@ fn rewritten_twice(policy: &dyn AcceptancePolicy) -> Vec<Violation> {
                     changed_class,
                     reasked,
                     node: policy.graph(class).after_rewrite(),
+                    rewrites_left: 0,
                 });
             }
         }
@@ -539,8 +543,9 @@ fn enters_an_entry(at: Position, next: Next) -> bool {
 }
 
 /// 7: along every edge from a position, in either state of the re-ask,
-/// `cost(n) + most(m) <= most(n)`, and so for using the re-ask. `most` is
-/// the ceiling being held to it.
+/// `cost(n) + most(m) <= most(n)`, and so for using the re-ask and for the
+/// successor a further rewrite of the sentence gives, waiting or ended. `most`
+/// is the ceiling being held to it.
 pub(super) fn ceiling_rises(
     policy: &dyn AcceptancePolicy,
     most: &mut dyn FnMut(Position) -> u32,
@@ -555,9 +560,18 @@ pub(super) fn ceiling_rises(
             let here = most(at);
             let mut ways: Vec<u32> = Vec::new();
             for &(_, next) in node.edges() {
-                if let Moved::To(to) = follow(policy, at, next) {
-                    ways.push(node.calls.saturating_add(most(to)));
+                match follow(policy, at, next) {
+                    Moved::To(to) => ways.push(node.calls.saturating_add(most(to))),
+                    Moved::Ended(End::Removed { .. }) | Moved::Illegal => {}
+                    Moved::Ended(_) => {
+                        if let Some(rewritten) = next_rewrite(policy, stepped(policy, at)) {
+                            ways.push(node.calls.saturating_add(most(rewritten)));
+                        }
+                    }
                 }
+            }
+            if let Some(rewritten) = next_rewrite(policy, at) {
+                ways.push(most(rewritten));
             }
             if !reasked && matches!(node.step, Step::Read(_)) {
                 let again = most(Position {

@@ -1,6 +1,9 @@
 //! Apply explicit edits atomically. Unmentioned lesson bytes and items cannot
 //! change as a side effect of asking a model to correct one fact.
+use super::copied_wording::{self, Wording, SAY_IT_YOURSELF};
 use super::repeats::{self, Counts};
+use super::same_text;
+use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -12,18 +15,24 @@ pub(super) const INSTRUCTIONS: &str = "Give edits, never a replacement lesson or
 pub(super) const NEVER_SAY_WHERE: &str = "Never say in the lesson's text where a statement comes from, by number or by name, and never refer to an excerpt, passage or tutorial: no \"Source 2\", no \"as source 0 describes\", no \"In the project's tutorial, ...\", no \"According to the guide, ...\" and no \"Citation:\" line.";
 pub(super) const QUOTED_WORDING: &str =
     "Wording quoted from a source goes in double quotation marks, and only in a cited sentence; never put wording in single quotation marks.";
+/// What separates the lesson's sentence from the citation's quote.
+pub(super) const OWN_SENTENCE: &str = "The lesson states the fact in its own sentence and the quote holds the source's words: never paste the quote as the sentence, and never put the source's wording in a sentence outside double quotation marks.";
 pub(super) const UNQUOTED_REMARKS: &str = "A misconception, a learner's thought, something a friend says or an example remark is written in the lesson's own sentence without quotation marks. Commands and their output go in code formatting.";
 /// Told to the writer and the repairs alike, so a step a repair adds starts where the lesson has left the learner.
 pub(super) const STEPS_IN_ORDER: &str = "The learner does the lesson's steps in order, with their own tools and materials, so each step starts from what the steps before it left: a later step uses what an earlier one made or set up, and never has the learner make or set it up again.";
 
 /// What the teaching repair is told besides [`INSTRUCTIONS`] when a lesson's
 /// parts list the sentences they cite (claim classes design §3.5).
-const CITING: &str = "A sentence that states a figure, a date, a version, a product's behaviour or quoted wording needs a citation. Prefer citing it: when a supplied excerpt states it, append a citation and leave the sentence exactly as it is. A citation names the block or question by path, the sentence copied exactly from its body, explanation or a choice's reason, the sourceIndex of the excerpt that states it, and a quote, an exact span of that excerpt of at least 25 characters and five words, that contains the figure or wording. Write the general form of the sentence instead only when no supplied excerpt states it; generalizing a figure an excerpt states throws away a correct statement. Never cite an excerpt that does not contain what the sentence states. When a citation's quote does not state its sentence, take the citation back by listing its path in uncite; the sentence then either cites a supplied excerpt that states it or is written in its general form.";
+fn citing() -> String {
+    format!("A sentence that states a figure, a date, a version, a product's behaviour or quoted wording needs a citation. Prefer citing it: when a supplied excerpt states it, append a citation and leave the sentence exactly as it is, unless it copies the excerpt's wording (then say it in the lesson's own words first). A citation names the block or question by path, the sentence copied exactly from its body, explanation or a choice's reason, the sourceIndex of the excerpt that states it, and a quote, an exact span of that excerpt of at least {MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words, that contains the figure or wording. {OWN_SENTENCE} Write the general form of the sentence instead only when no supplied excerpt states it; generalizing a figure an excerpt states throws away a correct statement. Never cite an excerpt that does not contain what the sentence states. When a citation's quote does not state its sentence, take the citation back by listing its path in uncite; the sentence then either cites a supplied excerpt that states it or is written in its general form.")
+}
 
 /// What the claim repair is told besides [`INSTRUCTIONS`] when a lesson's
 /// parts list the sentences they cite: its corrected sentence cites the
 /// evidence passage it was given.
-const CITING_REWRITE: &str = "When your corrected sentence states a figure, a date, a version, a product's behaviour or quoted wording that an evidence passage states, append a citation for it: the block or question by path, the corrected sentence copied exactly, the passage's sourceIndex from the evidence table and a quote, an exact span of the passage of at least 25 characters and five words, that contains it. Never cite a passage that lacks what the sentence states; leave that detail out of the sentence instead.";
+fn citing_rewrite() -> String {
+    format!("When your corrected sentence states a figure, a date, a version, a product's behaviour or quoted wording that an evidence passage states, append a citation for it: the block or question by path, the corrected sentence copied exactly, the passage's sourceIndex from the evidence table and a quote, an exact span of the passage of at least {MIN_QUOTE_CHARS} characters and {MIN_QUOTE_WORDS} words, that contains it. {OWN_SENTENCE} Never cite a passage that lacks what the sentence states; leave that detail out of the sentence instead.")
+}
 
 /// Where a lesson's schema describes one cited sentence of a part.
 const CITATION: &str = "/properties/blocks/items/properties/citations/items";
@@ -69,7 +78,7 @@ pub(super) fn schema(candidate: &Value) -> Value {
 /// to append.
 pub(super) fn instructions(lesson: &Value) -> String {
     if lesson.pointer(CITATION).is_some() {
-        format!("{INSTRUCTIONS} {CITING} {NEVER_SAY_WHERE} {QUOTED_WORDING} {UNQUOTED_REMARKS} {STEPS_IN_ORDER}")
+        format!("{INSTRUCTIONS} {} {NEVER_SAY_WHERE} {QUOTED_WORDING} {UNQUOTED_REMARKS} {STEPS_IN_ORDER}", citing())
     } else {
         INSTRUCTIONS.to_owned()
     }
@@ -79,7 +88,8 @@ pub(super) fn instructions(lesson: &Value) -> String {
 pub(super) fn rewrite_instructions(lesson: &Value) -> String {
     if lesson.pointer(CITATION).is_some() {
         format!(
-            "{INSTRUCTIONS} {CITING_REWRITE} {NEVER_SAY_WHERE} {QUOTED_WORDING} {UNQUOTED_REMARKS} {STEPS_IN_ORDER}"
+            "{INSTRUCTIONS} {} {NEVER_SAY_WHERE} {QUOTED_WORDING} {UNQUOTED_REMARKS} {STEPS_IN_ORDER}",
+            citing_rewrite()
         )
     } else {
         INSTRUCTIONS.to_owned()
@@ -235,16 +245,18 @@ fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
     if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(not_a_part());
     }
-    let sentence = cite.sentence.trim();
     let target = lesson
         .pointer(&cite.path)
         .filter(|part| part.is_object())
         .ok_or_else(|| format!("names {}, which is not in the draft.", cite.path))?;
-    if sentence.is_empty()
-        || !citable_texts(target, text == "explanation")
-            .iter()
-            .any(|held| held.contains(sentence))
-    {
+    let sentence = citable_texts(target, text == "explanation")
+        .into_iter()
+        .find_map(|held| {
+            let span = same_text::find(held, &cite.sentence)?;
+            same_text::exact_sentences(held, span)
+        })
+        .map(str::to_owned);
+    let Some(sentence) = sentence else {
         let place = if text == "explanation" {
             "explanation or choice reasons"
         } else {
@@ -254,7 +266,7 @@ fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
             "names a sentence that is not in the {place} of {}; copy it exactly.",
             cite.path
         ));
-    }
+    };
     let part = lesson
         .pointer_mut(&cite.path)
         .and_then(Value::as_object_mut)
@@ -293,13 +305,64 @@ fn part_of(path: &str) -> String {
     }
 }
 
+/// The quotes of the block or question at `part`, and those of the citations
+/// the patch appends to it: the source wording its sentences may not copy.
+fn quotes_for(candidate: &Value, part: &str, cites: &[Cite]) -> Wording {
+    let Some(held) = Some(part)
+        .filter(|part| !part.is_empty())
+        .and_then(|part| candidate.pointer(part))
+    else {
+        return Wording::default();
+    };
+    Wording::of_part(
+        held,
+        cites
+            .iter()
+            .filter(|cite| cite.path == part)
+            .map(|cite| cite.quote.as_str()),
+    )
+}
+
+/// Why `before` is not exactly in the field at `path` of `candidate`: when its
+/// words stand there, or in one other taught field, once under the text
+/// identity ([`same_text`]), the reason gives the lesson's own sentences to
+/// copy from.
+fn not_found(candidate: &Value, path: &str, before: &str, index: usize) -> String {
+    let plain = format!("the before text of edit {index} does not occur in {path}.");
+    let exact_in = |field: &str| -> Option<(Vec<(usize, usize)>, String)> {
+        let text = candidate.pointer(field)?.as_str()?;
+        let hits = same_text::find_all(text, before);
+        let span = hits.first().copied()?;
+        let exact = same_text::exact_sentences(text, span)?.to_owned();
+        Some((hits, exact))
+    };
+    if let Some((hits, exact)) = exact_in(path) {
+        return if hits.len() == 1 {
+            format!("the before text of edit {index} is not in {path} exactly; its words stand there as \"{exact}\". Copy the before text exactly from that, with its formatting and punctuation.")
+        } else {
+            plain
+        };
+    }
+    let mut fields = Vec::new();
+    paths(candidate, "", &mut fields);
+    let mut elsewhere = fields
+        .into_iter()
+        .filter(|other| other != path && repeats::teaches_path(other))
+        .filter_map(|other| exact_in(&other).map(|(hits, exact)| (other, hits.len(), exact)));
+    match (elsewhere.next(), elsewhere.next()) {
+        (Some((other, 1, exact)), None) => format!("the before text of edit {index} does not occur in {path}; its words stand in {other} as \"{exact}\". Give that path, and copy the before text exactly."),
+        _ => plain,
+    }
+}
+
 /// The new value of one field under its edits, or the first problem with
 /// them, as `(edit number, what is wrong)`.
 fn field_value(
+    candidate: &Value,
     path: &str,
     original: &Value,
     edits: Vec<(usize, Edit)>,
-    lesson: &Counts,
+    (lesson, part, wording): (&Counts, &Wording, &Wording),
 ) -> std::result::Result<Value, (usize, String)> {
     let first = edits.first().map_or(0, |(index, _)| *index);
     if let Some(text) = original.as_str() {
@@ -317,10 +380,7 @@ fn field_value(
             };
             let mut matches = text.match_indices(before);
             let Some((start, _)) = matches.next() else {
-                return Err((
-                    index,
-                    format!("the before text of edit {index} does not occur in {path}."),
-                ));
+                return Err((index, not_found(candidate, path, before, index)));
             };
             if matches.next().is_some() {
                 return Err((index, format!("the before text of edit {index} occurs more than once in {path}; include enough surrounding text to make it unique.")));
@@ -334,6 +394,15 @@ fn field_value(
                 return Err((
                     index,
                     format!("edit {index} to {path} adds a sentence the lesson already has: \"{sentence}\". Reword it or leave it out."),
+                ));
+            }
+            let copied = copied_wording::is_taught_text(path)
+                .then(|| copied_wording::gained(text, &alone, part, wording))
+                .flatten();
+            if let Some(sentence) = copied {
+                return Err((
+                    index,
+                    format!("edit {index} to {path} writes the source's wording as the lesson's own sentence: \"{sentence}\". {SAY_IT_YOURSELF}"),
                 ));
             }
             ranges.push((start, start + before.len(), after));
@@ -375,7 +444,7 @@ fn part_values(
     candidate: &Value,
     allowed: &[String],
     edits: Vec<(usize, Edit)>,
-    lesson: &Counts,
+    held: (&Counts, &Wording, &Wording),
 ) -> std::result::Result<FieldValues, Problems> {
     let mut problems = Vec::new();
     let mut fields = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
@@ -400,7 +469,7 @@ fn part_values(
         let first = edits.first().map_or(0, |(index, _)| *index);
         match candidate.pointer(&path) {
             None => problems.push((first, format!("{path} is not in the draft."))),
-            Some(original) => match field_value(&path, original, edits, lesson) {
+            Some(original) => match field_value(candidate, &path, original, edits, held) {
                 Ok(value) => values.push((path, value)),
                 Err(problem) => problems.push(problem),
             },
@@ -415,13 +484,20 @@ fn part_values(
 
 /// Applies a patch part by part: the edits of a block or question that has
 /// any problem are left out and the other parts' edits apply.
+#[cfg(test)]
 pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
-    apply_in(candidate, patch, &Value::Null)
+    apply_in(candidate, patch, &Value::Null, &Wording::default())
 }
 
 /// [`apply`] where `lesson`, the lesson `candidate` is a part of, also holds
-/// the sentences an edit may not add again.
-pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result<Value> {
+/// the sentences an edit may not add again, and `wording`, the lesson's saved
+/// excerpts, is source wording an edit may not add a sentence that copies.
+pub(super) fn apply_in(
+    candidate: &Value,
+    patch: &str,
+    lesson: &Value,
+    wording: &Wording,
+) -> Result<Value> {
     let fail = |reason: String| {
         AppError::InvalidInput(format!(
             "The repair's edits could not be applied: {reason} The draft was preserved."
@@ -446,8 +522,9 @@ pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result
     let mut result = candidate.clone();
     let mut problems = Vec::new();
     let mut applied = false;
-    for edits in parts.into_values() {
-        match part_values(candidate, &allowed, edits, &held) {
+    for (part, edits) in parts {
+        let quotes = quotes_for(candidate, &part, &patch.citations);
+        match part_values(candidate, &allowed, edits, (&held, &quotes, wording)) {
             Ok(values) => {
                 applied |= !values.is_empty();
                 for (path, value) in values {
@@ -509,3 +586,9 @@ mod tests;
 
 #[cfg(test)]
 mod uncite_tests;
+
+#[cfg(test)]
+mod copied_tests;
+
+#[cfg(test)]
+mod locate_tests;

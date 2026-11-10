@@ -218,22 +218,22 @@ async fn calls_are_counted_and_the_ceiling_appears_once_the_statements_are_sorte
                 })
             );
             // The sorting call made (1), the longest path of each
-            // statement from its entry (16 for the Sourced one, 16 for
+            // statement from its entry (19 for the Sourced one, 19 for
             // each Common one) and the flow repair of the section (1).
-            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(50));
+            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(59));
             calls_planned(&policy, &[], 0);
-            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(50));
+            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(59));
 
             // The Sourced statement is resolved: its path is over.
             statements_moved(
                 &policy,
                 &[],
-                &[alone(Class::Sourced, PlannedAt::Ended)],
+                &[alone(Class::Sourced, PlannedAt::Ended(None))],
                 &[],
             );
-            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(34));
+            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(40));
             cuts_known(0);
-            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(33));
+            assert_eq!(progress.snapshot().2.model_calls_ceiling, Some(39));
             checks(async { drop(model_calls(3, Term::Reading)) }).await;
             assert_eq!(progress.snapshot().2.model_calls, 4);
 
@@ -266,12 +266,12 @@ fn a_ceiling_that_goes_up_is_counted_and_one_that_comes_down_is_not() {
     };
     publish_ceiling(&mut state, Change::default());
     let first = state.activity.model_calls_ceiling.unwrap();
-    assert_eq!(first, 1 + 16 + 1);
+    assert_eq!(first, 1 + 19 + 1);
     assert_eq!(state.activity.model_calls_ceiling_rises, 0);
 
     // The plan's own events only lower it.
     if let Some(plan) = state.plan.as_mut() {
-        plan.moved(&policy, &[sourced(PlannedAt::Ended)]);
+        plan.moved(&policy, &[sourced(PlannedAt::Ended(None))]);
     }
     publish_ceiling(&mut state, Change::default());
     assert_eq!(state.activity.model_calls_ceiling, Some(2));
@@ -300,7 +300,7 @@ async fn a_flow_repair_with_its_call_leaves_the_ceiling_where_it_was_and_one_wit
             };
             let ceiling = || progress.snapshot().2.model_calls_ceiling;
             calls_planned(&policy, &[statement(PlannedAt::Entry)], 2);
-            statements_moved(&policy, &[], &[statement(PlannedAt::Ended)], &[]);
+            statements_moved(&policy, &[], &[statement(PlannedAt::Ended(None))], &[]);
             cuts_known(2);
             // The sorting call made (1) and the flow repair of each of the
             // two sections that took a cut.
@@ -311,7 +311,7 @@ async fn a_flow_repair_with_its_call_leaves_the_ceiling_where_it_was_and_one_wit
             flow_repaired();
             assert_eq!(ceiling(), Some(3));
             // The pass after the repairs does not raise it.
-            statements_moved(&policy, &[], &[statement(PlannedAt::Ended)], &[]);
+            statements_moved(&policy, &[], &[statement(PlannedAt::Ended(None))], &[]);
             assert_eq!(ceiling(), Some(3));
 
             // The second finds no gap to mend: it makes no call, and the
@@ -335,7 +335,7 @@ async fn a_statement_the_plan_takes_in_is_followed_and_raises_the_ceiling_by_its
                 at,
                 sentence: None,
             };
-            let done = planned(Class::Sourced, PlannedAt::Ended);
+            let done = planned(Class::Sourced, PlannedAt::Ended(None));
             calls_planned(&policy, &[done], 0);
             assert_eq!(plan_claims(), Some(Vec::new()));
             let first = ClaimId("first".into());
@@ -359,7 +359,7 @@ async fn a_statement_the_plan_takes_in_is_followed_and_raises_the_ceiling_by_its
             // The sorting call made and the newcomer's longest path from
             // its entry: a rise, counted.
             let activity = progress.snapshot().2;
-            assert_eq!(activity.model_calls_ceiling, Some(1 + 16));
+            assert_eq!(activity.model_calls_ceiling, Some(1 + 19));
             assert_eq!(activity.model_calls_ceiling_rises, 1);
             assert_eq!(plan_claims(), Some(vec![first, joined]));
         })

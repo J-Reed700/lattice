@@ -12,7 +12,7 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::application::services::claim_verification::BRIDGE_SYSTEM;
 use lattice_core::domain::learning::acceptance::{
-    most_calls, AcceptancePolicy, End, Outcome, Position, Reading, Step, Then,
+    most_calls, start, AcceptancePolicy, End, Outcome, Reading, Step, Then,
 };
 use lattice_core::domain::learning::claim_review::{
     ClaimEvent, ClaimLedgerEntry, ClaimState, VerdictKind,
@@ -1626,12 +1626,7 @@ async fn the_ceiling_after_the_sort_counts_a_statement_the_model_calls_internal_
     // The one sorting call, made; the model's statement at the longest path of
     // the Internal graph from its entry; a flow repair for its section; and
     // nothing for the remark the rules left out.
-    let entry = Position {
-        class: Class::Internal,
-        changed_class: false,
-        reasked: false,
-        node: policy.graph(Class::Internal).entry(),
-    };
+    let entry = start(&policy, Class::Internal);
     assert_eq!(trace.calls, 1);
     assert_eq!(trace.ceilings, [1 + most_calls(&policy, entry) + 1]);
     Ok(())

@@ -5,6 +5,7 @@
 //! snapshot before output crosses into persistence.
 
 use crate::dto::{GenerateLearningProgramRequestDto, LearningSourceDto};
+use crate::lessons::same_text::fold;
 pub(crate) use crate::lessons::structured_call::complete_checked;
 pub(crate) use crate::lessons::structured_call::{complete_json, complete_json_with_progress};
 use crate::model_call;
@@ -21,12 +22,11 @@ mod lesson_rules;
 mod outline;
 mod recall;
 
-pub(crate) use lesson::MAX_CITATIONS;
 pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
+pub(crate) use lesson::{lesson_schema_counting, MAX_CITATIONS};
 pub use lesson_rules::lesson_rule_notes;
 pub(crate) use lesson_rules::{
-    lesson_rules, lesson_rules_holding, prose_sentences, split_check, teaching_sentences, Counts,
-    CHECK_REVEAL,
+    lesson_rules, prose_sentences, split_check, teaching_sentences, CHECK_REVEAL,
 };
 pub(crate) use outline::{decode_outline, draft_outline, outline_schema};
 pub use outline::{generate_outline, generate_outline_with_progress};
@@ -34,24 +34,24 @@ pub(crate) use recall::recall_output_tokens;
 pub use recall::{generate_recall_drafts, GeneratedLearningCardDraft};
 
 const MIN_TEXT: usize = 3;
-const MIN_QUOTE_CHARS: usize = 25;
+pub(crate) const MIN_QUOTE_CHARS: usize = 25;
+pub(crate) const MIN_QUOTE_WORDS: usize = 5;
 /// The longest span the code itself picks as a quotation; a model's has no ceiling.
 pub(crate) const MAX_QUOTE_CHARS: usize = 1200;
 pub(crate) const OUTLINE_OUTPUT_RESERVE: usize = 4000;
 pub(crate) const LESSON_OUTPUT_RESERVE: usize = 10000;
 
 /// Added to a draft brief when the material cites saved sources.
-const CITATION_DRAFT_BRIEF: &str = " For each part, name the sourceIndex of the passage that supports it and copy the supporting words exactly from that excerpt. List each sentence that states a specific or attributes a statement to a source with the excerpt it comes from and the words that contain it.";
+const CITATION_DRAFT_BRIEF: &str = " For each part, name the sourceIndex of the passage that supports it and copy the supporting words exactly from that excerpt into the quote; the lesson's own sentences state the fact in other words. List each sentence that states a specific with the excerpt it comes from and the words that contain it.";
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
 
-fn normalize(text: &str) -> String {
-    text.split_whitespace()
-        .collect::<Vec<_>>()
-        .join(" ")
-        .to_lowercase()
+/// Whether `quote` is long enough to be a quotation: the floor the prompts state.
+pub(crate) fn long_enough_quote(quote: &str) -> bool {
+    let quote = quote.trim();
+    quote.chars().count() >= MIN_QUOTE_CHARS && quote.split_whitespace().count() >= MIN_QUOTE_WORDS
 }
 
 /// A deterministic excerpt match establishes provenance for a quoted span;
@@ -61,10 +61,7 @@ fn validate_quote(quote: &str, source: &LearningSourceDto) -> Result<()> {
 }
 
 pub(crate) fn validate_excerpt_quote(quote: &str, excerpt: &str) -> Result<()> {
-    let quote = quote.trim();
-    let chars = quote.chars().count();
-    let words = quote.split_whitespace().count();
-    if chars < MIN_QUOTE_CHARS || words < 5 || !normalize(excerpt).contains(&normalize(quote)) {
+    if !long_enough_quote(quote) || !fold(excerpt).contains(&fold(quote)) {
         return Err(invalid("The generated quotation does not match a valid passage in the saved reference. No material was published."));
     }
     Ok(())
@@ -165,9 +162,9 @@ fn grounding_instructions(has_sources: bool) -> &'static str {
 /// §3.4, §3.5): a specific stands only in a sentence it lists in its
 /// citations, with a quote that holds it.
 fn citation_instructions(has_sources: bool) -> String {
-    use super::text_edits::{NEVER_SAY_WHERE, QUOTED_WORDING, UNQUOTED_REMARKS};
+    use super::text_edits::{NEVER_SAY_WHERE, OWN_SENTENCE, QUOTED_WORDING, UNQUOTED_REMARKS};
     if has_sources {
-        format!("Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim, the sourceIndex of the excerpt that states it and a verbatim quote from that excerpt that contains the specific. A sentence that would state a specific no excerpt contains is written in its general form instead. {NEVER_SAY_WHERE} State what the excerpt says as the lesson's own sentence and cite that sentence in the citations list. A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps, question explanations and the reasons for wrong choices state what is so: a worked example, a practice or a check works a hypothetical case and cites nothing. {QUOTED_WORDING} {UNQUOTED_REMARKS}")
+        format!("Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim from the block's or question's text, the sourceIndex of the excerpt that states it and a verbatim quote from that excerpt that contains the specific. A sentence that would state a specific no excerpt contains is written in its general form instead. {NEVER_SAY_WHERE} State what the excerpt says as the lesson's own sentence and cite that sentence in the citations list. {OWN_SENTENCE} A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps, question explanations and the reasons for wrong choices state what is so: a worked example, a practice or a check works a hypothetical case and cites nothing. {QUOTED_WORDING} {UNQUOTED_REMARKS}")
     } else {
         format!("Every citations list is empty: no sources are supplied, so nothing is cited. Quotation marks mark wording quoted from a source, so none appears in the text. {UNQUOTED_REMARKS}")
     }

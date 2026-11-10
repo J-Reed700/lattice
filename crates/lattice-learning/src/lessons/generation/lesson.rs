@@ -13,6 +13,7 @@ use crate::dto::{
 };
 use crate::embedded_runtime::BuiltinRuntimes;
 use crate::lessons::course_plan::CoursePlan;
+use crate::lessons::shape::{self, number, LessonShape, ShapePolicy};
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
@@ -117,19 +118,32 @@ pub(super) fn course_context(
     json!({"curriculum":sequence,"coursePlan":planned})
 }
 
-/// The lesson's output schema for `source_count` saved sources. It is the one
+/// The writer's output schema for `source_count` saved sources. It is the one
 /// schema under which teaching review applies the lesson's rules
 /// (`lesson_rules`), so evals that review a lesson use it rather than a copy.
 pub fn lesson_schema(source_count: usize) -> serde_json::Value {
+    shape::policy()
+        .schema(shape::Phase::Draft, source_count)
+        .into_value()
+}
+
+/// The lesson schema with `blocks` and `questions` each bounded to the given
+/// (least, most) item counts: the item shapes are the same whatever the
+/// counts, which the shape policy chooses.
+pub(crate) fn lesson_schema_counting(
+    source_count: usize,
+    blocks: (usize, usize),
+    questions: (usize, usize),
+) -> serde_json::Value {
     json!({
         "type":"object","additionalProperties":false,"required":["blocks","questions"],
         "properties":{
-            "blocks":{"type":"array","minItems":10,"maxItems":16,"items":{
+            "blocks":{"type":"array","minItems":blocks.0,"maxItems":blocks.1,"items":{
                 "type":"object","additionalProperties":false,"required":["kind","title","body","rubric","sourceIndex","quote","citations"],"properties":{
                     "kind":{"type":"string","enum":["explanation","worked_example","contrast","check","guided_practice","independent_practice","reflection","recap"]},"title":{"type":"string"},"body":{"type":"string","minLength":1},"rubric":crate::teaching::rubric_schema(),"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
             }},
-            "questions":{"type":"array","minItems":6,"maxItems":6,"items":{
+            "questions":{"type":"array","minItems":questions.0,"maxItems":questions.1,"items":{
                 "type":"object","additionalProperties":false,"required":["kind","prompt","options","correctIndex","rationales","explanation","sourceIndex","quote","citations"],"properties":{
                     "kind":{"type":"string","enum":["practice","quiz","test"]},"prompt":{"type":"string"},"options":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"correctIndex":{"type":"integer","minimum":0,"maximum":3},"rationales":{"type":"array","minItems":4,"maxItems":4,"items":{"type":"string"}},"explanation":{"type":"string"},"sourceIndex":source_index_schema(source_count),"quote":{"type":"string"},"citations":citations_schema(source_count)
                 }
@@ -171,7 +185,10 @@ fn lesson_prompt(
     source_data: Vec<serde_json::Value>,
     topics: Vec<serde_json::Value>,
     grounded: bool,
+    policy: &dyn ShapePolicy,
 ) -> Result<String> {
+    let (least_ideas, most_ideas) = policy.ideas();
+    let (least_sections, most_sections) = policy.sections();
     serde_json::to_string(&json!({
         "task":"Prepare one substantial course lesson with teaching, worked applications, and independent practice",
         "programGoal":program.summary.goal,"priorKnowledge":program.prior_knowledge,
@@ -182,7 +199,7 @@ fn lesson_prompt(
         "evidenceByTopic":topics,
         "referenceCatalog":references.catalog(llm),
         "requirements":[
-            "Teach through the two or three core ideas the objective depends on, the ones coursePlan lists for this lesson: fewer ideas understood deeply, not a survey. For each idea write an explanation, then a worked_example, then a check. Where learners plausibly mistake an idea for something similar, put a contrast between its example and its check; the lesson has at least one. After the ideas come one guided_practice, one independent_practice, one reflection and one recap, in that order: 10 to 16 blocks.",
+            format!("Teach through the {} or {} core ideas the objective depends on, the ones coursePlan lists for this lesson: fewer ideas understood deeply, not a survey. For each idea write an explanation, then a worked_example, then a check. Where learners plausibly mistake an idea for something similar, put a contrast between its example and its check; the lesson has at least one. After the ideas come one guided_practice, one independent_practice, one reflection and one recap, in that order: {least_sections} to {most_sections} blocks.", number(least_ideas), number(most_ideas)),
             "Where a newcomer would plausibly guess wrong about an idea, open its explanation with one short prediction question, asked before any of the teaching: a concrete situation and what the learner expects to happen, or which choice they would make. The explanation then answers it, says why, and names the tempting wrong guess and why it fails: a wrong guess corrected at once is remembered better than the idea read cold. An idea with no tempting wrong guess opens with its explanation.",
             "An explanation establishes one mental model in plain language before any detail: what the idea is, why it works, and when it applies. Ground it in one concrete instance before generalizing, and let the worked example use a different case, so the learner meets the idea in at least two concrete cases. Connect it to what the learner already knows from the ideas coursePlan lists for earlier lessons, or from their prior knowledge. When the idea has structure (parts and their relations, a flow, a sequence or states), include one small diagram the prose says what to notice in: a mermaid fence (flowchart, sequenceDiagram or stateDiagram-v2) or a Markdown table. No decorative diagrams.",
             "Match the guidance to priorKnowledge, and fade it within the lesson. A worked example shows every step for a learner new to the area, but only the steps new to someone who already knows its basics, because spelling out what a learner already knows slows them down. Guidance then fades: the worked example shows the steps, guided_practice names the steps without their answers, and independent_practice gives none.",
@@ -305,6 +322,7 @@ pub async fn prepare_lesson_with_references<'a>(
             "This lesson outline is incomplete and cannot be prepared.",
         ));
     }
+    let policy = shape::policy();
     let output_tokens = LESSON_OUTPUT_RESERVE;
     let bare_prompt = lesson_prompt(
         llm,
@@ -315,6 +333,7 @@ pub async fn prepare_lesson_with_references<'a>(
         Vec::new(),
         Vec::new(),
         true,
+        policy,
     )?;
     // Refused before any research or model call is spent on this lesson: a
     // prompt that leaves no room for evidence has nothing to check it against.
@@ -359,6 +378,7 @@ pub async fn prepare_lesson_with_references<'a>(
                 Vec::new(),
                 unmapped,
                 true,
+                policy,
             )?,
             output_tokens,
         );
@@ -389,6 +409,7 @@ pub async fn prepare_lesson_with_references<'a>(
                 source_data(&sources),
                 map,
                 true,
+                policy,
             )?;
             if !sources.is_empty() && fits(llm, &lesson_system(true), &prompt, reserve).await {
                 fitted = Some((count, prompt, sources));
@@ -433,9 +454,10 @@ pub async fn prepare_lesson_with_references<'a>(
     // verification checks against.
     let references = expanded.as_ref().unwrap_or(references);
     validate_source_snapshot_ids(&references.sources)?;
+    let draft_schema = policy.schema(shape::Phase::Draft, sources.len());
     // Approval is deliberately never cached here.
     let draft_input = serde_json::to_string(&json!({
-        "policy":"lesson-draft", "prompt":prompt, "schema":lesson_schema(sources.len()),
+        "policy":"lesson-draft", "prompt":prompt, "schema":draft_schema.value(),
         "revision":crate::lesson_drafts::authoring_revision(program.summary.revision), "model":llm.model_name(),
         "sources":references.sources,
     }))?;
@@ -468,7 +490,7 @@ pub async fn prepare_lesson_with_references<'a>(
             llm,
             &lesson_system(!sources.is_empty()),
             prompt.clone(),
-            lesson_schema(sources.len()),
+            draft_schema.value().clone(),
             output_tokens,
             None,
             Some(ReasonFirst {
@@ -484,13 +506,16 @@ pub async fn prepare_lesson_with_references<'a>(
     };
     let raw = crate::content_verification::normalize_example_fences(llm, raw).await?;
     let raw = crate::content_verification::strip_draft_apparatus(raw);
+    // The draft review holds the lesson to what the writer was asked for;
+    // verification, which cuts, holds it to what the lesson is kept with.
     // Finish an interrupted section repair before reviewing the assembled
     // lesson. Its checkpoint is scoped to exact inputs and cannot approve it;
     // the repair path performs teaching review after all patches are saved.
     let raw = if crate::content_verification::has_pending_repair(
         llm,
         &prompt,
-        &lesson_schema(sources.len()),
+        policy,
+        sources.len(),
         &raw,
         references,
     )
@@ -502,7 +527,7 @@ pub async fn prepare_lesson_with_references<'a>(
             llm,
             crate::teaching::LESSON_REPAIR_SYSTEM,
             &prompt,
-            &lesson_schema(sources.len()),
+            LessonShape::new(&draft_schema, policy),
             raw,
             output_tokens,
             references,
@@ -517,7 +542,7 @@ pub async fn prepare_lesson_with_references<'a>(
         llm,
         runtimes,
         &prompt,
-        &lesson_schema(sources.len()),
+        policy,
         raw,
         references,
         (output_tokens, &mut numbered),
@@ -543,10 +568,11 @@ pub async fn prepare_lesson_with_references<'a>(
     // The lesson's own rules do not stop it here: what the teaching review could
     // not repair, and any citation that does not match its source, waits for the
     // user while the lesson publishes.
+    let kept_schema = policy.schema(shape::Phase::Kept, sources.len());
     let mut findings = crate::teaching::structural_findings(
-        &lesson_schema(sources.len()),
+        crate::teaching::ReviewSchema::Lesson(LessonShape::new(&kept_schema, policy)),
         &raw,
-        crate::generation::Counts::Spent,
+        &crate::lessons::copied_wording::Wording::of(references),
     )?;
     let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;

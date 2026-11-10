@@ -2,6 +2,10 @@
 use super::*;
 use serde_json::json;
 
+fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
+    crate::lessons::shape::policy().rules(candidate, crate::lessons::shape::Phase::Draft)
+}
+
 fn block(kind: &str, title: &str) -> Value {
     let body = if kind == "check" {
         format!("Case for {title}: what happens to the lid?\n\n{CHECK_REVEAL}\n\nAnswer for {title}: it bulges.")
@@ -167,8 +171,7 @@ fn a_specific_without_a_citation_is_a_finding_at_its_section() {
 
 const LONG_SENTENCE: &str = "The default timeout for every outgoing request in the client library is 30 seconds unless the caller sets another value.";
 
-/// What the user reads is the whole sentence, not the first 90
-/// characters the note for the model keeps.
+/// The user and the repair both read the whole sentence.
 #[test]
 fn an_uncited_specific_is_summarised_with_its_whole_sentence() {
     let mut candidate = lesson();
@@ -760,7 +763,7 @@ fn lines_inside_tilde_fences_are_no_repeated_sentences() {
 fn prose_after_a_list_has_ended_is_compared_again() {
     const STEP: &str =
         "1. Run:\n   ```\n   pwd\n   ```\n   Expected output: `/home/learner/Music`.";
-    const SAID: &str = "Say this once here.";
+    const SAID: &str = "Say this one thing only once here.";
     let mut candidate = lesson();
     candidate["blocks"][1]["body"] = json!(format!("{SAID}\n\n{STEP}"));
     candidate["blocks"][4]["body"] = json!(format!("{STEP}\n\n{SAID}"));

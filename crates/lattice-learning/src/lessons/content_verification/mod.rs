@@ -38,7 +38,7 @@ pub(crate) use claim_ledger::{
 mod class_checks;
 mod classify;
 pub(crate) use classify::{
-    figures, needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS, QUOTE_MARKS,
+    needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS, QUOTE_MARKS,
 };
 mod coverage;
 #[cfg(any(test, feature = "test-support"))]
@@ -114,6 +114,8 @@ pub mod test_support;
 #[cfg(test)]
 pub(crate) mod tests;
 use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
+#[cfg(test)]
+pub(crate) use repair_loop::settle_after_cuts;
 #[cfg(test)]
 pub(crate) use repair_loop::verify_and_repair;
 pub(crate) use repair_loop::verify_and_repair_with_references;
@@ -415,8 +417,8 @@ fn units(candidate: &Value) -> Result<Vec<Value>> {
         .get("questions")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid("Verification needs lesson questions."))?;
-    if blocks.is_empty() || blocks.len() > 32 || questions.len() > 24 {
-        return Err(invalid("Invalid verification unit count."));
+    if blocks.is_empty() {
+        return Err(invalid("Verification needs lesson blocks."));
     }
     Ok(blocks.iter().map(|b| json!({"kind":"teaching", "role":b["kind"], "title":b["title"], "body":b["body"], "rubric":b["rubric"]}))
         .chain(questions.iter().map(|q| {

@@ -1,15 +1,14 @@
 //! A sentence written into or out of a field's text, the way a put back and
 //! its undo do it.
 
-use crate::lessons::repeats;
+use crate::lessons::same_text::holds_sentence;
 use lattice_core::domain::learning::claim_review::{span_of, Anchor, ClaimLedgerEntry, CutPlace};
 
 /// `text` with `sentence` written in at `anchor`: one space between sentences
 /// of a paragraph, paragraph breaks kept. `None` when the anchor's sentence is
 /// not in `text` exactly once, or when `text` has the sentence already.
 pub(crate) fn insert_sentence(text: &str, anchor: &Anchor, sentence: &str) -> Option<String> {
-    let held = repeats::keys(text);
-    if repeats::keys(sentence).iter().any(|key| held.contains(key)) {
+    if holds_sentence(text, sentence) {
         return None;
     }
     let mut out = text.to_owned();

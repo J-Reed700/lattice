@@ -4,7 +4,8 @@
 use super::acceptance_switch_tests::{claim, identified, lesson_of, node_of, open, walk, REASONED};
 use super::class_checks_tests::Classes;
 use super::*;
-use lattice_core::domain::learning::acceptance::{Outcome, Reading, Step};
+use crate::lessons::call_plan::CallPlan;
+use lattice_core::domain::learning::acceptance::{Goal, Outcome, Reading, Step};
 use lattice_core::domain::learning::claim_review::{
     Actor, AttachOutcome, Check, CheckResult, Checker, ClaimEvent, ClaimState, EvidenceFingerprint,
     HumanBinding, Provenance, UserAction,
@@ -46,7 +47,11 @@ async fn taught(
     (from, to): (&str, &str),
 ) -> Result<ClaimId> {
     ledger
-        .begin_teaching(&lesson_of(from), std::slice::from_ref(id))
+        .begin_teaching(
+            &StandardPolicy::new(),
+            &lesson_of(from),
+            std::slice::from_ref(id),
+        )
         .await?;
     let pass = identified(ledger, &Classes::new(&[]), &lesson_of(to), &[(to, to)], &[]).await?;
     let [kept] = pass.statements.as_slice() else {
@@ -99,6 +104,106 @@ async fn a_sentence_the_teaching_review_keeps_rewriting_is_held_once_its_claims_
         current = taught(&mut ledger, &current, pair).await?;
     }
     assert!(ledger.releasable(&policy, &[]).is_empty());
+    Ok(())
+}
+
+/// A Reasoning statement the consistency reading refuted, whose rewrite was
+/// not applied at first and then was, and which then passed both readings:
+/// its own repair took both rewrite steps its graph gives.
+async fn repaired_with_its_retry(
+    ledger: &mut claim_ledger::ClaimLedger,
+    name: &str,
+    sentence: &str,
+) -> Result<ClaimId> {
+    let id = claim(ledger, name, (sentence, sentence), sentence, REASONED).await?;
+    let rewrite = Step::Rewrite(Goal::AgreeWithThePassages);
+    walk(
+        ledger,
+        &id,
+        Class::Reasoning,
+        &[
+            (Step::Read(Reading::Consistency), Outcome::Refuted),
+            (rewrite, Outcome::NotApplied),
+            (rewrite, Outcome::Rewritten),
+            (Step::Read(Reading::Consistency), Outcome::Stands),
+            (Step::Read(Reading::Veto), Outcome::Stands),
+        ],
+    )
+    .await?;
+    Ok(id)
+}
+
+#[tokio::test]
+async fn a_statement_whose_own_repair_took_both_rewrite_steps_is_not_released() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let id = repaired_with_its_retry(&mut ledger, "reader", FIRST).await?;
+    assert!(matches!(
+        ledger.entry(&id).unwrap().state(),
+        ClaimState::Consistent { .. }
+    ));
+
+    assert!(ledger.releasable(&policy, &[]).is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_with_one_applied_rewrite_and_nothing_else_spent_is_released() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let id = claim(&mut ledger, "reader", (FIRST, FIRST), FIRST, REASONED).await?;
+    walk(
+        &mut ledger,
+        &id,
+        Class::Reasoning,
+        &[
+            (Step::Read(Reading::Consistency), Outcome::Refuted),
+            (
+                Step::Rewrite(Goal::AgreeWithThePassages),
+                Outcome::Rewritten,
+            ),
+            (Step::Read(Reading::Consistency), Outcome::Stands),
+            (Step::Read(Reading::Veto), Outcome::Stands),
+        ],
+    )
+    .await?;
+
+    assert_eq!(ledger.releasable(&policy, &[]), [id]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_plan_holds_the_reading_of_a_lone_statements_teaching_rewrite() -> Result<()> {
+    let policy = StandardPolicy::new();
+    let mut ledger = open().await?;
+    let id = claim(&mut ledger, "reader", (FIRST, FIRST), FIRST, REASONED).await?;
+    let lone = std::slice::from_ref(&id);
+    let mut plan = CallPlan::new(
+        &policy,
+        &ledger.planned(&policy, &lesson_of(FIRST), lone),
+        0,
+    );
+    walk(
+        &mut ledger,
+        &id,
+        Class::Reasoning,
+        &[
+            (Step::Read(Reading::Consistency), Outcome::Stands),
+            (Step::Read(Reading::Veto), Outcome::Stands),
+        ],
+    )
+    .await?;
+    assert_eq!(
+        plan.moved(&policy, &ledger.planned(&policy, &lesson_of(FIRST), lone)),
+        0
+    );
+
+    // The teaching review rewrites its sentence: the successor is read again,
+    // and the ceiling held that cost.
+    let successor = taught(&mut ledger, &id, (FIRST, SECOND)).await?;
+    assert_ne!(successor, id);
+    let moved = ledger.planned(&policy, &lesson_of(SECOND), lone);
+    assert_eq!(plan.moved(&policy, &moved), 0, "the ceiling rises");
     Ok(())
 }
 

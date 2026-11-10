@@ -12,7 +12,7 @@ fn sentence(field: &str, quote: &str) -> Protected {
 
 const VERIFIED: &str = "Water boils at 100 °C at sea level.";
 const FAILED: &str = "Salt lowers the boiling point.";
-const OTHER: &str = "Stir while it heats.";
+const OTHER: &str = "Stir the water while it heats.";
 
 fn section(body: &str) -> Value {
     json!({ "kind": "explanation", "title": "Boiling", "body": body })

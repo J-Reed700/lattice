@@ -16,23 +16,23 @@ use lattice_core::domain::learning::claim_review::{
 /// A sentence that states a figure no source gives and, beside it, what the
 /// course states.
 const SENTENCE: &str =
-    "DictReader buffers 100 rows before parsing, and missing values in nonblank rows default to None.";
+    "DictReader buffers 100 rows before parsing, and missing values default to None in nonblank rows.";
 const BUFFERS: &str = "DictReader buffers 100 rows before parsing.";
-const MISSING: &str = "Missing values in nonblank rows default to None.";
+const MISSING: &str = "Missing values default to None in nonblank rows.";
 /// The figure's part said anew, beside the same neighbour.
 const READS: &str =
-    "DictReader reads one row at a time, and missing values in nonblank rows default to None.";
+    "DictReader reads one row at a time, and missing values default to None in nonblank rows.";
 const READS_ONE: &str = "DictReader reads one row at a time.";
 /// A statement no sentence of these lessons makes.
 const NAMES: &str = "DictReader names each field after its header.";
 /// The neighbour's statement alone, at more length than the whole sentence it
 /// stood on.
-const MISSING_ALONE: &str = "Missing values in nonblank rows default to None, whatever DictReader does with the rows before them.";
+const MISSING_ALONE: &str = "Missing values default to None in nonblank rows, whatever DictReader does with the rows before them.";
 /// The figure's part said anew as a sentence of its own.
 const BUFFERS_ONE: &str = "DictReader buffers rows one at a time before parsing.";
 /// The sentence said anew with another figure no source gives.
 const STILL_FAILING: &str =
-    "DictReader buffers 200 rows before parsing, and missing values in nonblank rows default to None.";
+    "DictReader buffers 200 rows before parsing, and missing values default to None in nonblank rows.";
 const BUFFERS_200: &str = "DictReader buffers 200 rows before parsing.";
 /// A second failed sentence, its correction, and a sentence that states
 /// nothing to keep the two apart.
