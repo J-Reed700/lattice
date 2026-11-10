@@ -2,6 +2,7 @@
 //! change as a side effect of asking a model to correct one fact.
 use super::copied_wording::{self, Wording, SAY_IT_YOURSELF};
 use super::repeats::{self, Counts};
+use super::same_text;
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -244,16 +245,18 @@ fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
     if index.is_empty() || !index.bytes().all(|byte| byte.is_ascii_digit()) {
         return Err(not_a_part());
     }
-    let sentence = cite.sentence.trim();
     let target = lesson
         .pointer(&cite.path)
         .filter(|part| part.is_object())
         .ok_or_else(|| format!("names {}, which is not in the draft.", cite.path))?;
-    if sentence.is_empty()
-        || !citable_texts(target, text == "explanation")
-            .iter()
-            .any(|held| held.contains(sentence))
-    {
+    let sentence = citable_texts(target, text == "explanation")
+        .into_iter()
+        .find_map(|held| {
+            let span = same_text::find(held, &cite.sentence)?;
+            same_text::exact_sentences(held, span)
+        })
+        .map(str::to_owned);
+    let Some(sentence) = sentence else {
         let place = if text == "explanation" {
             "explanation or choice reasons"
         } else {
@@ -263,7 +266,7 @@ fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
             "names a sentence that is not in the {place} of {}; copy it exactly.",
             cite.path
         ));
-    }
+    };
     let part = lesson
         .pointer_mut(&cite.path)
         .and_then(Value::as_object_mut)
@@ -320,9 +323,42 @@ fn quotes_for(candidate: &Value, part: &str, cites: &[Cite]) -> Wording {
     )
 }
 
+/// Why `before` is not exactly in the field at `path` of `candidate`: when its
+/// words stand there, or in one other taught field, once under the text
+/// identity ([`same_text`]), the reason gives the lesson's own sentences to
+/// copy from.
+fn not_found(candidate: &Value, path: &str, before: &str, index: usize) -> String {
+    let plain = format!("the before text of edit {index} does not occur in {path}.");
+    let exact_in = |field: &str| -> Option<(Vec<(usize, usize)>, String)> {
+        let text = candidate.pointer(field)?.as_str()?;
+        let hits = same_text::find_all(text, before);
+        let span = hits.first().copied()?;
+        let exact = same_text::exact_sentences(text, span)?.to_owned();
+        Some((hits, exact))
+    };
+    if let Some((hits, exact)) = exact_in(path) {
+        return if hits.len() == 1 {
+            format!("the before text of edit {index} is not in {path} exactly; its words stand there as \"{exact}\". Copy the before text exactly from that, with its formatting and punctuation.")
+        } else {
+            plain
+        };
+    }
+    let mut fields = Vec::new();
+    paths(candidate, "", &mut fields);
+    let mut elsewhere = fields
+        .into_iter()
+        .filter(|other| other != path && repeats::teaches_path(other))
+        .filter_map(|other| exact_in(&other).map(|(hits, exact)| (other, hits.len(), exact)));
+    match (elsewhere.next(), elsewhere.next()) {
+        (Some((other, 1, exact)), None) => format!("the before text of edit {index} does not occur in {path}; its words stand in {other} as \"{exact}\". Give that path, and copy the before text exactly."),
+        _ => plain,
+    }
+}
+
 /// The new value of one field under its edits, or the first problem with
 /// them, as `(edit number, what is wrong)`.
 fn field_value(
+    candidate: &Value,
     path: &str,
     original: &Value,
     edits: Vec<(usize, Edit)>,
@@ -344,10 +380,7 @@ fn field_value(
             };
             let mut matches = text.match_indices(before);
             let Some((start, _)) = matches.next() else {
-                return Err((
-                    index,
-                    format!("the before text of edit {index} does not occur in {path}."),
-                ));
+                return Err((index, not_found(candidate, path, before, index)));
             };
             if matches.next().is_some() {
                 return Err((index, format!("the before text of edit {index} occurs more than once in {path}; include enough surrounding text to make it unique.")));
@@ -436,7 +469,7 @@ fn part_values(
         let first = edits.first().map_or(0, |(index, _)| *index);
         match candidate.pointer(&path) {
             None => problems.push((first, format!("{path} is not in the draft."))),
-            Some(original) => match field_value(&path, original, edits, held) {
+            Some(original) => match field_value(candidate, &path, original, edits, held) {
                 Ok(value) => values.push((path, value)),
                 Err(problem) => problems.push(problem),
             },
@@ -556,3 +589,6 @@ mod uncite_tests;
 
 #[cfg(test)]
 mod copied_tests;
+
+#[cfg(test)]
+mod locate_tests;
