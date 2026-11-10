@@ -36,7 +36,17 @@ use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulati
 pub(crate) fn assert_golden(name: &str, expected: &str, actual: &str) {
     let expected = expected.replace("\r\n", "\n");
     if expected != actual {
-        panic!("golden {name} differs\n<<<GOLDEN {name}\n{actual}GOLDEN>>>\n");
+        let same = expected
+            .lines()
+            .zip(actual.lines())
+            .take_while(|(golden, seen)| golden == seen)
+            .count();
+        let golden = expected.lines().nth(same).unwrap_or("<end>");
+        let seen = actual.lines().nth(same).unwrap_or("<end>");
+        panic!(
+            "golden {name} differs\nfirst difference at line {}:\n  golden: {golden}\n  actual: {seen}\n<<<GOLDEN {name}\n{actual}GOLDEN>>>\n",
+            same + 1
+        );
     }
 }
 
