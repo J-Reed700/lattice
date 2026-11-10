@@ -131,12 +131,11 @@ pub(crate) fn findings(candidate: &Value) -> Vec<ReviewFinding> {
             };
             for text in citable_texts(part, question) {
                 for sentence in copies(text, &quotes) {
-                    let shown: String = sentence.chars().take(90).collect();
                     found.push(
                         ReviewFinding::new(
                             FindingKind::Teaching,
                             Some(site),
-                            format!("{label} copies the source's wording in \"{shown}\" outside quotation marks. {SAY_IT_YOURSELF}"),
+                            format!("{label} copies the source's wording in \"{sentence}\" outside quotation marks. {SAY_IT_YOURSELF}"),
                         )
                         .with_summary(format!("{plain} copies a source's wording without quotation marks: \u{201c}{sentence}\u{201d}"))
                         .with_passage(&sentence),

@@ -17,7 +17,7 @@ pub mod reference_collection;
 pub(crate) mod repeats;
 pub mod review_evidence;
 pub mod review_findings;
-mod same_text;
+pub(crate) mod same_text;
 #[cfg(test)]
 mod sentence_identity_tests;
 pub(crate) mod structured_call;

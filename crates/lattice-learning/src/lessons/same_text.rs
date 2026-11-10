@@ -54,8 +54,8 @@ pub(crate) fn overlap(a: &str, b: &str) -> bool {
     !a.is_empty() && !b.is_empty() && (a.contains(&b) || b.contains(&a))
 }
 
-/// The bytes of `text` that `needle` stands for, if it occurs in it once
-/// both are folded: from where its first folded character began to where
+/// The bytes of `text` that `needle` stands for, if it occurs in it (the
+/// first occurrence) once both are folded: from where its first folded character began to where
 /// its last one ended.
 pub(crate) fn find(text: &str, needle: &str) -> Option<(usize, usize)> {
     let needle: Vec<char> = folded(needle).into_iter().map(|(c, _, _)| c).collect();

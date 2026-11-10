@@ -43,7 +43,7 @@ pub(crate) const OUTLINE_OUTPUT_RESERVE: usize = 4000;
 pub(crate) const LESSON_OUTPUT_RESERVE: usize = 10000;
 
 /// Added to a draft brief when the material cites saved sources.
-const CITATION_DRAFT_BRIEF: &str = " For each part, name the sourceIndex of the passage that supports it and copy the supporting words exactly from that excerpt into the quote; the lesson's own sentences state the fact in other words. List each sentence that states a specific or attributes a statement to a source with the excerpt it comes from and the words that contain it.";
+const CITATION_DRAFT_BRIEF: &str = " For each part, name the sourceIndex of the passage that supports it and copy the supporting words exactly from that excerpt into the quote; the lesson's own sentences state the fact in other words. List each sentence that states a specific with the excerpt it comes from and the words that contain it.";
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
