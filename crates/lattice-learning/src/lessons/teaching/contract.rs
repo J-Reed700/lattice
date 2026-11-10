@@ -4,6 +4,7 @@
 //! model finds; code keeps only what the lesson's own words bear out.
 use super::protected;
 use crate::lessons::content_verification::{unit_fields, Protected};
+use crate::lessons::same_text;
 use crate::lessons::structured_call::{self, CallKind, ReasonFirst};
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use lattice_core::{application::ports::LLMPort, shared::error::Result};
@@ -178,47 +179,13 @@ fn schema(items: &[Item], parts: &[Part]) -> Value {
     }})
 }
 
-/// `text` as quotes are compared: whitespace runs as one space and Markdown
-/// inline markers dropped, each character with the bytes it came from.
-fn squeezed(text: &str) -> Vec<(char, usize, usize)> {
-    let mut out: Vec<(char, usize, usize)> = Vec::new();
-    for (start, character) in text.char_indices() {
-        let end = start + character.len_utf8();
-        if matches!(character, '*' | '_' | '`') {
-            continue;
-        }
-        if character.is_whitespace() {
-            if out.last().is_some_and(|(last, _, _)| *last == ' ') {
-                continue;
-            }
-            out.push((' ', start, end));
-        } else {
-            out.push((character, start, end));
-        }
-    }
-    out
-}
-
-/// The exact text in `part` that `quote` stands for once both are
-/// squeezed, if any.
+/// The exact text in `part` that `quote` stands for once both are folded
+/// ([`same_text`]), if any.
 fn locate(part: &Part, quote: &str) -> Option<String> {
-    let needle: Vec<char> = squeezed(quote).iter().map(|(c, _, _)| *c).collect();
-    let needle: &[char] = {
-        let start = needle.iter().position(|c| *c != ' ')?;
-        let end = needle.iter().rposition(|c| *c != ' ')?;
-        needle.get(start..=end)?
-    };
-    for text in &part.texts {
-        let hay = squeezed(text);
-        let chars: Vec<char> = hay.iter().map(|(c, _, _)| *c).collect();
-        let Some(at) = chars.windows(needle.len()).position(|w| w == needle) else {
-            continue;
-        };
-        let first = hay.get(at)?;
-        let last = hay.get(at + needle.len() - 1)?;
-        return text.get(first.1..last.2).map(str::to_owned);
-    }
-    None
+    part.texts.iter().find_map(|text| {
+        let (start, end) = same_text::find(text, quote)?;
+        text.get(start..end).map(str::to_owned)
+    })
 }
 
 fn at_position<'a>(plan: Option<&'a Vec<Value>>, name: &'a str) -> impl Iterator<Item = &'a Value> {

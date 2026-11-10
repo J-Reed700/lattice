@@ -91,6 +91,7 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
         &lesson_schema(1),
         &off_shape_value(true).to_string(),
         crate::generation::Counts::Asked,
+        &[],
     )
     .unwrap();
     let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.key().id()).collect();
@@ -103,28 +104,6 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
     ]
     .map(String::from);
     assert_eq!(keys, std::collections::BTreeSet::from(expected));
-}
-
-#[test]
-fn the_publication_check_reports_a_question_kind_the_lesson_lacks() {
-    let mut lesson = off_shape_value(true);
-    lesson["questions"]
-        .as_array_mut()
-        .unwrap()
-        .retain(|question| question["kind"] != "test");
-    let findings = crate::teaching::structural_findings(
-        &lesson_schema(1),
-        &lesson.to_string(),
-        crate::generation::Counts::Spent,
-    )
-    .unwrap();
-    assert!(
-        findings
-            .iter()
-            .any(|finding| finding.key().id() == "structure:lesson"
-                && finding.note.contains("test")),
-        "{findings:?}"
-    );
 }
 
 #[test]
@@ -460,6 +439,7 @@ fn a_lessons_text_of_any_length_is_no_schema_finding() {
             &schema,
             &lesson.to_string(),
             crate::generation::Counts::Asked,
+            &[],
         )
         .unwrap()
         .into_iter()

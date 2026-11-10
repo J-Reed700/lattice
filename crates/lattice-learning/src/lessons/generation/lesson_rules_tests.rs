@@ -167,8 +167,7 @@ fn a_specific_without_a_citation_is_a_finding_at_its_section() {
 
 const LONG_SENTENCE: &str = "The default timeout for every outgoing request in the client library is 30 seconds unless the caller sets another value.";
 
-/// What the user reads is the whole sentence, not the first 90
-/// characters the note for the model keeps.
+/// The user and the repair both read the whole sentence.
 #[test]
 fn an_uncited_specific_is_summarised_with_its_whole_sentence() {
     let mut candidate = lesson();

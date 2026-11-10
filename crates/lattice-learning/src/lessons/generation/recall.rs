@@ -1,13 +1,12 @@
 //! Recall-card drafts generated from one prepared lesson and the source
 //! snapshots its blocks cite.
 
-use super::{
-    invalid, normalize, parse_json, send_packed, validate_quote, validate_text, MIN_QUOTE_CHARS,
-};
+use super::{invalid, parse_json, send_packed, validate_quote, validate_text, MIN_QUOTE_CHARS};
 use crate::dto::{
     LearningLessonDto, LearningPreparation, LearningProgramDto, LearningProgramStatus,
     LearningSourceDto,
 };
+use crate::lessons::same_text::fold;
 use crate::lessons::structured_call::complete_checked_request;
 use crate::model_call;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
@@ -77,7 +76,7 @@ fn parse_recall_drafts_with_lesson(
             if !validate_text(&card.question)
                 || !validate_text(&card.answer)
                 || !validate_text(&card.explanation)
-                || !seen_questions.insert(normalize(&card.question))
+                || !seen_questions.insert(fold(&card.question))
                 || (card.source_ids.is_empty() && !allowed_sources.is_empty())
             {
                 return Err(invalid(
@@ -102,7 +101,7 @@ fn parse_recall_drafts_with_lesson(
             });
             let lesson_matches = allowed_sources.is_empty() && card.source_ids.is_empty()
                 && card.quote.trim().chars().count() >= MIN_QUOTE_CHARS
-                && normalize(lesson_text).contains(&normalize(&card.quote));
+                && fold(lesson_text).contains(&fold(&card.quote));
             if !evidence_matches && !lesson_matches {
                 return Err(invalid(
                     "A recall draft's evidence quote did not match one of its cited lesson sources. Try again.",
