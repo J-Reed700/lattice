@@ -23,7 +23,7 @@ mod outline;
 mod recall;
 
 pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
-pub(crate) use lesson::{lesson_schema_counting, MAX_CITATIONS};
+pub(crate) use lesson::{lesson_schema_counting, reads_as_lesson, MAX_CITATIONS};
 pub use lesson_rules::lesson_rule_notes;
 pub(crate) use lesson_rules::{
     lesson_rules, prose_sentences, split_check, teaching_sentences, CHECK_REVEAL,

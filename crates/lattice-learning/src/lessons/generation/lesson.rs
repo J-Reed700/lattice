@@ -45,6 +45,12 @@ struct GeneratedLesson {
     questions: Vec<GeneratedQuestion>,
 }
 
+/// Whether `candidate` is still the writer's shape of a lesson, as far as
+/// reading it goes; the schema is not consulted.
+pub(crate) fn reads_as_lesson(candidate: &serde_json::Value) -> bool {
+    serde_json::from_value::<GeneratedLesson>(candidate.clone()).is_ok()
+}
+
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedBlock {
