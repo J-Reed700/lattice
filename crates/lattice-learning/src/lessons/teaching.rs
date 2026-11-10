@@ -200,7 +200,7 @@ impl<'a> ReviewSchema<'a> {
     pub(crate) fn value(&self) -> &'a Value {
         match self {
             Self::Lesson(shape) => shape.value(),
-            Self::Other(schema) => *schema,
+            Self::Other(schema) => schema,
         }
     }
 }
