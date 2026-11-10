@@ -191,17 +191,18 @@ async fn the_review_is_corrected_while_each_answer_checks_another_section() -> R
 
 #[tokio::test]
 async fn missing_duplicate_unknown_and_invented_checks_never_approve_unchecked_content() {
-    let invented = json!({"index":0,"passageId":"invented","finding":"An invented passage cannot establish a complete review.","hasDefect":false});
-    // Each case: the checks of the first answer, and of the answer to the
-    // correction, which asks only for the sections that first answer left unchecked.
-    for (first, retry) in [
-        (vec![], vec![]),
-        (vec![check(0), check(0), check(2)], vec![check(0), check(0)]),
-        (vec![check(1), check(2), check(3)], vec![]),
-        (vec![invented.clone(), check(1), check(2)], vec![invented]),
+    for checks in [
+        vec![],
+        vec![check(0), check(0), check(2)],
+        vec![check(1), check(2), check(3)],
+        vec![
+            json!({"index":0,"passageId":"invented","finding":"An invented passage cannot establish a complete review.","hasDefect":false}),
+            check(1),
+            check(2),
+        ],
     ] {
-        let answer = |checks| json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
-        let model = model(vec![answer(first), answer(retry)]);
+        let bad = json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
+        let model = model(vec![bad.clone(), bad]);
         let error = review(
             &model,
             "Review instructional quality.",
@@ -542,8 +543,8 @@ async fn an_answer_that_leaves_an_id_out_is_corrected_and_the_verdict_given_befo
 #[tokio::test]
 async fn a_second_verdict_for_one_id_is_refused() {
     let asked = [asked(1, 0)];
-    let twice = |checks| json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(1, "present", "")],"issues":[],"blockChecks":fixture_checks(checks)});
-    let model = model(vec![twice(vec![check(0)]), twice(vec![])]);
+    let twice = json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(1, "present", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])});
+    let model = model(vec![twice.clone(), twice]);
     let error = super::review(
         &model,
         "Review instructional quality.",
@@ -566,8 +567,8 @@ async fn a_second_verdict_for_one_id_is_refused() {
 #[tokio::test]
 async fn a_verdict_on_an_id_nobody_asked_about_is_refused() {
     let asked = [asked(1, 0)];
-    let stray = |checks| json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(9, "resolved", "")],"issues":[],"blockChecks":fixture_checks(checks)});
-    let model = model(vec![stray(vec![check(0)]), stray(vec![])]);
+    let stray = json!({"openFindings":[verdict_entry(1, "resolved", ""), verdict_entry(9, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])});
+    let model = model(vec![stray.clone(), stray]);
     let error = super::review(
         &model,
         "Review instructional quality.",

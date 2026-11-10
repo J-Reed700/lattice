@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 use super::*;
-use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
+use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::lessons::shape;
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLocation, ClaimState, EvidenceFingerprint,
@@ -744,36 +744,6 @@ async fn a_flow_repair_that_rewrites_a_sentence_a_claim_stands_on_is_no_repair()
 }
 
 #[tokio::test]
-async fn a_flow_repair_that_leaves_the_section_no_lesson_leaves_it_as_cut() -> Result<()> {
-    let section = json!({"kind":"explanation","title":"Idea","body":AFTER_CUT,"rubric":[{"title":"One","description":"Observable.","dimension":"recall"}],"sourceIndex":null,"quote":"","citations":[]});
-    let taken = Taken {
-        label: "Idea".into(),
-        gaps: vec![Gap {
-            field: "rubric/0/dimension".into(),
-            before: Some("recall".into()),
-            after: None,
-        }],
-        answer_lost: false,
-    };
-    let llm = model(&[json!({"edits":[
-        {"path":"/blocks/0/rubric/0/dimension","before":"recall","after":"mastery"}
-    ]})]);
-
-    let repaired = mend_section(
-        &llm,
-        (&json!({"type":"object"}), 4_000),
-        (0, true, &section),
-        (&taken, &[]),
-        (&json!({}), &Default::default()),
-    )
-    .await?;
-
-    assert_eq!(repaired, None);
-    assert_eq!(llm.prompts.lock().unwrap().len(), 1);
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_flow_repair_that_asks_for_nothing_changes_nothing() -> Result<()> {
     let (_, taken, protected) = mended_section();
     let llm = model(&[json!({"edits":[],"citations":[]})]);
@@ -1000,11 +970,36 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
     })
     .to_string();
 
+    let clean_review = json!({
+        "issues": [],
+        "blockChecks": crate::teaching_review::fixture_checks(vec![
+            json!({
+                "index": 0,
+                "passageId": "section-0-passage-0",
+                "finding": "Section 0 is good.",
+                "hasDefect": false,
+            }),
+            json!({
+                "index": 1,
+                "passageId": "section-1-passage-0",
+                "finding": "Section 1 is good.",
+                "hasDefect": false,
+            }),
+            json!({
+                "index": 2,
+                "passageId": "section-2-passage-0",
+                "finding": "Section 2 is good.",
+                "hasDefect": false,
+            }),
+        ])
+    })
+    .to_string();
+
     let llm = model(&[
         serde_json::from_str(&defect_review)?,
         serde_json::from_str(&actionable_evidence)?,
         serde_json::from_str(&fix_edit)?,
-        serde_json::from_str(&clean_review(&[0], &[verdict("reviewer/1", "resolved")]))?,
+        serde_json::from_str(&clean_review)?,
     ]);
 
     let mut ledger = ClaimLedger::open(&llm, "{}").await?;

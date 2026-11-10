@@ -1746,6 +1746,49 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
 }
 
 #[tokio::test]
+async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> {
+    let pool = migrated().await?;
+    let program = accepted_program(&pool).await?;
+    let outcome: String = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .map_err(db)?;
+    let prompts = [
+        "Which command shows the permissions of every file in the current directory?",
+        "Which command shows the owner of every file in the current directory?",
+    ];
+    let items: Vec<BankItem> = prompts
+        .iter()
+        .enumerate()
+        .map(|(n, prompt)| {
+            let mut stored = item(LearningItemFormat::SingleChoice, &outcome, 2, 900 + n);
+            stored.prompt = (*prompt).to_string();
+            BankItem {
+                item: stored,
+                source_quote: String::new(),
+                lesson_id: None,
+                origin: "bank",
+                review_status: "agreed",
+            }
+        })
+        .collect();
+    let mut tx = pool.begin().await.map_err(db)?;
+    let stored =
+        insert_bank_items_in(&mut tx, &program.summary.id, &items, Some("test-model")).await?;
+    tx.commit().await.map_err(db)?;
+    assert_eq!(stored, 2);
+    let rows: Vec<String> = sqlx::query_scalar(
+        "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND origin='bank' ORDER BY rowid",
+    )
+    .bind(&program.summary.id)
+    .fetch_all(&pool)
+    .await
+    .map_err(db)?;
+    assert_eq!(rows, prompts);
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_lesson_question_repeated_from_the_program_stays_in_its_place_as_dropped() -> Result<()> {
     let pool = migrated().await?;
     let program = accepted_program(&pool).await?;

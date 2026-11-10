@@ -45,30 +45,6 @@ struct GeneratedLesson {
     questions: Vec<GeneratedQuestion>,
 }
 
-impl GeneratedLesson {
-    /// A lesson has at least one section.
-    fn has_sections(&self) -> bool {
-        !self.blocks.is_empty()
-    }
-}
-
-/// Whether `candidate` is still the writer's shape of a lesson, as far as
-/// reading it goes; the schema is not consulted.
-pub(crate) fn reads_as_lesson(candidate: &serde_json::Value) -> bool {
-    serde_json::from_value::<GeneratedLesson>(candidate.clone())
-        .is_ok_and(|lesson| lesson.has_sections())
-}
-
-/// Whether `part`, a section when `block` and else a question, still reads as
-/// the writer's shape of one.
-pub(crate) fn reads_as_part(part: &serde_json::Value, block: bool) -> bool {
-    if block {
-        serde_json::from_value::<GeneratedBlock>(part.clone()).is_ok()
-    } else {
-        serde_json::from_value::<GeneratedQuestion>(part.clone()).is_ok()
-    }
-}
-
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GeneratedBlock {
@@ -519,15 +495,7 @@ pub async fn prepare_lesson_with_references<'a>(
                 subject: "the lesson",
                 brief: &brief,
             }),
-            |raw| {
-                if parse_json::<GeneratedLesson>(raw)?.has_sections() {
-                    Ok(raw.to_owned())
-                } else {
-                    Err(AppError::InvalidInput(
-                        "The lesson has no sections; write at least one.".into(),
-                    ))
-                }
-            },
+            |raw| parse_json::<GeneratedLesson>(raw).map(|_| raw.to_owned()),
         )
         .await?;
         crate::lesson_drafts::save(&raw).await?;

@@ -498,14 +498,6 @@ async fn mend_section(
         return Ok(None);
     };
     let confined = confine(before, after, &targets, protected)?.section;
-    if crate::generation::reads_as_part(before, block)
-        && !crate::generation::reads_as_part(&confined, block)
-    {
-        tracing::info!(
-            "claim.state: a flow repair left the section no lesson; it keeps the text as cut"
-        );
-        return Ok(None);
-    }
     Ok((confined != *before).then_some(confined))
 }
 
