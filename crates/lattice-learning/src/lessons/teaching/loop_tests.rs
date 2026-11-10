@@ -2885,7 +2885,8 @@ async fn a_new_whole_lesson_issue_continues_the_count_of_the_one_before() -> Res
 }
 
 #[tokio::test]
-async fn a_stored_reviewer_finding_stands_and_its_section_is_not_reviewed_again() -> Result<()> {
+async fn a_stored_reviewer_finding_is_judged_again_by_the_first_review_and_is_not_repaired(
+) -> Result<()> {
     let pool = crate::tests::pool().await?;
     let (_, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
@@ -2901,7 +2902,8 @@ async fn a_stored_reviewer_finding_stands_and_its_section_is_not_reviewed_again(
         1,
         Some(FindingSite::Section(0)),
         "Section 1 (candidate blocks-0): The first idea is wrong.",
-    );
+    )
+    .with_passage(&part_body(0));
     store
         .record(
             &lesson_id,
@@ -2949,7 +2951,19 @@ async fn a_stored_reviewer_finding_stands_and_its_section_is_not_reviewed_again(
         &mut LessonSubject::new(&collection, &[], held),
     )
     .await?;
-    assert_eq!(model.reviews()[0]["sectionIndicesToReview"], json!([1]));
+    let first = &model.reviews()[0];
+    assert_eq!(first["sectionIndicesToReview"], json!([0, 1]));
+    let asked: Vec<Value> = first["openFindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["id"].clone())
+        .collect();
+    assert_eq!(asked, [json!("reviewer/1")]);
+    assert!(first.get("knownFindings").is_none());
+    assert!(model.repairs().is_empty());
+    assert_eq!(reviewed.set_aside.len(), 1);
+    assert_eq!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/1");
     let reviewed_candidate: Value = serde_json::from_str(&reviewed.candidate)?;
     store
         .record(
@@ -2970,6 +2984,108 @@ async fn a_stored_reviewer_finding_stands_and_its_section_is_not_reviewed_again(
         row.state,
         crate::lessons::claim_reviews::teaching_findings::TeachingFindingStateDto::Kept
     );
+    Ok(())
+}
+
+/// The review of `candidate` in the lesson job under way, the reviewer shown
+/// `authoring` as the lesson's authoring context.
+async fn review_in_the_job(
+    model: &ByRequest,
+    authoring: &str,
+    candidate: Value,
+) -> Result<Reviewed> {
+    lesson_drafts::resume(INPUT.into()).await?;
+    let sources = references();
+    let collection = ReferenceCollection::lexical(&sources)?;
+    review_material(
+        model,
+        LESSON_REPAIR_SYSTEM,
+        authoring,
+        ReviewSchema::Other(&json!({"type":"object"})),
+        candidate.to_string(),
+        4000,
+        &mut LessonSubject::new(&collection, &[], Held::default()),
+    )
+    .await
+}
+
+fn part_a_is_wrong(text: &str) -> bool {
+    text.contains("Part A") && text.contains("first idea")
+}
+
+#[tokio::test]
+async fn a_draft_the_reviewer_saw_under_one_authoring_context_is_reviewed_again_under_another(
+) -> Result<()> {
+    let pool = crate::tests::pool().await?;
+    let (repo, job, lesson_id) =
+        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
+    let first = ByRequest::new(part_a_is_wrong, |_, _| Vec::new());
+    let before = lesson_drafts::run(&repo, &job, &lesson_id, async {
+        review_in_the_job(&first, &context(), parts_lesson(2)).await
+    })
+    .await?;
+    assert_eq!(before.set_aside.len(), 1);
+    let other =
+        json!({"sources":[{"sourceIndex":0,"excerpt":EXCERPT}],"lessonShape":["Two sections."]})
+            .to_string();
+    let second = ByRequest::new(part_a_is_wrong, |_, _| Vec::new());
+    lesson_drafts::run(&repo, &job, &lesson_id, async {
+        review_in_the_job(&second, &other, serde_json::from_str(&before.candidate)?).await
+    })
+    .await?;
+    let reviews = second.reviews();
+    assert!(
+        !reviews.is_empty(),
+        "the same text under other inputs was not reviewed"
+    );
+    assert_eq!(reviews[0]["sectionIndicesToReview"], json!([0, 1]));
+    let asked: Vec<Value> = reviews[0]["openFindings"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["id"].clone())
+        .collect();
+    assert_eq!(asked, [json!("reviewer/1")]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_contradiction_between_two_parts_is_kept_with_both_and_repaired() -> Result<()> {
+    let none_wrong = |index: usize| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Nothing is wrong here.","hasDefect":false});
+    let recheck = |id: &str, issues: Vec<&str>, section: usize| {
+        json!({
+            "openFindings": [{"id": id, "verdict": "resolved", "note": ""}],
+            "issues": issues,
+            "blockChecks": crate::teaching_review::fixture_checks(vec![none_wrong(section)]),
+        })
+        .to_string()
+    };
+    let clash = json!({"decisions":[{
+        "issueId": "issue-0",
+        "verdict": "actionable",
+        "basis": "internal_conflict",
+        "evidenceIds": ["blocks-0", "blocks-1"],
+        "partId": "blocks-1",
+        "requirementId": null,
+        "reason": "Part A and Part B state opposite ideas."
+    }]})
+    .to_string();
+    let model = model(vec![
+        parts_review(2, &[0]),
+        parts_evidence(&[0]),
+        edits_answer(vec![better_idea(0, "reviewer/1")]),
+        recheck("reviewer/1", vec!["Part A now contradicts Part B."], 0),
+        clash,
+        edits_answer(vec![better_idea(1, "reviewer/2")]),
+        recheck("reviewer/2", Vec::new(), 1),
+    ]);
+    let reviewed = run(&model, parts_lesson(2)).await?;
+    let repairs = repair_requests(&model);
+    assert_eq!(repairs.len(), 2, "the contradiction reached no repair");
+    let sent = &repairs[1]["issuesToFix"][0];
+    assert_eq!(sent["part"], "/blocks/1");
+    assert_eq!(sent["also"], "/blocks/0");
+    assert!(reviewed.set_aside.is_empty());
     Ok(())
 }
 

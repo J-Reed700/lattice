@@ -324,73 +324,6 @@ pub(crate) struct ScriptedModel {
     pub(crate) prompts: std::sync::Mutex<Vec<String>>,
 }
 
-/// Diagnostic: what the review adapter rewrote, kept per model (by address,
-/// since the struct is built with literals in many files) and reported when
-/// the model is dropped.
-mod adapted_calls {
-    use super::ScriptedModel;
-    use std::collections::HashMap;
-    use std::sync::Mutex;
-
-    #[derive(Default)]
-    struct Log {
-        calls: usize,
-        records: Vec<String>,
-    }
-
-    static LOGS: Mutex<Option<HashMap<usize, Log>>> = Mutex::new(None);
-
-    fn key(model: &ScriptedModel) -> usize {
-        std::ptr::from_ref(model) as usize
-    }
-
-    fn with_log<R>(model: &ScriptedModel, act: impl FnOnce(&mut Log) -> R) -> R {
-        let mut logs = LOGS.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
-        act(logs
-            .get_or_insert_with(HashMap::new)
-            .entry(key(model))
-            .or_default())
-    }
-
-    /// The zero-based index of the reply just taken from the script.
-    pub(super) fn next_call(model: &ScriptedModel) -> usize {
-        with_log(model, |log| {
-            log.calls += 1;
-            log.calls - 1
-        })
-    }
-
-    pub(super) fn record(model: &ScriptedModel, call: usize, changes: Vec<String>) {
-        if !changes.is_empty() {
-            with_log(model, |log| {
-                log.records
-                    .push(format!("call {call}: {}", changes.join("; ")));
-            });
-        }
-    }
-
-    impl Drop for ScriptedModel {
-        fn drop(&mut self) {
-            let log = LOGS
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .as_mut()
-                .and_then(|logs| logs.remove(&key(self)));
-            let Some(log) = log.filter(|log| !log.records.is_empty()) else {
-                return;
-            };
-            if std::thread::panicking() {
-                return;
-            }
-            let lines: Vec<String> = log.records.iter().map(|r| format!("ADAPTED {r}")).collect();
-            for line in &lines {
-                eprintln!("{line}");
-            }
-            panic!("ADAPTED-REPLIES {}\n{}", lines.len(), lines.join("\n"));
-        }
-    }
-}
-
 /// Where `schema` bounds a string's length above a blank: each `maxLength`
 /// and each `minLength` over one, as `path: bound`.
 pub(crate) fn length_bounds(schema: &serde_json::Value) -> Vec<String> {
@@ -621,14 +554,8 @@ impl LLMPort for ScriptedModel {
         let mut replies = Vec::new();
         for prompt in fixture_prompts(request) {
             let reply = self.respond(&prompt).await?;
-            let call = adapted_calls::next_call(self);
             replies.push(match &request.json_schema {
-                Some(schema) => {
-                    let mut changes = Vec::new();
-                    let adapted = as_the_review_asks(schema, reply, &mut changes);
-                    adapted_calls::record(self, call, changes);
-                    adapted
-                }
+                Some(schema) => as_the_review_asks(schema, reply),
                 None => reply,
             });
         }
@@ -651,11 +578,7 @@ impl LLMPort for ScriptedModel {
 /// only for the sections it lists, and, when it asks for a verdict on each
 /// open finding, "present" if the reply reports a defect and "resolved" if it
 /// does not.
-fn as_the_review_asks(
-    schema: &serde_json::Value,
-    reply: String,
-    changes: &mut Vec<String>,
-) -> String {
+fn as_the_review_asks(schema: &serde_json::Value, reply: String) -> String {
     let Ok(serde_json::Value::Object(mut fields)) = serde_json::from_str(&reply) else {
         return reply;
     };
@@ -670,24 +593,13 @@ fn as_the_review_asks(
     };
     if let Some(serde_json::Value::Array(checks)) = fields.get_mut("blockChecks") {
         let sections = listed("/properties/blockChecks/items/properties/sectionId/enum");
-        let mut dropped = Vec::new();
         checks.retain(|check| {
-            let kept = !check["sectionId"].is_string()
+            !check["sectionId"].is_string()
                 || sections
                     .iter()
                     .flatten()
-                    .any(|section| *section == check["sectionId"]);
-            if !kept {
-                dropped.push(check["sectionId"].to_string());
-            }
-            kept
+                    .any(|section| *section == check["sectionId"])
         });
-        if !dropped.is_empty() {
-            changes.push(format!(
-                "dropped checks for sections [{}]",
-                dropped.join(",")
-            ));
-        }
     }
     let defect = fields
         .get("issues")
@@ -704,10 +616,6 @@ fn as_the_review_asks(
                 .into_iter()
                 .map(|id| serde_json::json!({"id":id,"verdict":verdict,"note":""}))
                 .collect();
-            changes.push(format!(
-                "added verdicts {}",
-                serde_json::Value::Array(entries.clone())
-            ));
             fields.insert("openFindings".into(), entries.into());
         }
     }
