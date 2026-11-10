@@ -1011,3 +1011,112 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
 
     Ok(())
 }
+
+fn shaped_block(kind: &str, title: &str) -> Value {
+    let body = if kind == "check" {
+        format!(
+            "Case for {title}: what happens to the lid?\n\n{}\n\nAnswer for {title}: it bulges.",
+            crate::generation::CHECK_REVEAL
+        )
+    } else {
+        format!("Body of {title}.")
+    };
+    let rubric = if kind.ends_with("practice") {
+        json!([
+            {"title":"One","description":"Observable.","dimension":"recall"},
+            {"title":"Two","description":"Observable.","dimension":"application"}
+        ])
+    } else {
+        json!([])
+    };
+    json!({"kind":kind,"title":title,"body":body,"rubric":rubric,"sourceIndex":null,"quote":"","citations":[]})
+}
+
+fn shaped_question(kind: &str, prompt: &str) -> Value {
+    json!({"kind":kind,"prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":0,
+        "rationales":["","Two reverses the order.","Three mistakes the cause for the effect.","Four states it backwards."],
+        "explanation":"Because.","sourceIndex":null,"quote":"","citations":[]})
+}
+
+/// A lesson in the writer's full shape: eleven sections, the checks at units 3
+/// and 6, the worked examples at units 1 and 5; six questions.
+fn shaped_lesson() -> Value {
+    json!({"blocks":[
+        shaped_block("explanation","First idea"), shaped_block("worked_example","First example"),
+        shaped_block("contrast","Not to be confused with"), shaped_block("check","Your turn"),
+        shaped_block("explanation","Second idea"), shaped_block("worked_example","Second example"),
+        shaped_block("check","Your turn again"), shaped_block("guided_practice","Guided"),
+        shaped_block("independent_practice","On your own"), shaped_block("reflection","From memory"),
+        shaped_block("recap","Recap"),
+    ],"questions":[
+        shaped_question("practice","P1?"), shaped_question("practice","P2?"),
+        shaped_question("quiz","Q1?"), shaped_question("quiz","Q2?"),
+        shaped_question("test","T1?"), shaped_question("test","T2?"),
+    ]})
+}
+
+#[tokio::test]
+async fn a_check_whose_only_worked_example_goes_goes_with_it() -> Result<()> {
+    let llm = model(&[]);
+    let mut ledger = ClaimLedger::open(&llm, "{}").await?;
+    let mut lesson = shaped_lesson();
+    lesson["blocks"][1]["body"] = json!("Alpha.");
+    ledger
+        .cuts
+        .take(1, "First example".into(), (Vec::new(), false));
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let settled = settle(
+        &llm,
+        ("{}", &json!({"type":"object"}), 4_000),
+        &references,
+        &lesson.to_string(),
+        &mut ledger,
+    )
+    .await?;
+
+    // The check after the example would test what the lesson has not shown.
+    let with_it = ledger.cuts.going.contains_key(&3);
+    assert!(
+        with_it || matches!(settled, Settled::Stopped(_)),
+        "{:?}",
+        ledger.cuts.going
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_review_after_cuts_with_no_claim_left_asks_for_no_count_the_cuts_spent() {
+    let mut lesson = shaped_lesson();
+    lesson["questions"].as_array_mut().unwrap().pop();
+    let without = Going::new([2]).out_of(&lesson);
+    let questions = without["questions"].as_array().unwrap().len();
+    let answers = json!({"answers":(0..questions).map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."})).collect::<Vec<_>>()});
+    let checks = (0..without["blocks"].as_array().unwrap().len())
+        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Reviewed; no teaching defect was found.","hasDefect":false}))
+        .collect();
+    let review = json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
+    let llm = model(&[answers, review]);
+    let mut ledger = ClaimLedger::open(&llm, "{}").await.unwrap();
+    ledger.cuts.go(2, "Not to be confused with".into());
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+
+    let _ = settle(
+        &llm,
+        ("{}", &crate::generation::lesson_schema(1), 4_000),
+        &references,
+        &lesson.to_string(),
+        &mut ledger,
+    )
+    .await;
+
+    let prompts = llm.prompts.lock().unwrap();
+    assert!(
+        !prompts
+            .iter()
+            .any(|prompt| prompt.contains("Give the complete corrected material")),
+        "the whole lesson was asked for again to restore the writer's counts"
+    );
+}

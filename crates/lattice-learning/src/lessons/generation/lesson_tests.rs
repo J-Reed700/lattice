@@ -106,6 +106,28 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
 }
 
 #[test]
+fn the_publication_check_reports_a_question_kind_the_lesson_lacks() {
+    let mut lesson = off_shape_value(true);
+    lesson["questions"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|question| question["kind"] != "test");
+    let findings = crate::teaching::structural_findings(
+        &lesson_schema(1),
+        &lesson.to_string(),
+        crate::generation::Counts::Spent,
+    )
+    .unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.key().id() == "structure:lesson"
+                && finding.note.contains("test")),
+        "{findings:?}"
+    );
+}
+
+#[test]
 fn a_quotation_that_does_not_match_keeps_its_source_and_waits_for_the_user() {
     let mut lesson = off_shape(true);
     lesson.blocks[2].quote = "Water boils at exactly one hundred degrees in every kitchen.".into();
