@@ -3,7 +3,7 @@ use super::copied_wording::{self, Wording};
 use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::shape::LessonShape;
-use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding, Rule};
+use crate::review_findings::{plain_part, FindingKind, FindingSite, Remedy, ReviewFinding, Rule};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -259,17 +259,15 @@ fn quotation_findings(quote_checks: &[Value]) -> Vec<ReviewFinding> {
         .collect()
 }
 
-/// The structure findings a repair of the whole material answers: all but a
-/// missing citation, which the edits of the repair after the review can
-/// append (claim classes design §3.5).
+/// The structure findings only a rewrite of the whole material can answer.
 fn whole_repairs(structure: &[ReviewFinding]) -> impl Iterator<Item = &ReviewFinding> {
     structure
         .iter()
-        .filter(|finding| finding.kind != FindingKind::Quotation)
+        .filter(|finding| finding.remedy() == Remedy::Whole)
 }
 
-/// Whether the structure findings hold up the content review. Structure the
-/// machine stopped repairing no longer does.
+/// Whether a rewrite of the whole material still has structure to answer, which
+/// holds up the content review.
 fn holds_up_review(structure: &[ReviewFinding], passes: Option<&Passes>) -> bool {
     whole_repairs(structure).any(|finding| passes.is_none_or(|passes| passes.repairable(finding)))
 }

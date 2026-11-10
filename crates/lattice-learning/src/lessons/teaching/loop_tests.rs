@@ -3580,3 +3580,48 @@ fn a_copied_sentence_does_not_hold_up_the_content_review() {
     ));
     assert!(!holds_up_review(&[copy], None));
 }
+
+#[test]
+fn a_finding_whose_edit_overlapped_another_findings_is_not_charged_and_is_told_to_give_it_again(
+) -> Result<()> {
+    use super::repair::Repaired;
+    use super::subject::{Settled, Subject};
+    let mut previous = shaped_lesson();
+    previous["blocks"][0]["body"] = json!("Body of First idea. Beta is second.");
+    let about = |sentence: &str| {
+        ReviewFinding::rule_about(
+            Rule::SentenceRepeated,
+            FindingKind::Teaching,
+            FindingSite::Section(0),
+            sentence,
+            "Say it once.",
+        )
+        .with_passage(sentence)
+    };
+    let (first, second) = (about("Beta is second."), about("Body of First idea."));
+    let patch = json!({"edits":[
+        {"finding":first.id().as_str(),"path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."},
+        {"finding":second.id().as_str(),"path":"/blocks/0/body","before":"is second.","after":"is last."}
+    ]})
+    .to_string();
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut subject = LessonSubject::new(&references, &[], Held::default());
+
+    let settled = subject.settle_repair(
+        &previous,
+        &[first.clone(), second.clone()],
+        true,
+        Ok(Repaired::Patch(patch)),
+    )?;
+
+    assert!(matches!(settled, Settled::Changed(_)));
+    assert!(subject.last_attempt(&first).is_some_and(
+        |told| told.starts_with("The last repair's edits for this finding were applied")
+    ));
+    assert_eq!(
+        subject.last_attempt(&second).as_deref(),
+        Some("The last repair's edit for this finding overlapped an edit for another finding and was left out; give it again.")
+    );
+    Ok(())
+}

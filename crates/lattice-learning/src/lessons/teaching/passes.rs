@@ -41,6 +41,36 @@ pub(super) enum Outcome {
     Unnamed,
     /// The repair's answer could not be used at all.
     Unusable(String),
+    /// Its edit overlapped another finding's and was left out: not an attempt.
+    Deferred,
+}
+
+impl Outcome {
+    /// What became of the attempt, for the user's log.
+    fn in_words(&self) -> String {
+        match self {
+            Self::Applied => "its edits were applied and the defect was still found".to_owned(),
+            Self::NotApplied(reasons) => {
+                format!("its edits could not be applied: {}", reasons.join(" "))
+            }
+            Self::Reverted => {
+                "its edits were put back: they touched a sentence that must stay".to_owned()
+            }
+            Self::Unnamed => "the repair made no change for it".to_owned(),
+            Self::Unusable(reason) => format!("the repair's answer could not be used: {reason}"),
+            Self::Deferred => "its edit overlapped another finding's and was left out".to_owned(),
+        }
+    }
+}
+
+/// What a finding's repairs came to, for the log of one the user is left with.
+pub(super) struct Account {
+    /// The repairs it started with: words an earlier repair worked on.
+    pub inherited: u8,
+    /// Why the machine did not repair it; empty when it was not held.
+    pub held: String,
+    /// Each attempt's outcome in plain words, in order.
+    pub attempts: String,
 }
 
 pub(super) enum Next {
@@ -60,6 +90,12 @@ pub(super) struct Passes {
     spent: BTreeMap<FindingId, u8>,
     /// What became of the last repair's attempt at each finding.
     last: BTreeMap<FindingId, Outcome>,
+    /// What became of every repair's attempt at each finding, in order.
+    attempts: BTreeMap<FindingId, Vec<Outcome>>,
+    /// The repairs each finding started with.
+    inherited: BTreeMap<FindingId, u8>,
+    /// Why each finding held during this review was held.
+    held_because: BTreeMap<FindingId, &'static str>,
     /// Sentence digest to the repairs those words have been through.
     worked: BTreeMap<String, u8>,
     /// For each place, the most repairs a reviewer finding with no passage
@@ -82,6 +118,10 @@ struct Kept {
     worked: BTreeMap<String, u8>,
     #[serde(default)]
     passage_less: Vec<(FindingSite, u8)>,
+    #[serde(default)]
+    attempts: Vec<(FindingId, Vec<Outcome>)>,
+    #[serde(default)]
+    inherited: Vec<(FindingId, u8)>,
 }
 
 /// Whether a reviewer's finding has no passage to count the repairs of.
@@ -125,6 +165,16 @@ impl Passes {
                 .iter()
                 .map(|(site, count)| (*site, *count))
                 .collect(),
+            attempts: self
+                .attempts
+                .iter()
+                .map(|(id, outcomes)| (id.clone(), outcomes.clone()))
+                .collect(),
+            inherited: self
+                .inherited
+                .iter()
+                .map(|(id, count)| (id.clone(), *count))
+                .collect(),
         })
     }
 
@@ -136,6 +186,8 @@ impl Passes {
             self.last = kept.last.into_iter().collect();
             self.worked = kept.worked;
             self.passage_less = kept.passage_less.into_iter().collect();
+            self.attempts = kept.attempts.into_iter().collect();
+            self.inherited = kept.inherited.into_iter().collect();
         }
     }
 
@@ -147,10 +199,13 @@ impl Passes {
             || self.spent.get(&id).copied().unwrap_or_default() >= REPAIRS_PER_FINDING
     }
 
-    /// Holds these findings for the user: the machine does not repair them
-    /// (a finding about a sentence a live claim stands on, §10.3).
-    pub fn hold(&mut self, ids: impl IntoIterator<Item = FindingId>) {
-        self.held.ids.extend(ids);
+    /// Holds these findings for the user, `why`: the machine does not repair
+    /// them (a finding about a sentence a live claim stands on, §10.3).
+    pub fn hold(&mut self, ids: impl IntoIterator<Item = FindingId>, why: &'static str) {
+        for id in ids {
+            self.held_because.entry(id.clone()).or_insert(why);
+            self.held.ids.insert(id);
+        }
     }
 
     /// Whether a deterministic finding still blocks the content review: one
@@ -211,6 +266,7 @@ impl Passes {
                 start = start.max(self.passage_less.get(&site).copied().unwrap_or_default());
             }
             if start > 0 {
+                self.inherited.insert(id.clone(), start);
                 self.spent.insert(id, start);
             }
         }
@@ -228,9 +284,18 @@ impl Passes {
     }
 
     /// A repair was sent `finding` and this became of its attempt at it: the
-    /// repair is charged to it.
+    /// repair is charged to it, unless its edit was only left out for
+    /// overlapping another finding's.
     pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
         let id = finding.id();
+        self.attempts
+            .entry(id.clone())
+            .or_default()
+            .push(outcome.clone());
+        if outcome == Outcome::Deferred {
+            self.last.insert(id, outcome);
+            return;
+        }
         let spent = self.spent.entry(id.clone()).or_default();
         *spent += 1;
         let own = *spent;
@@ -259,7 +324,32 @@ impl Passes {
             Outcome::Unusable(reason) => {
                 format!("The last repair's answer could not be used: {reason}")
             }
+            Outcome::Deferred => "The last repair's edit for this finding overlapped an edit for another finding and was left out; give it again.".to_owned(),
         })
+    }
+
+    /// What `finding`'s repairs came to.
+    pub fn account(&self, finding: &ReviewFinding) -> Account {
+        let id = finding.id();
+        let held = if let Some(why) = self.held_because.get(&id) {
+            (*why).to_owned()
+        } else if self.held.ids.contains(&id) || self.held.places.contains(&finding.place()) {
+            "already with the user".to_owned()
+        } else {
+            String::new()
+        };
+        Account {
+            inherited: self.inherited.get(&id).copied().unwrap_or_default(),
+            held,
+            attempts: self
+                .attempts
+                .get(&id)
+                .into_iter()
+                .flatten()
+                .map(Outcome::in_words)
+                .collect::<Vec<_>>()
+                .join(" | "),
+        }
     }
 
     /// An applied repair put these sentences through the repairs `id` had
@@ -476,7 +566,7 @@ mod tests {
     fn a_finding_held_during_the_review_is_never_repaired() {
         let held = section(4, "a protected sentence");
         let mut passes = Passes::default();
-        passes.hold([held.id()]);
+        passes.hold([held.id()], "a test");
         assert!(!passes.repairable(&held));
         assert_eq!(
             done(passes.next(&Value::Null, vec![held.clone()])),
@@ -755,5 +845,75 @@ mod tests {
         passes.resume(&saved);
         assert_eq!(passes.spent.get(&section(3, "").id()), Some(&1));
         assert!(passes.passage_less.is_empty());
+    }
+
+    #[test]
+    fn an_attempt_left_out_for_overlap_is_no_repair_and_is_told_to_try_again() {
+        let mut passes = Passes::default();
+        let finding = own(0, "A first sentence.");
+        for _ in 0..3 {
+            passes.charge(&finding, Outcome::Deferred);
+        }
+        assert_eq!(passes.spent.get(&finding.id()), None);
+        assert!(passes.worked.is_empty());
+        assert!(passes.repairable(&finding));
+        assert_eq!(
+            passes.last_attempt(&finding.id()).as_deref(),
+            Some("The last repair's edit for this finding overlapped an edit for another finding and was left out; give it again.")
+        );
+        passes.charge(&finding, Outcome::Applied);
+        assert_eq!(passes.spent.get(&finding.id()), Some(&1));
+    }
+
+    #[test]
+    fn a_deferred_attempt_survives_a_saved_review() {
+        let mut passes = Passes::default();
+        let finding = own(0, "A first sentence.");
+        passes.charge(&finding, Outcome::Deferred);
+        let saved = passes.saved().unwrap().to_string();
+        let mut resumed = Passes::default();
+        resumed.resume(&saved);
+        assert_eq!(resumed.last.get(&finding.id()), Some(&Outcome::Deferred));
+        assert_eq!(
+            resumed.attempts.get(&finding.id()),
+            Some(&vec![Outcome::Deferred])
+        );
+    }
+
+    #[test]
+    fn the_account_of_a_finding_lists_its_attempts_in_order_and_why_it_was_held() {
+        let mut passes = Passes::default();
+        let finding = own(0, "A first sentence.");
+        passes.charge(
+            &finding,
+            Outcome::NotApplied(vec!["It did not occur.".to_owned()]),
+        );
+        passes.charge(&finding, Outcome::Deferred);
+        passes.hold([finding.id()], "a sentence a live claim stands on");
+        let account = passes.account(&finding);
+        assert_eq!(account.inherited, 0);
+        assert_eq!(account.held, "a sentence a live claim stands on");
+        assert_eq!(
+            account.attempts,
+            "its edits could not be applied: It did not occur. | its edit overlapped another finding's and was left out"
+        );
+        let user_held = section(4, "kept as written");
+        let with_user = Passes::new(Held {
+            places: BTreeSet::from([user_held.place()]),
+            ..Held::default()
+        });
+        assert_eq!(with_user.account(&user_held).held, "already with the user");
+    }
+
+    #[test]
+    fn a_finding_that_starts_above_zero_says_so_in_its_account() {
+        let candidate = serde_json::json!({"blocks":[{"body":"A first sentence. A second sentence."}],"questions":[]});
+        let mut passes = Passes::default();
+        let first = own(0, "A first sentence.");
+        sent(&mut passes, &candidate, vec![first.clone()]);
+        passes.worked_on(&first.id(), ["A second sentence.".to_owned()]);
+        let second = own(0, "A second sentence.");
+        sent(&mut passes, &candidate, vec![second.clone()]);
+        assert_eq!(passes.account(&second).inherited, 1);
     }
 }

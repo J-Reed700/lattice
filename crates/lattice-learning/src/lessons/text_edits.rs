@@ -372,10 +372,10 @@ fn field_change(
             let copied = copied_wording::is_taught_text(path)
                 .then(|| copied_wording::gained(text, &alone, part, wording))
                 .flatten();
-            if let Some(sentence) = copied {
+            if let Some(copied_wording::Copied { sentence, words }) = copied {
                 return Err((
                     index,
-                    format!("edit {index} to {path} writes the source's wording as the lesson's own sentence: \"{sentence}\". {SAY_IT_YOURSELF}"),
+                    format!("edit {index} to {path} writes the source's wording as the lesson's own sentence: \"{sentence}\" (the source's words are \"{words}\"). {SAY_IT_YOURSELF}"),
                 ));
             }
             ranges.push(Range {
@@ -497,6 +497,17 @@ pub(super) struct Named {
     /// `…/citations` lists its applied citations and uncites changed.
     pub applied: BTreeSet<String>,
     pub problems: Vec<String>,
+    /// Every group of this finding that was refused was refused only because
+    /// it overlapped an edit for another finding.
+    pub deferred: bool,
+}
+
+impl Named {
+    /// A reason a change of this finding was left out, and not an overlap.
+    fn refused(&mut self, reason: String) {
+        self.deferred = false;
+        self.problems.push(reason);
+    }
 }
 
 /// Whether a change naming `finding` may touch `part` (`/blocks/N`,
@@ -598,6 +609,7 @@ fn accept(
     let mut scalars = BTreeSet::<String>::new();
     for group in groups {
         let finding = group.finding.as_deref();
+        let mut overlapped = false;
         let found = match may_change(finding, &group.part) {
             Err(reason) => Err(group
                 .edits
@@ -608,7 +620,10 @@ fn accept(
                 let quotes = quotes_for(candidate, &group.part, cites);
                 group_changes(candidate, &allowed, group.edits, (&held, &quotes, wording)).and_then(
                     |changes| match clash(&changes, &texts, &scalars) {
-                        Some(problem) => Err(vec![problem]),
+                        Some(problem) => {
+                            overlapped = true;
+                            Err(vec![problem])
+                        }
                         None => Ok(changes),
                     },
                 )
@@ -644,12 +659,12 @@ fn accept(
             }
             Err(found) => {
                 if let Some(finding) = finding {
-                    accepted
-                        .named
-                        .entry(finding.to_owned())
-                        .or_default()
+                    let named = accepted.named.entry(finding.to_owned()).or_default();
+                    let only_overlaps = overlapped && (named.problems.is_empty() || named.deferred);
+                    named
                         .problems
                         .extend(found.iter().map(|(_, reason)| reason.clone()));
+                    named.deferred = only_overlaps;
                 }
                 accepted.problems.extend(found);
             }
@@ -746,8 +761,7 @@ fn withdraw(
                     named
                         .entry(finding.to_owned())
                         .or_default()
-                        .problems
-                        .push(reason.clone());
+                        .refused(reason.clone());
                 }
                 unnamed.push(reason);
             }
@@ -784,8 +798,7 @@ fn cite_all(
                     named
                         .entry(finding.to_owned())
                         .or_default()
-                        .problems
-                        .push(reason.clone());
+                        .refused(reason.clone());
                 }
                 refused.push(reason);
             }
