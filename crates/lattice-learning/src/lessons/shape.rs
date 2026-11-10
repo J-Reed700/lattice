@@ -1,8 +1,7 @@
 //! The lesson's shape (acceptance policy design §2.8): what the writer is asked
 //! for, what the lesson is held to once verification has spent some of it, and
 //! what a cut may take. One policy answers all of it, so the writer's schema,
-//! the lesson's rules, the cuts, the save and what a model is told of the
-//! shape read the same decision.
+//! the lesson's rules, the cuts and the save read the same decision.
 //!
 //! A lesson is held to one of two promises (`Phase`). The draft is held to the
 //! margin: the writer is asked for more than a lesson needs (a mix of
@@ -13,7 +12,7 @@
 //! since the previous check). The phase is the caller's to name; nothing infers
 //! it from the lesson.
 use crate::dto::LessonQuestionKind;
-use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding, Rule};
+use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use serde_json::Value;
 use std::collections::BTreeSet;
 
@@ -25,9 +24,6 @@ pub(crate) enum Phase {
     /// A lesson verification has cut or may cut, held to the floor.
     Kept,
 }
-
-/// The key a request states a lesson's shape under.
-pub(crate) const WORDS: &str = "lessonShape";
 
 /// A lesson schema and the promise it holds a lesson to. Only the shape
 /// policy builds one, so the two cannot disagree.
@@ -77,17 +73,6 @@ impl<'a> LessonShape<'a> {
     pub(crate) fn phase(&self) -> Phase {
         self.schema.phase()
     }
-
-    /// States in `request`, the writer's request, the shape this lesson is held
-    /// to now: what a model that reviews or repairs the lesson reads.
-    pub(crate) fn state_in(&self, request: &mut Value) {
-        if let Some(request) = request.as_object_mut() {
-            request.insert(
-                WORDS.to_owned(),
-                serde_json::json!(self.policy.asked(self.phase())),
-            );
-        }
-    }
 }
 
 /// The one reader of a lesson's shape.
@@ -97,10 +82,11 @@ pub(crate) trait ShapePolicy: Send + Sync {
     /// minimums.
     fn schema(&self, phase: Phase, source_count: usize) -> LessonSchema;
 
-    /// What a lesson in `phase` is held to, in the words a model is given: the
-    /// writer is asked for the draft's, and a review or a repair is told the
-    /// words of the phase the lesson is in.
-    fn asked(&self, phase: Phase) -> Vec<String>;
+    /// The fewest and most core ideas a lesson teaches.
+    fn ideas(&self) -> (usize, usize);
+
+    /// The fewest and most sections the writer is asked for.
+    fn sections(&self) -> (usize, usize);
 
     /// Every rule finding of `lesson` in `phase`: the shape's about the count
     /// and the order of its sections and questions, and the rules of its parts.
@@ -213,22 +199,12 @@ impl ShapePolicy for StandardShape {
         }
     }
 
-    fn asked(&self, phase: Phase) -> Vec<String> {
-        let kinds = question_kinds();
-        match phase {
-            Phase::Draft => vec![
-                format!("Teach through the {} or {} core ideas the objective depends on, the ones coursePlan lists for this lesson: fewer ideas understood deeply, not a survey. For each idea write an explanation, then a worked_example, then a check. Where learners plausibly mistake an idea for something similar, put a contrast between its example and its check; the lesson has at least one. After the ideas come one guided_practice, one independent_practice, one reflection and one recap, in that order: {} to {} blocks.", number(IDEAS.0), number(IDEAS.1), SECTIONS.0, SECTIONS.1),
-                format!(
-                    "Create exactly {} distinct multiple-choice items of each kind: {kinds}.",
-                    number(QUESTIONS_PER_KIND)
-                ),
-            ],
-            // What `shape_findings` holds a `Phase::Kept` lesson to: change the two together.
-            Phase::Kept => vec![
-                "Verification takes out of a lesson what no source confirms, so this lesson is no longer held to the number of sections and questions it was drafted with.".to_owned(),
-                format!("It is held to this instead: at least one explanation; each check after a worked example shown since the previous check; the recap after the reflection when it has both; and at least one question of each kind: {kinds}."),
-            ],
-        }
+    fn ideas(&self) -> (usize, usize) {
+        IDEAS
+    }
+
+    fn sections(&self) -> (usize, usize) {
+        SECTIONS
     }
 
     fn rules(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
@@ -316,8 +292,12 @@ impl ShapePolicy for FixedSchema {
         }
     }
 
-    fn asked(&self, phase: Phase) -> Vec<String> {
-        StandardShape.asked(phase)
+    fn ideas(&self) -> (usize, usize) {
+        StandardShape.ideas()
+    }
+
+    fn sections(&self) -> (usize, usize) {
+        StandardShape.sections()
     }
 
     fn rules(&self, _lesson: &Value, _phase: Phase) -> Vec<ReviewFinding> {
@@ -353,8 +333,8 @@ fn text<'a>(item: &'a Value, field: &str) -> &'a str {
     item.get(field).and_then(Value::as_str).unwrap_or_default()
 }
 
-fn structure(rule: Rule, site: FindingSite, summary: String, note: String) -> ReviewFinding {
-    ReviewFinding::rule(rule, FindingKind::Structure, site, note).with_summary(summary)
+fn structure(site: FindingSite, summary: String, note: String) -> ReviewFinding {
+    ReviewFinding::new(FindingKind::Structure, Some(site), note).with_summary(summary)
 }
 
 fn kind_count(items: &[Value], kind: &str) -> usize {
@@ -374,7 +354,7 @@ const NUMBER_WORDS: [&str; 11] = [
 ];
 
 /// `count` as a word, or in digits past ten.
-fn number(count: usize) -> String {
+pub(crate) fn number(count: usize) -> String {
     NUMBER_WORDS
         .get(count)
         .map_or_else(|| count.to_string(), |word| (*word).to_owned())
@@ -418,20 +398,15 @@ fn mix_asked(exactly: &str) -> String {
 /// questions each for practice, quiz and test"; `adjective` goes before
 /// "questions" when it is not empty.
 fn questions_asked(adjective: &str) -> String {
-    format!(
-        "at least {} {adjective}questions each for {}",
-        number(QUESTIONS_PER_KIND),
-        question_kinds()
-    )
-}
-
-/// The question kinds, as the words join them: "practice, quiz and test".
-fn question_kinds() -> String {
     let kinds: Vec<String> = LessonQuestionKind::ALL
         .iter()
         .map(|kind| kind.as_str().to_owned())
         .collect();
-    join_plain(&kinds)
+    format!(
+        "at least {} {adjective}questions each for {}",
+        number(QUESTIONS_PER_KIND),
+        join_plain(&kinds)
+    )
 }
 
 /// The sections that are checks and follow no worked example since the
@@ -460,7 +435,6 @@ fn order_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
     for index in unshown_checks(blocks) {
         let section = format!("Section {} (candidate blocks-{index})", index + 1);
         found.push(structure(
-            Rule::UnshownCheck,
             FindingSite::Section(index),
             format!("Section {} is a check on an idea that no worked example has shown since the previous check.", index + 1),
             format!("{section} checks an idea no worked example has shown since the previous check; place each check after the example of the idea it asks the learner to apply."),
@@ -470,7 +444,6 @@ fn order_findings(blocks: &[Value]) -> Vec<ReviewFinding> {
     if let (Some(reflection), Some(recap)) = (first("reflection"), first("recap")) {
         if reflection > recap {
             found.push(structure(
-                Rule::RecapFirst,
                 FindingSite::Section(recap),
                 format!("Section {} recaps the lesson before the learner is asked to explain it from memory.", recap + 1),
                 format!("Section {} (candidate blocks-{recap}) recaps before the reflection asks the learner to explain the lesson from memory; put the reflection first, so the recap is what they compare their explanation with.", recap + 1),
@@ -500,7 +473,6 @@ fn section_mix_finding(blocks: &[Value]) -> Option<ReviewFinding> {
         .map(|(kind, count, _, _)| counted(*count, &kind.replace('_', " ")))
         .collect();
     Some(structure(
-        Rule::SectionMix,
         FindingSite::Lesson,
         format!(
             "The lesson should have {}. It has {}.",
@@ -535,7 +507,6 @@ fn question_count_finding(questions: &[Value]) -> Option<ReviewFinding> {
         .map(|(kind, count)| counted(*count, &format!("{kind} question")))
         .collect();
     Some(structure(
-        Rule::QuestionCount,
         FindingSite::Lesson,
         format!(
             "The lesson needs {}. It has {}.",
@@ -555,7 +526,6 @@ fn explanation_finding(blocks: &[Value]) -> Option<ReviewFinding> {
         return None;
     }
     Some(structure(
-        Rule::NoExplanation,
         FindingSite::Lesson,
         "The lesson has no explanation.".to_owned(),
         "The lesson has no explanation section; it needs one, which teaches an idea before a check or a question asks about it.".to_owned(),
@@ -572,7 +542,6 @@ fn question_kinds_finding(questions: &[Value]) -> Option<ReviewFinding> {
         return None;
     }
     Some(structure(
-        Rule::QuestionKinds,
         FindingSite::Lesson,
         format!(
             "The lesson has no {} question, and it needs one of each kind.",

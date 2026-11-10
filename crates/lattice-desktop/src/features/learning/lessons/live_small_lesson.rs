@@ -161,7 +161,11 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
             serde_json::from_value::<Vec<String>>(case["issues"].clone())?
                 .into_iter()
                 .map(|issue| {
-                    crate::features::learning::review_findings::ReviewFinding::reviewer(None, issue)
+                    crate::features::learning::review_findings::ReviewFinding::new(
+                        crate::features::learning::review_findings::FindingKind::Teaching,
+                        None,
+                        issue,
+                    )
                 })
                 .collect();
         let accepted = crate::features::learning::review_evidence::check(

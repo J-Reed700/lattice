@@ -37,7 +37,7 @@ pub(crate) use claim_ledger::{
 };
 mod class_checks;
 mod classify;
-pub(crate) use classify::{quoted_wording, CITED_KINDS, QUOTE_MARKS};
+pub(crate) use classify::{markers, Case, Givens, Marker, CITED_KINDS, QUOTE_MARKS};
 mod coverage;
 #[cfg(any(test, feature = "test-support"))]
 pub use coverage::live_mapping_fixture;
@@ -127,8 +127,7 @@ pub(crate) use report::{not_verified_line, persist_report, sources_changed};
 /// v21: the evidence challenge is gone; a supported verdict is weighed by
 /// the provenance gate (source provenance §11) and passages carry their
 /// source's title, domain and date.
-/// v22: the part-wise judge has a kind for the lesson's own figures.
-const POLICY: &str = "lesson-evidence-v22";
+const POLICY: &str = "lesson-evidence-v21";
 
 /// The evidence policy checks are judged under: what a labelled checker
 /// example records (§15).

@@ -7,11 +7,11 @@
 //! publishing.
 use super::validate_text;
 use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
-use crate::content_verification::{names_a_source, quoted_wording, CITED_KINDS};
+use crate::content_verification::{markers, names_a_source, Case, Givens, Marker, CITED_KINDS};
 use crate::lessons::repeats;
 use crate::lessons::same_text::{fold, overlap};
 use crate::lessons::shape;
-use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding, Rule};
+use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 use std::collections::{HashMap, HashSet};
@@ -65,20 +65,19 @@ fn reasons(question: &Value) -> Vec<&str> {
 
 /// A broken rule, with what is wrong in plain words for the user and the
 /// note the repair is given.
-fn structure(rule: Rule, site: FindingSite, summary: String, note: String) -> ReviewFinding {
-    ReviewFinding::rule(rule, FindingKind::Structure, site, note).with_summary(summary)
+fn structure(site: FindingSite, summary: String, note: String) -> ReviewFinding {
+    ReviewFinding::new(FindingKind::Structure, Some(site), note).with_summary(summary)
 }
 
 /// A citation a part lacks. Not structure: it does not hold up the content
 /// review, and the repair that follows settles it by appending the citation.
 fn citation(
-    rule: Rule,
     site: FindingSite,
     summary: String,
     note: String,
     (quote, sentence): (&str, &str),
 ) -> ReviewFinding {
-    ReviewFinding::rule_about(rule, FindingKind::Quotation, site, sentence, note)
+    ReviewFinding::new(FindingKind::Quotation, Some(site), note)
         .with_summary(summary)
         .with_passage(quote)
         .with_sentence(sentence)
@@ -140,13 +139,11 @@ pub(crate) fn prose_sentences(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Quoted wording stands only in a sentence the writer lists in the part's
+/// A specific stands only in a sentence the writer lists in the part's
 /// citations, with a quote that contains it. Otherwise it is cited, when a
-/// supplied excerpt holds it, or written as the lesson's own sentence without
-/// quotation marks, when none does (claim classes design §3.4, §3.13). A
-/// figure is not read here: whether it is the lesson's own or a fact a source
-/// must state is the classifier's question. Code is exempt.
-fn uncited_quotations(
+/// supplied excerpt states it, or the part is written in its general form,
+/// when none does (claim classes design §3.4, §3.5). Code is exempt.
+fn uncited_specifics(
     item: &Value,
     body: &str,
     (site, label): (FindingSite, &str),
@@ -164,9 +161,9 @@ fn uncited_quotations(
         .flatten()
         .map(|entry| (text(entry, "sentence"), text(entry, "quote")))
         .collect();
+    let case = Case::Stated(Givens::of(item));
     for sentence in prose_sentences(body) {
-        let wanted: Vec<&str> = quoted_wording(&sentence).collect();
-        if wanted.is_empty() {
+        if markers(&sentence, &case).next().is_none() {
             continue;
         }
         let quotes: Vec<&str> = cited
@@ -174,18 +171,28 @@ fn uncited_quotations(
             .filter(|(cited, _)| overlap(cited, &sentence))
             .map(|(_, quote)| *quote)
             .collect();
+        let wanted: Vec<String> = markers(&sentence, &case)
+            .map(|marker| marker.text().to_owned())
+            .collect();
         let lacking = |quote: &str| -> Vec<String> {
             let held = fold(quote);
             wanted
                 .iter()
-                .filter(|wording| !held.contains(&fold(wording)))
-                .map(|wording| (*wording).to_owned())
+                .filter(|specific| !held.contains(&fold(specific)))
+                .cloned()
                 .collect()
         };
         let (summary, note, quote) = if quotes.is_empty() {
             let summary =
                 format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
-            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt holds the wording: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the wording. When no supplied excerpt holds it, or the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence.");
+            let unquoted = if markers(&sentence, &case)
+                .any(|marker| matches!(marker, Marker::Quoted(_)))
+            {
+                " When the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence instead."
+            } else {
+                ""
+            };
+            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.{unquoted}");
             (summary, note, "")
         } else {
             let (missing, quote) = quotes
@@ -200,16 +207,10 @@ fn uncited_quotations(
                 "The quotation cited for this sentence does not contain {}: \u{201c}{sentence}\u{201d}",
                 join_plain(&missing)
             );
-            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or remove the quotation marks and write it as the lesson's own sentence when no excerpt holds the wording.", missing.join(", "));
+            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "));
             (summary, note, quote)
         };
-        findings.push(citation(
-            Rule::Uncited,
-            site,
-            summary,
-            note,
-            (quote, sentence.as_str()),
-        ));
+        findings.push(citation(site, summary, note, (quote, sentence.as_str())));
     }
 }
 
@@ -258,13 +259,7 @@ fn scaffolding(
                 "This line is a citation written into the lesson's text: \u{201c}{line}\u{201d}"
             );
             let note = format!("{label} has a citation written into its text: \"{line}\". Remove that line from the text and cite the sentence it supports in an entry of the citations of {path}.");
-            findings.push(citation(
-                Rule::CitationLabel,
-                site,
-                summary,
-                note,
-                ("", line.as_str()),
-            ));
+            findings.push(citation(site, summary, note, ("", line.as_str())));
         }
         for sentence in prose_sentences(body) {
             if labels.iter().any(|line| line.contains(&sentence)) {
@@ -277,13 +272,7 @@ fn scaffolding(
                 "This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}"
             );
             let note = format!("{label} names a source by its number in \"{sentence}\". Learners never see source numbers: state what the source says as the lesson's own sentence without naming a source, and cite that sentence in the citations list of {path}.");
-            findings.push(citation(
-                Rule::SourceNumber,
-                site,
-                summary,
-                note,
-                ("", sentence.as_str()),
-            ));
+            findings.push(citation(site, summary, note, ("", sentence.as_str())));
         }
     }
 }
@@ -320,14 +309,12 @@ pub(crate) fn lesson_rules(
         let title = text(block, "title");
         if !validate_text(title) {
             findings.push(structure(
-                Rule::TitleMissing,
                 FindingSite::Section(index),
                 format!("{plain} needs a title."),
                 format!("{section} needs a title."),
             ));
         } else if let Some(first) = titles.get(&fold(title)) {
             findings.push(structure(
-                Rule::TitleRepeated,
                 FindingSite::Section(index),
                 format!("{plain} has the same title as section {}.", first + 1),
                 format!("{section} repeats the title of section {}; give each section a distinct title.", first + 1),
@@ -343,11 +330,9 @@ pub(crate) fn lesson_rules(
             let key = repeats::key(&sentence);
             if !seen.insert(key.clone()) && reported.insert(key) {
                 findings.push(
-                    ReviewFinding::rule_about(
-                        Rule::SentenceRepeated,
+                    ReviewFinding::new(
                         FindingKind::Teaching,
-                        FindingSite::Section(index),
-                        &sentence,
+                        Some(FindingSite::Section(index)),
                         format!("Section {} (candidate blocks-{index}) says \"{sentence}\" when the lesson has said it already; say it once, in the section it belongs to, and take it out or reword it here.", index + 1),
                     )
                     .with_summary(format!("Section {} repeats a sentence the lesson already has: \u{201c}{sentence}\u{201d}", index + 1))
@@ -367,7 +352,6 @@ pub(crate) fn lesson_rules(
             .is_some_and(|(case, reveal)| !case.trim().is_empty() && !reveal.trim().is_empty());
         if !held_back {
             findings.push(structure(
-                Rule::CheckHoldback,
                 FindingSite::Section(index),
                 format!("{plain} is a check, but it does not hold its answer back until the learner has tried."),
                 format!("{section} is a check: write the case to reason through first, then one line `{CHECK_REVEAL}`, then the answer, the reasoning and the misconception each plausible wrong answer reveals. Nothing above that line may give the answer away."),
@@ -381,14 +365,12 @@ pub(crate) fn lesson_rules(
         let prompt = text(question, "prompt");
         if !validate_text(prompt) {
             findings.push(structure(
-                Rule::PromptMissing,
                 site,
                 format!("{label} needs a prompt."),
                 format!("{label} needs a prompt."),
             ));
         } else if let Some(first) = prompts.get(&fold(prompt)) {
             findings.push(structure(
-                Rule::PromptRepeated,
                 site,
                 format!("{label} asks the same thing as question {}.", first + 1),
                 format!(
@@ -401,7 +383,6 @@ pub(crate) fn lesson_rules(
         }
         if !validate_text(text(question, "explanation")) {
             findings.push(structure(
-                Rule::ExplanationMissing,
                 site,
                 format!("{label} needs an answer explanation."),
                 format!("{label} needs an answer explanation."),
@@ -427,7 +408,6 @@ pub(crate) fn lesson_rules(
             || !distinct_options(&choice_texts)
         {
             findings.push(structure(
-                Rule::Choices,
                 site,
                 format!("{label} needs four distinct answer choices."),
                 format!("{label} needs four distinct answer choices."),
@@ -451,14 +431,12 @@ pub(crate) fn lesson_rules(
                         .max()
                         .unwrap_or(0);
                     structure(
-                        Rule::KeyLongest,
                         site,
                         format!("{label}'s right choice stands out as the longest."),
                         format!("{label}'s right choice is {key} characters and the longest wrong choice {other}; so that a learner cannot pick the right choice for its length, it may be at most {allowed} characters. Shorten the right choice to {allowed} characters or fewer, or make the wrong choices as specific."),
                     )
                 }
                 KeyFault::GivesAway => structure(
-                    Rule::KeyGivenAway,
                     site,
                     format!("{label}'s prompt gives away its answer."),
                     format!("{label}'s right choice repeats the prompt's words, so the prompt gives the answer away; reword the prompt or the right choice."),
@@ -468,7 +446,6 @@ pub(crate) fn lesson_rules(
         let reasons = reasons(question);
         if reasons.len() != options.len() {
             findings.push(structure(
-                Rule::RationaleCount,
                 site,
                 format!("{label} needs a reason for each of its choices."),
                 format!("{label} needs one entry in rationales for each answer choice, in the order of the choices: empty for the right choice, and for each wrong choice the misconception it reflects and why it fails."),
@@ -482,7 +459,6 @@ pub(crate) fn lesson_rules(
                 .collect();
             if !lacking.is_empty() {
                 findings.push(structure(
-                    Rule::RationaleMissing,
                     site,
                     format!("{label} needs a reason for each wrong choice: {}.", join_plain(&lacking)),
                     format!("{label} gives no reason in rationales for {}: for each wrong choice, name the misconception it reflects and why it fails.", join_plain(&lacking)),
@@ -499,7 +475,7 @@ pub(crate) fn lesson_rules(
             &mut findings,
         );
         if CITED_KINDS.contains(&text(block, "kind")) {
-            uncited_quotations(
+            uncited_specifics(
                 block,
                 text(block, "body"),
                 (FindingSite::Section(index), &label),
@@ -515,14 +491,14 @@ pub(crate) fn lesson_rules(
             (FindingSite::Question(index), &label),
             &mut findings,
         );
-        uncited_quotations(
+        uncited_specifics(
             question,
             text(question, "explanation"),
             (FindingSite::Question(index), &label),
             &mut findings,
         );
         for reason in reasons(question) {
-            uncited_quotations(
+            uncited_specifics(
                 question,
                 reason,
                 (FindingSite::Question(index), &label),

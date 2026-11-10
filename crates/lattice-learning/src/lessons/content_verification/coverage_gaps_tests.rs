@@ -199,7 +199,7 @@ async fn an_assertion_the_sources_contradict_is_adopted_and_checked() -> Result<
 
 /// A figure the extractor missed in an exercise is a statement the lesson
 /// makes, and a source must back it: the audit's gap joins the inventory,
-/// located at the judged passage, and the model sorts it Sourced.
+/// located at the judged passage, and the rule layer sorts it Sourced.
 #[tokio::test]
 async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_check() -> Result<()>
 {
@@ -225,7 +225,7 @@ async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_ch
         finding.class,
         Some(Classed {
             class: Class::Sourced,
-            by: ClassifiedBy::Model
+            by: ClassifiedBy::Rule
         })
     );
     assert_eq!(finding.verdict, ClaimVerdict::Unsupported);

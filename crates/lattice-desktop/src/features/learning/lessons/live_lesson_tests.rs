@@ -8,7 +8,7 @@
     clippy::panic
 )]
 use super::*;
-use crate::features::learning::review_findings::ReviewFinding;
+use crate::features::learning::review_findings::{FindingKind, ReviewFinding};
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
@@ -823,7 +823,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let issues: Vec<ReviewFinding> =
         serde_json::from_value::<Vec<String>>(review["issues"].clone())?
             .into_iter()
-            .map(|issue| ReviewFinding::reviewer(None, issue))
+            .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
             .collect();
     let authoring = serde_json::from_str(&draft.authoring.unwrap().prompt)?;
     let candidate = serde_json::from_str(&draft.candidate)?;
@@ -870,7 +870,7 @@ async fn live_review_findings_require_evidence() -> Result<()> {
         let issues: Vec<ReviewFinding> =
             serde_json::from_value::<Vec<String>>(case["issues"].clone())?
                 .into_iter()
-                .map(|issue| ReviewFinding::reviewer(None, issue))
+                .map(|issue| ReviewFinding::new(FindingKind::Teaching, None, issue))
                 .collect();
         let accepted = review_evidence::check(
             &model,

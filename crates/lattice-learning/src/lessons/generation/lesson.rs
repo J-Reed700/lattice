@@ -13,11 +13,11 @@ use crate::dto::{
 };
 use crate::embedded_runtime::BuiltinRuntimes;
 use crate::lessons::course_plan::CoursePlan;
-use crate::lessons::shape::{self, LessonShape, ShapePolicy};
+use crate::lessons::shape::{self, number, LessonShape, ShapePolicy};
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding, Rule};
+use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::error::{AppError, Result};
@@ -187,6 +187,8 @@ fn lesson_prompt(
     grounded: bool,
     policy: &dyn ShapePolicy,
 ) -> Result<String> {
+    let (least_ideas, most_ideas) = policy.ideas();
+    let (least_sections, most_sections) = policy.sections();
     serde_json::to_string(&json!({
         "task":"Prepare one substantial course lesson with teaching, worked applications, and independent practice",
         "programGoal":program.summary.goal,"priorKnowledge":program.prior_knowledge,
@@ -196,8 +198,8 @@ fn lesson_prompt(
         "sources":source_data,
         "evidenceByTopic":topics,
         "referenceCatalog":references.catalog(llm),
-        (shape::WORDS): policy.asked(shape::Phase::Draft),
         "requirements":[
+            format!("Teach through the {} or {} core ideas the objective depends on, the ones coursePlan lists for this lesson: fewer ideas understood deeply, not a survey. For each idea write an explanation, then a worked_example, then a check. Where learners plausibly mistake an idea for something similar, put a contrast between its example and its check; the lesson has at least one. After the ideas come one guided_practice, one independent_practice, one reflection and one recap, in that order: {least_sections} to {most_sections} blocks.", number(least_ideas), number(most_ideas)),
             "Where a newcomer would plausibly guess wrong about an idea, open its explanation with one short prediction question, asked before any of the teaching: a concrete situation and what the learner expects to happen, or which choice they would make. The explanation then answers it, says why, and names the tempting wrong guess and why it fails: a wrong guess corrected at once is remembered better than the idea read cold. An idea with no tempting wrong guess opens with its explanation.",
             "An explanation establishes one mental model in plain language before any detail: what the idea is, why it works, and when it applies. Ground it in one concrete instance before generalizing, and let the worked example use a different case, so the learner meets the idea in at least two concrete cases. Connect it to what the learner already knows from the ideas coursePlan lists for earlier lessons, or from their prior knowledge. When the idea has structure (parts and their relations, a flow, a sequence or states), include one small diagram the prose says what to notice in: a mermaid fence (flowchart, sequenceDiagram or stateDiagram-v2) or a Markdown table. No decorative diagrams.",
             "Match the guidance to priorKnowledge, and fade it within the lesson. A worked example shows every step for a learner new to the area, but only the steps new to someone who already knows its basics, because spelling out what a learner already knows slows them down. Guidance then fades: the worked example shows the steps, guided_practice names the steps without their answers, and independent_practice gives none.",
@@ -222,6 +224,7 @@ fn lesson_prompt(
             "Write a worked_example's steps as a numbered Markdown list, one step per item; where a step has the learner type or enter something, put it in a code span or fence and say what they should see after it.",
             "Spread the questions across the lesson's ideas; no two test the same fact.",
             "For Python or JavaScript code in a worked_example, contrast or check, put each complete independently runnable program in a labeled python or javascript Markdown fence, including imports, inputs and output-producing calls. Use Python's standard library or plain ECMAScript only; no network, host files, input prompts, packages, or browser/Node APIs. Use text, output, csv or json fences only for non-executable data. If demonstrating an exception, catch it and print its type. State the expected observation in the surrounding explanation. Do not silently change versions or language to evade verification.",
+            "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.",
             "Use exactly four distinct choices and one correct index per question; rationales has one entry per choice, in the order of the choices. The four choices are close in length, so the right one never stands out as the longest, and the right choice is worded in its own words rather than repeating the prompt's.",
             "Every question, its choices, its rationales and its explanation rest only on what this lesson teaches or on an earlier lesson's planned ideas, terms and actions in coursePlan; a learner who studied only those can answer it. Practice questions test application with feedback; quizzes diagnose common misconceptions; test questions require transfer to new scenarios. Make every wrong choice a specific misconception a learner could plausibly hold, never filler. Each wrong choice's entry in rationales names the misconception it reflects and why it fails, never referring to a choice by its letter or position; the right choice's entry is an empty string. The explanation says why the correct answer is right. Every rationale and the explanation say what is true about this question's own case, using the names and values its prompt gives; never give what a source, an excerpt, a passage or a tutorial says or does not say as the reason. An explanation names each choice by its words, never by its number, letter or position, because the choices are shuffled before learners see them.",
             "evidenceByTopic lists the lesson's topics in teaching order with the sourceIndexes whose excerpts cover each. Teach every topic; a topic with no covering sourceIndex has no evidence.",
@@ -714,11 +717,9 @@ fn cite_sentences(
                     )
                 };
                 findings.push(
-                    ReviewFinding::rule_about(
-                        Rule::SentenceCitation,
+                    ReviewFinding::new(
                         FindingKind::Quotation,
-                        site,
-                        &cited.sentence,
+                        Some(site),
                         format!(
                             "The source citation of the sentence \"{shown}\" could not be confirmed: {message}"
                         ),
@@ -754,11 +755,9 @@ fn citation(
         FindingSite::Lesson => "the lesson".to_owned(),
     };
     findings.push(
-        ReviewFinding::rule_about(
-            Rule::PartCitation,
+        ReviewFinding::new(
             FindingKind::Quotation,
-            site,
-            quote,
+            Some(site),
             format!("The source citation at {part} could not be confirmed: {error}"),
         )
         .with_summary(format!(

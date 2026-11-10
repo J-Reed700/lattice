@@ -29,7 +29,7 @@ fn a_sentence_copied_from_an_excerpt_with_no_quote_and_no_citation_is_a_finding(
     let found = findings(&lesson(SENTENCE), &wording());
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].kind, FindingKind::Teaching);
-    assert_eq!(found[0].place().site, FindingSite::Section(0));
+    assert_eq!(found[0].key().site, FindingSite::Section(0));
     assert!(found[0].note.contains(SENTENCE), "{}", found[0].note);
     assert!(
         found[0].note.contains("double quotation marks"),

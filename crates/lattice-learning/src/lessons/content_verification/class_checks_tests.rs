@@ -381,8 +381,7 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_quotations_the
             },
         ]
     );
-    // An explanation states what is so: there a figure statement is never left
-    // Internal, and what the model calls Internal is read as Reasoning.
+    // An explanation states what is so: there the figure is the rules' to send.
     let stated = class_checks::sort(
         &model,
         &StandardPolicy::new(),
@@ -396,8 +395,8 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_quotations_the
     assert_eq!(
         stated,
         [Classed {
-            class: Class::Reasoning,
-            by: ClassifiedBy::Model
+            class: Class::Sourced,
+            by: ClassifiedBy::Rule
         }]
     );
     Ok(())
@@ -405,8 +404,8 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_quotations_the
 
 /// An answer explanation reasons from its question's givens: a figure it
 /// shares with the question's prompt or options is the question's, and the
-/// model sorts a statement that states no other. A figure of its own is
-/// never left Internal: the model sorts it, and Internal is read as Reasoning.
+/// model sorts a statement that states no other. A figure of its own is the
+/// rules' to send to a source.
 #[tokio::test]
 async fn a_figure_an_answer_shares_with_its_question_is_a_given_not_a_specific() -> Result<()> {
     const GIVEN: &str =
@@ -451,7 +450,7 @@ async fn a_figure_an_answer_shares_with_its_question_is_a_given_not_a_specific()
             },
             Classed {
                 class: Class::Sourced,
-                by: ClassifiedBy::Model
+                by: ClassifiedBy::Rule
             },
         ]
     );

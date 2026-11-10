@@ -3,12 +3,10 @@
 //! waits in the lesson's review panel, with the reviewer's note and the part
 //! of the lesson it is about, until the user keeps the text as written.
 //!
-//! A finding is stored by its id (`FindingId`), never its wording. It is bound
-//! to the text of that part (`unit_sha256`): while the text is unchanged the
-//! machine does not repair it again and a "keep as written" stands; once the
-//! text changes, both lapse. A row from before finding ids is stored by its
-//! kind and place (`FindingKey`) and stands for every finding of that kind at
-//! that place until the text changes.
+//! A finding is identified by its kind and place (`FindingKey`), never its
+//! wording. It is bound to the text of that part (`unit_sha256`): while the
+//! text is unchanged the machine does not repair it again and a "keep as
+//! written" stands; once the text changes, both lapse.
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use lattice_core::shared::error::{AppError, Result};
@@ -21,9 +19,7 @@ use super::repository::blocks;
 use super::repository::teaching_findings::{self as table, FindingWrite, Settle, StoredFinding};
 use super::teaching_summary::{derive, passage_shown, sentence_of, Stored};
 use crate::persistence::{db, now};
-use crate::review_findings::{
-    site_sha256, unit, FindingId, FindingKey, FindingKind, FindingSite, Held, SetAside,
-};
+use crate::review_findings::{site_sha256, unit, FindingKey, FindingKind, FindingSite, SetAside};
 
 /// What raised a teaching finding.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
@@ -170,31 +166,28 @@ impl TeachingFindingsRepository {
 
     /// The lesson's findings whose part still has the text they were found
     /// in: the machine does not repair these again.
-    pub(crate) async fn held(&self, lesson_id: &str, candidate: &Value) -> Result<Held> {
+    pub(crate) async fn held(
+        &self,
+        lesson_id: &str,
+        candidate: &Value,
+    ) -> Result<BTreeSet<FindingKey>> {
         let rows = table::held_rows(&self.pool, lesson_id).await?;
-        let mut held = Held::default();
-        for row in &rows {
-            let Some(site) = site_of(&row.site, row.unit_index) else {
-                continue;
-            };
-            if site_sha256(candidate, site) != row.unit_sha256 {
-                continue;
-            }
-            if row.identity == "finding" {
-                held.ids.insert(FindingId::stored(row.finding_key.clone()));
-            } else if let Some(kind) = FindingKind::from_column(&row.kind) {
-                held.places.insert(FindingKey { kind, site });
-            }
-        }
-        Ok(held)
+        Ok(rows
+            .iter()
+            .filter_map(|row| {
+                let key = FindingKey {
+                    kind: FindingKind::from_column(&row.kind)?,
+                    site: site_of(&row.site, row.unit_index)?,
+                };
+                (site_sha256(candidate, key.site) == row.unit_sha256).then_some(key)
+            })
+            .collect())
     }
 
     /// Record findings for `candidate`. A finding kept as written stays kept
     /// while its part's text is unchanged; otherwise it waits again with the
     /// latest note. With `replace`, the findings not raised again were
-    /// fixed and go. A row stored by place whose part's text is unchanged
-    /// covers the findings of its kind there; once the text changes it gives
-    /// way to the findings' own rows.
+    /// fixed and go.
     pub(crate) async fn record(
         &self,
         lesson_id: &str,
@@ -205,26 +198,15 @@ impl TeachingFindingsRepository {
     ) -> Result<()> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let at = now();
-        let places = table::place_rows(&mut tx, lesson_id).await?;
-        let mut stay: Vec<String> = Vec::new();
-        let mut lapsed: Vec<String> = Vec::new();
-        for SetAside { finding, repairs } in findings {
+        let keys: Vec<String> = findings.iter().map(|f| f.finding.key().id()).collect();
+        if replace {
+            table::delete_not_raised(&mut tx, lesson_id, &serde_json::to_string(&keys)?).await?;
+        }
+        for (SetAside { finding, repairs }, key) in findings.iter().zip(&keys) {
             let shown = unit(candidate, finding);
-            let (site, index) = site_columns(finding.place().site);
-            let at_place = places.iter().find(|row| {
-                row.kind == finding.kind.as_str() && row.site == site && row.unit_index == index
-            });
-            if let Some(row) = at_place {
-                if row.unit_sha256 == shown.sha256 {
-                    stay.push(row.finding_key.clone());
-                    continue;
-                }
-                lapsed.push(row.finding_key.clone());
-            }
-            let id = finding.id();
-            stay.push(id.as_str().to_owned());
+            let (site, index) = site_columns(finding.key().site);
             let write = FindingWrite {
-                key: id.as_str(),
+                key: key.as_str(),
                 kind: finding.kind.as_str(),
                 site,
                 unit_index: index,
@@ -239,11 +221,6 @@ impl TeachingFindingsRepository {
                 found_at: at,
             };
             table::upsert(&mut tx, lesson_id, &write).await?;
-        }
-        if replace {
-            table::delete_not_raised(&mut tx, lesson_id, &serde_json::to_string(&stay)?).await?;
-        } else if !lapsed.is_empty() {
-            table::delete_keys(&mut tx, lesson_id, &serde_json::to_string(&lapsed)?).await?;
         }
         tx.commit().await.map_err(db)
     }

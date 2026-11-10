@@ -1,4 +1,3 @@
-use super::quotes::{lesson_quote_checks, reanchor_lesson_quotes, restore_lesson_quotes};
 use super::*;
 use crate::lessons::course_generation_tests::ScriptedModel;
 use std::sync::Mutex;

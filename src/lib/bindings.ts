@@ -7766,10 +7766,6 @@ export type LearningClaimPartKindDto =
  */
 "common" |
 /**
- * No passage states it and none needs to: one of the lesson's own figures.
- */
-"own" |
-/**
  * No passage gives a specific it states.
  */
 "specific_missing" |

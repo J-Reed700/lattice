@@ -698,20 +698,3 @@ fn the_writer_is_told_to_name_no_source_by_name_either() {
     assert!(instructions.contains("According to the guide"));
     assert!(!instructions.contains("an attribution to a source"));
 }
-
-#[test]
-fn the_writer_and_the_teaching_repair_are_told_what_the_lesson_s_own_figures_are() {
-    let schema = lesson_schema(2);
-    for (who, text) in [
-        ("writer", citation_instructions(true)),
-        (
-            "teaching repair",
-            crate::lessons::text_edits::instructions(&schema),
-        ),
-    ] {
-        assert!(
-            text.contains("The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."),
-            "{who}: {text}"
-        );
-    }
-}

@@ -448,6 +448,7 @@ mod schema_tests;
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::review_findings::FindingKind;
 
     /// A reply listing `decisions` in order, each under its issue ID.
     fn reply(decisions: &[(&str, Value)]) -> Value {
@@ -465,7 +466,7 @@ mod tests {
     }
 
     fn proposal(text: &str) -> Vec<ReviewFinding> {
-        vec![ReviewFinding::reviewer(None, text)]
+        vec![ReviewFinding::new(FindingKind::Teaching, None, text)]
     }
 
     /// The check of a first answer, which a broken decision fails.
@@ -736,7 +737,8 @@ mod tests {
             vec![(issues[0].note.clone(), Some(FindingSite::Lesson))]
         );
         // A finding the section review already placed keeps its section.
-        let section = vec![ReviewFinding::reviewer(
+        let section = vec![ReviewFinding::new(
+            FindingKind::Teaching,
             Some(FindingSite::Section(4)),
             "Section 5 (candidate blocks-4): a proposed factual correction.",
         )];
@@ -928,7 +930,8 @@ mod tests {
     #[test]
     fn a_finding_that_already_has_a_site_keeps_it_whatever_the_decision_names() -> Result<()> {
         let evidence = parts_evidence();
-        let section = vec![ReviewFinding::reviewer(
+        let section = vec![ReviewFinding::new(
+            FindingKind::Teaching,
             Some(FindingSite::Section(4)),
             "Section 5 (candidate blocks-4): a proposed factual correction.",
         )];

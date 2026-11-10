@@ -48,7 +48,7 @@ fn a_prose_sentence_holding_code_is_still_a_repeat() {
     ]);
     let found = teaching(&candidate);
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].place().site, FindingSite::Section(1));
+    assert_eq!(found[0].key().site, FindingSite::Section(1));
     assert_eq!(found[0].passage.as_deref(), Some(SHARED));
 }
 
@@ -58,7 +58,7 @@ fn a_sentence_equal_to_its_citations_quote_copies_the_source() {
     block["citations"] = cites(QUOTE);
     let found = teaching(&lesson(vec![block]));
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].place().site, FindingSite::Section(0));
+    assert_eq!(found[0].key().site, FindingSite::Section(0));
     assert!(
         found[0].note.contains("double quotation marks"),
         "{}",
@@ -73,7 +73,7 @@ fn a_sentence_holding_the_quote_after_other_words_copies_the_source() {
     block["citations"] = cites(QUOTE);
     let found = teaching(&lesson(vec![block]));
     assert_eq!(found.len(), 1, "{found:?}");
-    assert_eq!(found[0].place().site, FindingSite::Section(0));
+    assert_eq!(found[0].key().site, FindingSite::Section(0));
 }
 
 #[test]
@@ -133,7 +133,7 @@ fn a_question_explanation_or_choice_reason_copying_the_quote_is_a_finding_at_the
         candidate["questions"] = json!([question(explanation, reasons)]);
         let found = teaching(&candidate);
         assert_eq!(found.len(), 1, "{found:?}");
-        assert_eq!(found[0].place().site, FindingSite::Question(0));
+        assert_eq!(found[0].key().site, FindingSite::Question(0));
     }
 }
 
