@@ -16,6 +16,7 @@ pub mod reference_collection;
 pub(crate) mod repeats;
 pub mod review_evidence;
 pub mod review_findings;
+pub(crate) mod shape;
 pub(crate) mod structured_call;
 pub mod teaching;
 pub mod teaching_review;

@@ -1091,7 +1091,8 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
             has_pending_repair(
                 &model,
                 "{}",
-                &json!({}),
+                &crate::lessons::shape::FixedSchema(json!({})),
+                0,
                 &saved,
                 &ReferenceCollection::lexical(&sources)?
             )

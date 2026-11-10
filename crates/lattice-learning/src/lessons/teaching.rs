@@ -1,12 +1,11 @@
 //! Instructional review and task-specific teaching contracts.
 use super::writer_excerpts::{self, WriterExcerpts};
 use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
-use crate::generation::Counts;
+use crate::lessons::shape::LessonShape;
 use crate::review_findings::{
     plain_part, FindingKey, FindingKind, FindingSite, ReviewFinding, SetAside,
 };
 use crate::teaching_review::LengthRule;
-use jsonschema::error::ValidationErrorKind;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -115,12 +114,10 @@ pub const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts
 
 /// Deterministic findings: the schema, each section's body and rubric,
 /// and, under a lesson's schema, the lesson's own rules. Nothing is
-/// dropped; a caller that sends six at a time decides what waits. `counts`
-/// says whether a lesson is held to the quantities its writer was asked for.
+/// dropped; a caller that sends six at a time decides what waits.
 pub(crate) fn structural_findings(
-    schema: &Value,
+    schema: ReviewSchema<'_>,
     candidate: &str,
-    counts: Counts,
 ) -> Result<Vec<ReviewFinding>> {
     let value: Value = match serde_json::from_str(candidate) {
         Ok(value) => value,
@@ -133,18 +130,10 @@ pub(crate) fn structural_findings(
             .with_summary("The lesson could not be read as a whole.")])
         }
     };
-    let validator = jsonschema::JSONSchema::compile(schema)
+    let validator = jsonschema::JSONSchema::compile(schema.value())
         .map_err(|_| AppError::InternalError("Invalid teaching schema".into()))?;
     let mut issues = Vec::new();
     if let Err(errors) = validator.validate(&value) {
-        let errors = errors.filter(|error| {
-            let item_count = matches!(
-                error.kind,
-                ValidationErrorKind::MinItems { .. } | ValidationErrorKind::MaxItems { .. }
-            );
-            let path = error.instance_path.to_string();
-            !(counts == Counts::Spent && item_count && (path == "/blocks" || path == "/questions"))
-        });
         issues.extend(errors.map(|error| {
             ReviewFinding::new(
                 FindingKind::Structure,
@@ -182,21 +171,33 @@ pub(crate) fn structural_findings(
             }
         }
     }
-    if is_lesson_schema(schema) {
-        issues.extend(crate::generation::lesson_rules_holding(&value, counts));
+    if let ReviewSchema::Lesson(shape) = schema {
+        issues.extend(shape.policy.rules(&value, shape.phase()));
     }
     Ok(issues)
 }
 
-/// A lesson's schema: sections and questions of the lesson's kinds. Only
-/// under it do the lesson's own rules apply.
-fn is_lesson_schema(schema: &Value) -> bool {
-    schema
-        .pointer("/properties/blocks/items/properties/kind")
-        .is_some()
-        && schema
-            .pointer("/properties/questions/items/properties/kind")
-            .is_some()
+/// What material is reviewed against. Only a lesson's schema, with the policy
+/// that built it, brings the lesson's own rules, in the schema's phase.
+#[derive(Clone, Copy)]
+pub(crate) enum ReviewSchema<'a> {
+    Lesson(LessonShape<'a>),
+    Other(&'a Value),
+}
+
+impl<'a> From<LessonShape<'a>> for ReviewSchema<'a> {
+    fn from(shape: LessonShape<'a>) -> Self {
+        Self::Lesson(shape)
+    }
+}
+
+impl<'a> ReviewSchema<'a> {
+    pub(crate) fn value(&self) -> &'a Value {
+        match self {
+            Self::Lesson(shape) => shape.value(),
+            Self::Other(schema) => *schema,
+        }
+    }
 }
 
 /// Findings for a source quotation that matches no saved reference, placed
@@ -258,6 +259,7 @@ fn review_step(is_lesson: bool, lesson_words: &str, other_words: &str) {
 /// A lesson (`review_lesson`) instead repairs while each pass fixes something
 /// and publishes with what is left waiting for the user (`passes`).
 /// This is an AI review, not a claim of independent expert verification.
+/// For material that is not a lesson (`review_and_repair_lesson` is the lesson's).
 pub async fn review_and_repair(
     llm: &dyn LLMPort,
     system: &str,
@@ -266,7 +268,49 @@ pub async fn review_and_repair(
     candidate: String,
     output_tokens: usize,
 ) -> Result<String> {
-    let context = json!({"policy":"lesson-teaching","model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema});
+    review_and_repair_under(
+        llm,
+        system,
+        prompt,
+        ReviewSchema::Other(schema),
+        candidate,
+        output_tokens,
+    )
+    .await
+}
+
+/// `review_and_repair` for a lesson written to the writer's schema for
+/// `source_count` sources: the lesson's rules apply to it.
+pub async fn review_and_repair_lesson(
+    llm: &dyn LLMPort,
+    system: &str,
+    prompt: &str,
+    source_count: usize,
+    candidate: String,
+    output_tokens: usize,
+) -> Result<String> {
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Draft, source_count);
+    review_and_repair_under(
+        llm,
+        system,
+        prompt,
+        ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
+        candidate,
+        output_tokens,
+    )
+    .await
+}
+
+async fn review_and_repair_under(
+    llm: &dyn LLMPort,
+    system: &str,
+    prompt: &str,
+    schema: ReviewSchema<'_>,
+    candidate: String,
+    output_tokens: usize,
+) -> Result<String> {
+    let context = json!({"policy":"lesson-teaching","model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema.value()});
     let receipt = crate::content_verification::digest(&context.to_string());
     if crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
         crate::lesson_progress::phase(
@@ -275,16 +319,22 @@ pub async fn review_and_repair(
         );
         return Ok(candidate);
     }
-    let candidate = review_and_repair_with_progress(
+    let candidate = review_material(
         llm,
         system,
         prompt,
         schema,
         candidate,
         output_tokens,
-        None,
+        ReviewContext {
+            outline: None,
+            protected: &[],
+            lesson_references: None,
+            held: BTreeSet::new(),
+        },
     )
-    .await?;
+    .await
+    .map(|reviewed| reviewed.candidate)?;
     crate::lesson_drafts::record_teaching(&candidate, receipt).await?;
     Ok(candidate)
 }
@@ -312,16 +362,18 @@ struct Reviewed {
     set_aside: Vec<SetAside>,
 }
 
-pub(crate) async fn review_lesson(
+pub(crate) async fn review_lesson<'s>(
     llm: &dyn LLMPort,
     system: &str,
     prompt: &str,
-    schema: &Value,
+    review_schema: impl Into<ReviewSchema<'s>>,
     candidate: String,
     output_tokens: usize,
     references: &crate::reference_collection::ReferenceCollection<'_>,
     protected: &[crate::lessons::content_verification::Protected],
 ) -> Result<String> {
+    let review_schema = review_schema.into();
+    let schema = review_schema.value();
     let mut sources: Vec<_> = references
         .sources
         .iter()
@@ -375,7 +427,7 @@ pub(crate) async fn review_lesson(
         llm,
         system,
         prompt,
-        schema,
+        review_schema,
         candidate,
         output_tokens,
         ReviewContext {
@@ -405,7 +457,7 @@ pub async fn review_and_repair_with_progress(
         llm,
         system,
         prompt,
-        schema,
+        ReviewSchema::Other(schema),
         candidate,
         output_tokens,
         ReviewContext {
@@ -432,11 +484,12 @@ async fn review_material(
     llm: &dyn LLMPort,
     system: &str,
     prompt: &str,
-    schema: &Value,
+    review_schema: ReviewSchema<'_>,
     mut candidate: String,
     output_tokens: usize,
     context: ReviewContext<'_>,
 ) -> Result<Reviewed> {
+    let schema = review_schema.value();
     let outline = context.outline;
     // Only a lesson's review publishes with findings left for the user;
     // outlines, assessments and placement tasks fail closed as before.
@@ -543,12 +596,7 @@ async fn review_material(
             json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
         }).collect();
         let review_prompt = json!({"task":"Review instructional quality", "authoringContext":authoring_context, "originalIssuesToRecheck":original_issues, "sourceQuoteChecks":quote_checks, "correctnessPriority":correctness_priority, "candidate":candidate_value,"referenceVersions":reference_versions});
-        let counts = if context.protected.is_empty() {
-            Counts::Asked
-        } else {
-            Counts::Spent
-        };
-        let structure = structural_findings(schema, &candidate, counts)?;
+        let structure = structural_findings(review_schema, &candidate)?;
         // A rewrite of the whole lesson changes the sentences its checked
         // claims stand on, so once there are any, what its shape asks waits
         // for the user (claim classes design §3.10).

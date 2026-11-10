@@ -1,6 +1,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing, clippy::panic)]
 use super::*;
 use crate::lessons::course_generation_tests::ScriptedModel;
+use crate::lessons::shape;
 use lattice_core::domain::learning::claim_review::{
     Actor, Check, CheckResult, Checker, ClaimEvent, ClaimLocation, ClaimState, EvidenceFingerprint,
     UnitKind,
@@ -139,6 +140,21 @@ fn report(units: usize) -> LessonVerificationReport {
         unexecuted_languages: Vec::new(),
         replaced_findings: Vec::new(),
     }
+}
+
+/// A schema of the test's own under the kept promise, for tests of what the
+/// schema is not about.
+fn loose() -> LessonShape<'static> {
+    static POLICY: std::sync::LazyLock<shape::FixedSchema> =
+        std::sync::LazyLock::new(|| shape::FixedSchema(json!({"type":"object"})));
+    static SCHEMA: std::sync::LazyLock<shape::LessonSchema> =
+        std::sync::LazyLock::new(|| POLICY.schema(shape::Phase::Kept, 0));
+    LessonShape::new(&SCHEMA, &*POLICY)
+}
+
+/// Why the lesson without the units that go could not be published.
+fn thin(lesson: &Value, going: &Going) -> Option<String> {
+    shape::policy().floor(lesson, going.units())
 }
 
 fn gap(before: Option<&str>, after: Option<&str>) -> Gap {
@@ -461,7 +477,7 @@ async fn a_lesson_that_loses_its_first_explanation_stops_with_the_reason_that_na
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson().to_string(),
         &mut ledger,
@@ -517,7 +533,7 @@ async fn a_lesson_every_statement_of_which_ended_removed_stops_with_the_reason_t
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson().to_string(),
         &mut ledger,
@@ -546,7 +562,7 @@ async fn a_lesson_with_a_statement_left_is_settled_as_before_whatever_was_remove
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson().to_string(),
         &mut ledger,
@@ -574,7 +590,7 @@ async fn a_section_left_with_too_little_goes_and_the_checks_let_go_of_its_statem
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson.to_string(),
         &mut ledger,
@@ -602,7 +618,7 @@ async fn a_lesson_with_nothing_cut_is_settled_without_a_call() -> Result<()> {
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson().to_string(),
         &mut ledger,
@@ -764,7 +780,7 @@ async fn each_section_that_took_a_cut_gets_one_flow_repair_and_never_a_second() 
     for _ in 0..2 {
         let settled = settle(
             &llm,
-            ("{}", &json!({"type":"object"}), 4_000),
+            ("{}", loose(), 4_000),
             &references,
             &lesson.to_string(),
             &mut ledger,
@@ -804,7 +820,7 @@ async fn a_flow_repair_that_cannot_stand_leaves_the_section_as_cut() -> Result<(
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson.to_string(),
         &mut ledger,
@@ -986,7 +1002,7 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
 
     let settled = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &lesson.to_string(),
         &mut ledger,
@@ -999,7 +1015,7 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
 
     let settled_again = settle(
         &llm,
-        ("{}", &json!({"type":"object"}), 4_000),
+        ("{}", loose(), 4_000),
         &references,
         &edited_str,
         &mut ledger,
@@ -1010,4 +1026,111 @@ async fn settle_does_not_rerun_teaching_review_on_cut_lesson_when_surviving_sect
     assert_eq!(llm.outputs.lock().unwrap().len(), 0);
 
     Ok(())
+}
+
+fn shaped_block(kind: &str, title: &str) -> Value {
+    let body = if kind == "check" {
+        format!(
+            "Case for {title}: what happens to the lid?\n\n{}\n\nAnswer for {title}: it bulges.",
+            crate::generation::CHECK_REVEAL
+        )
+    } else {
+        format!("Body of {title}.")
+    };
+    let rubric = if kind.ends_with("practice") {
+        json!([
+            {"title":"One","description":"Observable.","dimension":"recall"},
+            {"title":"Two","description":"Observable.","dimension":"application"}
+        ])
+    } else {
+        json!([])
+    };
+    json!({"kind":kind,"title":title,"body":body,"rubric":rubric,"sourceIndex":null,"quote":"","citations":[]})
+}
+
+fn shaped_question(kind: &str, prompt: &str) -> Value {
+    json!({"kind":kind,"prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":0,
+        "rationales":["","Two reverses the order.","Three mistakes the cause for the effect.","Four states it backwards."],
+        "explanation":"Because.","sourceIndex":null,"quote":"","citations":[]})
+}
+
+/// A lesson in the writer's full shape: eleven sections, the checks at units 3
+/// and 6, the worked examples at units 1 and 5; six questions.
+fn shaped_lesson() -> Value {
+    json!({"blocks":[
+        shaped_block("explanation","First idea"), shaped_block("worked_example","First example"),
+        shaped_block("contrast","Not to be confused with"), shaped_block("check","Your turn"),
+        shaped_block("explanation","Second idea"), shaped_block("worked_example","Second example"),
+        shaped_block("check","Your turn again"), shaped_block("guided_practice","Guided"),
+        shaped_block("independent_practice","On your own"), shaped_block("reflection","From memory"),
+        shaped_block("recap","Recap"),
+    ],"questions":[
+        shaped_question("practice","P1?"), shaped_question("practice","P2?"),
+        shaped_question("quiz","Q1?"), shaped_question("quiz","Q2?"),
+        shaped_question("test","T1?"), shaped_question("test","T2?"),
+    ]})
+}
+
+#[tokio::test]
+async fn a_check_whose_only_worked_example_goes_goes_with_it() -> Result<()> {
+    let llm = model(&[]);
+    let mut ledger = ClaimLedger::open(&llm, "{}").await?;
+    let mut lesson = shaped_lesson();
+    lesson["blocks"][1]["body"] = json!("Alpha.");
+    ledger
+        .cuts
+        .take(1, "First example".into(), (Vec::new(), false));
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources)?;
+
+    let settled = settle(
+        &llm,
+        ("{}", loose(), 4_000),
+        &references,
+        &lesson.to_string(),
+        &mut ledger,
+    )
+    .await?;
+
+    // The check after the example would test what the lesson has not shown.
+    assert_eq!(
+        ledger.cuts.going.keys().copied().collect::<Vec<_>>(),
+        [1, 3]
+    );
+    assert!(matches!(settled, Settled::Again(_)));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_review_after_cuts_with_no_claim_left_asks_for_no_count_the_cuts_spent() {
+    let mut lesson = shaped_lesson();
+    lesson["questions"].as_array_mut().unwrap().pop();
+    let without = Going::new([2]).out_of(&lesson);
+    let questions = without["questions"].as_array().unwrap().len();
+    let answers = json!({"answers":(0..questions).map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."})).collect::<Vec<_>>()});
+    let checks = (0..without["blocks"].as_array().unwrap().len())
+        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Reviewed; no teaching defect was found.","hasDefect":false}))
+        .collect();
+    let review = json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
+    let llm = model(&[answers, review]);
+    let sources = sources();
+    let references = ReferenceCollection::lexical(&sources).unwrap();
+
+    let _ = crate::lessons::content_verification::settle_after_cuts(
+        &llm,
+        "{}",
+        shape::policy(),
+        lesson.to_string(),
+        &references,
+        &[(2, "Not to be confused with")],
+    )
+    .await;
+
+    let prompts = llm.prompts.lock().unwrap();
+    assert!(
+        !prompts
+            .iter()
+            .any(|prompt| prompt.contains("Give the complete corrected material")),
+        "the whole lesson was asked for again to restore the writer's counts"
+    );
 }

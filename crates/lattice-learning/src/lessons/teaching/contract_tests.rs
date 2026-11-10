@@ -199,7 +199,7 @@ async fn run_under(
         model,
         LESSON_REPAIR_SYSTEM,
         context,
-        schema,
+        ReviewSchema::Other(schema),
         candidate.to_string(),
         4000,
         ReviewContext {

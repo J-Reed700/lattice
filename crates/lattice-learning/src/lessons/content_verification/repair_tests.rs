@@ -347,7 +347,13 @@ async fn the_last_attempt_takes_the_sentence_out_and_leaves_the_rest_to_the_mode
     });
 
     assert_eq!(
-        cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?,
+        cut::last_attempts(
+            &StandardPolicy::new(),
+            crate::lessons::shape::policy(),
+            &mut context,
+            &mut ledger
+        )
+        .await?,
         1
     );
 
@@ -404,7 +410,13 @@ async fn a_last_attempt_that_cannot_take_the_sentence_out_ends_the_claim_removed
     });
 
     assert_eq!(
-        cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?,
+        cut::last_attempts(
+            &StandardPolicy::new(),
+            crate::lessons::shape::policy(),
+            &mut context,
+            &mut ledger
+        )
+        .await?,
         1
     );
 
@@ -464,7 +476,13 @@ async fn the_other_claims_of_a_section_that_goes_are_no_work_for_the_model() -> 
         ],
     });
 
-    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert!(
         section_failures(&context, 0).is_empty(),
@@ -503,7 +521,13 @@ async fn a_failed_example_on_its_last_attempt_is_taken_out_with_its_fences() -> 
     });
 
     assert_eq!(
-        cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?,
+        cut::last_attempts(
+            &StandardPolicy::new(),
+            crate::lessons::shape::policy(),
+            &mut context,
+            &mut ledger
+        )
+        .await?,
         1
     );
 
@@ -552,7 +576,13 @@ async fn a_claim_on_a_sentence_cut_for_another_is_no_work_for_the_model() -> Res
     });
 
     assert_eq!(
-        cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?,
+        cut::last_attempts(
+            &StandardPolicy::new(),
+            crate::lessons::shape::policy(),
+            &mut context,
+            &mut ledger
+        )
+        .await?,
         1
     );
 
@@ -608,9 +638,14 @@ async fn last_attempts_that_leave_the_lesson_no_claim_stop_it_and_end_every_clai
         ],
     });
 
-    let error = cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger)
-        .await
-        .unwrap_err();
+    let error = cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await
+    .unwrap_err();
 
     assert_eq!(
         error.to_string(),
@@ -705,7 +740,8 @@ async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncite
         json!([{"sentence":sentence,"sourceIndex":0,"quote":quote}])
     );
     let uncited = |lesson: &Value| {
-        crate::generation::lesson_rules(lesson)
+        crate::lessons::shape::policy()
+            .rules(lesson, crate::lessons::shape::Phase::Draft)
             .into_iter()
             .filter(|finding| finding.kind == crate::review_findings::FindingKind::Quotation)
             .count()
@@ -1033,7 +1069,13 @@ async fn the_last_attempt_on_a_sentence_that_also_states_a_passed_claim_leaves_w
         ],
     });
 
-    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     let after = context["candidate"]["blocks"][0]["body"].as_str().unwrap();
     assert!(
@@ -1095,7 +1137,13 @@ async fn the_last_attempt_takes_out_the_sentence_that_states_the_claim_not_the_r
         ],
     });
 
-    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     assert_eq!(
         context["candidate"]["blocks"][0]["body"],
@@ -1213,7 +1261,13 @@ async fn a_passage_wide_quote_is_cut_to_the_sentence_that_states_the_claim_and_e
     )
     .await?;
 
-    let handled = cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    let handled = cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // The first sentence of the passage stays; the stating one goes where the
     // lesson writes it again too.
@@ -1254,7 +1308,13 @@ async fn a_cut_whose_sentence_another_live_statement_stands_on_takes_everything_
     };
     ledger.append(&mate, sorted).await?;
 
-    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // Once its narrowing was not applied, the quote is cut whole.
     assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
@@ -1275,7 +1335,13 @@ async fn a_claim_that_draws_on_several_sentences_of_its_quote_is_cut_with_everyt
     let (mut ledger, mut context) =
         passage_wide_with(&llm, &body, (passage, statement), true).await?;
 
-    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // Once its narrowing was not applied, the whole quote goes.
     assert_eq!(context["candidate"]["blocks"][0]["body"], "Closing line.");
@@ -1347,7 +1413,13 @@ async fn a_statement_no_single_sentence_states_is_narrowed_and_sent_not_cut() ->
     passed(&mut ledger, &llm, "first", (first, first), &body).await?;
     passed(&mut ledger, &llm, "last", (last, last), &body).await?;
 
-    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // Nothing is cut: the statement is sent, told to take its claim out and
     // leave the others as they are.
@@ -1392,7 +1464,13 @@ async fn a_statement_narrowed_is_still_sent_and_nothing_is_decided_for_it_yet() 
     });
     let recorded = ledger.entry(&cut).unwrap().events().len();
 
-    let handled = cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    let handled = cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // Nothing is cut; the model is asked to take the claim out of the sentence.
     assert_eq!(handled, 0);
@@ -1453,7 +1531,13 @@ async fn a_statement_whose_narrowing_was_not_applied_keeps_its_sentence_and_is_p
         ],
     });
 
-    cut::last_attempts(&StandardPolicy::new(), &mut context, &mut ledger).await?;
+    cut::last_attempts(
+        &StandardPolicy::new(),
+        crate::lessons::shape::policy(),
+        &mut context,
+        &mut ledger,
+    )
+    .await?;
 
     // The sentence stays with its neighbour's words; the statement is published
     // not verified.
