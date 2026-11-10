@@ -3349,7 +3349,8 @@ async fn a_closed_review_s_recheck_takes_a_resolved_verdict_not_an_issue() -> Re
 }
 
 #[tokio::test]
-async fn material_that_fails_closed_and_comes_back_unchanged_fails_without_another_review() {
+async fn material_that_fails_closed_whose_repair_changes_nothing_twice_fails_without_another_review(
+) {
     let model = ByRequest::new(
         |_| false,
         |_, _| vec![json!({"path":"/wrong","before":true,"after":true})],
@@ -3365,9 +3366,9 @@ async fn material_that_fails_closed_and_comes_back_unchanged_fails_without_anoth
     )
     .await;
     let error = result.unwrap_err().to_string();
-    assert!(error.contains("still found an issue"), "{error}");
+    assert!(error.contains("changed nothing"), "{error}");
     assert_eq!(model.reviews().len(), 1);
-    assert_eq!(model.repairs().len(), 1);
+    assert_eq!(model.repairs().len(), 2);
 }
 
 #[tokio::test]
