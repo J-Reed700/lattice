@@ -3,7 +3,7 @@
 //! stands only in double quotation marks, whether or not the lesson cites it.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::copied_wording::{excerpt_findings, excerpt_wording};
-use super::text_edits::apply_with;
+use super::text_edits::apply_in;
 use crate::generation::Counts;
 use crate::review_findings::{FindingKind, FindingSite};
 use serde_json::{json, Value};
@@ -78,7 +78,7 @@ fn ordinary_phrasing_on_the_same_topic_is_no_finding() {
 fn the_review_and_the_draft_check_find_the_copy_once() {
     let schema = crate::generation::lesson_schema(2);
     let teaching = |lesson: &Value| {
-        crate::teaching::structural_findings_with(
+        crate::teaching::structural_findings(
             &schema,
             &lesson.to_string(),
             Counts::Spent,
@@ -98,7 +98,7 @@ fn the_review_and_the_draft_check_find_the_copy_once() {
 
 fn edit(after: &str) -> lattice_core::shared::error::Result<Value> {
     let patch = json!({"edits":[{"path":"/blocks/0/body","before":"Opening.","after":after}]});
-    apply_with(
+    apply_in(
         &lesson("Opening."),
         &patch.to_string(),
         &Value::Null,

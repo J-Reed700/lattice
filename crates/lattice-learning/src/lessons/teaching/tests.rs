@@ -103,6 +103,7 @@ fn structure(blocks: Value) -> Vec<ReviewFinding> {
         &json!({"type":"object"}),
         &candidate.to_string(),
         crate::generation::Counts::Asked,
+        &[],
     )
     .unwrap()
 }
@@ -184,6 +185,7 @@ fn material_that_cannot_be_read_is_named_in_plain_words() {
         &json!({"type":"object"}),
         "not json",
         crate::generation::Counts::Asked,
+        &[],
     )
     .unwrap();
     assert_eq!(found.len(), 1);

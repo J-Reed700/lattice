@@ -1532,6 +1532,7 @@ fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall()
             &schema,
             &lesson.to_string(),
             crate::generation::Counts::Asked,
+            &[],
         )
         .unwrap()
         .iter()

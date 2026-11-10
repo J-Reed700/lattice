@@ -547,6 +547,12 @@ pub async fn prepare_lesson_with_references<'a>(
         &lesson_schema(sources.len()),
         &raw,
         crate::generation::Counts::Spent,
+        &crate::lessons::copied_wording::excerpt_wording(
+            references
+                .sources
+                .iter()
+                .map(|source| source.excerpt.as_str()),
+        ),
     )?;
     let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;

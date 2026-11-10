@@ -67,6 +67,7 @@ fn a_citation_sentence_may_equal_a_sentence_the_lesson_has() {
         &original,
         &json!({"edits":[body, cite]}).to_string(),
         &original,
+        &[],
     )
     .unwrap();
     assert_eq!(
@@ -89,6 +90,7 @@ fn a_citation_quote_may_equal_a_sentence_the_lesson_has() {
         &original,
         &json!({"edits":[body, cite]}).to_string(),
         &original,
+        &[],
     )
     .unwrap();
     assert_eq!(

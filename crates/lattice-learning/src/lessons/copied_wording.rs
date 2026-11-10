@@ -6,6 +6,7 @@ use super::same_text::fold;
 use super::text_edits::citable_texts;
 use crate::generation::{long_enough_quote, teaching_sentences};
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use lattice_core::shared::text::sentences;
 use serde_json::Value;
 
 /// The quotes among `quotes` that are long enough to be a quotation; a copy
@@ -111,9 +112,40 @@ pub(crate) fn gained(before: &str, after: &str, quotes: &[String]) -> Option<Str
 pub(crate) const SAY_IT_YOURSELF: &str =
     "Say it in the lesson's own words, or put the source's words in double quotation marks.";
 
+/// The source wording a lesson may not copy outside quotation marks, from
+/// the saved excerpts: each excerpt whole, and each of its sentences long
+/// enough to be quoted.
+pub(crate) fn excerpt_wording<'a>(excerpts: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    let mut wording = Vec::new();
+    for excerpt in excerpts {
+        wording.push(excerpt.to_owned());
+        wording.extend(
+            sentences(excerpt)
+                .into_iter()
+                .filter_map(|(from, to)| excerpt.get(from..to))
+                .filter(|sentence| long_enough_quote(sentence))
+                .map(str::to_owned),
+        );
+    }
+    wording
+}
+
 /// A finding for every sentence of `candidate`'s blocks and questions that
-/// copies the source's wording.
+/// copies a quote its part cites.
 pub(crate) fn findings(candidate: &Value) -> Vec<ReviewFinding> {
+    report(candidate, &[])
+}
+
+/// A finding for every sentence that copies `wording` and no quote its part
+/// cites, which [`findings`] reports already.
+pub(crate) fn excerpt_findings(candidate: &Value, wording: &[String]) -> Vec<ReviewFinding> {
+    if wording.is_empty() {
+        return Vec::new();
+    }
+    report(candidate, wording)
+}
+
+fn report(candidate: &Value, wording: &[String]) -> Vec<ReviewFinding> {
     let mut found = Vec::new();
     for (list, question) in [("blocks", false), ("questions", true)] {
         let parts = candidate.get(list).and_then(Value::as_array);
@@ -130,7 +162,16 @@ pub(crate) fn findings(candidate: &Value) -> Vec<ReviewFinding> {
                 )
             };
             for text in citable_texts(part, question) {
-                for sentence in copies(text, &quotes) {
+                let cited = copies(text, &quotes);
+                let copied = if wording.is_empty() {
+                    cited
+                } else {
+                    copies(text, wording)
+                        .into_iter()
+                        .filter(|sentence| !cited.contains(sentence))
+                        .collect()
+                };
+                for sentence in copied {
                     found.push(
                         ReviewFinding::new(
                             FindingKind::Teaching,
@@ -145,16 +186,4 @@ pub(crate) fn findings(candidate: &Value) -> Vec<ReviewFinding> {
         }
     }
     found
-}
-
-/// The source wording a lesson may not copy outside quotation marks, from
-/// the saved excerpts.
-pub(crate) fn excerpt_wording<'a>(_excerpts: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    Vec::new()
-}
-
-/// A finding for every sentence of `candidate` that copies `wording` and no
-/// quote its part cites.
-pub(crate) fn excerpt_findings(_candidate: &Value, _wording: &[String]) -> Vec<ReviewFinding> {
-    Vec::new()
 }

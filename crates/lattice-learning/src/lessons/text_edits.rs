@@ -304,7 +304,11 @@ fn part_of(path: &str) -> String {
 
 /// The quotes of the block or question at `part`, and those of the citations
 /// the patch appends to it: the source wording its sentences may not copy.
-fn quotes_for(candidate: &Value, part: &str, cites: &[Cite]) -> Vec<String> {
+fn quotes_for(
+    candidate: &Value,
+    part: &str,
+    (cites, wording): (&[Cite], &[String]),
+) -> Vec<String> {
     let Some(held) = Some(part)
         .filter(|part| !part.is_empty())
         .and_then(|part| candidate.pointer(part))
@@ -312,6 +316,7 @@ fn quotes_for(candidate: &Value, part: &str, cites: &[Cite]) -> Vec<String> {
         return Vec::new();
     };
     let mut quotes = copied_wording::quotes_of(held);
+    quotes.extend_from_slice(wording);
     quotes.extend(copied_wording::kept(
         cites
             .iter()
@@ -452,23 +457,20 @@ fn part_values(
 
 /// Applies a patch part by part: the edits of a block or question that has
 /// any problem are left out and the other parts' edits apply.
+#[cfg(test)]
 pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
-    apply_in(candidate, patch, &Value::Null)
-}
-
-/// [`apply_in`] where the lesson's excerpts, `wording`, are source wording too.
-pub(super) fn apply_with(
-    candidate: &Value,
-    patch: &str,
-    lesson: &Value,
-    _wording: &[String],
-) -> Result<Value> {
-    apply_in(candidate, patch, lesson)
+    apply_in(candidate, patch, &Value::Null, &[])
 }
 
 /// [`apply`] where `lesson`, the lesson `candidate` is a part of, also holds
-/// the sentences an edit may not add again.
-pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result<Value> {
+/// the sentences an edit may not add again, and `wording`, the lesson's saved
+/// excerpts, is source wording an edit may not add a sentence that copies.
+pub(super) fn apply_in(
+    candidate: &Value,
+    patch: &str,
+    lesson: &Value,
+    wording: &[String],
+) -> Result<Value> {
     let fail = |reason: String| {
         AppError::InvalidInput(format!(
             "The repair's edits could not be applied: {reason} The draft was preserved."
@@ -494,7 +496,7 @@ pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result
     let mut problems = Vec::new();
     let mut applied = false;
     for (part, edits) in parts {
-        let quotes = quotes_for(candidate, &part, &patch.citations);
+        let quotes = quotes_for(candidate, &part, (&patch.citations, wording));
         match part_values(candidate, &allowed, edits, (&held, &quotes)) {
             Ok(values) => {
                 applied |= !values.is_empty();
