@@ -523,3 +523,34 @@ fn a_report_that_continues_an_id_that_is_not_open_is_raised_as_new() {
     assert_eq!(new[0].id().as_str(), "reviewer/2");
     assert_eq!(standing.open().len(), 1);
 }
+
+#[test]
+fn a_site_less_report_that_continues_a_finding_changes_what_it_says_and_not_where_it_is() {
+    let candidate = lesson(&[FIRST, SECOND]);
+    let (mut standing, fresh) = reviewed(
+        &candidate,
+        vec![report(Some(FindingSite::Section(0)), "Wrong.", Some(FIRST))],
+    );
+    let changed = lesson(&["The first part states one plain fact. More.", SECOND]);
+    let issue = Reported {
+        continues: Some(fresh[0].id()),
+        ..report(None, "Wrong, in an issue.", None)
+    };
+    let (_, new) = answer(
+        &mut standing,
+        &changed,
+        vec![verdict(&fresh[0], false, "It was fixed.")],
+        vec![issue],
+    );
+    assert!(new.is_empty());
+    assert_eq!(standing.open().len(), 1);
+    let open = &standing.open()[0];
+    assert_eq!(open.id(), fresh[0].id());
+    assert_eq!(open.site, Some(FindingSite::Section(0)));
+    assert_eq!(open.note, "Wrong, in an issue.");
+    assert_eq!(open.summary, "About: Wrong, in an issue.");
+    assert_eq!(
+        open.passage.as_deref(),
+        Some("The first part states one plain fact. More.")
+    );
+}

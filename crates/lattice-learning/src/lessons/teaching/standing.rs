@@ -293,17 +293,30 @@ impl Standing {
                 );
             }
             if let Some(report) = report {
-                let number = match self.open.get(position).map(|finding| &finding.origin) {
-                    Some(Origin::Reviewer { number }) => *number,
-                    _ => continue,
-                };
-                let replaced = report.clone().finding(number);
-                self.about.insert(
-                    id.clone(),
-                    sentence_digests(&sentences_of(candidate, &replaced)),
-                );
-                if let Some(finding) = self.open.get_mut(position) {
-                    *finding = replaced;
+                if report.site.is_some() {
+                    let number = match self.open.get(position).map(|finding| &finding.origin) {
+                        Some(Origin::Reviewer { number }) => *number,
+                        _ => continue,
+                    };
+                    let replaced = report.clone().finding(number);
+                    self.about.insert(
+                        id.clone(),
+                        sentence_digests(&sentences_of(candidate, &replaced)),
+                    );
+                    if let Some(finding) = self.open.get_mut(position) {
+                        *finding = replaced;
+                    }
+                } else {
+                    let now = self
+                        .open
+                        .get(position)
+                        .and_then(|finding| self.passage_now(candidate, finding))
+                        .map(|(_, text)| text);
+                    if let Some(finding) = self.open.get_mut(position) {
+                        finding.note = report.note.clone();
+                        finding.summary = report.summary.clone();
+                        finding.passage = now;
+                    }
                 }
                 continue;
             }
