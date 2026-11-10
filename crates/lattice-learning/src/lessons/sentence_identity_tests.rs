@@ -1,6 +1,7 @@
 //! What counts as a sentence the lesson says twice, and as source wording the
 //! lesson copies.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+use super::copied_wording::{self, Wording};
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use serde_json::{json, Value};
 
@@ -15,9 +16,11 @@ fn lesson(blocks: Vec<Value>) -> Value {
 }
 
 fn teaching(candidate: &Value) -> Vec<ReviewFinding> {
-    crate::lessons::shape::policy()
-        .rules(candidate, crate::lessons::shape::Phase::Draft)
+    copied_wording::findings(candidate, &Wording::default())
         .into_iter()
+        .chain(
+            crate::lessons::shape::policy().rules(candidate, crate::lessons::shape::Phase::Draft),
+        )
         .filter(|finding| finding.kind == FindingKind::Teaching)
         .collect()
 }
