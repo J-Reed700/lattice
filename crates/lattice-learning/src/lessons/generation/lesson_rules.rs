@@ -6,7 +6,7 @@
 //! repairs cannot settle waits for the user. It never stops the lesson from
 //! publishing.
 use super::validate_text;
-use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
+use crate::assessment_engine::{key_fault, longest_allowed_key, repeated_option, KeyFault};
 use crate::content_verification::{names_a_source, quoted_wording, CITED_KINDS};
 use crate::lessons::repeats;
 use crate::lessons::same_text::{fold, overlap};
@@ -422,16 +422,23 @@ pub(crate) fn lesson_rules(
             .get("correctIndex")
             .and_then(Value::as_u64)
             .and_then(|right| usize::try_from(right).ok());
-        if options.len() != 4
-            || options.iter().any(|option| !validate_text(option))
-            || !distinct_options(&choice_texts)
-        {
-            findings.push(structure(
-                Rule::Choices,
-                site,
-                format!("{label} needs four distinct answer choices."),
-                format!("{label} needs four distinct answer choices."),
-            ));
+        let choices_fault = if options.len() != 4 {
+            Some(format!(
+                "{label} has {} answer choices; it needs four.",
+                options.len()
+            ))
+        } else if options.iter().any(|option| !validate_text(option)) {
+            Some(format!("{label} has a blank answer choice."))
+        } else {
+            repeated_option(&choice_texts).map(|choice| {
+                format!(
+                    "{label} repeats the answer choice \"{}\"; each choice must differ.",
+                    choice.trim()
+                )
+            })
+        };
+        if let Some(note) = choices_fault {
+            findings.push(structure(Rule::Choices, site, note.clone(), note));
         } else if let Some(fault) = right.and_then(|right| key_fault(prompt, &choice_texts, right))
         {
             findings.push(match fault {
