@@ -468,6 +468,42 @@ async fn outlines_and_assessments_still_fail_closed_after_one_repair() {
     .is_err());
 }
 
+/// A schema that has a `modules` property does not make material an outline:
+/// what is reviewed comes from the entry point, so this material is repaired
+/// by span edits, as other material is, and not rewritten whole.
+#[tokio::test]
+async fn the_subject_comes_from_the_entry_point_not_the_schema() {
+    let scripted = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        retitle("Corrected example"),
+        review(None),
+    ]);
+    let schema = json!({"type":"object","properties":{"modules":{"type":"array"}}});
+    let _ = review_and_repair(
+        &scripted,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &schema,
+        lesson(EXCERPT).to_string(),
+        4000,
+    )
+    .await;
+    let prompts = scripted.prompts.lock().unwrap();
+    let repair = prompts
+        .iter()
+        .find(|prompt| prompt.contains("issuesToFix"))
+        .map(String::as_str);
+    assert!(repair.is_some(), "no repair request was sent");
+    assert!(
+        repair
+            .unwrap()
+            .contains("Correct only the established teaching defects"),
+        "the repair was asked for as a rewrite of the whole material"
+    );
+}
+
 #[tokio::test]
 async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_repair_leaves_it(
 ) -> Result<()> {
