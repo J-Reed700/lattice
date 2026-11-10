@@ -8,6 +8,7 @@ use crate::recall::{
     study_dto::CreateInterviewStudyDeckRequestDto, study_repository::StudyRepository,
     study_service::create_interview_deck,
 };
+use lattice_core::shared::persistence::Database;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 fn save_request(program_id: &str, revision: i64) -> SaveLearningPracticeProfileRequestDto {
@@ -253,7 +254,7 @@ async fn a_new_interview_date_becomes_the_target_of_the_courses_interview_decks(
     let study = StudyRepository::new(pool.clone());
     let deck = create_interview_deck(
         &study,
-        &pool,
+        &Database::from(pool.clone()),
         CreateInterviewStudyDeckRequestDto {
             program_id: program_id.clone(),
             activity_id,
@@ -287,7 +288,7 @@ async fn a_conflicting_save_leaves_the_decks_target_alone() -> Result<()> {
     let study = StudyRepository::new(pool.clone());
     let deck = create_interview_deck(
         &study,
-        &pool,
+        &Database::from(pool.clone()),
         CreateInterviewStudyDeckRequestDto {
             program_id: program_id.clone(),
             activity_id,
