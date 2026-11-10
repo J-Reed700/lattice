@@ -5,7 +5,7 @@
 //! `readings` ask these judges along its graphs. Every judgment is saved as a
 //! receipt, so a resumed pass asks nothing twice.
 use super::claim_ledger::{sentences, Place, Rewrites};
-use super::classify::{classify, ruling, Case, ToSort};
+use super::classify::{classify, offer, Case, ToSort};
 use super::*;
 use crate::lessons::call_plan::{Planned, PlannedAt, SAMPLES};
 use lattice_core::application::services::claim_verification::{
@@ -55,16 +55,17 @@ pub(super) async fn sort(
                 by: ClassifiedBy::Writer,
             }),
             None => {
-                let ruling = ruling(&claim.statement, field, case);
-                match ruling.decided() {
+                let allowed = offer(&claim.statement, field, case);
+                match allowed.rule_class() {
                     Some(class) => Some(Classed {
                         class,
                         by: ClassifiedBy::Rule,
                     }),
                     None => saved_class(llm, &claim.statement)
                         .await?
+                        .filter(|class| allowed.holds(*class))
                         .map(|class| Classed {
-                            class: ruling.settle(class),
+                            class,
                             by: ClassifiedBy::Model,
                         }),
                 }

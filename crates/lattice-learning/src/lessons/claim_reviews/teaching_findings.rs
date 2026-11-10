@@ -6,13 +6,9 @@
 //! A finding is stored by its id (`FindingId`), never its wording. It is bound
 //! to the text of that part (`unit_sha256`): while the text is unchanged the
 //! machine does not repair it again and a "keep as written" stands; once the
-//! text changes, both lapse. A reviewer's finding is stored with its number,
-//! note, summary and passage: while its part is unchanged the machine does not
-//! repair it again, a later job's first review asks the reviewer about it by
-//! its number, and the number is not given to another finding. A row from
-//! before finding ids is stored by its kind and place (`FindingKey`) and
-//! stands for every finding of that kind at that place until the text
-//! changes.
+//! text changes, both lapse. A row from before finding ids is stored by its
+//! kind and place (`FindingKey`) and stands for every finding of that kind at
+//! that place until the text changes.
 use std::collections::{BTreeSet, HashMap, HashSet};
 
 use lattice_core::shared::error::{AppError, Result};
@@ -26,8 +22,7 @@ use super::repository::teaching_findings::{self as table, FindingWrite, Settle, 
 use super::teaching_summary::{derive, passage_shown, sentence_of, Stored};
 use crate::persistence::{db, now};
 use crate::review_findings::{
-    site_sha256, unit, FindingId, FindingKey, FindingKind, FindingSite, Held, ReviewFinding,
-    SetAside,
+    site_sha256, unit, FindingId, FindingKey, FindingKind, FindingSite, Held, SetAside,
 };
 
 /// What raised a teaching finding.
@@ -179,13 +174,6 @@ impl TeachingFindingsRepository {
         let rows = table::held_rows(&self.pool, lesson_id).await?;
         let mut held = Held::default();
         for row in &rows {
-            let id = FindingId::stored(row.finding_key.clone());
-            let number = (row.identity == "finding")
-                .then(|| id.reviewer_number())
-                .flatten();
-            if let Some(number) = number {
-                held.next_number = held.next_number.max(number.saturating_add(1));
-            }
             let Some(site) = site_of(&row.site, row.unit_index) else {
                 continue;
             };
@@ -193,20 +181,11 @@ impl TeachingFindingsRepository {
                 continue;
             }
             if row.identity == "finding" {
-                if let Some(number) = number {
-                    let finding = ReviewFinding::reviewer(number, Some(site), row.note.clone())
-                        .with_summary(row.summary.clone().unwrap_or_default())
-                        .with_passage(row.passage.as_deref().unwrap_or_default())
-                        .with_sentence(row.sentence.as_deref().unwrap_or_default());
-                    held.reviewer.push((finding, row.unit_sha256.clone()));
-                }
-                held.ids.insert(id);
+                held.ids.insert(FindingId::stored(row.finding_key.clone()));
             } else if let Some(kind) = FindingKind::from_column(&row.kind) {
                 held.places.insert(FindingKey { kind, site });
             }
         }
-        held.reviewer
-            .sort_by_key(|(finding, _)| finding.id().reviewer_number());
         Ok(held)
     }
 

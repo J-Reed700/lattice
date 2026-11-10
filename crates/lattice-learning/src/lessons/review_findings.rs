@@ -182,9 +182,8 @@ pub enum Origin {
     Plan { check: PlanCheck, subject: String },
     /// An independent solution disagreed with the question's key.
     AnswerKey,
-    /// The teaching reviewer; `number` is the finding's own among the
-    /// reviewer's findings on one lesson.
-    Reviewer { number: u32 },
+    /// The teaching reviewer.
+    Reviewer,
 }
 
 /// A finding's identity across passes and reviews.
@@ -200,11 +199,6 @@ impl FindingId {
     /// A stored id read back.
     pub(crate) fn stored(id: String) -> Self {
         Self(id)
-    }
-
-    /// The number of a reviewer's finding's id.
-    pub(crate) fn reviewer_number(&self) -> Option<u32> {
-        self.0.strip_prefix("reviewer/")?.parse().ok()
     }
 }
 
@@ -332,30 +326,16 @@ impl ReviewFinding {
         )
     }
 
-    /// The reviewer's finding `number`. `site` is none until the evidence
-    /// check places it.
-    pub fn reviewer(number: u32, site: Option<FindingSite>, note: impl Into<String>) -> Self {
-        Self::raised(
-            Origin::Reviewer { number },
-            FindingKind::Teaching,
-            site,
-            note,
-        )
+    /// A reviewer's finding. `site` is none until the evidence check places it.
+    pub fn reviewer(site: Option<FindingSite>, note: impl Into<String>) -> Self {
+        Self::raised(Origin::Reviewer, FindingKind::Teaching, site, note)
     }
 
-    /// A finding of `kind` at `site`, raised as that kind is; a reviewer's is
-    /// numbered by its site, so one site is one finding.
+    /// A finding of `kind` at `site`, raised as that kind is.
     #[cfg(test)]
     pub(crate) fn of_kind(kind: FindingKind, site: FindingSite, note: impl Into<String>) -> Self {
         match kind {
-            FindingKind::Teaching => {
-                let number = match site {
-                    FindingSite::Lesson => 0,
-                    FindingSite::Section(index) => 2 * index + 1,
-                    FindingSite::Question(index) => 2 * index + 2,
-                };
-                Self::reviewer(u32::try_from(number).unwrap_or_default(), Some(site), note)
-            }
+            FindingKind::Teaching => Self::reviewer(Some(site), note),
             FindingKind::Quotation => Self::rule(Rule::Quotation, kind, site, note),
             FindingKind::Structure => Self::rule(Rule::Schema, kind, site, note),
             FindingKind::AnswerKey => Self::raised(Origin::AnswerKey, kind, Some(site), note),
@@ -409,7 +389,7 @@ impl ReviewFinding {
                 format!("plan/{}/{site}/{subject}", serde_name(check))
             }
             Origin::AnswerKey => format!("key/{site}"),
-            Origin::Reviewer { number } => format!("reviewer/{number}"),
+            Origin::Reviewer => format!("reviewer/{site}"),
         })
     }
 
@@ -463,12 +443,6 @@ pub(crate) struct Held {
     pub ids: BTreeSet<FindingId>,
     /// Rows stored before finding ids: every finding of the kind at the place.
     pub places: BTreeSet<FindingKey>,
-    /// The reviewer's findings among those, each with the digest of its
-    /// part's text.
-    pub reviewer: Vec<(ReviewFinding, String)>,
-    /// One more than the highest number of any reviewer finding stored for
-    /// the lesson, changed text or not; none is zero.
-    pub next_number: u32,
 }
 
 /// A finding the repairs stopped on: it waits for the user.
@@ -544,7 +518,7 @@ pub(crate) fn sentences_of(candidate: &Value, finding: &ReviewFinding) -> Vec<St
 }
 
 /// The sentences of every string of `value` that are not blank once folded.
-pub(crate) fn sentences_in(value: &Value) -> Vec<String> {
+fn sentences_in(value: &Value) -> Vec<String> {
     let mut leaves = Vec::new();
     string_leaves(value, &mut leaves);
     leaves
@@ -698,7 +672,7 @@ mod tests {
 
     #[test]
     fn a_finding_is_also_about_a_second_part_only_when_it_is_another_one() {
-        let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(1)), "x");
+        let finding = ReviewFinding::reviewer(Some(FindingSite::Section(1)), "x");
         assert_eq!(finding.also, None);
         assert_eq!(
             finding.clone().with_also(FindingSite::Section(1)).also,
@@ -712,7 +686,7 @@ mod tests {
 
     #[test]
     fn a_finding_stored_without_a_second_part_is_read_back() {
-        let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(1)), "x");
+        let finding = ReviewFinding::reviewer(Some(FindingSite::Section(1)), "x");
         let mut stored = serde_json::to_value(&finding).unwrap();
         stored.as_object_mut().unwrap().remove("also");
         let read: ReviewFinding = serde_json::from_value(stored).unwrap();
@@ -722,26 +696,21 @@ mod tests {
     #[test]
     fn a_finding_has_its_own_id_and_keeps_it_whatever_its_note_says() {
         let part = FindingSite::Section(2);
-        let first = ReviewFinding::reviewer(1, Some(part), "The example returns the string \"4\".");
+        let first = ReviewFinding::reviewer(Some(part), "The example returns the string \"4\".");
         let reworded = ReviewFinding::reviewer(
-            1,
             Some(part),
             "Section 3 shows a string result where the code returns a number.",
         );
         assert_eq!(first.id(), reworded.id());
-        assert_eq!(first.id().as_str(), "reviewer/1");
-        assert_eq!(first.id().reviewer_number(), Some(1));
-        assert_ne!(first.id(), ReviewFinding::reviewer(2, Some(part), "x").id());
+        assert_eq!(first.id().as_str(), "reviewer/section-2");
         assert_eq!(first.place().id(), "teaching:section-2");
         assert_ne!(
             ReviewFinding::of_kind(FindingKind::Teaching, part, "x").id(),
             ReviewFinding::of_kind(FindingKind::Quotation, part, "x").id()
         );
         assert_eq!(
-            ReviewFinding::reviewer(7, None, "lesson-wide")
-                .id()
-                .as_str(),
-            "reviewer/7"
+            ReviewFinding::reviewer(None, "lesson-wide").id().as_str(),
+            "reviewer/lesson"
         );
         assert_eq!(
             ReviewFinding::answer_key(2, "x").id().as_str(),
@@ -796,16 +765,16 @@ mod tests {
             {"title":"Sums","body":"Add two numbers. Then check the second tool carefully. Done."},
             {"title":"Other","body":"Then check the second tool carefully."}
         ],"questions":[]});
-        let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x")
+        let finding = ReviewFinding::reviewer(Some(FindingSite::Section(0)), "x")
             .with_passage("the second tool");
         assert_eq!(
             sentences_of(&candidate, &finding),
             ["Then check the second tool carefully."]
         );
-        let absent = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x")
+        let absent = ReviewFinding::reviewer(Some(FindingSite::Section(0)), "x")
             .with_passage("words that are not there");
         assert!(sentences_of(&candidate, &absent).is_empty());
-        let wide = ReviewFinding::reviewer(1, None, "x").with_passage("the second tool");
+        let wide = ReviewFinding::reviewer(None, "x").with_passage("the second tool");
         assert_eq!(sentences_of(&candidate, &wide).len(), 1);
     }
 
@@ -847,11 +816,11 @@ mod tests {
 
     #[test]
     fn a_summary_is_set_apart_from_the_note_written_for_the_model() {
-        let finding = ReviewFinding::reviewer(1, None, "Fix blocks[2].")
-            .with_summary("The example is wrong.");
+        let finding =
+            ReviewFinding::reviewer(None, "Fix blocks[2].").with_summary("The example is wrong.");
         assert_eq!(finding.note, "Fix blocks[2].");
         assert_eq!(finding.summary, "The example is wrong.");
-        assert_eq!(ReviewFinding::reviewer(1, None, "x").summary, "");
+        assert_eq!(ReviewFinding::reviewer(None, "x").summary, "");
     }
 
     #[test]
@@ -866,7 +835,7 @@ mod tests {
     #[test]
     fn a_unit_s_hash_changes_with_its_text_only() {
         let candidate = json!({"blocks":[{"title":"Sums","body":"Add."},{"title":"Other","body":"B"}],"questions":[{"prompt":"What is 2+2?"}]});
-        let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x");
+        let finding = ReviewFinding::reviewer(Some(FindingSite::Section(0)), "x");
         let before = unit(&candidate, &finding);
         assert_eq!(before.title, "Section 1: Sums");
         let mut other_changed = candidate.clone();

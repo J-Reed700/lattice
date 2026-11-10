@@ -3,7 +3,7 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
 use crate::lesson_drafts;
-use crate::lessons::course_generation_tests::{review_reply, verdict, ScriptedModel, Windowed};
+use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{FindingKey, Held};
 use lattice_core::application::ports::llm_port::{
@@ -24,21 +24,9 @@ fn context() -> String {
 }
 
 fn review(defect: Option<&str>) -> String {
-    judged(defect, &[])
-}
-
-/// A review of the lesson's one section, with `verdicts` on the findings it
-/// was asked about.
-fn judged(defect: Option<&str>, verdicts: &[Value]) -> String {
     let finding =
         defect.unwrap_or("The complete explanation was reviewed and no teaching defect was found.");
-    review_reply(
-        &[],
-        vec![
-            json!({"index":0,"passageId":"section-0-passage-0","finding":finding,"hasDefect":defect.is_some()}),
-        ],
-        verdicts,
-    )
+    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-0","finding":finding,"hasDefect":defect.is_some()})])}).to_string()
 }
 
 fn actionable() -> String {
@@ -47,10 +35,6 @@ fn actionable() -> String {
 
 fn retitle(after: &str) -> String {
     json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":after}]}).to_string()
-}
-
-fn retitle_from(before: &str, after: &str) -> String {
-    json!({"edits":[{"path":"/blocks/0/title","before":before,"after":after}]}).to_string()
 }
 
 fn references() -> Vec<crate::dto::LearningSourceDto> {
@@ -107,28 +91,31 @@ fn model(outputs: Vec<String>) -> ScriptedModel {
 }
 
 #[tokio::test]
-async fn a_defect_no_repair_fixes_waits_after_its_second_repair() -> Result<()> {
+async fn a_defect_one_repair_did_not_fix_publishes_and_waits_for_the_user() -> Result<()> {
     // The failure that ended a two-hour job: the recheck still found the
-    // defect, reworded. Repairs are counted so that job ends.
-    let model = model(defect_no_repair_fixes());
+    // defect, reworded. Nothing was fixed, so the review stops, and the
+    // lesson publishes with the finding set aside.
+    let model = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        retitle("Corrected example"),
+        review(Some(
+            "Section 1 still prints the result as the string \"4\" instead of the number.",
+        )),
+        actionable(),
+    ]);
     let reviewed = run(&model, lesson(EXCERPT)).await?;
     let candidate: Value = serde_json::from_str(&reviewed.candidate)?;
-    assert_eq!(candidate["blocks"][0]["title"], "Corrected twice");
+    assert_eq!(candidate["blocks"][0]["title"], "Corrected example");
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
     assert_eq!(waiting.finding.place().id(), "teaching:section-0");
-    assert_eq!(waiting.finding.id().as_str(), "reviewer/1");
-    assert_eq!(waiting.repairs, 2);
-    assert!(waiting.finding.note.contains("after two repairs"));
+    assert_eq!(waiting.repairs, 1);
+    assert!(waiting.finding.note.contains("instead of the number"));
     assert!(waiting.finding.passage.is_some());
-    assert_eq!(model.prompts.lock().unwrap().len(), 6);
-    let asked = repair_requests(&model);
-    assert_eq!(asked.len(), 2);
-    assert!(asked[1]["issuesToFix"][0]["lastAttempt"]
-        .as_str()
-        .is_some_and(
-            |attempt| attempt.starts_with("The last repair's edits for this finding were applied")
-        ));
+    assert_eq!(model.prompts.lock().unwrap().len(), 5);
     Ok(())
 }
 
@@ -150,7 +137,7 @@ async fn a_pass_that_fixes_the_defect_publishes_with_nothing_waiting() -> Result
         )),
         actionable(),
         retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
+        review(None),
     ]);
     let reviewed = run(&model, lesson(EXCERPT)).await?;
     assert!(reviewed.set_aside.is_empty());
@@ -165,7 +152,7 @@ async fn a_lessons_own_repair_stays_in_the_review_phase() -> Result<()> {
         )),
         actionable(),
         retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
+        review(None),
     ]);
     let (reviewed, phases, stages) =
         crate::lesson_progress::phased(run(&model, lesson(EXCERPT))).await;
@@ -181,11 +168,7 @@ async fn a_lessons_own_repair_stays_in_the_review_phase() -> Result<()> {
 async fn a_quiz_batch_reviewed_inside_a_lesson_job_changes_no_phase() -> Result<()> {
     let issue = json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."]}).to_string();
     let patch = json!({"edits":[{"path":"/wrong","before":true,"after":false}]}).to_string();
-    let model = model(vec![
-        issue,
-        patch,
-        json!({"issues":[],"openFindings":[verdict("reviewer/1", "resolved")]}).to_string(),
-    ]);
+    let model = model(vec![issue, patch, json!({"issues":[]}).to_string()]);
     let (reviewed, phases, stages) = crate::lesson_progress::phased(async {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Evidence,
@@ -230,8 +213,6 @@ async fn a_revised_quotation_that_still_matches_no_reference_waits_instead_of_fa
         review(None),
         retitle("Example, revised"),
         review(None),
-        retitle_from("Example, revised", "Example, revised again"),
-        review(None),
     ]);
     let reviewed = run(
         &model,
@@ -252,7 +233,8 @@ async fn a_revised_quotation_that_still_matches_no_reference_waits_instead_of_fa
 }
 
 #[tokio::test]
-async fn a_finding_whose_repairs_cannot_be_used_waits_after_its_second() -> Result<()> {
+async fn a_repair_whose_answer_cannot_be_used_leaves_the_lesson_unchanged_and_waiting() -> Result<()>
+{
     let unusable =
         json!({"edits":[{"path":"/blocks/0/title","before":"Missing text","after":"X"}]})
             .to_string();
@@ -261,8 +243,6 @@ async fn a_finding_whose_repairs_cannot_be_used_waits_after_its_second() -> Resu
             "The example shows \"result\": \"4\" although the code returns the number 4.",
         )),
         actionable(),
-        unusable.clone(),
-        unusable.clone(),
         unusable.clone(),
         unusable,
     ]);
@@ -277,15 +257,6 @@ async fn a_finding_whose_repairs_cannot_be_used_waits_after_its_second() -> Resu
         reviewed.set_aside[0].finding.place().id(),
         "teaching:section-0"
     );
-    assert_eq!(reviewed.set_aside[0].repairs, 2);
-    let asked = repair_requests(&model);
-    assert!(asked
-        .last()
-        .is_some_and(|request| request["issuesToFix"][0]["lastAttempt"]
-            .as_str()
-            .is_some_and(
-                |attempt| attempt.starts_with("The last repair's answer could not be used")
-            )));
     Ok(())
 }
 
@@ -385,7 +356,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         )),
         actionable(),
         retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
+        review(None),
     ]);
     let window = Windowed(&scripted, 13_000);
     let sources = references();
@@ -465,10 +436,9 @@ async fn outlines_and_assessments_still_fail_closed_after_one_repair() {
             "The example shows \"result\": \"4\" although the code returns the number 4.",
         )),
         retitle("Corrected example"),
-        judged(
-            Some("Section 1 still prints the result as the string \"4\" instead of the number."),
-            &[verdict("reviewer/1", "present")],
-        ),
+        review(Some(
+            "Section 1 still prints the result as the string \"4\" instead of the number.",
+        )),
     ]);
     assert!(review_and_repair(
         &model,
@@ -492,7 +462,7 @@ async fn the_subject_comes_from_the_entry_point_not_the_schema() {
             "The example shows \"result\": \"4\" although the code returns the number 4.",
         )),
         retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
+        review(None),
     ]);
     let schema = json!({"type":"object","properties":{"modules":{"type":"array"}}});
     let _ = review_and_repair(
@@ -594,12 +564,7 @@ async fn a_teaching_finding_on_the_sentence_of_a_machine_claim_with_attempts_lef
     );
 
     // The machine's claim with attempts left: repaired, and the repair kept.
-    let repaired = model(vec![
-        finding(),
-        actionable(),
-        fix,
-        judged(None, &[verdict("reviewer/1", "resolved")]),
-    ]);
+    let repaired = model(vec![finding(), actionable(), fix, review(None)]);
     let outcome = review_protecting(&repaired, &candidate, &[sentence(true)]).await?;
     assert!(outcome.set_aside.is_empty(), "{:?}", outcome.set_aside);
     let after: Value = serde_json::from_str(&outcome.candidate)?;
@@ -625,7 +590,7 @@ fn a_finding_with_no_passage_about_a_released_sentence_changes_that_sentence_and
         released: true,
     }];
     let finding =
-        ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "the explanation is wordy");
+        ReviewFinding::reviewer(Some(FindingSite::Section(0)), "the explanation is wordy");
 
     assert!(
         protected::on_protected(&previous, std::slice::from_ref(&finding), &protected).is_empty()
@@ -672,12 +637,7 @@ async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragra
     );
 
     // Repaired now: the claims protect their own sentences only.
-    let repaired = model(vec![
-        defect(),
-        actionable(),
-        fix,
-        judged(None, &[verdict("reviewer/1", "resolved")]),
-    ]);
+    let repaired = model(vec![defect(), actionable(), fix, review(None)]);
     let outcome = review_protecting(&repaired, &candidate, &[sentence(V1), sentence(V2)]).await?;
     assert!(outcome.set_aside.is_empty(), "{:?}", outcome.set_aside);
     let after: Value = serde_json::from_str(&outcome.candidate)?;
@@ -792,7 +752,7 @@ async fn a_short_review_issue_is_checked_and_repaired_not_dropped() -> Result<()
         brief.to_string(),
         actionable(),
         retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
+        review(None),
     ]);
     let reviewed = run(&model, lesson(EXCERPT)).await?;
     assert!(reviewed.set_aside.is_empty(), "{:?}", reviewed.set_aside);
@@ -819,7 +779,7 @@ async fn a_long_review_issue_is_repaired_where_a_review_fails_closed() -> Result
     let model = model(vec![
         first.to_string(),
         retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
+        review(None),
     ]);
     let repaired = review_and_repair(
         &model,
@@ -843,22 +803,16 @@ async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Resul
         .collect();
     let model = model(vec![
         json!({"issues": issues}).to_string(),
-        json!({"modules":[{"title":"Revised"}]}).to_string(),
-        json!({"issues":[],"openFindings":[verdict("reviewer/1", "resolved"), verdict("reviewer/2", "resolved"), verdict("reviewer/3", "resolved"), verdict("reviewer/4", "resolved"), verdict("reviewer/5", "resolved"), verdict("reviewer/6", "resolved"), verdict("reviewer/7", "resolved")]}).to_string(),
+        json!({"modules":[]}).to_string(),
+        json!({"issues":[]}).to_string(),
     ]);
-    let progress = crate::outline_progress::OutlineProgress::default();
-    let sources = references();
-    review_and_repair_with_progress(
+    review_and_repair(
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
         &json!({"type":"object","properties":{"modules":{"type":"array"}}}),
         json!({"modules":[]}).to_string(),
         4000,
-        OutlineReviewContext {
-            progress: &progress,
-            sources: &sources,
-        },
     )
     .await?;
     let prompts = model.prompts.lock().unwrap();
@@ -890,30 +844,27 @@ async fn the_lesson_review_asks_for_every_defect_with_no_count_cap() -> Result<(
     Ok(())
 }
 
-/// The scripted review, with each teaching repair request answered by
-/// `answer` from the ids of the findings it carries; the requests are kept.
-struct Answering {
+/// The scripted review, every teaching repair request answered with edits
+/// that match nothing in the draft, and the requests kept.
+struct UnusableRepairs {
     review: ScriptedModel,
-    answer: fn(&Value) -> Result<String>,
-    requests: Mutex<Vec<Value>>,
+    repairs: Mutex<Vec<String>>,
 }
 
 #[async_trait::async_trait]
-impl LLMPort for Answering {
+impl LLMPort for UnusableRepairs {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         if asks_for_repair(request) {
-            let sent = crate::content_verification::tests::fixture_prompts(request)
-                .iter()
-                .filter_map(|prompt| {
-                    serde_json::from_str::<Value>(prompt.rsplit("\n\n").next()?).ok()
-                })
-                .find(|sent| sent.get("issuesToFix").is_some())
-                .unwrap();
-            self.requests.lock().unwrap().push(sent.clone());
-            let reply = (self.answer)(&sent)?;
+            self.repairs
+                .lock()
+                .unwrap()
+                .extend(crate::content_verification::tests::fixture_prompts(request));
+            let unusable =
+                json!({"edits":[{"path":"/blocks/0/title","before":"Missing text","after":"X"}]})
+                    .to_string();
             return Ok(crate::content_verification::tests::fixture_completion(
                 request,
-                vec![reply],
+                vec![unusable],
             ));
         }
         self.review.complete(request).await
@@ -932,263 +883,80 @@ impl LLMPort for Answering {
     }
 }
 
-impl Answering {
-    fn new(review: Vec<String>, answer: fn(&Value) -> Result<String>) -> Self {
-        Self {
-            review: model(review),
-            answer,
-            requests: Mutex::new(Vec::new()),
-        }
-    }
-
-    /// The ids each repair was sent, in order; a request asked again for a
-    /// refused answer counts once.
-    fn asked(&self) -> Vec<Vec<String>> {
-        let mut asked: Vec<Vec<String>> = Vec::new();
-        for request in self.requests.lock().unwrap().iter() {
-            let ids = ids_of(request);
-            if asked.last() != Some(&ids) {
-                asked.push(ids);
-            }
-        }
-        asked
-    }
-}
-
-fn ids_of(request: &Value) -> Vec<String> {
-    request["issuesToFix"]
-        .as_array()
-        .unwrap()
+#[tokio::test]
+async fn an_unusable_repair_stops_what_it_was_sent_and_the_carried_findings_still_get_theirs(
+) -> Result<()> {
+    let marks = ["A", "B", "C", "D", "E", "F", "G"];
+    assert!(marks.len() > passes::PER_REPAIR);
+    let blocks: Vec<Value> = marks
         .iter()
-        .map(|entry| entry["id"].as_str().unwrap().to_owned())
-        .collect()
-}
-
-/// The id of the finding raised for part `index` when every part is
-/// reported in order.
-fn section_id(index: usize) -> String {
-    format!("reviewer/{}", index + 1)
-}
-
-fn unusable_edits() -> String {
-    json!({"edits":[{"path":"/blocks/0/title","before":"Missing text","after":"X"}]}).to_string()
-}
-
-/// A better idea for each part a repair request names, as its finding's edit.
-fn better_ideas(sent: &Value) -> String {
-    edits_answer(
-        sent["issuesToFix"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .filter_map(|entry| {
-                let index = entry["part"]
-                    .as_str()?
-                    .strip_prefix("/blocks/")?
-                    .parse()
-                    .ok()?;
-                Some(better_idea(index, entry["id"].as_str()?))
-            })
-            .collect(),
-    )
-}
-
-#[tokio::test]
-async fn an_unusable_answer_for_several_findings_is_asked_again_in_halves() -> Result<()> {
-    let model = Answering::new(
-        vec![
-            parts_review(4, &[0, 1, 2, 3]),
-            parts_evidence(&[0, 1, 2, 3]),
-            parts_recheck(
-                &[0, 1, 2, 3],
-                &["reviewer/1", "reviewer/2", "reviewer/3", "reviewer/4"],
-            ),
-        ],
-        |sent| {
-            if ids_of(sent).len() > 2 {
-                Ok(unusable_edits())
-            } else {
-                Ok(better_ideas(sent))
-            }
-        },
-    );
-    let reviewed = run(&model, parts_lesson(4)).await?;
-    assert!(reviewed.set_aside.is_empty(), "{:?}", reviewed.set_aside);
-    let after: Value = serde_json::from_str(&reviewed.candidate)?;
-    for index in 0..4 {
-        assert!(
-            after["blocks"][index]["body"]
-                .as_str()
-                .unwrap()
-                .contains("better idea"),
-            "part {index}"
-        );
-    }
-    let all: Vec<String> = (0..4).map(section_id).collect();
+        .map(|mark| {
+            json!({"kind":"explanation","title":format!("Part {mark}"),"body":format!("Unusable repair section {mark} says the function returns the number 4."),"rubric":[],"sourceIndex":0,"quote":EXCERPT})
+        })
+        .collect();
+    let candidate = json!({"blocks":blocks,"questions":[]});
+    let defects = || {
+        let checks = marks.iter().enumerate().map(|(index, mark)| {
+            json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":format!("Defect marker {mark}."),"hasDefect":true})
+        });
+        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks.collect())})
+            .to_string()
+    };
+    let decisions = || {
+        let each = (0..marks.len()).map(|index| {
+            json!({"issueId":format!("issue-{index}"),"verdict":"actionable","basis":"internal_conflict","evidenceIds":[format!("blocks-{index}")],"partId":format!("blocks-{index}"),"requirementId":null,"reason":"The section contradicts itself."})
+        });
+        json!({"decisions":each.collect::<Vec<_>>()}).to_string()
+    };
+    let model = UnusableRepairs {
+        review: model(vec![defects(), decisions(), defects(), decisions()]),
+        repairs: Mutex::new(Vec::new()),
+    };
+    let reviewed = run(&model, candidate.clone()).await?;
     assert_eq!(
-        model.asked(),
-        [
-            all,
-            vec![section_id(0), section_id(1)],
-            vec![section_id(2), section_id(3)]
-        ]
+        serde_json::from_str::<Value>(&reviewed.candidate)?,
+        candidate
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn one_finding_s_unusable_answer_does_not_stop_the_others() -> Result<()> {
-    let model = Answering::new(
-        vec![
-            parts_review(2, &[0, 1]),
-            parts_evidence(&[0, 1]),
-            parts_recheck(&[1], &["reviewer/2"]),
-        ],
-        |sent| {
-            if ids_of(sent).contains(&section_id(0)) {
-                Ok(unusable_edits())
-            } else {
-                Ok(better_ideas(sent))
-            }
-        },
-    );
-    let reviewed = run(&model, parts_lesson(2)).await?;
-    assert_eq!(reviewed.set_aside.len(), 1);
-    assert_eq!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/1");
-    assert_eq!(reviewed.set_aside[0].repairs, 2);
-    let after: Value = serde_json::from_str(&reviewed.candidate)?;
-    assert!(after["blocks"][1]["body"]
-        .as_str()
-        .unwrap()
-        .contains("better idea"));
-    let last = model.requests.lock().unwrap().last().cloned().unwrap();
-    assert_eq!(ids_of(&last), [section_id(0)]);
-    assert!(last["issuesToFix"][0]["lastAttempt"]
-        .as_str()
-        .is_some_and(|attempt| attempt.starts_with("The last repair's answer could not be used")));
-    Ok(())
-}
-
-#[tokio::test]
-async fn findings_whose_repair_does_not_fit_wait_and_the_others_are_still_repaired() -> Result<()> {
-    let model = Answering::new(
-        vec![
-            parts_review(2, &[0, 1]),
-            parts_evidence(&[0, 1]),
-            parts_recheck(&[0], &["reviewer/1"]),
-        ],
-        |sent| {
-            if ids_of(sent).contains(&section_id(1)) {
-                Err(AppError::PromptExceedsWindow {
-                    prompt_tokens: 251_588,
-                    window: 131_072,
-                    counted_exactly: true,
-                    message: "over the window".into(),
-                })
-            } else {
-                Ok(better_ideas(sent))
-            }
-        },
-    );
-    let reviewed = run(&model, parts_lesson(2)).await?;
-    assert_eq!(reviewed.set_aside.len(), 1);
-    assert_eq!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/2");
-    assert_eq!(reviewed.set_aside[0].repairs, 0);
-    let after: Value = serde_json::from_str(&reviewed.candidate)?;
-    assert!(after["blocks"][0]["body"]
-        .as_str()
-        .unwrap()
-        .contains("better idea"));
-    Ok(())
-}
-
-/// `run` under a schema of the test's own.
-async fn run_with_schema(
-    model: &dyn LLMPort,
-    candidate: Value,
-    schema: &Value,
-) -> Result<Reviewed> {
-    let sources = references();
-    let references = ReferenceCollection::lexical(&sources)?;
-    review_material(
-        model,
-        LESSON_REPAIR_SYSTEM,
-        &context(),
-        ReviewSchema::Other(schema),
-        candidate.to_string(),
-        4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
-    )
-    .await
-}
-
-#[tokio::test]
-async fn a_rewrite_that_cannot_be_used_is_asked_again_whole_not_in_halves() -> Result<()> {
-    let schema = json!({
-        "type": "object",
-        "required": ["blocks", "questions", "title"],
-        "properties": {"questions": {"type": "array", "minItems": 1}},
-    });
-    let model = Answering::new(vec![parts_review(2, &[])], |_| {
-        Err(AppError::ModelAnswerUnusable("it was empty.".into()))
-    });
-    let reviewed = run_with_schema(&model, parts_lesson(2), &schema).await?;
-    let requests = model.requests.lock().unwrap();
+    let repairs = model.repairs.lock().unwrap();
+    let asked = |repair: &str| -> Vec<bool> {
+        marks
+            .iter()
+            .map(|mark| repair.contains(&format!("Defect marker {mark}.")))
+            .collect()
+    };
+    let first_six = vec![true, true, true, true, true, true, false];
+    let carried = vec![false, false, false, false, false, false, true];
+    let asked: Vec<_> = repairs.iter().map(|repair| asked(repair)).collect();
     assert!(
-        requests.iter().all(|request| ids_of(request).len() == 2),
-        "{:?}",
-        requests.iter().map(ids_of).collect::<Vec<_>>()
+        asked.iter().all(|a| *a == first_six || *a == carried),
+        "every repair asks exactly the first six findings or exactly the carried one: {asked:?}"
     );
-    assert_eq!(requests.len(), 2);
-    assert_eq!(ids_of(&requests[0]), ids_of(&requests[1]));
-    for entry in requests[1]["issuesToFix"].as_array().unwrap() {
-        assert!(entry["lastAttempt"].as_str().is_some_and(
-            |attempt| attempt.starts_with("The last repair's answer could not be used")
-        ));
-    }
-    assert_eq!(reviewed.set_aside.len(), 2);
-    assert!(reviewed
+    let first_carried = asked.iter().position(|a| *a == carried);
+    assert!(
+        first_carried.is_some(),
+        "the review stopped at the unusable repair; the carried finding was never repaired: {asked:?}"
+    );
+    assert!(
+        asked[..first_carried.unwrap_or_default()]
+            .iter()
+            .all(|a| *a == first_six)
+            && asked[first_carried.unwrap_or_default()..]
+                .iter()
+                .all(|a| *a == carried),
+        "the first six are asked before the carried one and never again: {asked:?}"
+    );
+    let waiting: Vec<_> = reviewed
         .set_aside
         .iter()
-        .all(|waiting| waiting.repairs == 2));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_lesson_whose_structure_no_repair_fixes_still_has_its_content_reviewed() -> Result<()> {
-    let schema = json!({"type": "object", "required": ["blocks", "questions", "title"]});
-    let model = Answering::new(
-        vec![
-            parts_review(2, &[0]),
-            parts_evidence(&[0]),
-            parts_recheck(&[0], &["reviewer/1"]),
-        ],
-        |sent| {
-            if ids_of(sent).contains(&section_id(0)) {
-                Ok(better_ideas(sent))
-            } else {
-                Ok(parts_lesson(2).to_string())
-            }
-        },
-    );
-    let reviewed = run_with_schema(&model, parts_lesson(2), &schema).await?;
-    let after: Value = serde_json::from_str(&reviewed.candidate)?;
-    assert!(after["blocks"][0]["body"]
-        .as_str()
-        .unwrap()
-        .contains("better idea"));
-    assert_eq!(reviewed.set_aside.len(), 1);
-    assert_ne!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/1");
-    assert_eq!(reviewed.set_aside[0].repairs, 2);
-    let reviews = model
-        .review
-        .prompts
-        .lock()
-        .unwrap()
-        .iter()
-        .filter(|prompt| prompt.starts_with("Review instructional quality."))
-        .count();
-    assert_eq!(reviews, 2);
+        .map(|waiting| (waiting.finding.place().id(), waiting.repairs))
+        .collect();
+    assert_eq!(waiting.len(), marks.len(), "{waiting:?}");
+    for index in 0..passes::PER_REPAIR {
+        assert!(
+            waiting.contains(&(format!("teaching:section-{index}"), 1)),
+            "{waiting:?}"
+        );
+    }
     Ok(())
 }
 
@@ -1234,15 +1002,9 @@ fn retitle_again(after: &str) -> String {
         .to_string()
 }
 
-fn retitle_a_third_time(after: &str) -> String {
-    json!({"edits":[{"path":"/blocks/0/title","before":"Corrected twice","after":after}]})
-        .to_string()
-}
-
-/// The defect of `a_defect_no_repair_fixes_waits_after_its_second_repair`: the
-/// calls of two repairs, each rechecked, and the pass that stops at the second.
-/// The reviewer's verdict on a finding is not checked against the evidence
-/// again.
+/// The defect of `a_defect_one_repair_did_not_fix_publishes_and_waits_for_the_user`,
+/// with the calls a second repair and its recheck would make after the first
+/// recheck.
 fn defect_no_repair_fixes() -> Vec<String> {
     vec![
         review(Some(
@@ -1250,15 +1012,15 @@ fn defect_no_repair_fixes() -> Vec<String> {
         )),
         actionable(),
         retitle("Corrected example"),
-        judged(
-            Some("Section 1 still prints the result as the string \"4\" instead of the number."),
-            &[verdict("reviewer/1", "present")],
-        ),
+        review(Some(
+            "Section 1 still prints the result as the string \"4\" instead of the number.",
+        )),
+        actionable(),
         retitle_again("Corrected twice"),
-        judged(
-            Some("Section 1 still prints the result as the string \"4\" after two repairs."),
-            &[verdict("reviewer/1", "present")],
-        ),
+        review(Some(
+            "Section 1 still prints the result as the string \"4\" after two repairs.",
+        )),
+        actionable(),
     ]
 }
 
@@ -1283,39 +1045,12 @@ fn repairs_asked(llm: &DropsAfterRepair) -> usize {
 /// first repair as a requeue cuts one. The second starts on the draft that
 /// repair saved, after `between` has happened to it. Returns the repairs asked
 /// of the model across both runs and the second run's review.
-///
-/// A draft changed since the repair is reviewed afresh: `afresh` is whether
-/// that is what `between` does, which changes the calls the second run makes.
-async fn cut_short_then_resumed(
-    between: fn(&mut Value),
-    afresh: bool,
-) -> Result<(usize, Reviewed)> {
+async fn cut_short_then_resumed(between: fn(&mut Value)) -> Result<(usize, Reviewed)> {
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let llm = DropsAfterRepair {
-        model: model(if afresh {
-            let mut script: Vec<String> = defect_no_repair_fixes().into_iter().take(3).collect();
-            script.extend([
-                review(Some(
-                    "Section 1 still prints the result as the string \"4\" in the new draft.",
-                )),
-                actionable(),
-                retitle_again("Corrected twice"),
-                judged(
-                    Some("Section 1 still prints the result as the string \"4\" after two repairs."),
-                    &[verdict("reviewer/1", "present")],
-                ),
-                retitle_a_third_time("Corrected thrice"),
-                judged(
-                    Some("Section 1 still prints the result as the string \"4\" after three repairs."),
-                    &[verdict("reviewer/1", "present")],
-                ),
-            ]);
-            script
-        } else {
-            defect_no_repair_fixes()
-        }),
+        model: model(defect_no_repair_fixes()),
         repaired: AtomicBool::new(false),
         dropped: AtomicBool::new(false),
     };
@@ -1343,18 +1078,18 @@ async fn cut_short_then_resumed(
     Ok((repairs_asked(&llm), second))
 }
 
-/// Run through, the review above repairs the defect twice and stops. Cut short
-/// after its first repair and run again, it makes the second and stops the
-/// same way instead of repairing from zero.
+/// Run through, the review above repairs the defect once, rechecks, sees
+/// nothing fixed and stops. Cut short after that repair and run again, it
+/// stops the same way instead of repairing from zero.
 #[tokio::test]
 async fn a_review_cut_short_after_its_first_repair_resumes_with_the_repairs_it_had_made(
 ) -> Result<()> {
-    let (repairs, reviewed) = cut_short_then_resumed(|_| {}, false).await?;
-    assert_eq!(repairs, 2);
+    let (repairs, reviewed) = cut_short_then_resumed(|_| {}).await?;
+    assert_eq!(repairs, 1);
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
-    assert_eq!(waiting.finding.id().as_str(), "reviewer/1");
-    assert_eq!(waiting.repairs, 2);
+    assert_eq!(waiting.finding.id().as_str(), "reviewer/section-0");
+    assert_eq!(waiting.repairs, 1);
     Ok(())
 }
 
@@ -1362,12 +1097,12 @@ async fn a_review_cut_short_after_its_first_repair_resumes_with_the_repairs_it_h
 /// claim repair has changed that draft, the review starts again.
 #[tokio::test]
 async fn a_review_cut_short_resumes_afresh_on_a_draft_changed_since_its_repair() -> Result<()> {
-    let (repairs, reviewed) = cut_short_then_resumed(claim_repair, true).await?;
-    assert_eq!(repairs, 3);
+    let (repairs, reviewed) = cut_short_then_resumed(claim_repair).await?;
+    assert_eq!(repairs, 2);
     assert_eq!(reviewed.set_aside.len(), 1);
     let waiting = &reviewed.set_aside[0];
-    assert_eq!(waiting.finding.id().as_str(), "reviewer/1");
-    assert_eq!(waiting.repairs, 2);
+    assert_eq!(waiting.finding.id().as_str(), "reviewer/section-0");
+    assert_eq!(waiting.repairs, 1);
     Ok(())
 }
 
@@ -1397,11 +1132,8 @@ fn whole_lesson_and_fully_guarded_section_findings_wait_when_claims_are_protecte
         FindingSite::Lesson,
         "no contrast block",
     );
-    let section_finding = ReviewFinding::reviewer(
-        1,
-        Some(FindingSite::Section(0)),
-        "expand on the explanation",
-    );
+    let section_finding =
+        ReviewFinding::reviewer(Some(FindingSite::Section(0)), "expand on the explanation");
     let findings = vec![lesson_finding.clone(), section_finding.clone()];
     let held = protected::on_protected(&lesson, &findings, &protected);
     let expected = vec![lesson_finding.id(), section_finding.id()];
@@ -1446,7 +1178,7 @@ fn a_finding_on_an_option_is_not_held_when_only_the_explanation_is_protected() {
         "The function adds its two arguments and returns four.",
     )];
     let finding =
-        ReviewFinding::reviewer(1, Some(FindingSite::Question(0)), "the option is ambiguous")
+        ReviewFinding::reviewer(Some(FindingSite::Question(0)), "the option is ambiguous")
             .with_passage("Four is returned.");
     assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
 }
@@ -1475,11 +1207,8 @@ fn a_question_finding_with_no_passage_is_not_held_while_options_are_unprotected(
         "explanation",
         "The function adds its two arguments and returns four.",
     )];
-    let finding = ReviewFinding::reviewer(
-        1,
-        Some(FindingSite::Question(0)),
-        "the distractors are weak",
-    );
+    let finding =
+        ReviewFinding::reviewer(Some(FindingSite::Question(0)), "the distractors are weak");
     assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
 }
 
@@ -1489,11 +1218,8 @@ fn a_section_finding_with_no_passage_is_not_held_while_the_title_is_unprotected(
     let sentence = "The function returns the number 4 for the sum of two and two.";
     lesson["blocks"][0]["body"] = json!(sentence);
     let protected = vec![protect(0, "body", sentence)];
-    let finding = ReviewFinding::reviewer(
-        1,
-        Some(FindingSite::Section(0)),
-        "expand on the explanation",
-    );
+    let finding =
+        ReviewFinding::reviewer(Some(FindingSite::Section(0)), "expand on the explanation");
     assert!(protected::on_protected(&lesson, &[finding], &protected).is_empty());
 }
 
@@ -1508,11 +1234,8 @@ fn a_review_repair_with_no_passage_cannot_rewrite_the_kind_or_quote() -> Result<
         json!("The first sentence is protected here. The second sentence now reads better.");
     repaired["blocks"][0]["quote"] = json!("A different quotation that was never a target.");
     repaired["blocks"][0]["kind"] = json!("example");
-    let finding = ReviewFinding::reviewer(
-        1,
-        Some(FindingSite::Section(0)),
-        "improve the second sentence",
-    );
+    let finding =
+        ReviewFinding::reviewer(Some(FindingSite::Section(0)), "improve the second sentence");
     let touched = std::collections::BTreeMap::from([("/blocks/0".to_owned(), vec![&finding])]);
     let confined = protected::confine_review(&previous, &repaired, &touched, &protected)?;
     assert_eq!(
@@ -1536,7 +1259,7 @@ fn repair_requests(model: &ScriptedModel) -> Vec<Value> {
         .collect()
 }
 
-const PART_NAMES: [&str; 4] = ["Part A", "Part B", "Part C", "Part D"];
+const PART_NAMES: [&str; 3] = ["Part A", "Part B", "Part C"];
 
 fn part_body(index: usize) -> String {
     let name = PART_NAMES[index];
@@ -1578,17 +1301,9 @@ fn parts_review(count: usize, defective: &[usize]) -> String {
 /// A review whose defective parts are `(part, paragraph)`: the paragraph
 /// each one's finding is about.
 fn parts_review_at(count: usize, defective: &[(usize, usize)]) -> String {
-    let all: Vec<usize> = (0..count).collect();
-    parts_checked(&all, defective, &[])
-}
-
-/// A review of the parts `asked` alone, whose defective parts are
-/// `(part, paragraph)`, with `verdicts` on the findings it was asked about.
-fn parts_checked(asked: &[usize], defective: &[(usize, usize)], verdicts: &[Value]) -> String {
-    let checks: Vec<Value> = asked
-        .iter()
+    let checks: Vec<Value> = (0..count)
         .map(|index| {
-            let found = defective.iter().find(|(part, _)| part == index);
+            let found = defective.iter().find(|(part, _)| *part == index);
             json!({
                 "index": index,
                 "passageId": format!("section-{index}-passage-{}", found.map_or(0, |(_, paragraph)| *paragraph)),
@@ -1601,14 +1316,11 @@ fn parts_checked(asked: &[usize], defective: &[(usize, usize)], verdicts: &[Valu
             })
         })
         .collect();
-    review_reply(&[], checks, verdicts)
-}
-
-/// A review of the parts `asked` alone that finds no defect and resolves the
-/// findings `resolved`.
-fn parts_recheck(asked: &[usize], resolved: &[&str]) -> String {
-    let verdicts: Vec<Value> = resolved.iter().map(|id| verdict(id, "resolved")).collect();
-    parts_checked(asked, &[], &verdicts)
+    json!({
+        "issues": [],
+        "blockChecks": crate::teaching_review::fixture_checks(checks),
+    })
+    .to_string()
 }
 
 fn parts_evidence(defective: &[usize]) -> String {
@@ -1640,7 +1352,7 @@ async fn the_repair_is_told_each_finding_s_id_part_and_passage() -> Result<()> {
         review(Some("The example shows the wrong result.")),
         actionable(),
         retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
+        review(None),
     ]);
     let candidate = lesson(EXCERPT);
     run(&model, candidate.clone()).await?;
@@ -1665,7 +1377,7 @@ async fn an_edit_names_the_finding_it_is_for() -> Result<()> {
         review(Some("The example shows the wrong result.")),
         actionable(),
         retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
+        review(None),
     ]);
     let recorder = RecordsSchemas {
         inner: &scripted,
@@ -1700,12 +1412,13 @@ async fn an_edit_outside_its_finding_s_part_leaves_the_other_findings_edits_appl
         parts_review(3, &[0, 1]),
         parts_evidence(&[0, 1]),
         edits_answer(vec![
-            better_idea(0, "reviewer/1"),
-            better_idea(2, "reviewer/2"),
+            better_idea(0, "reviewer/section-0"),
+            better_idea(2, "reviewer/section-1"),
         ]),
-        parts_recheck(&[0], &["reviewer/1"]),
-        edits_answer(vec![better_idea(1, "reviewer/2")]),
-        parts_recheck(&[1], &["reviewer/2"]),
+        parts_review(3, &[1]),
+        parts_evidence(&[1]),
+        edits_answer(vec![better_idea(1, "reviewer/section-1")]),
+        parts_review(3, &[]),
     ]);
     let reviewed = run(&model, parts_lesson(3)).await?;
     let after: Value = serde_json::from_str(&reviewed.candidate)?;
@@ -1728,10 +1441,11 @@ async fn a_finding_no_edit_named_is_told_so_on_its_second_attempt() -> Result<()
     let model = model(vec![
         parts_review(2, &[0, 1]),
         parts_evidence(&[0, 1]),
-        edits_answer(vec![better_idea(0, "reviewer/1")]),
-        parts_recheck(&[0], &["reviewer/1"]),
-        edits_answer(vec![better_idea(1, "reviewer/2")]),
-        parts_recheck(&[1], &["reviewer/2"]),
+        edits_answer(vec![better_idea(0, "reviewer/section-0")]),
+        parts_review(2, &[1]),
+        parts_evidence(&[1]),
+        edits_answer(vec![better_idea(1, "reviewer/section-1")]),
+        parts_review(2, &[]),
     ]);
     run(&model, parts_lesson(2)).await?;
     let asked = repair_requests(&model);
@@ -1777,7 +1491,7 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
         released: false,
     }];
     let touches_the_protected_sentence = json!({
-        "finding": "reviewer/1",
+        "finding": "reviewer/section-0",
         "path": "/blocks/0/body",
         "before": KEPT,
         "after": "Part A states a different fact about the tool.",
@@ -1787,9 +1501,10 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
         parts_evidence(&[0, 1]),
         edits_answer(vec![
             touches_the_protected_sentence.clone(),
-            better_idea(1, "reviewer/2"),
+            better_idea(1, "reviewer/section-1"),
         ]),
-        parts_recheck(&[1], &["reviewer/2"]),
+        parts_review_at(2, &[(0, 1)]),
+        parts_evidence(&[0]),
         edits_answer(vec![touches_the_protected_sentence]),
     ]);
     let reviewed = review_protecting(&model, &candidate, &protected).await?;
@@ -2109,7 +1824,7 @@ async fn a_repair_edit_that_drops_a_sentences_markers_is_asked_again_with_the_ex
         actionable(),
         edit("The function returns the number 4 for the sum of two and two."),
         edit(MARKED),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
+        review(None),
     ]);
     let recording = Recording(&scripted, Mutex::new(Vec::new()));
     let reviewed = run(&recording, candidate).await?;
@@ -2156,7 +1871,7 @@ async fn a_repair_s_answer_is_kept_as_it_was_given() -> Result<()> {
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
     assert!(kept.iter().all(|row| row["answer"].is_string()), "{kept:?}");
-    let first = json!({"edits":[{"finding":"reviewer/1","path":"/blocks/0/title","before":"Example","after":"Corrected example"}]});
+    let first = json!({"edits":[{"finding":"reviewer/section-0","path":"/blocks/0/title","before":"Example","after":"Corrected example"}]});
     let given = |row: &Value| {
         row["answer"]
             .as_str()
@@ -2186,8 +1901,6 @@ async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
         )),
         actionable(),
         unusable.clone(),
-        unusable.clone(),
-        unusable.clone(),
         unusable,
     ]);
     lesson_drafts::run(&repo, &job, &lesson_id, async {
@@ -2195,16 +1908,14 @@ async fn a_refused_repair_answer_is_kept_with_its_reason() -> Result<()> {
     })
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
-    assert_eq!(kept.len(), 2, "{kept:?}");
-    for row in &kept {
-        assert!(row.get("answer").is_none(), "{kept:?}");
-        assert!(
-            row["refused"]
-                .as_str()
-                .is_some_and(|reason| !reason.is_empty()),
-            "{kept:?}"
-        );
-    }
+    assert_eq!(kept.len(), 1, "{kept:?}");
+    assert!(kept[0].get("answer").is_none(), "{kept:?}");
+    assert!(
+        kept[0]["refused"]
+            .as_str()
+            .is_some_and(|reason| !reason.is_empty()),
+        "{kept:?}"
+    );
     Ok(())
 }
 
@@ -2245,20 +1956,18 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
     let (repo, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
     let script = defect_no_repair_fixes();
-    // The reviews of the second run are read from their checkpoints; the
-    // evidence check of the first finding is asked again.
+    // The reviews of the second run are read from their checkpoints; its two
+    // rechecks of the findings are asked again.
     let rest = vec![
         script[0].clone(),
         script[1].clone(),
         script[3].clone(),
-        script[5].clone(),
+        script[4].clone(),
         script[1].clone(),
+        script[4].clone(),
     ];
     let llm = RepairsApart {
-        repairs: model(vec![
-            retitle("Corrected example"),
-            retitle_again("Corrected twice"),
-        ]),
+        repairs: model(vec![retitle("Corrected example"); 2]),
         rest: model(rest),
     };
     let first = lesson_drafts::run(&repo, &job, &lesson_id, async {
@@ -2269,7 +1978,7 @@ async fn a_repair_asked_again_in_its_job_is_read_back() -> Result<()> {
         run(&llm, lesson(EXCERPT)).await
     })
     .await?;
-    assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 2);
+    assert_eq!(llm.repairs.prompts.lock().unwrap().len(), 1);
     assert_eq!(second.candidate, first.candidate);
     let waiting = |reviewed: &Reviewed| -> Vec<(String, _)> {
         reviewed
@@ -2348,855 +2057,5 @@ async fn a_row_stored_by_place_holds_every_finding_of_its_kind_there() -> Result
     assert!(!passes.repairable(&plan_at("aaaa000000000001", FindingSite::Section(0))));
     assert!(!passes.repairable(&plan_at("aaaa000000000002", FindingSite::Section(0))));
     assert!(passes.repairable(&plan_at("aaaa000000000003", FindingSite::Section(1))));
-    Ok(())
-}
-
-const DRAFT_QUESTIONS: &str =
-    "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.";
-
-#[tokio::test]
-async fn a_review_after_a_cut_and_its_repair_are_told_the_shape_the_lesson_is_kept_with(
-) -> Result<()> {
-    use crate::lessons::shape::{FixedSchema, Phase, ShapePolicy};
-    let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
-        actionable(),
-        retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
-    ]);
-    let policy = FixedSchema(json!({"type":"object"}));
-    let schema = policy.schema(Phase::Kept, 1);
-    let request = json!({
-        "sources":[{"sourceIndex":0,"excerpt":EXCERPT}],
-        "lessonShape":[DRAFT_QUESTIONS]
-    })
-    .to_string();
-    let sources = references();
-    let references = ReferenceCollection::lexical(&sources)?;
-    let reviewed = review_material(
-        &model,
-        LESSON_REPAIR_SYSTEM,
-        &request,
-        ReviewSchema::Lesson(LessonShape::new(&schema, &policy)),
-        lesson(EXCERPT).to_string(),
-        4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
-    )
-    .await?;
-    assert!(reviewed.set_aside.is_empty());
-    {
-        let prompts = model.prompts.lock().unwrap();
-        assert!(
-            prompts
-                .iter()
-                .all(|prompt| !prompt.contains(DRAFT_QUESTIONS)),
-            "a model was told the draft's questions for a lesson held to the floor"
-        );
-        assert!(prompts
-            .iter()
-            .any(|prompt| prompt.contains("authoringContext")));
-    }
-    let requests = repair_requests(&model);
-    assert_eq!(requests.len(), 1);
-    let lines = requests[0]["originalRequirements"]["lessonShape"]
-        .as_array()
-        .cloned()
-        .unwrap_or_default();
-    assert!(!lines.is_empty(), "the repair was not told the shape");
-    let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
-    assert!(
-        words
-            .join("\n")
-            .contains("at least one question of each kind"),
-        "{words:?}"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_draft_review_is_told_what_the_writer_was() -> Result<()> {
-    use crate::lessons::shape::{self, FixedSchema, Phase, ShapePolicy};
-    let model = model(vec![
-        review(Some(
-            "The example shows \"result\": \"4\" although the code returns the number 4.",
-        )),
-        actionable(),
-        retitle("Corrected example"),
-        judged(None, &[verdict("reviewer/1", "resolved")]),
-    ]);
-    let draft = shape::policy().asked(Phase::Draft);
-    let policy = FixedSchema(json!({"type":"object"}));
-    let schema = policy.schema(Phase::Draft, 1);
-    let request = json!({
-        "sources":[{"sourceIndex":0,"excerpt":EXCERPT}],
-        "lessonShape":draft
-    })
-    .to_string();
-    let sources = references();
-    let references = ReferenceCollection::lexical(&sources)?;
-    review_material(
-        &model,
-        LESSON_REPAIR_SYSTEM,
-        &request,
-        ReviewSchema::Lesson(LessonShape::new(&schema, &policy)),
-        lesson(EXCERPT).to_string(),
-        4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
-    )
-    .await?;
-    {
-        let prompts = model.prompts.lock().unwrap();
-        let reviews: Vec<_> = prompts
-            .iter()
-            .filter(|prompt| prompt.contains("authoringContext"))
-            .collect();
-        assert!(!reviews.is_empty());
-        for prompt in reviews {
-            for line in &draft {
-                assert!(prompt.contains(line.as_str()), "{line}");
-            }
-        }
-    }
-    let requests = repair_requests(&model);
-    assert_eq!(requests.len(), 1);
-    assert_eq!(
-        requests[0]["originalRequirements"]["lessonShape"],
-        json!(draft)
-    );
-    Ok(())
-}
-
-/// A model that answers each kind of request from what the request asks: the
-/// reviewer from the passages it is shown and the sections and verdicts its
-/// schema allows, the evidence check from the issues it lists, a repair from
-/// `repair`. The reviews and repairs it is sent are kept.
-struct ByRequest {
-    /// Whether a passage's words are a defect.
-    defective: fn(&str) -> bool,
-    /// Whether a section's check reports a defect again that an open finding
-    /// is already about.
-    restates: bool,
-    /// The defects of the whole material at the nth review (from 1), given
-    /// the candidate the review shows.
-    whole: fn(&Value, usize) -> Vec<&'static str>,
-    /// The edits of the nth repair (from 0), given the request.
-    repair: fn(&Value, usize) -> Vec<Value>,
-    seen_reviews: Mutex<Vec<Value>>,
-    seen_repairs: Mutex<Vec<Value>>,
-}
-
-fn no_whole_defects(_: &Value, _: usize) -> Vec<&'static str> {
-    Vec::new()
-}
-
-impl ByRequest {
-    fn new(defective: fn(&str) -> bool, repair: fn(&Value, usize) -> Vec<Value>) -> Self {
-        Self {
-            defective,
-            restates: false,
-            whole: no_whole_defects,
-            repair,
-            seen_reviews: Mutex::new(Vec::new()),
-            seen_repairs: Mutex::new(Vec::new()),
-        }
-    }
-
-    fn restating(mut self) -> Self {
-        self.restates = true;
-        self
-    }
-
-    fn about_the_whole(mut self, whole: fn(&Value, usize) -> Vec<&'static str>) -> Self {
-        self.whole = whole;
-        self
-    }
-
-    /// The review requests, as the JSON each carries.
-    fn reviews(&self) -> Vec<Value> {
-        self.seen_reviews.lock().unwrap().clone()
-    }
-
-    /// The repair requests, as the JSON each carries.
-    fn repairs(&self) -> Vec<Value> {
-        self.seen_repairs.lock().unwrap().clone()
-    }
-
-    fn review_answer(&self, sent: &Value, schema: &Value, number: usize) -> String {
-        let candidate = &sent["candidate"];
-        let listed =
-            |key: &str| -> Vec<Value> { sent[key].as_array().cloned().unwrap_or_default() };
-        let (open, known) = (listed("openFindings"), listed("knownFindings"));
-        let sections: Vec<usize> = schema
-            .pointer("/properties/blockChecks/items/properties/sectionId/enum")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(|id| id.as_str()?.strip_prefix("section-")?.parse().ok())
-            .collect();
-        let passages_of = |index: usize| -> Vec<(String, String)> {
-            candidate["blocks"][index]["bodyPassages"]
-                .as_array()
-                .into_iter()
-                .flatten()
-                .filter_map(|passage| {
-                    Some((
-                        passage["id"].as_str()?.to_owned(),
-                        passage["text"].as_str()?.to_owned(),
-                    ))
-                })
-                .collect()
-        };
-        let covered = |index: usize, id: &str| {
-            let part = format!("Section {}", index + 1);
-            open.iter()
-                .any(|entry| entry["part"] == part.as_str() && entry["passageId"] == id)
-                || known.iter().any(|entry| entry["part"] == part.as_str())
-        };
-        let mut checks = Vec::new();
-        for index in &sections {
-            let passages = passages_of(*index);
-            let found = passages.iter().find(|(_, text)| (self.defective)(text));
-            let id = found
-                .or(passages.first())
-                .map(|(id, _)| id.clone())
-                .unwrap_or_default();
-            let has_defect = found.is_some_and(|(id, _)| self.restates || !covered(*index, id));
-            checks.push(json!({
-                "sectionId": format!("section-{index}"),
-                "passageId": id,
-                "finding": if has_defect { "The first idea is wrong." } else { "Nothing is wrong here." },
-                "hasDefect": has_defect,
-            }));
-        }
-        let wanted = (self.whole)(candidate, number);
-        let issues: Vec<String> = wanted
-            .iter()
-            .filter(|note| {
-                !open
-                    .iter()
-                    .chain(&known)
-                    .any(|entry| entry["note"].as_str() == Some(**note))
-            })
-            .map(|note| (*note).to_owned())
-            .collect();
-        let mut answer = json!({"issues": issues});
-        if schema.pointer("/properties/blockChecks").is_some() {
-            answer["blockChecks"] = json!(checks);
-        }
-        if let Some(ids) = schema
-            .pointer("/properties/openFindings/items/properties/id/enum")
-            .and_then(Value::as_array)
-        {
-            let verdicts: Vec<Value> = ids
-                .iter()
-                .filter_map(Value::as_str)
-                .map(|id| {
-                    let entry = open
-                        .iter()
-                        .find(|entry| entry["id"] == id)
-                        .cloned()
-                        .unwrap_or(Value::Null);
-                    let section = entry["part"]
-                        .as_str()
-                        .and_then(|part| part.strip_prefix("Section "))
-                        .and_then(|number| number.parse::<usize>().ok());
-                    let present = match section {
-                        Some(number) => {
-                            let passages = passages_of(number.saturating_sub(1));
-                            passages.iter().any(|(passage, text)| {
-                                entry["passageId"].as_str().is_none_or(|own| own == passage)
-                                    && (self.defective)(text)
-                            })
-                        }
-                        None => wanted
-                            .iter()
-                            .any(|note| entry["note"].as_str() == Some(*note)),
-                    };
-                    json!({"id": id, "verdict": if present { "present" } else { "resolved" }, "note": ""})
-                })
-                .collect();
-            answer["openFindings"] = json!(verdicts);
-        }
-        answer.to_string()
-    }
-}
-
-/// The evidence check's answer: each proposal is actionable, at the section
-/// its note names, or at the lesson.
-fn evidence_answer(sent: &Value, schema: &Value) -> String {
-    let keys = schema
-        .pointer("/properties/decisions/items/properties/issueId/enum")
-        .and_then(Value::as_array)
-        .cloned()
-        .unwrap_or_default();
-    let notes = sent["proposals"].as_array().cloned().unwrap_or_default();
-    let first = sent["candidateParts"][0]["id"]
-        .as_str()
-        .unwrap_or("blocks-0")
-        .to_owned();
-    let decisions: Vec<Value> = keys
-        .iter()
-        .zip(&notes)
-        .map(|(key, note)| {
-            let section = note
-                .as_str()
-                .and_then(|note| note.split("Section ").nth(1))
-                .and_then(|rest| {
-                    rest.split(|c: char| !c.is_ascii_digit())
-                        .next()?
-                        .parse::<usize>()
-                        .ok()
-                })
-                .map(|number| format!("blocks-{}", number.saturating_sub(1)));
-            json!({
-                "issueId": key,
-                "verdict": "actionable",
-                "basis": "internal_conflict",
-                "evidenceIds": [section.clone().unwrap_or(first.clone())],
-                "requirementId": null,
-                "reason": "The note describes a concrete conflict in the lesson.",
-                "partId": section.unwrap_or_else(|| "lesson".to_owned()),
-            })
-        })
-        .collect();
-    json!({"decisions": decisions}).to_string()
-}
-
-#[async_trait::async_trait]
-impl LLMPort for ByRequest {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let texts = crate::content_verification::tests::fixture_prompts(request);
-        let Some(sent) = texts
-            .iter()
-            .find_map(|text| serde_json::from_str::<Value>(text.rsplit("\n\n").next()?).ok())
-        else {
-            return Ok(crate::content_verification::tests::fixture_completion(
-                request,
-                Vec::new(),
-            ));
-        };
-        let schema = request.json_schema.clone().unwrap_or(Value::Null);
-        let reply = if asks_for_repair(request) {
-            let number = {
-                let mut seen = self.seen_repairs.lock().unwrap();
-                seen.push(sent.clone());
-                seen.len() - 1
-            };
-            json!({"edits": (self.repair)(&sent, number)}).to_string()
-        } else if schema.pointer("/properties/decisions").is_some() {
-            evidence_answer(&sent, &schema)
-        } else if schema.pointer("/properties/issues").is_some() {
-            let number = {
-                let mut seen = self.seen_reviews.lock().unwrap();
-                seen.push(sent.clone());
-                seen.len()
-            };
-            self.review_answer(&sent, &schema, number)
-        } else {
-            return Err(AppError::InternalError(
-                "ByRequest was sent a request of a kind it does not answer".into(),
-            ));
-        };
-        Ok(crate::content_verification::tests::fixture_completion(
-            request,
-            vec![reply],
-        ))
-    }
-    fn model_name(&self) -> &str {
-        "by-request"
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.len() / 4
-    }
-    fn max_context_tokens(&self) -> usize {
-        128_000
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-/// The blocks a repair request lists findings for.
-fn parts_sent(sent: &Value) -> Vec<usize> {
-    sent["issuesToFix"]
-        .as_array()
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| {
-            entry["part"]
-                .as_str()?
-                .strip_prefix("/blocks/")?
-                .parse()
-                .ok()
-        })
-        .collect()
-}
-
-/// An edit of a block's title: a change that fixes nothing.
-fn retitled(sent: &Value, index: usize) -> Value {
-    let title = sent["candidate"]["blocks"][index]["title"]
-        .as_str()
-        .unwrap_or_default();
-    json!({"path": format!("/blocks/{index}/title"), "before": title, "after": format!("{title}.")})
-}
-
-/// The edit that takes the first idea out of a block; once it is out, a
-/// retitle.
-fn mend(sent: &Value, index: usize) -> Value {
-    let has_it = sent["candidate"]["blocks"][index]["body"]
-        .as_str()
-        .is_some_and(|body| body.contains("gives a first idea"));
-    if has_it {
-        json!({"path": format!("/blocks/{index}/body"), "before": "gives a first idea", "after": "gives a better idea"})
-    } else {
-        retitled(sent, index)
-    }
-}
-
-fn mend_every_part(sent: &Value, _: usize) -> Vec<Value> {
-    parts_sent(sent)
-        .into_iter()
-        .map(|index| mend(sent, index))
-        .collect()
-}
-
-/// An edit of each block listed that changes its words and keeps the first
-/// idea.
-fn reword_every_part(sent: &Value, _: usize) -> Vec<Value> {
-    parts_sent(sent)
-        .into_iter()
-        .map(|index| {
-            json!({"path": format!("/blocks/{index}/body"), "before": "gives a first idea", "after": "gives a first idea, again"})
-        })
-        .collect()
-}
-
-/// The first repair takes up only the first block; the others, every block
-/// listed.
-fn mend_the_first_part_first(sent: &Value, number: usize) -> Vec<Value> {
-    if number == 0 {
-        vec![mend(sent, 0)]
-    } else {
-        mend_every_part(sent, number)
-    }
-}
-
-/// The first repair corrects the first paragraph of the block; every later one
-/// changes the last paragraph and leaves its defect.
-fn correct_the_first_paragraph_then_touch_the_last(sent: &Value, number: usize) -> Vec<Value> {
-    if number == 0 {
-        return vec![json!({
-            "path": "/blocks/0/body",
-            "before": "takes a wrong fact as input.",
-            "after": "takes a plain fact as input.",
-        })];
-    }
-    let body = sent["candidate"]["blocks"][0]["body"]
-        .as_str()
-        .unwrap_or_default();
-    let last = body.rsplit("\n\n").next().unwrap_or_default();
-    vec![json!({"path": "/blocks/0/body", "before": last, "after": format!("{last} Again.")})]
-}
-
-/// A single part whose first idea is wrong, reviewed and repaired once.
-async fn one_repair_that_fixes_it() -> Result<(ByRequest, Reviewed)> {
-    let model = ByRequest::new(|text| text.contains("first idea"), mend_every_part);
-    let reviewed = run(&model, parts_lesson(1)).await?;
-    Ok((model, reviewed))
-}
-
-fn notes_waiting(reviewed: &Reviewed) -> Vec<(String, u8)> {
-    reviewed
-        .set_aside
-        .iter()
-        .map(|waiting| (waiting.finding.note.clone(), waiting.repairs))
-        .collect()
-}
-
-#[tokio::test]
-async fn a_resolved_finding_is_a_verdict_never_an_issue() -> Result<()> {
-    let (model, reviewed) = one_repair_that_fixes_it().await?;
-    assert!(
-        reviewed.set_aside.is_empty(),
-        "{:?}",
-        notes_waiting(&reviewed)
-    );
-    assert_eq!(model.repairs().len(), 1);
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_recheck_shows_the_open_finding_with_its_id() -> Result<()> {
-    let (model, _) = one_repair_that_fixes_it().await?;
-    let reviews = model.reviews();
-    assert!(reviews.len() >= 2, "{}", reviews.len());
-    assert!(
-        reviews[1]["openFindings"][0]["id"].is_string(),
-        "{}",
-        reviews[1]
-    );
-    assert!(reviews[1].get("originalIssuesToRecheck").is_none());
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_section_no_repair_touched_is_not_reviewed_again() -> Result<()> {
-    let model = ByRequest::new(
-        |text| text.contains("Part A") && text.contains("first idea"),
-        mend_every_part,
-    );
-    let reviewed = run(&model, parts_lesson(3)).await?;
-    assert!(reviewed.set_aside.is_empty());
-    let reviews = model.reviews();
-    assert_eq!(reviews[0]["sectionIndicesToReview"], json!([0, 1, 2]));
-    assert_eq!(reviews[1]["sectionIndicesToReview"], json!([0]));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_finding_in_an_untouched_part_is_not_asked_about_and_stays() -> Result<()> {
-    let model = ByRequest::new(
-        |text| text.contains("first idea"),
-        mend_the_first_part_first,
-    );
-    run(&model, parts_lesson(2)).await?;
-    let (reviews, repairs) = (model.reviews(), model.repairs());
-    assert_eq!(
-        reviews[1]["openFindings"].as_array().map(Vec::len),
-        Some(1),
-        "{}",
-        reviews[1]
-    );
-    assert_eq!(reviews[1]["openFindings"][0]["part"], "Section 1");
-    assert_eq!(repairs.len(), 2);
-    let second = repairs[1]["issuesToFix"].as_array().unwrap();
-    assert_eq!(second.len(), 1);
-    assert_eq!(second[0]["part"], "/blocks/1");
-    assert!(second[0]["lastAttempt"].is_string(), "{}", second[0]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_new_reviewer_defect_gets_its_own_number_and_budget() -> Result<()> {
-    let model = ByRequest::new(
-        |text| text.contains("wrong fact") || text.contains("first idea"),
-        correct_the_first_paragraph_then_touch_the_last,
-    );
-    let mut candidate = parts_lesson(1);
-    candidate["blocks"][0]["body"] =
-        json!("The tool takes a wrong fact as input.\n\nThe tool then gives a first idea.");
-    let reviewed = run(&model, candidate).await?;
-    assert_eq!(
-        model.repairs().len(),
-        3,
-        "one for the first defect, two for the second"
-    );
-    assert_eq!(reviewed.set_aside.len(), 1);
-    assert_eq!(reviewed.set_aside[0].repairs, 2);
-    let after: Value = serde_json::from_str(&reviewed.candidate)?;
-    let body = after["blocks"][0]["body"].as_str().unwrap();
-    assert_eq!(
-        reviewed.set_aside[0].finding.passage.as_deref(),
-        body.rsplit("\n\n").next()
-    );
-    Ok(())
-}
-
-const WHEN_TO_USE: &str = "The lesson never says when the tool should be used.";
-const WHAT_IT_CANNOT_DO: &str = "The lesson does not say what the tool cannot do.";
-
-#[tokio::test]
-async fn a_new_whole_lesson_issue_continues_the_count_of_the_one_before() -> Result<()> {
-    let model = ByRequest::new(|_| false, |sent, _| vec![retitled(sent, 0)]).about_the_whole(
-        |_, review| {
-            if review == 1 {
-                vec![WHEN_TO_USE]
-            } else {
-                vec![WHEN_TO_USE, WHAT_IT_CANNOT_DO]
-            }
-        },
-    );
-    let reviewed = run(&model, parts_lesson(1)).await?;
-    let waiting = notes_waiting(&reviewed);
-    assert_eq!(waiting.len(), 2, "{waiting:?}");
-    assert!(
-        waiting.iter().all(|(_, repairs)| *repairs == 2),
-        "{waiting:?}"
-    );
-    assert_eq!(model.repairs().len(), 2);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_stored_reviewer_finding_is_judged_again_by_the_first_review_and_is_not_repaired(
-) -> Result<()> {
-    let pool = crate::tests::pool().await?;
-    let (_, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-    let program_id: String =
-        sqlx::query_scalar("SELECT program_id FROM learning_lessons WHERE id=?")
-            .bind(&lesson_id)
-            .fetch_one(&pool)
-            .await
-            .unwrap();
-    let store = TeachingFindingsRepository::new(pool);
-    let before = parts_lesson(2);
-    let stored = ReviewFinding::reviewer(
-        1,
-        Some(FindingSite::Section(0)),
-        "Section 1 (candidate blocks-0): The first idea is wrong.",
-    )
-    .with_passage(&part_body(0));
-    store
-        .record(
-            &lesson_id,
-            &job,
-            &before,
-            &[SetAside {
-                finding: stored,
-                repairs: 2,
-            }],
-            true,
-        )
-        .await?;
-    let key = store
-        .list(&lesson_id)
-        .await?
-        .first()
-        .unwrap()
-        .finding_key
-        .clone();
-    store
-        .settle(
-            &program_id,
-            &lesson_id,
-            std::slice::from_ref(&key),
-            TeachingSettleDto::Keep,
-        )
-        .await?;
-    let mut after = before.clone();
-    after["blocks"][1]["body"] =
-        json!("Part B states one plain fact about the tool. Part B then gives a better idea.");
-    let held = store.held(&lesson_id, &after).await?;
-    let model = ByRequest::new(
-        |text| text.contains("Part A") && text.contains("first idea"),
-        mend_every_part,
-    );
-    let sources = references();
-    let collection = ReferenceCollection::lexical(&sources)?;
-    let reviewed = review_material(
-        &model,
-        LESSON_REPAIR_SYSTEM,
-        &context(),
-        ReviewSchema::Other(&json!({"type":"object"})),
-        after.to_string(),
-        4000,
-        &mut LessonSubject::new(&collection, &[], held),
-    )
-    .await?;
-    let first = &model.reviews()[0];
-    assert_eq!(first["sectionIndicesToReview"], json!([0, 1]));
-    let asked: Vec<Value> = first["openFindings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| entry["id"].clone())
-        .collect();
-    assert_eq!(asked, [json!("reviewer/1")]);
-    assert!(first.get("knownFindings").is_none());
-    assert!(model.repairs().is_empty());
-    assert_eq!(reviewed.set_aside.len(), 1);
-    assert_eq!(reviewed.set_aside[0].finding.id().as_str(), "reviewer/1");
-    let reviewed_candidate: Value = serde_json::from_str(&reviewed.candidate)?;
-    store
-        .record(
-            &lesson_id,
-            &job,
-            &reviewed_candidate,
-            &reviewed.set_aside,
-            true,
-        )
-        .await?;
-    let listed = store.list(&lesson_id).await?;
-    let row = listed
-        .iter()
-        .find(|finding| finding.unit_index == Some(0))
-        .unwrap();
-    assert_eq!(row.finding_key, key);
-    assert_eq!(
-        row.state,
-        crate::lessons::claim_reviews::teaching_findings::TeachingFindingStateDto::Kept
-    );
-    Ok(())
-}
-
-/// The review of `candidate` in the lesson job under way, the reviewer shown
-/// `authoring` as the lesson's authoring context.
-async fn review_in_the_job(
-    model: &ByRequest,
-    authoring: &str,
-    candidate: Value,
-) -> Result<Reviewed> {
-    lesson_drafts::resume(INPUT.into()).await?;
-    let sources = references();
-    let collection = ReferenceCollection::lexical(&sources)?;
-    review_material(
-        model,
-        LESSON_REPAIR_SYSTEM,
-        authoring,
-        ReviewSchema::Other(&json!({"type":"object"})),
-        candidate.to_string(),
-        4000,
-        &mut LessonSubject::new(&collection, &[], Held::default()),
-    )
-    .await
-}
-
-fn part_a_is_wrong(text: &str) -> bool {
-    text.contains("Part A") && text.contains("first idea")
-}
-
-#[tokio::test]
-async fn a_draft_the_reviewer_saw_under_one_authoring_context_is_reviewed_again_under_another(
-) -> Result<()> {
-    let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) =
-        crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-    let first = ByRequest::new(part_a_is_wrong, |_, _| Vec::new());
-    let before = lesson_drafts::run(&repo, &job, &lesson_id, async {
-        review_in_the_job(&first, &context(), parts_lesson(2)).await
-    })
-    .await?;
-    assert_eq!(before.set_aside.len(), 1);
-    let other =
-        json!({"sources":[{"sourceIndex":0,"excerpt":EXCERPT}],"lessonShape":["Two sections."]})
-            .to_string();
-    let second = ByRequest::new(part_a_is_wrong, |_, _| Vec::new());
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
-        review_in_the_job(&second, &other, serde_json::from_str(&before.candidate)?).await
-    })
-    .await?;
-    let reviews = second.reviews();
-    assert!(
-        !reviews.is_empty(),
-        "the same text under other inputs was not reviewed"
-    );
-    assert_eq!(reviews[0]["sectionIndicesToReview"], json!([0, 1]));
-    let asked: Vec<Value> = reviews[0]["openFindings"]
-        .as_array()
-        .unwrap()
-        .iter()
-        .map(|entry| entry["id"].clone())
-        .collect();
-    assert_eq!(asked, [json!("reviewer/1")]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_contradiction_between_two_parts_is_kept_with_both_and_repaired() -> Result<()> {
-    let none_wrong = |index: usize| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Nothing is wrong here.","hasDefect":false});
-    let recheck = |id: &str, issues: Vec<&str>, section: usize| {
-        json!({
-            "openFindings": [{"id": id, "verdict": "resolved", "note": ""}],
-            "issues": issues,
-            "blockChecks": crate::teaching_review::fixture_checks(vec![none_wrong(section)]),
-        })
-        .to_string()
-    };
-    let clash = json!({"decisions":[{
-        "issueId": "issue-0",
-        "verdict": "actionable",
-        "basis": "internal_conflict",
-        "evidenceIds": ["blocks-0", "blocks-1"],
-        "partId": "blocks-1",
-        "requirementId": null,
-        "reason": "Part A and Part B state opposite ideas."
-    }]})
-    .to_string();
-    let model = model(vec![
-        parts_review(2, &[0]),
-        parts_evidence(&[0]),
-        edits_answer(vec![better_idea(0, "reviewer/1")]),
-        recheck("reviewer/1", vec!["Part A now contradicts Part B."], 0),
-        clash,
-        edits_answer(vec![better_idea(1, "reviewer/2")]),
-        recheck("reviewer/2", Vec::new(), 1),
-    ]);
-    let reviewed = run(&model, parts_lesson(2)).await?;
-    let repairs = repair_requests(&model);
-    assert_eq!(repairs.len(), 2, "the contradiction reached no repair");
-    let sent = &repairs[1]["issuesToFix"][0];
-    assert_eq!(sent["part"], "/blocks/1");
-    assert_eq!(sent["also"], "/blocks/0");
-    assert!(reviewed.set_aside.is_empty());
-    Ok(())
-}
-
-const WRONG_COMPARISON: &str =
-    "The exercise answer contradicts its stated condition. Correct the comparison.";
-
-#[tokio::test]
-async fn a_closed_review_s_recheck_takes_a_resolved_verdict_not_an_issue() -> Result<()> {
-    let model = ByRequest::new(
-        |_| false,
-        |_, _| vec![json!({"path":"/wrong","before":true,"after":false})],
-    )
-    .about_the_whole(|candidate, _| {
-        if candidate["wrong"] == true {
-            vec![WRONG_COMPARISON]
-        } else {
-            Vec::new()
-        }
-    });
-    let result = review_and_repair(
-        &model,
-        "Author quiz questions",
-        "Require a correct comparison",
-        &json!({"type":"object"}),
-        json!({"wrong":true}).to_string(),
-        2000,
-    )
-    .await;
-    assert!(result.is_ok(), "{result:?}");
-    Ok(())
-}
-
-#[tokio::test]
-async fn material_that_fails_closed_and_comes_back_unchanged_fails_without_another_review() {
-    let model = ByRequest::new(
-        |_| false,
-        |_, _| vec![json!({"path":"/wrong","before":true,"after":true})],
-    )
-    .about_the_whole(|_, _| vec![WRONG_COMPARISON]);
-    let result = review_and_repair(
-        &model,
-        "Author quiz questions",
-        "Require a correct comparison",
-        &json!({"type":"object"}),
-        json!({"wrong":true}).to_string(),
-        2000,
-    )
-    .await;
-    let error = result.unwrap_err().to_string();
-    assert!(error.contains("still found an issue"), "{error}");
-    assert_eq!(model.reviews().len(), 1);
-    assert_eq!(model.repairs().len(), 1);
-}
-
-#[tokio::test]
-async fn a_present_finding_its_section_check_reports_again_is_one_finding() -> Result<()> {
-    let model = ByRequest::new(|text| text.contains("first idea"), reword_every_part).restating();
-    let reviewed = run(&model, parts_lesson(1)).await?;
-    let repairs = model.repairs();
-    assert_eq!(repairs.len(), 2);
-    assert_eq!(repairs[1]["issuesToFix"].as_array().map(Vec::len), Some(1));
-    assert_eq!(
-        reviewed.set_aside.len(),
-        1,
-        "{:?}",
-        notes_waiting(&reviewed)
-    );
     Ok(())
 }

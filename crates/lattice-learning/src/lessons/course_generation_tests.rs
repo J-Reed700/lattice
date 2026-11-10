@@ -50,9 +50,9 @@ impl Model {
         if prompt.starts_with("Review instructional quality.") {
             let context: serde_json::Value =
                 serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
-            // Only the outline plan review numbers the modules it shows;
-            // the teaching reviews keep their own response shape.
-            if context.get("moduleNumbering").is_some() {
+            // The outline review names its open findings; lesson reviews
+            // keep their own response shape.
+            if context.get("openFindings").is_some() {
                 return Ok(json!({"newFindings":[]}).to_string());
             }
             if context["candidate"].get("blocks").is_none() {
@@ -570,46 +570,6 @@ impl LLMPort for ScriptedModel {
         Ok(true)
     }
 }
-/// A teaching-review verdict on the finding `id`: "present" or "resolved".
-pub(crate) fn verdict(id: &str, verdict: &str) -> serde_json::Value {
-    json!({"id":id,"verdict":verdict,"note":""})
-}
-
-/// A teaching-review reply that reports no issue, finds no defect in the
-/// sections it checks, and gives `verdicts` on the findings it was asked about.
-pub(crate) fn clean_review(sections: &[usize], verdicts: &[serde_json::Value]) -> String {
-    review_reply(
-        &[],
-        sections
-            .iter()
-            .map(|index| section_check(*index, None))
-            .collect(),
-        verdicts,
-    )
-}
-
-/// The check of section `index`: a defect when `defect` is given.
-pub(crate) fn section_check(index: usize, defect: Option<&str>) -> serde_json::Value {
-    let finding = defect.unwrap_or("No defect was found in this section.");
-    json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":finding,"hasDefect":defect.is_some()})
-}
-
-/// A teaching-review reply as it is written: `checks` are for exactly the
-/// sections the review asks about, `verdicts` for exactly the findings it asks
-/// about (none: no `openFindings`).
-pub(crate) fn review_reply(
-    issues: &[&str],
-    checks: Vec<serde_json::Value>,
-    verdicts: &[serde_json::Value],
-) -> String {
-    let mut reply =
-        json!({"issues":issues,"blockChecks":crate::teaching_review::fixture_checks(checks)});
-    if !verdicts.is_empty() {
-        reply["openFindings"] = json!(verdicts);
-    }
-    reply.to_string()
-}
-
 impl ScriptedModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
         self.prompts
@@ -842,7 +802,7 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
             vec![
                 issue.clone(),
                 patch.clone(),
-                json!({"issues":[],"openFindings":[verdict("reviewer/1", "resolved")]}).to_string(),
+                json!({"issues":[]}).to_string(),
             ]
             .into(),
         ),
@@ -865,19 +825,12 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
             .map_err(|_| AppError::InternalError("fixture lock".into()))?;
         assert_eq!(prompts.len(), 3);
         assert!(prompts[1].contains("Correct the comparison"));
-        assert!(prompts[2].contains("openFindings"));
-        assert!(prompts[2].contains("judge the correction"));
+        assert!(prompts[2].contains("originalIssuesToRecheck"));
+        assert!(prompts[2].contains("final publication check"));
         assert!(prompts[2].contains("Correct the comparison"));
     }
     let model = ScriptedModel {
-        outputs: std::sync::Mutex::new(
-            vec![
-                issue.clone(),
-                patch,
-                json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."],"openFindings":[verdict("reviewer/1", "present")]}).to_string(),
-            ]
-            .into(),
-        ),
+        outputs: std::sync::Mutex::new(vec![issue.clone(), patch, issue].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
     assert!(crate::teaching::review_and_repair(
@@ -900,18 +853,12 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
         "A running total is initialized to zero and each accepted value is added exactly once. "
             .repeat(10);
     let candidate = json!({"blocks":[{"kind":"explanation","body":body}]});
-    let check = |has_defect, verdicts: &[serde_json::Value]| {
-        review_reply(
-            &[],
-            vec![
-                json!({"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect}),
-            ],
-            verdicts,
-        )
+    let check = |has_defect| {
+        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect})])}).to_string()
     };
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
-            vec![check(true, &[]), json!({"edits":[{"path":"/blocks/0/body","before":body,"after":format!("{body}Return the accumulated total.")}]}).to_string(), check(false, &[verdict("reviewer/1", "resolved")])].into(),
+            vec![check(true), json!({"edits":[{"path":"/blocks/0/body","before":body,"after":format!("{body}Return the accumulated total.")}]}).to_string(), check(false)].into(),
         ),
         prompts: std::sync::Mutex::new(vec![]),
     };

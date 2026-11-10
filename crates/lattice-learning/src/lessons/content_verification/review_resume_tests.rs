@@ -1,6 +1,6 @@
 use super::*;
 use crate::lessons::course_generation_tests::ScriptedModel;
-use crate::teaching_review::{LengthRule, Scope};
+use crate::teaching_review::LengthRule;
 use crate::{key_review, lesson_drafts, teaching_review};
 
 #[tokio::test]
@@ -37,12 +37,10 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
                     "Review",
                     json!({}),
                     &candidate,
-                    Scope::default(),
                     None,
                     LengthRule::Fail
                 )
                 .await?
-                .reported
                 .len(),
                 1
             );
@@ -59,7 +57,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             "Review",
             json!({}),
             &candidate,
-            Scope::default(),
             None,
             LengthRule::Fail,
         )
@@ -76,7 +73,6 @@ async fn completed_review_findings_survive_resume_without_losing_defects() -> Re
             "Review",
             json!({}),
             &candidate,
-            Scope::default(),
             None,
             LengthRule::Fail,
         )
@@ -106,7 +102,6 @@ async fn incomplete_reviews_are_never_saved_as_completed() -> Result<()> {
                 "Review",
                 json!({}),
                 &candidate,
-                Scope::default(),
                 None,
                 LengthRule::Fail
             )

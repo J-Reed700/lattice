@@ -611,9 +611,6 @@ impl Review for PreparationReview<'_, '_> {
             targets,
             active,
         )?;
-        if let Some(requirements) = context.get_mut("requirements") {
-            LessonShape::new(&self.schema, self.shape).state_in(requirements);
-        }
         repair::number_evidence(&mut context, self.numbered);
         self.ledger
             .begin_repairs(policy, &self.candidate, targets)

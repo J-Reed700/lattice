@@ -486,7 +486,7 @@ fn a_reason_is_held_to_the_citation_rule_like_the_explanation() {
     let mut candidate = lesson();
     candidate["questions"][3]["rationales"] = json!([
         "",
-        "The guide says \"the cache holds at most 128 entries\" in each node.",
+        "The cache holds 128 entries.",
         "Three fails.",
         "Four fails."
     ]);
@@ -496,7 +496,7 @@ fn a_reason_is_held_to_the_citation_rule_like_the_explanation() {
     assert_eq!(findings[0].kind, FindingKind::Quotation);
 
     candidate["questions"][3]["citations"] = json!([
-        {"sentence":"The guide says \"the cache holds at most 128 entries\" in each node.","sourceIndex":0,"quote":"The cache holds at most 128 entries at a time."}
+        {"sentence":"The cache holds 128 entries.","sourceIndex":0,"quote":"The cache holds at most 128 entries at a time."}
     ]);
     assert!(lesson_rules(&candidate).is_empty());
 }
@@ -504,8 +504,7 @@ fn a_reason_is_held_to_the_citation_rule_like_the_explanation() {
 #[test]
 fn a_question_explanation_is_held_to_the_same_rule() {
     let mut candidate = lesson();
-    candidate["questions"][2]["explanation"] =
-        json!("The guide says \"the cache holds at most 128 entries\" in each node.");
+    candidate["questions"][2]["explanation"] = json!("The cache holds 128 entries.");
 
     let findings = lesson_rules(&candidate);
 

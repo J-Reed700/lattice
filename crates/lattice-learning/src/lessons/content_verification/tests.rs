@@ -560,17 +560,7 @@ impl Model {
         }
         if prompt.starts_with("Review instructional quality.") {
             let data = context(prompt);
-            let asked = data["sectionIndicesToReview"].as_array().cloned();
-            let checks = data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().filter(|(index,_)|asked.as_ref().is_none_or(|asked|asked.contains(&json!(index)))).map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>();
-            let mut answer =
-                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
-            if let Some(open) = data["openFindings"].as_array() {
-                answer["openFindings"] = open
-                    .iter()
-                    .map(|finding| json!({"id":finding["id"],"verdict":"resolved","note":""}))
-                    .collect();
-            }
-            return Ok(answer.to_string());
+            return Ok(json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>())} ).to_string());
         }
         if prompt.starts_with("Source passages:") {
             *self.judge_calls.lock().unwrap() += 1;
