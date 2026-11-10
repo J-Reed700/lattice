@@ -2,11 +2,12 @@
 //! against the passages its sentence cites, part by part. A part is stated by
 //! a passage, standard knowledge of the field, a specific no passage gives, or
 //! something a passage contradicts; the statement passes when every part is
-//! stated, common or the lesson's own and one is stated. The decision is made from the parts,
-//! never from the verdict the model writes beside them, and the application
-//! guards what may count as common (see [`BridgeOutcome::guarded`]). It answers
-//! under the prompt the replay measured
-//! (evals/grounding/claim-classes/replay_classes.py, `BRIDGE_SYSTEM`).
+//! stated, common or the lesson's own and one is stated. The decision is made
+//! from the parts, never from the verdict the model writes beside them, and
+//! the application guards what may count as common (see
+//! [`BridgeOutcome::guarded`]). It answers under the prompt the replay
+//! measured (evals/grounding/claim-classes/replay_classes.py,
+//! `BRIDGE_SYSTEM`).
 use super::*;
 use serde_json::{json, Value};
 
@@ -103,7 +104,8 @@ impl BridgeOutcome {
     }
 
     /// Whether the statement stands: every part stated, common or the
-    /// lesson's own, and one stated. A part a passage contradicts outranks one that is missing.
+    /// lesson's own, and one stated. A part a passage contradicts outranks one
+    /// that is missing.
     pub fn decision(&self) -> BridgeDecision {
         let any = |kind: PartKind| self.parts.iter().any(|part| part.kind == kind);
         if any(PartKind::Contradicted) {
@@ -132,8 +134,8 @@ impl BridgeOutcome {
     }
 
     /// Whether the passages ground a statement a closed-book reading called
-    /// false: every part stated, common or the lesson's own and one stated, else the veto
-    /// stands. Apply [`Self::guarded`] first.
+    /// false: every part stated, common or the lesson's own and one stated,
+    /// else the veto stands. Apply [`Self::guarded`] first.
     pub fn ground_outcome(&self) -> Outcome {
         let any = |kind: PartKind| self.parts.iter().any(|part| part.kind == kind);
         if any(PartKind::Stated) && !any(PartKind::SpecificMissing) && !any(PartKind::Contradicted)
