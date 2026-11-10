@@ -9,11 +9,11 @@ use lattice_core::domain::learning::claim_review::{
 use std::sync::Mutex;
 
 fn block(kind: &str, title: &str, body: &str) -> Value {
-    json!({"kind":kind,"title":title,"body":body,"rubric":[]})
+    json!({"kind":kind,"title":title,"body":body,"rubric":[],"quote":""})
 }
 
 fn question(prompt: &str) -> Value {
-    json!({"kind":"quiz","prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":0,"explanation":"Because."})
+    json!({"kind":"quiz","prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":0,"explanation":"Because.","quote":""})
 }
 
 /// Four sections (units 0 to 3) and two questions (units 4 and 5).

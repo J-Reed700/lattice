@@ -146,7 +146,7 @@ fn choices_that_differ_only_in_path_punctuation_are_different_choices() {
 fn choices_a_reader_cannot_tell_apart_or_blank_choices_are_still_rejected() {
     let same = choice_item(
         "Which program reads the typed commands?",
-        &["The shell", "the shell.", "The kernel", "The editor"],
+        &["The shell", "The shell.", "The kernel", "The editor"],
         2,
     );
     assert!(validate_candidate(&same).is_err());

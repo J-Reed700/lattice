@@ -137,7 +137,7 @@ impl LLMPort for Rounds {
 }
 
 fn block(index: usize, body: &str) -> Value {
-    json!({"kind":"explanation","title":format!("Section {index}"),"body":body,"rubric":[]})
+    json!({"kind":"explanation","title":format!("Section {index}"),"body":body,"rubric":[],"quote":""})
 }
 
 /// What a test logs, every level.
