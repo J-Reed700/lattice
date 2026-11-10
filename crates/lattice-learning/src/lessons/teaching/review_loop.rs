@@ -34,6 +34,9 @@ pub(super) async fn review_material(
     subject.resume(&candidate).await?;
     subject.save(&candidate).await?;
     let mut authoring = json_or_text(prompt);
+    if let ReviewSchema::Lesson(shape) = schema {
+        shape.state_in(&mut authoring);
+    }
     for attempt in 0usize.. {
         if let Some(progress) = subject.progress() {
             progress.stage(if attempt == 0 {

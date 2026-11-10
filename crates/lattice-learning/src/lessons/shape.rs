@@ -1,7 +1,8 @@
 //! The lesson's shape (acceptance policy design §2.8): what the writer is asked
 //! for, what the lesson is held to once verification has spent some of it, and
 //! what a cut may take. One policy answers all of it, so the writer's schema,
-//! the lesson's rules, the cuts and the save read the same decision.
+//! the lesson's rules, the cuts, the save and what a model is told of the
+//! shape read the same decision.
 //!
 //! A lesson is held to one of two promises (`Phase`). The draft is held to the
 //! margin: the writer is asked for more than a lesson needs (a mix of
@@ -24,6 +25,9 @@ pub(crate) enum Phase {
     /// A lesson verification has cut or may cut, held to the floor.
     Kept,
 }
+
+/// The key a request states a lesson's shape under.
+pub(crate) const WORDS: &str = "lessonShape";
 
 /// A lesson schema and the promise it holds a lesson to. Only the shape
 /// policy builds one, so the two cannot disagree.
@@ -73,6 +77,17 @@ impl<'a> LessonShape<'a> {
     pub(crate) fn phase(&self) -> Phase {
         self.schema.phase()
     }
+
+    /// States in `request`, the writer's request, the shape this lesson is held
+    /// to now: what a model that reviews or repairs the lesson reads.
+    pub(crate) fn state_in(&self, request: &mut Value) {
+        if let Some(request) = request.as_object_mut() {
+            request.insert(
+                WORDS.to_owned(),
+                serde_json::json!(self.policy.asked(self.phase())),
+            );
+        }
+    }
 }
 
 /// The one reader of a lesson's shape.
@@ -82,11 +97,10 @@ pub(crate) trait ShapePolicy: Send + Sync {
     /// minimums.
     fn schema(&self, phase: Phase, source_count: usize) -> LessonSchema;
 
-    /// The fewest and most core ideas a lesson teaches.
-    fn ideas(&self) -> (usize, usize);
-
-    /// The fewest and most sections the writer is asked for.
-    fn sections(&self) -> (usize, usize);
+    /// What a lesson in `phase` is held to, in the words a model is given: the
+    /// writer is asked for the draft's, and a review or a repair is told the
+    /// words of the phase the lesson is in.
+    fn asked(&self, phase: Phase) -> Vec<String>;
 
     /// Every rule finding of `lesson` in `phase`: the shape's about the count
     /// and the order of its sections and questions, and the rules of its parts.
@@ -199,12 +213,22 @@ impl ShapePolicy for StandardShape {
         }
     }
 
-    fn ideas(&self) -> (usize, usize) {
-        IDEAS
-    }
-
-    fn sections(&self) -> (usize, usize) {
-        SECTIONS
+    fn asked(&self, phase: Phase) -> Vec<String> {
+        let kinds = question_kinds();
+        match phase {
+            Phase::Draft => vec![
+                format!("Teach through the {} or {} core ideas the objective depends on, the ones coursePlan lists for this lesson: fewer ideas understood deeply, not a survey. For each idea write an explanation, then a worked_example, then a check. Where learners plausibly mistake an idea for something similar, put a contrast between its example and its check; the lesson has at least one. After the ideas come one guided_practice, one independent_practice, one reflection and one recap, in that order: {} to {} blocks.", number(IDEAS.0), number(IDEAS.1), SECTIONS.0, SECTIONS.1),
+                format!(
+                    "Create exactly {} distinct multiple-choice items of each kind: {kinds}.",
+                    number(QUESTIONS_PER_KIND)
+                ),
+            ],
+            // What `shape_findings` holds a `Phase::Kept` lesson to: change the two together.
+            Phase::Kept => vec![
+                "Verification takes out of a lesson what no source confirms, so this lesson is no longer held to the number of sections and questions it was drafted with.".to_owned(),
+                format!("It is held to this instead: at least one explanation; each check after a worked example shown since the previous check; the recap after the reflection when it has both; and at least one question of each kind: {kinds}."),
+            ],
+        }
     }
 
     fn rules(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
@@ -292,12 +316,8 @@ impl ShapePolicy for FixedSchema {
         }
     }
 
-    fn ideas(&self) -> (usize, usize) {
-        StandardShape.ideas()
-    }
-
-    fn sections(&self) -> (usize, usize) {
-        StandardShape.sections()
+    fn asked(&self, phase: Phase) -> Vec<String> {
+        StandardShape.asked(phase)
     }
 
     fn rules(&self, _lesson: &Value, _phase: Phase) -> Vec<ReviewFinding> {
@@ -354,7 +374,7 @@ const NUMBER_WORDS: [&str; 11] = [
 ];
 
 /// `count` as a word, or in digits past ten.
-pub(crate) fn number(count: usize) -> String {
+fn number(count: usize) -> String {
     NUMBER_WORDS
         .get(count)
         .map_or_else(|| count.to_string(), |word| (*word).to_owned())
@@ -398,15 +418,20 @@ fn mix_asked(exactly: &str) -> String {
 /// questions each for practice, quiz and test"; `adjective` goes before
 /// "questions" when it is not empty.
 fn questions_asked(adjective: &str) -> String {
+    format!(
+        "at least {} {adjective}questions each for {}",
+        number(QUESTIONS_PER_KIND),
+        question_kinds()
+    )
+}
+
+/// The question kinds, as the words join them: "practice, quiz and test".
+fn question_kinds() -> String {
     let kinds: Vec<String> = LessonQuestionKind::ALL
         .iter()
         .map(|kind| kind.as_str().to_owned())
         .collect();
-    format!(
-        "at least {} {adjective}questions each for {}",
-        number(QUESTIONS_PER_KIND),
-        join_plain(&kinds)
-    )
+    join_plain(&kinds)
 }
 
 /// The sections that are checks and follow no worked example since the

@@ -2123,3 +2123,56 @@ async fn a_review_after_a_cut_and_its_repair_are_told_the_shape_the_lesson_is_ke
     );
     Ok(())
 }
+
+#[tokio::test]
+async fn a_draft_review_is_told_what_the_writer_was() -> Result<()> {
+    use crate::lessons::shape::{self, FixedSchema, Phase, ShapePolicy};
+    let model = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        retitle("Corrected example"),
+        review(None),
+    ]);
+    let draft = shape::policy().asked(Phase::Draft);
+    let policy = FixedSchema(json!({"type":"object"}));
+    let schema = policy.schema(Phase::Draft, 1);
+    let request = json!({
+        "sources":[{"sourceIndex":0,"excerpt":EXCERPT}],
+        "lessonShape":draft
+    })
+    .to_string();
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    review_material(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &request,
+        ReviewSchema::Lesson(LessonShape::new(&schema, &policy)),
+        lesson(EXCERPT).to_string(),
+        4000,
+        &mut LessonSubject::new(&references, &[], Held::default()),
+    )
+    .await?;
+    {
+        let prompts = model.prompts.lock().unwrap();
+        let reviews: Vec<_> = prompts
+            .iter()
+            .filter(|prompt| prompt.contains("authoringContext"))
+            .collect();
+        assert!(!reviews.is_empty());
+        for prompt in reviews {
+            for line in &draft {
+                assert!(prompt.contains(line.as_str()), "{line}");
+            }
+        }
+    }
+    let requests = repair_requests(&model);
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]["originalRequirements"]["lessonShape"],
+        json!(draft)
+    );
+    Ok(())
+}
