@@ -7,7 +7,7 @@
 //! publishing.
 use super::validate_text;
 use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
-use crate::content_verification::{markers, names_a_source, Case, Givens, Marker, CITED_KINDS};
+use crate::content_verification::{names_a_source, quoted_wording, CITED_KINDS};
 use crate::lessons::repeats;
 use crate::lessons::same_text::{fold, overlap};
 use crate::lessons::shape;
@@ -140,11 +140,13 @@ pub(crate) fn prose_sentences(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// A specific stands only in a sentence the writer lists in the part's
+/// Quoted wording stands only in a sentence the writer lists in the part's
 /// citations, with a quote that contains it. Otherwise it is cited, when a
-/// supplied excerpt states it, or the part is written in its general form,
-/// when none does (claim classes design §3.4, §3.5). Code is exempt.
-fn uncited_specifics(
+/// supplied excerpt holds it, or written as the lesson's own sentence without
+/// quotation marks, when none does (claim classes design §3.4, §3.13). A
+/// figure is not read here: whether it is the lesson's own or a fact a source
+/// must state is the classifier's question. Code is exempt.
+fn uncited_quotations(
     item: &Value,
     body: &str,
     (site, label): (FindingSite, &str),
@@ -162,9 +164,9 @@ fn uncited_specifics(
         .flatten()
         .map(|entry| (text(entry, "sentence"), text(entry, "quote")))
         .collect();
-    let case = Case::Stated(Givens::of(item));
     for sentence in prose_sentences(body) {
-        if markers(&sentence, &case).next().is_none() {
+        let wanted: Vec<&str> = quoted_wording(&sentence).collect();
+        if wanted.is_empty() {
             continue;
         }
         let quotes: Vec<&str> = cited
@@ -172,28 +174,18 @@ fn uncited_specifics(
             .filter(|(cited, _)| overlap(cited, &sentence))
             .map(|(_, quote)| *quote)
             .collect();
-        let wanted: Vec<String> = markers(&sentence, &case)
-            .map(|marker| marker.text().to_owned())
-            .collect();
         let lacking = |quote: &str| -> Vec<String> {
             let held = fold(quote);
             wanted
                 .iter()
-                .filter(|specific| !held.contains(&fold(specific)))
-                .cloned()
+                .filter(|wording| !held.contains(&fold(wording)))
+                .map(|wording| (*wording).to_owned())
                 .collect()
         };
         let (summary, note, quote) = if quotes.is_empty() {
             let summary =
                 format!("No source is cited for this sentence: \u{201c}{sentence}\u{201d}");
-            let unquoted = if markers(&sentence, &case)
-                .any(|marker| matches!(marker, Marker::Quoted(_)))
-            {
-                " When the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence instead."
-            } else {
-                ""
-            };
-            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt states it: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the figure or wording. Write the general form only when no supplied excerpt does.{unquoted}");
+            let note = format!("{label} states a specific in \"{sentence}\" without citing it. Cite it when a supplied excerpt holds the wording: add an entry to the citations of {path} with the sentence, the excerpt's sourceIndex and an exact quote of the excerpt that contains the wording. When no supplied excerpt holds it, or the words are not quoted from a source (a misconception, a learner's thought or an example remark), remove the quotation marks and write it as the lesson's own sentence.");
             (summary, note, "")
         } else {
             let (missing, quote) = quotes
@@ -208,7 +200,7 @@ fn uncited_specifics(
                 "The quotation cited for this sentence does not contain {}: \u{201c}{sentence}\u{201d}",
                 join_plain(&missing)
             );
-            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or write the general form when no excerpt states it.", missing.join(", "));
+            let note = format!("{label}: the quote cited for \"{sentence}\" does not contain {}. Cite a quote of a supplied excerpt that does, in an entry of the citations of {path}, or remove the quotation marks and write it as the lesson's own sentence when no excerpt holds the wording.", missing.join(", "));
             (summary, note, quote)
         };
         findings.push(citation(
@@ -507,7 +499,7 @@ pub(crate) fn lesson_rules(
             &mut findings,
         );
         if CITED_KINDS.contains(&text(block, "kind")) {
-            uncited_specifics(
+            uncited_quotations(
                 block,
                 text(block, "body"),
                 (FindingSite::Section(index), &label),
@@ -523,14 +515,14 @@ pub(crate) fn lesson_rules(
             (FindingSite::Question(index), &label),
             &mut findings,
         );
-        uncited_specifics(
+        uncited_quotations(
             question,
             text(question, "explanation"),
             (FindingSite::Question(index), &label),
             &mut findings,
         );
         for reason in reasons(question) {
-            uncited_specifics(
+            uncited_quotations(
                 question,
                 reason,
                 (FindingSite::Question(index), &label),
