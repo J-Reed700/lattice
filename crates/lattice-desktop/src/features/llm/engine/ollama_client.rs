@@ -736,6 +736,9 @@ impl LLMPort for OllamaClient {
     fn reasons_for(&self, request: &CompletionRequest) -> bool {
         self.thinking_mode(request) == ThinkingMode::On
     }
+    fn thinks_before_answering(&self) -> bool {
+        self.thinking_mode(&CompletionRequest::default()) == ThinkingMode::On
+    }
 
     async fn is_ready(&self) -> Result<bool> {
         Ok(self.health_check().await)

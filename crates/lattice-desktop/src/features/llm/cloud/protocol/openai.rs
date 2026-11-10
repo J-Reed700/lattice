@@ -150,8 +150,8 @@ impl ProviderProtocol for OpenAi {
         Box::new(stream::Events::default())
     }
 
-    fn thinks_unasked(&self, _model: &str) -> bool {
-        false
+    fn thinks_unasked(&self, model: &str) -> bool {
+        is_reasoning_model(model)
     }
 
     fn reasons(&self, model: &str, _request: &CompletionRequest) -> bool {
@@ -200,7 +200,15 @@ impl ProviderProtocol for OpenAi {
 /// Whether this OpenAI model is a reasoning model, which takes an effort
 /// setting in place of sampling knobs and rejects `temperature`/`top_p`.
 fn is_reasoning_model(model: &str) -> bool {
+    let model = base_model(model);
     model.starts_with("gpt-5") || model.starts_with("gpt-6") || model.starts_with('o')
+}
+
+/// A fine-tune answers as the model it was tuned from: `ft:<base>:<org>:...`.
+fn base_model(id: &str) -> &str {
+    id.strip_prefix("ft:")
+        .and_then(|id| id.split(':').next())
+        .unwrap_or(id)
 }
 
 /// What, if anything, belongs in the Responses API's `reasoning` block. Only
@@ -209,6 +217,7 @@ fn is_reasoning_model(model: &str) -> bool {
 /// (gpt-5) or `low` (o-series).
 fn reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str> {
     let effort = effort?;
+    let model = base_model(model);
     let floor = if model.starts_with("gpt-5") || model.starts_with("gpt-6") {
         "minimal"
     } else if model.starts_with('o') {
@@ -222,10 +231,7 @@ fn reasoning_effort<'a>(model: &str, effort: Option<&'a str>) -> Option<&'a str>
 // OpenAI's model list has no endpoint capabilities. Recognize chat families,
 // including fine tunes, and exclude specialized audio/image/search endpoints.
 fn is_chat_model(id: &str) -> bool {
-    let base = id
-        .strip_prefix("ft:")
-        .and_then(|id| id.split(':').next())
-        .unwrap_or(id);
+    let base = base_model(id);
     (base.starts_with("gpt-")
         || base.starts_with("chatgpt-")
         || base.starts_with("chat-")

@@ -414,6 +414,9 @@ impl LLMPort for LlamaCppLlm {
     fn reasons_for(&self, request: &CompletionRequest) -> bool {
         self.thinking_mode(request) == ThinkingMode::On
     }
+    fn thinks_before_answering(&self) -> bool {
+        self.thinking_mode(&CompletionRequest::default()) == ThinkingMode::On
+    }
     /// A crashed bundled server leaves this client cached with a dead port;
     /// saying so lets the role cache drop it and start a fresh server.
     fn is_alive(&self) -> bool {
