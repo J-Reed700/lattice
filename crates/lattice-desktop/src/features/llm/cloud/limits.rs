@@ -86,14 +86,7 @@ async fn report_from(
         .map_err(|_| failed())?;
     let status = response.status();
     if !status.is_success() {
-        // Only a 429's body is read: it alone tells an account with nothing
-        // left from a busy one.
-        let body = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-            response.text().await.unwrap_or_default()
-        } else {
-            String::new()
-        };
-        return Err(super::status_error(protocol, status, &body));
+        return Err(super::refusal(protocol, response).await);
     }
     let reply: serde_json::Value = response.json().await.map_err(|_| failed())?;
     (api.parse)(reply).ok_or_else(failed)

@@ -170,14 +170,7 @@ impl CloudLlm {
                 .get("retry-after")
                 .and_then(|h| h.to_str().ok())
                 .and_then(|v| v.parse::<u64>().ok());
-            // Only a 429's body is read: it alone tells an account with nothing
-            // left from a busy one.
-            let refusal = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-                response.text().await.unwrap_or_default()
-            } else {
-                String::new()
-            };
-            let error = status_error(self.protocol, status, &refusal);
+            let error = refusal(self.protocol, response).await;
             let resend =
                 matches!(error, AppError::RateLimitExceeded(_)) || status.is_server_error();
             if attempt == 2 || !resend {
@@ -365,6 +358,18 @@ fn out_of_quota(body: &str) -> bool {
     ["/error/type", "/error/code"]
         .iter()
         .any(|field| reply.pointer(field).and_then(Value::as_str) == Some("insufficient_quota"))
+}
+
+/// The error for a refused response; only a 429's body is read, as it alone
+/// tells an account with nothing left from a busy one.
+async fn refusal(protocol: &dyn ProviderProtocol, response: reqwest::Response) -> AppError {
+    let status = response.status();
+    let body = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        response.text().await.unwrap_or_default()
+    } else {
+        String::new()
+    };
+    status_error(protocol, status, &body)
 }
 
 /// A provider's refusal, typed by what waiting can change: a rejected key or
