@@ -6,6 +6,8 @@ use crate::{
     ratchet::{impl_item_attrs, production_files, token_paths, trait_item_attrs},
     test_only,
 };
+#[cfg(test)]
+mod handouts;
 mod rule3;
 mod sqlx_types;
 mod unit_of_work;
@@ -101,6 +103,16 @@ pub fn is_data_module(path: &str) -> bool {
 
 pub fn file_violations(path: &str, ast: &syn::File) -> Vec<Violation> {
     file_violations_with(path, ast, EXCEPTIONS)
+}
+
+#[cfg(test)]
+pub fn file_violations_in(
+    path: &str,
+    _module: &[String],
+    ast: &syn::File,
+    _modules: &handouts::ModuleScopes,
+) -> Vec<Violation> {
+    file_violations(path, ast)
 }
 
 pub fn file_violations_with(
@@ -457,6 +469,8 @@ impl<'ast> Visit<'ast> for Scan<'_> {
     }
 }
 
+#[cfg(test)]
+mod driver_tests;
 #[cfg(test)]
 mod tests;
 #[cfg(test)]

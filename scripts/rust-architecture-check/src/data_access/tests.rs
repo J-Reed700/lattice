@@ -6,10 +6,12 @@ const TRANSACTIONS: &str = "crates/lattice-core/src/shared/persistence/transacti
 const DEFERRED: &str = "begins a deferred transaction; use begin_write() or begin_read()";
 const BEGIN_WITH: &str = "begins with begin_with(); use begin_write() or begin_read()";
 
+/// Rules 1 to 3; rules 4 and 5 are covered by `driver_tests` and `unit_of_work_tests`.
 fn found(path: &str, source: &str) -> Vec<String> {
     let ast = syn::parse_file(source).unwrap();
     file_violations(path, &ast)
         .iter()
+        .filter(|violation| violation.rule < 4)
         .map(ToString::to_string)
         .collect()
 }
