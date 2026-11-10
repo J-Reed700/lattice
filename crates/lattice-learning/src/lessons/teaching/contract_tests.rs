@@ -10,6 +10,7 @@ use crate::reference_collection::ReferenceCollection;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
@@ -242,12 +243,7 @@ async fn run_under(
         ReviewSchema::Other(schema),
         candidate.to_string(),
         4000,
-        ReviewContext {
-            outline: None,
-            protected,
-            lesson_references: Some(&references),
-            held: BTreeSet::new(),
-        },
+        &mut LessonSubject::new(&references, protected, BTreeSet::new()),
     )
     .await
 }
@@ -592,6 +588,14 @@ async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
     let model = Routed::new(&scripted, vec![]);
     let outline = json!({"modules":[{"title":"A module","lessons":[]}]});
     let schema = json!({"type":"object","properties":{"modules":{"type":"array"}}});
+    let progress = crate::outline_progress::OutlineProgress::default();
+    let sources = vec![crate::dto::LearningSourceDto {
+        id: "saved-reference".into(),
+        title: "Example reference".into(),
+        url: None,
+        acquired_at: 0,
+        excerpt: EXCERPT.into(),
+    }];
     review_and_repair_with_progress(
         &model,
         "Author a curriculum outline",
@@ -599,7 +603,10 @@ async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
         &schema,
         outline.to_string(),
         4000,
-        None,
+        OutlineReviewContext {
+            progress: &progress,
+            sources: &sources,
+        },
     )
     .await?;
     assert!(model.asked().is_empty());

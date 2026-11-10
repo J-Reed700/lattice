@@ -5,9 +5,11 @@ use super::*;
 use crate::lesson_drafts;
 use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
 use crate::reference_collection::ReferenceCollection;
+use crate::review_findings::FindingKey;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use std::collections::BTreeSet;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 
@@ -55,12 +57,7 @@ async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        ReviewContext {
-            outline: None,
-            protected: &[],
-            lesson_references: Some(&references),
-            held: BTreeSet::new(),
-        },
+        &mut LessonSubject::new(&references, &[], BTreeSet::new()),
     )
     .await
 }
@@ -81,12 +78,7 @@ async fn review_protecting(
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        ReviewContext {
-            outline: None,
-            protected,
-            lesson_references: Some(&references),
-            held: BTreeSet::new(),
-        },
+        &mut LessonSubject::new(&references, protected, BTreeSet::new()),
     )
     .await
 }
@@ -333,12 +325,7 @@ async fn a_repair_too_long_for_the_window_leaves_the_lesson_waiting() -> Result<
         ReviewSchema::Other(&json!({"type":"object"})),
         original.to_string(),
         4000,
-        ReviewContext {
-            outline: None,
-            protected: &[],
-            lesson_references: Some(&references),
-            held: BTreeSet::new(),
-        },
+        &mut LessonSubject::new(&references, &[], BTreeSet::new()),
     )
     .await?;
     assert_eq!(
@@ -381,12 +368,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        ReviewContext {
-            outline: None,
-            protected: &[],
-            lesson_references: Some(&references),
-            held: BTreeSet::new(),
-        },
+        &mut LessonSubject::new(&references, &[], BTreeSet::new()),
     )
     .await?;
     assert!(reviewed.set_aside.is_empty());
@@ -428,15 +410,14 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
         ReviewSchema::Other(&json!({"type":"object"})),
         lesson(EXCERPT).to_string(),
         4000,
-        ReviewContext {
-            outline: None,
-            protected: &[],
-            lesson_references: Some(&references),
-            held: BTreeSet::from([FindingKey {
+        &mut LessonSubject::new(
+            &references,
+            &[],
+            BTreeSet::from([FindingKey {
                 kind: FindingKind::Teaching,
                 site: FindingSite::Section(0),
             }]),
-        },
+        ),
     )
     .await?;
     assert_eq!(reviewed.set_aside.len(), 1);
@@ -532,12 +513,7 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        ReviewContext {
-            outline: None,
-            protected: &protected,
-            lesson_references: Some(&references),
-            held: BTreeSet::new(),
-        },
+        &mut LessonSubject::new(&references, &protected, BTreeSet::new()),
     )
     .await?;
     assert_eq!(reviewed.set_aside.len(), 1);
@@ -1515,12 +1491,11 @@ async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<
         ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
         candidate.to_string(),
         4000,
-        ReviewContext {
-            outline: None,
-            protected: if protected { &sentences } else { &[] },
-            lesson_references: Some(&references),
-            held: BTreeSet::new(),
-        },
+        &mut LessonSubject::new(
+            &references,
+            if protected { &sentences } else { &[] },
+            BTreeSet::new(),
+        ),
     )
     .await?;
     Ok(reviewed
