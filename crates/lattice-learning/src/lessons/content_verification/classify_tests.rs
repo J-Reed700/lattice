@@ -367,6 +367,26 @@ fn a_source_label_alone_needs_no_citation() {
 }
 
 #[test]
+fn a_sentence_that_only_names_a_source_needs_no_citation() {
+    for sentence in [
+        "The documentation is available without leaving the program.",
+        "According to the survey, most readers skim.",
+    ] {
+        assert!(!needs_citation(sentence, &Givens::NONE), "{sentence}");
+    }
+}
+
+#[test]
+fn an_attribution_or_a_verb_of_saying_is_still_a_specific_to_check() {
+    for sentence in [
+        "According to the survey, most readers skim.",
+        "The documentation states that the option is off by default.",
+    ] {
+        assert!(states_a_specific(sentence), "{sentence}");
+    }
+}
+
+#[test]
 fn an_apostrophe_is_not_a_quotation_mark() {
     for sentence in [
         "Run pwd before ls so you see the shell's folder rather than the window's.",
