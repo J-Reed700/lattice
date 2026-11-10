@@ -20,6 +20,9 @@ mod incremental_tests;
 
 const BAD: &str = "DictReader strips field-name whitespace by default.";
 const GOOD: &str = "DictReader preserves field-name whitespace by default.";
+/// What a repair writes for [`BAD`]: the same fact in the lesson's own words,
+/// since a repair may not write a sentence that copies a source.
+const FIXED: &str = "By default, DictReader preserves field-name whitespace.";
 const SOURCE: &str = "DictReader preserves field-name whitespace by default. Missing values in nonblank rows default to None. The optional skipinitialspace setting ignores spaces immediately after delimiters; it defaults to false.";
 
 /// A deterministic protocol fixture, not evidence of a live model's accuracy.
@@ -369,7 +372,7 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
             let passage = passages.iter().find(|p|p["field"]=="/body" || p["field"]=="/explanation").unwrap();
             let quote = passage["text"].as_str().unwrap();
             let index = v["index"].as_u64().unwrap() as usize;
-            let statement = if quote.contains(BAD) { BAD } else if quote.contains(GOOD) { GOOD } else { quote };
+            let statement = if quote.contains(BAD) { BAD } else if quote.contains(GOOD) { GOOD } else if quote.contains(FIXED) { FIXED } else { quote };
             json!({"index":index,"claims":[{"passageId":passage["id"],"statement":statement}],"nonFactualReason":""})
         }).collect::<Vec<_>>()).to_string());
     }
@@ -480,7 +483,7 @@ impl Model {
             *self.repaired.lock().unwrap() = true;
             return Ok(repair_body(
                 prompt,
-                candidate(GOOD)["blocks"][0]["body"].clone(),
+                candidate(FIXED)["blocks"][0]["body"].clone(),
             ));
         }
         if prompt.starts_with("Review instructional quality.") {
@@ -1019,9 +1022,9 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
                 let mut patch = self::context(prompt)["candidate"].clone();
                 for block in patch["blocks"].as_array_mut().unwrap() {
                     let good = if block["title"].as_str().unwrap().contains("second") {
-                        format!("Note that {GOOD}")
+                        format!("Note that {FIXED}")
                     } else {
-                        GOOD.to_owned()
+                        FIXED.to_owned()
                     };
                     block["body"] = json!(block["body"].as_str().unwrap().replace(BAD, &good));
                 }
@@ -1092,7 +1095,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
     assert!(partial["blocks"][0]["body"]
         .as_str()
         .unwrap()
-        .contains(GOOD));
+        .contains(FIXED));
     assert!(partial["blocks"][1]["body"].as_str().unwrap().contains(BAD));
     let retry = jobs
         .retry_job(&LearningGenerationJobActionRequestDto {
@@ -1298,7 +1301,7 @@ async fn contradictory_claim_is_repaired_and_rechecked_against_references() -> R
     )
     .await?;
     assert!(*model.repaired.lock().unwrap());
-    assert!(raw.contains(GOOD));
+    assert!(raw.contains(FIXED));
     assert!(report.issues.is_empty());
     assert!(report
         .findings
