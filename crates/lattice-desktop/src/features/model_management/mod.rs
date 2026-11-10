@@ -31,4 +31,5 @@ pub mod machine_probe;
 pub mod model_manager;
 pub mod plugin;
 pub mod recommend;
+mod repository;
 pub mod use_cases;

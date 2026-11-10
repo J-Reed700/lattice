@@ -18,5 +18,6 @@
 pub mod corpus_shape_repository;
 pub mod database_stats;
 pub mod di;
+mod repository;
 pub mod type_label;
 pub mod use_cases;

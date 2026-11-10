@@ -4,7 +4,7 @@
 //! `cargo test --test sync_repository_reads -- --ignored`.
 use lattice_sync::{
     error::AppError,
-    persistence::sync_repository::PgSyncRepository,
+    persistence::{db::Database, sync_repository::PgSyncRepository},
     sync::{
         repository::SyncRepository,
         types::{ConflictResolution, ConflictStatus, PushChange, SyncAction},
@@ -34,7 +34,7 @@ async fn device(repo: &PgSyncRepository, user: i64, name: &str) -> Uuid {
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
 async fn pull_pages_by_sequence_and_skips_the_readers_own_writes(pool: PgPool) {
-    let repo = PgSyncRepository::new(pool.clone());
+    let repo = PgSyncRepository::new(Database::from(pool.clone()));
     let writer = device(&repo, 7, "laptop").await;
     let reader = device(&repo, 7, "phone").await;
     let pushed = repo
@@ -87,7 +87,7 @@ async fn pull_pages_by_sequence_and_skips_the_readers_own_writes(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
 async fn conflicts_show_in_pull_and_status_until_resolved(pool: PgPool) {
-    let repo = PgSyncRepository::new(pool.clone());
+    let repo = PgSyncRepository::new(Database::from(pool.clone()));
     let writer = device(&repo, 9, "desktop").await;
     let reader = device(&repo, 9, "tablet").await;
     let first = repo
@@ -176,7 +176,7 @@ async fn conflicts_show_in_pull_and_status_until_resolved(pool: PgPool) {
 #[sqlx::test(migrations = "./migrations")]
 #[ignore = "requires a disposable PostgreSQL DATABASE_URL"]
 async fn registering_a_device_again_renames_it_in_place(pool: PgPool) {
-    let repo = PgSyncRepository::new(pool.clone());
+    let repo = PgSyncRepository::new(Database::from(pool.clone()));
     let uuid = Uuid::new_v4();
     let first = repo
         .upsert_device(5, uuid, "kitchen tablet".into())

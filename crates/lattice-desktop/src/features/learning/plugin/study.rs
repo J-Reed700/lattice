@@ -8,7 +8,7 @@ use crate::features::learning::recall::{
 pub async fn list_study_decks(
     container: State<'_, Container>,
 ) -> Result<Vec<StudyDeckSummaryDto>, ApiError> {
-    StudyRepository::new(container.db_pool().clone())
+    StudyRepository::new(container.database().clone())
         .list(chrono::Utc::now().timestamp_millis())
         .await
         .map_err(ApiError::from)
@@ -19,7 +19,7 @@ pub async fn get_study_deck(
     id: String,
     container: State<'_, Container>,
 ) -> Result<StudyDeckDto, ApiError> {
-    StudyRepository::new(container.db_pool().clone())
+    StudyRepository::new(container.database().clone())
         .get(&id)
         .await
         .map_err(ApiError::from)
@@ -39,7 +39,7 @@ pub async fn generate_study_deck(
     .await?;
     let llm = &pin.llm;
     service::generate_deck(
-        &StudyRepository::new(container.db_pool().clone()),
+        &StudyRepository::new(container.database().clone()),
         container.library_passages().as_ref(),
         llm.as_ref(),
         request,
@@ -61,7 +61,7 @@ pub async fn generate_conversation_study_deck(
     .await?;
     let llm = &pin.llm;
     service::generate_conversation_deck(
-        &StudyRepository::new(container.db_pool().clone()),
+        &StudyRepository::new(container.database().clone()),
         llm.as_ref(),
         request,
     )
@@ -74,7 +74,7 @@ pub async fn review_study_card(
     request: ReviewStudyCardRequestDto,
     container: State<'_, Container>,
 ) -> Result<StudyCardDto, ApiError> {
-    service::review(&StudyRepository::new(container.db_pool().clone()), request)
+    service::review(&StudyRepository::new(container.database().clone()), request)
         .await
         .map_err(ApiError::from)
 }
@@ -84,7 +84,7 @@ pub async fn update_study_card(
     request: UpdateStudyCardRequestDto,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    service::update_card(&StudyRepository::new(container.db_pool().clone()), request)
+    service::update_card(&StudyRepository::new(container.database().clone()), request)
         .await
         .map_err(ApiError::from)
 }
@@ -94,7 +94,7 @@ pub async fn delete_study_deck(
     id: String,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    StudyRepository::new(container.db_pool().clone())
+    StudyRepository::new(container.database().clone())
         .delete_deck(&id)
         .await
         .map_err(ApiError::from)
@@ -105,7 +105,7 @@ pub async fn set_study_deck_target(
     request: SetStudyDeckTargetRequestDto,
     container: State<'_, Container>,
 ) -> Result<StudyDeckDto, ApiError> {
-    service::set_target(&StudyRepository::new(container.db_pool().clone()), request)
+    service::set_target(&StudyRepository::new(container.database().clone()), request)
         .await
         .map_err(ApiError::from)
 }
@@ -115,8 +115,8 @@ pub async fn create_interview_study_deck(
     request: CreateInterviewStudyDeckRequestDto,
     container: State<'_, Container>,
 ) -> Result<StudyDeckDto, ApiError> {
-    let pool = container.db_pool().clone();
-    service::create_interview_deck(&StudyRepository::new(pool.clone()), &pool, request)
+    let database = container.database().clone();
+    service::create_interview_deck(&StudyRepository::new(database.clone()), &database, request)
         .await
         .map_err(ApiError::from)
 }

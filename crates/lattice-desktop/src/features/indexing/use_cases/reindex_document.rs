@@ -12,9 +12,9 @@
 use std::sync::Arc;
 
 use crate::features::indexing::dto::IndexFileResponseDto;
+use crate::infrastructure::persistence::repositories::{document, embedding};
 use crate::infrastructure::services::metadata_extraction::MetadataExtractor;
 use lattice_core::application::factories::FileMetadataFactory;
-use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
     EmbeddingPort, FileStoragePort, RepositoryPort, SearchResultCachePort, VectorSearchPort,
 };
@@ -22,6 +22,7 @@ use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::{Database, Transactions};
 
 /// Reindex document use case.
 ///
@@ -38,7 +39,7 @@ pub struct ReindexDocumentUseCase {
     content_extractor: Option<Arc<dyn lattice_core::application::ports::ContentExtractionPort>>,
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn RepositoryPort<Document>>,
-    uow_factory: Arc<dyn UnitOfWorkFactory>,
+    database: Database,
     /// The live vector index, updated alongside SQLite: the persisted index is
     /// rebuilt only when empty, so a reindex that skipped it would leave dangling
     /// vectors and miss the new chunks until then.
@@ -92,7 +93,7 @@ impl ReindexDocumentUseCase {
         file_storage: Arc<dyn FileStoragePort>,
         embedding_service: Arc<dyn EmbeddingPort>,
         document_repo: Arc<dyn RepositoryPort<Document>>,
-        uow_factory: Arc<dyn UnitOfWorkFactory>,
+        database: Database,
         vector_search: Arc<dyn VectorSearchPort>,
     ) -> Self {
         Self {
@@ -100,7 +101,7 @@ impl ReindexDocumentUseCase {
             content_extractor: None,
             embedding_service,
             document_repo,
-            uow_factory,
+            database,
             vector_search,
             query_cache: None,
         }
@@ -232,33 +233,7 @@ impl ReindexDocumentUseCase {
             .collect();
 
         document.mark_indexed();
-        let mut uow = self.uow_factory.create().await?;
-        let db_result = {
-            let document_repo = uow.document_repository()?;
-            let embedding_repo = uow.embedding_repository()?;
-
-            embedding_repo
-                .delete_by_document_id(document.id().as_str())
-                .await?;
-            document_repo.save(&document).await?;
-            embedding_repo.save_batch(embedding_entries).await?;
-            Ok(())
-        };
-
-        match db_result {
-            Ok(()) => {
-                uow.commit().await?;
-            }
-            Err(err) => {
-                if let Err(rollback_err) = uow.rollback().await {
-                    return Err(AppError::Database(format!(
-                        "Reindex failed: {}; rollback failed: {}",
-                        err, rollback_err
-                    )));
-                }
-                return Err(err);
-            }
-        }
+        self.persist_reindexed(&document, embedding_entries).await?;
 
         // Publish complete source metadata in batches, away from the async runtime.
         // SQLite has committed; report publication failures instead of claiming success.
@@ -312,6 +287,25 @@ impl ReindexDocumentUseCase {
             error: None,
             file_path: file_path_str.to_string(),
         })
+    }
+
+    /// Replaces the document's chunks and vectors in one unit of work, unless
+    /// the document was deleted while the new embeddings were being made.
+    async fn persist_reindexed(
+        &self,
+        document: &Document,
+        entries: Vec<(Embedding, Vec<f32>)>,
+    ) -> Result<()> {
+        let id = document.id().to_string();
+        let mut tx = self.database.begin_write().await?;
+        if !document::ops::exists(&mut tx, &id).await? {
+            return Err(AppError::NotFound(format!("Document not found: {}", id)));
+        }
+        embedding::ops::delete_by_document_id(&mut tx, &id).await?;
+        document::ops::save(&mut tx, document).await?;
+        embedding::ops::save_batch(&mut tx, entries).await?;
+        tx.commit().await?;
+        Ok(())
     }
 
     /// Execute reindexing with a specific chunking strategy.

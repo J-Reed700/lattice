@@ -25,6 +25,7 @@ use lattice_core::application::services::completion_input::{
 };
 use lattice_core::domain::models::vision::{VisionGeometry, VisionPreset};
 use serde_json::{json, Value};
+use std::sync::Arc;
 use std::time::Duration;
 use wiremock::matchers::{method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -72,16 +73,26 @@ fn request(geometry: VisionGeometry) -> CompletionRequest {
     }
 }
 
-/// The first body the stub server received. The reply is not what these
-/// tests check, so an adapter that retries a reply it cannot read sends the
-/// same body again.
-async fn received_body(server: &MockServer) -> Value {
+/// What the stub server received on `route`: a scheduled client may ask the
+/// server about itself before it completes.
+async fn received_on(server: &MockServer, route: &str) -> Vec<wiremock::Request> {
     let requests = server.received_requests().await.unwrap_or_default();
+    requests
+        .into_iter()
+        .filter(|request| request.url.path() == route)
+        .collect()
+}
+
+/// The first body the stub server received on `route`. The reply is not what
+/// these tests check, so an adapter that retries a reply it cannot read sends
+/// the same body again.
+async fn received_body(server: &MockServer, route: &str) -> Value {
+    let requests = received_on(server, route).await;
     let first = requests.first().expect("a request reached the server");
     serde_json::from_slice(&first.body).unwrap()
 }
 
-fn llama_cpp(server: &MockServer, vision: Option<VisionGeometry>) -> LlamaCppLlm {
+async fn llama_cpp(server: &MockServer, vision: Option<VisionGeometry>) -> Arc<dyn LLMPort> {
     let settings = LLMSettingsDto {
         llama_cpp: LlamaCppSettingsDto {
             url: server.uri(),
@@ -92,7 +103,11 @@ fn llama_cpp(server: &MockServer, vision: Option<VisionGeometry>) -> LlamaCppLlm
         max_tokens: 4_096,
         ..Default::default()
     };
-    LlamaCppLlm::new(&settings).unwrap().with_vision(vision)
+    LlamaCppLlm::new(&settings)
+        .unwrap()
+        .with_vision(vision)
+        .into_port()
+        .await
 }
 
 async fn chat_completions_stub() -> MockServer {
@@ -115,8 +130,11 @@ async fn llama_cpp_sends_the_picture_as_an_image_url_part_before_the_text() {
     let server = chat_completions_stub().await;
     let geometry = VisionPreset::Qwen25Vl.geometry();
     let request = request(geometry);
-    let _ = llama_cpp(&server, Some(geometry)).complete(&request).await;
-    let body = received_body(&server).await;
+    let _ = llama_cpp(&server, Some(geometry))
+        .await
+        .complete(&request)
+        .await;
+    let body = received_body(&server, "/v1/chat/completions").await;
     let fitted = geometry.plan(1280, 960);
     assert_eq!(
         body["messages"],
@@ -139,16 +157,14 @@ async fn llama_cpp_sends_the_picture_as_an_image_url_part_before_the_text() {
 async fn a_model_nobody_declared_able_to_see_sends_nothing_and_its_fallback_carries_the_caption() {
     let server = chat_completions_stub().await;
     let request = request(VisionPreset::Qwen25Vl.geometry());
-    let client = llama_cpp(&server, None);
+    let client = llama_cpp(&server, None).await;
     let refused = client.complete(&request).await.unwrap_err();
     assert!(
         refused.to_string().contains("is not set up to see images"),
         "{refused}"
     );
-    assert!(server
-        .received_requests()
+    assert!(received_on(&server, "/v1/chat/completions")
         .await
-        .unwrap_or_default()
         .is_empty());
 
     let fallback = CompletionRequest {
@@ -156,7 +172,7 @@ async fn a_model_nobody_declared_able_to_see_sends_nothing_and_its_fallback_carr
         ..request
     };
     let _ = client.complete(&fallback).await;
-    let body = received_body(&server).await;
+    let body = received_body(&server, "/v1/chat/completions").await;
     let fitted = VisionPreset::Qwen25Vl.geometry().plan(1280, 960);
     assert_eq!(
         body["messages"][1],
@@ -185,9 +201,10 @@ async fn ollama_sends_the_picture_in_the_messages_images_list() {
         Duration::from_secs(5),
     )
     .unwrap()
-    .with_vision(Some(geometry));
+    .with_vision(Some(geometry))
+    .into_port();
     let _ = client.complete(&request(geometry)).await;
-    let body = received_body(&server).await;
+    let body = received_body(&server, "/api/chat").await;
     assert_eq!(
         body["messages"][1],
         json!({
@@ -199,7 +216,7 @@ async fn ollama_sends_the_picture_in_the_messages_images_list() {
 }
 
 /// A cloud client for `provider` pointed at the stub server's `route`.
-async fn cloud(provider: LLMProvider, route: &str, reply: Value) -> (MockServer, CloudLlm) {
+async fn cloud(provider: LLMProvider, route: &str, reply: Value) -> (MockServer, Arc<dyn LLMPort>) {
     let server = MockServer::start().await;
     Mock::given(method("POST"))
         .and(path(route))
@@ -211,10 +228,11 @@ async fn cloud(provider: LLMProvider, route: &str, reply: Value) -> (MockServer,
         model: "vision-model".into(),
         ..Default::default()
     };
-    let client = CloudLlm::new(&settings, "test-key".into())
+    let client = CloudLlm::new(&settings, "test-key".into(), Some(settings.max_tokens))
         .unwrap()
         .with_endpoint(format!("{}{route}", server.uri()))
-        .with_vision(Some(VisionPreset::OpenAi.geometry()));
+        .with_vision(Some(VisionPreset::OpenAi.geometry()))
+        .into_port();
     (server, client)
 }
 
@@ -229,7 +247,7 @@ async fn openai_responses_take_an_input_image_before_the_input_text() {
     let _ = client
         .complete(&request(VisionPreset::OpenAi.geometry()))
         .await;
-    let body = received_body(&server).await;
+    let body = received_body(&server, "/responses").await;
     assert_eq!(
         body["input"][1],
         json!({"role":"user","content":[
@@ -250,7 +268,7 @@ async fn anthropic_takes_a_base64_image_block_before_the_text() {
     let _ = client
         .complete(&request(VisionPreset::Anthropic.geometry()))
         .await;
-    let body = received_body(&server).await;
+    let body = received_body(&server, "/messages").await;
     assert_eq!(body["system"], "Answer from the picture.");
     assert_eq!(
         body["messages"][0],
@@ -272,7 +290,7 @@ async fn gemini_takes_an_image_url_part_as_llama_cpp_does() {
     let _ = client
         .complete(&request(VisionPreset::Gemini.geometry()))
         .await;
-    let body = received_body(&server).await;
+    let body = received_body(&server, "/chat/completions").await;
     assert_eq!(
         body["messages"][1],
         json!({"role":"user","content":[

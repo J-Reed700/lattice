@@ -4,6 +4,7 @@
 //! placeholder modules (`bm25.rs`, `file_search.rs`) for a never-completed
 //! migration were removed.
 
+mod repository;
 pub mod sqlite_text_search;
 
 pub use sqlite_text_search::SqliteTextSearch;

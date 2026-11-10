@@ -24,6 +24,7 @@ use lattice_core::domain::learning::drills::{
     LessonSentence, Material, Origin, PatternRating, Proof, LANGUAGES,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStore;
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
@@ -163,7 +164,7 @@ async fn started() -> Result<(SqlitePool, String, Value)> {
     let pool = pool().await?;
     let program = stocked(&pool).await?;
     let started = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &code(&program, "python"),
         AttemptMode::Practice,
         40,
@@ -183,7 +184,7 @@ async fn starting_a_drill_gives_the_attempt_and_the_drill_as_the_learner_may_see
     let pool = pool().await?;
     let program = stocked(&pool).await?;
     let started = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &code(&program, "python"),
         AttemptMode::Interview,
         40,
@@ -216,7 +217,7 @@ async fn starting_a_drill_gives_the_attempt_and_the_drill_as_the_learner_may_see
             .map(CodeReviewFileDto::from)
             .collect::<Vec<_>>()
     );
-    let (attempt, _) = attempts::get(&pool, &attempt_id).await?;
+    let (attempt, _) = attempts::get(&Database::from(pool.clone()), &attempt_id).await?;
     assert_eq!(attempt.status, AttemptStatus::Open);
     assert_eq!(started.jobs.len(), 1, "the build of the next drill");
     let next = JobStore::new(pool.clone()).get(&started.jobs[0]).await?;
@@ -273,7 +274,7 @@ async fn the_drill_names_the_lesson_it_was_built_from_while_the_lesson_is_there(
     };
     stock_on(&pool, "drill", &second).await?;
     let started = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &lesson_of(&program, &lessons[1]),
         AttemptMode::Practice,
         40,
@@ -301,7 +302,10 @@ async fn the_drill_names_the_lesson_it_was_built_from_while_the_lesson_is_there(
         .await
         .map_err(db)?;
     assert_eq!(
-        review::result(&pool, &attempt_id).await?.drill.lesson,
+        review::result(&Database::from(pool.clone()), &attempt_id)
+            .await?
+            .drill
+            .lesson,
         named("Sleep, renamed")
     );
 
@@ -311,7 +315,13 @@ async fn the_drill_names_the_lesson_it_was_built_from_while_the_lesson_is_there(
         .execute(&pool)
         .await
         .map_err(db)?;
-    assert_eq!(review::result(&pool, &attempt_id).await?.drill.lesson, None);
+    assert_eq!(
+        review::result(&Database::from(pool.clone()), &attempt_id)
+            .await?
+            .drill
+            .lesson,
+        None
+    );
     Ok(())
 }
 
@@ -320,7 +330,7 @@ async fn a_drill_with_no_course_names_no_lesson() -> Result<()> {
     let pool = pool().await?;
     stock(&pool, "drill").await?;
     let attempt = opened(&pool, "drill", AttemptMode::Practice).await?;
-    let shown = review::result(&pool, &attempt.id).await?;
+    let shown = review::result(&Database::from(pool.clone()), &attempt.id).await?;
     assert_eq!(shown.drill.lesson, None);
     assert!(serde_json::to_value(&shown).expect("a DTO is JSON")["drill"]["lesson"].is_null());
     Ok(())
@@ -344,7 +354,7 @@ fn the_check_for_the_key_finds_it_where_it_is() {
 #[tokio::test]
 async fn an_attempt_not_yet_graded_shows_the_learner_nothing_of_the_key() -> Result<()> {
     let (pool, attempt_id, _) = started().await?;
-    let open = review::result(&pool, &attempt_id).await?;
+    let open = review::result(&Database::from(pool.clone()), &attempt_id).await?;
     assert_eq!(open.status, AttemptStatus::Open);
     assert_eq!(open.reveal, None);
     assert!(open.findings.is_empty());
@@ -352,16 +362,29 @@ async fn an_attempt_not_yet_graded_shows_the_learner_nothing_of_the_key() -> Res
     assert!(shown["reveal"].is_null());
     assert_nothing_of_the_key(&shown);
 
-    let acted = review::submit(&pool, &attempt_id, finding_dtos(), None, 61_000).await?;
+    let acted = review::submit(
+        &Database::from(pool.clone()),
+        &attempt_id,
+        finding_dtos(),
+        None,
+        61_000,
+    )
+    .await?;
     assert_eq!(acted.dto.status, AttemptStatus::Submitted);
     assert_eq!(acted.dto.reveal, None);
     assert_eq!(acted.dto.findings, finding_dtos());
     assert_nothing_of_the_key(&serde_json::to_value(&acted.dto).expect("a DTO is JSON"));
 
     let mut connection = pool.acquire().await.map_err(db)?;
-    attempts::record_ungraded_in(&mut connection, &attempt_id, Some(GRADER), "No answer.").await?;
+    attempts::repository::record_ungraded_in(
+        &mut connection,
+        &attempt_id,
+        Some(GRADER),
+        "No answer.",
+    )
+    .await?;
     drop(connection);
-    let ungraded = review::result(&pool, &attempt_id).await?;
+    let ungraded = review::result(&Database::from(pool.clone()), &attempt_id).await?;
     assert_eq!(ungraded.status, AttemptStatus::CouldntGrade);
     assert_eq!(ungraded.error.as_deref(), Some("No answer."));
     assert_eq!(ungraded.grader_model.as_deref(), Some(GRADER));
@@ -376,7 +399,7 @@ async fn with_no_drill_ready_the_lesson_next_up_is_built_and_the_learner_is_told
     let program = course(&pool).await?;
     let lessons = lessons_of(&pool, &program).await?;
     let started = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &code(&program, "python"),
         AttemptMode::Practice,
         50,
@@ -415,7 +438,7 @@ async fn with_none_ready_the_build_queued_plants_a_pattern_the_schedule_has_due_
     let due = "concurrency.check_then_act";
     schedule_pattern(&pool, "code:python", due, 1).await?;
     let started = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &code(&program, "python"),
         AttemptMode::Practice,
         50,
@@ -436,8 +459,22 @@ async fn asking_again_while_a_build_is_under_way_finds_that_build() -> Result<()
     let pool = pool().await?;
     let program = course(&pool).await?;
     let asked = code(&program, "python");
-    let first = review::start(&pool, &asked, AttemptMode::Practice, 50, 2).await?;
-    let again = review::start(&pool, &asked, AttemptMode::Practice, 50, 2).await?;
+    let first = review::start(
+        &Database::from(pool.clone()),
+        &asked,
+        AttemptMode::Practice,
+        50,
+        2,
+    )
+    .await?;
+    let again = review::start(
+        &Database::from(pool.clone()),
+        &asked,
+        AttemptMode::Practice,
+        50,
+        2,
+    )
+    .await?;
     assert_eq!(first.dto, again.dto);
     assert_eq!(jobs_of(&pool, DRILL_BUILD).await?, 1);
     Ok(())
@@ -449,9 +486,23 @@ async fn the_build_queued_when_a_drill_was_taken_is_the_one_the_next_learner_wai
     let pool = pool().await?;
     let program = stocked(&pool).await?;
     let asked = code(&program, "python");
-    let first = review::start(&pool, &asked, AttemptMode::Practice, 50, 2).await?;
+    let first = review::start(
+        &Database::from(pool.clone()),
+        &asked,
+        AttemptMode::Practice,
+        50,
+        2,
+    )
+    .await?;
     let next = first.jobs[0].clone();
-    let second = review::start(&pool, &asked, AttemptMode::Practice, 50, 2).await?;
+    let second = review::start(
+        &Database::from(pool.clone()),
+        &asked,
+        AttemptMode::Practice,
+        50,
+        2,
+    )
+    .await?;
     assert_eq!(
         second.dto,
         StartedCodeReviewDto::Building { job_id: next },
@@ -487,7 +538,14 @@ async fn a_request_that_cannot_make_a_build_is_refused_and_takes_no_drill() -> R
         refused.push((lesson_of(&program, lesson), 40, 2, what.to_owned()));
     }
     for (asked, lines, count, what) in refused {
-        let result = review::start(&pool, &asked, AttemptMode::Practice, lines, count).await;
+        let result = review::start(
+            &Database::from(pool.clone()),
+            &asked,
+            AttemptMode::Practice,
+            lines,
+            count,
+        )
+        .await;
         assert!(
             matches!(result, Err(AppError::InvalidInput(_))),
             "{what}: {result:?}"
@@ -495,7 +553,7 @@ async fn a_request_that_cannot_make_a_build_is_refused_and_takes_no_drill() -> R
     }
     assert_eq!(jobs_of(&pool, DRILL_BUILD).await?, 0);
     let still_there = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &code(&program, "python"),
         AttemptMode::Practice,
         40,
@@ -522,7 +580,7 @@ async fn asking_for_a_lesson_takes_its_ready_drill_or_builds_it() -> Result<()> 
     stock_on(&pool, "drill", &first).await?;
 
     let building = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &lesson_of(&program, &lessons[1]),
         AttemptMode::Practice,
         40,
@@ -538,7 +596,7 @@ async fn asking_for_a_lesson_takes_its_ready_drill_or_builds_it() -> Result<()> 
     assert_eq!(status_of(&pool, "drill").await?, "ready");
 
     let started = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &lesson_of(&program, &lessons[0]),
         AttemptMode::Practice,
         40,
@@ -548,7 +606,7 @@ async fn asking_for_a_lesson_takes_its_ready_drill_or_builds_it() -> Result<()> 
     let StartedCodeReviewDto::Started { attempt_id, .. } = started.dto else {
         panic!("a drill of the first lesson was ready");
     };
-    let (_, stored) = attempts::get(&pool, &attempt_id).await?;
+    let (_, stored) = attempts::get(&Database::from(pool.clone()), &attempt_id).await?;
     assert_eq!(stored.drill.id, "drill");
     Ok(())
 }
@@ -566,7 +624,7 @@ async fn a_drill_from_before_lessons_is_never_served() -> Result<()> {
     stock_on(&pool, "no-lesson", &no_lesson).await?;
 
     let started = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &code(&program, "python"),
         AttemptMode::Practice,
         40,
@@ -591,7 +649,7 @@ async fn a_course_with_no_lesson_to_drill_is_refused_and_queues_nothing() -> Res
         record_unfit(&pool, &program, &lesson, &Material::code("python")).await?;
     }
     let result = review::start(
-        &pool,
+        &Database::from(pool.clone()),
         &code(&program, "python"),
         AttemptMode::Practice,
         40,
@@ -614,7 +672,7 @@ async fn handing_in_a_review_queues_its_grading_and_reads_back_as_submitted() ->
         .map(CodeReviewFileDto::from)
         .collect();
     let acted = review::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt_id,
         finding_dtos(),
         Some(fix.clone()),
@@ -630,7 +688,7 @@ async fn handing_in_a_review_queues_its_grading_and_reads_back_as_submitted() ->
         .await?;
     assert_eq!(job.kind, DRILL_GRADING);
     assert_eq!(
-        review::result(&pool, &attempt_id).await?,
+        review::result(&Database::from(pool.clone()), &attempt_id).await?,
         acted.dto,
         "what is read back is what was returned"
     );
@@ -640,13 +698,22 @@ async fn handing_in_a_review_queues_its_grading_and_reads_back_as_submitted() ->
 #[tokio::test]
 async fn a_review_with_a_time_that_is_not_a_time_is_refused() -> Result<()> {
     let (pool, attempt_id, _) = started().await?;
-    let result = review::submit(&pool, &attempt_id, Vec::new(), None, u64::MAX).await;
+    let result = review::submit(
+        &Database::from(pool.clone()),
+        &attempt_id,
+        Vec::new(),
+        None,
+        u64::MAX,
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::InvalidInput(_))),
         "{result:?}"
     );
     assert_eq!(
-        review::result(&pool, &attempt_id).await?.status,
+        review::result(&Database::from(pool.clone()), &attempt_id)
+            .await?
+            .status,
         AttemptStatus::Open
     );
     Ok(())
@@ -656,11 +723,11 @@ async fn a_review_with_a_time_that_is_not_a_time_is_refused() -> Result<()> {
 async fn an_attempt_that_is_not_there_is_not_found() -> Result<()> {
     let pool = pool().await?;
     assert!(matches!(
-        review::result(&pool, "nothing").await,
+        review::result(&Database::from(pool.clone()), "nothing").await,
         Err(AppError::NotFound(_))
     ));
     assert!(matches!(
-        review::regrade(&pool, "nothing").await,
+        review::regrade(&Database::from(pool.clone()), "nothing").await,
         Err(AppError::NotFound(_))
     ));
     Ok(())
@@ -673,7 +740,7 @@ async fn an_attempt_that_could_not_be_graded_is_regraded_through_the_command() -
     waiting
         .grade(&ScriptedModel::new(Vec::<String>::new()), None, &grader)
         .await?;
-    let acted = review::regrade(&waiting.pool, &waiting.attempt).await?;
+    let acted = review::regrade(&Database::from(waiting.pool.clone()), &waiting.attempt).await?;
     assert_eq!(acted.dto.status, AttemptStatus::Submitted);
     assert_eq!(acted.dto.error, None);
     assert!(acted.job.is_some());
@@ -693,7 +760,7 @@ async fn a_graded_review_reveals_every_issue_every_finding_the_score_the_ratings
     let grader = FakeGrader::new(review_assessment());
     waiting.grade(&model, Some(&runner), &grader).await?;
 
-    let result = review::result(&waiting.pool, &waiting.attempt).await?;
+    let result = review::result(&Database::from(waiting.pool.clone()), &waiting.attempt).await?;
     assert_eq!(result.status, AttemptStatus::Graded);
     assert_eq!(result.grader_model.as_deref(), Some(MODEL));
     assert!(result.graded_at.is_some());
@@ -886,7 +953,7 @@ async fn a_revealed_issue_carries_the_lesson_s_words_it_breaks() -> Result<()> {
     let grader = FakeGrader::new(review_assessment());
     waiting.grade(&model, None, &grader).await?;
 
-    let revealed = review::result(&waiting.pool, &waiting.attempt)
+    let revealed = review::result(&Database::from(waiting.pool.clone()), &waiting.attempt)
         .await?
         .reveal
         .expect("a graded review is revealed");
@@ -922,8 +989,10 @@ async fn the_reveal_is_read_in_camel_case_with_flat_outcomes() -> Result<()> {
     let runner = FakeRunner::killing_the_operator();
     let grader = FakeGrader::new(review_assessment());
     waiting.grade(&model, Some(&runner), &grader).await?;
-    let shown = serde_json::to_value(review::result(&waiting.pool, &waiting.attempt).await?)
-        .expect("a DTO is JSON");
+    let shown = serde_json::to_value(
+        review::result(&Database::from(waiting.pool.clone()), &waiting.attempt).await?,
+    )
+    .expect("a DTO is JSON");
 
     assert_eq!(shown["status"], "graded");
     assert!(shown["attemptId"].is_string());
@@ -981,7 +1050,7 @@ async fn every_language_the_screen_offers_starts_at_every_size_it_offers() -> Re
         for (lines, count) in SCREEN_SIZES {
             let program = course(&pool).await?;
             let started = review::start(
-                &pool,
+                &Database::from(pool.clone()),
                 &code(&program, language),
                 AttemptMode::Practice,
                 lines,
@@ -1004,7 +1073,8 @@ async fn an_issue_a_blind_review_raised_is_revealed_as_also_valid_and_a_planted_
     let model = ScriptedModel::new(Vec::<String>::new());
     let grader = FakeGrader::new(review_assessment());
     waiting.grade(&model, None, &grader).await?;
-    let (attempt, mut stored) = attempts::get(&waiting.pool, &waiting.attempt).await?;
+    let (attempt, mut stored) =
+        attempts::get(&Database::from(waiting.pool.clone()), &waiting.attempt).await?;
     stored.drill.key[1].origin = Origin::FoundInReview;
 
     let revealed = reveal::result_of(&attempt, &stored)?
@@ -1041,7 +1111,8 @@ async fn ratings_are_revealed_as_stored_whatever_their_number_against_the_key() 
     let model = ScriptedModel::new(Vec::<String>::new());
     let grader = FakeGrader::new(review_assessment());
     waiting.grade(&model, None, &grader).await?;
-    let (mut attempt, mut stored) = attempts::get(&waiting.pool, &waiting.attempt).await?;
+    let (mut attempt, mut stored) =
+        attempts::get(&Database::from(waiting.pool.clone()), &waiting.attempt).await?;
     stored.drill.key[1].origin = Origin::FoundInReview;
     let rating = |pattern: &str, rating| IssueRating {
         pattern: pattern.to_owned(),

@@ -208,7 +208,7 @@ mod tests {
         );
 
         let container = Container::new(
-            pool,
+            pool.into(),
             db_conn,
             None, // No embedding model for tests
             "http://localhost:11434",

@@ -9,11 +9,11 @@ use lattice_core::{
 };
 
 struct Candidate {
-    inner: Box<dyn LLMPort>,
+    inner: std::sync::Arc<dyn LLMPort>,
 }
 
-pub(super) fn candidate(inner: Box<dyn LLMPort>) -> Box<dyn LLMPort> {
-    Box::new(Candidate { inner })
+pub(super) fn candidate(inner: std::sync::Arc<dyn LLMPort>) -> std::sync::Arc<dyn LLMPort> {
+    std::sync::Arc::new(Candidate { inner })
 }
 
 #[async_trait::async_trait]

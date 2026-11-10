@@ -2,7 +2,10 @@
 use super::{study_dto::*, study_repository::StudyRepository};
 use lattice_core::{
     application::ports::{LLMPort, LibraryPassagesPort},
-    shared::error::{AppError, Result},
+    shared::{
+        error::{AppError, Result},
+        persistence::Database,
+    },
 };
 
 fn text(value: &str, label: &str, max: usize) -> Result<()> {
@@ -233,27 +236,14 @@ pub(crate) async fn interview_deck_ids(
 /// new date.
 pub async fn create_interview_deck(
     repo: &StudyRepository,
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     request: CreateInterviewStudyDeckRequestDto,
 ) -> Result<StudyDeckDto> {
     let now = chrono::Utc::now().timestamp_millis();
     validate_target(request.target_at, now)?;
     let material =
-        super::interview_deck::load(pool, &request.program_id, &request.activity_id).await?;
+        super::interview_deck::load(database, &request.program_id, &request.activity_id).await?;
     let deck = super::interview_deck::deck(&material, now);
-    let saved_target = match repo.get(&deck.id).await {
-        Ok(saved) => saved.target_at,
-        Err(AppError::NotFound(_)) => {
-            repo.save(&deck).await?;
-            None
-        }
-        Err(error) => return Err(error),
-    };
-    // Setting a date makes every card scheduled into its final window due now.
-    // The same date again must not undo the rest a review scheduled before
-    // the interview, and no date keeps the one the deck has.
-    if request.target_at.is_some() && request.target_at != saved_target {
-        repo.set_target(&deck.id, request.target_at, now).await?;
-    }
-    repo.get(&deck.id).await
+    repo.ensure_interview_deck(&deck, request.target_at, now)
+        .await
 }

@@ -98,6 +98,24 @@ async fn a_failed_lookup_says_so_and_is_asked_again() {
     let failure = report_from(CloudProvider::Anthropic, &server.uri(), "model", "secret")
         .await
         .unwrap_err();
-    assert!(failure.to_string().contains("did not report limits"));
+    assert!(matches!(failure, AppError::Network(_)), "{failure:?}");
     assert!(!failure.to_string().contains("secret"));
+}
+
+#[tokio::test]
+async fn a_provider_that_does_not_offer_the_model_is_not_a_network_failure() {
+    for status in [404, 401] {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .respond_with(ResponseTemplate::new(status))
+            .mount(&server)
+            .await;
+        let failure = report_from(CloudProvider::Anthropic, &server.uri(), "model", "secret")
+            .await
+            .unwrap_err();
+        assert!(
+            matches!(failure, AppError::InvalidConfig(_)),
+            "{status}: {failure:?}"
+        );
+    }
 }

@@ -13,7 +13,7 @@ use std::sync::Arc;
 
 use crate::features::indexing::dto::{IndexFileRequestDto, IndexFileResponseDto};
 use crate::features::indexing::LibraryGc;
-use lattice_core::application::ports::UnitOfWorkFactory;
+use crate::infrastructure::persistence::repositories::{document, embedding};
 use lattice_core::application::ports::{
     BlobLease, ContentAddressedStoragePort, ContentExtractionPort, DocumentIndexObserver,
     DocumentRepositoryPort, EmbeddingPort, EmbeddingRepositoryPort, FileStoragePort,
@@ -25,6 +25,7 @@ use lattice_core::application::services::live_index::{
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::{Database, Transactions};
 use tracing::instrument;
 
 mod prepare;
@@ -81,7 +82,7 @@ pub struct IndexFileUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn DocumentRepositoryPort>,
     embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
-    uow_factory: Arc<dyn UnitOfWorkFactory>,
+    database: Database,
     /// Shared in-memory vector index for runtime updates.
     /// When new embeddings are persisted, they are also added here
     /// so that newly indexed documents are immediately searchable.
@@ -106,7 +107,7 @@ impl IndexFileUseCase {
         embedding_service: Arc<dyn EmbeddingPort>,
         document_repo: Arc<dyn DocumentRepositoryPort>,
         embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
-        uow_factory: Arc<dyn UnitOfWorkFactory>,
+        database: Database,
     ) -> Self {
         Self {
             content_storage,
@@ -115,7 +116,7 @@ impl IndexFileUseCase {
             embedding_service,
             document_repo,
             embedding_repo,
-            uow_factory,
+            database,
             vector_search: None,
             query_cache: None,
             index_observer: None,
@@ -205,9 +206,7 @@ impl IndexFileUseCase {
             PrepareForIndexingOutcome::Prepared(prepared) => {
                 let chunks_created = prepared.document.chunks().len();
                 let file_path = prepared.library_path.clone();
-                let document_id = self
-                    .commit_prepared(*prepared, self.uow_factory.as_ref())
-                    .await?;
+                let document_id = self.commit_prepared(*prepared, &self.database).await?;
                 Ok(IndexFileResponseDto {
                     document_id,
                     chunks_created,
@@ -267,7 +266,7 @@ impl IndexFileUseCase {
     pub async fn commit_prepared(
         &self,
         prepared: PreparedDocument,
-        factory: &dyn UnitOfWorkFactory,
+        database: &Database,
     ) -> Result<String> {
         let PreparedDocument {
             mut document,
@@ -281,35 +280,19 @@ impl IndexFileUseCase {
         // Status and the complete chunk/vector set commit in the same transaction.
         document.mark_indexed();
         let document_id = document.id().to_string();
-        let stale_chunk_ids: Vec<_> = self
-            .embedding_repo
-            .find_by_document_id(&document_id)
-            .await?
-            .into_iter()
-            .map(|(embedding, _)| embedding.chunk_id().to_string())
-            .collect();
-        let mut uow = factory.create().await?;
-        let save_result: Result<()> = async {
-            let documents = uow.document_repository()?;
-            let vectors = uow.embedding_repository()?;
-            documents.save(&document).await?;
-            vectors.save_batch(embeddings.clone()).await?;
-            Ok(())
-        }
-        .await;
-        if let Err(error) = save_result {
-            let rollback = uow.rollback().await;
-            // Nothing will reference the blob now; release it before the
-            // error propagates.
-            drop(lease);
-            if imported_new {
-                self.release_failed_import(&library_hash, import_intent)
-                    .await;
+        let stale_chunk_ids = match save_document(database, &document, &embeddings).await {
+            Ok(stale_chunk_ids) => stale_chunk_ids,
+            Err(error) => {
+                // Nothing will reference the blob now; release it before the
+                // error propagates.
+                drop(lease);
+                if imported_new {
+                    self.release_failed_import(&library_hash, import_intent)
+                        .await;
+                }
+                return Err(error);
             }
-            rollback?;
-            return Err(error);
-        }
-        uow.commit().await?;
+        };
         // The row is durable, so the document itself now protects the blob and
         // this import's lease and record have done their job.
         drop(lease);
@@ -390,3 +373,22 @@ impl IndexFileUseCase {
 
 #[cfg(test)]
 mod tests;
+
+/// Writes the document with its chunks and vectors in one unit of work, and
+/// returns the chunk ids whose vectors the new set replaces.
+async fn save_document(
+    database: &Database,
+    document: &Document,
+    embeddings: &[EmbeddingWithVector],
+) -> Result<Vec<String>> {
+    let mut tx = database.begin_write().await?;
+    let stale_chunk_ids = embedding::ops::find_by_document_id(&mut tx, &document.id().to_string())
+        .await?
+        .into_iter()
+        .map(|(embedding, _)| embedding.chunk_id().to_string())
+        .collect();
+    document::ops::save(&mut tx, document).await?;
+    embedding::ops::save_batch(&mut tx, embeddings.to_vec()).await?;
+    tx.commit().await?;
+    Ok(stale_chunk_ids)
+}

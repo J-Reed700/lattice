@@ -9,7 +9,7 @@ pub async fn set_conversation_course(
     request: SetConversationCourseRequestDto,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    bind_conversation(container.db_pool(), &request)
+    bind_conversation(container.database(), &request)
         .await
         .map_err(ApiError::from)
 }

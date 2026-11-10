@@ -84,12 +84,45 @@ fn test_io_error_conversion() {
     assert_eq!(api_err.code, ErrorCode::FileNotFound);
 }
 
-#[test]
-fn test_sqlx_error_conversion() {
-    let sqlx_err = sqlx::Error::RowNotFound;
-    let api_err: ApiError = sqlx_err.into();
+fn api_error_of(error: sqlx::Error) -> ApiError {
+    crate::shared::persistence::PersistenceError::from(error).into()
+}
 
-    assert_eq!(api_err.code, ErrorCode::NotFound);
+#[test]
+fn test_persistence_error_conversion() {
+    let cases = [
+        (
+            sqlx::Error::RowNotFound,
+            ErrorCode::NotFound,
+            "Record not found",
+        ),
+        (
+            sqlx::Error::PoolTimedOut,
+            ErrorCode::DatabaseConnectionError,
+            "Database connection error",
+        ),
+        (
+            sqlx::Error::PoolClosed,
+            ErrorCode::DatabaseConnectionError,
+            "Database connection error",
+        ),
+        (
+            sqlx::Error::Configuration("bad url".into()),
+            ErrorCode::InvalidConfig,
+            "Database configuration error",
+        ),
+        (
+            sqlx::Error::WorkerCrashed,
+            ErrorCode::DatabaseError,
+            "Database error",
+        ),
+    ];
+    for (error, code, message) in cases {
+        let api_err = api_error_of(error);
+        assert_eq!(api_err.code, code);
+        assert_eq!(api_err.message, message);
+        assert!(api_err.details.is_some());
+    }
 }
 
 #[test]
@@ -249,5 +282,28 @@ fn a_web_status_converts_to_its_own_code_with_its_message_as_the_message() {
     assert_eq!(
         serde_json::to_value(ErrorCode::HttpStatus).unwrap(),
         "HTTP_STATUS"
+    );
+}
+
+/// A job's cause code, the renderer's errors and the outline's wait all come
+/// from this one mapping.
+#[test]
+fn a_busy_database_converts_to_its_own_code() {
+    let code = |error: AppError| serde_json::to_value(ApiError::from(error).code).unwrap();
+    assert_eq!(
+        code(AppError::Database(
+            "error returned from database: (code: 5) database is locked".into()
+        )),
+        "DATABASE_BUSY"
+    );
+    assert_eq!(
+        code(AppError::ServiceNotAvailable(
+            "The database is temporarily busy. Saved work is retained.".into()
+        )),
+        "DATABASE_BUSY"
+    );
+    assert_eq!(
+        code(AppError::Database("no such table: x".into())),
+        "DATABASE_ERROR"
     );
 }

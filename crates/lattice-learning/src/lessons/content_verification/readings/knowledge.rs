@@ -53,8 +53,15 @@ impl Reader for Knowledge {
                 None => asks.push((ordinal, *statement, key)),
             }
         }
-        for (ordinal, statement, key) in asks {
-            let judged = knowledge_of(at.llm, &key, &statement.claim.statement).await?;
+        let mut asked: futures::stream::FuturesUnordered<_> = asks
+            .into_iter()
+            .map(|(ordinal, statement, key)| async move {
+                let judged = knowledge_of(at.llm, &key, &statement.claim.statement).await?;
+                Ok::<_, AppError>((ordinal, statement, judged))
+            })
+            .collect();
+        while let Some(asked) = futures::StreamExt::next(&mut asked).await {
+            let (ordinal, statement, judged) = asked?;
             let read = self.read_of(&statement, judged.map(|knowledge| (knowledge, false)));
             made.put(at, ordinal, read);
         }

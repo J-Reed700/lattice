@@ -2,6 +2,7 @@
 //! job, and a job that keeps ending the process stops being resumed.
 use super::*;
 use crate::shared::error::{AppError, Result};
+use crate::shared::persistence::Database;
 use serde_json::json;
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
@@ -63,7 +64,7 @@ async fn finished(runtime: &JobRuntime, id: &str) {
 
 #[tokio::test]
 async fn a_handler_that_panics_fails_its_job_and_frees_the_kind() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     runtime
         .register(
             KIND,
@@ -103,7 +104,7 @@ impl JobHandler for Failing {
 
 #[tokio::test]
 async fn a_handler_that_returns_an_error_still_fails_with_that_error() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     runtime
         .register(
             KIND,
@@ -246,7 +247,7 @@ async fn a_kind_that_cannot_be_recovered_does_not_stop_the_others() -> Result<()
     const BAD: &str = "test.bad";
     const AFTER: &str = "test.after";
     let pool = pool().await;
-    let runtime = JobRuntime::new(pool.clone());
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     let store = runtime.store();
     let mut stuck = new_job("stuck", None);
     stuck.kind = BAD.into();
@@ -291,7 +292,7 @@ async fn a_kind_that_cannot_be_recovered_does_not_stop_the_others() -> Result<()
 
 #[tokio::test]
 async fn registering_every_kind_without_a_failure_reports_none() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let failures = runtime
         .register_all(vec![registration(KIND), registration("test.other")])
         .await;
@@ -303,7 +304,7 @@ async fn registering_every_kind_without_a_failure_reports_none() -> Result<()> {
 async fn a_kind_that_failed_to_register_is_retried_until_it_does_and_its_jobs_run() -> Result<()> {
     const LATE: &str = "test.late";
     let pool = pool().await;
-    let runtime = JobRuntime::new(pool.clone());
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     let store = runtime.store();
     let mut saved = new_job("saved", None);
     saved.kind = LATE.into();

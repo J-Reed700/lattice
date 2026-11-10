@@ -132,11 +132,12 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
     assert_ne!(copy_id, original.summary.id);
     let copy = LearningRepository::new(pool.clone()).get(&copy_id).await?;
     let copied_lesson = &copy.modules[0].lessons[0];
-    let evidence = lesson_evidence::get(&pool, &copy_id, &copied_lesson.id)
+    let database = Database::from(pool.clone());
+    let evidence = lesson_evidence::get(&database, &copy_id, &copied_lesson.id)
         .await?
         .unwrap();
     let before = lesson_evidence::get(
-        &pool,
+        &database,
         &original.summary.id,
         &original.modules[0].lessons[0].id,
     )
@@ -159,7 +160,9 @@ async fn copied_course_retains_citations_bound_to_copied_ids_without_exposing_an
         copied_lesson.blocks[0].source_ids[0]
     );
     assert_ne!(passage.source_version_id, original.sources[0].id);
-    let outline = outline_evidence_view::get(&pool, &copy_id).await?.unwrap();
+    let outline = outline_evidence_view::get(&database, &copy_id)
+        .await?
+        .unwrap();
     assert!(!outline.citations.is_empty());
     assert_eq!(outline.unavailable_count, 0);
     assert!(outline.citations.iter().all(|citation| copy
@@ -228,7 +231,7 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
         .unwrap()
         .contains("Current-only receipt"));
     let restored = lesson_evidence::get(
-        &pool,
+        &Database::from(pool.clone()),
         &original.summary.id,
         &original.modules[0].lessons[0].id,
     )
@@ -245,7 +248,7 @@ async fn replacing_course_backs_up_current_provenance_and_restores_exported_prov
         .get(&recovery.program_id)
         .await?;
     let evidence = lesson_evidence::get(
-        &pool,
+        &Database::from(pool.clone()),
         &recovery.program_id,
         &recovered.modules[0].lessons[0].id,
     )
@@ -340,7 +343,7 @@ async fn malformed_or_future_provenance_is_rejected_before_an_import_writes() ->
         0
     );
     assert!(lesson_evidence::get(
-        &pool,
+        &Database::from(pool.clone()),
         &original.summary.id,
         &original.modules[0].lessons[0].id
     )

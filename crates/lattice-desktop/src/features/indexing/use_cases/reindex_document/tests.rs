@@ -1,12 +1,12 @@
 //! Tests for reindexing: vector eviction, empty extractions and strategy changes.
 
 use super::*;
+use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use async_trait::async_trait;
-use lattice_core::application::ports::UnitOfWorkFactory;
-use lattice_core::application::ports::{EmbeddingRepositoryPort, FileMetadata, Filter};
+use lattice_core::application::ports::{FileMetadata, Filter};
 use lattice_core::domain::entities::Document;
-use lattice_core::domain::entities::Embedding;
 use lattice_core::shared::types::ValidatedFilePath;
+use sqlx::SqlitePool;
 use std::fs;
 use std::path::Path;
 use std::sync::Mutex;
@@ -169,209 +169,26 @@ impl EmbeddingPort for MockEmbedder {
     }
 }
 
-struct MockUowDocumentRepo;
-
-#[async_trait]
-impl RepositoryPort<Document> for MockUowDocumentRepo {
-    async fn save(&self, _entity: &Document) -> Result<()> {
-        Ok(())
-    }
-
-    async fn find_by_id(&self, _id: &str) -> Result<Option<Document>> {
-        Ok(None)
-    }
-
-    async fn find_all(&self) -> Result<Vec<Document>> {
-        Ok(vec![])
-    }
-
-    async fn find_by_filter(&self, _filter: &dyn Filter) -> Result<Vec<Document>> {
-        Ok(vec![])
-    }
-
-    async fn save_batch(&self, _entities: &[Document]) -> Result<()> {
-        Ok(())
-    }
-
-    async fn delete(&self, _id: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn delete_batch(&self, _ids: &[&str]) -> Result<()> {
-        Ok(())
-    }
-
-    async fn count(&self) -> Result<usize> {
-        Ok(0)
-    }
-
-    async fn exists(&self, _id: &str) -> Result<bool> {
-        Ok(false)
-    }
-}
-
-#[async_trait]
-impl lattice_core::application::ports::DocumentRepositoryPort for MockUowDocumentRepo {
-    async fn find_by_checksum(
-        &self,
-        _checksum: &lattice_core::domain::value_objects::Checksum,
-    ) -> Result<Option<Document>> {
-        Ok(None)
-    }
-
-    async fn count_documents(&self) -> Result<i64> {
-        Ok(0)
-    }
-
-    async fn count_chunks(&self) -> Result<i64> {
-        Ok(0)
-    }
-
-    async fn find_file_path_by_id(&self, _document_id: &str) -> Result<String> {
-        Ok(String::new())
-    }
-
-    async fn find_id_by_path(&self, _file_path: &str) -> Result<Option<String>> {
-        Ok(None)
-    }
-
-    async fn document_exists(&self, _document_id: &str) -> Result<bool> {
-        Ok(false)
-    }
-
-    async fn delete(&self, _document_id: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
-        <Self as lattice_core::application::ports::DocumentRepositoryPort>::delete(
-            self,
-            document_id,
-        )
+async fn pool_with(document: Option<&Document>) -> SqlitePool {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
         .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    if let Some(document) = document {
+        let mut tx = pool.begin_write().await.unwrap();
+        document::ops::save(&mut tx, document).await.unwrap();
+        tx.commit().await.unwrap();
     }
-
-    async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
-        Ok(vec![])
-    }
+    pool
 }
 
-struct MockUowEmbeddingRepo;
-
-#[async_trait]
-impl EmbeddingRepositoryPort for MockUowEmbeddingRepo {
-    async fn vectors_by_document_ids(
-        &self,
-        _document_ids: &[String],
-    ) -> Result<lattice_core::application::ports::embedding_repository_port::DocumentVectors> {
-        Ok(Default::default())
-    }
-
-    async fn create(&self, _chunk_id: &str, _vector: &[f32], _model: &str) -> Result<String> {
-        unimplemented!()
-    }
-
-    async fn find_by_chunk(&self, _chunk_id: &str) -> Result<Option<Embedding>> {
-        unimplemented!()
-    }
-
-    async fn save(&self, _entity: &Embedding, _vector: Vec<f32>) -> Result<()> {
-        Ok(())
-    }
-
-    async fn save_batch(&self, _entries: Vec<(Embedding, Vec<f32>)>) -> Result<()> {
-        Ok(())
-    }
-
-    async fn find_by_chunk_id(&self, _chunk_id: &str) -> Result<Option<(Embedding, Vec<f32>)>> {
-        Ok(None)
-    }
-
-    async fn find_by_document_id(&self, _document_id: &str) -> Result<Vec<(Embedding, Vec<f32>)>> {
-        Ok(vec![])
-    }
-
-    async fn delete_by_chunk_id(&self, _chunk_id: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn delete_by_document_id(&self, _document_id: &str) -> Result<()> {
-        Ok(())
-    }
-
-    async fn count(&self) -> Result<i64> {
-        Ok(0)
-    }
-
-    async fn create_batch(&self, _entries: Vec<(Embedding, Vec<f32>)>) -> Result<Vec<String>> {
-        Ok(vec![])
-    }
-}
-
-struct MockUnitOfWork;
-
-#[async_trait]
-impl lattice_core::application::ports::UnitOfWork for MockUnitOfWork {
-    fn chunk_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::application::ports::ChunkRepositoryPort + Send + '_>> {
-        Err(AppError::InvalidState(
-            "Chunk repository not used in test".to_string(),
-        ))
-    }
-
-    fn document_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::application::ports::DocumentRepositoryPort + Send + '_>> {
-        Ok(Box::new(MockUowDocumentRepo))
-    }
-
-    fn embedding_repository(&self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + '_>> {
-        Ok(Box::new(MockUowEmbeddingRepo))
-    }
-
-    fn system_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::domain::repositories::SystemRepository + Send + '_>> {
-        Err(AppError::InvalidState(
-            "System repository not used in test".to_string(),
-        ))
-    }
-
-    fn model_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::application::ports::unit_of_work::ModelRepositoryPort + '_>>
-    {
-        Err(AppError::InvalidState(
-            "Model repository not used in test".to_string(),
-        ))
-    }
-
-    fn model_file_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort + '_>>
-    {
-        Err(AppError::InvalidState(
-            "Model file repository not used in test".to_string(),
-        ))
-    }
-
-    async fn commit(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    async fn rollback(&mut self) -> Result<()> {
-        Ok(())
-    }
-}
-
-struct MockUnitOfWorkFactory;
-
-#[async_trait]
-impl UnitOfWorkFactory for MockUnitOfWorkFactory {
-    async fn create(&self) -> Result<Box<dyn lattice_core::application::ports::UnitOfWork + Send>> {
-        Ok(Box::new(MockUnitOfWork))
-    }
+async fn count(pool: &SqlitePool, table: &str) -> i64 {
+    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 struct MockDocumentRepo {
@@ -469,13 +286,14 @@ async fn test_reindex_document() {
     let doc_id = aggregate.id().to_string();
     let _original_chunks = aggregate.chunks().len();
 
+    let pool = pool_with(Some(&aggregate)).await;
     repo.set_document(aggregate);
 
     let use_case = ReindexDocumentUseCase::new(
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo.clone(),
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(pool.clone()),
         Arc::new(MockVectorSearch::default()),
     );
 
@@ -486,6 +304,10 @@ async fn test_reindex_document() {
     assert!(response.error.is_none());
     // Chunks may differ due to different content
     assert!(response.chunks_created > 0);
+    assert_eq!(
+        count(&pool, "text_embeddings").await,
+        response.chunks_created as i64
+    );
 }
 
 /// Reindex keeps the live vector index in step with the database: no
@@ -505,6 +327,7 @@ async fn reindex_evicts_stale_vectors_and_adds_new_ones() {
         .collect();
     assert!(!stale_keys.is_empty(), "fixture must start with chunks");
 
+    let pool = pool_with(Some(&aggregate)).await;
     repo.set_document(aggregate);
 
     let vector_search = Arc::new(MockVectorSearch::default());
@@ -512,7 +335,7 @@ async fn reindex_evicts_stale_vectors_and_adds_new_ones() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo.clone(),
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(pool.clone()),
         vector_search.clone(),
     );
 
@@ -552,6 +375,7 @@ async fn a_file_that_now_extracts_to_whitespace_fails_and_keeps_its_vectors() {
     let repo = Arc::new(MockDocumentRepo::new());
     let (aggregate, _temp_dir) = create_test_aggregate();
     let doc_id = aggregate.id().to_string();
+    let pool = pool_with(Some(&aggregate)).await;
     repo.set_document(aggregate);
     let vector_search = Arc::new(MockVectorSearch::default());
     let use_case = ReindexDocumentUseCase::new(
@@ -560,7 +384,7 @@ async fn a_file_that_now_extracts_to_whitespace_fails_and_keeps_its_vectors() {
         }),
         Arc::new(MockEmbedder),
         repo,
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(pool.clone()),
         vector_search.clone(),
     );
 
@@ -582,7 +406,7 @@ async fn test_reindex_document_not_found() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo,
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(pool_with(None).await),
         Arc::new(MockVectorSearch::default()),
     );
 
@@ -599,6 +423,7 @@ async fn test_reindex_with_different_strategy() {
     let (aggregate, _temp_dir) = create_test_aggregate();
     let doc_id = aggregate.id().to_string();
 
+    let pool = pool_with(Some(&aggregate)).await;
     repo.set_document(aggregate);
 
     let vector_search = Arc::new(MockVectorSearch::default());
@@ -606,7 +431,7 @@ async fn test_reindex_with_different_strategy() {
         Arc::new(MockFileStorage::updated()),
         Arc::new(MockEmbedder),
         repo,
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(pool.clone()),
         vector_search.clone(),
     );
 
@@ -628,145 +453,6 @@ async fn test_reindex_with_different_strategy() {
 
 #[tokio::test]
 async fn reindex_refreshes_stale_octet_stream_mime_type_and_marks_yaml_chunks_as_code() {
-    struct CapturingUowDocumentRepo {
-        saved: Arc<Mutex<Option<Document>>>,
-    }
-
-    #[async_trait]
-    impl RepositoryPort<Document> for CapturingUowDocumentRepo {
-        async fn save(&self, entity: &Document) -> Result<()> {
-            *self.saved.lock().unwrap() = Some(entity.clone());
-            Ok(())
-        }
-        async fn find_by_id(&self, _id: &str) -> Result<Option<Document>> {
-            Ok(None)
-        }
-        async fn find_all(&self) -> Result<Vec<Document>> {
-            Ok(vec![])
-        }
-        async fn find_by_filter(&self, _filter: &dyn Filter) -> Result<Vec<Document>> {
-            Ok(vec![])
-        }
-        async fn save_batch(&self, _entities: &[Document]) -> Result<()> {
-            Ok(())
-        }
-        async fn delete(&self, _id: &str) -> Result<()> {
-            Ok(())
-        }
-        async fn delete_batch(&self, _ids: &[&str]) -> Result<()> {
-            Ok(())
-        }
-        async fn count(&self) -> Result<usize> {
-            Ok(0)
-        }
-        async fn exists(&self, _id: &str) -> Result<bool> {
-            Ok(false)
-        }
-    }
-
-    #[async_trait]
-    impl lattice_core::application::ports::DocumentRepositoryPort for CapturingUowDocumentRepo {
-        async fn find_by_checksum(
-            &self,
-            _checksum: &lattice_core::domain::value_objects::Checksum,
-        ) -> Result<Option<Document>> {
-            Ok(None)
-        }
-        async fn count_documents(&self) -> Result<i64> {
-            Ok(0)
-        }
-        async fn count_chunks(&self) -> Result<i64> {
-            Ok(0)
-        }
-        async fn find_file_path_by_id(&self, _document_id: &str) -> Result<String> {
-            Ok(String::new())
-        }
-        async fn find_id_by_path(&self, _file_path: &str) -> Result<Option<String>> {
-            Ok(None)
-        }
-        async fn document_exists(&self, _document_id: &str) -> Result<bool> {
-            Ok(false)
-        }
-        async fn delete(&self, _document_id: &str) -> Result<()> {
-            Ok(())
-        }
-        async fn delete_and_release_blob(&self, document_id: &str) -> Result<()> {
-            <Self as lattice_core::application::ports::DocumentRepositoryPort>::delete(
-                self,
-                document_id,
-            )
-            .await
-        }
-        async fn find_all_paginated(&self, _limit: usize) -> Result<Vec<Document>> {
-            Ok(vec![])
-        }
-    }
-
-    struct CapturingUow {
-        saved: Arc<Mutex<Option<Document>>>,
-    }
-
-    #[async_trait]
-    impl lattice_core::application::ports::UnitOfWork for CapturingUow {
-        fn chunk_repository(
-            &self,
-        ) -> Result<Box<dyn lattice_core::application::ports::ChunkRepositoryPort + Send + '_>>
-        {
-            Err(AppError::InvalidState("not used".into()))
-        }
-        fn document_repository(
-            &self,
-        ) -> Result<Box<dyn lattice_core::application::ports::DocumentRepositoryPort + Send + '_>>
-        {
-            Ok(Box::new(CapturingUowDocumentRepo {
-                saved: self.saved.clone(),
-            }))
-        }
-        fn embedding_repository(&self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + '_>> {
-            Ok(Box::new(MockUowEmbeddingRepo))
-        }
-        fn system_repository(
-            &self,
-        ) -> Result<Box<dyn lattice_core::domain::repositories::SystemRepository + Send + '_>>
-        {
-            Err(AppError::InvalidState("not used".into()))
-        }
-        fn model_repository(
-            &self,
-        ) -> Result<Box<dyn lattice_core::application::ports::unit_of_work::ModelRepositoryPort + '_>>
-        {
-            Err(AppError::InvalidState("not used".into()))
-        }
-        fn model_file_repository(
-            &self,
-        ) -> Result<
-            Box<dyn lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort + '_>,
-        > {
-            Err(AppError::InvalidState("not used".into()))
-        }
-        async fn commit(&mut self) -> Result<()> {
-            Ok(())
-        }
-        async fn rollback(&mut self) -> Result<()> {
-            Ok(())
-        }
-    }
-
-    struct CapturingUowFactory {
-        saved: Arc<Mutex<Option<Document>>>,
-    }
-
-    #[async_trait]
-    impl UnitOfWorkFactory for CapturingUowFactory {
-        async fn create(
-            &self,
-        ) -> Result<Box<dyn lattice_core::application::ports::UnitOfWork + Send>> {
-            Ok(Box::new(CapturingUow {
-                saved: self.saved.clone(),
-            }))
-        }
-    }
-
     let temp_dir = TempDir::new().unwrap();
     let file_path = temp_dir.path().join("config.yaml");
     let yaml_content = "server:\n  host: 127.0.0.1\n  port: 8080\n";
@@ -792,8 +478,8 @@ async fn reindex_refreshes_stale_octet_stream_mime_type_and_marks_yaml_chunks_as
     let doc_id = document.id().to_string();
 
     let repo = Arc::new(MockDocumentRepo::new());
+    let pool = pool_with(Some(&document)).await;
     repo.set_document(document);
-    let saved = Arc::new(Mutex::new(None));
 
     let use_case = ReindexDocumentUseCase::new(
         Arc::new(MockFileStorage {
@@ -801,19 +487,39 @@ async fn reindex_refreshes_stale_octet_stream_mime_type_and_marks_yaml_chunks_as
         }),
         Arc::new(MockEmbedder),
         repo,
-        Arc::new(CapturingUowFactory {
-            saved: saved.clone(),
-        }),
+        Database::from(pool.clone()),
         Arc::new(MockVectorSearch::default()),
     );
 
-    use_case.execute(doc_id).await.unwrap();
+    use_case.execute(doc_id.clone()).await.unwrap();
 
-    let persisted = saved
-        .lock()
+    let persisted = DocumentRepositoryImpl::new(pool)
+        .find_by_id(&doc_id)
+        .await
         .unwrap()
-        .clone()
-        .expect("saved document in UoW");
+        .expect("the reindexed document is stored");
     assert_eq!(persisted.mime_type(), "text/x-yaml");
     assert!(persisted.chunks().iter().all(|c| c.has_code()));
+}
+
+#[tokio::test]
+async fn reindex_does_not_resurrect_a_document_deleted_meanwhile() {
+    let repo = Arc::new(MockDocumentRepo::new());
+    let (aggregate, _temp_dir) = create_test_aggregate();
+    let doc_id = aggregate.id().to_string();
+    let pool = pool_with(None).await;
+    repo.set_document(aggregate);
+    let use_case = ReindexDocumentUseCase::new(
+        Arc::new(MockFileStorage::updated()),
+        Arc::new(MockEmbedder),
+        repo,
+        Database::from(pool.clone()),
+        Arc::new(MockVectorSearch::default()),
+    );
+
+    let error = use_case.execute(doc_id).await.unwrap_err();
+
+    assert!(matches!(error, AppError::NotFound(_)), "{error:?}");
+    assert_eq!(count(&pool, "documents").await, 0);
+    assert_eq!(count(&pool, "text_embeddings").await, 0);
 }

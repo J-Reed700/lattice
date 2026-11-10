@@ -329,7 +329,7 @@ impl LearningAssessmentRepository {
             hash,
             "Operation ID was reused with different settings.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             return tx.commit().await.map_err(db);
         }
         Self::active_program(&mut tx, &req.program_id).await?;
@@ -343,7 +343,7 @@ impl LearningAssessmentRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)
     }
 

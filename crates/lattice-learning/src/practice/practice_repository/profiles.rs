@@ -1,6 +1,6 @@
 //! Preparing for: course-level practice profiles.
 use super::*;
-use crate::recall::{study_repository::StudyRepository, study_service};
+use crate::recall::{study_repository::set_target_in, study_service};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -59,7 +59,7 @@ impl LearningPracticeRepository {
         if saved_date != request.interview_at {
             study_service::validate_target(request.interview_at, now)?;
             for deck_id in &decks {
-                StudyRepository::set_target_in(&mut tx, deck_id, request.interview_at, now).await?;
+                set_target_in(&mut tx, deck_id, request.interview_at, now).await?;
             }
         }
         let revision = current_revision + 1;

@@ -129,7 +129,13 @@ impl ConversationRepository {
         );
 
         if let Some(space_id) = &query.space_id {
-            ensure_standard_space(&self.pool, space_id).await?;
+            let mut connection = self
+                .pool
+                .acquire()
+                .await
+                .map_err(|e| AppError::Database(format!("Failed to verify space: {}", e)))?;
+            ensure_standard_space(&mut connection, space_id).await?;
+            drop(connection);
             qb.push(" AND c.space_id = ").push_bind(space_id);
         }
 

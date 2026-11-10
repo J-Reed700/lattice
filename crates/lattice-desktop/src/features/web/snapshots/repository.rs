@@ -3,14 +3,16 @@
 use std::collections::HashSet;
 
 use chrono::Utc;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 use super::dto::WebPageSnapshotStatus;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::PersistenceError;
 use lattice_core::shared::persistence::Transactions;
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
+fn db(error: impl Into<PersistenceError>) -> AppError {
+    AppError::from(error.into())
 }
 
 /// The conversation frozen copies belong to when no chat cited the page.
@@ -67,13 +69,112 @@ pub struct ReadyCapture {
     pub favicon_data_url: Option<String>,
 }
 
+async fn snapshot_for_url(
+    connection: &mut SqliteConnection,
+    conversation_id: &str,
+    normalized_url: &str,
+) -> Result<Option<SnapshotRow>> {
+    sqlx::query_as::<_, SnapshotRow>(&format!(
+        "SELECT {COLUMNS} FROM web_page_snapshots \
+         WHERE conversation_id = ? AND normalized_url = ?"
+    ))
+    .bind(conversation_id)
+    .bind(normalized_url)
+    .fetch_optional(connection)
+    .await
+    .map_err(db)
+}
+
+async fn viewer_in(
+    conn: &mut SqliteConnection,
+    conversation_id: &str,
+    normalized_url: &str,
+) -> Result<Option<SnapshotRow>> {
+    let trimmed = conversation_id.trim();
+    if !trimmed.is_empty() {
+        if let Some(row) = snapshot_for_url(&mut *conn, trimmed, normalized_url).await? {
+            return Ok(Some(row));
+        }
+    }
+    sqlx::query_as::<_, SnapshotRow>(&format!(
+        "SELECT {COLUMNS} FROM web_page_snapshots \
+         WHERE normalized_url = ? \
+            OR LOWER(TRIM(requested_url)) = LOWER(TRIM(?)) \
+            OR LOWER(TRIM(COALESCE(final_url, ''))) = LOWER(TRIM(?)) \
+         ORDER BY CASE WHEN normalized_url = ? THEN 0 ELSE 1 END, \
+                  CASE status WHEN 'ready' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, \
+                  captured_at DESC, \
+                  created_at DESC, \
+                  id DESC \
+         LIMIT 1"
+    ))
+    .bind(normalized_url)
+    .bind(normalized_url)
+    .bind(normalized_url)
+    .bind(normalized_url)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(db)
+}
+
+async fn reader_text_in(
+    conn: &mut SqliteConnection,
+    conversation_id: &str,
+    normalized_url: &str,
+    requested_url: &str,
+) -> Result<Option<String>> {
+    let from_web_sources: Option<String> = sqlx::query_scalar(
+        "SELECT content FROM conversation_web_sources \
+         WHERE normalized_url = ? AND content IS NOT NULL AND TRIM(content) != '' \
+         ORDER BY CASE WHEN conversation_id = ? THEN 0 ELSE 1 END, \
+                  content_fetched_at DESC, \
+                  added_at DESC \
+         LIMIT 1",
+    )
+    .bind(normalized_url)
+    .bind(conversation_id)
+    .fetch_optional(&mut *conn)
+    .await
+    .map_err(db)?;
+
+    if from_web_sources.is_some() {
+        return Ok(from_web_sources);
+    }
+
+    let from_learning_versions = sqlx::query_scalar::<_, String>(
+        "SELECT v.full_text FROM learning_source_versions v \
+         INNER JOIN learning_source_library s ON s.id = v.source_id \
+         WHERE ( \
+             LOWER(TRIM(s.origin)) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
+             OR LOWER(TRIM(s.requested_url)) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
+             OR LOWER(TRIM(COALESCE(v.resolved_url, ''))) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
+         ) \
+           AND TRIM(v.full_text) != '' \
+         ORDER BY v.acquired_at DESC \
+         LIMIT 1",
+    )
+    .bind(requested_url)
+    .bind(normalized_url)
+    .bind(requested_url)
+    .bind(normalized_url)
+    .bind(requested_url)
+    .bind(normalized_url)
+    .fetch_optional(&mut *conn)
+    .await
+    .ok()
+    .flatten();
+
+    Ok(from_learning_versions)
+}
+
 #[derive(Clone)]
 pub struct SnapshotRepository {
     pool: SqlitePool,
 }
 
 impl SnapshotRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -81,6 +182,27 @@ impl SnapshotRepository {
     /// with `new_id` when there is none. The flag says whether this call made it.
     pub async fn insert_or_get(
         &self,
+        new_id: &str,
+        conversation_id: &str,
+        normalized_url: &str,
+        requested_url: &str,
+    ) -> Result<(SnapshotRow, bool)> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let found = Self::insert_or_get_in(
+            &mut tx,
+            new_id,
+            conversation_id,
+            normalized_url,
+            requested_url,
+        )
+        .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(found)
+    }
+
+    /// [`Self::insert_or_get`] inside the caller's unit of work.
+    pub async fn insert_or_get_in(
+        conn: &mut SqliteConnection,
         new_id: &str,
         conversation_id: &str,
         normalized_url: &str,
@@ -97,13 +219,12 @@ impl SnapshotRepository {
         .bind(normalized_url)
         .bind(requested_url)
         .bind(Utc::now().to_rfc3339())
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await
         .map_err(db)?
         .rows_affected()
             == 1;
-        let row = self
-            .find(conversation_id, normalized_url)
+        let row = snapshot_for_url(&mut *conn, conversation_id, normalized_url)
             .await?
             .ok_or_else(|| AppError::Database("snapshot row vanished after insert".into()))?;
         Ok((row, inserted))
@@ -124,15 +245,8 @@ impl SnapshotRepository {
         conversation_id: &str,
         normalized_url: &str,
     ) -> Result<Option<SnapshotRow>> {
-        sqlx::query_as::<_, SnapshotRow>(&format!(
-            "SELECT {COLUMNS} FROM web_page_snapshots \
-             WHERE conversation_id = ? AND normalized_url = ?"
-        ))
-        .bind(conversation_id)
-        .bind(normalized_url)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        snapshot_for_url(&mut connection, conversation_id, normalized_url).await
     }
 
     pub async fn find_for_viewer(
@@ -140,31 +254,10 @@ impl SnapshotRepository {
         conversation_id: &str,
         normalized_url: &str,
     ) -> Result<Option<SnapshotRow>> {
-        let trimmed = conversation_id.trim();
-        if !trimmed.is_empty() {
-            if let Some(row) = self.find(trimmed, normalized_url).await? {
-                return Ok(Some(row));
-            }
-        }
-        sqlx::query_as::<_, SnapshotRow>(&format!(
-            "SELECT {COLUMNS} FROM web_page_snapshots \
-             WHERE normalized_url = ? \
-                OR LOWER(TRIM(requested_url)) = LOWER(TRIM(?)) \
-                OR LOWER(TRIM(COALESCE(final_url, ''))) = LOWER(TRIM(?)) \
-             ORDER BY CASE WHEN normalized_url = ? THEN 0 ELSE 1 END, \
-                      CASE status WHEN 'ready' THEN 0 WHEN 'pending' THEN 1 ELSE 2 END, \
-                      captured_at DESC, \
-                      created_at DESC, \
-                      id DESC \
-             LIMIT 1"
-        ))
-        .bind(normalized_url)
-        .bind(normalized_url)
-        .bind(normalized_url)
-        .bind(normalized_url)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let row = viewer_in(&mut tx, conversation_id, normalized_url).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(row)
     }
 
     pub async fn resolve_conversation_for_capture(
@@ -172,12 +265,13 @@ impl SnapshotRepository {
         conversation_id: &str,
         normalized_url: &str,
     ) -> Result<String> {
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
         let trimmed = conversation_id.trim();
         if !trimmed.is_empty() {
             let count: i64 =
                 sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM conversations WHERE id = ?")
                     .bind(trimmed)
-                    .fetch_one(&self.pool)
+                    .fetch_one(&mut *tx)
                     .await
                     .map_err(db)?;
             if count > 0 {
@@ -185,7 +279,7 @@ impl SnapshotRepository {
             }
         }
 
-        if let Some(row) = self.find_for_viewer("", normalized_url).await? {
+        if let Some(row) = viewer_in(&mut tx, "", normalized_url).await? {
             return Ok(row.conversation_id);
         }
 
@@ -193,7 +287,7 @@ impl SnapshotRepository {
             "SELECT conversation_id FROM conversation_web_sources WHERE normalized_url = ? ORDER BY added_at DESC LIMIT 1"
         )
         .bind(normalized_url)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)? {
             return Ok(cid);
@@ -202,23 +296,25 @@ impl SnapshotRepository {
         if let Some(cid) = sqlx::query_scalar::<_, String>(
             "SELECT id FROM conversations ORDER BY updated_at DESC LIMIT 1",
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?
         {
             return Ok(cid);
         }
 
+        tx.commit().await.map_err(db)?;
         self.library_conversation().await
     }
 
     /// The conversation that holds frozen copies no chat cited: pages saved
     /// from the library or as learning references. Created on first use.
     pub async fn library_conversation(&self) -> Result<String> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let space_id: Option<String> = sqlx::query_scalar(
             "SELECT id FROM conversation_spaces WHERE id = 'space_general' UNION ALL SELECT id FROM conversation_spaces LIMIT 1"
         )
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
 
@@ -230,9 +326,10 @@ impl SnapshotRepository {
         .bind(space_id)
         .bind(&now)
         .bind(&now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(db)?;
+        tx.commit().await.map_err(db)?;
 
         Ok(LIBRARY_CONVERSATION.to_string())
     }
@@ -243,48 +340,10 @@ impl SnapshotRepository {
         normalized_url: &str,
         requested_url: &str,
     ) -> Result<Option<String>> {
-        let from_web_sources: Option<String> = sqlx::query_scalar(
-            "SELECT content FROM conversation_web_sources \
-             WHERE normalized_url = ? AND content IS NOT NULL AND TRIM(content) != '' \
-             ORDER BY CASE WHEN conversation_id = ? THEN 0 ELSE 1 END, \
-                      content_fetched_at DESC, \
-                      added_at DESC \
-             LIMIT 1",
-        )
-        .bind(normalized_url)
-        .bind(conversation_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
-
-        if from_web_sources.is_some() {
-            return Ok(from_web_sources);
-        }
-
-        let from_learning_versions = sqlx::query_scalar::<_, String>(
-            "SELECT v.full_text FROM learning_source_versions v \
-             INNER JOIN learning_source_library s ON s.id = v.source_id \
-             WHERE ( \
-                 LOWER(TRIM(s.origin)) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
-                 OR LOWER(TRIM(s.requested_url)) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
-                 OR LOWER(TRIM(COALESCE(v.resolved_url, ''))) IN (LOWER(TRIM(?)), LOWER(TRIM(?))) \
-             ) \
-               AND TRIM(v.full_text) != '' \
-             ORDER BY v.acquired_at DESC \
-             LIMIT 1",
-        )
-        .bind(requested_url)
-        .bind(normalized_url)
-        .bind(requested_url)
-        .bind(normalized_url)
-        .bind(requested_url)
-        .bind(normalized_url)
-        .fetch_optional(&self.pool)
-        .await
-        .ok()
-        .flatten();
-
-        Ok(from_learning_versions)
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let text = reader_text_in(&mut tx, conversation_id, normalized_url, requested_url).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(text)
     }
 
     pub async fn find_reader_archive(
@@ -293,9 +352,9 @@ impl SnapshotRepository {
         normalized_url: &str,
         requested_url: &str,
     ) -> Result<Option<(Option<String>, String)>> {
-        let Some(text) = self
-            .find_reader_text(conversation_id, normalized_url, requested_url)
-            .await?
+        let mut tx = self.pool.begin_read().await.map_err(db)?;
+        let Some(text) =
+            reader_text_in(&mut tx, conversation_id, normalized_url, requested_url).await?
         else {
             return Ok(None);
         };
@@ -306,7 +365,7 @@ impl SnapshotRepository {
              LIMIT 1",
         )
         .bind(normalized_url)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await
         .ok()
         .flatten();
@@ -327,12 +386,13 @@ impl SnapshotRepository {
             .bind(normalized_url)
             .bind(requested_url)
             .bind(normalized_url)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
             .ok()
             .flatten()
         };
 
+        tx.commit().await.map_err(db)?;
         Ok(Some((title, text)))
     }
 
@@ -347,24 +407,25 @@ impl SnapshotRepository {
         .map_err(db)
     }
 
-    pub async fn set_job(&self, id: &str, job_id: &str) -> Result<()> {
+    /// Records the job that captures row `id`.
+    pub async fn set_job_in(conn: &mut SqliteConnection, id: &str, job_id: &str) -> Result<()> {
         sqlx::query("UPDATE web_page_snapshots SET job_id = ? WHERE id = ?")
             .bind(job_id)
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *conn)
             .await
             .map_err(db)?;
         Ok(())
     }
 
     /// Resets a row when status IN ('failed', 'ready') back to pending.
-    pub async fn reset_for_retry(&self, id: &str) -> Result<bool> {
+    pub async fn reset_for_retry_in(conn: &mut SqliteConnection, id: &str) -> Result<bool> {
         Ok(sqlx::query(
             "UPDATE web_page_snapshots SET status = 'pending', error_code = NULL, \
              error_message = NULL WHERE id = ? AND status IN ('failed', 'ready')",
         )
         .bind(id)
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await
         .map_err(db)?
         .rows_affected()

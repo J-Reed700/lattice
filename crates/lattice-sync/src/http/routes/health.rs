@@ -12,9 +12,7 @@ pub struct HealthResponse {
 }
 
 pub async fn healthz(State(state): State<AppState>) -> AppResult<Json<HealthResponse>> {
-    let _: i64 = sqlx::query_scalar("SELECT 1::bigint")
-        .fetch_one(&state.pool)
-        .await?;
+    state.database.ping().await?;
 
     Ok(Json(HealthResponse {
         status: "ok",

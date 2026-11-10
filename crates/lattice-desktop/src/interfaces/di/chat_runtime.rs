@@ -77,7 +77,7 @@ impl ChatStorage for Container {
         Container::chunk_repository(self)
     }
     fn chat_records(&self) -> Arc<dyn ChatRecords> {
-        Arc::new(ConversationRepository::new(self.db_pool().clone()))
+        Arc::new(ConversationRepository::new(self.database().clone()))
     }
 
     async fn ensure_page_snapshot(&self, conversation_id: &str, url: &str) {
@@ -105,12 +105,12 @@ impl ChatStorage for Container {
         Container::handoffs_in_flight(self)
     }
     fn conversation_branches(&self) -> Arc<dyn ConversationBranches> {
-        Arc::new(ConversationRepository::new(self.db_pool().clone()))
+        Arc::new(ConversationRepository::new(self.database().clone()))
     }
     fn chat_starter_cache(&self) -> Arc<dyn ChatStarterCache> {
         Arc::new(
-            crate::features::conversation::starters::ChatStarterCacheRepository::new(
-                self.db_pool().clone(),
+            crate::features::conversation::starters_repository::ChatStarterCacheRepository::new(
+                self.database().clone(),
             ),
         )
     }
@@ -120,7 +120,7 @@ impl ChatStorage for Container {
         focus: Option<&ExplorerFocusDto>,
     ) -> Option<TurnSource> {
         let folder = FolderTurn::resolve(
-            self.db_pool(),
+            self.database(),
             self.folder_index().map(Arc::as_ref),
             conversation_id,
             focus,
@@ -131,7 +131,7 @@ impl ChatStorage for Container {
         }
         let container = self.clone();
         CourseTurn::resolve(
-            self.db_pool(),
+            self.database(),
             self.course_indexes().cloned(),
             conversation_id,
             Arc::new(move || container.sync_workspace_notes_to_vault()),

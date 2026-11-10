@@ -2,12 +2,14 @@
 //! All table creation is handled by migrations
 
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 
 pub const SCHEMA_VERSION: i32 = 18;
 
 /// Initializes the database schema by running migrations.
-pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
+pub async fn initialize_schema(pool: &impl DriverPool) -> Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::migrate!("./migrations")
         .run(pool)
         .await
@@ -17,11 +19,14 @@ pub async fn initialize_schema(pool: &SqlitePool) -> Result<()> {
 }
 
 /// Rebuild FTS5 index from scratch
-pub async fn rebuild_fts5_index(pool: &SqlitePool) -> Result<()> {
+pub async fn rebuild_fts5_index(pool: &impl DriverPool) -> Result<()> {
+    let pool = pool.sqlx_pool();
     tracing::info!("Rebuilding FTS5 index...");
 
+    let mut tx = pool.begin_write().await?;
+
     sqlx::query("DELETE FROM documents_fts")
-        .execute(pool)
+        .execute(&mut *tx)
         .await?;
 
     sqlx::query(
@@ -32,8 +37,10 @@ pub async fn rebuild_fts5_index(pool: &SqlitePool) -> Result<()> {
         GROUP BY document_id
         "#,
     )
-    .execute(pool)
+    .execute(&mut *tx)
     .await?;
+
+    tx.commit().await?;
 
     tracing::info!("FTS5 index rebuilt");
     Ok(())

@@ -5,8 +5,6 @@ use std::collections::HashSet;
 use std::future::Future;
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use crate::features::indexing::library_owner::{self, LibraryFiles};
 use crate::features::indexing::LibraryGc;
 use crate::features::web::images::ChatImageService;
@@ -14,14 +12,15 @@ use crate::features::web::snapshots::WebPageSnapshotService;
 use lattice_core::application::ports::ChatImagesPort;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::fs::SweepGate;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
-/// Decide, once per start, whether the database behind `pool` owns the files
+/// Decide, once per start, whether the database behind `database` owns the files
 /// `files` names, and open `gate` if it does. Every cleanup that deletes a file
 /// because no row names it reads the gate afterwards; none reads the database
 /// or the owner file again.
-pub async fn open_gate_if_owner(pool: &SqlitePool, files: &LibraryFiles, gate: &SweepGate) {
-    if library_owner::may_sweep(pool, files).await {
+pub async fn open_gate_if_owner(database: &Database, files: &LibraryFiles, gate: &SweepGate) {
+    if library_owner::may_sweep(database, files).await {
         gate.open();
     }
 }

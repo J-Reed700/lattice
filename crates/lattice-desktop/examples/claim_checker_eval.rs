@@ -387,7 +387,7 @@ async fn main() -> Result<(), BoxError> {
             model: args.model.clone(),
             ..LlamaCppSettingsDto::default()
         };
-        let backend: Arc<dyn LLMPort> = Arc::new(LlamaCppLlm::new(&settings)?);
+        let backend: Arc<dyn LLMPort> = LlamaCppLlm::new(&settings)?.into_port().await;
         Some(Arc::new(RecordingLlm {
             inner: backend,
             calls: Mutex::new(Vec::new()),

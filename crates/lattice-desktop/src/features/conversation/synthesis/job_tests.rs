@@ -2,13 +2,14 @@
 //! and its staged result saved to the Journal once.
 use super::*;
 use crate::features::conversation::dto::MessageDto;
+use lattice_core::shared::persistence::Database;
 use std::sync::Mutex;
 use std::time::Duration;
 use tokio::sync::Notify;
 
 const WAIT: Duration = Duration::from_secs(10);
 
-async fn pool() -> sqlx::SqlitePool {
+pub(super) async fn pool() -> sqlx::SqlitePool {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
         .idle_timeout(None)
@@ -122,12 +123,13 @@ impl SynthesisWork for FakeWork {
         })
     }
 
-    async fn remove_scratch(&self, conversation_id: String) {
+    async fn remove_scratch(&self, conversation_id: String) -> Result<()> {
         self.removed.lock().unwrap().push(conversation_id);
+        Ok(())
     }
 }
 
-async fn finished(jobs: &JobRuntime, id: &str) -> JobRecord {
+pub(super) async fn finished(jobs: &JobRuntime, id: &str) -> JobRecord {
     tokio::time::timeout(WAIT, async {
         loop {
             let job = jobs.store().get(id).await.unwrap();
@@ -143,7 +145,8 @@ async fn finished(jobs: &JobRuntime, id: &str) -> JobRecord {
 }
 
 async fn runtime_with(pool: &sqlx::SqlitePool, work: Arc<FakeWork>) -> Arc<JobRuntime> {
-    let jobs = JobRuntime::with_poll_interval(pool.clone(), Duration::from_millis(50));
+    let jobs =
+        JobRuntime::with_poll_interval(Database::from(pool.clone()), Duration::from_millis(50));
     jobs.register(
         JOURNAL_SYNTHESIS,
         Arc::new(JournalSynthesisJob::with(work)),

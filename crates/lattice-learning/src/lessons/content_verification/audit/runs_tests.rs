@@ -3,6 +3,7 @@
 use std::str::FromStr;
 
 use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::SqlitePool;
 
 use super::*;
 use crate::curriculum_repository::ProgramVerifierAudit;
@@ -69,7 +70,7 @@ fn batch(index: usize, outcome: BatchOutcome, tokens: (u64, u64)) -> BatchRecord
 
 #[tokio::test]
 async fn a_run_keeps_each_batch_and_its_tokens_across_a_stop_and_a_resume() {
-    let runs = SqliteAuditRuns::new(database().await);
+    let runs = SqliteAuditRuns::new(Database::from(database().await));
     let key = key("draft-1");
 
     let opened = runs.begin(&key, "verifier-audit-v1", 2_500).await.unwrap();
@@ -103,7 +104,7 @@ async fn a_run_keeps_each_batch_and_its_tokens_across_a_stop_and_a_resume() {
 
 #[tokio::test]
 async fn the_course_total_sums_every_audit_of_its_lessons() {
-    let runs = SqliteAuditRuns::new(database().await);
+    let runs = SqliteAuditRuns::new(Database::from(database().await));
     for (draft, tokens) in [("draft-1", (1_000, 50)), ("draft-2", (2_000, 70))] {
         runs.begin(&key(draft), "verifier-audit-v1", 1)
             .await
@@ -131,7 +132,7 @@ async fn the_course_total_sums_every_audit_of_its_lessons() {
 
 #[tokio::test]
 async fn a_batch_for_an_audit_that_is_gone_is_refused() {
-    let runs = SqliteAuditRuns::new(database().await);
+    let runs = SqliteAuditRuns::new(Database::from(database().await));
     let refused = runs
         .record(&key("never-begun"), &batch(1, BatchOutcome::Done, (1, 1)))
         .await;

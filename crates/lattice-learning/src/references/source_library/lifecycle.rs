@@ -1,4 +1,5 @@
 //! Adopting versions, changing freshness policy, deleting and reimporting sources.
+use super::repository::{self, lifecycle as stored, SourceVersionInsert};
 use super::*;
 use crate::references::trust;
 use lattice_core::shared::persistence::Transactions;
@@ -18,7 +19,7 @@ impl LearningSourceLibraryRepository {
             }
         }
         let hash = hash(req)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -27,33 +28,38 @@ impl LearningSourceLibraryRepository {
             "adopt",
             &hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             return Ok(());
         }
-        let row=sqlx::query("SELECT revision,pending_version_id,active_version_id FROM learning_source_library WHERE program_id=? AND id=?")
-            .bind(&req.program_id).bind(&req.source_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Learning source not found".into()))?;
-        let revision: i64 = row.get("revision");
+        let row = stored::adoption_state(&mut tx, &req.program_id, &req.source_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
+        let revision = row.revision;
         if revision != req.expected_revision {
             return Err(conflict("Source changed; reload and retry."));
         }
-        let pending: Option<String> = row.get("pending_version_id");
-        if pending.as_deref() != Some(&req.version_id) {
+        if row.pending_version_id.as_deref() != Some(&req.version_id) {
             return Err(invalid("Only the pending source version can be adopted."));
         }
-        let current: Option<String> = row.get("active_version_id");
-        let next_revision = if current.as_deref() == Some(&req.version_id) {
+        let next_revision = if row.active_version_id.as_deref() == Some(&req.version_id) {
             revision
         } else {
             revision + 1
         };
-        if next_revision != revision {
-            let result=sqlx::query("UPDATE learning_source_library SET active_version_id=?,pending_version_id=NULL,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
-            .bind(&req.version_id).bind(next_revision).bind(now()).bind(&req.program_id).bind(&req.source_id).bind(revision).execute(&mut *tx).await.map_err(db)?;
-            if result.rows_affected() != 1 {
-                return Err(conflict("Source changed; reload and retry."));
-            }
+        if next_revision != revision
+            && !stored::adopt_version(
+                &mut tx,
+                &req.program_id,
+                &req.source_id,
+                &req.version_id,
+                (next_revision, revision),
+                now(),
+            )
+            .await?
+        {
+            return Err(conflict("Source changed; reload and retry."));
         }
         source_operation(
             &req.operation_id,
@@ -63,7 +69,7 @@ impl LearningSourceLibraryRepository {
             &hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &SourceOperationResult {
                 version_id: Some(&req.version_id),
                 revision: next_revision,
@@ -86,7 +92,7 @@ impl LearningSourceLibraryRepository {
             }
         }
         let hash = hash(req)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if source_operation(
             &req.operation_id,
@@ -95,34 +101,38 @@ impl LearningSourceLibraryRepository {
             "policy",
             &hash,
         )
-        .seen(&mut *tx)
+        .seen(&mut tx)
         .await?
         {
             return Ok(());
         }
-        let row=sqlx::query("SELECT revision,kind,freshness_policy FROM learning_source_library WHERE program_id=? AND id=?")
-            .bind(&req.program_id).bind(&req.source_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Learning source not found".into()))?;
-        let revision: i64 = row.get("revision");
+        let row = stored::policy_state(&mut tx, &req.program_id, &req.source_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
+        let revision = row.revision;
         if revision != req.expected_revision {
             return Err(conflict("Source changed; reload and retry."));
         }
-        if row.get::<String, _>("kind") != "web"
-            && req.freshness_policy != LearningSourcePolicy::Fixed
-        {
+        if row.kind != "web" && req.freshness_policy != LearningSourcePolicy::Fixed {
             return Err(invalid("Document and pasted sources use the fixed policy"));
         }
-        let old: String = row.get("freshness_policy");
-        let next = if old == policy(&req.freshness_policy) {
+        let next = if row.freshness_policy == policy(&req.freshness_policy) {
             revision
         } else {
             revision + 1
         };
-        if next != revision {
-            let result=sqlx::query("UPDATE learning_source_library SET freshness_policy=?,revision=?,updated_at=? WHERE program_id=? AND id=? AND revision=?")
-            .bind(policy(&req.freshness_policy)).bind(next).bind(now()).bind(&req.program_id).bind(&req.source_id).bind(revision).execute(&mut *tx).await.map_err(db)?;
-            if result.rows_affected() != 1 {
-                return Err(conflict("Source changed; reload and retry."));
-            }
+        if next != revision
+            && !stored::set_policy(
+                &mut tx,
+                &req.program_id,
+                &req.source_id,
+                policy(&req.freshness_policy),
+                (next, revision),
+                now(),
+            )
+            .await?
+        {
+            return Err(conflict("Source changed; reload and retry."));
         }
         source_operation(
             &req.operation_id,
@@ -132,7 +142,7 @@ impl LearningSourceLibraryRepository {
             &hash,
         )
         .record(
-            &mut *tx,
+            &mut tx,
             &SourceOperationResult {
                 version_id: None,
                 revision: next,
@@ -159,43 +169,34 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Deletion reason must contain 1–500 characters."));
         }
         let hash = hash(req)?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
-            .seen(&mut *tx)
+            .seen(&mut tx)
             .await?
         {
             return Ok(());
         }
         require_active_program(&mut tx, &req.program_id).await?;
-        let row = sqlx::query(
-            "SELECT revision,deleted_at FROM learning_source_library WHERE program_id=? AND id=?",
-        )
-        .bind(&req.program_id)
-        .bind(&req.source_id)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
-        let revision: i64 = row.get("revision");
-        if revision != req.expected_revision {
+        let row = stored::deletion_state(&mut tx, &req.program_id, &req.source_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
+        if row.revision != req.expected_revision {
             return Err(conflict("Source changed; reload and retry."));
         }
-        if row.get::<Option<i64>, _>("deleted_at").is_some() {
+        if row.deleted_at.is_some() {
             return Err(invalid("This source is already removed."));
         }
-        let timestamp = now();
-        let updated = sqlx::query("UPDATE learning_source_library SET deleted_at=?,deletion_reason=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND deleted_at IS NULL")
-            .bind(timestamp)
-            .bind(reason)
-            .bind(timestamp)
-            .bind(&req.program_id)
-            .bind(&req.source_id)
-            .bind(req.expected_revision)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        if updated.rows_affected() != 1 {
+        if !stored::mark_deleted(
+            &mut tx,
+            &req.program_id,
+            &req.source_id,
+            reason,
+            req.expected_revision,
+            now(),
+        )
+        .await?
+        {
             return Err(conflict("Source changed; reload and retry."));
         }
         crate::lessons::claim_reviews::source_deleted::reopen_for_deleted_source(
@@ -205,7 +206,7 @@ impl LearningSourceLibraryRepository {
         )
         .await?;
         portability_operation(&req.operation_id, &req.program_id, "delete_source", &hash)
-            .record(&mut *tx, &Some(&req.source_id))
+            .record(&mut tx, &Some(&req.source_id))
             .await?;
         tx.commit().await.map_err(db)
     }
@@ -231,17 +232,12 @@ impl LearningSourceLibraryRepository {
             return Err(invalid("Replacement source text must not be empty."));
         }
         let hash = hash(req)?;
-        let saved_text: Option<String> = sqlx::query_scalar(
-            "SELECT v.full_text FROM learning_source_library l JOIN learning_source_versions v ON v.program_id=l.program_id AND v.id=l.active_version_id WHERE l.program_id=? AND l.id=?",
-        )
-        .bind(&req.program_id)
-        .bind(&req.source_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(db)?;
-        let comparison = trust::capture::compare(
-            &self.pool,
-            &req.program_id,
+        let mut read = self.database.begin_read().await.map_err(db)?;
+        let saved_text = stored::active_text_in(&mut read, &req.program_id, &req.source_id).await?;
+        let saved = trust::capture::saved_texts(&mut read, &req.program_id).await?;
+        read.commit().await.map_err(db)?;
+        let comparison = trust::capture::compare_saved(
+            saved,
             trust::capture::VersionText {
                 source_id: &req.source_id,
                 version_id: &req.version_id,
@@ -254,93 +250,64 @@ impl LearningSourceLibraryRepository {
             },
         )
         .await?;
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         lock_program(&mut tx, &req.program_id).await?;
         if portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
-            .seen(&mut *tx)
+            .seen(&mut tx)
             .await?
         {
             return Ok(());
         }
         require_active_program(&mut tx, &req.program_id).await?;
-        let source =
-            sqlx::query("SELECT * FROM learning_source_library WHERE program_id=? AND id=?")
-                .bind(&req.program_id)
-                .bind(&req.source_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
-                .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
-        let revision: i64 = source.get("revision");
+        let source = stored::source_row(&mut tx, &req.program_id, &req.source_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
+        let revision = source.revision;
         if revision != req.expected_revision {
             return Err(conflict("Source changed; reload and retry."));
         }
-        if source.get::<Option<i64>, _>("deleted_at").is_none() {
+        if source.deleted_at.is_none() {
             return Err(invalid("Only a removed source can be re-imported."));
         }
-        let requested_url: Option<String> = source.get("requested_url");
-        let current_id: Option<String> = source.get("active_version_id");
-        let prior = if let Some(version_id) = current_id.as_deref() {
-            sqlx::query("SELECT * FROM learning_source_versions WHERE program_id=? AND source_id=? AND id=?")
-                .bind(&req.program_id)
-                .bind(&req.source_id)
-                .bind(version_id)
-                .fetch_optional(&mut *tx)
-                .await
-                .map_err(db)?
+        let requested_url = source.requested_url.clone();
+        let prior = if let Some(version_id) = source.active_version_id.as_deref() {
+            stored::stored_version(&mut tx, &req.program_id, &req.source_id, version_id).await?
         } else {
             None
         };
         let prior = prior.ok_or_else(|| {
             AppError::InvalidState("Removed source has no version to re-import.".into())
         })?;
-        let prior_text: String = prior.get("full_text");
-        let text_input = req.replacement_text.as_deref().unwrap_or(&prior_text);
+        let text_input = req.replacement_text.as_deref().unwrap_or(&prior.full_text);
         let text = normalized(text_input);
         if text.trim().is_empty() {
             return Err(invalid("Re-imported source text must not be empty."));
         }
         let digest_value = hash_text(&text);
-        let existing: Option<String> = sqlx::query_scalar(
-            "SELECT id FROM learning_source_versions WHERE program_id=? AND source_id=? AND content_sha256=?",
+        let existing = repository::version_with_digest(
+            &mut tx,
+            &req.program_id,
+            &req.source_id,
+            &digest_value,
         )
-        .bind(&req.program_id)
-        .bind(&req.source_id)
-        .bind(&digest_value)
-        .fetch_optional(&mut *tx)
-        .await
-        .map_err(db)?;
+        .await?;
         let active_version = if let Some(existing_id) = existing {
             existing_id
         } else {
-            let collision: Option<i64> = sqlx::query_scalar(
-                "SELECT 1 FROM learning_source_versions WHERE program_id=? AND id=?",
-            )
-            .bind(&req.program_id)
-            .bind(&req.version_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
-            if collision.is_some() {
+            if stored::version_id_in_use(&mut tx, &req.program_id, &req.version_id).await? {
                 return Err(invalid(
                     "The requested source version ID is already in use.",
                 ));
             }
-            let next: i64 = sqlx::query_scalar(
-                "SELECT COALESCE(MAX(version_number),0)+1 FROM learning_source_versions WHERE program_id=? AND source_id=?",
-            )
-            .bind(&req.program_id)
-            .bind(&req.source_id)
-            .fetch_one(&mut *tx)
-            .await
-            .map_err(db)?;
-            let title: String = prior.get("title");
-            let publisher: Option<String> = prior.get("publisher");
-            let resolved_url: Option<String> = prior.get("resolved_url");
-            let extraction: String = prior.get("extraction_version");
-            let truncated = prior.get::<i64, _>("truncated") != 0;
+            let next =
+                repository::next_version_number(&mut tx, &req.program_id, &req.source_id).await?;
+            let title = prior.title.clone();
+            let publisher = prior.publisher.clone();
+            let resolved_url = prior.resolved_url.clone();
+            let extraction = prior.extraction_version.clone();
+            let truncated = prior.truncated;
             let timestamp = now();
-            insert_version(
+            repository::insert_version(
                 &mut tx,
                 SourceVersionInsert {
                     program_id: &req.program_id,
@@ -360,10 +327,10 @@ impl LearningSourceLibraryRepository {
             )
             .await?;
             // The restored version keeps the provenance of the one it restores.
-            let prior_id: String = prior.get("id");
+            let prior_id = prior.id.clone();
             let signals =
                 trust::capture::carried_forward(&mut tx, &req.program_id, &prior_id).await?;
-            let kind = parse_kind(&source.get::<String, _>("kind"))?;
+            let kind = parse_kind(&source.kind)?;
             let restored = trust::capture::CapturedVersion {
                 program_id: &req.program_id,
                 source_id: &req.source_id,
@@ -375,7 +342,7 @@ impl LearningSourceLibraryRepository {
                 acquired_at_ms: timestamp,
             };
             trust::capture::record(&mut tx, &restored, &signals, &comparison).await?;
-            mirror_legacy(
+            repository::mirror_legacy(
                 &mut tx,
                 &req.program_id,
                 &req.version_id,
@@ -388,20 +355,20 @@ impl LearningSourceLibraryRepository {
             req.version_id.clone()
         };
         let timestamp = now();
-        let updated = sqlx::query("UPDATE learning_source_library SET active_version_id=?,pending_version_id=NULL,deleted_at=NULL,deletion_reason=NULL,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND deleted_at IS NOT NULL")
-            .bind(&active_version)
-            .bind(timestamp)
-            .bind(&req.program_id)
-            .bind(&req.source_id)
-            .bind(req.expected_revision)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
-        if updated.rows_affected() != 1 {
+        if !stored::restore_source(
+            &mut tx,
+            &req.program_id,
+            &req.source_id,
+            &active_version,
+            req.expected_revision,
+            timestamp,
+        )
+        .await?
+        {
             return Err(conflict("Source changed; reload and retry."));
         }
         portability_operation(&req.operation_id, &req.program_id, "reimport_source", &hash)
-            .record(&mut *tx, &Some(&active_version))
+            .record(&mut tx, &Some(&active_version))
             .await?;
         tx.commit().await.map_err(db)
     }

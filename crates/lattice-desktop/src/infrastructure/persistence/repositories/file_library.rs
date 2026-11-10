@@ -2,6 +2,7 @@
 use lattice_core::application::contracts::file_library::{IndexedFolder, IndexingActivity};
 use lattice_core::application::ports::file_library::FileLibraryPort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqlitePool;
 
@@ -30,11 +31,21 @@ fn folder_scope(path: &str) -> (&str, String, String) {
     (path, prefix, end)
 }
 
+pub async fn watch_folder_paths(pool: &impl DriverPool) -> Result<Vec<String>> {
+    let pool = pool.sqlx_pool();
+    Ok(
+        sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
+            .fetch_all(pool)
+            .await?,
+    )
+}
+
 pub struct SqliteFileLibrary {
     pool: SqlitePool,
 }
 impl SqliteFileLibrary {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 }

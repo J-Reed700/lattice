@@ -6,7 +6,7 @@
 //! Design: docs/design/2026-10-18-source-provenance-and-trust.md §5, §12, §16;
 //! docs/design/2026-10-21-claim-official-sources.md §4.3.
 
-use super::{SavedText, VersionFacts};
+use super::{repository, SavedText, VersionFacts};
 use crate::references::trust::{calibration, SqliteSourceTrustStore};
 use lattice_core::application::ports::{LLMPort, SourceTrustStore, StoredJudgement};
 use lattice_core::application::services::source_trust::{
@@ -21,7 +21,7 @@ use lattice_core::domain::provenance::{
     StandingAssessment, TrustLevel, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -40,7 +40,7 @@ const COPY_RELATIONS: [RelationKind; 4] = [
 /// The course a lesson preparation job weighs its claims' support in.
 #[derive(Clone)]
 struct Course {
-    pool: SqlitePool,
+    database: Database,
     program_id: String,
     /// The course and lesson the judgements are asked about (§12).
     topic: String,
@@ -56,7 +56,7 @@ tokio::task_local! {
 /// (`research::run`); outside it, nothing is weighed and the claim ledger's
 /// gate applies the quotation rule alone.
 pub(crate) async fn with_trust<T>(
-    pool: SqlitePool,
+    database: Database,
     program_id: String,
     topic: String,
     future: impl std::future::Future<Output = T>,
@@ -64,7 +64,7 @@ pub(crate) async fn with_trust<T>(
     COURSE
         .scope(
             Course {
-                pool,
+                database,
                 program_id,
                 topic,
             },
@@ -74,7 +74,7 @@ pub(crate) async fn with_trust<T>(
 }
 
 tokio::task_local! {
-    static OUTLINE_POOL: SqlitePool;
+    static OUTLINE_DATABASE: Database;
 }
 
 /// Turns the provenance gate on for the outline that `future` drafts or
@@ -83,10 +83,10 @@ tokio::task_local! {
 /// review and repair loop opens the course's scope itself
 /// ([`outline_trust`]). Outside it (unit tests) no outline is weighed.
 pub async fn with_outline_trust<T>(
-    pool: SqlitePool,
+    database: Database,
     future: impl std::future::Future<Output = T>,
 ) -> T {
-    OUTLINE_POOL.scope(pool, future).await
+    OUTLINE_DATABASE.scope(database, future).await
 }
 
 /// Runs `future` in `program_id`'s trust scope when an outline command
@@ -96,18 +96,14 @@ pub(crate) async fn outline_trust<T>(
     topic: String,
     future: impl std::future::Future<Output = T>,
 ) -> T {
-    match OUTLINE_POOL.try_with(Clone::clone) {
-        Ok(pool) => with_trust(pool, program_id, topic, future).await,
+    match OUTLINE_DATABASE.try_with(Clone::clone) {
+        Ok(database) => with_trust(database, program_id, topic, future).await,
         Err(_) => future.await,
     }
 }
 
 fn course() -> Option<Course> {
     COURSE.try_with(Clone::clone).ok()
-}
-
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
 }
 
 fn now() -> i64 {
@@ -147,7 +143,7 @@ struct VersionRecord {
 /// The judgements of one verification pass.
 pub(crate) struct Judgements {
     store: SqliteSourceTrustStore,
-    pool: SqlitePool,
+    database: Database,
     program_id: String,
     topic: String,
     model: String,
@@ -176,9 +172,9 @@ impl Judgements {
     /// course's overrides, relations and bars as they are now: what a trust
     /// change re-decides from. Nothing here calls a model; a judgement the
     /// store lacks is an error (`facts` with no model).
-    pub(crate) async fn cached(pool: SqlitePool, program_id: &str, model: &str) -> Result<Self> {
+    pub(crate) async fn cached(database: Database, program_id: &str, model: &str) -> Result<Self> {
         let course = Course {
-            pool,
+            database,
             program_id: program_id.to_owned(),
             topic: String::new(),
         };
@@ -186,14 +182,14 @@ impl Judgements {
     }
 
     async fn load(course: Course, model: &str) -> Result<Self> {
-        let store = SqliteSourceTrustStore::new(course.pool.clone());
+        let store = SqliteSourceTrustStore::new(course.database.clone());
         let overrides = store.overrides(&course.program_id).await?;
         let relations = store.relations(&course.program_id).await?;
         let bars = calibration::bars_of(&store.outcomes().await?);
         let known_classes = known_classes(&overrides.entries);
         Ok(Self {
             store,
-            pool: course.pool,
+            database: course.database,
             program_id: course.program_id,
             topic: course.topic,
             model: model.to_owned(),
@@ -299,6 +295,68 @@ impl Judgements {
                 })
             })
             .collect()
+    }
+
+    /// Judges at once the ownership of every distinct (origin, subject) pair
+    /// that weighing `wanted`, each a subject and the versions cited for it,
+    /// will ask for; the store then holds each answer. Waits for all and
+    /// returns the first error.
+    pub(in crate::lessons::content_verification) async fn owners(
+        &mut self,
+        llm: &dyn LLMPort,
+        wanted: &[(Option<ClaimSubject>, Vec<String>)],
+    ) -> Result<()> {
+        let read: Vec<String> = wanted
+            .iter()
+            .flat_map(|(_, versions)| versions)
+            .flat_map(|version| {
+                let originals = self.relations.iter().filter_map(move |relation| {
+                    match (&relation.to, relation.from == *version) {
+                        (RelationTarget::Version(to), true)
+                            if COPY_RELATIONS.contains(&relation.kind) =>
+                        {
+                            Some(to.clone())
+                        }
+                        _ => None,
+                    }
+                });
+                std::iter::once(version.clone()).chain(originals)
+            })
+            .collect();
+        self.load_versions(Some(llm), &read).await?;
+        let mut seen = std::collections::HashSet::new();
+        let mut pairs = Vec::new();
+        for (subject, versions) in wanted {
+            let Some(subject) = subject else {
+                continue;
+            };
+            for version in versions {
+                let record = self.version(Some(llm), version).await?;
+                let Some((provenance, _)) = &record.judged else {
+                    continue;
+                };
+                if provenance.origin.host.is_some()
+                    && seen.insert((provenance.origin.key.0.clone(), subject.key.0.clone()))
+                {
+                    pairs.push((record.clone(), subject));
+                }
+            }
+        }
+        let this = &*self;
+        let tasks = pairs.iter().map(|(record, subject)| async move {
+            match &record.judged {
+                Some((provenance, _)) => this
+                    .authority(Some(llm), provenance, subject)
+                    .await
+                    .map(|_| ()),
+                None => Ok(()),
+            }
+        });
+        futures::future::join_all(tasks)
+            .await
+            .into_iter()
+            .collect::<Result<Vec<()>>>()
+            .map(|_| ())
     }
 
     /// The facts of each of `versions` for `profile`'s subject: the version's
@@ -481,21 +539,56 @@ impl Judgements {
         if let Some(record) = self.versions.get(version) {
             return Ok(record.clone());
         }
-        let row = sqlx::query(
-            "SELECT v.source_id, v.full_text, v.acquired_at, l.added_by, l.selection_note FROM learning_source_versions v JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id WHERE v.program_id = ? AND v.id = ?",
-        )
-        .bind(&self.program_id)
-        .bind(version)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(db)?;
-        let added_by: String = row.try_get("added_by").map_err(db)?;
-        let added_by = AddedBy::from_column(&added_by).ok_or_else(|| {
-            AppError::InternalError(format!("Unknown source origin \"{added_by}\"."))
+        let record = self.build_version(llm, version).await?;
+        self.versions.insert(version.to_owned(), record.clone());
+        Ok(record)
+    }
+
+    /// Reads at once every one of `versions` this pass has not read yet, so
+    /// the standings they lack are judged together; the first error is
+    /// returned once all have finished.
+    async fn load_versions(
+        &mut self,
+        llm: Option<&dyn LLMPort>,
+        versions: &[String],
+    ) -> Result<()> {
+        let mut seen = std::collections::HashSet::new();
+        let missing: Vec<&String> = versions
+            .iter()
+            .filter(|version| !self.versions.contains_key(*version) && seen.insert(*version))
+            .collect();
+        let this = &*self;
+        let built = futures::future::join_all(missing.iter().map(|version| async move {
+            this.build_version(llm, version)
+                .await
+                .map(|record| ((*version).clone(), record))
+        }))
+        .await;
+        let mut first_error = None;
+        for outcome in built {
+            match outcome {
+                Ok((version, record)) => {
+                    self.versions.insert(version, record);
+                }
+                Err(error) if first_error.is_none() => first_error = Some(error),
+                Err(_) => {}
+            }
+        }
+        first_error.map_or(Ok(()), Err)
+    }
+
+    async fn build_version(
+        &self,
+        llm: Option<&dyn LLMPort>,
+        version: &str,
+    ) -> Result<Arc<VersionRecord>> {
+        let row = repository::version_row(&self.database, &self.program_id, version).await?;
+        let added_by = AddedBy::from_column(&row.added_by).ok_or_else(|| {
+            AppError::InternalError(format!("Unknown source origin \"{}\".", row.added_by))
         })?;
-        let selection_note: Option<String> = row.try_get("selection_note").map_err(db)?;
-        let text: String = row.try_get("full_text").map_err(db)?;
-        let acquired_at: i64 = row.try_get("acquired_at").map_err(db)?;
+        let selection_note = row.selection_note;
+        let text = row.full_text;
+        let acquired_at = row.acquired_at;
         let provenance = self.store.provenance(version).await?;
         let links = provenance
             .as_ref()
@@ -512,15 +605,13 @@ impl Judgements {
             }
             None => None,
         };
-        let record = Arc::new(VersionRecord {
-            source_id: row.try_get("source_id").map_err(db)?,
+        Ok(Arc::new(VersionRecord {
+            source_id: row.source_id,
             added_by,
             acquired_at: acquired_at / MILLIS_PER_SECOND,
             saved: Arc::new(saved),
             judged,
-        });
-        self.versions.insert(version.to_owned(), record.clone());
-        Ok(record)
+        }))
     }
 
     /// A version's standing (`source-standing-v2`): judged from its signals
@@ -558,7 +649,7 @@ pub(in crate::lessons::content_verification) async fn passage_labels(
     let Some(course) = course() else {
         return Ok(HashMap::new());
     };
-    let records: HashMap<String, ProvenanceRecord> = SqliteSourceTrustStore::new(course.pool)
+    let records: HashMap<String, ProvenanceRecord> = SqliteSourceTrustStore::new(course.database)
         .program_provenance(&course.program_id)
         .await?
         .into_iter()

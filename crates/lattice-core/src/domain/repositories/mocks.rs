@@ -1,4 +1,4 @@
-//! Mock implementations of UnitOfWork and repositories for testing
+//! Mock implementations of repositories for testing
 //!
 //! This module provides mock implementations using the `mockall` crate.
 //! These mocks are designed to be used in service layer tests.
@@ -12,11 +12,10 @@ use async_trait::async_trait;
 use crate::shared::error::Result;
 
 use crate::application::ports::{
-    unit_of_work::{ModelFileRepositoryPort, ModelRepositoryPort},
     ChunkRepositoryPort, DocumentRepositoryPort, EmbeddingRepositoryPort,
 };
 
-use crate::domain::repositories::{model_repository::ModelRepository, SystemRepository};
+use crate::domain::repositories::model_repository::ModelRepository;
 
 use crate::domain::entities::Embedding;
 use crate::domain::entities::{Chunk, Document};
@@ -247,61 +246,10 @@ mock! {
 }
 
 mock! {
-    /// Mock implementation of SystemRepository
-    pub SystemRepo {}
-
-    #[async_trait]
-    impl SystemRepository for SystemRepo {
-        async fn vacuum(&self) -> Result<()>;
-        async fn analyze(&self) -> Result<()>;
-        async fn get_database_size(&self) -> Result<i64>;
-        async fn integrity_check(&self) -> Result<bool>;
-    }
-}
-
-mock! {
-    /// Mock implementation of ModelRepositoryPort
-    pub ModelRepo {}
-
-    #[async_trait]
-    impl ModelRepositoryPort for ModelRepo {
-        async fn find_by_model_id(&self, model_id: &str) -> Result<Option<crate::domain::entities::model::Model>>;
-        async fn create_model_with_files(
-            &self,
-            model: &crate::domain::entities::model::Model,
-            files: Vec<crate::domain::entities::model_file::ModelFile>,
-        ) -> Result<()>;
-        async fn update_status_completed(&self, model_id: &str) -> Result<()>;
-        async fn update_status_failed(&self, model_id: &str) -> Result<()>;
-    }
-}
-
-mock! {
-    /// Mock implementation of ModelFileRepositoryPort
-    pub ModelFileRepo {}
-
-    #[async_trait]
-    impl ModelFileRepositoryPort for ModelFileRepo {
-        async fn create(&self, model_file: &crate::domain::entities::model_file::ModelFile) -> Result<()>;
-        async fn find_by_model_id(&self, model_id: &str) -> Result<Vec<crate::domain::entities::model_file::ModelFile>>;
-        async fn count_total_files(&self, model_id: &str) -> Result<usize>;
-        async fn count_completed_files(&self, model_id: &str) -> Result<usize>;
-        async fn update_file_status_by_model_and_name(
-            &self,
-            model_id: &str,
-            file_name: &str,
-            status: crate::domain::value_objects::model_status::FileStatus,
-            size_bytes: Option<i64>,
-        ) -> Result<()>;
-    }
-}
-
-mock! {
     /// Mock implementation of ModelRepository for testing ModelService
     ///
     /// This mock allows you to set expectations for model repository operations
-    /// used by ModelService (not to be confused with MockModelRepo which implements
-    /// ModelRepositoryPort for UnitOfWork).
+    /// used by ModelService.
     pub ModelRepository {}
 
     #[async_trait]
@@ -312,116 +260,5 @@ mock! {
         async fn update_status(&self, model_id: &str, status: ModelStatus) -> Result<()>;
         async fn update_file_progress(&self, model_id: &str, file_name: &str, downloaded_bytes: i64, status: FileStatus) -> Result<()>;
         async fn delete(&self, model_id: &str) -> Result<()>;
-    }
-}
-
-mock! {
-    /// Mock implementation of UnitOfWork trait
-    ///
-    /// This mock allows you to set expectations for repository access
-    /// and transaction operations (commit/rollback).
-    pub UnitOfWork {}
-
-    #[async_trait]
-    impl crate::application::ports::unit_of_work::UnitOfWork for UnitOfWork {
-        fn chunk_repository<'a>(&'a self) -> Result<Box<dyn ChunkRepositoryPort + Send + 'a>>;
-        fn document_repository<'a>(&'a self) -> Result<Box<dyn DocumentRepositoryPort + Send + 'a>>;
-        fn embedding_repository<'a>(&'a self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + 'a>>;
-        fn system_repository<'a>(&'a self) -> Result<Box<dyn SystemRepository + Send + 'a>>;
-        fn model_repository<'a>(&'a self) -> Result<Box<dyn ModelRepositoryPort + 'a>>;
-        fn model_file_repository<'a>(&'a self) -> Result<Box<dyn ModelFileRepositoryPort + 'a>>;
-        async fn commit(&mut self) -> Result<()>;
-        async fn rollback(&mut self) -> Result<()>;
-    }
-}
-
-mock! {
-    /// Mock implementation of UnitOfWorkFactory trait
-    ///
-    /// This mock allows you to control what UnitOfWork instances are created.
-    pub UnitOfWorkFactory {}
-
-    #[async_trait]
-    impl crate::application::ports::unit_of_work::UnitOfWorkFactory for UnitOfWorkFactory {
-        async fn create(&self) -> Result<Box<dyn crate::application::ports::unit_of_work::UnitOfWork + Send>>;
-    }
-}
-
-/// Create a default MockUnitOfWork with basic expectations set
-///
-/// This helper sets up common default behaviors:
-/// - commit() returns Ok(())
-/// - rollback() returns Ok(())
-///
-/// You can override these with your own expectations.
-pub fn create_default_mock_uow() -> MockUnitOfWork {
-    let mut mock = MockUnitOfWork::new();
-
-    // Default: commit succeeds
-    mock.expect_commit().returning(|| Ok(()));
-
-    // Default: rollback succeeds
-    mock.expect_rollback().returning(|| Ok(()));
-
-    mock
-}
-
-/// Create a MockUnitOfWork that simulates a commit failure
-pub fn create_failing_commit_mock_uow() -> MockUnitOfWork {
-    let mut mock = MockUnitOfWork::new();
-
-    mock.expect_commit().returning(|| {
-        Err(crate::shared::error::AppError::Database(
-            "Commit failed".to_string(),
-        ))
-    });
-
-    mock
-}
-
-/// Create a MockUnitOfWork that simulates a rollback failure
-pub fn create_failing_rollback_mock_uow() -> MockUnitOfWork {
-    let mut mock = MockUnitOfWork::new();
-
-    mock.expect_rollback().returning(|| {
-        Err(crate::shared::error::AppError::Database(
-            "Rollback failed".to_string(),
-        ))
-    });
-
-    mock
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::application::ports::unit_of_work::UnitOfWork;
-
-    #[tokio::test]
-    async fn test_mock_uow_commit() {
-        let mut mock = create_default_mock_uow();
-        let result = mock.commit().await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_mock_uow_rollback() {
-        let mut mock = create_default_mock_uow();
-        let result = mock.rollback().await;
-        assert!(result.is_ok());
-    }
-
-    #[tokio::test]
-    async fn test_failing_commit() {
-        let mut mock = create_failing_commit_mock_uow();
-        let result = mock.commit().await;
-        assert!(result.is_err());
-    }
-
-    #[tokio::test]
-    async fn test_failing_rollback() {
-        let mut mock = create_failing_rollback_mock_uow();
-        let result = mock.rollback().await;
-        assert!(result.is_err());
     }
 }

@@ -7,8 +7,6 @@ use crate::features::llm::instances::{
 use crate::features::llm::loading::ModelLoader;
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use crate::features::llm::use_cases::{
     CheckModelDownloadedUseCase, DeleteModelUseCase, DownloadModelUseCase,
     GetAvailableModelsUseCase, GetModelPathUseCase, GetSystemCapabilitiesUseCase,
@@ -18,13 +16,11 @@ use crate::infrastructure::adapters::fs::tokio_checksum::TokioChecksumAdapter;
 use crate::infrastructure::adapters::fs::TokioFileSystemAdapter;
 use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 use crate::infrastructure::file_system::FileSystemAdapter;
-use crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::download_manager::DownloadManager;
 use lattice_core::application::ports::llm_port::{
     InvalidationCause, ModelRequirements, ModelRole, OptionalLlmLoader, PinnedModel,
 };
-use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{
     CredentialsPort, FileSystemPort, LLMPort, ModelCatalogPort, ModelStoragePort, SystemInfoPort,
 };
@@ -33,6 +29,7 @@ use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::ports::file_access::{ChecksumService, FileSystemAccess};
 use lattice_core::domain::repositories::downloaded_model_repository::DownloadedModelRepository as DownloadedModelRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 
 mod roles;
 
@@ -60,7 +57,7 @@ pub struct LlmPorts {
 }
 
 pub fn build(
-    db_pool: SqlitePool,
+    database: Database,
     credentials: Arc<dyn CredentialsPort>,
     backend_devices: Arc<BackendDevices>,
     ports: LlmPorts,
@@ -77,7 +74,6 @@ pub fn build(
     let file_system = Arc::new(FileSystemAdapter::new()) as Arc<dyn FileSystemPort>;
     let checksum_service = Arc::new(TokioChecksumAdapter) as Arc<dyn ChecksumService>;
     let file_system_access = Arc::new(TokioFileSystemAdapter) as Arc<dyn FileSystemAccess>;
-    let uow_factory = Arc::new(SqliteUnitOfWorkFactory::new(db_pool)) as Arc<dyn UnitOfWorkFactory>;
 
     let get_system_capabilities_use_case = Arc::new(GetSystemCapabilitiesUseCase::new(system_info));
     let get_available_models_use_case =
@@ -96,7 +92,7 @@ pub fn build(
         credentials,
         checksum_service,
         file_system_access,
-        uow_factory,
+        database,
     ));
     let delete_model_use_case = Arc::new(DeleteModelUseCase::new(
         model_storage.clone(),
@@ -162,7 +158,7 @@ impl Container {
         request_override: Option<&ModelRef>,
         requirements: ModelRequirements,
     ) -> Result<PinnedModel> {
-        let (choice, title) = chat_model_choice(self.db_pool(), conversation_id).await?;
+        let (choice, title) = chat_model_choice(self.database(), conversation_id).await?;
         self.llm_for(&ModelRequest {
             role: ModelRole::Chat,
             selection: ModelSelection::Chat {
@@ -439,17 +435,12 @@ impl Container {
 /// The chat's own model choice and its title, read from the row that holds
 /// them. No choice is the Settings default, live.
 async fn chat_model_choice(
-    pool: &SqlitePool,
+    database: &Database,
     conversation_id: &str,
 ) -> Result<(ChatModelChoice, String)> {
-    let (choice, title): (Option<String>, String) =
-        sqlx::query_as("SELECT model_choice, title FROM conversations WHERE id = ?")
-            .bind(conversation_id)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Conversation {conversation_id} not found"))
-            })?;
+    let (choice, title) = super::repository::chat_model_row(database, conversation_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Conversation {conversation_id} not found")))?;
     Ok((
         ChatModelChoice::from_column(conversation_id, choice.as_deref())?,
         title,

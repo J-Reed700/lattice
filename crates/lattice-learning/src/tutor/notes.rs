@@ -37,10 +37,10 @@ impl CourseTurn {
             .ok_or_else(|| {
                 AppError::NotFound("Lesson does not belong to this learning program.".into())
             })?;
-        let (note_id, _) = LearningRepository::new(self.pool.clone())
+        let (note_id, _) = LearningRepository::new(self.database.clone())
             .ensure_lesson_note(&self.program_id, &lesson_id, &title, &content)
             .await?;
-        let notes = DailyNotesRepository::new(self.pool.clone());
+        let notes = DailyNotesRepository::new(self.database.clone());
         let mut note = notes.get(&note_id).await?;
         note.content = with_summary(&note.content, summary);
         note.updated_at = chrono::Utc::now().to_rfc3339();

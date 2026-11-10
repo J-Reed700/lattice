@@ -17,6 +17,7 @@ mod file_job;
 pub mod imports;
 pub mod items;
 pub mod plugin;
+pub mod repository;
 mod url_job;
 mod worker;
 

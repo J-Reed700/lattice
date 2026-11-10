@@ -216,6 +216,23 @@ impl ClaimReviewStore for MemoryLedger {
         ledger.revision = Revision(ledger.revision.0 + 1);
         Ok(ledger.revision)
     }
+
+    async fn hold_lesson_review(
+        &self,
+        _lesson_id: &str,
+        stop_reason: Option<lattice_core::domain::learning::claim_review::StopReason>,
+    ) -> Result<Option<Revision>> {
+        let mut ledger = self.ledger.lock().unwrap();
+        let Some(review) = ledger.review.as_mut() else {
+            return Ok(None);
+        };
+        review.state = lattice_core::domain::learning::claim_review::LessonReviewState::NeedsReview;
+        if stop_reason.is_some() {
+            review.stop_reason = stop_reason;
+        }
+        ledger.revision = Revision(ledger.revision.0 + 1);
+        Ok(Some(ledger.revision))
+    }
 }
 
 /// The page or the error the web service answers with.
@@ -405,7 +422,7 @@ impl LLMPort for Judge {
 }
 
 struct World {
-    pool: sqlx::SqlitePool,
+    pool: lattice_core::shared::persistence::Database,
     program_id: String,
     ledger: MemoryLedger,
 }
@@ -433,7 +450,7 @@ async fn world_with(claims: Vec<ClaimLedgerEntry>) -> World {
     let program_id = program.summary.id.clone();
     let ledger = MemoryLedger::new(&program_id, claims);
     World {
-        pool,
+        pool: pool.into(),
         program_id,
         ledger,
     }
@@ -451,7 +468,7 @@ impl World {
         let library = EmptyLibrary;
         attach(
             &AttachDeps {
-                pool: &self.pool,
+                database: &self.pool,
                 store: &self.ledger,
                 web,
                 snapshots,
@@ -489,7 +506,7 @@ impl World {
         let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
         let report = attach_to(
             &AttachDeps {
-                pool: &self.pool,
+                database: &self.pool,
                 store: &self.ledger,
                 web: &web,
                 snapshots: &snapshots,
@@ -530,7 +547,7 @@ impl World {
         let progress = |stage: ClaimAttachProgressDto| stages.lock().unwrap().push(stage);
         let report = attach_to_lesson(
             &AttachDeps {
-                pool: &self.pool,
+                database: &self.pool,
                 store: &self.ledger,
                 web,
                 snapshots: &snapshots,
@@ -878,7 +895,7 @@ async fn a_stale_review_is_refused_before_anything_is_saved() {
     let library = EmptyLibrary;
     let refused = attach(
         &AttachDeps {
-            pool: &world.pool,
+            database: &world.pool,
             store: &world.ledger,
             web: &web,
             snapshots: &snapshots,
@@ -959,7 +976,7 @@ async fn a_new_source_is_checked_for_the_waiting_claims_by_the_machine() {
     let library = EmptyLibrary;
     let judge = Judge::says("supported");
     let deps = AttachDeps {
-        pool: &world.pool,
+        database: &world.pool,
         store: &world.ledger,
         web: &web,
         snapshots: &snapshots,
@@ -1194,3 +1211,6 @@ async fn a_lesson_with_no_open_claims_saves_the_source_and_checks_nothing() {
         .all(|stage| !matches!(stage, ClaimAttachProgressDto::Checking { .. })));
     assert!(matches!(stages.last(), Some(ClaimAttachProgressDto::Done)));
 }
+
+#[path = "write_tests.rs"]
+mod write;

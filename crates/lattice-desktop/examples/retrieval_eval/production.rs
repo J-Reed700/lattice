@@ -60,6 +60,7 @@ use lattice_core::application::contracts::search::{
 use lattice_core::application::ports::vector_search_port::VectorIndexEntry;
 use lattice_core::application::ports::{EmbeddingPort, VectorSearchPort};
 use lattice_core::domain::value_objects::ContextualizedChunk;
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
@@ -369,7 +370,10 @@ impl ProductionIndex {
         let mut search = HybridSearchUseCase::new(
             Arc::clone(&model) as Arc<dyn EmbeddingPort>,
             Arc::clone(&index) as Arc<dyn VectorSearchPort>,
-            Arc::new(SqliteTextSearch::new(pool.clone()).with_header_weight(fts_header.weight())),
+            Arc::new(
+                SqliteTextSearch::new(Database::from(pool.clone()))
+                    .with_header_weight(fts_header.weight()),
+            ),
         )
         .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone())))
         .with_rrf_k(rrf_k);
@@ -901,7 +905,7 @@ mod tests {
         // What the orchestrator's vault-wide branches read: the keyword search, which leaves
         // chat attachments out, and the chunk repository's attachment and body lookups.
         let hits = TextSearchPort::search_scoped(
-            &SqliteTextSearch::new(pool.clone()),
+            &SqliteTextSearch::new(Database::from(pool.clone())),
             "quota",
             5,
             None,

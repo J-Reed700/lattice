@@ -45,7 +45,7 @@ describe('outline progress while the model server is out of reach', () => {
   it.each([
     ['RATE_LIMIT_EXCEEDED', 'The model is getting too many requests. Lattice keeps trying.'],
     ['SERVICE_NOT_AVAILABLE', 'The model server is busy or starting. Lattice keeps trying.'],
-    ['INTERNAL_ERROR', "The model server isn't answering. Lattice keeps trying."],
+    ['INTERNAL_ERROR', 'Lattice is waiting to try again.'],
   ] as const)('reads a %s wait as its own sentence, with the seconds beside it', (errorCode, sentence) => {
     render(<Tree current={progress('drafting', { retryInSeconds: 30, errorCode })} onCancel={vi.fn()} />);
     expect(screen.getByText(sentence)).toBeVisible();

@@ -33,7 +33,7 @@ impl ClaimLedger {
             return Ok(Audited::Off);
         };
         let material = AuditMaterial::of_draft(
-            &scope.pool,
+            &scope.database,
             &sink.program_id,
             &sink.lesson_id,
             candidate,
@@ -48,7 +48,7 @@ impl ClaimLedger {
         };
         let audit = lesson::audit_lesson(
             verifier.as_ref(),
-            &scope.pool,
+            &scope.database,
             &LessonAuditRequest {
                 program_id: &sink.program_id,
                 lesson_id: &sink.lesson_id,

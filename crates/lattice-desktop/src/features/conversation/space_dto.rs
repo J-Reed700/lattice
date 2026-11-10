@@ -2,7 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationSpaceDto {
     pub id: String,
@@ -18,7 +18,7 @@ pub struct ConversationSpaceDto {
     pub updated_at: String,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationJournalDto {
     pub id: String,
@@ -152,7 +152,7 @@ pub struct SetConversationStateRequestDto {
     pub value: bool,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, sqlx::FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct ConversationSpaceMemberDto {
     pub space_id: String,

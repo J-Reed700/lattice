@@ -25,14 +25,12 @@ impl ModelWindowDto {
         )
     }
 
-    /// The output ceiling this choice runs at.
-    pub fn max_output_within(&self, reported: &Self, fallback: u32) -> u32 {
-        within(
-            self.max_output_tokens
-                .or(reported.max_output_tokens)
-                .unwrap_or(fallback),
-            reported.max_output_tokens,
-        )
+    /// The output ceiling this choice runs at when anyone knows one: what was
+    /// chosen, else what is reported, never past what is reported.
+    pub fn max_output_known(&self, reported: &Self) -> Option<u32> {
+        self.max_output_tokens
+            .or(reported.max_output_tokens)
+            .map(|ceiling| within(ceiling, reported.max_output_tokens))
     }
 
     /// What is wrong with this choice, as a sentence for the settings check.
@@ -63,7 +61,6 @@ mod tests {
     fn with_no_choice_a_window_stays_at_the_default_and_output_follows_the_provider() {
         let chosen = ModelWindowDto::default();
         assert_eq!(chosen.context_window_within(&REPORTED, 131_072), 131_072);
-        assert_eq!(chosen.max_output_within(&REPORTED, 8_192), 128_000);
     }
 
     #[test]
@@ -83,7 +80,6 @@ mod tests {
             max_output_tokens: None,
         };
         assert_eq!(chosen.context_window_within(&NOT_REPORTED, 131_072), 40_000);
-        assert_eq!(chosen.max_output_within(&NOT_REPORTED, 8_192), 8_192);
     }
 
     #[test]
@@ -93,7 +89,24 @@ mod tests {
             max_output_tokens: Some(500_000),
         };
         assert_eq!(chosen.context_window_within(&REPORTED, 131_072), 200_000);
-        assert_eq!(chosen.max_output_within(&REPORTED, 131_072), 128_000);
+    }
+
+    #[test]
+    fn a_ceiling_is_known_only_when_chosen_or_reported() {
+        let chosen = ModelWindowDto {
+            context_window: None,
+            max_output_tokens: Some(500_000),
+        };
+        assert_eq!(chosen.max_output_known(&REPORTED), Some(128_000));
+        assert_eq!(chosen.max_output_known(&NOT_REPORTED), Some(500_000));
+        assert_eq!(
+            ModelWindowDto::default().max_output_known(&REPORTED),
+            Some(128_000)
+        );
+        assert_eq!(
+            ModelWindowDto::default().max_output_known(&NOT_REPORTED),
+            None
+        );
     }
 
     #[test]

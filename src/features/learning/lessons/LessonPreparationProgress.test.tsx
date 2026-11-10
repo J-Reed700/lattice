@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
 import { LessonPreparationStatus, type ReviewOpener } from '@/features/learning/lessons/LessonPreparationProgress';
 import { claimItem, review } from '@/features/learning/lessons/review/claimReviewTestData';
-import type { LearningGenerationJob } from '@/lib/bindings';
+import type { ErrorCode, LearningGenerationJob } from '@/lib/bindings';
 import { expectPlainError, findAlertWith } from '@/tests/plainErrors';
 
 
@@ -68,6 +68,21 @@ describe('Durable lesson preparation progress', () => {
     expect(await screen.findByText('Resumed from saved checks')).toBeVisible();
     expect(screen.queryByText('Waiting to retry')).not.toBeInTheDocument();
     expect(api.retry).not.toHaveBeenCalled();
+    view.unmount(); view.client.clear();
+  });
+
+  it.each([
+    ['DATABASE_BUSY', 'Another task is using the database. Lattice keeps trying.', false],
+    ['NETWORK_ERROR', "Can't reach the model server. Lattice keeps trying.", true],
+  ])('says what a %s wait is on, and offers model settings only when it is the model', async (errorCode, sentence, onModel) => {
+    const waiting: LearningGenerationJob = { ...job, status: 'pending', errorCode: errorCode as ErrorCode,
+      error: 'The wait is saved. Preparation retries automatically while Lattice is open.',
+      progressMessage: 'Waiting to retry',
+    };
+    api.plan.mockImplementation(async () => ({ ok: true, data: { jobs: [waiting] } }));
+    const view = show();
+    const notice = await findAlertWith(sentence);
+    expect(within(notice).queryByRole('button', { name: 'Open model settings' }) !== null).toBe(onModel);
     view.unmount(); view.client.clear();
   });
 

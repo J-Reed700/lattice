@@ -6,8 +6,9 @@ use crate::{
     persistence::{db, now},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{sqlite::SqliteRow, Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 mod bank;
@@ -421,19 +422,16 @@ pub struct LearningAssessmentRepository {
 }
 
 impl LearningAssessmentRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
-    }
-
-    async fn active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+    async fn active_program(connection: &mut SqliteConnection, program_id: &str) -> Result<()> {
         let status: Option<String> =
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *connection)
                 .await
                 .map_err(db)?;
         if status.as_deref() != Some("active") {
@@ -441,10 +439,10 @@ impl LearningAssessmentRepository {
         }
         Ok(())
     }
-    async fn writer_lock(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+    async fn writer_lock(connection: &mut SqliteConnection, program_id: &str) -> Result<()> {
         sqlx::query("UPDATE learning_programs SET revision=revision WHERE id=?")
             .bind(program_id)
-            .execute(&mut **tx)
+            .execute(&mut *connection)
             .await
             .map_err(db)?;
         Ok(())
