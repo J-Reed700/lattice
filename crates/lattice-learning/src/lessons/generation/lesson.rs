@@ -616,9 +616,13 @@ fn assemble(
             (FindingSite::Section(index), &mut source_ids),
             &mut findings,
         )?;
-        // Practice with fewer than two criteria is a structural finding;
-        // the criteria it has are saved.
-        let rubric = crate::teaching::rubric(block.rubric, false).map_err(unusable)?;
+        // Criteria the rules refuse are not saved, and a practice section
+        // without them is a finding (`teaching::structural_findings`).
+        let rubric = match crate::teaching::rubric(block.rubric, false) {
+            Ok(rubric) => rubric,
+            Err(AppError::InvalidInput(_)) => Vec::new(),
+            Err(other) => return Err(other),
+        };
         blocks.push(LearningBlockDto {
             rubric,
             kind: block.kind,

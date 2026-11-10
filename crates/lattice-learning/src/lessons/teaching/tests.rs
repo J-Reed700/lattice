@@ -110,8 +110,8 @@ fn structure(blocks: Value) -> Vec<ReviewFinding> {
 #[test]
 fn a_block_of_any_length_is_no_finding_for_its_length() {
     let rubric = json!([
-        {"title":"One","description":"Observable."},
-        {"title":"Two","description":"Observable."}
+        {"title":"One","description":"Observable.","dimension":"recall"},
+        {"title":"Two","description":"Observable.","dimension":"application"}
     ]);
     let blocks: Vec<_> = [
         "explanation",
