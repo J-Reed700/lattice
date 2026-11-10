@@ -423,6 +423,7 @@ async fn a_saved_call_names_the_model_that_answered() -> Result<()> {
 #[tokio::test]
 async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()> {
     use crate::features::learning::content_verification::page_budget;
+    use crate::features::llm::fitting::PortBackend;
     use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler, ScheduledLlm};
     use lattice_core::application::ports::llm_port::CompletionInput;
     let directory = tempfile::tempdir()?;
@@ -431,7 +432,10 @@ async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()
         BackendCapacity::concurrent(1),
     ));
     let model = ObservedModel::observing(
-        Arc::new(ScheduledLlm::new(Arc::new(TimedBackend), scheduler)),
+        Arc::new(ScheduledLlm::new(
+            Arc::new(PortBackend(Arc::new(TimedBackend))),
+            scheduler,
+        )),
         directory.path().to_path_buf(),
         0,
     );

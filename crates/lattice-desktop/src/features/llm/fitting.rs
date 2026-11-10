@@ -72,10 +72,6 @@ impl OutputLimits {
         Self { ceiling }
     }
 
-    pub(crate) fn ceiling(self) -> Option<u32> {
-        self.ceiling
-    }
-
     /// The reply ceiling before the window is considered: the request's own
     /// cap within the model's ceiling; the model's ceiling alone when it
     /// thinks, since thinking counts toward it; `None` when neither is known.

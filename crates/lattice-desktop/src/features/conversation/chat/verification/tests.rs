@@ -176,7 +176,7 @@ async fn live_grounding_adversarial_regressions() {
     .unwrap();
     let config: LLMSettingsDto =
         serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
-    let llm = Arc::new(LlamaCppLlm::new(&config).unwrap());
+    let llm = LlamaCppLlm::new(&config).unwrap().into_port().await;
     let verifier = GroundingVerifier::new(Some(llm));
     let mut evidence =
         source("The design workspace retains hourly file versions for 14 days before expiration.");
@@ -350,12 +350,15 @@ async fn an_unreached_copy_that_cut_a_negation_is_not_checked_rather_than_suppor
 /// A judge over `llm`, behind a scheduler with `slots` slots: how many
 /// claims run side by side is the backend's decision, not the judge's.
 fn scheduled_judge(llm: Arc<ScriptedLlm>, slots: usize) -> ClaimJudge {
+    use crate::features::llm::fitting::PortBackend;
     use crate::features::llm::scheduler::{BackendCapacity, InferenceScheduler, ScheduledLlm};
     let scheduler = Arc::new(InferenceScheduler::new(
         "judge-test",
         BackendCapacity::concurrent(slots),
     ));
-    ClaimJudge::new(Arc::new(ScheduledLlm::new(llm, scheduler)) as Arc<dyn LLMPort>)
+    ClaimJudge::new(
+        Arc::new(ScheduledLlm::new(Arc::new(PortBackend(llm)), scheduler)) as Arc<dyn LLMPort>,
+    )
 }
 
 /// A slow judge is not a failed one: three two-minute calls in a row are all

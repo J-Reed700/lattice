@@ -18,14 +18,19 @@ use lattice_core::domain::learning::claim_review::SourceAddedBy;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
 use std::{
-    collections::HashSet, fs::OpenOptions, io::Write, path::PathBuf, sync::Mutex, time::Duration,
+    collections::HashSet,
+    fs::OpenOptions,
+    io::Write,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    time::Duration,
 };
 
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
 
-fn live_client() -> Result<Box<dyn LLMPort>> {
+async fn live_client() -> Result<Arc<dyn LLMPort>> {
     let model = std::env::var("LATTICE_LEARNING_EVAL_MODEL").map_err(|_| {
         invalid("Configure LATTICE_LEARNING_EVAL_MODEL before running live research controls.")
     })?;
@@ -41,7 +46,7 @@ fn live_client() -> Result<Box<dyn LLMPort>> {
         .filter(|value| *value > 0)
         .unwrap_or(300);
     match provider.as_str() {
-        "llama_cpp" => Ok(Box::new(LlamaCppLlm::new(&LLMSettingsDto {
+        "llama_cpp" => Ok(LlamaCppLlm::new(&LLMSettingsDto {
             context_window: std::env::var("LATTICE_LEARNING_EVAL_CONTEXT_TOKENS")
                 .ok()
                 .and_then(|value| value.parse().ok())
@@ -55,14 +60,17 @@ fn live_client() -> Result<Box<dyn LLMPort>> {
                 auth_header_value: value,
             },
             ..Default::default()
-        })?)),
-        "ollama" => Ok(Box::new(OllamaClient::with_model_and_timeouts_and_header(
+        })?
+        .into_port()
+        .await),
+        "ollama" => Ok(OllamaClient::with_model_and_timeouts_and_header(
             endpoint,
             model,
             Duration::from_secs(30),
             Duration::from_secs(u64::from(timeout)),
             (!name.is_empty()).then_some((name, value)),
-        )?)),
+        )?
+        .into_port()),
         _ => Err(invalid("Unsupported live research evaluation provider.")),
     }
 }
@@ -110,7 +118,7 @@ fn page(url: &str, title: &str, text: &str) -> FetchUrlContentOutput {
 #[ignore = "contacts an explicitly configured model; web discovery and pages are recorded fixtures"]
 async fn live_interview_research_keeps_queries_public_and_captures_real_page_bodies() -> Result<()>
 {
-    let llm = live_client()?;
+    let llm = live_client().await?;
     let (pool, program_id, _, _) = fixture().await?;
     let library = LearningSourceLibraryRepository::new(pool);
     let web = RecordedWeb {
