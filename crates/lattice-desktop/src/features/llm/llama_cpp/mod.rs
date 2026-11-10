@@ -7,17 +7,17 @@
 //! process: a sidecar's client holds the handle that keeps it running.
 use crate::features::llm::backend::{ignore_retry, ignore_text, ModelBackend, Progress};
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
-use crate::features::llm::engine::vision::pictures_outside_a_user_message;
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
+use crate::features::llm::openai_chat::openai_content_parts;
 use crate::features::llm::scheduler::SchedulerRegistry;
 use async_trait::async_trait;
 use futures::StreamExt;
 use lattice_core::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
-        invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse,
-        ContentPart, LLMPort, ThinkingPolicy,
+        invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
+        ThinkingPolicy,
     },
 };
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -342,24 +342,6 @@ pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
         calls_join_last = joins;
     }
     coalesce_system_messages(messages)
-}
-
-/// A user message's parts as OpenAI Chat Completions content: each picture an
-/// `image_url` data URI, each text a `text` part, in the order given. Shared
-/// with the cloud adapter's OpenAI-compatible chat path.
-pub(crate) fn openai_content_parts(role: &str, parts: &[ContentPart]) -> Result<Vec<Value>> {
-    if role != "user" {
-        return Err(pictures_outside_a_user_message(role));
-    }
-    Ok(parts
-        .iter()
-        .map(|part| match part {
-            ContentPart::Text { text } => json!({"type":"text","text":text}),
-            ContentPart::Image(image) => {
-                json!({"type":"image_url","image_url":{"url":image.data_uri()}})
-            }
-        })
-        .collect())
 }
 
 /// The server's chat template may allow only one system message at index zero.

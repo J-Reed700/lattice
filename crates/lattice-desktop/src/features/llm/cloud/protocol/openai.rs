@@ -3,12 +3,16 @@
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ContentPart,
 };
+use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::{AppError, Result};
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client, RequestBuilder, StatusCode};
 use serde_json::{json, Value};
 
 use super::listing::{self, is_text_model};
-use super::{api_base, user_parts, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
+use super::{
+    api_base, insufficient_quota, user_parts, CatalogProtocol, CompletionProtocol, EventDecoder,
+    LimitsApi, LimitsProtocol, ModelPage, ProviderApi,
+};
 use crate::features::llm::cloud::{field, reply, set_field};
 use crate::features::llm::fitting::{Fitted, Thinking};
 
@@ -16,28 +20,30 @@ mod stream;
 
 pub(super) struct OpenAi;
 
-impl ProviderProtocol for OpenAi {
-    fn name(&self) -> &'static str {
-        "openai"
-    }
-
-    fn shown_name(&self) -> &'static str {
-        "OpenAI"
+impl ProviderApi for OpenAi {
+    fn provider(&self) -> CloudProvider {
+        CloudProvider::Openai
     }
 
     fn api_base(&self) -> String {
         api_base("LATTICE_OPENAI_BASE_URL", "https://api.openai.com")
     }
 
+    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
+        request.bearer_auth(key)
+    }
+
+    fn out_of_credit(&self, status: StatusCode, reply: &Value) -> bool {
+        status == StatusCode::TOO_MANY_REQUESTS && insufficient_quota(reply)
+    }
+}
+
+impl CompletionProtocol for OpenAi {
     fn completion_path(&self) -> &'static str {
         "/v1/responses"
     }
 
     fn sign(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
-        request.bearer_auth(key)
-    }
-
-    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
         request.bearer_auth(key)
     }
 
@@ -141,7 +147,16 @@ impl ProviderProtocol for OpenAi {
                 _ => {}
             }
         }
-        reply::finish(&mut response, &value, "status", &reasoning_parts);
+        let input_tokens = field(field(&value, "usage"), "input_tokens")
+            .as_u64()
+            .unwrap_or(0);
+        reply::finish(
+            &mut response,
+            &value,
+            "status",
+            input_tokens,
+            &reasoning_parts,
+        );
         // OpenAI replays its output items one by one.
         response.replay = blocks
             .iter()
@@ -155,10 +170,21 @@ impl ProviderProtocol for OpenAi {
         Box::new(stream::Events::default())
     }
 
-    fn requires_ceiling(&self) -> bool {
-        false
+    /// The Responses API counts the cached tokens within `input_tokens`.
+    fn prompt_tokens_read(&self, reply: &Value) -> u64 {
+        let usage = field(reply, "usage");
+        field(usage, "input_tokens")
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_sub(
+                field(field(usage, "input_tokens_details"), "cached_tokens")
+                    .as_u64()
+                    .unwrap_or(0),
+            )
     }
+}
 
+impl CatalogProtocol for OpenAi {
     fn catalog_url(&self) -> &'static str {
         "https://api.openai.com/v1/models"
     }
@@ -186,6 +212,12 @@ impl ProviderProtocol for OpenAi {
             .map(listing::ApiModel::into_dto)
             .collect();
         Ok(ModelPage { models, next: None })
+    }
+}
+
+impl LimitsProtocol for OpenAi {
+    fn requires_ceiling(&self) -> bool {
+        false
     }
 
     /// OpenAI's model object carries neither a window nor an output ceiling.

@@ -15,7 +15,7 @@ use lattice_core::{
 };
 use reqwest::Url;
 
-use super::protocol::{protocol_for_cloud, ProviderProtocol};
+use super::protocol::{protocols, LimitsProtocol};
 
 /// A model with no report still runs, so a chat waits only this long for one.
 const REPORT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -56,7 +56,7 @@ pub(crate) async fn report(
     model: &str,
     key: &str,
 ) -> Result<ModelWindowDto> {
-    let protocol = protocol_for_cloud(provider);
+    let protocol = protocols(provider).limits;
     if protocol.limits_api().is_none() {
         return Ok(ModelWindowDto::default());
     }
@@ -69,7 +69,7 @@ async fn report_from(
     model: &str,
     key: &str,
 ) -> Result<ModelWindowDto> {
-    let protocol = protocol_for_cloud(provider);
+    let protocol = protocols(provider).limits;
     let label = protocol.shown_name();
     let failed = || AppError::Network(format!("{label} did not report limits for {model}"));
     let api = protocol.limits_api().ok_or_else(failed)?;
@@ -99,12 +99,12 @@ pub(crate) fn ceiling_to_send(
     model: &str,
     known: Option<u32>,
 ) -> Result<Option<u32>> {
-    ceiling_for(protocol_for_cloud(provider), model, known)
+    ceiling_for(protocols(provider).limits, model, known)
 }
 
 /// [`ceiling_to_send`] for a provider whose protocol is already resolved.
 pub(super) fn ceiling_for(
-    protocol: &dyn ProviderProtocol,
+    protocol: &dyn LimitsProtocol,
     model: &str,
     known: Option<u32>,
 ) -> Result<Option<u32>> {

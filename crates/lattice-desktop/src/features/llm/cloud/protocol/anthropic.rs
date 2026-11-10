@@ -7,13 +7,17 @@ use lattice_core::application::{
         ToolChoice,
     },
 };
+use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::{AppError, Result};
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::listing;
-use super::{api_base, user_parts, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
+use super::{
+    api_base, user_parts, CatalogProtocol, CompletionProtocol, EventDecoder, LimitsApi,
+    LimitsProtocol, ModelPage, ProviderApi,
+};
 use crate::features::llm::cloud::{field, reply, set_field};
 use crate::features::llm::fitting::{Fitted, Thinking};
 
@@ -28,19 +32,30 @@ const LIST_PAGE_SIZE: &str = "100";
 
 pub(super) struct Anthropic;
 
-impl ProviderProtocol for Anthropic {
-    fn name(&self) -> &'static str {
-        "anthropic"
-    }
-
-    fn shown_name(&self) -> &'static str {
-        "Anthropic"
+impl ProviderApi for Anthropic {
+    fn provider(&self) -> CloudProvider {
+        CloudProvider::Anthropic
     }
 
     fn api_base(&self) -> String {
         api_base("LATTICE_ANTHROPIC_BASE_URL", "https://api.anthropic.com")
     }
 
+    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
+        self.sign(request, key)
+    }
+
+    /// An account out of credit is refused with a 400, not a 429.
+    fn out_of_credit(&self, status: StatusCode, reply: &Value) -> bool {
+        status == StatusCode::BAD_REQUEST
+            && reply
+                .pointer("/error/message")
+                .and_then(Value::as_str)
+                .is_some_and(|message| message.to_ascii_lowercase().contains("credit balance"))
+    }
+}
+
+impl CompletionProtocol for Anthropic {
     fn completion_path(&self) -> &'static str {
         "/v1/messages"
     }
@@ -49,10 +64,6 @@ impl ProviderProtocol for Anthropic {
         request
             .header("x-api-key", key)
             .header("anthropic-version", API_VERSION)
-    }
-
-    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
-        self.sign(request, key)
     }
 
     fn thinking(&self, model: &str, request: &CompletionRequest) -> Thinking {
@@ -189,7 +200,33 @@ impl ProviderProtocol for Anthropic {
                 _ => {}
             }
         }
-        reply::finish(&mut response, &value, "stop_reason", &reasoning_parts);
+        // The whole prompt: cache reads and writes are counted apart from
+        // `input_tokens`.
+        let input_tokens: u64 = [
+            "input_tokens",
+            "cache_creation_input_tokens",
+            "cache_read_input_tokens",
+        ]
+        .iter()
+        .filter_map(|key| field(field(&value, "usage"), key).as_u64())
+        .sum();
+        reply::finish(
+            &mut response,
+            &value,
+            "stop_reason",
+            input_tokens,
+            &reasoning_parts,
+        );
+        if response.finish_reason == "refusal" {
+            // Claude's safety classifiers decline with a 200 and name the one
+            // that did; the reply itself says nothing worth logging.
+            tracing::warn!(
+                category = field(field(&value, "stop_details"), "category")
+                    .as_str()
+                    .unwrap_or("unnamed"),
+                "The model declined the request"
+            );
+        }
         // The content blocks replay as the assistant message they were,
         // signed thinking included.
         response.replay = vec![CompletionInput::Native {
@@ -202,9 +239,14 @@ impl ProviderProtocol for Anthropic {
         Box::new(stream::Events::default())
     }
 
-    /// The Messages API refuses a request without `max_tokens`.
-    fn requires_ceiling(&self) -> bool {
-        true
+    /// Cache reads are counted apart from `input_tokens`, and cache writes
+    /// too, though the backend read those like any others.
+    fn prompt_tokens_read(&self, reply: &Value) -> u64 {
+        let usage = field(reply, "usage");
+        field(usage, "input_tokens").as_u64().unwrap_or(0)
+            + field(usage, "cache_creation_input_tokens")
+                .as_u64()
+                .unwrap_or(0)
     }
 
     fn format_refusal(&self, body: &Value, reason: &str) -> Option<AppError> {
@@ -222,7 +264,9 @@ impl ProviderProtocol for Anthropic {
             schema::in_words(body.clone())
         })
     }
+}
 
+impl CatalogProtocol for Anthropic {
     fn catalog_url(&self) -> &'static str {
         "https://api.anthropic.com/v1/models"
     }
@@ -263,6 +307,13 @@ impl ProviderProtocol for Anthropic {
             .map(listing::ApiModel::into_dto)
             .collect();
         Ok(ModelPage { models, next })
+    }
+}
+
+impl LimitsProtocol for Anthropic {
+    /// The Messages API refuses a request without `max_tokens`.
+    fn requires_ceiling(&self) -> bool {
+        true
     }
 
     fn limits_api(&self) -> Option<LimitsApi> {

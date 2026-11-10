@@ -1,8 +1,9 @@
-use super::protocol::protocol_for;
+use super::protocol::protocols;
 use super::*;
 use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
+use lattice_core::domain::models::model_ref::CloudProvider;
 use serde_json::json;
 use wiremock::{
     matchers::{body_string_contains, header, method, path},
@@ -210,9 +211,9 @@ async fn refusals_are_typed_by_what_waiting_can_change() {
 }
 fn openai_status(status: u16, body: &str) -> AppError {
     status_error(
-        protocol_for(LLMProvider::Openai).unwrap(),
+        protocols(CloudProvider::Openai).completion,
         reqwest::StatusCode::from_u16(status).unwrap(),
-        body,
+        &serde_json::from_str(body).unwrap_or(Value::Null),
     )
 }
 

@@ -1,12 +1,15 @@
-use super::protocol::protocol_for;
+use super::protocol::{cloud_provider, protocols};
 use super::*;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
 use lattice_core::application::ports::llm_port::{ThinkingMode, ToolChoice};
+use lattice_core::domain::models::model_ref::CloudProvider;
 use serde_json::json;
 
 fn parse_completion(provider: LLMProvider, value: Value) -> Result<CompletionResponse> {
-    protocol_for(provider)?.parse_reply(value)
+    protocols(cloud_provider(provider)?)
+        .completion
+        .parse_reply(value)
 }
 
 trait UncutBody {
@@ -20,8 +23,8 @@ impl UncutBody for CloudLlm {
 }
 
 fn claude_thinks_unasked(model: &str) -> bool {
-    protocol_for(LLMProvider::Anthropic)
-        .unwrap()
+    protocols(CloudProvider::Anthropic)
+        .completion
         .thinking(model, &CompletionRequest::default())
         .is_on()
 }
@@ -832,7 +835,7 @@ async fn a_streamed_answer_is_timed_from_its_first_delta() {
     ]);
     let sent = Instant::now().checked_sub(Duration::from_secs(2)).unwrap();
     let response = streaming::drain(
-        protocol_for(LLMProvider::Openai).unwrap(),
+        protocols(CloudProvider::Openai).completion,
         futures::stream::iter([Ok::<_, String>(bytes)]),
         Duration::from_secs(1),
         sent,
@@ -859,7 +862,7 @@ async fn a_streams_own_timings_win_over_the_clock() {
     ]);
     let sent = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
     let response = streaming::drain(
-        protocol_for(LLMProvider::Google).unwrap(),
+        protocols(CloudProvider::Google).completion,
         futures::stream::iter([Ok::<_, String>(bytes)]),
         Duration::from_secs(1),
         sent,

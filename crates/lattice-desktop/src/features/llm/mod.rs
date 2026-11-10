@@ -13,6 +13,7 @@ pub mod dto;
 pub(crate) mod fitting;
 pub(crate) mod instances;
 pub(crate) mod loading;
+pub(crate) mod openai_chat;
 pub mod use_cases;
 
 pub mod cloud;

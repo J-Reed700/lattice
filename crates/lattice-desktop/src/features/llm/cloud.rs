@@ -10,7 +10,7 @@ use lattice_core::application::{
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
-use protocol::{protocol_for, ProviderProtocol};
+use protocol::{cloud_provider, protocols, CompletionProtocol, ProviderApi};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
@@ -22,7 +22,7 @@ mod streaming;
 mod timing;
 
 pub struct CloudLlm {
-    protocol: &'static dyn ProviderProtocol,
+    protocol: &'static dyn CompletionProtocol,
     model: String,
     key: String,
     endpoint: String,
@@ -70,8 +70,9 @@ impl CloudLlm {
                 "Cloud model and API key are required".into(),
             ));
         }
-        let protocol = protocol_for(settings.provider)?;
-        let model_ceiling = limits::ceiling_for(protocol, &settings.model, output_ceiling)?;
+        let protocols = protocols(cloud_provider(settings.provider)?);
+        let protocol = protocols.completion;
+        let model_ceiling = limits::ceiling_for(protocols.limits, &settings.model, output_ceiling)?;
         let endpoint = format!("{}{}", protocol.api_base(), protocol.completion_path());
         // No client-wide timeout: a long answer is bounded by the request's time
         // budget, and a streamed one additionally by stall detection.
@@ -157,15 +158,17 @@ impl CloudLlm {
             }
             // Avoid echoing provider bodies which can contain submitted user text.
             if status == reqwest::StatusCode::BAD_REQUEST {
-                let error = status_error(self.protocol, status, "");
-                let reason = rejection_reason(response).await;
-                let refusal = self.protocol.format_refusal(body, &reason);
-                return Err(bad_request_error(
-                    self.protocol.shown_name(),
-                    &reason,
-                    refusal,
-                    error,
-                ));
+                let error = status_error(self.protocol, status, &Value::Null);
+                let reply = response.json::<Value>().await.unwrap_or(Value::Null);
+                let reason = reply
+                    .pointer("/error/message")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                let refusal = self.protocol.format_refusal(body, reason);
+                if self.protocol.out_of_credit(status, &reply) {
+                    return Err(credit_balance_error(self.protocol.shown_name()));
+                }
+                return Err(refusal.unwrap_or(error));
             }
             let retry_after = response
                 .headers()
@@ -335,72 +338,32 @@ fn set_field(value: &mut Value, key: &str, field_value: Value) -> Result<()> {
 #[cfg(test)]
 mod tests;
 
-/// A 400's own reason. It is read to tell its causes apart and is never
-/// shown, since a provider's error can quote what was sent; it is logged only
-/// when it refuses a response schema.
-async fn rejection_reason(response: reqwest::Response) -> String {
-    response
-        .json::<Value>()
-        .await
-        .ok()
-        .and_then(|reply| {
-            reply
-                .pointer("/error/message")
-                .and_then(Value::as_str)
-                .map(str::to_owned)
-        })
-        .unwrap_or_default()
-}
-
-/// What a 400 is, by its reason: an account out of credit is a setting to
-/// fix, and a schema Claude cannot compile is retried in words.
-fn bad_request_error(
-    shown: &str,
-    reason: &str,
-    format_refusal: Option<AppError>,
-    error: AppError,
-) -> AppError {
-    if reason.to_ascii_lowercase().contains("credit balance") {
-        return AppError::InvalidConfig(format!(
-            "{shown} refused the request because the account's credit balance is too low \
-             (HTTP 400): add credits to the account, or choose another model in Settings → AI"
-        ));
-    }
-    format_refusal.unwrap_or(error)
-}
-
-/// Whether a 429's body says the account has no quota left, by its error's
-/// type or code. The body is read for this and is never shown.
-fn out_of_quota(body: &str) -> bool {
-    let Ok(reply) = serde_json::from_str::<Value>(body) else {
-        return false;
-    };
-    ["/error/type", "/error/code"]
-        .iter()
-        .any(|field| reply.pointer(field).and_then(Value::as_str) == Some("insufficient_quota"))
+/// A 400 from an account out of credit is a setting to fix.
+fn credit_balance_error(shown: &str) -> AppError {
+    AppError::InvalidConfig(format!(
+        "{shown} refused the request because the account's credit balance is too low \
+         (HTTP 400): add credits to the account, or choose another model in Settings → AI"
+    ))
 }
 
 /// The error for a refused response; only a 429's body is read, as it alone
-/// tells an account with nothing left from a busy one.
-async fn refusal(protocol: &dyn ProviderProtocol, response: reqwest::Response) -> AppError {
+/// tells an account with nothing left from a busy one. The body is never
+/// shown.
+async fn refusal(api: &dyn ProviderApi, response: reqwest::Response) -> AppError {
     let status = response.status();
-    let body = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
-        response.text().await.unwrap_or_default()
+    let reply = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+        response.json::<Value>().await.unwrap_or(Value::Null)
     } else {
-        String::new()
+        Value::Null
     };
-    status_error(protocol, status, &body)
+    status_error(api, status, &reply)
 }
 
 /// A provider's refusal, typed by what waiting can change: a rejected key or
 /// an unknown model is a setting to fix, a rate limit or server error is an
 /// outage, and any other refusal would be refused again.
-fn status_error(
-    protocol: &dyn ProviderProtocol,
-    status: reqwest::StatusCode,
-    body: &str,
-) -> AppError {
-    let (shown, name) = (protocol.shown_name(), protocol.name());
+fn status_error(api: &dyn ProviderApi, status: reqwest::StatusCode, reply: &Value) -> AppError {
+    let (shown, name) = (api.shown_name(), api.name());
     match status.as_u16() {
         401 => AppError::InvalidConfig(format!(
             "{shown} rejected the saved API key (HTTP {status}): replace it in Settings → AI"
@@ -413,7 +376,7 @@ fn status_error(
             "{shown} does not offer the configured model (HTTP {status}): choose another in \
              Settings → AI"
         )),
-        429 if out_of_quota(body) => AppError::InvalidConfig(format!(
+        429 if api.out_of_credit(status, reply) => AppError::InvalidConfig(format!(
             "{shown} says the account has no credit or quota left (HTTP 429): add credit to the \
              account, or choose another model in Settings → AI"
         )),

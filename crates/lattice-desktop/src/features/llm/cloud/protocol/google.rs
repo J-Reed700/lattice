@@ -4,18 +4,22 @@ use lattice_core::application::{
     contracts::settings::ModelWindowDto,
     ports::llm_port::{CompletionInput, CompletionRequest, CompletionResponse, ToolChoice},
 };
+use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::{AppError, Result};
-use reqwest::{Client, RequestBuilder};
+use reqwest::{Client, RequestBuilder, StatusCode};
 use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::listing::{invalid_list, is_text_model};
-use super::{api_base, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
+use super::{
+    api_base, insufficient_quota, CatalogProtocol, CompletionProtocol, EventDecoder, LimitsApi,
+    LimitsProtocol, ModelPage, ProviderApi,
+};
 use crate::features::llm::cloud::catalog::CloudModelDto;
 use crate::features::llm::cloud::reply::call_arguments;
 use crate::features::llm::cloud::{field, set_field, timing};
 use crate::features::llm::fitting::{Fitted, Thinking};
-use crate::features::llm::llama_cpp::openai_content_parts;
+use crate::features::llm::openai_chat::openai_content_parts;
 
 mod stream;
 
@@ -24,13 +28,9 @@ const LIST_PAGE_SIZE: &str = "1000";
 
 pub(super) struct Google;
 
-impl ProviderProtocol for Google {
-    fn name(&self) -> &'static str {
-        "google"
-    }
-
-    fn shown_name(&self) -> &'static str {
-        "Google"
+impl ProviderApi for Google {
+    fn provider(&self) -> CloudProvider {
+        CloudProvider::Google
     }
 
     fn api_base(&self) -> String {
@@ -40,18 +40,25 @@ impl ProviderProtocol for Google {
         )
     }
 
+    /// The native API takes the key as a header of its own, and refuses a
+    /// bearer token that is not OAuth.
+    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
+        request.header("x-goog-api-key", key)
+    }
+
+    /// Google answers in OpenAI's error shape.
+    fn out_of_credit(&self, status: StatusCode, reply: &Value) -> bool {
+        status == StatusCode::TOO_MANY_REQUESTS && insufficient_quota(reply)
+    }
+}
+
+impl CompletionProtocol for Google {
     fn completion_path(&self) -> &'static str {
         "/v1beta/openai/chat/completions"
     }
 
     fn sign(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
         request.bearer_auth(key).header("x-goog-api-key", key)
-    }
-
-    /// The native API takes the key as a header of its own, and refuses a
-    /// bearer token that is not OAuth.
-    fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder {
-        request.header("x-goog-api-key", key)
     }
 
     /// Google thinks unless told not to. With no effort set nothing says
@@ -203,10 +210,21 @@ impl ProviderProtocol for Google {
         Box::new(stream::Events::default())
     }
 
-    fn requires_ceiling(&self) -> bool {
-        false
+    /// Chat completions count the cached tokens within `prompt_tokens`.
+    fn prompt_tokens_read(&self, reply: &Value) -> u64 {
+        let usage = field(reply, "usage");
+        field(usage, "prompt_tokens")
+            .as_u64()
+            .unwrap_or(0)
+            .saturating_sub(
+                field(field(usage, "prompt_tokens_details"), "cached_tokens")
+                    .as_u64()
+                    .unwrap_or(0),
+            )
     }
+}
 
+impl CatalogProtocol for Google {
     fn catalog_url(&self) -> &'static str {
         "https://generativelanguage.googleapis.com/v1beta/models"
     }
@@ -259,6 +277,12 @@ impl ProviderProtocol for Google {
             models,
             next: page.next_page_token,
         })
+    }
+}
+
+impl LimitsProtocol for Google {
+    fn requires_ceiling(&self) -> bool {
+        false
     }
 
     fn limits_api(&self) -> Option<LimitsApi> {
