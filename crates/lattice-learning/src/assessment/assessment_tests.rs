@@ -1748,6 +1748,9 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
 async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> {
     let pool = migrated().await?;
     let program = accepted_program(&pool).await?;
+    let mut setup = pool.begin().await.map_err(db)?;
+    LearningAssessmentRepository::ensure_outcomes(&mut setup, &program.summary.id).await?;
+    setup.commit().await.map_err(db)?;
     let outcome: String = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions LIMIT 1")
         .fetch_one(&pool)
         .await
