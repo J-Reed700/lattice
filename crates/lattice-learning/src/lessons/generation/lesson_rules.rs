@@ -7,7 +7,7 @@
 //! publishing.
 use super::validate_text;
 use crate::assessment_engine::{key_fault, longest_allowed_key, repeated_option, KeyFault};
-use crate::content_verification::{names_a_source, quoted_wording, CITED_KINDS};
+use crate::content_verification::{fences, names_a_source, quoted_wording, CITED_KINDS};
 use crate::lessons::repeats;
 use crate::lessons::same_text::{fold, overlap};
 use crate::lessons::shape;
@@ -334,6 +334,16 @@ pub(crate) fn lesson_rules(
             ));
         } else {
             titles.insert(fold(title), index);
+        }
+    }
+    for (index, block) in blocks.iter().enumerate() {
+        if fences(text(block, "body")).unclosed {
+            findings.push(structure(
+                Rule::FenceUnclosed,
+                FindingSite::Section(index),
+                format!("Section {} opens a code fence it never closes.", index + 1),
+                format!("Section {} (candidate blocks-{index}) opens a code fence it never closes, so everything after its opening marks is shown as code. Close the fence with a line of the same marks after the example's last line.", index + 1),
+            ));
         }
     }
     let mut seen = HashSet::new();

@@ -117,6 +117,8 @@ pub enum Rule {
     TitleRepeated,
     /// A check does not hold its answer back.
     CheckHoldback,
+    /// A section opens a code fence it never closes.
+    FenceUnclosed,
     /// A question has no prompt.
     PromptMissing,
     /// Two questions ask the same thing.
