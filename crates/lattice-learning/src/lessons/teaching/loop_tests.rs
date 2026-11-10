@@ -1294,17 +1294,25 @@ fn better_idea(index: usize, finding: &str) -> Value {
 }
 
 fn parts_review(count: usize, defective: &[usize]) -> String {
+    let at_first: Vec<(usize, usize)> = defective.iter().map(|part| (*part, 0)).collect();
+    parts_review_at(count, &at_first)
+}
+
+/// A review whose defective parts are `(part, paragraph)`: the paragraph
+/// each one's finding is about.
+fn parts_review_at(count: usize, defective: &[(usize, usize)]) -> String {
     let checks: Vec<Value> = (0..count)
         .map(|index| {
+            let found = defective.iter().find(|(part, _)| *part == index);
             json!({
                 "index": index,
-                "passageId": format!("section-{index}-passage-0"),
-                "finding": if defective.contains(&index) {
+                "passageId": format!("section-{index}-passage-{}", found.map_or(0, |(_, paragraph)| *paragraph)),
+                "finding": if found.is_some() {
                     "The first idea is wrong."
                 } else {
                     "Nothing is wrong here."
                 },
-                "hasDefect": defective.contains(&index),
+                "hasDefect": found.is_some(),
             })
         })
         .collect();
@@ -1452,12 +1460,9 @@ async fn a_finding_no_edit_named_is_told_so_on_its_second_attempt() -> Result<()
 #[tokio::test]
 async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
     use crate::lessons::content_verification::Protected;
-    const V1: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
-    const V2: &str = "Their inner membrane folds into cristae that enlarge its surface.";
-    let block0_body =
-        format!("{V1} {V2} They carry their own circular DNA, passed down from the mother.");
-    let block1_body =
-        "Part B states one plain fact about the tool. Part B then gives a first idea.";
+    const KEPT: &str = "Part A states one plain fact about the tool.";
+    let block0_body = format!("{KEPT}\n\nPart A then gives a first idea.");
+    let block1_body = part_body(1);
     let candidate = json!({
         "blocks": [
             {
@@ -1482,23 +1487,23 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
     let protected = vec![Protected {
         unit: 0,
         field: "body".into(),
-        quote: V1.into(),
+        quote: KEPT.into(),
         released: false,
     }];
     let touches_the_protected_sentence = json!({
         "finding": "reviewer/section-0",
         "path": "/blocks/0/body",
-        "before": block0_body,
-        "after": block0_body.replace(V1, "Mitochondria make ATP directly."),
+        "before": KEPT,
+        "after": "Part A states a different fact about the tool.",
     });
     let model = model(vec![
-        parts_review(2, &[0, 1]),
+        parts_review_at(2, &[(0, 1), (1, 0)]),
         parts_evidence(&[0, 1]),
         edits_answer(vec![
             touches_the_protected_sentence.clone(),
             better_idea(1, "reviewer/section-1"),
         ]),
-        parts_review(2, &[0]),
+        parts_review_at(2, &[(0, 1)]),
         parts_evidence(&[0]),
         edits_answer(vec![touches_the_protected_sentence]),
     ]);
