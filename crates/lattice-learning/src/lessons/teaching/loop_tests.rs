@@ -648,10 +648,10 @@ async fn a_finding_on_a_sentence_no_claim_stands_on_is_repaired_inside_a_paragra
 #[tokio::test]
 async fn a_lesson_whose_sentences_stand_on_checked_claims_is_never_written_again_whole_for_its_shape(
 ) -> Result<()> {
-    // After cuts a lesson lacks some of what its writer was asked for. A
-    // rewrite of the whole lesson changes the sentences its claims stand on
+    // A rewrite of the whole lesson changes the sentences its claims stand on
     // and is always refused: four of them, fourteen minutes each on the 27B,
-    // in one job of 2026-11-03. What its shape asks waits for the user.
+    // in one job of 2026-11-03. What is wrong with the form of what stands
+    // waits for the user.
     let sentence = "The function returns the number 4 for the sum of two and two.";
     let mut candidate = lesson(EXCERPT);
     candidate["blocks"][0]["kind"] = json!("guided_practice");
@@ -1528,11 +1528,15 @@ async fn a_protected_review_still_holds_a_section_without_a_title() -> Result<()
 fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall() {
     let schema = crate::generation::lesson_schema(1);
     let at_lesson = |lesson: &Value| -> usize {
-        structural_findings(&schema, &lesson.to_string())
-            .unwrap()
-            .iter()
-            .filter(|finding| finding.key().id() == "structure:lesson")
-            .count()
+        structural_findings(
+            &schema,
+            &lesson.to_string(),
+            crate::generation::Counts::Asked,
+        )
+        .unwrap()
+        .iter()
+        .filter(|finding| finding.key().id() == "structure:lesson")
+        .count()
     };
     assert_eq!(at_lesson(&shaped_lesson()), 0);
     assert_eq!(at_lesson(&shaped_lesson_after_a_cut()), 2);

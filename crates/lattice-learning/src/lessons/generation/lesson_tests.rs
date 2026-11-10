@@ -87,9 +87,12 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
     assert_eq!(prepared.keys.len(), 5);
     assert!(citations.is_empty());
     // The rules come back as findings for the user, not as an error.
-    let findings =
-        crate::teaching::structural_findings(&lesson_schema(1), &off_shape_value(true).to_string())
-            .unwrap();
+    let findings = crate::teaching::structural_findings(
+        &lesson_schema(1),
+        &off_shape_value(true).to_string(),
+        crate::generation::Counts::Asked,
+    )
+    .unwrap();
     let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.key().id()).collect();
     let expected = [
         "structure:lesson",
@@ -431,12 +434,16 @@ fn a_lessons_text_of_any_length_is_no_schema_finding() {
         .collect();
     let mut lesson = json!({"blocks":blocks,"questions":questions});
     let schema_findings = |lesson: &Value| -> Vec<String> {
-        crate::teaching::structural_findings(&schema, &lesson.to_string())
-            .unwrap()
-            .into_iter()
-            .map(|finding| finding.note)
-            .filter(|note| note.starts_with("Fix the schema violation"))
-            .collect()
+        crate::teaching::structural_findings(
+            &schema,
+            &lesson.to_string(),
+            crate::generation::Counts::Asked,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|finding| finding.note)
+        .filter(|note| note.starts_with("Fix the schema violation"))
+        .collect()
     };
     let found = schema_findings(&lesson);
     assert!(found.is_empty(), "the fixture is not a lesson: {found:?}");
