@@ -1320,6 +1320,79 @@ fn a_locked_database_is_retried_and_other_database_errors_are_not() {
     ));
 }
 
+fn deferral(error: &AppError) -> Deferral {
+    let JobFailure::Defer(deferral) = JobFailure::classify(error) else {
+        panic!("{error} is waited out, not failed");
+    };
+    deferral
+}
+
+/// A busy database was described as a service outage.
+#[test]
+fn a_wait_describes_the_database_when_the_database_is_busy() {
+    for busy in [
+        AppError::Database("error returned from database: (code: 5) database is locked".into()),
+        AppError::ServiceNotAvailable(
+            "The database is temporarily busy. Saved work is retained.".into(),
+        ),
+    ] {
+        let deferral = deferral(&busy);
+        assert_eq!(deferral.code, "temporarily_unavailable", "{busy}");
+        assert_eq!(
+            deferral.progress_message,
+            "Waiting for another task to finish with the database"
+        );
+    }
+}
+
+#[test]
+fn a_wait_keeps_the_outage_message_when_the_connection_is_lost() {
+    let deferral = deferral(&AppError::Network("connection reset".into()));
+    assert_eq!(deferral.code, "temporarily_unavailable");
+    assert_eq!(
+        deferral.progress_message,
+        "Waiting to retry after a service outage"
+    );
+}
+
+/// The lesson panel reads the job's cause, not the deferral's code, so a busy
+/// database must be recorded as one there.
+#[tokio::test]
+async fn a_job_deferred_on_a_busy_database_records_the_database_as_its_cause() -> Result<()> {
+    for error in [
+        AppError::Database("error returned from database: (code: 5) database is locked".into()),
+        AppError::ServiceNotAvailable(
+            "The database is temporarily busy. Saved work is retained.".into(),
+        ),
+    ] {
+        let runtime =
+            JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+        runtime
+            .register(
+                KIND,
+                Arc::new(Repeating {
+                    error: error.clone(),
+                    saves: false,
+                    attempts: Default::default(),
+                }),
+                JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
+                    initial: Duration::from_secs(3600),
+                    max: Duration::from_secs(3600),
+                }),
+            )
+            .await?;
+        let id = runtime.submit(&new_job(KIND, "busy", None)).await?.id;
+        let job = saved_once(&runtime, &id, |job| {
+            job.retry_count == 1 && job.status == JobStatus::Pending
+        })
+        .await;
+        assert_eq!(job.cause_code.as_deref(), Some("DATABASE_BUSY"), "{error}");
+        runtime.close();
+        runtime.drain().await;
+    }
+    Ok(())
+}
+
 /// Reads the rank in scope at the top of the handler and inside nested
 /// futures, as the lesson pipeline's parallel checks run.
 struct Peek {

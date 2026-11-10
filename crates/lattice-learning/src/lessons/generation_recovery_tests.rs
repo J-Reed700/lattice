@@ -712,3 +712,33 @@ async fn a_job_stored_without_a_code_reads_null() {
     assert_eq!(old.error.as_deref(), Some("old failure"));
     assert_eq!(old.error_code, None);
 }
+
+#[tokio::test]
+async fn a_deferred_lesson_says_what_it_waits_on() {
+    let pool = crate::tests::pool().await.unwrap();
+    let (_, job) = repository_tests::queued_job(&pool).await;
+    let job = JobStore::new(pool).get(&job.id).await.unwrap();
+    for (error, code, progress) in [
+        (
+            AppError::Database("error returned from database: (code: 5) database is locked".into()),
+            "temporarily_unavailable",
+            "Another task is using the database; preparation will retry automatically",
+        ),
+        (
+            AppError::Network("connection lost".into()),
+            "temporarily_unavailable",
+            "Connection interrupted; saved work will resume automatically",
+        ),
+        (
+            AppError::RateLimitExceeded("provider busy".into()),
+            "temporarily_unavailable",
+            "The model service is rate limiting requests; preparation will retry automatically",
+        ),
+    ] {
+        let JobFailure::Defer(deferral) = lesson_failure(&job, &error) else {
+            panic!("{error} is deferred, not failed");
+        };
+        assert_eq!(deferral.code, code, "{error}");
+        assert_eq!(deferral.progress_message, progress, "{error}");
+    }
+}
