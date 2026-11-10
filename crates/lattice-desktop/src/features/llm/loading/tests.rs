@@ -880,6 +880,53 @@ mod output_ceiling_on_the_wire {
     }
 
     #[tokio::test]
+    async fn an_openai_reasoning_model_says_it_thinks_before_every_answer() {
+        for (provider, name, thinks) in [
+            (CloudProvider::Openai, "gpt-5", true),
+            (CloudProvider::Openai, "gpt-4.1", false),
+            (CloudProvider::Google, "gemini-2.5-flash", false),
+        ] {
+            let model = ModelRef::Cloud {
+                provider,
+                model: name.into(),
+            };
+            let port = cloud_client(
+                &window_of(400_000),
+                &model,
+                Tuning::Standard,
+                &reports(100_000),
+                "test-key".into(),
+            )
+            .unwrap()
+            .schedule(&crate::features::llm::scheduler::SchedulerRegistry::default());
+            assert_eq!(port.thinks_before_answering(), thinks, "{name}");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_fine_tune_of_a_reasoning_model_is_sent_its_ceiling_and_no_sampling() {
+        let request = CompletionRequest {
+            sampling: Some(
+                lattice_core::application::ports::llm_port::SamplingOverride {
+                    temperature: Some(0.7),
+                    ..Default::default()
+                },
+            ),
+            ..capped_at(512)
+        };
+        let body = sent_body_of(
+            CloudProvider::Openai,
+            "ft:o4-mini:org::id",
+            &window_of(400_000),
+            &reports(100_000),
+            request,
+        )
+        .await;
+        assert_eq!(body["max_output_tokens"], json!(100_000));
+        assert!(body.get("temperature").is_none(), "{body}");
+    }
+
+    #[tokio::test]
     async fn an_openai_reasoning_model_is_sent_its_ceiling_cut_to_the_room_the_prompt_leaves() {
         let body = sent_body_of(
             CloudProvider::Openai,
@@ -993,14 +1040,15 @@ mod local_reply_ceiling_on_the_wire {
         }
     }
 
-    /// The body a scheduled client of a llama-server whose window is
-    /// `settings.context_window` and whose tokenizer counts `tokenized` tokens
-    /// sends for `request`.
-    async fn llama_body(
+    /// A scheduled client of a llama-server whose window is
+    /// `settings.context_window` and whose tokenizer counts `tokenized` tokens.
+    async fn llama_port(
         settings: &LLMSettingsDto,
         tokenized: usize,
-        request: CompletionRequest,
-    ) -> Value {
+    ) -> (
+        MockServer,
+        std::sync::Arc<dyn lattice_core::application::ports::llm_port::LLMPort>,
+    ) {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/props"))
@@ -1042,6 +1090,16 @@ mod local_reply_ceiling_on_the_wire {
             .unwrap()
             .schedule(&SchedulerRegistry::default())
             .await;
+        (server, client)
+    }
+
+    /// The body that client sends for `request`.
+    async fn llama_body(
+        settings: &LLMSettingsDto,
+        tokenized: usize,
+        request: CompletionRequest,
+    ) -> Value {
+        let (server, client) = llama_port(settings, tokenized).await;
         let _ = client.complete(&request).await;
         let received = server.received_requests().await.unwrap();
         let chat = received
@@ -1051,9 +1109,13 @@ mod local_reply_ceiling_on_the_wire {
         serde_json::from_slice(&chat.body).unwrap()
     }
 
-    /// The `options` a scheduled Ollama client of a model run at
-    /// `settings.context_window` sends for `request`.
-    async fn ollama_options(settings: &LLMSettingsDto, request: CompletionRequest) -> Value {
+    /// A scheduled Ollama client of a model run at `settings.context_window`.
+    async fn ollama_port(
+        settings: &LLMSettingsDto,
+    ) -> (
+        MockServer,
+        std::sync::Arc<dyn lattice_core::application::ports::llm_port::LLMPort>,
+    ) {
         let server = MockServer::start().await;
         Mock::given(method("GET"))
             .and(path("/api/tags"))
@@ -1083,6 +1145,12 @@ mod local_reply_ceiling_on_the_wire {
         )
         .await
         .expect("the stub answers every probe the factory makes");
+        (server, client)
+    }
+
+    /// The `options` that client sends for `request`.
+    async fn ollama_options(settings: &LLMSettingsDto, request: CompletionRequest) -> Value {
+        let (server, client) = ollama_port(settings).await;
         let _ = client.complete(&request).await;
         let received = server.received_requests().await.unwrap();
         let chat = received
@@ -1091,6 +1159,28 @@ mod local_reply_ceiling_on_the_wire {
             .expect("the chat request reached the server");
         let body: Value = serde_json::from_slice(&chat.body).unwrap();
         body["options"].clone()
+    }
+
+    fn always_thinking(mut settings: LLMSettingsDto) -> LLMSettingsDto {
+        settings.thinking_override =
+            lattice_core::application::contracts::settings::ThinkingOverrideDto::On;
+        settings
+    }
+
+    #[tokio::test]
+    async fn a_llama_cpp_model_set_to_always_think_says_it_thinks_before_every_answer() {
+        let (_server, always) = llama_port(&always_thinking(configured(8_192, 4_096)), 10).await;
+        assert!(always.thinks_before_answering());
+        let (_server, default) = llama_port(&configured(8_192, 4_096), 10).await;
+        assert!(!default.thinks_before_answering());
+    }
+
+    #[tokio::test]
+    async fn an_ollama_model_set_to_always_think_says_it_thinks_before_every_answer() {
+        let (_server, always) = ollama_port(&always_thinking(configured(8_192, 4_096))).await;
+        assert!(always.thinks_before_answering());
+        let (_server, default) = ollama_port(&configured(8_192, 4_096)).await;
+        assert!(!default.thinks_before_answering());
     }
 
     #[tokio::test]
