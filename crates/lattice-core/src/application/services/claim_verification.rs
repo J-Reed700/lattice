@@ -10,6 +10,15 @@ use crate::shared::text::normalize_whitespace;
 use serde::{Deserialize, Serialize};
 use tracing::warn;
 
+/// What the lesson's own figures are, in the words every judge and the writer are given
+/// (claim classes design §3.13).
+#[macro_export]
+macro_rules! own_figures {
+    () => {
+        "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them."
+    };
+}
+
 mod batch;
 mod bridge;
 mod classes;
