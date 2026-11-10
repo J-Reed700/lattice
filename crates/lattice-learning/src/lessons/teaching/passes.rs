@@ -1,9 +1,10 @@
 //! When a lesson's teaching review stops repairing. Every finding gets a
 //! repair. A repair is charged to each finding it was sent (`charge`, with
 //! what became of its attempt at it), not when it is sent: a finding charged
-//! `REPAIRS_PER_FINDING` repairs stops being repaired; when a repair fixes none of the open findings, the findings
-//! that repair was sent stop, and every finding not yet sent to a repair still
-//! gets one. The review ends when no repairable finding is left. Stopped
+//! `REPAIRS_PER_FINDING` repairs stops being repaired; when a repair fixes
+//! none of the open findings, the findings that repair was sent stop, and
+//! every finding not yet sent to a repair still gets one. The review ends
+//! when no repairable finding is left. Stopped
 //! findings wait for the user, and the lesson publishes: no teaching-review
 //! finding fails a lesson job.
 //!

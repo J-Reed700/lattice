@@ -453,7 +453,7 @@ async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Re
 
 #[tokio::test]
 async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Result<()> {
-    let scripted = scripted(vec![reviewed(3), retitle_at(1)]);
+    let scripted = scripted(vec![reviewed(3), retitle_at(2), reviewed(3)]);
     let clash = answer(
         json!([]),
         json!([]),
@@ -463,7 +463,7 @@ async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Re
         }]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![clash]);
+    let model = Routed::new(&scripted, vec![clash.clone(), clash]);
     let candidate = lesson([
         "Commands like ls take no folder name.",
         "The list shows names.",
@@ -474,6 +474,8 @@ async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Re
     let found = &result.set_aside[0].finding;
     assert_eq!(found.site, Some(FindingSite::Section(0)));
     assert_eq!(found.also, Some(FindingSite::Section(2)));
+    let after: Value = serde_json::from_str(&result.candidate)?;
+    assert_eq!(after["blocks"][2]["title"], "Reading, revised");
     Ok(())
 }
 

@@ -33,7 +33,9 @@ fn kept(
 ) -> Value {
     let part = finding.site.and_then(FindingSite::pointer).unwrap();
     let touched = std::collections::BTreeMap::from([(part, vec![&finding])]);
-    protected::confine_review(previous, repaired, &touched, protected).unwrap()
+    let out = protected::confine_review(previous, repaired, &touched, protected).unwrap();
+    assert_ne!(&out, previous, "the confined repair kept nothing");
+    out
 }
 
 fn whole_question_repair(previous: &Value) -> Value {

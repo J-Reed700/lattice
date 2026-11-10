@@ -689,30 +689,10 @@ fn clash(
         })
 }
 
-/// Applies a patch whose changes may name the finding they are for. The edits
-/// of one finding to one block or question that has any problem are left out,
-/// and everything else applies. `may_change` says which parts a finding's
-/// changes may touch.
-pub(super) fn apply_for(
-    candidate: &Value,
-    patch: &str,
-    lesson: &Value,
-    wording: &Wording,
-    may_change: MayChange<'_>,
-) -> Result<AppliedFor> {
-    let fail = |reason: String| {
-        AppError::InvalidInput(format!(
-            "The repair's edits could not be applied: {reason} The draft was preserved."
-        ))
-    };
-    let patch: Patch = crate::generation::parse_json(patch)?;
-    if patch.edits.is_empty() && patch.citations.is_empty() && patch.uncite.is_empty() {
-        return Err(fail("it gave no edits.".into()));
-    }
-    let mut allowed = Vec::new();
-    paths(candidate, "", &mut allowed);
+/// The edits of a patch grouped by finding and part, in the order of their first edit.
+fn grouped(edits: Vec<Edit>) -> Vec<Group> {
     let mut groups: Vec<Group> = Vec::new();
-    for (index, edit) in patch.edits.into_iter().enumerate() {
+    for (index, edit) in edits.into_iter().enumerate() {
         if edit.before == edit.after {
             continue;
         }
@@ -729,13 +709,36 @@ pub(super) fn apply_for(
             }),
         }
     }
+    groups
+}
+
+/// What accepting and refusing the groups of a patch came to.
+struct Accepted {
+    named: BTreeMap<String, Named>,
+    problems: Problems,
+    applied: bool,
+    kept: Vec<(Option<String>, Change)>,
+}
+
+/// Accepts or refuses each group in turn, against the rule and the groups accepted before it.
+fn accept(
+    groups: Vec<Group>,
+    candidate: &Value,
+    (lesson, wording): (&Value, &Wording),
+    cites: &[Cite],
+    may_change: MayChange<'_>,
+) -> Accepted {
+    let mut allowed = Vec::new();
+    paths(candidate, "", &mut allowed);
     let held = repeats::counts_of(&[candidate, lesson]);
-    let mut named = BTreeMap::<String, Named>::new();
-    let mut problems = Vec::new();
-    let mut applied = false;
+    let mut accepted = Accepted {
+        named: BTreeMap::new(),
+        problems: Vec::new(),
+        applied: false,
+        kept: Vec::new(),
+    };
     let mut texts = BTreeMap::<String, Vec<(usize, usize)>>::new();
     let mut scalars = BTreeSet::<String>::new();
-    let mut kept: Vec<(Option<String>, Change)> = Vec::new();
     for group in groups {
         let finding = group.finding.as_deref();
         let found = match may_change(finding, &group.part) {
@@ -745,7 +748,7 @@ pub(super) fn apply_for(
                 .map(|(index, _)| (*index, format!("edit {index} {reason}")))
                 .collect::<Problems>()),
             Ok(()) => {
-                let quotes = quotes_for(candidate, &group.part, &patch.citations);
+                let quotes = quotes_for(candidate, &group.part, cites);
                 group_changes(candidate, &allowed, group.edits, (&held, &quotes, wording)).and_then(
                     |changes| match clash(&changes, &texts, &scalars) {
                         Some(problem) => Err(vec![problem]),
@@ -756,7 +759,7 @@ pub(super) fn apply_for(
         };
         match found {
             Ok(changes) => {
-                applied |= !changes.is_empty();
+                accepted.applied |= !changes.is_empty();
                 for change in &changes {
                     match change {
                         Change::Text { path, ranges } => texts
@@ -769,13 +772,14 @@ pub(super) fn apply_for(
                     }
                 }
                 if let Some(finding) = finding {
-                    named
+                    accepted
+                        .named
                         .entry(finding.to_owned())
                         .or_default()
                         .applied
                         .extend(changes.iter().map(|change| change.path().to_owned()));
                 }
-                kept.extend(
+                accepted.kept.extend(
                     changes
                         .into_iter()
                         .map(|change| (group.finding.clone(), change)),
@@ -783,17 +787,26 @@ pub(super) fn apply_for(
             }
             Err(found) => {
                 if let Some(finding) = finding {
-                    named
+                    accepted
+                        .named
                         .entry(finding.to_owned())
                         .or_default()
                         .problems
                         .extend(found.iter().map(|(_, reason)| reason.clone()));
                 }
-                problems.extend(found);
+                accepted.problems.extend(found);
             }
         }
     }
-    let mut result = candidate.clone();
+    accepted
+}
+
+/// Writes the accepted changes into `result`; the sentences written, as (finding, path, sentence).
+fn write_changes(
+    candidate: &Value,
+    kept: Vec<(Option<String>, Change)>,
+    result: &mut Value,
+) -> Vec<(String, String, String)> {
     let mut fields = BTreeMap::<String, Vec<(Option<String>, Range)>>::new();
     for (finding, change) in kept {
         match change {
@@ -837,11 +850,20 @@ pub(super) fn apply_for(
             *slot = json!(updated);
         }
     }
-    problems.sort_by_key(|(index, _)| *index);
-    let problems: Vec<String> = problems.into_iter().map(|(_, reason)| reason).collect();
+    written
+}
+
+/// Takes back the citations the patch withdraws; whether any went, and why others stay.
+fn withdraw(
+    candidate: &Value,
+    uncites: &[Uncite],
+    may_change: MayChange<'_>,
+    result: &mut Value,
+    named: &mut BTreeMap<String, Named>,
+) -> (bool, Vec<String>) {
     let mut gone = Vec::new();
     let mut unnamed = Vec::new();
-    for (index, uncite) in patch.uncite.iter().enumerate() {
+    for (index, uncite) in uncites.iter().enumerate() {
         let path = uncite.path();
         let outcome = match cited_at(candidate, path) {
             Some((part, at)) => may_change(uncite.finding(), &part)
@@ -875,13 +897,21 @@ pub(super) fn apply_for(
         }
     }
     let removed = !gone.is_empty();
-    take_back(&mut result, gone);
-    // A citation comes on top of the edits: one the draft cannot hold is left
-    // out, not charged to the edits and citations that apply.
+    take_back(result, gone);
+    (removed, unnamed)
+}
+
+/// Appends the patch's citations to `result`; the reasons for the ones left out.
+fn cite_all(
+    cites: &[Cite],
+    may_change: MayChange<'_>,
+    result: &mut Value,
+    named: &mut BTreeMap<String, Named>,
+) -> Vec<String> {
     let mut refused: Vec<String> = Vec::new();
-    for (index, cite) in patch.citations.iter().enumerate() {
+    for (index, cite) in cites.iter().enumerate() {
         let outcome = may_change(cite.finding.as_deref(), &cite.path)
-            .and_then(|()| append(&mut result, cite))
+            .and_then(|()| append(result, cite))
             .map_err(|reason| format!("citation {index} {reason}"));
         match (outcome, cite.finding.as_deref()) {
             (Ok(()), Some(finding)) => {
@@ -904,7 +934,54 @@ pub(super) fn apply_for(
             }
         }
     }
-    if !applied && !removed && refused.len() == patch.citations.len() {
+    refused
+}
+
+/// Applies a patch whose changes may name the finding they are for. The edits
+/// of one finding to one block or question that has any problem are left out,
+/// and everything else applies. `may_change` says which parts a finding's
+/// changes may touch.
+pub(super) fn apply_for(
+    candidate: &Value,
+    patch: &str,
+    lesson: &Value,
+    wording: &Wording,
+    may_change: MayChange<'_>,
+) -> Result<AppliedFor> {
+    let fail = |reason: String| {
+        AppError::InvalidInput(format!(
+            "The repair's edits could not be applied: {reason} The draft was preserved."
+        ))
+    };
+    let patch: Patch = crate::generation::parse_json(patch)?;
+    if patch.edits.is_empty() && patch.citations.is_empty() && patch.uncite.is_empty() {
+        return Err(fail("it gave no edits.".into()));
+    }
+    let mut accepted = accept(
+        grouped(patch.edits),
+        candidate,
+        (lesson, wording),
+        &patch.citations,
+        may_change,
+    );
+    let mut result = candidate.clone();
+    let written = write_changes(candidate, accepted.kept, &mut result);
+    accepted.problems.sort_by_key(|(index, _)| *index);
+    let problems: Vec<String> = accepted
+        .problems
+        .into_iter()
+        .map(|(_, reason)| reason)
+        .collect();
+    let mut named = accepted.named;
+    let (removed, unnamed) = withdraw(
+        candidate,
+        &patch.uncite,
+        may_change,
+        &mut result,
+        &mut named,
+    );
+    let refused = cite_all(&patch.citations, may_change, &mut result, &mut named);
+    if !accepted.applied && !removed && refused.len() == patch.citations.len() {
         let mut reasons = problems;
         reasons.extend(unnamed);
         reasons.extend(refused);
