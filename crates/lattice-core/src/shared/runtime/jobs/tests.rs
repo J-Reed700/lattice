@@ -1,5 +1,6 @@
 use super::*;
 use crate::shared::error::{AppError, Result};
+use crate::shared::persistence::Database;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tokio::sync::{mpsc, Semaphore};
@@ -148,7 +149,7 @@ async fn reusing_an_operation_id_with_a_different_payload_is_rejected() -> Resul
 
 #[tokio::test]
 async fn a_job_cancelled_before_it_runs_never_runs() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let (handler, mut started) = gate();
     // Saved before its kind is registered, then cancelled while queued.
     let saved = runtime
@@ -200,7 +201,7 @@ async fn a_job_cancelled_before_it_runs_never_runs() -> Result<()> {
 
 #[tokio::test]
 async fn cancelling_a_running_job_commits_before_signalling_and_late_writes_lose() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -410,7 +411,8 @@ impl JobHandler for Repeating {
 /// A runtime that redelivers deferred jobs at once, running one [`Repeating`]
 /// job.
 async fn repeating(error: AppError, saves: bool) -> Result<(Arc<JobRuntime>, String)> {
-    let runtime = JobRuntime::with_poll_interval(pool().await, Duration::from_millis(10));
+    let runtime =
+        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
     runtime
         .register(
             KIND,
@@ -512,7 +514,8 @@ impl JobHandler for Renumbered {
 
 #[tokio::test]
 async fn the_same_failure_in_changing_words_still_ends_the_job() -> Result<()> {
-    let runtime = JobRuntime::with_poll_interval(pool().await, Duration::from_millis(10));
+    let runtime =
+        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
     runtime
         .register(
             KIND,
@@ -534,7 +537,8 @@ async fn the_same_failure_in_changing_words_still_ends_the_job() -> Result<()> {
 
 #[tokio::test]
 async fn cancelling_a_deferred_job_forgets_its_last_failure() -> Result<()> {
-    let runtime = JobRuntime::with_poll_interval(pool().await, Duration::from_millis(10));
+    let runtime =
+        JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
     runtime
         .register(
             KIND,
@@ -662,7 +666,7 @@ async fn a_job_that_ends_while_the_database_is_busy_is_still_recorded() -> Resul
         .max_connections(1)
         .acquire_timeout(Duration::from_millis(100))
         .connect_lazy_with(options);
-    let runtime = JobRuntime::new(busy.clone());
+    let runtime = JobRuntime::new(Database::from(busy.clone()));
     let retry = Duration::from_millis(20);
     let config = JobKindConfig::new(RecoveryPolicy::Requeue).backoff(Backoff {
         initial: retry,
@@ -708,7 +712,7 @@ async fn transient_errors_defer_and_other_errors_fail() -> Result<()> {
             JobStatus::Failed,
         ),
     ] {
-        let runtime = JobRuntime::new(pool().await);
+        let runtime = JobRuntime::new(Database::from(pool().await));
         runtime
             .register(
                 KIND,
@@ -823,7 +827,7 @@ async fn progress_only_moves_forward_and_drops_stale_activity() -> Result<()> {
 
 #[tokio::test]
 async fn one_subject_runs_one_job_at_a_time_while_other_subjects_proceed() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -862,7 +866,7 @@ async fn one_subject_runs_one_job_at_a_time_while_other_subjects_proceed() -> Re
 
 #[tokio::test]
 async fn a_kind_runs_no_more_jobs_than_its_concurrency() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -930,7 +934,7 @@ impl JobHandler for Abandons {
 
 #[tokio::test]
 async fn cancellation_drops_in_flight_work_before_the_handler_continues() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let (started, mut receiver) = mpsc::unbounded_channel();
     let (signal, dropped) = tokio::sync::oneshot::channel();
     let observed: Arc<Mutex<Option<bool>>> = Arc::default();
@@ -960,7 +964,7 @@ async fn cancellation_drops_in_flight_work_before_the_handler_continues() -> Res
 
 #[tokio::test]
 async fn startup_recovery_requeues_or_interrupts_by_kind() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let store = runtime.store();
     let resumable = store.submit(&new_job(KIND, "resume", None)).await?.id;
     let single = store.submit(&new_job(ONCE, "once", None)).await?.id;
@@ -1020,7 +1024,7 @@ async fn startup_recovery_requeues_or_interrupts_by_kind() -> Result<()> {
 
 #[tokio::test]
 async fn shutdown_drains_workers_and_keeps_resumable_work_pending() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let (resume_handler, mut resumed) = gate();
     let (once_handler, mut once_started) = gate();
     runtime
@@ -1065,7 +1069,7 @@ async fn shutdown_drains_workers_and_keeps_resumable_work_pending() -> Result<()
 
 #[tokio::test]
 async fn observers_see_each_transition_of_a_job() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let seen: Arc<Mutex<Vec<(String, JobStatus)>>> = Arc::default();
     let sink = seen.clone();
     runtime.observe(move |job| {
@@ -1156,7 +1160,7 @@ impl JobHandler for Judged {
 
 #[tokio::test]
 async fn a_handler_can_judge_its_work_failed_without_an_error() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     runtime
         .register(
             ONCE,
@@ -1180,7 +1184,7 @@ async fn a_handler_can_judge_its_work_failed_without_an_error() -> Result<()> {
 
 #[tokio::test]
 async fn a_requeued_job_gives_up_its_turn_to_the_work_already_waiting() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let (handler, mut started) = gate();
     runtime
         .register(
@@ -1348,7 +1352,7 @@ async fn ranks_seen_by_a_job(
     config: JobKindConfig,
     rank: Option<i64>,
 ) -> (Vec<Option<i64>>, Option<RankTicket>) {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let (seen, mut receiver) = mpsc::unbounded_channel();
     runtime
         .register(KIND, Arc::new(Peek { seen }), config)

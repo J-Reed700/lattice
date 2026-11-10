@@ -3,7 +3,7 @@
 
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqliteConnection;
 
 /// A lesson with its course and module, as `LessonContext::load` reads it.
 pub(super) type LessonRow = (
@@ -22,7 +22,7 @@ pub(super) type LessonRow = (
 /// The lesson `lesson_id` of the course `program_id` with its course and module: the course's title, goal and prior
 /// knowledge, the module's title, summary and outcomes, then the lesson's title, objective, minutes and preparation.
 pub(super) async fn lesson_in(
-    pool: &SqlitePool,
+    connection: &mut SqliteConnection,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<Option<LessonRow>> {
@@ -31,21 +31,21 @@ pub(super) async fn lesson_in(
     )
     .bind(lesson_id)
     .bind(program_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *connection)
     .await
     .map_err(db)
 }
 
 /// The lesson's blocks as (kind, body, source ids as stored), in order.
 pub(super) async fn blocks_in(
-    pool: &SqlitePool,
+    connection: &mut SqliteConnection,
     lesson_id: &str,
 ) -> Result<Vec<(String, String, String)>> {
     sqlx::query_as(
         "SELECT kind,body,source_ids_json FROM learning_blocks WHERE lesson_id=? ORDER BY ordinal",
     )
     .bind(lesson_id)
-    .fetch_all(pool)
+    .fetch_all(&mut *connection)
     .await
     .map_err(db)
 }

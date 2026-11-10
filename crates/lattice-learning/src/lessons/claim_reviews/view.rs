@@ -42,7 +42,8 @@ use crate::lesson_evidence::LearningEvidencePassageDto;
 use crate::persistence::db;
 use crate::references::trust::dto_map;
 use crate::repository::LearningRepository;
-use crate::source_library::LearningSourceLibraryRepository;
+use crate::source_library::{workspace_in, LearningSourceLibraryRepository};
+use lattice_core::shared::persistence::Transactions;
 
 /// A stored location's quote and span narrowed to the claim's sentence in
 /// the lesson's current text; as stored when its field is gone.
@@ -131,7 +132,7 @@ impl ClaimReviewService {
         lesson_id: &str,
     ) -> Result<Option<LessonClaimReviewDto>> {
         let mut ledger = self.store().load(lesson_id).await?;
-        if source_deleted::reopen_lost(self.pool(), program_id, &ledger).await? {
+        if source_deleted::reopen_lost(&self.database, program_id, &ledger).await? {
             ledger = self.store().load(lesson_id).await?;
         }
         let Some(review) = ledger
@@ -176,11 +177,11 @@ impl ClaimReviewService {
                 )
             })
             .collect();
-        let mut teaching_findings = TeachingFindingsRepository::new(self.pool().clone())
+        let mut teaching_findings = TeachingFindingsRepository::new(self.database.clone())
             .list(lesson_id)
             .await?;
         if published {
-            let bodies = blocks::section_bodies(self.pool(), lesson_id).await?;
+            let bodies = blocks::section_bodies(&self.database, lesson_id).await?;
             name_claims(&ledger, &bodies, &mut teaching_findings);
         }
         Ok(Some(LessonClaimReviewDto {
@@ -240,7 +241,7 @@ impl ClaimReviewService {
             .flatten()
             .flat_map(|(check, _)| &check.evidence)
             .collect();
-        let repo = LearningSourceLibraryRepository::new(self.pool().clone());
+        let repo = LearningSourceLibraryRepository::new(self.database.clone());
         let mut versions: HashMap<String, Option<String>> = HashMap::new();
         for seen in compared {
             if texts.contains_key(&key(seen)) {
@@ -272,10 +273,9 @@ impl ClaimReviewService {
     /// Every version of the course's sources, deleted ones included: a card
     /// still names a source the user removed.
     async fn sources(&self, program_id: &str) -> Result<HashMap<String, SourceFacts>> {
-        let mut connection = self.pool().acquire().await.map_err(db)?;
-        let workspace =
-            LearningSourceLibraryRepository::workspace_on(&mut connection, program_id, true)
-                .await?;
+        let mut read = self.database.begin_read().await.map_err(db)?;
+        let workspace = workspace_in(&mut read, program_id, true).await?;
+        read.commit().await.map_err(db)?;
         Ok(workspace
             .sources
             .into_iter()
@@ -317,7 +317,7 @@ impl ClaimReviewService {
                     .map_err(|error| AppError::Serialization(error.to_string()));
             }
         }
-        let program = LearningRepository::new(self.pool().clone())
+        let program = LearningRepository::new(self.database.clone())
             .get(program_id)
             .await?;
         program

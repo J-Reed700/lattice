@@ -2,22 +2,20 @@
 //! outline exists, so the learner can read the topics before any lesson is
 //! written.
 
-use super::repository::{self, content_revision};
-use super::view::{outline_lessons, saved_entries};
+use super::repository::{self, content_revision, latest_attempt, outline_lessons, saved_entries};
 use super::{ensure, outline_revision};
 use crate::lessons::course_setup::CourseSetups;
 use crate::persistence::db;
 use crate::quiz_bank_jobs::ModelLoader;
 use crate::repository::LearningRepository;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use lattice_core::shared::runtime::jobs::{
-    Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobStatus, JobStore,
-    NewJob, RecoveryPolicy,
+    Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobStatus, JobStore, NewJob,
+    RecoveryPolicy,
 };
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::{SqliteConnection, SqlitePool};
 
 pub const COURSE_PLAN: &str = "learning.course_plan";
 
@@ -42,27 +40,12 @@ fn digest(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 
-/// The newest plan job of a program for an outline revision.
-pub(super) async fn latest_attempt(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-    outline_revision: i64,
-) -> Result<Option<JobRecord>> {
-    let revisions = repository::job_revisions(&mut *connection, program_id).await?;
-    let jobs = JobStore::list_for_subject_in(connection, COURSE_PLAN, program_id).await?;
-    Ok(jobs.into_iter().find(|job| {
-        revisions
-            .iter()
-            .any(|(id, revision)| *id == job.id && *revision == Some(outline_revision))
-    }))
-}
-
 /// Queue planning the course's current outline: the job that is waiting or
 /// running for it, a new attempt of one that failed or stopped, or a new job.
 /// `None` when every lesson already has its topics. The caller tells the
 /// runtime once the job commits.
-pub async fn queue(pool: &SqlitePool, program_id: &str) -> Result<Option<String>> {
-    let mut tx = pool.begin_write().await.map_err(db)?;
+pub async fn queue(database: &Database, program_id: &str) -> Result<Option<String>> {
+    let mut tx = database.begin_write().await.map_err(db)?;
     let (status, revision) = repository::program_state(&mut tx, program_id)
         .await?
         .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -138,7 +121,7 @@ pub async fn queue(pool: &SqlitePool, program_id: &str) -> Result<Option<String>
 /// Plans the course's topics on the Learning model.
 #[derive(Clone)]
 pub struct CoursePlanWorker {
-    pub pool: SqlitePool,
+    pub database: Database,
     pub load_llm: ModelLoader,
     pub course_setups: CourseSetups,
 }
@@ -161,10 +144,10 @@ impl JobHandler for CoursePlanWorker {
         let _activity = lattice_core::shared::runtime::user_activity::UserActivity::begin(
             "Planning what each lesson teaches",
         );
-        let program = LearningRepository::new(self.pool.clone())
+        let program = LearningRepository::new(self.database.clone())
             .get(&program_id)
             .await?;
-        if outline_revision(&self.pool, &program_id).await? != revision {
+        if outline_revision(&self.database, &program_id).await? != revision {
             return Ok(JobOutcome::Completed {
                 result_ref: format!("course_plan:stale:{revision}"),
                 message: "The outline changed, so this plan is no longer needed.".into(),
@@ -176,7 +159,7 @@ impl JobHandler for CoursePlanWorker {
         let pin = pin?;
         let Some(planned) = context
             .until_cancelled(ensure(
-                &self.pool,
+                &self.database,
                 pin.llm.as_ref(),
                 &program,
                 revision,

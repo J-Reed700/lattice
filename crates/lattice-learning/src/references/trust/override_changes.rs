@@ -10,6 +10,7 @@ use crate::dto::{LearningSiteTrustOverrideDto, LearningTrackRecordDto};
 use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::domain::provenance::TrustOverride;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 
 fn site_of(entry: &TrustOverride) -> Option<&str> {
@@ -26,7 +27,10 @@ fn site_of(entry: &TrustOverride) -> Option<&str> {
 
 /// Every site and site-for-subject override, each with the track record of
 /// the site's origins: the user's verdicts on claims its pages supported.
-pub async fn list(store: &SqliteSourceTrustStore) -> Result<Vec<LearningSiteTrustOverrideDto>> {
+pub async fn list(
+    database: &Database,
+    store: &SqliteSourceTrustStore,
+) -> Result<Vec<LearningSiteTrustOverrideDto>> {
     let entries = store.site_overrides().await?;
     let sites: Vec<_> = entries.iter().filter_map(site_of).collect();
     if sites.is_empty() {
@@ -34,7 +38,7 @@ pub async fn list(store: &SqliteSourceTrustStore) -> Result<Vec<LearningSiteTrus
     }
     // A site can contain many snapshots from the same origin. Deduplicate
     // origins before joining outcomes so their history is counted only once.
-    let rows = site_outcome_counts(store.pool(), &sites).await?;
+    let rows = site_outcome_counts(database, &sites).await?;
     let mut records: HashMap<String, (u32, u32)> = HashMap::new();
     for (site, held, failed) in rows {
         let count = |value| {

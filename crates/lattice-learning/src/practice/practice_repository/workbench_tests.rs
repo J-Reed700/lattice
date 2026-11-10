@@ -8,6 +8,7 @@ use crate::{
     repository::LearningRepository,
     tests,
 };
+use lattice_core::shared::persistence::Database;
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -85,7 +86,7 @@ async fn add_block(
 /// Captures a pasted source and returns `(source_id, version_id)`.
 async fn add_version(pool: &SqlitePool, program_id: &str) -> Result<(String, String)> {
     let (op, source_id, version_id) = (id(), id(), id());
-    LearningSourceLibraryRepository::new(pool.clone())
+    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .add(
             NewLearningSource {
                 operation_id: &op,

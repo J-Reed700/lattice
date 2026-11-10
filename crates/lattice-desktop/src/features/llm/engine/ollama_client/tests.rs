@@ -1,12 +1,23 @@
 //! Tests for typed completions, streaming, tool calls and timeouts against scripted Ollama servers.
 
 use super::*;
+use crate::features::llm::fitting::SendUnscheduled;
 use std::sync::Arc;
+
+trait UncutChatRequest {
+    fn uncut_chat_request(&self, request: &CompletionRequest) -> Result<OllamaChatRequest>;
+}
+
+impl UncutChatRequest for OllamaClient {
+    fn uncut_chat_request(&self, request: &CompletionRequest) -> Result<OllamaChatRequest> {
+        self.chat_request(&Fitted::uncut(self, request))
+    }
+}
 
 #[tokio::test]
 async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
     use lattice_core::application::ports::llm_port::{
-        CompletionInput, CompletionRequest, LLMPort, SamplingOverride,
+        CompletionInput, CompletionRequest, SamplingOverride,
     };
     use wiremock::{
         matchers::{method, path},
@@ -74,7 +85,7 @@ async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
         time_budget: Some(Duration::from_secs(2)),
         ..Default::default()
     };
-    let response = LLMPort::complete(&client, &request).await.unwrap();
+    let response = SendUnscheduled::complete(&client, &request).await.unwrap();
     assert_eq!(response.text, "{\"ok\":true}");
     assert_eq!(response.input_tokens, 30);
     assert_eq!(response.output_tokens, 4);
@@ -97,7 +108,7 @@ async fn typed_completion_sends_schema_reasoning_sampling_and_output_budget() {
 #[tokio::test]
 async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
     use lattice_core::application::ports::llm_port::{
-        CompletionInput, CompletionRequest, LLMPort, ToolDefinition,
+        CompletionInput, CompletionRequest, ToolDefinition,
     };
     use wiremock::{
         matchers::{method, path},
@@ -158,7 +169,7 @@ async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
         max_output_tokens: Some(1024),
         ..Default::default()
     };
-    let first_response = LLMPort::complete(&client, &request).await.unwrap();
+    let first_response = SendUnscheduled::complete(&client, &request).await.unwrap();
     let call = first_response.tool_calls.first().unwrap();
     let (id, name) = match call {
         CompletionInput::ToolCall { id, name, .. } => (id.clone(), name.clone()),
@@ -172,7 +183,9 @@ async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
         id,
         output: "The trip is on Friday.".into(),
     });
-    let second_response = LLMPort::complete(&client, &next_request).await.unwrap();
+    let second_response = SendUnscheduled::complete(&client, &next_request)
+        .await
+        .unwrap();
     assert_eq!(second_response.text, "Friday.");
     let requests = server.received_requests().await.unwrap();
     assert_eq!(requests.len(), 2);
@@ -196,7 +209,7 @@ async fn typed_completion_replays_native_tool_call_and_result_on_next_round() {
 
 #[tokio::test]
 async fn typed_completion_cancels_http_work_when_request_budget_expires() {
-    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
+    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -233,18 +246,23 @@ async fn typed_completion_cancels_http_work_when_request_budget_expires() {
         ..Default::default()
     };
 
-    let error = LLMPort::complete(&client, &request).await.unwrap_err();
+    let error = SendUnscheduled::complete(&client, &request)
+        .await
+        .unwrap_err();
     assert!(error.to_string().contains("time budget"));
     let request = CompletionRequest {
         no_time_limit: true,
         ..request
     };
     assert_eq!(
-        LLMPort::complete(&client, &request).await.unwrap().text,
+        SendUnscheduled::complete(&client, &request)
+            .await
+            .unwrap()
+            .text,
         "late"
     );
     assert_eq!(
-        LLMPort::complete_with_progress(&client, &request, &|_| Ok(()))
+        SendUnscheduled::complete_with_progress(&client, &request, &|_| Ok(()))
             .await
             .unwrap()
             .text,
@@ -255,7 +273,7 @@ async fn typed_completion_cancels_http_work_when_request_budget_expires() {
 #[tokio::test]
 async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
     use lattice_core::application::ports::llm_port::{
-        CompletionInput, CompletionRequest, LLMPort, ToolDefinition,
+        CompletionInput, CompletionRequest, ToolDefinition,
     };
     use wiremock::{
         matchers::{method, path},
@@ -317,7 +335,7 @@ async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
         reasoning_by_callback.lock().unwrap().push(text);
         Ok(())
     };
-    let response = LLMPort::complete_with_reasoning_progress(
+    let response = SendUnscheduled::complete_with_reasoning_progress(
         &client,
         &request,
         &on_text,
@@ -354,7 +372,7 @@ async fn typed_completion_streams_content_and_keeps_terminal_tool_calls() {
 
 #[tokio::test]
 async fn typed_stream_handles_sparse_tool_indices_without_allocating_gaps() {
-    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest, LLMPort};
+    use lattice_core::application::ports::llm_port::{CompletionInput, CompletionRequest};
     use wiremock::{
         matchers::{method, path},
         Mock, MockServer, ResponseTemplate,
@@ -383,10 +401,13 @@ async fn typed_stream_handles_sparse_tool_indices_without_allocating_gaps() {
             Duration::from_secs(1),
         )
         .unwrap();
-        let response =
-            LLMPort::complete_with_progress(&client, &CompletionRequest::default(), &|_| Ok(()))
-                .await
-                .unwrap();
+        let response = SendUnscheduled::complete_with_progress(
+            &client,
+            &CompletionRequest::default(),
+            &|_| Ok(()),
+        )
+        .await
+        .unwrap();
         let names: Vec<_> = response
             .tool_calls
             .iter()
@@ -553,19 +574,19 @@ fn a_thinking_answer_turns_think_on_with_the_thinking_profile() {
         thinking: ThinkingMode::On,
         ..Default::default()
     };
-    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    let sent = serde_json::to_value(client.uncut_chat_request(&request).unwrap()).unwrap();
     assert_eq!(sent["think"], true);
     assert_eq!(sent["options"]["temperature"], 1.0);
     assert_eq!(sent["options"]["top_k"], 20);
     request.reasoning_effort = Some("high".into());
-    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    let sent = serde_json::to_value(client.uncut_chat_request(&request).unwrap()).unwrap();
     assert_eq!(sent["think"], "high");
     request.tools = vec![ToolDefinition {
         name: "search".into(),
         description: "Search".into(),
         parameters: serde_json::json!({"type":"object"}),
     }];
-    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    let sent = serde_json::to_value(client.uncut_chat_request(&request).unwrap()).unwrap();
     assert_eq!(
         sent["think"], false,
         "a round that can call tools never thinks"
@@ -585,10 +606,10 @@ fn stop_sequences_go_in_the_options_only_when_asked_for() {
         stop: vec!["[5]".into(), "\n5.".into()],
         ..Default::default()
     };
-    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    let sent = serde_json::to_value(client.uncut_chat_request(&request).unwrap()).unwrap();
     assert_eq!(sent["options"]["stop"], serde_json::json!(["[5]", "\n5."]));
     request.stop.clear();
-    let sent = serde_json::to_value(client.chat_request(&request).unwrap()).unwrap();
+    let sent = serde_json::to_value(client.uncut_chat_request(&request).unwrap()).unwrap();
     assert!(sent["options"].get("stop").is_none());
 }
 
@@ -629,7 +650,8 @@ fn llava() -> OllamaClient {
 fn pictures_go_in_the_messages_images_list_beside_its_text() {
     use lattice_core::domain::models::vision::VisionPreset;
     let client = llava().with_vision(Some(VisionPreset::GemmaSiglip.geometry()));
-    let sent = serde_json::to_value(client.chat_request(&picture_request()).unwrap()).unwrap();
+    let sent =
+        serde_json::to_value(client.uncut_chat_request(&picture_request()).unwrap()).unwrap();
     assert_eq!(
         sent["messages"][0],
         serde_json::json!({
@@ -642,7 +664,7 @@ fn pictures_go_in_the_messages_images_list_beside_its_text() {
 
 #[test]
 fn a_model_nobody_declared_able_to_see_refuses_pictures() {
-    let refused = llava().chat_request(&picture_request()).unwrap_err();
+    let refused = llava().uncut_chat_request(&picture_request()).unwrap_err();
     assert!(matches!(refused, AppError::InvalidConfig(_)), "{refused}");
     assert!(refused
         .to_string()
@@ -703,9 +725,11 @@ async fn the_window_is_asked_for_and_held_to_what_the_server_reports() {
     assert_eq!(client.resolve_context_window(Some(131_072)).await, 16_384);
     assert_eq!(client.resolve_context_window(Some(8_192)).await, 8_192);
     let client = client.with_context_window(16_384);
-    assert_eq!(LLMPort::max_context_tokens(&client), 16_384);
+    assert_eq!(ModelBackend::window(&client), 16_384);
     let body = client
-        .chat_request(&lattice_core::application::ports::llm_port::CompletionRequest::default())
+        .uncut_chat_request(
+            &lattice_core::application::ports::llm_port::CompletionRequest::default(),
+        )
         .unwrap();
     assert_eq!(
         serde_json::to_value(body).unwrap()["options"]["num_ctx"],

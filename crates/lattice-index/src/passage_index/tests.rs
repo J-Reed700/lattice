@@ -719,3 +719,6 @@ mod live {
         live.release(&reopened).await;
     }
 }
+
+#[path = "crash_tests.rs"]
+mod crash;

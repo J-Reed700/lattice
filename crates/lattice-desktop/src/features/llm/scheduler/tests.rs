@@ -1,9 +1,12 @@
 use super::*;
+use crate::features::llm::backend::{ModelBackend, Progress};
+use crate::features::llm::fitting::{Fitted, OutputLimits, PortBackend, Sent, Thinking};
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, InferencePriority, ServedTiming,
 };
 use lattice_core::application::ports::LLMPort;
+use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::runtime::jobs::{RankScope, RankTicket};
 use parking_lot::Mutex as SyncMutex;
 use std::sync::atomic::{AtomicUsize, Ordering};
@@ -606,7 +609,10 @@ async fn a_scheduled_backend_measures_its_pace_from_its_own_answers() {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    let llm = ScheduledLlm::new(Arc::new(TimedModel(logged_run())), scheduler, 512);
+    let llm = ScheduledLlm::new(
+        Arc::new(PortBackend(Arc::new(TimedModel(logged_run())))),
+        scheduler,
+    );
     assert_eq!(llm.pace(), None, "nothing is asked of the server");
     llm.complete(&request("hi", None)).await.unwrap();
     let pace = llm.pace().unwrap();
@@ -679,7 +685,7 @@ async fn exact_counts_come_from_the_server_once_per_text() {
 struct GatedModel {
     started: AtomicUsize,
     gate: tokio::sync::Semaphore,
-    seen: SyncMutex<Vec<CompletionRequest>>,
+    seen: SyncMutex<Vec<Sent>>,
 }
 
 impl GatedModel {
@@ -693,13 +699,44 @@ impl GatedModel {
 }
 
 #[async_trait]
-impl LLMPort for GatedModel {
-    async fn complete(
+impl ModelBackend for GatedModel {
+    fn model_name(&self) -> &str {
+        "gated"
+    }
+    fn provider_name(&self) -> &str {
+        "gated"
+    }
+    fn window(&self) -> usize {
+        8_192
+    }
+    fn thinking(&self, _request: &CompletionRequest) -> Thinking {
+        Thinking::Off
+    }
+    fn output_limits(&self) -> OutputLimits {
+        OutputLimits::of(None)
+    }
+    fn supports_tool_calling(&self) -> bool {
+        false
+    }
+    fn vision(&self) -> Option<VisionGeometry> {
+        None
+    }
+    fn keeps_read_prompts(&self) -> bool {
+        false
+    }
+    fn is_alive(&self) -> bool {
+        true
+    }
+    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
+        Ok(true)
+    }
+    async fn send(
         &self,
-        request: &CompletionRequest,
+        fitted: &Fitted<'_>,
+        _progress: Progress<'_>,
     ) -> lattice_core::shared::error::Result<CompletionResponse> {
         self.started.fetch_add(1, Ordering::SeqCst);
-        self.seen.lock().push(request.clone());
+        self.seen.lock().push(fitted.sent());
         let _released = self.gate.acquire().await.unwrap();
         Ok(CompletionResponse {
             text: "ok".into(),
@@ -707,15 +744,6 @@ impl LLMPort for GatedModel {
             finish_reason: "stop".into(),
             ..Default::default()
         })
-    }
-    fn model_name(&self) -> &str {
-        "gated"
-    }
-    fn max_context_tokens(&self) -> usize {
-        8_192
-    }
-    async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {
-        Ok(true)
     }
 }
 
@@ -739,11 +767,7 @@ async fn a_request_cancelled_in_flight_is_aborted_and_frees_its_slot() {
         "test",
         BackendCapacity::llama_server(1, 100_000),
     ));
-    let llm = Arc::new(ScheduledLlm::new(
-        model.clone(),
-        Arc::clone(&scheduler),
-        512,
-    ));
+    let llm = Arc::new(ScheduledLlm::new(model.clone(), Arc::clone(&scheduler)));
     let cancel = CancellationToken::new();
     let running = {
         let llm = Arc::clone(&llm);
@@ -779,14 +803,14 @@ async fn an_admitted_request_reaches_the_backend_pinned_to_its_slot() {
         "test",
         BackendCapacity::llama_server(2, 100_000),
     ));
-    let llm = ScheduledLlm::new(model.clone(), scheduler, 512);
+    let llm = ScheduledLlm::new(model.clone(), scheduler);
     llm.complete(&request(&"x".repeat(5_000), None))
         .await
         .unwrap();
     let seen = model.seen.lock().clone();
     assert_eq!(seen.len(), 1);
-    assert_eq!(seen[0].assigned_slot, Some(0));
-    assert_eq!(seen[0].cache_key.as_deref(), Some("conversation"));
+    assert_eq!(seen[0].slot, Some(0));
+    assert_eq!(seen[0].request.cache_key.as_deref(), Some("conversation"));
 
     // 5 000 characters reported as 1 000 tokens moves the estimate off four.
     assert!(llm.chars_per_token() > 4.0, "{}", llm.chars_per_token());
@@ -805,7 +829,7 @@ async fn a_call_queues_behind_a_busy_slot() {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    let llm = ScheduledLlm::new(model, Arc::clone(&scheduler), 512);
+    let llm = ScheduledLlm::new(model, Arc::clone(&scheduler));
     let held = scheduler
         .admit(ask(InferencePriority::Interactive, 1), None)
         .await
@@ -825,7 +849,7 @@ fn scheduled(model: Arc<GatedModel>) -> ScheduledLlm {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    ScheduledLlm::new(model, scheduler, 512)
+    ScheduledLlm::new(model, scheduler)
 }
 
 /// Whatever backend is behind the port, nothing whose prompt alone fills its
@@ -864,7 +888,8 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     let model = GatedModel::new();
     model.gate.add_permits(2);
     let llm = scheduled(model.clone());
-    // "user" and 31 564 characters: 7 892 tokens by the estimate, 300 left.
+    // "user" and 31 564 characters: 7 892 tokens by the estimate and 24 of
+    // framing, 276 left.
     let prompt = "x".repeat(31_564);
     llm.complete(&CompletionRequest {
         max_output_tokens: Some(302),
@@ -880,8 +905,79 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     .await
     .unwrap();
     let seen = model.seen.lock();
-    assert_eq!(seen[0].max_output_tokens, Some(300));
-    assert_eq!(seen[1].max_output_tokens, Some(256));
+    assert_eq!(
+        seen[0].request.max_output_tokens,
+        Some(302),
+        "the caller's cap is not rewritten"
+    );
+    assert_eq!(seen[0].ceiling, Some(276));
+    assert_eq!(seen[1].ceiling, Some(256));
+}
+
+/// A server's own count sizes the room, and the request says it was counted.
+#[tokio::test]
+async fn an_exact_count_sizes_the_room_the_backend_is_told() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "tokens": vec![1; 3_000] })),
+        )
+        .expect(1)
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    model.gate.add_permits(1);
+    let llm = scheduled(model.clone())
+        .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
+    // About 10 000 tokens by the estimate; the server counts 3 000, plus the
+    // template's framing for one message and the answer's opening.
+    llm.complete(&CompletionRequest {
+        max_output_tokens: Some(6_000),
+        ..request(&"x".repeat(40_000), None)
+    })
+    .await
+    .unwrap();
+    let seen = model.seen.lock();
+    assert!(seen[0].size.counted_exactly);
+    assert_eq!(seen[0].size.prompt_tokens, 3_000 + 8 + 16);
+    assert_eq!(seen[0].room, 8_192 - 3_024);
+    assert_eq!(seen[0].ceiling, Some(5_168));
+}
+
+/// A prompt the margined estimate plainly fits is not worth a round trip.
+#[tokio::test]
+async fn a_small_prompt_is_not_counted_by_the_server() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "tokens": [1] })),
+        )
+        .expect(0)
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    model.gate.add_permits(1);
+    let llm = scheduled(model.clone())
+        .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
+    llm.complete(&CompletionRequest {
+        max_output_tokens: Some(512),
+        ..request("hello", None)
+    })
+    .await
+    .unwrap();
+    let seen = model.seen.lock();
+    assert!(!seen[0].size.counted_exactly);
+    assert!(seen[0].room > 512);
+    assert_eq!(seen[0].ceiling, Some(512));
 }
 
 /// The estimate never refuses what the backend's own tokenizer says fits.
@@ -909,6 +1005,203 @@ async fn an_exact_count_decides_before_a_request_is_refused() {
         .await
         .unwrap();
     assert_eq!(model.seen.lock().len(), 1);
+}
+
+/// A model with an 8,192-token window behind a tokenizer that answers
+/// `tokens`, or does not exist, sizing a request that asks `asked` tokens of
+/// answer. What the backend was sent, or the refusal.
+async fn measured(tokens: Option<usize>, content: &str, asked: Option<u32>) -> Result<Sent> {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    let reply = match tokens {
+        Some(tokens) => {
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({"tokens": vec![1; tokens]}))
+        }
+        None => ResponseTemplate::new(404),
+    };
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(reply)
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    model.gate.add_permits(1);
+    let llm = scheduled(model.clone())
+        .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri()));
+    llm.complete(&CompletionRequest {
+        max_output_tokens: asked,
+        ..request(content, None)
+    })
+    .await?;
+    let sent = model.seen.lock()[0].clone();
+    Ok(sent)
+}
+
+#[tokio::test]
+async fn a_prompt_the_estimate_overcounts_keeps_the_output_it_asked_for() {
+    let long = "word ".repeat(8_000);
+    // The server counts 2,000 tokens, so 2,000 more still fit.
+    let sent = measured(Some(2_000), &long, Some(2_000)).await.unwrap();
+    assert_eq!(sent.ceiling, Some(2_000));
+    assert!(sent.size.counted_exactly);
+}
+
+#[tokio::test]
+async fn an_answer_the_window_cannot_hold_is_cut_to_the_room_the_count_leaves() {
+    let long = "word ".repeat(8_000);
+    // The server counts 6,500 tokens and the framing 24 more: the answer gets
+    // the 1,668 left, not the 2,000 asked.
+    let sent = measured(Some(6_500), &long, Some(2_000)).await.unwrap();
+    assert_eq!(sent.ceiling, Some(1_668));
+    // Only a prompt that fills the window is refused.
+    for (tokens, counted) in [(Some(8_200), "(counted exactly)"), (None, "(estimated)")] {
+        let refused = measured(tokens, &long, Some(2_000)).await.unwrap_err();
+        assert!(
+            matches!(
+                refused,
+                AppError::PromptExceedsWindow { window: 8_192, counted_exactly, .. }
+                    if counted_exactly == tokens.is_some()
+            ),
+            "{refused}"
+        );
+        let told = refused.to_string();
+        for expected in [
+            counted,
+            "leaves no room for an answer",
+            "configured context window is 8192",
+        ] {
+            assert!(told.contains(expected), "{told}");
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_server_that_cannot_count_is_not_refused_on_the_estimates_margin() {
+    // About 6,000 tokens at four characters a token: the margin reads 9,000,
+    // past the 8,192 window; the plain estimate leaves room.
+    let prose = "word ".repeat(4_800);
+    let sent = measured(None, &prose, Some(2_000)).await.unwrap();
+    assert_eq!(sent.ceiling, Some(2_000));
+    assert!(!sent.size.counted_exactly);
+    let sent = measured(None, &prose, None).await.unwrap();
+    assert_eq!(sent.size.prompt_tokens + sent.room as usize, 8_192);
+}
+
+#[tokio::test]
+async fn an_open_answer_is_given_the_room_the_prompt_leaves_and_never_more() {
+    let long = "word ".repeat(8_000);
+    // The estimate leaves nothing; the exact count leaves 2,168 of the 8,192.
+    let sent = measured(Some(6_000), &long, None).await.unwrap();
+    assert_eq!(sent.size.prompt_tokens + sent.room as usize, 8_192);
+    assert!(sent.size.counted_exactly);
+    // A prompt that fills the window leaves no room, and is refused.
+    let refused = measured(Some(8_192), &long, None).await.unwrap_err();
+    assert!(
+        refused.to_string().contains("leaves no room for an answer"),
+        "{refused}"
+    );
+}
+
+/// A prompt not worth counting is recorded at its estimate plus the
+/// template's framing (8 for the message, 16 for the answer), with or without
+/// a tokenizer behind the port.
+#[tokio::test]
+async fn a_prompt_not_worth_counting_is_recorded_at_its_estimate_and_framing() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(serde_json::json!({ "tokens": [1] })),
+        )
+        .expect(0)
+        .mount(&server)
+        .await;
+    let without = GatedModel::new();
+    without.gate.add_permits(1);
+    let with = GatedModel::new();
+    with.gate.add_permits(1);
+    let llms = [
+        (scheduled(without.clone()), without),
+        (
+            scheduled(with.clone())
+                .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri())),
+            with,
+        ),
+    ];
+    for (llm, model) in &llms {
+        // "user" and "hello!!!" are 12 characters: 3 tokens.
+        llm.complete(&CompletionRequest {
+            max_output_tokens: Some(512),
+            ..request("hello!!!", None)
+        })
+        .await
+        .unwrap();
+        let sent = model.seen.lock()[0].clone();
+        assert_eq!(sent.size.prompt_tokens, 3 + 8 + 16);
+        assert!(!sent.size.counted_exactly);
+    }
+}
+
+/// Admission reserves the prompt the server counted, not the larger estimate
+/// the count replaced.
+#[tokio::test]
+async fn a_counted_prompt_reserves_its_counted_size() {
+    use wiremock::matchers::{method, path};
+    use wiremock::{Mock, MockServer, ResponseTemplate};
+
+    let server = MockServer::start().await;
+    Mock::given(method("POST"))
+        .and(path("/tokenize"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(serde_json::json!({ "tokens": vec![1; 2_000] })),
+        )
+        .mount(&server)
+        .await;
+    let model = GatedModel::new();
+    let scheduler = Arc::new(InferenceScheduler::new(
+        "test",
+        BackendCapacity::llama_server(2, 8_192),
+    ));
+    let llm = Arc::new(
+        ScheduledLlm::new(model.clone(), scheduler)
+            .with_tokenizer(ServerTokenizer::new(reqwest::Client::new(), &server.uri())),
+    );
+    // About 10 000 tokens by the estimate each; the server counts 2 000.
+    let calls: Vec<_> = ["first", "second"]
+        .into_iter()
+        .map(|key| {
+            let llm = Arc::clone(&llm);
+            tokio::spawn(async move {
+                llm.complete(&CompletionRequest {
+                    max_output_tokens: Some(512),
+                    cache_key: Some(key.into()),
+                    ..request(&"x".repeat(40_000), None)
+                })
+                .await
+            })
+        })
+        .collect();
+    let both_started = tokio::time::timeout(Duration::from_secs(1), async {
+        while model.started.load(Ordering::SeqCst) < 2 {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+    })
+    .await
+    .is_ok();
+    model.gate.add_permits(2);
+    for call in calls {
+        call.await.unwrap().unwrap();
+    }
+    assert!(
+        both_started,
+        "both calls fit the window by their counted size and run together"
+    );
 }
 
 fn ranked(priority: InferencePriority, scope: &Arc<RankScope>) -> AdmissionRequest {

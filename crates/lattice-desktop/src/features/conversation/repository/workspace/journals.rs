@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::conversation::repository::space_rows::ConversationJournalRow;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -72,7 +73,7 @@ impl ConversationRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to create journal: {}", e)))?;
 
-        let created = sqlx::query_as::<_, ConversationJournalDto>(
+        let created = sqlx::query_as::<_, ConversationJournalRow>(
             r#"
         SELECT
             id, name, description, icon, accent_color, space_prompt,
@@ -90,11 +91,11 @@ impl ConversationRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
-        Ok(created)
+        Ok(created.into())
     }
 
     pub async fn list_journals(&self) -> Result<Vec<ConversationJournalDto>, AppError> {
-        let journals = sqlx::query_as::<_, ConversationJournalDto>(
+        let journals = sqlx::query_as::<_, ConversationJournalRow>(
             r#"
         SELECT
             id, name, description, icon, accent_color, space_prompt,
@@ -107,7 +108,7 @@ impl ConversationRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to list journals: {}", e)))?;
 
-        Ok(journals)
+        Ok(journals.into_iter().map(Into::into).collect())
     }
 
     pub async fn update_journal(
@@ -159,7 +160,7 @@ impl ConversationRepository {
             )));
         }
 
-        let updated = sqlx::query_as::<_, ConversationJournalDto>(
+        let updated = sqlx::query_as::<_, ConversationJournalRow>(
             r#"
         SELECT
             id, name, description, icon, accent_color, space_prompt,
@@ -177,7 +178,7 @@ impl ConversationRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
-        Ok(updated)
+        Ok(updated.into())
     }
 
     pub async fn archive_journal(

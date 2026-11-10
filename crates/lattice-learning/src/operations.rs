@@ -6,10 +6,7 @@
 //! Callers look up and record inside their own transaction, so the ledger row
 //! commits or rolls back with the work it describes.
 use self::repository::RecordedOperation;
-use super::persistence::{decode, encode};
-use lattice_core::shared::error::{AppError, Result};
-use serde::{de::DeserializeOwned, Serialize};
-use sqlx::SqliteConnection;
+use lattice_core::shared::error::AppError;
 
 mod repository;
 
@@ -57,46 +54,6 @@ impl Operation<'_> {
             Err(OperationConflict(self.conflict))
         }
     }
-
-    /// The stored result of an earlier identical request, or `None` when the
-    /// ID is new.
-    pub(crate) async fn replay<T>(&self, connection: &mut SqliteConnection) -> Result<Option<T>>
-    where
-        T: DeserializeOwned,
-    {
-        let Some(recorded) = repository::find(connection, self.id).await? else {
-            return Ok(None);
-        };
-        self.check(&recorded)?;
-        decode(&recorded.result_json).map(Some)
-    }
-
-    /// Whether an identical request was already recorded, ignoring its result.
-    pub(crate) async fn seen(&self, connection: &mut SqliteConnection) -> Result<bool> {
-        Ok(self
-            .replay::<serde::de::IgnoredAny>(connection)
-            .await?
-            .is_some())
-    }
-
-    /// Record this request and what it produced.
-    pub(crate) async fn record<T>(
-        &self,
-        connection: &mut SqliteConnection,
-        result: &T,
-    ) -> Result<()>
-    where
-        T: Serialize + ?Sized,
-    {
-        repository::insert(connection, self, &encode(result)?).await
-    }
-
-    /// Drop this identical request's row once what it produced is gone, so
-    /// the same ID can do the work again inside the caller's transaction. A
-    /// row recorded for any other request is left alone.
-    pub(crate) async fn forget(&self, connection: &mut SqliteConnection) -> Result<()> {
-        repository::delete(connection, self).await
-    }
 }
 
 #[cfg(test)]
@@ -104,6 +61,7 @@ mod tests {
     use super::*;
     use crate::persistence::db;
     use crate::tests::pool;
+    use lattice_core::shared::error::Result;
 
     const CONFLICT: &str = "Operation ID was already used with different test data.";
 

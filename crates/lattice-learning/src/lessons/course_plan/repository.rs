@@ -2,9 +2,15 @@
 //! `learning_course_plan_entry_history`, and the course plan's rows of
 //! `learning_jobs`.
 
-use crate::persistence::db;
+use super::edit::{ENTRY_CHANGED, LESSON_LOCKED, LESSON_WRITTEN, REVISION_CHANGED};
+use super::job::COURSE_PLAN;
+use super::view::OutlineLesson;
+use super::PlannedLesson;
+use crate::persistence::{db, now};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{JobRecord, JobStatus, JobStore};
 use sqlx::SqliteConnection;
+use std::collections::{HashMap, HashSet};
 
 /// The outline revision a program's plan is keyed on.
 pub(super) async fn content_revision(
@@ -236,4 +242,153 @@ pub(super) async fn copy_job_row(
         .await
         .map_err(db)?;
     Ok(())
+}
+
+pub(super) async fn outline_lessons(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<Vec<OutlineLesson>> {
+    let rows = outline_rows(connection, program_id).await?;
+    Ok(rows
+        .into_iter()
+        .map(|(id, preparation, completed)| OutlineLesson {
+            id,
+            open: preparation == "outline" && completed == 0,
+        })
+        .collect())
+}
+
+/// The lessons a running `lesson_preparation` job covers. A pending job does
+/// not lock: the writer reads the plan only once its job is claimed.
+pub(super) async fn locked_lessons(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<HashSet<String>> {
+    let jobs = JobStore::list_for_subject_in(
+        connection,
+        crate::curriculum_repository::LESSON_PREPARATION,
+        program_id,
+    )
+    .await?;
+    Ok(jobs
+        .into_iter()
+        .filter(|job| job.status == JobStatus::Running)
+        .flat_map(|job| {
+            job.requested
+                .get("lessonIds")
+                .and_then(serde_json::Value::as_array)
+                .map(|ids| {
+                    ids.iter()
+                        .filter_map(|id| id.as_str().map(str::to_owned))
+                        .collect::<Vec<_>>()
+                })
+                .unwrap_or_default()
+        })
+        .collect())
+}
+
+/// The saved entries of a revision with their entry revisions, by lesson.
+pub(super) async fn saved_entries(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    outline_revision: i64,
+) -> Result<HashMap<String, (PlannedLesson, i64)>> {
+    let rows = saved_rows(connection, program_id, outline_revision).await?;
+    rows.into_iter()
+        .map(|(id, entry, revision)| {
+            let entry: PlannedLesson = serde_json::from_str(&entry).map_err(|error| {
+                AppError::InternalError(format!(
+                    "The course plan entry for lesson {id} cannot be read: {error}"
+                ))
+            })?;
+            Ok((id, (entry, revision)))
+        })
+        .collect()
+}
+
+/// The newest replaced entry of each lesson.
+pub(super) async fn newest_replaced(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    outline_revision: i64,
+) -> Result<HashMap<String, PlannedLesson>> {
+    let rows = newest_replaced_rows(connection, program_id, outline_revision).await?;
+    rows.into_iter()
+        .map(|(id, entry)| {
+            let entry: PlannedLesson = serde_json::from_str(&entry).map_err(|error| {
+                AppError::InternalError(format!(
+                    "The replaced course plan entry for lesson {id} cannot be read: {error}"
+                ))
+            })?;
+            Ok((id, entry))
+        })
+        .collect()
+}
+
+/// The newest plan job of a program for an outline revision.
+pub(super) async fn latest_attempt(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    outline_revision: i64,
+) -> Result<Option<JobRecord>> {
+    let revisions = job_revisions(&mut *connection, program_id).await?;
+    let jobs = JobStore::list_for_subject_in(connection, COURSE_PLAN, program_id).await?;
+    Ok(jobs.into_iter().find(|job| {
+        revisions
+            .iter()
+            .any(|(id, revision)| *id == job.id && *revision == Some(outline_revision))
+    }))
+}
+
+/// Whether the outline is still `outline_revision` and each of `lessons` is
+/// in it, still open, not being written, and at the revision the caller saw.
+pub(super) async fn check_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    outline_revision: i64,
+    lessons: &[(&str, i64)],
+) -> Result<()> {
+    if content_revision(connection, program_id).await? != outline_revision {
+        return Err(AppError::InvalidState(REVISION_CHANGED.into()));
+    }
+    let outline = outline_lessons(connection, program_id).await?;
+    let locked = locked_lessons(connection, program_id).await?;
+    let saved = saved_entries(connection, program_id, outline_revision).await?;
+    for (lesson_id, expected) in lessons {
+        let lesson = outline
+            .iter()
+            .find(|lesson| lesson.id == *lesson_id)
+            .ok_or_else(|| AppError::NotFound("That lesson is not in this course.".into()))?;
+        if locked.contains(*lesson_id) {
+            return Err(AppError::InvalidState(LESSON_LOCKED.into()));
+        }
+        if !lesson.open {
+            return Err(AppError::InvalidState(LESSON_WRITTEN.into()));
+        }
+        let (_, revision) = saved
+            .get(*lesson_id)
+            .ok_or_else(|| AppError::NotFound("This lesson has no planned topics yet.".into()))?;
+        if revision != expected {
+            return Err(AppError::InvalidState(ENTRY_CHANGED.into()));
+        }
+    }
+    Ok(())
+}
+
+/// Replace a lesson's entry, keeping the old one in its history.
+pub(super) async fn replace_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    outline_revision: i64,
+    topics: &PlannedLesson,
+) -> Result<()> {
+    replace_entry(
+        connection,
+        program_id,
+        outline_revision,
+        &topics.lesson_id,
+        &serde_json::to_string(topics)?,
+        now(),
+    )
+    .await
 }

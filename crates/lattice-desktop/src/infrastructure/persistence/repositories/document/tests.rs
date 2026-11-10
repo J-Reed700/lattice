@@ -3,6 +3,7 @@ use lattice_core::shared::error::AppError;
 
 use lattice_core::application::ports::DocumentRepositoryPort;
 use lattice_core::application::ports::RepositoryPort;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::sqlite::SqlitePoolOptions;
 
 async fn repository() -> DocumentRepository {
@@ -228,21 +229,23 @@ async fn assert_contract(
 }
 
 #[tokio::test]
-async fn standalone_and_transactional_adapters_share_the_aggregate_contract() {
+async fn standalone_and_in_unit_writes_share_the_aggregate_contract() {
     let repository = repository().await;
     let document = aggregate(&repository.pool, "standalone").await;
     assert_contract(&repository, &document).await;
-    let pool = repository.pool.clone();
-    let transaction = std::sync::Arc::new(tokio::sync::Mutex::new(pool.begin().await.unwrap()));
-    let adapter = super::SqliteDocumentRepositoryTx::new(transaction.clone());
-    assert_contract(&adapter, &document).await;
-    drop(adapter);
-    std::sync::Arc::try_unwrap(transaction)
-        .unwrap()
-        .into_inner()
-        .commit()
+    let mut tx = repository.pool.begin_write().await.unwrap();
+    super::ops::save_batch(&mut tx, std::slice::from_ref(&document))
         .await
         .unwrap();
+    let loaded = super::ops::find_by_id(&mut tx, document.id().as_str())
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(loaded.chunks().len(), 1);
+    assert_eq!(loaded.chunks()[0].content(), "durable chunk");
+    assert_eq!(loaded.tags(), document.tags());
+    assert_eq!(loaded.source_context(), document.source_context());
+    tx.commit().await.unwrap();
 }
 
 #[tokio::test]
@@ -482,17 +485,11 @@ async fn access_batches_preserve_embeddings_and_increment_each_document_once() {
 async fn access_metadata_participates_in_the_callers_transaction() {
     let repo = repository().await;
     insert(&repo, "hit", "/hit.txt", &"d".repeat(64)).await;
-    let transaction =
-        std::sync::Arc::new(tokio::sync::Mutex::new(repo.pool.begin().await.unwrap()));
-    let adapter = super::SqliteDocumentRepositoryTx::new(transaction.clone());
-    adapter.record_accesses(&["hit".into()]).await.unwrap();
-    drop(adapter);
-    std::sync::Arc::try_unwrap(transaction)
-        .unwrap()
-        .into_inner()
-        .rollback()
+    let mut tx = repo.pool.begin_write().await.unwrap();
+    super::ops::record_accesses(&mut tx, &["hit".into()])
         .await
         .unwrap();
+    tx.rollback().await.unwrap();
     let count: i64 = sqlx::query_scalar("SELECT access_count FROM documents WHERE id='hit'")
         .fetch_one(&repo.pool)
         .await

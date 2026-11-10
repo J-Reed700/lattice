@@ -244,12 +244,12 @@ impl ClaimLedger {
         let Some(scope) = crate::lesson_drafts::scope() else {
             return Ok(ledger);
         };
-        let program_id = LearningCurriculumRepository::new(scope.pool.clone())
+        let program_id = LearningCurriculumRepository::new(scope.database.clone())
             .job(&scope.job_id)
             .await?
             .program_id;
         ledger.sink = Some(Sink {
-            store: ClaimReviewRepository::new(scope.pool),
+            store: ClaimReviewRepository::new(scope.database),
             lesson_id: scope.lesson_id,
             job_id: scope.job_id,
             program_id,

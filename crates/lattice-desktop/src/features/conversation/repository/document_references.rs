@@ -1,7 +1,7 @@
 //! Documents linked to a conversation, and the space memberships they imply.
 
 use super::ConversationRepository;
-use crate::features::conversation::persistence_mapper::{
+use crate::features::conversation::repository::mapper::{
     DocumentReferenceMapper, DocumentReferenceModel,
 };
 use chrono::Utc;

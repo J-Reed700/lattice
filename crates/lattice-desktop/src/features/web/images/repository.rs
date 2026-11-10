@@ -12,6 +12,8 @@ use std::collections::{HashMap, HashSet};
 use chrono::Utc;
 use lattice_core::application::contracts::images::{ChatImageDto, ImageOrigin};
 use lattice_core::application::ports::chat_images::DRAFT_REQUEST_PREFIX;
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::PersistenceError;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
@@ -19,8 +21,8 @@ use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id};
 use crate::infrastructure::storage::{FileIntents, FileStore};
 use lattice_core::shared::error::{AppError, Result};
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
+fn db(error: impl Into<PersistenceError>) -> AppError {
+    AppError::from(error.into())
 }
 
 const COLUMNS: &str = "id, conversation_id, request_id, message_id, ref AS image_ref, ext, mime, \
@@ -128,7 +130,8 @@ pub struct ImageRepository {
 }
 
 impl ImageRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -401,6 +404,16 @@ impl ImageRepository {
     /// files were let go of: what lets a sweep free a file whose removal does
     /// not finish now.
     pub async fn delete_ids(&self, ids: &[String]) -> Result<u64> {
+        self.delete_where(ids, "").await
+    }
+
+    /// [`Self::delete_ids`] for rows that still no message holds when the
+    /// write lock is taken: one attached since they were read stays.
+    pub async fn delete_orphan_ids(&self, ids: &[String]) -> Result<u64> {
+        self.delete_where(ids, " AND message_id IS NULL").await
+    }
+
+    async fn delete_where(&self, ids: &[String], condition: &str) -> Result<u64> {
         if ids.is_empty() {
             return Ok(0);
         }
@@ -409,14 +422,14 @@ impl ImageRepository {
         let record_sql = record_releases_sql(
             FileStore::ChatImage,
             "id || '.' || ext",
-            &format!("chat_images WHERE id IN ({placeholders})"),
+            &format!("chat_images WHERE id IN ({placeholders}){condition}"),
         );
         let mut record = sqlx::query(&record_sql).bind(run_id());
         for id in ids {
             record = record.bind(id);
         }
         record.execute(&mut *tx).await.map_err(db)?;
-        let delete_sql = format!("DELETE FROM chat_images WHERE id IN ({placeholders})");
+        let delete_sql = format!("DELETE FROM chat_images WHERE id IN ({placeholders}){condition}");
         let mut delete = sqlx::query(&delete_sql);
         for id in ids {
             delete = delete.bind(id);

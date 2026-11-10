@@ -11,6 +11,7 @@ use crate::repository::LearningRepository;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRuntime, JobStore};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
@@ -144,10 +145,18 @@ pub(super) async fn planned_program(
     model: &Topics,
 ) -> (LearningProgramDto, i64) {
     let program = saved_program(pool).await;
-    let revision = outline_revision(pool, &program.summary.id).await.unwrap();
-    ensure(pool, model, &program, revision, &Default::default())
+    let revision = outline_revision(&Database::from(pool.clone()), &program.summary.id)
         .await
         .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        model,
+        &program,
+        revision,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     (program, revision)
 }
 
@@ -205,14 +214,14 @@ pub(super) async fn lesson_job(
 /// Runs the course-plan job `job_id` to its end on `llm`.
 pub(super) async fn run_plan_job(pool: &SqlitePool, llm: Arc<dyn LLMPort>, job_id: &str) {
     let worker = CoursePlanWorker {
-        pool: pool.clone(),
+        database: Database::from(pool.clone()),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(crate::generation_jobs::pinned_for_test(llm)) })
         }),
         course_setups: Default::default(),
     };
-    let runtime = JobRuntime::new(pool.clone());
+    let runtime = JobRuntime::new(Database::from(pool.clone()));
     runtime
         .register(COURSE_PLAN, Arc::new(worker), course_plan_job_config())
         .await

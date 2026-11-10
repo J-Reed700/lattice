@@ -8,21 +8,21 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{
     ActivityItem, ActivityProgress, ActivitySource, ActivityTarget,
 };
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime};
 use lattice_core::shared::Result;
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Research turns and syntheses, read from their jobs.
 pub struct ConversationActivity {
-    pool: SqlitePool,
+    database: Database,
     jobs: Arc<JobRuntime>,
 }
 
 impl ConversationActivity {
-    pub fn new(pool: SqlitePool, jobs: Arc<JobRuntime>) -> Self {
-        Self { pool, jobs }
+    pub fn new(database: Database, jobs: Arc<JobRuntime>) -> Self {
+        Self { database, jobs }
     }
 
     async fn chat_titles(&self, jobs: &[JobRecord]) -> Result<HashMap<String, String>> {
@@ -33,7 +33,7 @@ impl ConversationActivity {
         if ids.is_empty() {
             return Ok(HashMap::new());
         }
-        ConversationRepository::new(self.pool.clone())
+        ConversationRepository::new(self.database.clone())
             .titles_of(&ids)
             .await
     }

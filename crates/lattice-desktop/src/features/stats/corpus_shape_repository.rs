@@ -12,6 +12,7 @@ use sqlx::{Row, SqlitePool};
 
 use crate::features::stats::type_label::type_label;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 
 /// How far back "recently grown" looks.
@@ -35,7 +36,8 @@ pub struct SqliteCorpusShapeRepository {
 }
 
 impl SqliteCorpusShapeRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 }

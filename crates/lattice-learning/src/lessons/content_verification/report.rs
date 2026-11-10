@@ -519,7 +519,7 @@ pub(crate) fn sources_changed(error: &AppError) -> bool {
 
 /// Called inside both publication transactions, before marking anything ready.
 pub(crate) async fn persist_report(
-    tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+    tx: &mut lattice_core::shared::persistence::WriteTx,
     program_id: &str,
     lesson_id: &str,
     lesson: &PreparedLearningLesson,

@@ -7,10 +7,12 @@ use sqlx::{SqliteConnection, SqlitePool};
 
 use super::dto::WebPageSnapshotStatus;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::PersistenceError;
 use lattice_core::shared::persistence::Transactions;
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
+fn db(error: impl Into<PersistenceError>) -> AppError {
+    AppError::from(error.into())
 }
 
 /// The conversation frozen copies belong to when no chat cited the page.
@@ -171,7 +173,8 @@ pub struct SnapshotRepository {
 }
 
 impl SnapshotRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -185,6 +188,26 @@ impl SnapshotRepository {
         requested_url: &str,
     ) -> Result<(SnapshotRow, bool)> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let found = Self::insert_or_get_in(
+            &mut tx,
+            new_id,
+            conversation_id,
+            normalized_url,
+            requested_url,
+        )
+        .await?;
+        tx.commit().await.map_err(db)?;
+        Ok(found)
+    }
+
+    /// [`Self::insert_or_get`] inside the caller's unit of work.
+    pub async fn insert_or_get_in(
+        conn: &mut SqliteConnection,
+        new_id: &str,
+        conversation_id: &str,
+        normalized_url: &str,
+        requested_url: &str,
+    ) -> Result<(SnapshotRow, bool)> {
         let inserted = sqlx::query(
             "INSERT INTO web_page_snapshots \
                  (id, conversation_id, normalized_url, requested_url, status, created_at) \
@@ -196,15 +219,14 @@ impl SnapshotRepository {
         .bind(normalized_url)
         .bind(requested_url)
         .bind(Utc::now().to_rfc3339())
-        .execute(&mut *tx)
+        .execute(&mut *conn)
         .await
         .map_err(db)?
         .rows_affected()
             == 1;
-        let row = snapshot_for_url(&mut tx, conversation_id, normalized_url)
+        let row = snapshot_for_url(&mut *conn, conversation_id, normalized_url)
             .await?
             .ok_or_else(|| AppError::Database("snapshot row vanished after insert".into()))?;
-        tx.commit().await.map_err(db)?;
         Ok((row, inserted))
     }
 
@@ -385,24 +407,25 @@ impl SnapshotRepository {
         .map_err(db)
     }
 
-    pub async fn set_job(&self, id: &str, job_id: &str) -> Result<()> {
+    /// Records the job that captures row `id`.
+    pub async fn set_job_in(conn: &mut SqliteConnection, id: &str, job_id: &str) -> Result<()> {
         sqlx::query("UPDATE web_page_snapshots SET job_id = ? WHERE id = ?")
             .bind(job_id)
             .bind(id)
-            .execute(&self.pool)
+            .execute(&mut *conn)
             .await
             .map_err(db)?;
         Ok(())
     }
 
     /// Resets a row when status IN ('failed', 'ready') back to pending.
-    pub async fn reset_for_retry(&self, id: &str) -> Result<bool> {
+    pub async fn reset_for_retry_in(conn: &mut SqliteConnection, id: &str) -> Result<bool> {
         Ok(sqlx::query(
             "UPDATE web_page_snapshots SET status = 'pending', error_code = NULL, \
              error_message = NULL WHERE id = ? AND status IN ('failed', 'ready')",
         )
         .bind(id)
-        .execute(&self.pool)
+        .execute(&mut *conn)
         .await
         .map_err(db)?
         .rows_affected()

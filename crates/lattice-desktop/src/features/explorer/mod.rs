@@ -29,4 +29,6 @@ pub mod scope;
 pub mod tools;
 
 #[cfg(test)]
+mod folders_tests;
+#[cfg(test)]
 mod tests;

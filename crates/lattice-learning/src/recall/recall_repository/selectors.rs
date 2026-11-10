@@ -1,6 +1,6 @@
 //! Source selectors: creating, reading and re-matching them, and searching program sources.
 use super::*;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use sqlx::SqliteConnection;
 
 #[derive(Debug, Clone)]
@@ -155,7 +155,7 @@ impl LearningRecallRepository {
                 "Source search query must contain 1–240 characters.",
             ));
         }
-        let snapshots = LearningSourceLibraryRepository::new(self.pool.clone());
+        let snapshots = LearningSourceLibraryRepository::new(Database::from(self.pool.clone()));
         let sources = snapshots.verification_sources(&req.program_id).await?;
         // The course's index with its rows brought up to date, never waiting
         // for embedding; by words alone when there is none.

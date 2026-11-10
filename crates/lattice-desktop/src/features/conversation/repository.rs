@@ -8,6 +8,7 @@ mod conversations;
 mod document_references;
 mod fork;
 mod knowledge;
+pub(crate) mod mapper;
 mod memory;
 mod memory_pool;
 mod memory_port;
@@ -17,6 +18,7 @@ mod memory_vectors;
 mod messages;
 mod port;
 mod pruning;
+pub(crate) mod space_rows;
 mod tangents;
 
 #[cfg(test)]
@@ -25,6 +27,7 @@ mod workspace;
 #[cfg(test)]
 mod write_tests;
 
+use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::SqlitePool;
 
 /// SQLite implementation of the conversation repository.
@@ -36,7 +39,8 @@ pub struct ConversationRepository {
 
 impl ConversationRepository {
     /// Creates a conversation repository.
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self {
             pool,
             memory_embedding: None,

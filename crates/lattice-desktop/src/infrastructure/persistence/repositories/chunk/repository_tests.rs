@@ -1,14 +1,13 @@
-//! The pool-backed and transaction-backed chunk repositories over the real
-//! migrated schema.
-use super::{ChunkFilter, SqliteChunkRepository, SqliteChunkRepositoryTx};
+//! The pool-backed chunk repository and the chunk operations inside a unit of
+//! work, over the real migrated schema.
+use super::{ops, ChunkFilter, SqliteChunkRepository};
 use lattice_core::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
 use lattice_core::domain::entities::chunk::Chunk;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::DocumentId;
 use sqlx::sqlite::SqlitePoolOptions;
 use sqlx::SqlitePool;
-use std::sync::Arc;
-use tokio::sync::Mutex;
 
 async fn pool() -> SqlitePool {
     let pool = SqlitePoolOptions::new()
@@ -263,34 +262,24 @@ async fn chunk_batch_writes_are_bounded_and_late_batch_failure_rolls_back() {
         "a foreign-key failure in the second INSERT must roll back the first"
     );
 
-    let tx = Arc::new(Mutex::new(pool.begin().await.unwrap()));
-    let tx_repo = SqliteChunkRepositoryTx::new(tx.clone());
-    let (saved, writes) = count_writes(tx_repo.save_batch(&chunks)).await;
+    let mut tx = pool.begin_write().await.unwrap();
+    let (saved, writes) = count_writes(ops::save_batch_optimized(&mut tx, &chunks)).await;
     saved.unwrap();
-    assert_eq!(
-        writes, 3,
-        "transaction adapter should use shared bulk writes"
-    );
-    Arc::try_unwrap(tx)
-        .expect("only the test owns the transaction")
-        .into_inner()
-        .commit()
-        .await
-        .unwrap();
+    assert_eq!(writes, 3, "a unit of work should use shared bulk writes");
+    tx.commit().await.unwrap();
 }
 
 #[tokio::test]
-async fn transaction_repository_follows_its_transaction() {
+async fn chunk_operations_follow_their_unit_of_work() {
     let pool = pool().await;
     let seeds = document(&pool, "indexed").await;
 
-    let tx = Arc::new(Mutex::new(pool.begin().await.unwrap()));
-    let repo = SqliteChunkRepositoryTx::new(tx.clone());
-    repo.save_batch(&[]).await.unwrap();
+    let mut tx = pool.begin_write().await.unwrap();
+    ops::save_batch_optimized(&mut tx, &[]).await.unwrap();
     let saved = vec![chunk(&seeds, 1), chunk(&seeds, 0)];
-    repo.save_batch(&saved).await.unwrap();
+    ops::save_batch_optimized(&mut tx, &saved).await.unwrap();
     assert_eq!(
-        repo.find_by_document(seeds.as_str())
+        ops::find_by_document(&mut tx, seeds.as_str())
             .await
             .unwrap()
             .iter()
@@ -299,41 +288,19 @@ async fn transaction_repository_follows_its_transaction() {
         vec![0, 1]
     );
     assert_eq!(
-        repo.count_by_document(seeds.as_str()).await.unwrap(),
+        ops::count_by_document(&mut tx, seeds.as_str())
+            .await
+            .unwrap(),
         2usize
     );
-    assert_eq!(
-        repo.find_by_filter(&by_document(&seeds, None))
-            .await
-            .unwrap()
-            .len(),
-        2
-    );
-    let limited = repo
-        .find_by_filter(&by_document(&seeds, Some(1)))
+    let limited = ops::find_by_document_limit(&mut tx, seeds.as_str(), Some(1))
         .await
         .unwrap();
     assert_eq!(limited.len(), 1);
     assert_eq!(limited[0].index(), 0);
-    assert!(repo
-        .find_by_filter(&ForeignFilter)
-        .await
-        .unwrap()
-        .is_empty());
-    let refused = repo.find_by_filter(&by_document(&seeds, Some(0))).await;
-    assert!(
-        matches!(refused, Err(AppError::InvalidInput(_))),
-        "{refused:?}"
-    );
-    assert!(repo.exists(saved[0].id().as_str()).await.unwrap());
+    assert!(ops::exists(&mut tx, saved[0].id().as_str()).await.unwrap());
+    tx.rollback().await.unwrap();
 
-    let rolled_back = Arc::try_unwrap(tx).expect("only the test owns the transaction");
-    rolled_back.into_inner().rollback().await.unwrap();
-    let dropped = repo.find_all().await;
-    assert!(
-        matches!(dropped, Err(AppError::InternalError(_))),
-        "{dropped:?}"
-    );
     let pool_repo = SqliteChunkRepository::new(pool.clone());
     assert_eq!(
         pool_repo.count_all().await.unwrap(),
@@ -341,26 +308,16 @@ async fn transaction_repository_follows_its_transaction() {
         "rollback undid the writes"
     );
 
-    let tx = Arc::new(Mutex::new(pool.begin().await.unwrap()));
-    let repo = SqliteChunkRepositoryTx::new(tx.clone());
-    let kept = repo
-        .create(
-            seeds.as_str(),
-            "Acorns need a cold winter.",
-            None,
-            None,
-            3,
-            None,
-            None,
-        )
+    let mut tx = pool.begin_write().await.unwrap();
+    let kept = chunk(&seeds, 3);
+    ops::save(&mut tx, &kept).await.unwrap();
+    ops::save_batch_optimized(&mut tx, &[chunk(&seeds, 4)])
         .await
         .unwrap();
-    repo.create_batch(vec![chunk(&seeds, 4)]).await.unwrap();
-    repo.delete(kept.id().as_str()).await.unwrap();
-    assert_eq!(RepositoryPort::count(&repo).await.unwrap(), 1);
-    assert_eq!(repo.count_all().await.unwrap(), 1);
-    let committed = Arc::try_unwrap(tx).expect("only the test owns the transaction");
-    committed.into_inner().commit().await.unwrap();
+    ops::delete(&mut tx, kept.id().as_str()).await.unwrap();
+    assert_eq!(ops::count(&mut tx).await.unwrap(), 1);
+    assert_eq!(ops::count_all(&mut tx).await.unwrap(), 1);
+    tx.commit().await.unwrap();
     assert_eq!(
         pool_repo
             .find_by_document(seeds.as_str())

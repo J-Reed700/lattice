@@ -13,13 +13,12 @@
 //! before finding ids is stored by its kind and place (`FindingKey`) and
 //! stands for every finding of that kind at that place until the text
 //! changes.
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::{SqliteConnection, SqlitePool};
 
 use super::repository::blocks;
 use super::repository::teaching_findings::{self as table, FindingWrite, Settle, StoredFinding};
@@ -165,18 +164,18 @@ fn site_of(site: &str, index: Option<i64>) -> Option<FindingSite> {
 
 #[derive(Clone)]
 pub struct TeachingFindingsRepository {
-    pool: SqlitePool,
+    database: Database,
 }
 
 impl TeachingFindingsRepository {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
     /// The lesson's findings whose part still has the text they were found
     /// in: the machine does not repair these again.
     pub(crate) async fn held(&self, lesson_id: &str, candidate: &Value) -> Result<Held> {
-        let rows = table::held_rows(&self.pool, lesson_id).await?;
+        let rows = table::held_rows(&self.database, lesson_id).await?;
         let mut held = Held::default();
         for row in &rows {
             let id = FindingId::stored(row.finding_key.clone());
@@ -224,7 +223,7 @@ impl TeachingFindingsRepository {
         findings: &[SetAside],
         replace: bool,
     ) -> Result<()> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         let at = now();
         let places = table::place_rows(&mut tx, lesson_id).await?;
         let mut stay: Vec<String> = Vec::new();
@@ -271,7 +270,7 @@ impl TeachingFindingsRepository {
 
     /// The lesson's findings: by place, then kind.
     pub async fn list(&self, lesson_id: &str) -> Result<Vec<TeachingFindingDto>> {
-        let rows = table::stored_findings(&self.pool, lesson_id).await?;
+        let rows = table::stored_findings(&self.database, lesson_id).await?;
         let sections = self.sections_for_old_rows(lesson_id, &rows).await?;
         rows.iter()
             .map(|row| {
@@ -354,7 +353,7 @@ impl TeachingFindingsRepository {
         if !wanted {
             return Ok(HashMap::new());
         }
-        blocks::section_bodies(&self.pool, lesson_id).await
+        blocks::section_bodies(&self.database, lesson_id).await
     }
 
     /// Keeps, resolves or reopens every finding in `finding_keys` in one
@@ -385,7 +384,7 @@ impl TeachingFindingsRepository {
             ),
             TeachingSettleDto::Reopen => (&["kept", "resolved"][..], "waiting", None, None, None),
         };
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         let change = Settle {
             from,
             to,
@@ -401,14 +400,6 @@ impl TeachingFindingsRepository {
         }
         tx.commit().await.map_err(db)
     }
-}
-
-/// The (lesson, question index) pairs of a program whose question finding waits and whose part is unchanged.
-pub(crate) async fn waiting_questions_in(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-) -> Result<HashSet<(String, usize)>> {
-    table::waiting_questions(connection, program_id).await
 }
 
 #[cfg(test)]

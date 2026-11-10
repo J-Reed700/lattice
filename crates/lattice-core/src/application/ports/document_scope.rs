@@ -30,6 +30,15 @@ pub trait DocumentScopePort: Send + Sync {
         conversation_id: Option<&str>,
     ) -> Result<()>;
 
+    /// Stamp the owner and assign the space, whichever are given, in one
+    /// transaction: a document is filed completely or not at all.
+    async fn file_documents(
+        &self,
+        document_ids: &[String],
+        owner_conversation_id: Option<&str>,
+        space_id: Option<&str>,
+    ) -> Result<()>;
+
     /// The conversation that owns this document, or `None` when it is filed in
     /// the library (or does not exist).
     async fn conversation_owner(&self, document_id: &str) -> Result<Option<String>>;

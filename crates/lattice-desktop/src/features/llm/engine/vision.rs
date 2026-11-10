@@ -9,10 +9,11 @@
 use std::path::{Path, PathBuf};
 
 use lattice_core::application::contracts::settings::LLMSettingsDto;
+use lattice_core::application::ports::llm_port::ContentPart;
 use lattice_core::domain::models::curated::{chat_model_vision, ChatModelVision};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::models::vision::{cloud_vision_default, VisionGeometry};
-use lattice_core::shared::error::AppError;
+use lattice_core::shared::error::{AppError, Result};
 
 /// The geometry `model` sees with under `settings`, or `None` when it cannot
 /// see. Bundled local models are declared by the catalog instead and resolve
@@ -81,10 +82,23 @@ pub(crate) fn not_set_up_to_see(model: &str) -> AppError {
 
 /// The refusal of pictures in a message that is not the user's: no provider
 /// format carries them anywhere else.
-pub(crate) fn pictures_outside_a_user_message(role: &str) -> AppError {
+fn pictures_outside_a_user_message(role: &str) -> AppError {
     AppError::InvalidInput(format!(
         "Only a user message can carry pictures; this one is from {role}"
     ))
+}
+
+/// A user message's parts in one format, in the order given; a message from
+/// any other role carries no pictures.
+pub(crate) fn user_parts<'a, T>(
+    role: &str,
+    parts: &'a [ContentPart],
+    part: impl Fn(&'a ContentPart) -> T,
+) -> Result<Vec<T>> {
+    if role != "user" {
+        return Err(pictures_outside_a_user_message(role));
+    }
+    Ok(parts.iter().map(part).collect())
 }
 
 #[cfg(test)]

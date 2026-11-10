@@ -981,7 +981,7 @@ fn kept_rules(lesson: &Value) -> Vec<Rule> {
 #[test]
 fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
     type Mutation = fn(&mut Value);
-    let rows: [(&str, Mutation, Rule); 17] = [
+    let rows: [(&str, Mutation, Rule); 18] = [
         (
             "blank block title",
             |l| l["blocks"][0]["title"] = json!("  "),
@@ -1072,6 +1072,11 @@ fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
             Rule::NoExplanation,
         ),
         (
+            "a code fence the body never closes",
+            |l| l["blocks"][1]["body"] = json!("Run it:\n```python\nprint(1)\n"),
+            Rule::FenceUnclosed,
+        ),
+        (
             "a rubric with a repeated criterion",
             |l| {
                 let criterion = json!({"title":"Names the step","description":"Says which step comes next.","dimension":"recall"});
@@ -1111,6 +1116,60 @@ fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
             checked.is_ok(),
             "{name}: the save gate refuses it: {checked:?}"
         );
+    }
+}
+
+fn open_fences(lesson: &Value) -> Vec<(FindingSite, String, String)> {
+    crate::generation::lesson_rules(lesson, Vec::new())
+        .into_iter()
+        .filter(|finding| {
+            matches!(
+                finding.origin,
+                crate::review_findings::Origin::Rule {
+                    rule: Rule::FenceUnclosed,
+                    ..
+                }
+            )
+        })
+        .map(|finding| (finding.site.unwrap(), finding.summary, finding.note))
+        .collect()
+}
+
+#[test]
+fn a_section_that_opens_a_fence_it_never_closes_is_reported_at_its_section() {
+    for (kind, index) in [("worked_example", 1), ("explanation", 0), ("recap", 10)] {
+        let mut lesson = sweep_baseline(false);
+        lesson["blocks"][index]["kind"] = json!(kind);
+        lesson["blocks"][index]["body"] = json!("Run it:\n```python\nprint(1)\n");
+        let found = open_fences(&lesson);
+        assert_eq!(found.len(), 1, "{kind}");
+        let (site, summary, note) = &found[0];
+        assert_eq!(*site, FindingSite::Section(index));
+        assert_eq!(
+            *summary,
+            format!("Section {} opens a code fence it never closes.", index + 1)
+        );
+        assert!(note.starts_with(&format!(
+            "Section {} (candidate blocks-{index}) opens a code fence it never closes",
+            index + 1
+        )));
+        assert!(note.contains("shown as code"), "{note}");
+        assert!(note.contains("line of the same marks"), "{note}");
+    }
+}
+
+#[test]
+fn closed_fences_are_never_reported() {
+    for body in [
+        "```python\nprint(1)\n```\n",
+        "~~~\nplain\n~~~\n",
+        "```\nplain\n````\n",
+        "````markdown\n```\ninner\n```\n````\n",
+        "No fence at all.",
+    ] {
+        let mut lesson = sweep_baseline(false);
+        lesson["blocks"][1]["body"] = json!(body);
+        assert!(open_fences(&lesson).is_empty(), "{body:?}");
     }
 }
 
@@ -1173,4 +1232,15 @@ fn a_part_of_a_sourced_course_naming_no_source_is_saved_with_none_and_waits() {
             "{name}: the save gate refuses it: {checked:?}"
         );
     }
+}
+
+#[test]
+fn a_candidate_with_no_sections_does_not_read_as_a_lesson() {
+    assert!(crate::generation::reads_as_lesson(&sweep_baseline(false)));
+    let mut lesson = sweep_baseline(false);
+    lesson["blocks"] = json!([]);
+    assert!(!crate::generation::reads_as_lesson(&lesson));
+    assert!(!crate::generation::reads_as_lesson(
+        &json!({"blocks": [], "questions": []})
+    ));
 }

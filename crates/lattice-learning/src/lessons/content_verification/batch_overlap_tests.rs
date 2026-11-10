@@ -125,7 +125,7 @@ async fn a_batch_failing_twice_names_its_sections_and_the_others_are_kept() -> R
     let (repo, job, lesson) = batch_scheduler_tests::setup(&pool).await?;
     let model = Flaky::new(2);
     let content = sections(5);
-    crate::lesson_drafts::run(&repo, &job, &lesson, async {
+    crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let error = inventory::extract_remaining(&model, &content, vec![])
             .await
             .err()

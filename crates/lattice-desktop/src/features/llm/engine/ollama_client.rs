@@ -12,6 +12,7 @@
 //! the request's time budget. Do not reintroduce a client-wide timeout.
 
 use std::collections::{BTreeMap, HashMap};
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -20,6 +21,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, StatusCode};
 use tracing::{debug, warn};
 
+use crate::features::llm::backend::{ignore_text, ModelBackend, Progress};
 use crate::features::llm::engine::circuit_breaker::{
     CircuitBreaker, CircuitBreakerConfig, CircuitBreakerError,
 };
@@ -27,8 +29,10 @@ use crate::features::llm::engine::types::{
     OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse, OllamaTool, OllamaToolCall,
     OllamaToolCallFunction,
 };
-use crate::features::llm::engine::vision::{not_set_up_to_see, pictures_outside_a_user_message};
+use crate::features::llm::engine::vision::{not_set_up_to_see, user_parts};
 use crate::features::llm::engine::GenerationConfig;
+use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
+use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse, ContentPart, ServedTiming, ThinkingMode,
 };
@@ -76,6 +80,23 @@ pub struct OllamaClient {
 const FALLBACK_CONTEXT_WINDOW: usize = 131_072;
 
 impl OllamaClient {
+    /// The mode the model runs `request` in: the user's pin, or the request
+    /// with tool rounds held off.
+    fn thinking_mode(&self, request: &CompletionRequest) -> ThinkingMode {
+        self.config.thinking_override.mode_for(request)
+    }
+
+    /// Behind the scheduler of this server's endpoint on `schedulers`.
+    pub(crate) fn schedule(self, schedulers: &SchedulerRegistry) -> Arc<dyn LLMPort> {
+        let scheduler = schedulers.ollama(&self.base_url, ollama_max_concurrency());
+        Arc::new(ScheduledLlm::new(Arc::new(self), scheduler))
+    }
+
+    /// This client as a port, behind a scheduler of its own.
+    pub fn into_port(self) -> Arc<dyn LLMPort> {
+        self.schedule(&SchedulerRegistry::default())
+    }
+
     /// A client for `model_name` with the default probe and stream timeouts.
     pub fn with_model(base_url: impl Into<String>, model_name: impl Into<String>) -> Result<Self> {
         Self::with_model_and_timeouts(
@@ -248,8 +269,9 @@ impl OllamaClient {
         )))
     }
 
-    /// The `/api/chat` body for a typed request.
-    fn chat_request(&self, request: &CompletionRequest) -> Result<OllamaChatRequest> {
+    /// The `/api/chat` body for a fitted request.
+    fn chat_request(&self, fitted: &Fitted<'_>) -> Result<OllamaChatRequest> {
+        let request = fitted.request();
         if request.has_images() && self.vision.is_none() {
             return Err(not_set_up_to_see(&self.model_name));
         }
@@ -270,16 +292,13 @@ impl OllamaClient {
                 // Ollama takes a message's pictures as a list of base64
                 // strings beside its text.
                 CompletionInput::Multimodal { role, parts } => {
-                    if role != "user" {
-                        return Err(pictures_outside_a_user_message(role));
-                    }
-                    let text: Vec<&str> = parts
-                        .iter()
-                        .filter_map(|part| match part {
-                            ContentPart::Text { text } => Some(text.as_str()),
-                            ContentPart::Image(_) => None,
-                        })
-                        .collect();
+                    let text: Vec<&str> = user_parts(role, parts, |part| match part {
+                        ContentPart::Text { text } => Some(text.as_str()),
+                        ContentPart::Image(_) => None,
+                    })?
+                    .into_iter()
+                    .flatten()
+                    .collect();
                     OllamaChatMessage {
                         role: role.clone(),
                         content: text.join("\n"),
@@ -357,8 +376,8 @@ impl OllamaClient {
         let sampling = request.sampling.unwrap_or_default();
         // Thinking is a template switch on Ollama as on llama.cpp, decided the
         // same way: the user's pin, or the request with tool rounds held off.
-        let thinking = self.config.thinking_override.mode_for(request);
-        let profile = self.config.profile(thinking);
+        let thinks = fitted.thinking().is_on();
+        let profile = self.config.profile(thinks);
         let mut options = HashMap::from([
             (
                 "temperature".to_string(),
@@ -386,13 +405,10 @@ impl OllamaClient {
                 "num_ctx".to_string(),
                 serde_json::json!(self.context_window),
             ),
-            (
-                "num_predict".to_string(),
-                serde_json::json!(request.effective_max_output_tokens(
-                    u32::try_from(self.config.max_tokens).unwrap_or(u32::MAX)
-                )),
-            ),
         ]);
+        if let Some(num_predict) = fitted.ceiling() {
+            options.insert("num_predict".to_string(), serde_json::json!(num_predict));
+        }
         if !request.stop.is_empty() {
             options.insert("stop".to_string(), serde_json::json!(request.stop));
         }
@@ -401,13 +417,13 @@ impl OllamaClient {
         // only a truthy `think` on a model without thinking, and leaving it out
         // let Qwen 3.5 think by its template's default. Turned on, a level
         // goes through for models that grade it (gpt-oss) and `true` otherwise.
-        let think = match (thinking, request.reasoning_effort.as_deref()) {
-            (ThinkingMode::Off, _) => serde_json::Value::Bool(false),
-            (ThinkingMode::On, None | Some("none")) => serde_json::Value::Bool(true),
-            (ThinkingMode::On, Some(effort @ ("low" | "medium" | "high"))) => {
+        let think = match (thinks, request.reasoning_effort.as_deref()) {
+            (false, _) => serde_json::Value::Bool(false),
+            (true, None | Some("none")) => serde_json::Value::Bool(true),
+            (true, Some(effort @ ("low" | "medium" | "high"))) => {
                 serde_json::Value::String(effort.to_string())
             }
-            (ThinkingMode::On, Some(_)) => {
+            (true, Some(_)) => {
                 return Err(AppError::InvalidInput(
                     "Ollama supports thinking on or off, or low, medium, and high levels".into(),
                 ));
@@ -432,11 +448,12 @@ impl OllamaClient {
     /// callbacks as they arrive.
     async fn chat(
         &self,
-        request: &CompletionRequest,
+        fitted: &Fitted<'_>,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
     ) -> Result<CompletionResponse> {
-        let body = self.chat_request(request)?;
+        let request = fitted.request();
+        let body = self.chat_request(fitted)?;
         let exchange = async {
             let response = self
                 .circuit_breaker
@@ -695,39 +712,25 @@ impl Answer {
 }
 
 #[async_trait]
-impl LLMPort for OllamaClient {
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.chat(request, &|_| Ok(()), &|_| Ok(())).await
-    }
-
-    async fn complete_with_progress(
-        &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-    ) -> Result<CompletionResponse> {
-        self.chat(request, on_text, &|_| Ok(())).await
-    }
-
-    async fn complete_with_reasoning_progress(
-        &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        _on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
-    ) -> Result<CompletionResponse> {
-        self.chat(request, on_text, on_reasoning).await
-    }
-
+impl ModelBackend for OllamaClient {
     fn model_name(&self) -> &str {
         &self.model_name
     }
 
-    fn max_context_tokens(&self) -> usize {
+    fn provider_name(&self) -> &str {
+        "ollama"
+    }
+
+    fn window(&self) -> usize {
         self.context_window
     }
 
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(self.health_check().await)
+    fn thinking(&self, request: &CompletionRequest) -> Thinking {
+        Thinking::from(self.thinking_mode(request))
+    }
+
+    fn output_limits(&self) -> OutputLimits {
+        OutputLimits::known(u32::try_from(self.config.max_tokens).unwrap_or(u32::MAX))
     }
 
     fn supports_tool_calling(&self) -> bool {
@@ -738,8 +741,34 @@ impl LLMPort for OllamaClient {
         self.vision
     }
 
-    fn provider_name(&self) -> &str {
-        "ollama"
+    fn keeps_read_prompts(&self) -> bool {
+        false
+    }
+
+    fn is_alive(&self) -> bool {
+        true
+    }
+
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(self.health_check().await)
+    }
+
+    async fn send(
+        &self,
+        fitted: &Fitted<'_>,
+        progress: Progress<'_>,
+    ) -> Result<CompletionResponse> {
+        match progress {
+            Progress::None => self.chat(fitted, &ignore_text, &ignore_text).await,
+            Progress::Streamed {
+                on_text,
+                on_reasoning,
+                ..
+            } => {
+                self.chat(fitted, on_text, on_reasoning.unwrap_or(&ignore_text))
+                    .await
+            }
+        }
     }
 }
 

@@ -7,7 +7,8 @@
 use super::attempt::Attempt;
 use super::{Admitted, Backoff, Deferral, JobRecord, JobStatus, NewJob, RecoveryPolicy};
 use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::Transactions;
+use crate::shared::persistence::driver::DriverPool;
+use crate::shared::persistence::{PersistenceError, PersistenceErrorKind, Transactions, WriteTx};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 
 const SUSPENDED: &str = "Saved; resumes when the app opens";
@@ -20,12 +21,13 @@ pub const STOPPED_THE_APP: &str = "stopped_the_app";
 const STOPPED_THE_APP_MESSAGE: &str =
     "Lattice closed unexpectedly twice while this was running, so it was not resumed. Retry it to try again.";
 
-fn db(error: sqlx::Error) -> AppError {
-    match error {
-        sqlx::Error::PoolTimedOut => AppError::ServiceNotAvailable(
+fn db(error: impl Into<PersistenceError>) -> AppError {
+    let error = error.into();
+    match error.kind() {
+        PersistenceErrorKind::Busy => AppError::ServiceNotAvailable(
             "The database is temporarily busy. Saved work is retained.".into(),
         ),
-        error => AppError::Database(error.to_string()),
+        _ => AppError::Database(error.to_string()),
     }
 }
 
@@ -115,11 +117,12 @@ pub struct JobStore {
 }
 
 impl JobStore {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
-    async fn immediate(&self) -> Result<sqlx::Transaction<'static, sqlx::Sqlite>> {
+    async fn immediate(&self) -> Result<WriteTx> {
         // Reserve the write lock before reading: upgrading a deferred WAL read
         // transaction can fail at once with SQLITE_BUSY instead of waiting.
         self.pool.begin_write().await.map_err(db)

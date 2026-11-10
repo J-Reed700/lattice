@@ -11,10 +11,11 @@ use lattice_core::domain::learning::claim_review::{
     Actor, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation, ClaimState, EventProvenance,
     HumanBinding, Ledger, UnitKind, UnverifiedReason, UserAction,
 };
+use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 
-use super::{provenance, user_resolution, ClaimReviewService, LabelSource, Planned};
+use super::{add_kinds, provenance, user_resolution, ClaimReviewService, LabelSource, Planned};
 use crate::content_verification::Rewritten;
 use crate::lessons::claim_reviews::published_edit::{placed, update_report};
 use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan, Written};
@@ -71,16 +72,6 @@ pub(super) fn count(items: usize) -> u32 {
     u32::try_from(items).unwrap_or(u32::MAX)
 }
 
-async fn current_text(
-    connection: &mut sqlx::SqliteConnection,
-    lesson_id: &str,
-    unit: usize,
-) -> Result<(String, String)> {
-    blocks::section_title_body(connection, lesson_id, unit)
-        .await?
-        .ok_or_else(|| AppError::InvalidInput(SECTION_CHANGED.into()))
-}
-
 pub(super) fn endings<'a>(
     claims: &'a [ClaimLedgerEntry],
     plan: &FieldPlan,
@@ -134,9 +125,11 @@ impl ClaimReviewService {
         if body.trim().is_empty() {
             return Err(AppError::InvalidInput(NO_TEXT.into()));
         }
-        let mut connection = self.pool().acquire().await.map_err(db)?;
-        let (old_title, old_body) = current_text(&mut connection, &lesson_id, unit).await?;
-        drop(connection);
+        let mut read = self.database.begin_read().await.map_err(db)?;
+        let current = blocks::section_title_body(&mut read, &lesson_id, unit).await?;
+        read.commit().await.map_err(db)?;
+        let (old_title, old_body) =
+            current.ok_or_else(|| AppError::InvalidInput(SECTION_CHANGED.into()))?;
         if old_title != before_title || old_body != before_body {
             return Err(AppError::InvalidInput(SECTION_CHANGED.into()));
         }
@@ -188,14 +181,50 @@ impl ClaimReviewService {
             return Ok(outcome);
         }
 
-        let at = now();
+        let write = SectionWrite {
+            program_id: &program_id,
+            lesson_id: &lesson_id,
+            unit,
+            old: (&old_title, &old_body),
+            new: (&title, &body),
+            written: &written,
+            ending: &ending,
+            at: now(),
+        };
+        let moved = self.write_section_edit(&ledger, &write).await?;
+        outcome.revision = self.settled_revision(&ledger, &lesson_id, moved).await?;
+        Ok(outcome)
+    }
+
+    /// The edit and its settlement in one unit of work: the section, the
+    /// ledger's events, the stored report, the teaching notes' marker and
+    /// what each ended statement gives the checker examples and calibration.
+    /// Returns the kinds whose bar the settlement moved.
+    async fn write_section_edit(
+        &self,
+        ledger: &Ledger,
+        write: &SectionWrite<'_>,
+    ) -> Result<Vec<ClaimKind>> {
+        let SectionWrite {
+            program_id,
+            lesson_id,
+            unit,
+            old,
+            new,
+            written,
+            ending,
+            at,
+        } = *write;
         let user = ledger.review.as_ref().map(provenance);
-        let mut tx = self.pool().begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         if ledger.review.is_some() {
-            check_revision(&mut tx, &lesson_id, ledger.revision).await?;
+            check_revision(&mut tx, lesson_id, ledger.revision).await?;
         }
-        let (now_title, now_body) = current_text(&mut tx, &lesson_id, unit).await?;
-        if now_title != old_title || now_body != old_body {
+        let now_text = blocks::section_title_body(&mut tx, lesson_id, unit).await?;
+        if now_text
+            .as_ref()
+            .is_none_or(|(title, body)| *title != old.0 || *body != old.1)
+        {
             return Err(AppError::InvalidInput(SECTION_CHANGED.into()));
         }
         let placed_written: Vec<(&str, UnitKind, &Written)> = written
@@ -204,11 +233,11 @@ impl ClaimReviewService {
             .collect();
         let planned = match &user {
             Some(user) => {
-                record_edit(&mut tx, &lesson_id, unit, &placed_written, &ending, user).await?
+                record_edit(&mut tx, lesson_id, unit, &placed_written, ending, user).await?
             }
             None => Vec::new(),
         };
-        blocks::write_section(&mut tx, &lesson_id, unit, &title, &body).await?;
+        blocks::write_section(&mut tx, lesson_id, unit, new.0, new.1).await?;
         let ended: HashSet<String> = ending
             .iter()
             .map(|item| item.entry.claim_id().0.clone())
@@ -221,26 +250,41 @@ impl ClaimReviewService {
         } else {
             Vec::new()
         };
-        update_report(&mut tx, &program_id, &lesson_id, |report| {
+        update_report(&mut tx, program_id, lesson_id, |report| {
             report.rewritten(&Rewritten {
                 unit,
-                new_title: &title,
-                new_body: &body,
+                new_title: new.0,
+                new_body: new.1,
                 ended: &ended,
                 written: &report_written,
                 at,
             })
         })
         .await?;
-        teaching_findings::mark_part_changed(&mut tx, &lesson_id, "section", unit, at).await?;
+        teaching_findings::mark_part_changed(&mut tx, lesson_id, "section", unit, at).await?;
         if ledger.review.is_some() {
-            bump_revision(&mut tx, &lesson_id).await?;
+            bump_revision(&mut tx, lesson_id).await?;
         }
+        let moved = self
+            .settle_planned_in(&mut tx, ledger, lesson_id, &planned)
+            .await?;
         tx.commit().await.map_err(db)?;
-
-        outcome.revision = self.settle_planned(&ledger, &lesson_id, planned).await?;
-        Ok(outcome)
+        Ok(moved)
     }
+}
+
+/// What a section edit writes: the section's text before and after as
+/// (title, body), the statements it writes and the ones it ends.
+#[derive(Clone, Copy)]
+struct SectionWrite<'a> {
+    program_id: &'a str,
+    lesson_id: &'a str,
+    unit: usize,
+    old: (&'a str, &'a str),
+    new: (&'a str, &'a str),
+    written: &'a [(&'a str, &'a Written)],
+    ending: &'a [Ending<'a>],
+    at: i64,
 }
 
 impl ClaimReviewService {
@@ -263,28 +307,44 @@ impl ClaimReviewService {
     }
 
     pub(super) async fn ensure_in_course(&self, program_id: &str, lesson_id: &str) -> Result<()> {
-        if !blocks::lesson_in_course(self.pool(), program_id, lesson_id).await? {
+        if !blocks::lesson_in_course(&self.database, program_id, lesson_id).await? {
             return Err(AppError::NotFound(NOT_IN_COURSE.into()));
         }
         Ok(())
     }
 
-    /// Settles each ending after the commit and answers the review's revision
-    /// now; none for a lesson without a review.
-    pub(super) async fn settle_planned(
+    /// Settles each ending on the edit's own unit of work.
+    pub(super) async fn settle_planned_in(
+        &self,
+        tx: &mut WriteTx,
+        ledger: &Ledger,
+        lesson_id: &str,
+        planned: &[Planned<'_>],
+    ) -> Result<Vec<ClaimKind>> {
+        let Some(review) = &ledger.review else {
+            return Ok(Vec::new());
+        };
+        let mut moved = Vec::new();
+        for item in planned {
+            let kinds = self.settle_in(tx, review, lesson_id, item).await?;
+            add_kinds(&mut moved, kinds);
+        }
+        Ok(moved)
+    }
+
+    /// Re-decides what the settlement's moved bars touch after the commit
+    /// and answers the review's revision now; none for a lesson without a
+    /// review.
+    pub(super) async fn settled_revision(
         &self,
         ledger: &Ledger,
         lesson_id: &str,
-        planned: Vec<Planned<'_>>,
+        moved: Vec<ClaimKind>,
     ) -> Result<Option<i64>> {
-        let Some(review) = &ledger.review else {
+        if ledger.review.is_none() {
             return Ok(None);
-        };
-        let mut redecided = false;
-        for item in planned {
-            redecided |= self.settle(review, lesson_id, item).await?;
         }
-        Ok(Some(if redecided {
+        Ok(Some(if self.redecide(lesson_id, moved).await? {
             self.store().load(lesson_id).await?.revision.0
         } else {
             ledger.revision.0 + 1
@@ -296,7 +356,7 @@ impl ClaimReviewService {
 /// wrote as a statement they confirmed, and for each statement that ends the
 /// edit or removal it stood under. Returns what to settle after the commit.
 pub(super) async fn record_edit<'a>(
-    tx: &mut sqlx::SqliteConnection,
+    tx: &mut WriteTx,
     lesson_id: &str,
     unit: usize,
     written: &[(&str, UnitKind, &Written)],

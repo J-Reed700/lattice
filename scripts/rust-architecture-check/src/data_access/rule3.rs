@@ -1,8 +1,12 @@
 //! Rule 3: a function whose statements, its own plus those of same-file helpers
-//! it calls, number two or more runs none on the pool, begins at most one write
-//! and one read transaction, reads before it begins the write transaction, and
-//! runs nothing after the write transaction commits.
-use super::{is_punct, walk_tokens, Violation};
+//! it calls, number two or more, or that is a unit of work in any module (it
+//! begins a transaction or takes a `WriteTx` / `ReadTx`), runs none on
+//! the pool, begins at most one write and one read transaction, reads before it
+//! begins the write transaction, and runs nothing after the write transaction
+//! commits.
+mod pool;
+
+use super::{is_punct, walk_tokens, Exception, Exempt, Violation};
 use crate::{
     item_attrs,
     ratchet::{impl_item_attrs, trait_item_attrs},
@@ -13,7 +17,7 @@ use quote::ToTokens;
 use std::collections::{HashMap, HashSet};
 use syn::{
     visit::{self, Visit},
-    Expr, FnArg, ImplItem, Item, Pat, TraitItem,
+    Expr, FnArg, ImplItem, Item, Pat, TraitItem, Type,
 };
 
 const STATEMENTS: [&str; 7] = [
@@ -27,7 +31,7 @@ const STATEMENTS: [&str; 7] = [
 ];
 
 #[derive(Clone, Copy, PartialEq)]
-enum Kind {
+pub(super) enum Kind {
     Write,
     Read,
 }
@@ -66,6 +70,14 @@ impl Arg {
     }
 }
 
+/// A `let` binding: its name, its annotated type and its initializer when that only copies
+/// something.
+struct Let {
+    name: String,
+    ty: Option<Type>,
+    core: Option<Arg>,
+}
+
 /// A call to a function that may be defined in the same file.
 struct Helper {
     name: String,
@@ -83,6 +95,11 @@ enum Event {
     Helper {
         helper: Helper,
         args: Vec<Arg>,
+        at: Position,
+    },
+    /// An awaited call outside a data module: a data operation if it passes a unit or a pool.
+    Operation {
+        arg: Arg,
         at: Position,
     },
     Begin {
@@ -103,13 +120,14 @@ impl Event {
         match self {
             Event::Statement { at, .. }
             | Event::Helper { at, .. }
+            | Event::Operation { at, .. }
             | Event::Begin { at, .. }
             | Event::Commit { at, .. } => *at,
         }
     }
 }
 
-fn binding(pat: &Pat) -> Option<String> {
+pub(super) fn binding(pat: &Pat) -> Option<String> {
     match pat {
         Pat::Ident(ident) => Some(ident.ident.to_string()),
         Pat::Type(typed) => binding(&typed.pat),
@@ -118,6 +136,36 @@ fn binding(pat: &Pat) -> Option<String> {
         }
         _ => None,
     }
+}
+
+/// Parameters typed `WriteTx` or `ReadTx`, by value or `&mut`, matched on the last path
+/// segment. The flag says the function owns the unit.
+pub(super) fn unit_params(signature: &syn::Signature) -> Vec<(String, Kind, bool)> {
+    signature
+        .inputs
+        .iter()
+        .filter_map(|input| {
+            let FnArg::Typed(typed) = input else {
+                return None;
+            };
+            let (ty, owned) = match &*typed.ty {
+                Type::Reference(reference) => {
+                    reference.mutability?;
+                    (&*reference.elem, false)
+                }
+                ty => (ty, true),
+            };
+            let Type::Path(path) = ty else {
+                return None;
+            };
+            let kind = match path.path.segments.last()?.ident.to_string().as_str() {
+                "WriteTx" => Kind::Write,
+                "ReadTx" => Kind::Read,
+                _ => return None,
+            };
+            Some((binding(&typed.pat)?, kind, owned))
+        })
+        .collect()
 }
 
 fn is_self(expr: &Expr) -> bool {
@@ -147,6 +195,7 @@ fn split_arguments(stream: TokenStream) -> Vec<Arg> {
 /// begins.
 #[derive(Default)]
 struct Body {
+    lets: Vec<Let>,
     acquired: HashSet<String>,
     writes: HashSet<String>,
     reads: HashSet<String>,
@@ -155,7 +204,20 @@ struct Body {
     next_block: usize,
     /// Blocks with a `return` among their own statements.
     returning: HashSet<usize>,
+    /// Whether awaited calls that pass a unit or a pool are data operations (outside data modules).
+    operations: bool,
 }
+
+/// Calls that begin, end or check out a unit of work: never data operations themselves.
+const UNIT_CALLS: [&str; 7] = [
+    "begin_write",
+    "begin_read",
+    "begin",
+    "begin_with",
+    "commit",
+    "rollback",
+    "acquire",
+];
 
 impl Body {
     fn call(&mut self, method: &str, arguments: &str, receiver: Option<&str>, at: Position) {
@@ -189,6 +251,41 @@ impl Body {
             }
             _ => {}
         }
+    }
+
+    fn operation(&mut self, base: &Expr) {
+        let (name, args, at) = match base {
+            Expr::MethodCall(call) => (
+                call.method.to_string(),
+                call.args.iter().collect::<Vec<_>>(),
+                position(call.method.span()),
+            ),
+            Expr::Call(call) => match &*call.func {
+                Expr::Path(function) => match function.path.segments.last() {
+                    Some(last) => (
+                        last.ident.to_string(),
+                        call.args.iter().collect(),
+                        position(last.ident.span()),
+                    ),
+                    None => return,
+                },
+                _ => return,
+            },
+            _ => return,
+        };
+        if STATEMENTS.contains(&name.as_str()) || UNIT_CALLS.contains(&name.as_str()) {
+            return;
+        }
+        let text = args
+            .iter()
+            .filter(|arg| !matches!(arg, Expr::Closure(_) | Expr::Async(_)))
+            .map(|arg| arg.to_token_stream().to_string())
+            .collect::<Vec<_>>()
+            .join(" , ");
+        self.events.push(Event::Operation {
+            arg: Arg::new(&text),
+            at,
+        });
     }
 
     fn helper(&mut self, helper: Helper, args: Vec<Arg>, at: Position) {
@@ -241,6 +338,14 @@ impl<'ast> Visit<'ast> for Body {
                 }
             }
         }
+        if let Some(name) = binding(&local.pat) {
+            let ty = match &local.pat {
+                Pat::Type(typed) => Some((*typed.ty).clone()),
+                _ => None,
+            };
+            let core = local.init.as_ref().and_then(|init| pool::alias(&init.expr));
+            self.lets.push(Let { name, ty, core });
+        }
         visit::visit_local(self, local);
     }
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
@@ -268,8 +373,20 @@ impl<'ast> Visit<'ast> for Body {
         }
         visit::visit_expr_method_call(self, call);
     }
+    fn visit_expr_await(&mut self, expr: &'ast syn::ExprAwait) {
+        if self.operations {
+            self.operation(&expr.base);
+        }
+        visit::visit_expr_await(self, expr);
+    }
     fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
         if let Expr::Path(function) = &*call.func {
+            if let Some(last) = function.path.segments.last() {
+                let name = last.ident.to_string();
+                if name == "begin_write" || name == "begin_read" {
+                    self.call(&name, "", None, position(last.ident.span()));
+                }
+            }
             let names: Vec<&syn::Ident> = function
                 .path
                 .segments
@@ -362,21 +479,50 @@ struct Def {
     /// Parameter names, without the receiver.
     params: Vec<String>,
     receiver: bool,
+    /// The parameters and bindings that hold the pool, by type or by what they copy.
+    pool_names: HashSet<String>,
+    /// The fields of `self` that hold the pool.
+    pool_fields: HashSet<String>,
+    /// Begins a transaction or takes a `WriteTx` / `ReadTx`.
+    unit: bool,
     body: Body,
 }
 
 /// Every function with a body in the file, and the type whose impl it sits in.
 #[derive(Default)]
 struct Collect {
+    operations: bool,
     owner: Option<String>,
     defs: Vec<Def>,
+    /// Per struct of the file, its fields that hold a pool.
+    fields: HashMap<String, HashSet<String>>,
+    /// The pool fields of the struct the current impl is for.
+    current: HashSet<String>,
+    /// The generics of the current impl that are bounded by `DriverPool`.
+    bounds: HashSet<String>,
 }
 
 impl Collect {
     fn function(&mut self, signature: &syn::Signature, block: &syn::Block) {
-        let mut body = Body::default();
+        let mut body = Body {
+            operations: self.operations,
+            ..Body::default()
+        };
         body.visit_block(block);
         body.events.sort_by_key(Event::at);
+        let units = unit_params(signature);
+        for (name, kind, _) in &units {
+            if *kind == Kind::Write {
+                body.writes.insert(name.clone());
+            } else {
+                body.reads.insert(name.clone());
+            }
+        }
+        let unit = !units.is_empty()
+            || body
+                .events
+                .iter()
+                .any(|event| matches!(event, Event::Begin { .. }));
         let params = signature
             .inputs
             .iter()
@@ -385,12 +531,43 @@ impl Collect {
                 FnArg::Typed(typed) => Some(binding(&typed.pat).unwrap_or_else(|| "_".into())),
             })
             .collect();
+        let mut bounded = pool::bounded(&signature.generics);
+        bounded.extend(self.bounds.iter().cloned());
+        let mut pool_names: HashSet<String> = signature
+            .inputs
+            .iter()
+            .filter_map(|input| match input {
+                FnArg::Typed(typed) if pool::pool_type(&typed.ty, &bounded) => binding(&typed.pat),
+                _ => None,
+            })
+            .collect();
+        let pool_fields = if signature.receiver().is_some() {
+            self.current.clone()
+        } else {
+            HashSet::new()
+        };
+        for each in &body.lets {
+            let pool = each
+                .ty
+                .as_ref()
+                .is_some_and(|ty| pool::pool_type(ty, &bounded))
+                || each
+                    .core
+                    .as_ref()
+                    .is_some_and(|arg| pool::pool_text(arg, &pool_names, &pool_fields));
+            if pool {
+                pool_names.insert(each.name.clone());
+            }
+        }
         self.defs.push(Def {
             name: signature.ident.to_string(),
             owner: self.owner.clone(),
             line: signature.fn_token.span.start().line,
             params,
             receiver: signature.receiver().is_some(),
+            pool_names,
+            pool_fields,
+            unit,
             body,
         });
     }
@@ -416,7 +593,21 @@ impl<'ast> Visit<'ast> for Collect {
         let outer = self
             .owner
             .replace(item.self_ty.to_token_stream().to_string());
+        let fields = match &*item.self_ty {
+            Type::Path(ty) => ty
+                .path
+                .segments
+                .last()
+                .and_then(|last| self.fields.get(&last.ident.to_string()))
+                .cloned()
+                .unwrap_or_default(),
+            _ => HashSet::new(),
+        };
+        let outer_fields = std::mem::replace(&mut self.current, fields);
+        let outer_bounds = std::mem::replace(&mut self.bounds, pool::bounded(&item.generics));
         visit::visit_item_impl(self, item);
+        self.current = outer_fields;
+        self.bounds = outer_bounds;
         self.owner = outer;
     }
     fn visit_item_trait(&mut self, item: &'ast syn::ItemTrait) {
@@ -467,6 +658,18 @@ impl<'a> Resolver<'a> {
         Self { defs, index }
     }
 
+    /// The same-file function a helper call reaches, when there is one.
+    fn resolve(&self, def: &Def, helper: &Helper) -> Option<usize> {
+        let owner = if helper.same_type {
+            def.owner.as_deref()
+        } else {
+            None
+        };
+        let next = *self.index.get(&(owner, helper.name.as_str()))?;
+        let callee = self.defs.get(next)?;
+        (!helper.method || callee.receiver).then_some(next)
+    }
+
     /// What `arg` is inside `def`. `bound` holds what each parameter received;
     /// it is `None` for the function being checked, where the text decides.
     fn target(def: &Def, bound: Option<&HashMap<String, Target>>, arg: &Arg) -> Target {
@@ -480,8 +683,7 @@ impl<'a> Resolver<'a> {
         if let Some(target) = bound.and_then(|bound| arg.words.iter().find_map(|w| bound.get(w))) {
             return *target;
         }
-        if arg.squashed.contains("self.pool")
-            || arg.squashed.contains("acquire()")
+        if pool::pool_text(arg, &def.pool_names, &def.pool_fields)
             || named(&def.body.acquired)
             || arg.squashed.contains("pool")
         {
@@ -504,13 +706,36 @@ impl<'a> Resolver<'a> {
         let Some(def) = self.defs.get(at) else {
             return;
         };
+        let resolved: HashSet<Position> = def
+            .body
+            .events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Helper { helper, at, .. } => self.resolve(def, helper).map(|_| *at),
+                _ => None,
+            })
+            .collect();
         for event in &def.body.events {
             match event {
                 Event::Statement { arg, .. } => out.push(Step::Statement {
                     target: Self::target(def, bound, arg),
                     via: via.clone(),
                 }),
-                Event::Begin { kind, .. } => out.push(Step::Begin(*kind)),
+                Event::Operation { arg, at } => {
+                    let target = Self::target(def, bound, arg);
+                    if target != Target::Other && !resolved.contains(at) {
+                        out.push(Step::Statement {
+                            target,
+                            via: via.clone(),
+                        });
+                    }
+                }
+                Event::Begin { kind, at } => {
+                    if !resolved.contains(at) {
+                        out.push(Step::Begin(*kind));
+                    }
+                }
+                Event::Commit { at, .. } if resolved.contains(at) => {}
                 Event::Commit {
                     kind,
                     block,
@@ -521,18 +746,13 @@ impl<'a> Resolver<'a> {
                     early: *nested && def.body.returning.contains(block),
                 }),
                 Event::Helper { helper, args, .. } => {
-                    let owner = if helper.same_type {
-                        def.owner.as_deref()
-                    } else {
-                        None
-                    };
-                    let Some(&next) = self.index.get(&(owner, helper.name.as_str())) else {
+                    let Some(next) = self.resolve(def, helper) else {
                         continue;
                     };
                     let Some(callee) = self.defs.get(next) else {
                         continue;
                     };
-                    if stack.contains(&next) || (helper.method && !callee.receiver) {
+                    if stack.contains(&next) {
                         continue;
                     }
                     let skip = usize::from(callee.receiver && !helper.method);
@@ -558,17 +778,22 @@ impl<'a> Resolver<'a> {
 pub fn violations(
     path: &str,
     ast: &syn::File,
-    exceptions: &[(&str, &str, &str)],
+    exceptions: &[Exception],
+    data: bool,
 ) -> Vec<Violation> {
-    let mut collect = Collect::default();
+    let mut collect = Collect {
+        operations: !data,
+        ..Collect::default()
+    };
+    collect.fields = pool::pool_fields(ast);
     collect.visit_file(ast);
     let resolver = Resolver::new(&collect.defs);
     let mut found = Vec::new();
     for (position, def) in collect.defs.iter().enumerate() {
-        let excepted = exceptions
-            .iter()
-            .any(|(file, function, _)| *file == path && *function == def.name);
-        if excepted {
+        let excepted = exceptions.iter().any(|(file, function, exempt, _)| {
+            *file == path && *function == def.name && *exempt == Exempt::Shape
+        });
+        if excepted || (!data && !def.unit) {
             continue;
         }
         let mut items = Vec::new();
@@ -583,7 +808,7 @@ pub fn violations(
             .iter()
             .filter(|item| matches!(item, Step::Statement { .. }))
             .count();
-        if statements < 2 {
+        if !def.unit && statements < 2 {
             continue;
         }
         let mut add = |message: String| {

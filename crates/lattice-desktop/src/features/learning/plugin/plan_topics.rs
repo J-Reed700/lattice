@@ -10,7 +10,7 @@ pub async fn get_learning_course_plan(
     program_id: String,
     container: State<'_, Container>,
 ) -> Result<CoursePlanViewDto, ApiError> {
-    course_plan::view(container.db_pool(), &program_id)
+    course_plan::view(container.database(), &program_id)
         .await
         .map_err(ApiError::from)
 }
@@ -21,13 +21,13 @@ pub async fn plan_learning_course(
     request: PlanLearningCourseRequestDto,
     container: State<'_, Container>,
 ) -> Result<CoursePlanViewDto, ApiError> {
-    if let Some(id) = course_plan::queue(container.db_pool(), &request.program_id)
+    if let Some(id) = course_plan::queue(container.database(), &request.program_id)
         .await
         .map_err(ApiError::from)?
     {
         container.jobs().submitted(&id).await;
     }
-    course_plan::view(container.db_pool(), &request.program_id)
+    course_plan::view(container.database(), &request.program_id)
         .await
         .map_err(ApiError::from)
 }
@@ -38,7 +38,7 @@ pub async fn edit_learning_course_plan_entry(
     request: EditCoursePlanEntryRequestDto,
     container: State<'_, Container>,
 ) -> Result<CoursePlanViewDto, ApiError> {
-    course_plan::edit_entry(container.db_pool(), request)
+    course_plan::edit_entry(container.database(), request)
         .await
         .map_err(ApiError::from)
 }
@@ -49,7 +49,7 @@ pub async fn change_learning_course_plan_entries(
     request: ChangeCoursePlanEntriesRequestDto,
     container: State<'_, Container>,
 ) -> Result<CoursePlanViewDto, ApiError> {
-    course_plan::check_change(container.db_pool(), &request)
+    course_plan::check_change(container.database(), &request)
         .await
         .map_err(ApiError::from)?;
     let pin = learning_model(
@@ -58,7 +58,7 @@ pub async fn change_learning_course_plan_entries(
         "Changing the planned topics",
     )
     .await?;
-    course_plan::change_entries(container.db_pool(), pin.llm.as_ref(), request)
+    course_plan::change_entries(container.database(), pin.llm.as_ref(), request)
         .await
         .map_err(ApiError::from)
 }
@@ -69,7 +69,7 @@ pub async fn undo_learning_course_plan_entry(
     request: UndoCoursePlanEntryRequestDto,
     container: State<'_, Container>,
 ) -> Result<CoursePlanViewDto, ApiError> {
-    course_plan::undo_entry(container.db_pool(), request)
+    course_plan::undo_entry(container.database(), request)
         .await
         .map_err(ApiError::from)
 }

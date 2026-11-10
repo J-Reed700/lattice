@@ -4,6 +4,7 @@ use super::topics_support::*;
 use super::*;
 use crate::repository::LearningRepository;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
+use sqlx::SqlitePool;
 use std::sync::Arc;
 
 async fn plan_jobs(pool: &SqlitePool, program_id: &str) -> i64 {
@@ -20,8 +21,12 @@ async fn planning_twice_admits_one_job() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
 
-    let first = queue(&pool, &program.summary.id).await.unwrap();
-    let second = queue(&pool, &program.summary.id).await.unwrap();
+    let first = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
+    let second = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
 
     assert!(first.is_some(), "a course with no plan is queued");
     assert_eq!(first, second);
@@ -32,9 +37,13 @@ async fn planning_twice_admits_one_job() {
 async fn a_job_carries_the_course_and_the_outline_revision_it_plans() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
-    let revision = outline_revision(&pool, &program.summary.id).await.unwrap();
+    let revision = outline_revision(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
 
-    let id = queue(&pool, &program.summary.id).await.unwrap();
+    let id = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
 
     assert!(id.is_some(), "a job is queued");
 
@@ -51,11 +60,15 @@ async fn a_completed_plan_is_a_no_op() {
     let pool = crate::tests::pool().await.unwrap();
     let (program, _) = planned_program(&pool, &Topics::new()).await;
 
-    let queued = queue(&pool, &program.summary.id).await.unwrap();
+    let queued = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
 
     assert_eq!(queued, None);
     assert_eq!(plan_jobs(&pool, &program.summary.id).await, 0);
-    let shown = view(&pool, &program.summary.id).await.unwrap();
+    let shown = view(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
     assert_eq!(shown.state, CoursePlanStateDto::Planned);
 }
 
@@ -64,7 +77,9 @@ async fn a_draft_course_can_be_planned() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
     let model = Arc::new(Topics::new());
-    let id = queue(&pool, &program.summary.id).await.unwrap();
+    let id = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
     assert!(id.is_some(), "a draft course is queued");
     let id = id.unwrap();
 
@@ -73,7 +88,9 @@ async fn a_draft_course_can_be_planned() {
     assert_eq!(model.calls(), 1);
     let job = JobStore::new(pool.clone()).get(&id).await.unwrap();
     assert_eq!(job.status, JobStatus::Completed);
-    let planned = view(&pool, &program.summary.id).await.unwrap();
+    let planned = view(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
     assert_eq!(planned.state, CoursePlanStateDto::Planned);
     assert_eq!(planned.entries.len(), 4);
 }
@@ -91,7 +108,9 @@ async fn an_active_course_can_be_planned() {
         .await
         .unwrap();
 
-    let id = queue(&pool, &program.summary.id).await.unwrap();
+    let id = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
 
     assert!(id.is_some());
 }
@@ -100,7 +119,7 @@ async fn an_active_course_can_be_planned() {
 async fn an_unknown_course_is_refused() {
     let pool = crate::tests::pool().await.unwrap();
 
-    let refused = queue(&pool, "no-such-program").await;
+    let refused = queue(&Database::from(pool.clone()), "no-such-program").await;
 
     assert!(matches!(refused, Err(AppError::NotFound(_))), "{refused:?}");
 }
@@ -110,7 +129,9 @@ async fn a_stale_revision_completes_without_a_call() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
     let model = Arc::new(Topics::new());
-    let id = queue(&pool, &program.summary.id).await.unwrap();
+    let id = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
     assert!(id.is_some(), "a job is queued");
     let id = id.unwrap();
     change_outline(&pool, &program.summary.id).await;
@@ -137,10 +158,14 @@ async fn a_stale_revision_completes_without_a_call() {
 async fn the_job_plans_the_revision_it_was_queued_for_and_a_new_one_after_an_outline_change() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
-    let first = queue(&pool, &program.summary.id).await.unwrap();
+    let first = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
     change_outline(&pool, &program.summary.id).await;
 
-    let second = queue(&pool, &program.summary.id).await.unwrap();
+    let second = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
 
     assert!(first.is_some());
     assert!(second.is_some());
@@ -154,7 +179,9 @@ async fn the_job_plans_the_revision_it_was_queued_for_and_a_new_one_after_an_out
 async fn a_failed_job_is_tried_again_when_the_course_is_planned_again() {
     let pool = crate::tests::pool().await.unwrap();
     let program = saved_program(&pool).await;
-    let failed = queue(&pool, &program.summary.id).await.unwrap();
+    let failed = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
     assert!(failed.is_some(), "a job is queued");
     let failed = failed.unwrap();
     let store = JobStore::new(pool.clone());
@@ -164,14 +191,18 @@ async fn a_failed_job_is_tried_again_when_the_course_is_planned_again() {
         .await
         .unwrap();
 
-    let again = queue(&pool, &program.summary.id).await.unwrap();
+    let again = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
 
     assert!(again.is_some(), "a new attempt is queued");
 
     let again = again.unwrap();
     assert_ne!(again, failed);
     assert_eq!(store.get(&again).await.unwrap().status, JobStatus::Pending);
-    let twice = queue(&pool, &program.summary.id).await.unwrap();
+    let twice = queue(&Database::from(pool.clone()), &program.summary.id)
+        .await
+        .unwrap();
     assert_eq!(
         twice,
         Some(again),

@@ -2,8 +2,9 @@
 
 use lattice_core::application::ports::document_scope::DocumentScopePort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use sqlx::{SqliteConnection, SqlitePool};
 
 // Bound JSON encoding and SQLite's per-statement work without one worker
 // round trip per document. All batches still share a single transaction.
@@ -13,7 +14,8 @@ pub struct SqliteDocumentScope {
     pool: SqlitePool,
 }
 impl SqliteDocumentScope {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 }
@@ -43,19 +45,7 @@ impl DocumentScopePort for SqliteDocumentScope {
             return Ok(());
         }
         let mut tx = self.pool.begin_write().await?;
-        let now = chrono::Utc::now().to_rfc3339();
-        for ids in document_ids.chunks(SCOPE_BATCH_SIZE) {
-            let scope = serde_json::to_string(ids)?;
-            sqlx::query(
-                "INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)
-                 SELECT value, ?, ? FROM json_each(?)",
-            )
-            .bind(space_id)
-            .bind(&now)
-            .bind(scope)
-            .execute(&mut *tx)
-            .await?;
-        }
+        assign_documents_in(&mut tx, document_ids, space_id).await?;
         tx.commit().await?;
         Ok(())
     }
@@ -69,16 +59,26 @@ impl DocumentScopePort for SqliteDocumentScope {
             return Ok(());
         }
         let mut tx = self.pool.begin_write().await?;
-        for ids in document_ids.chunks(SCOPE_BATCH_SIZE) {
-            let scope = serde_json::to_string(ids)?;
-            sqlx::query(
-                "UPDATE documents SET owner_conversation_id = ?
-                 WHERE id IN (SELECT value FROM json_each(?))",
-            )
-            .bind(conversation_id)
-            .bind(scope)
-            .execute(&mut *tx)
-            .await?;
+        set_conversation_owner_in(&mut tx, document_ids, conversation_id).await?;
+        tx.commit().await?;
+        Ok(())
+    }
+
+    async fn file_documents(
+        &self,
+        document_ids: &[String],
+        owner_conversation_id: Option<&str>,
+        space_id: Option<&str>,
+    ) -> Result<()> {
+        if document_ids.is_empty() || (owner_conversation_id.is_none() && space_id.is_none()) {
+            return Ok(());
+        }
+        let mut tx = self.pool.begin_write().await?;
+        if let Some(conversation) = owner_conversation_id {
+            set_conversation_owner_in(&mut tx, document_ids, Some(conversation)).await?;
+        }
+        if let Some(space) = space_id {
+            assign_documents_in(&mut tx, document_ids, space).await?;
         }
         tx.commit().await?;
         Ok(())
@@ -115,6 +115,46 @@ impl DocumentScopePort for SqliteDocumentScope {
         .fetch_all(&self.pool)
         .await?)
     }
+}
+
+async fn assign_documents_in(
+    conn: &mut SqliteConnection,
+    document_ids: &[String],
+    space_id: &str,
+) -> Result<()> {
+    let now = chrono::Utc::now().to_rfc3339();
+    for ids in document_ids.chunks(SCOPE_BATCH_SIZE) {
+        let scope = serde_json::to_string(ids)?;
+        sqlx::query(
+            "INSERT OR IGNORE INTO document_space_memberships (document_id, space_id, created_at)
+             SELECT value, ?, ? FROM json_each(?)",
+        )
+        .bind(space_id)
+        .bind(&now)
+        .bind(scope)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
+}
+
+async fn set_conversation_owner_in(
+    conn: &mut SqliteConnection,
+    document_ids: &[String],
+    conversation_id: Option<&str>,
+) -> Result<()> {
+    for ids in document_ids.chunks(SCOPE_BATCH_SIZE) {
+        let scope = serde_json::to_string(ids)?;
+        sqlx::query(
+            "UPDATE documents SET owner_conversation_id = ?
+             WHERE id IN (SELECT value FROM json_each(?))",
+        )
+        .bind(conversation_id)
+        .bind(scope)
+        .execute(&mut *conn)
+        .await?;
+    }
+    Ok(())
 }
 
 #[cfg(test)]

@@ -7,7 +7,7 @@ pub async fn start_learning_generation_job(
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
     let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     let job = repo.start_job(&request).await.map_err(ApiError::from)?;
     container.jobs().submitted(&job.id).await;
@@ -21,7 +21,7 @@ pub async fn cancel_learning_generation_job(
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
     let job = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .cancel_job(&request)
     .await
@@ -37,7 +37,7 @@ pub async fn retry_learning_generation_job(
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
     let repo = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     );
     let job = repo.retry_job(&request).await.map_err(ApiError::from)?;
     container.jobs().submitted(&job.id).await;
@@ -51,7 +51,7 @@ pub async fn get_learning_generation_job(
     container: State<'_, Container>,
 ) -> Result<LearningGenerationJob, ApiError> {
     crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .job(&id)
     .await
@@ -70,7 +70,7 @@ pub(super) fn generation_worker(
         runtimes,
         research_web: Some(container.web_service()),
         verifier: Some(super::audit::container_verifier(container)),
-        pool: container.db_pool().clone(),
+        database: container.database().clone(),
         courses: container.course_indexes().cloned(),
         load_llm: std::sync::Arc::new(move || {
             let container = model_container.clone();

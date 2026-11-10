@@ -1,10 +1,14 @@
 //! The attempts' rows: opening, handing in, asking for a grade again, recording the grade or why there is none, and
 //! reading an attempt back.
 
-use super::{Attempt, AttemptMode, AttemptStatus, Graded, Submission};
-use crate::persistence::{db, decode, encode, now};
+use super::{operation_id, Attempt, AttemptMode, AttemptStatus, Graded, Submission};
+use crate::drills::jobs::{DRILL_GRADING, GRADING_STEPS};
+use crate::drills::repository::{self as drill_repository, StoredDrill};
+use crate::persistence::{db, decode, encode, hash, now};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
 use serde::de::DeserializeOwned;
+use serde_json::json;
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
 /// Opens an attempt `id` on a drill.
@@ -25,6 +29,19 @@ pub(super) async fn insert_in(
     .await
     .map(drop)
     .map_err(db)
+}
+
+/// Opens an attempt on a drill the caller has taken from the bank.
+pub(crate) async fn open_in(
+    connection: &mut SqliteConnection,
+    drill_id: &str,
+    mode: AttemptMode,
+) -> Result<Attempt> {
+    let id = uuid::Uuid::new_v4().to_string();
+    insert_in(connection, &id, drill_id, mode).await?;
+    find_in(connection, &id)
+        .await?
+        .ok_or_else(|| AppError::InternalError("The attempt just opened is not there.".into()))
 }
 
 /// Stores what the learner handed in on an open attempt.
@@ -158,4 +175,48 @@ fn stored<T: DeserializeOwned>(row: &SqliteRow, column: &str) -> Result<Option<T
         .as_deref()
         .map(decode::<T>)
         .transpose()
+}
+
+/// The latest attempts on drills of the course, newest first, at most `limit`, each with the drill it is on.
+pub(crate) async fn recent_in(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+    limit: u32,
+) -> Result<Vec<(Attempt, StoredDrill)>> {
+    let ids = recent_ids_in(connection, program_id, limit).await?;
+    let mut recent = Vec::with_capacity(ids.len());
+    for id in ids {
+        let Some(attempt) = find_in(connection, &id).await? else {
+            continue;
+        };
+        let Some(drill) = drill_repository::find_in(connection, &attempt.drill_id).await? else {
+            continue;
+        };
+        recent.push((attempt, drill));
+    }
+    Ok(recent)
+}
+
+/// Queues the job that grades `attempt` as it stands. The operation ID derives from the attempt and the times it was
+/// asked for again, so queueing it twice finds the same job.
+pub(super) async fn queue_grading_in(
+    connection: &mut SqliteConnection,
+    attempt: &Attempt,
+) -> Result<String> {
+    let requested = json!({"attemptId": attempt.id, "regrades": attempt.regrades});
+    let payload_hash = hash(&requested)?;
+    let admitted = JobStore::submit_in(
+        connection,
+        &NewJob {
+            kind: DRILL_GRADING.into(),
+            subject_id: Some(attempt.id.clone()),
+            operation_id: operation_id(&attempt.id, attempt.regrades),
+            payload_hash,
+            requested,
+            progress_total: GRADING_STEPS,
+            message: "Waiting to grade your review".into(),
+        },
+    )
+    .await?;
+    Ok(admitted.id)
 }

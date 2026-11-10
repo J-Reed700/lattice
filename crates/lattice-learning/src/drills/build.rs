@@ -21,9 +21,9 @@ use crate::drills::material::{DrillMaterial, StageCtx};
 use crate::drills::spec::DrillSpec;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome};
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::SqlitePool;
 use std::future::Future;
 use tokio_util::sync::CancellationToken;
 
@@ -128,7 +128,7 @@ pub struct DrillBuild<'a> {
     llm: &'a dyn LLMPort,
     material: Box<dyn DrillMaterial + 'a>,
     grader: &'a dyn ReviewGrader,
-    pool: &'a SqlitePool,
+    database: Database,
     cancel: CancellationToken,
 }
 
@@ -138,14 +138,14 @@ impl<'a> DrillBuild<'a> {
         llm: &'a dyn LLMPort,
         material: Box<dyn DrillMaterial + 'a>,
         grader: &'a dyn ReviewGrader,
-        pool: &'a SqlitePool,
+        database: &Database,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             llm,
             material,
             grader,
-            pool,
+            database: database.clone(),
             cancel,
         }
     }
@@ -154,7 +154,7 @@ impl<'a> DrillBuild<'a> {
     fn context(&self) -> StageCtx<'_> {
         StageCtx {
             llm: self.llm,
-            pool: self.pool,
+            database: &self.database,
             cancel: &self.cancel,
         }
     }

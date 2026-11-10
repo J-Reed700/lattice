@@ -5,10 +5,11 @@ use super::{
 };
 use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use serde::Deserialize;
 use sqlx::sqlite::SqliteRow;
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 
 #[derive(Clone)]
 pub struct StudyRepository {
@@ -278,7 +279,7 @@ pub(crate) enum ReviewOutcome {
 /// transaction. Every review of every card goes through here. A review ID
 /// already recorded with a different answer is refused.
 pub(crate) async fn record_review(
-    tx: &mut Transaction<'_, Sqlite>,
+    tx: &mut SqliteConnection,
     review: &CardReview<'_>,
     now: i64,
 ) -> Result<ReviewOutcome> {
@@ -292,7 +293,7 @@ pub(crate) async fn record_review(
         "SELECT card_id,rating,mode,correct,selected_option FROM study_reviews WHERE id=?",
     )
     .bind(review.review_id)
-    .fetch_optional(&mut **tx)
+    .fetch_optional(&mut *tx)
     .await
     .map_err(db)?;
     if let Some(existing) = existing {
@@ -310,7 +311,7 @@ pub(crate) async fn record_review(
     }
     let row = sqlx::query("SELECT c.stability,c.difficulty,c.last_reviewed_at,c.due_at,c.interval_days,c.review_count,c.lapses,t.target_at FROM study_cards c LEFT JOIN study_deck_targets t ON t.deck_id=c.deck_id WHERE c.id=?")
         .bind(review.card_id)
-        .fetch_optional(&mut **tx)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Study card no longer exists".into()))?;
@@ -327,7 +328,7 @@ pub(crate) async fn record_review(
         .bind(mode)
         .bind(review.correct)
         .bind(selected_option)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(db)?;
     sqlx::query("UPDATE study_cards SET stability=?,difficulty=?,last_reviewed_at=?,due_at=?,interval_days=?,review_count=?,lapses=? WHERE id=?")
@@ -339,18 +340,14 @@ pub(crate) async fn record_review(
         .bind(next.review_count)
         .bind(next.lapses)
         .bind(review.card_id)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(db)?;
     Ok(ReviewOutcome::Recorded)
 }
 
 /// Insert a card row. Its schedule starts as a new FSRS card due at `due_at`.
-async fn insert_card(
-    tx: &mut Transaction<'_, Sqlite>,
-    deck_id: &str,
-    card: &StudyCardDto,
-) -> Result<()> {
+async fn insert_card(tx: &mut SqliteConnection, deck_id: &str, card: &StudyCardDto) -> Result<()> {
     match card.format {
         StudyCardFormat::MultipleChoice
             if card.options.is_empty() || card.correct_index >= card.options.len() =>
@@ -383,21 +380,111 @@ async fn insert_card(
         .bind(&card.topic)
         .bind(card.due_at)
         .bind(format_name(card.format))
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(db)?;
     Ok(())
 }
 
+/// Insert a deck and its cards in the caller's unit of work.
+async fn save_deck_in(tx: &mut SqliteConnection, deck: &StudyDeckDto) -> Result<()> {
+    sqlx::query(
+        "INSERT INTO study_decks (id,title,focus,study_goal,model_name,created_at) VALUES (?,?,?,?,?,?)",
+    )
+    .bind(&deck.id)
+    .bind(&deck.title)
+    .bind(&deck.focus)
+    .bind(&deck.study_goal)
+    .bind(&deck.model_name)
+    .bind(deck.created_at)
+    .execute(&mut *tx)
+    .await
+    .map_err(db)?;
+    for card in &deck.cards {
+        insert_card(tx, &deck.id, card).await?;
+    }
+    Ok(())
+}
+
+/// Read a deck and its cards through the caller's unit of work.
+async fn deck_in(conn: &mut SqliteConnection, id: &str) -> Result<StudyDeckDto> {
+    let row = sqlx::query("SELECT d.*,t.target_at FROM study_decks d LEFT JOIN study_deck_targets t ON t.deck_id=d.id WHERE d.id=?")
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await
+        .map_err(db)?
+        .ok_or_else(|| AppError::NotFound("Study deck no longer exists".into()))?;
+    let rows = sqlx::query("SELECT * FROM study_cards WHERE deck_id=? ORDER BY rowid")
+        .bind(id)
+        .fetch_all(&mut *conn)
+        .await
+        .map_err(db)?;
+    Ok(StudyDeckDto {
+        id: row.get("id"),
+        title: row.get("title"),
+        focus: row.get("focus"),
+        study_goal: row.get("study_goal"),
+        model_name: row.get("model_name"),
+        created_at: row.get("created_at"),
+        target_at: row.get("target_at"),
+        cards: rows.iter().map(card).collect::<Result<_>>()?,
+    })
+}
+
+/// Set or clear a deck's target in the caller's unit of work. Setting one
+/// makes every card that would next come up after it due now, so each is
+/// recalled at least once before the target.
+async fn set_target_in(
+    tx: &mut SqliteConnection,
+    deck_id: &str,
+    target_at: Option<i64>,
+    now: i64,
+) -> Result<()> {
+    let exists = sqlx::query("SELECT 1 FROM study_decks WHERE id=?")
+        .bind(deck_id)
+        .fetch_optional(&mut *tx)
+        .await
+        .map_err(db)?;
+    if exists.is_none() {
+        return Err(AppError::NotFound("Study deck no longer exists".into()));
+    }
+    match target_at {
+        Some(target) => {
+            sqlx::query("INSERT INTO study_deck_targets(deck_id,target_at) VALUES(?,?) ON CONFLICT(deck_id) DO UPDATE SET target_at=excluded.target_at")
+                .bind(deck_id)
+                .bind(target)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+            sqlx::query("UPDATE study_cards SET due_at=? WHERE deck_id=? AND due_at>?")
+                .bind(now)
+                .bind(deck_id)
+                .bind(target.saturating_sub(FINAL_WINDOW_MS))
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+        None => {
+            sqlx::query("DELETE FROM study_deck_targets WHERE deck_id=?")
+                .bind(deck_id)
+                .execute(&mut *tx)
+                .await
+                .map_err(db)?;
+        }
+    }
+    Ok(())
+}
+
 impl StudyRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
     /// Insert the canonical Study deck in a caller-owned transaction. Learning
     /// Studio uses this only when creating its one linked deck per program.
     pub async fn insert_learning_deck_in_transaction(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         id: &str,
         title: &str,
         focus: &str,
@@ -407,13 +494,13 @@ impl StudyRepository {
     ) -> Result<()> {
         sqlx::query("INSERT OR IGNORE INTO study_decks(id,title,focus,study_goal,model_name,created_at) VALUES(?,?,?,?,?,?)")
             .bind(id).bind(title).bind(focus).bind(study_goal).bind(model_name).bind(created_at)
-            .execute(&mut **tx).await.map_err(db)?;
+            .execute(&mut *tx).await.map_err(db)?;
         Ok(())
     }
 
     /// Insert a Learning-origin card into its program's deck.
     pub async fn insert_learning_card_in_transaction(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         card: &StudyCardDto,
     ) -> Result<()> {
         insert_card(tx, &card.deck_id, card).await
@@ -499,22 +586,38 @@ impl StudyRepository {
 
     pub async fn save(&self, deck: &StudyDeckDto) -> Result<()> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
-        sqlx::query(
-            "INSERT INTO study_decks (id,title,focus,study_goal,model_name,created_at) VALUES (?,?,?,?,?,?)",
-        )
-        .bind(&deck.id)
-        .bind(&deck.title)
-        .bind(&deck.focus)
-        .bind(&deck.study_goal)
-        .bind(&deck.model_name)
-        .bind(deck.created_at)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-        for card in &deck.cards {
-            insert_card(&mut tx, &deck.id, card).await?;
-        }
+        save_deck_in(&mut tx, deck).await?;
         tx.commit().await.map_err(db)
+    }
+
+    /// The interview deck for `deck.id`: saved when it is new, with `target_at`
+    /// set when one is given and the deck does not have it already, in one
+    /// write so a failure leaves no deck without its target and two calls
+    /// cannot both create it.
+    pub async fn ensure_interview_deck(
+        &self,
+        deck: &StudyDeckDto,
+        target_at: Option<i64>,
+        now: i64,
+    ) -> Result<StudyDeckDto> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let saved_target = match deck_in(&mut tx, &deck.id).await {
+            Ok(saved) => saved.target_at,
+            Err(AppError::NotFound(_)) => {
+                save_deck_in(&mut tx, deck).await?;
+                None
+            }
+            Err(error) => return Err(error),
+        };
+        // Setting a date makes every card scheduled into its final window due now.
+        // The same date again must not undo the rest a review scheduled before
+        // the interview, and no date keeps the one the deck has.
+        if target_at.is_some() && target_at != saved_target {
+            set_target_in(&mut tx, &deck.id, target_at, now).await?;
+        }
+        let result = deck_in(&mut tx, &deck.id).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(result)
     }
 
     pub async fn list(&self, now: i64) -> Result<Vec<StudyDeckSummaryDto>> {
@@ -539,28 +642,9 @@ impl StudyRepository {
 
     pub async fn get(&self, id: &str) -> Result<StudyDeckDto> {
         let mut read = self.pool.begin_read().await.map_err(db)?;
-        let row = sqlx::query("SELECT d.*,t.target_at FROM study_decks d LEFT JOIN study_deck_targets t ON t.deck_id=d.id WHERE d.id=?")
-            .bind(id)
-            .fetch_optional(&mut *read)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| AppError::NotFound("Study deck no longer exists".into()))?;
-        let rows = sqlx::query("SELECT * FROM study_cards WHERE deck_id=? ORDER BY rowid")
-            .bind(id)
-            .fetch_all(&mut *read)
-            .await
-            .map_err(db)?;
+        let deck = deck_in(&mut read, id).await?;
         read.commit().await.map_err(db)?;
-        Ok(StudyDeckDto {
-            id: row.get("id"),
-            title: row.get("title"),
-            focus: row.get("focus"),
-            study_goal: row.get("study_goal"),
-            model_name: row.get("model_name"),
-            created_at: row.get("created_at"),
-            target_at: row.get("target_at"),
-            cards: rows.iter().map(card).collect::<Result<_>>()?,
-        })
+        Ok(deck)
     }
 
     /// Set or clear the moment a deck must be remembered by. Setting one
@@ -568,38 +652,7 @@ impl StudyRepository {
     /// recalled at least once before the target.
     pub async fn set_target(&self, deck_id: &str, target_at: Option<i64>, now: i64) -> Result<()> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
-        let exists = sqlx::query("SELECT 1 FROM study_decks WHERE id=?")
-            .bind(deck_id)
-            .fetch_optional(&mut *tx)
-            .await
-            .map_err(db)?;
-        if exists.is_none() {
-            return Err(AppError::NotFound("Study deck no longer exists".into()));
-        }
-        match target_at {
-            Some(target) => {
-                sqlx::query("INSERT INTO study_deck_targets(deck_id,target_at) VALUES(?,?) ON CONFLICT(deck_id) DO UPDATE SET target_at=excluded.target_at")
-                    .bind(deck_id)
-                    .bind(target)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
-                sqlx::query("UPDATE study_cards SET due_at=? WHERE deck_id=? AND due_at>?")
-                    .bind(now)
-                    .bind(deck_id)
-                    .bind(target.saturating_sub(FINAL_WINDOW_MS))
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
-            }
-            None => {
-                sqlx::query("DELETE FROM study_deck_targets WHERE deck_id=?")
-                    .bind(deck_id)
-                    .execute(&mut *tx)
-                    .await
-                    .map_err(db)?;
-            }
-        }
+        set_target_in(&mut tx, deck_id, target_at, now).await?;
         tx.commit().await.map_err(db)
     }
 

@@ -82,9 +82,12 @@ async fn an_edit_writes_history_and_bumps_the_entry_revision() {
     let order = ids(&program);
     let wanted = topics_of(&order[1], "an idea the learner wrote");
 
-    let shown = edit_entry(&pool, edit_request(&program, revision, 1, wanted.clone()))
-        .await
-        .unwrap();
+    let shown = edit_entry(
+        &Database::from(pool.clone()),
+        edit_request(&program, revision, 1, wanted.clone()),
+    )
+    .await
+    .unwrap();
 
     let entry = entry_of(&shown, &order[1]);
     assert_eq!(entry.topics, wanted);
@@ -115,9 +118,12 @@ async fn an_edit_keeps_the_learners_words_whole_and_lets_the_contrast_be_empty()
     let mut wanted = topics_of(&order[0], &long);
     wanted.contrast = String::new();
 
-    let shown = edit_entry(&pool, edit_request(&program, revision, 1, wanted))
-        .await
-        .unwrap();
+    let shown = edit_entry(
+        &Database::from(pool.clone()),
+        edit_request(&program, revision, 1, wanted),
+    )
+    .await
+    .unwrap();
 
     let entry = entry_of(&shown, &order[0]);
     assert_eq!(entry.topics.ideas, vec![long]);
@@ -132,7 +138,11 @@ async fn an_edit_that_does_not_apply_is_refused_and_writes_nothing() {
     let before = snapshot(&pool, &program.summary.id).await;
     let fine = topics_of(&order[1], "an idea");
 
-    let stale = edit_entry(&pool, edit_request(&program, revision, 7, fine.clone())).await;
+    let stale = edit_entry(
+        &Database::from(pool.clone()),
+        edit_request(&program, revision, 7, fine.clone()),
+    )
+    .await;
     assert!(
         matches!(&stale, Err(AppError::InvalidState(text)) if text.contains("changed")),
         "{stale:?}"
@@ -140,7 +150,11 @@ async fn an_edit_that_does_not_apply_is_refused_and_writes_nothing() {
 
     let mut no_ideas = fine.clone();
     no_ideas.ideas.clear();
-    let empty = edit_entry(&pool, edit_request(&program, revision, 1, no_ideas)).await;
+    let empty = edit_entry(
+        &Database::from(pool.clone()),
+        edit_request(&program, revision, 1, no_ideas),
+    )
+    .await;
     assert!(
         matches!(&empty, Err(AppError::InvalidInput(text)) if text.contains("at least one idea")),
         "{empty:?}"
@@ -153,7 +167,11 @@ async fn an_edit_that_does_not_apply_is_refused_and_writes_nothing() {
             1 => topics.terms = vec![String::new()],
             _ => topics.actions = vec!["\t".into()],
         }
-        let refused = edit_entry(&pool, edit_request(&program, revision, 1, topics)).await;
+        let refused = edit_entry(
+            &Database::from(pool.clone()),
+            edit_request(&program, revision, 1, topics),
+        )
+        .await;
         assert!(
             matches!(&refused, Err(AppError::InvalidInput(text)) if text.contains("blank")),
             "{blank}: {refused:?}"
@@ -161,7 +179,11 @@ async fn an_edit_that_does_not_apply_is_refused_and_writes_nothing() {
     }
 
     let stranger = topics_of("not-a-lesson", "an idea");
-    let unknown = edit_entry(&pool, edit_request(&program, revision, 1, stranger)).await;
+    let unknown = edit_entry(
+        &Database::from(pool.clone()),
+        edit_request(&program, revision, 1, stranger),
+    )
+    .await;
     assert!(matches!(unknown, Err(AppError::NotFound(_))), "{unknown:?}");
 
     assert_eq!(snapshot(&pool, &program.summary.id).await, before);
@@ -176,7 +198,7 @@ async fn an_edit_after_the_outline_changed_is_refused_and_writes_nothing() {
     let before = snapshot(&pool, &program.summary.id).await;
 
     let refused = edit_entry(
-        &pool,
+        &Database::from(pool.clone()),
         edit_request(&program, revision, 1, topics_of(&order[1], "an idea")),
     )
     .await;
@@ -197,7 +219,7 @@ async fn an_edit_of_a_lesson_being_written_is_refused_and_writes_nothing() {
     let before = snapshot(&pool, &program.summary.id).await;
 
     let refused = edit_entry(
-        &pool,
+        &Database::from(pool.clone()),
         edit_request(&program, revision, 1, topics_of(&order[1], "an idea")),
     )
     .await;
@@ -209,7 +231,7 @@ async fn an_edit_of_a_lesson_being_written_is_refused_and_writes_nothing() {
     assert_eq!(snapshot(&pool, &program.summary.id).await, before);
 
     let other = edit_entry(
-        &pool,
+        &Database::from(pool.clone()),
         edit_request(&program, revision, 1, topics_of(&order[2], "an idea")),
     )
     .await;
@@ -231,7 +253,7 @@ async fn an_edit_of_a_ready_lesson_is_refused() {
         .unwrap();
 
     let refused = edit_entry(
-        &pool,
+        &Database::from(pool.clone()),
         edit_request(&program, revision, 1, topics_of(&order[3], "an idea")),
     )
     .await;
@@ -250,7 +272,7 @@ async fn a_change_replaces_only_the_selected_entries() {
     let model = Topics::new();
 
     let shown = change_entries(
-        &pool,
+        &Database::from(pool.clone()),
         &model,
         change_request(
             &program,
@@ -288,7 +310,7 @@ async fn a_change_is_asked_at_interactive_priority_under_a_schema_of_the_selecte
     let model = Topics::new();
 
     change_entries(
-        &pool,
+        &Database::from(pool.clone()),
         &model,
         change_request(
             &program,
@@ -334,7 +356,7 @@ async fn a_gap_in_a_change_is_asked_for_again_with_the_lesson_it_left_out() {
     let model = Topics::answering(vec![change_answer(&[&order[1]], "a first idea")]);
 
     let shown = change_entries(
-        &pool,
+        &Database::from(pool.clone()),
         &model,
         change_request(
             &program,
@@ -412,7 +434,7 @@ async fn a_change_that_cannot_apply_is_refused_before_the_model_is_asked() {
         ),
     ];
     for (name, request) in cases {
-        let refused = change_entries(&pool, &model, request).await;
+        let refused = change_entries(&Database::from(pool.clone()), &model, request).await;
         assert!(refused.is_err(), "{name} is refused");
     }
 
@@ -437,7 +459,7 @@ async fn a_change_whose_outline_moved_during_the_call_saves_nothing() {
     );
 
     let refused = change_entries(
-        &pool,
+        &Database::from(pool.clone()),
         &model,
         change_request(&program, revision, &[at(&order[1], 1)], "Rework this"),
     )
@@ -470,7 +492,7 @@ async fn a_change_whose_entry_moved_during_the_call_saves_nothing() {
     };
 
     let refused = change_entries(
-        &pool,
+        &Database::from(pool.clone()),
         &model,
         change_request(&program, revision, &[at(&order[1], 1)], "Rework this"),
     )
@@ -494,16 +516,25 @@ async fn undo_pops_the_history_one_entry_at_a_time() {
     let order = ids(&program);
     let first = topics_of(&order[1], "the first edit");
     let second = topics_of(&order[1], "the second edit");
-    edit_entry(&pool, edit_request(&program, revision, 1, first.clone()))
-        .await
-        .unwrap();
-    edit_entry(&pool, edit_request(&program, revision, 2, second.clone()))
-        .await
-        .unwrap();
+    edit_entry(
+        &Database::from(pool.clone()),
+        edit_request(&program, revision, 1, first.clone()),
+    )
+    .await
+    .unwrap();
+    edit_entry(
+        &Database::from(pool.clone()),
+        edit_request(&program, revision, 2, second.clone()),
+    )
+    .await
+    .unwrap();
 
-    let once = undo_entry(&pool, undo_request(&program, revision, &order[1], 3))
-        .await
-        .unwrap();
+    let once = undo_entry(
+        &Database::from(pool.clone()),
+        undo_request(&program, revision, &order[1], 3),
+    )
+    .await
+    .unwrap();
     let entry = entry_of(&once, &order[1]);
     assert_eq!(entry.topics, first);
     assert_eq!(entry.entry_revision, 4);
@@ -514,9 +545,12 @@ async fn undo_pops_the_history_one_entry_at_a_time() {
     );
     assert_eq!(snapshot(&pool, &program.summary.id).await.history.len(), 1);
 
-    let twice = undo_entry(&pool, undo_request(&program, revision, &order[1], 4))
-        .await
-        .unwrap();
+    let twice = undo_entry(
+        &Database::from(pool.clone()),
+        undo_request(&program, revision, &order[1], 4),
+    )
+    .await
+    .unwrap();
     let entry = entry_of(&twice, &order[1]);
     assert_eq!(entry.topics, the_planned_entry(&order[1]));
     assert_eq!(entry.entry_revision, 5);
@@ -526,7 +560,11 @@ async fn undo_pops_the_history_one_entry_at_a_time() {
         .history
         .is_empty());
 
-    let nothing = undo_entry(&pool, undo_request(&program, revision, &order[1], 5)).await;
+    let nothing = undo_entry(
+        &Database::from(pool.clone()),
+        undo_request(&program, revision, &order[1], 5),
+    )
+    .await;
     assert!(
         matches!(&nothing, Err(AppError::InvalidState(text)) if text.contains("nothing to undo")),
         "{nothing:?}"
@@ -539,34 +577,50 @@ async fn an_undo_that_does_not_apply_is_refused_and_writes_nothing() {
     let (program, revision) = planned_program(&pool, &Topics::new()).await;
     let order = ids(&program);
     edit_entry(
-        &pool,
+        &Database::from(pool.clone()),
         edit_request(&program, revision, 1, topics_of(&order[1], "an edit")),
     )
     .await
     .unwrap();
     let before = snapshot(&pool, &program.summary.id).await;
 
-    let stale = undo_entry(&pool, undo_request(&program, revision, &order[1], 1)).await;
+    let stale = undo_entry(
+        &Database::from(pool.clone()),
+        undo_request(&program, revision, &order[1], 1),
+    )
+    .await;
     assert!(
         matches!(&stale, Err(AppError::InvalidState(text)) if text.contains("changed")),
         "{stale:?}"
     );
 
-    let fresh = undo_entry(&pool, undo_request(&program, revision, &order[2], 1)).await;
+    let fresh = undo_entry(
+        &Database::from(pool.clone()),
+        undo_request(&program, revision, &order[2], 1),
+    )
+    .await;
     assert!(
         matches!(&fresh, Err(AppError::InvalidState(text)) if text.contains("nothing to undo")),
         "{fresh:?}"
     );
 
     lesson_job(&pool, &program, &order[1], true).await;
-    let locked = undo_entry(&pool, undo_request(&program, revision, &order[1], 2)).await;
+    let locked = undo_entry(
+        &Database::from(pool.clone()),
+        undo_request(&program, revision, &order[1], 2),
+    )
+    .await;
     assert!(
         matches!(&locked, Err(AppError::InvalidState(text)) if text.contains("being written")),
         "{locked:?}"
     );
 
     change_outline(&pool, &program.summary.id).await;
-    let moved = undo_entry(&pool, undo_request(&program, revision, &order[2], 1)).await;
+    let moved = undo_entry(
+        &Database::from(pool.clone()),
+        undo_request(&program, revision, &order[2], 1),
+    )
+    .await;
     assert!(
         matches!(&moved, Err(AppError::InvalidState(text)) if text.contains("outline changed")),
         "{moved:?}"

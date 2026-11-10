@@ -114,8 +114,8 @@ pub(in super::super) async fn mark_deleted(
     Ok(updated.rows_affected() == 1)
 }
 
-pub(in super::super) async fn active_text(
-    pool: &SqlitePool,
+pub(in super::super) async fn active_text_in(
+    conn: &mut SqliteConnection,
     program_id: &str,
     source_id: &str,
 ) -> Result<Option<String>> {
@@ -124,7 +124,7 @@ pub(in super::super) async fn active_text(
     )
     .bind(program_id)
     .bind(source_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(db)
 }

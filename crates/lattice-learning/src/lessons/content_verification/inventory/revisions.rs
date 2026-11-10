@@ -7,6 +7,8 @@
 //! replaced. Coverage of the entire changed section is still audited
 //! independently before fact checking.
 use super::*;
+#[cfg(any(test, feature = "test-support"))]
+use lattice_core::shared::persistence::Database;
 
 mod locations;
 
@@ -242,7 +244,7 @@ pub async fn live_revision_fixture(
     let before: Basis = serde_json::from_value(basis)?;
     let pool = crate::test_support::pool().await?;
     let (repo, job, lesson) = crate::content_verification::test_support::setup(&pool).await?;
-    crate::lesson_drafts::run(&repo, &job, &lesson, async {
+    crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
         let index = before.inventory.index;
         let original = before.inventory.clone();
         crate::lesson_drafts::record_checkpoint(&key(llm,index),serde_json::to_value(before)?).await?;
@@ -348,7 +350,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             save(&model, &before, &claims_of(1, "Bravo stands firm today.")).await?;
 
             assert!(update(&model, &after, 1).await?.is_none());
@@ -376,7 +378,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             for (index, sentence) in [
                 "Alpha holds the line.",
                 "Bravo stands firm today.",
@@ -434,7 +436,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             save(&model, &before, &unit).await?;
             let updated = update(&model, &after, 0).await?.unwrap();
 
@@ -543,7 +545,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             let updated = update(&model, &after, 0).await?.unwrap();
 
@@ -601,7 +603,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             update(&model, &once, 0).await?.unwrap();
             update(&model, &twice, 0).await?.unwrap();
@@ -635,7 +637,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             let updated = update(&model, &after, 0).await?.unwrap();
 
@@ -683,7 +685,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             save(&model, &before, &holding(&[(BRAVO, "Bravo is firm.")])).await?;
             let updated = update(&model, &after, 0).await?.unwrap();
 
@@ -708,7 +710,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             let first = update(&model, &after, 0).await?.unwrap();
             let again = update(&model, &after, 0).await?.unwrap();
@@ -737,7 +739,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             save(&model, &before, &holding(&saved)).await?;
             // What the revision of the saved statements kept for this edit: the
             // statement of the sentence that was rewritten, on its new words.
@@ -785,7 +787,7 @@ mod revision_tests {
         let pool = crate::tests::pool().await?;
         let (repo, job, lesson) =
             crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             let saved = holding(&[(first, "First is so."), (third, "Third is so.")]);
             save(&model, &before, &saved).await?;
             let updated = update(&model, &after, 0).await?.unwrap();

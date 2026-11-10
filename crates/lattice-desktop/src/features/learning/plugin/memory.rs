@@ -4,7 +4,7 @@ pub(super) async fn learning_memory(
     container: &Container,
     program_id: &str,
 ) -> lattice_core::shared::error::Result<LearningMemoryDto> {
-    let repo = LearningRepository::new(container.db_pool().clone());
+    let repo = LearningRepository::new(container.database().clone());
     let state = repo.memory_state(program_id).await?;
     let mut lesson_notes = Vec::with_capacity(state.lesson_notes.len());
     for (lesson_id, note_id) in state.lesson_notes {
@@ -15,7 +15,7 @@ pub(super) async fn learning_memory(
     let (study_deck, due_count) = match state.deck_id.as_deref() {
         Some(deck_id) => {
             let deck = crate::features::learning::recall::study_repository::StudyRepository::new(
-                container.db_pool().clone(),
+                container.database().clone(),
             )
             .get(deck_id)
             .await?;
@@ -52,7 +52,7 @@ pub async fn ensure_learning_lesson_note(
     request: EnsureLearningLessonNoteRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningMemoryDto, ApiError> {
-    let repo = LearningRepository::new(container.db_pool().clone());
+    let repo = LearningRepository::new(container.database().clone());
     let program = repo
         .get(&request.program_id)
         .await
@@ -88,7 +88,7 @@ pub async fn generate_learning_card_drafts(
     request: GenerateLearningCardDraftsRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningMemoryDto, ApiError> {
-    let repo = LearningRepository::new(container.db_pool().clone());
+    let repo = LearningRepository::new(container.database().clone());
     let mut program = repo
         .get(&request.program_id)
         .await
@@ -96,7 +96,7 @@ pub async fn generate_learning_card_drafts(
     // The program's sources carry stored previews; the model reads the whole
     // captured text of each cited version.
     let texts = crate::features::learning::source_library::LearningSourceLibraryRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
     .version_texts(&request.program_id)
     .await
@@ -155,7 +155,7 @@ pub async fn save_learning_card_draft(
             ),
         ));
     }
-    let repo = LearningRepository::new(container.db_pool().clone());
+    let repo = LearningRepository::new(container.database().clone());
     repo.save_manual_draft(&request)
         .await
         .map_err(ApiError::from)?;
@@ -170,7 +170,7 @@ pub async fn accept_learning_card_draft(
     request: LearningCardDraftActionRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningMemoryDto, ApiError> {
-    LearningRepository::new(container.db_pool().clone())
+    LearningRepository::new(container.database().clone())
         .accept_card_draft(&request.program_id, &request.draft_id)
         .await
         .map_err(ApiError::from)?;
@@ -185,7 +185,7 @@ pub async fn discard_learning_card_draft(
     request: LearningCardDraftActionRequestDto,
     container: State<'_, Container>,
 ) -> Result<LearningMemoryDto, ApiError> {
-    LearningRepository::new(container.db_pool().clone())
+    LearningRepository::new(container.database().clone())
         .discard_card_draft(&request.program_id, &request.draft_id)
         .await
         .map_err(ApiError::from)?;

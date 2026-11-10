@@ -1,7 +1,7 @@
 //! Conversation messages: append, read and two-phase-commit status changes.
 
 use super::ConversationRepository;
-use crate::features::conversation::persistence_mapper::{
+use crate::features::conversation::repository::mapper::{
     ConversationMessageMapper, ConversationMessageModel,
 };
 use chrono::Utc;
@@ -21,14 +21,14 @@ impl ConversationRepository {
     /// statements rather than `RETURNING`, so it does not depend on the bundled
     /// SQLite version.
     pub(super) async fn allocate_sequence(
-        tx: &mut sqlx::Transaction<'_, sqlx::Sqlite>,
+        tx: &mut sqlx::SqliteConnection,
         conversation_id: &str,
     ) -> Result<i64> {
         let updated = sqlx::query(
             "UPDATE conversations SET next_message_sequence = next_message_sequence + 1 WHERE id = ?",
         )
         .bind(conversation_id)
-        .execute(&mut **tx)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to allocate message sequence: {}", e)))?;
         if updated.rows_affected() != 1 {
@@ -40,7 +40,7 @@ impl ConversationRepository {
         let next: i64 =
             sqlx::query_scalar("SELECT next_message_sequence FROM conversations WHERE id = ?")
                 .bind(conversation_id)
-                .fetch_one(&mut **tx)
+                .fetch_one(&mut *tx)
                 .await
                 .map_err(|e| {
                     AppError::Database(format!("Failed to read message sequence: {}", e))
