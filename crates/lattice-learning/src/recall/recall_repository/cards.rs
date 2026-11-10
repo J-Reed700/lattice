@@ -329,7 +329,7 @@ impl LearningRecallRepository {
 
     async fn canonical_sources(
         &self,
-        tx: &mut Transaction<'_, Sqlite>,
+        tx: &mut SqliteConnection,
         program_id: &str,
         version_ids: &[String],
     ) -> Result<Vec<StudySourceDto>> {
@@ -338,7 +338,7 @@ impl LearningRecallRepository {
             let row = sqlx::query("SELECT v.id,v.title,v.excerpt,v.resolved_url,v.requested_url,s.id source_id,s.origin,s.kind,d.file_name,d.file_path FROM learning_source_versions v JOIN learning_source_library s ON s.program_id=v.program_id AND s.id=v.source_id LEFT JOIN documents d ON d.id=s.origin WHERE v.program_id=? AND v.id=?")
                 .bind(program_id)
                 .bind(version_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?
                 .ok_or_else(|| invalid("Source version does not belong to this program."))?;
@@ -363,7 +363,7 @@ impl LearningRecallRepository {
 
     async fn suggest_duplicates(
         &self,
-        tx: &mut Transaction<'_, Sqlite>,
+        tx: &mut SqliteConnection,
         program_id: &str,
         card_id: &str,
         prompt: &str,
@@ -373,7 +373,7 @@ impl LearningRecallRepository {
         let rows = sqlx::query("SELECT card_id,prompt_json FROM learning_recall_card_profiles WHERE program_id=? AND card_id<>?")
             .bind(program_id)
             .bind(card_id)
-            .fetch_all(&mut **tx)
+            .fetch_all(&mut *tx)
             .await
             .map_err(db)?;
         for row in rows {
@@ -395,7 +395,7 @@ impl LearningRecallRepository {
                 .bind(program_id)
                 .bind(first)
                 .bind(second)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
             if exists.is_some() {
@@ -409,7 +409,7 @@ impl LearningRecallRepository {
                 .bind("similar_prompt")
                 .bind(similarity)
                 .bind(timestamp)
-                .execute(&mut **tx)
+                .execute(&mut *tx)
                 .await
                 .map_err(db)?;
         }

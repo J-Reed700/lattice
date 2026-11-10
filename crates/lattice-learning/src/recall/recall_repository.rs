@@ -14,8 +14,9 @@ use crate::{
     source_selector::{create_quote_selector, match_quote_selector, LearningQuoteMatch},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashSet;
 
 mod cards;
@@ -70,7 +71,8 @@ pub struct LearningRecallRepository {
     pool: SqlitePool,
 }
 impl LearningRecallRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -149,7 +151,7 @@ impl LearningRecallRepository {
 
     async fn card_source_versions(
         &self,
-        tx: &mut Transaction<'_, Sqlite>,
+        tx: &mut SqliteConnection,
         program_id: &str,
         card_id: &str,
     ) -> Result<Vec<String>> {
@@ -158,7 +160,7 @@ impl LearningRecallRepository {
         )
         .bind(program_id)
         .bind(card_id)
-        .fetch_optional(&mut **tx)
+        .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
         let ids: Vec<String> = if let Some(value) = origin {
@@ -175,7 +177,7 @@ impl LearningRecallRepository {
             )
             .bind(program_id)
             .bind(&id)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?;
             if version_exists.is_some() {
@@ -186,11 +188,11 @@ impl LearningRecallRepository {
     }
 }
 
-async fn lock_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+async fn lock_active_program(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
     let result =
         sqlx::query("UPDATE learning_programs SET status=status WHERE id=? AND status='active'")
             .bind(program_id)
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await
             .map_err(db)?;
     if result.rows_affected() != 1 {
@@ -217,7 +219,7 @@ fn recall_operation<'a>(
     }
 }
 
-async fn memory_deck(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<String> {
+async fn memory_deck(tx: &mut SqliteConnection, program_id: &str) -> Result<String> {
     crate::repository::ensure_memory_resources(tx, program_id)
         .await
         .map(|(_, deck_id)| deck_id)

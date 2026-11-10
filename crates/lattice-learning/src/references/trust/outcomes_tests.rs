@@ -45,7 +45,7 @@ async fn forgetting_a_verdict_keeps_every_outcome_when_one_cannot_be_removed() -
         .await
         .unwrap();
 
-    let forgotten = outcomes::forget(&course.pool, "claim", TrustVerdict::Remove).await;
+    let forgotten = outcomes::forget(&course.database, "claim", TrustVerdict::Remove).await;
 
     assert!(forgotten.is_err());
     assert_eq!(course.store.outcomes().await?.len(), 2);

@@ -6,8 +6,8 @@ use crate::{
     repository::LearningRepository,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
 
 #[derive(sqlx::FromRow)]
 pub(crate) struct SavedEvidenceVersion {
@@ -28,10 +28,11 @@ pub(super) struct EvidenceSnapshot {
 }
 
 pub(super) async fn read(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<EvidenceSnapshot> {
+    let pool = pool.sqlx_pool();
     let mut tx = pool.begin_read().await?;
     let program = LearningRepository::get_on(&mut tx, program_id).await?;
     let lesson = program

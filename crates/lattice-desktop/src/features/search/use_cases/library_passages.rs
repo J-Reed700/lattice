@@ -109,6 +109,7 @@ mod tests {
     use crate::infrastructure::persistence::repositories::{
         ChunkRepository, DocumentRepositoryImpl,
     };
+    use lattice_core::shared::persistence::driver::DriverPool;
 
     const STAMP: &str = "2026-10-02T00:00:00Z";
 
@@ -117,8 +118,8 @@ mod tests {
     ) -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let db = DatabaseConnection::new(dir.path().join("library.db")).await?;
-        initialize_database(db.pool()).await?;
-        let pool = db.pool().clone();
+        initialize_database(db.database()).await?;
+        let pool = db.database().sqlx_pool().clone();
         let document_id = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,indexed_at,created_at,updated_at,checksum,status) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(&document_id).bind(format!("/tmp/{document_id}.txt")).bind("Field notes.txt")
@@ -170,11 +171,11 @@ mod tests {
     async fn an_empty_scope_searches_nothing() -> anyhow::Result<()> {
         let dir = tempfile::tempdir()?;
         let db = DatabaseConnection::new(dir.path().join("library.db")).await?;
-        initialize_database(db.pool()).await?;
+        initialize_database(db.database()).await?;
         let library = LibraryPassages::new(
             crate::features::search::mocks::empty_hybrid_search(),
-            Arc::new(DocumentRepositoryImpl::new(db.pool().clone())),
-            Arc::new(ChunkRepository::new(db.pool().clone())),
+            Arc::new(DocumentRepositoryImpl::new(db.database().clone())),
+            Arc::new(ChunkRepository::new(db.database().clone())),
         );
         assert!(library
             .search("anything", &HashSet::new(), 10)

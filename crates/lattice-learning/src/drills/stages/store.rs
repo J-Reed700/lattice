@@ -55,7 +55,7 @@ impl DrillBuild<'_> {
             built.checked,
             built.blind,
         );
-        let mut transaction = self.pool.begin_write().await.map_err(db)?;
+        let mut transaction = self.database.begin_write().await.map_err(db)?;
         repository::insert_in(
             &mut transaction,
             &NewDrill {

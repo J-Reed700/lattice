@@ -354,6 +354,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
     use crate::lessons::course_generation_tests::ScriptedModel;
+    use lattice_core::shared::persistence::Database;
     use std::sync::Mutex;
 
     fn answer(index: usize, passage: &str) -> Value {
@@ -381,7 +382,7 @@ mod tests {
             json!({"units":{}}),
         ]);
         let resumed = model(vec![fixture_response(vec![answer(1, "unit-1-passage-0")])]);
-        crate::lesson_drafts::run(&repo, &job, &lesson, async {
+        crate::lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson, async {
             crate::lesson_drafts::resume("inventory-retry-fixture".into()).await?;
             // The first failure is deferred: a retry may answer differently.
             let error = extract_remaining(&broken, &content, vec![])

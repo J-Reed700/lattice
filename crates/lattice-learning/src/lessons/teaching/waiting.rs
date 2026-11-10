@@ -10,7 +10,7 @@ use lattice_core::shared::error::Result;
 fn repository() -> Option<(TeachingFindingsRepository, String, String)> {
     crate::lesson_drafts::scope().map(|scope| {
         (
-            TeachingFindingsRepository::new(scope.pool),
+            TeachingFindingsRepository::new(scope.database),
             scope.lesson_id,
             scope.job_id,
         )

@@ -15,6 +15,8 @@
 
 mod checksum;
 mod chunks;
+#[cfg(test)]
+mod chunks_write_tests;
 mod context;
 mod documents;
 mod stats;
@@ -28,8 +30,9 @@ use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;
 use lattice_core::application::ports::IngestedDocumentStorePort;
 use lattice_core::domain::value_objects::ContextualizedChunk;
+use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{Sqlite, SqlitePool, Transaction};
+use sqlx::{SqliteConnection, SqlitePool};
 use std::path::{Path, PathBuf};
 
 /// Main storage interface for indexed documents.
@@ -37,13 +40,15 @@ use std::path::{Path, PathBuf};
 /// Provides methods for storing, retrieving, and managing documents
 /// with their associated text chunks and embeddings.
 pub struct IndexStorage {
-    pub pool: SqlitePool,
+    pool: SqlitePool,
 }
 
 impl IndexStorage {
     /// Create a new storage instance.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: impl DriverPool) -> Self {
+        Self {
+            pool: pool.sqlx_pool().clone(),
+        }
     }
 
     // Document operations
@@ -147,15 +152,15 @@ impl IndexStorage {
     /// Store document with context using external transaction.
     pub async fn store_document_with_context_and_file_tx(
         &self,
-        tx: &mut Transaction<'_, Sqlite>,
-        path: &Path,
+        tx: &mut SqliteConnection,
+        facts: &context::DocumentFacts,
         file_id: &str,
         mime_type: &str,
         chunks: Vec<ContextualizedChunk>,
         embeddings: Vec<Vec<f32>>,
     ) -> Result<String> {
         context::store_document_with_context_and_file_tx(
-            tx, path, file_id, mime_type, chunks, embeddings,
+            tx, facts, file_id, mime_type, chunks, embeddings,
         )
         .await
     }
@@ -239,9 +244,10 @@ impl IndexStorageTrait for IndexStorage {
         embeddings: Vec<Vec<f32>>,
         model_identity: &str,
     ) -> Result<String> {
+        let facts = context::read_document_facts(path).await?;
         let mut tx = self.pool.begin_write().await?;
         let id = context::store_document_with_context_and_file_tx(
-            &mut tx, path, "", mime_type, chunks, embeddings,
+            &mut tx, &facts, "", mime_type, chunks, embeddings,
         )
         .await?;
         sqlx::query("UPDATE text_embeddings SET model_name = ? WHERE chunk_id IN (SELECT id FROM text_chunks WHERE document_id = ?)")

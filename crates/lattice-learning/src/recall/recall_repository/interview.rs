@@ -1,5 +1,5 @@
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
@@ -13,7 +13,7 @@ pub(in crate::recall) struct InterviewActivity {
 }
 
 pub(in crate::recall) async fn activity(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     program_id: &str,
     activity_id: &str,
 ) -> Result<Option<InterviewActivity>> {
@@ -22,7 +22,7 @@ pub(in crate::recall) async fn activity(
     )
     .bind(program_id)
     .bind(activity_id)
-    .fetch_optional(pool)
+    .fetch_optional(&mut *conn)
     .await
     .map_err(db)?;
     Ok(row.map(|row| InterviewActivity {
@@ -34,7 +34,7 @@ pub(in crate::recall) async fn activity(
 
 /// The path and content of each of the activity's files at `paths`.
 pub(in crate::recall) async fn files(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     activity_id: &str,
     paths: [&str; 2],
 ) -> Result<Vec<(String, String)>> {
@@ -44,7 +44,7 @@ pub(in crate::recall) async fn files(
     .bind(activity_id)
     .bind(paths[0])
     .bind(paths[1])
-    .fetch_all(pool)
+    .fetch_all(&mut *conn)
     .await
     .map_err(db)?;
     Ok(files
@@ -55,14 +55,14 @@ pub(in crate::recall) async fn files(
 
 /// A source version's title and link.
 pub(in crate::recall) async fn source_title_and_link(
-    pool: &SqlitePool,
+    conn: &mut SqliteConnection,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<(String, Option<String>)>> {
     let row = sqlx::query("SELECT title,COALESCE(resolved_url,requested_url) url FROM learning_source_versions WHERE program_id=? AND id=?")
         .bind(program_id)
         .bind(version_id)
-        .fetch_optional(pool)
+        .fetch_optional(&mut *conn)
         .await
         .map_err(db)?;
     Ok(row.map(|row| (row.get("title"), row.get("url"))))

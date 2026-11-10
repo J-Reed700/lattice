@@ -7,6 +7,7 @@
 use lattice_core::application::ports::{ReferenceSnapshot, ReferenceSnapshotPort, WebServiceTrait};
 use lattice_core::domain::learning::claim_review::{Provenance, SourceAddedBy};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 
 use super::failures::AttachFailureDto;
 use super::report::SnapshotNoteDto;
@@ -75,7 +76,7 @@ pub(super) async fn acquire(
     program_id: &str,
     evidence: &Evidence,
 ) -> Result<Acquired> {
-    let repo = LearningSourceLibraryRepository::new(deps.pool.clone());
+    let repo = LearningSourceLibraryRepository::new(deps.database.clone());
     match evidence {
         Evidence::SavedPassage {
             source_version_id,
@@ -131,12 +132,12 @@ pub(crate) struct PageCapture<'a> {
 /// the page could not be saved; nothing was.
 pub(crate) async fn capture_page(
     capture: &PageCapture<'_>,
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     program_id: &str,
     url: &str,
     added_by: SourceAddedBy,
 ) -> Result<std::result::Result<SavedSource, AttachFailureDto>> {
-    let repo = LearningSourceLibraryRepository::new(pool.clone());
+    let repo = LearningSourceLibraryRepository::new(database.clone());
     Ok(
         match link(capture, &repo, program_id, url, added_by).await? {
             Acquired::Saved(source) => Ok(source.saved),

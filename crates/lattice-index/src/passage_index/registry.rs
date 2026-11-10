@@ -5,11 +5,8 @@
 //! the meta keys mean is the owner's: the registry hands them over as they
 //! are stored.
 
-use super::store::{
-    connect, db_error, read_counts, read_document_keys, read_meta, Counts, DB_FILE,
-};
-use lattice_core::shared::{AppError, Result};
-use sqlx::Connection;
+use super::store::{read_counts_and_meta_of, read_document_keys_of, read_meta_of, Counts, DB_FILE};
+use lattice_core::shared::Result;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
@@ -40,14 +37,7 @@ pub async fn list(base: &Path) -> Vec<Entry> {
         if !dir.is_dir() {
             continue;
         }
-        let meta = match connect(&dir).await {
-            Some(mut connection) => {
-                let meta = read_meta(&mut connection).await;
-                let _ = connection.close().await;
-                meta.unwrap_or_default()
-            }
-            None => HashMap::new(),
-        };
+        let meta = read_meta_of(&dir).await;
         indexes.push(Entry { dir, meta });
     }
     indexes
@@ -59,20 +49,8 @@ pub async fn inspect(dir: &Path, prefix: &str) -> Result<Option<Inspected>> {
     if !dir.join(DB_FILE).exists() {
         return Ok(None);
     }
-    let mut connection = connect(dir).await.ok_or_else(|| {
-        AppError::Database(format!(
-            "Passage index: could not open {}",
-            dir.join(DB_FILE).display()
-        ))
-    })?;
-    let read = async {
-        let meta = read_meta(&mut connection).await?;
-        let counts = read_counts(&mut connection, prefix).await?;
-        Ok::<_, sqlx::Error>(Inspected { counts, meta })
-    }
-    .await;
-    let _ = connection.close().await;
-    read.map(Some).map_err(db_error("read the index"))
+    let (counts, meta) = read_counts_and_meta_of(dir, prefix).await?;
+    Ok(Some(Inspected { counts, meta }))
 }
 
 /// The document keys `dir`'s index holds, read without opening it for
@@ -81,16 +59,7 @@ pub async fn document_keys(dir: &Path) -> Result<Option<Vec<String>>> {
     if !dir.join(DB_FILE).exists() {
         return Ok(None);
     }
-    let mut connection = connect(dir).await.ok_or_else(|| {
-        AppError::Database(format!(
-            "Passage index: could not open {}",
-            dir.join(DB_FILE).display()
-        ))
-    })?;
-    let keys = read_document_keys(&mut connection).await;
-    let _ = connection.close().await;
-    keys.map(Some)
-        .map_err(db_error("read the index's documents"))
+    read_document_keys_of(dir).await.map(Some)
 }
 
 /// Bytes on disk of the files directly in `dir`: `passages.db` with its

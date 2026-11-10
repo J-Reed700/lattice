@@ -22,8 +22,9 @@ use tauri::{
 fn imports(container: &Container) -> BatchImports {
     BatchImports::new(
         container.jobs().clone(),
-        BatchItems::new(container.db_pool().clone()),
-        Arc::new(SqliteDocumentScope::new(container.db_pool().clone())),
+        container.database().clone(),
+        BatchItems::new(container.database().clone()),
+        Arc::new(SqliteDocumentScope::new(container.database().clone())),
     )
 }
 
@@ -159,8 +160,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             let container = app.state::<Container>().inner().clone();
             let files = FileImporter {
                 index_file: Arc::clone(container.indexing.index_file_use_case()),
-                uow_factory: Arc::clone(container.indexing.uow_factory()),
-                document_scope: Arc::new(SqliteDocumentScope::new(container.db_pool().clone())),
+                database: container.database().clone(),
+                document_scope: Arc::new(SqliteDocumentScope::new(container.database().clone())),
                 load_embedding: embedding_loader(&container),
             };
             let urls = UrlImporter {
@@ -171,7 +172,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // then resumes them from their pending items.
             tauri::async_runtime::block_on(container.jobs().register_all(
                 super::worker::job_kinds(
-                    &BatchItems::new(container.db_pool().clone()),
+                    &BatchItems::new(container.database().clone()),
                     files,
                     urls,
                 ),

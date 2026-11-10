@@ -72,7 +72,7 @@ impl LearningSourceLibraryRepository {
     /// course, is theirs and is never marked. No model is asked. Returns the
     /// pages refused now.
     pub async fn sweep_admission(&self, program_id: &str) -> Result<Vec<RefusedSource>> {
-        let mut tx = self.pool.begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         let pages = stored::unadmitted(&mut tx, program_id, gate::POLICY).await?;
         let mut refused = Vec::new();
         for page in pages {
@@ -104,7 +104,7 @@ impl LearningSourceLibraryRepository {
     /// words, shortest first.
     pub async fn admitted_under(&self, program_id: &str, words: usize) -> Result<Vec<ShortSource>> {
         stored::admitted_under(
-            &self.pool,
+            &self.database,
             program_id,
             gate::POLICY,
             i64::try_from(words).unwrap_or(i64::MAX),
@@ -115,7 +115,7 @@ impl LearningSourceLibraryRepository {
     /// The pages the gate has refused that the program still holds, for the
     /// user to delete.
     pub async fn refused_sources(&self, program_id: &str) -> Result<Vec<RefusedSource>> {
-        stored::refused_sources(&self.pool, program_id).await
+        stored::refused_sources(&self.database, program_id).await
     }
 
     /// The sources research added that the gate admitted and no lesson cites
@@ -124,18 +124,18 @@ impl LearningSourceLibraryRepository {
     /// lesson is being prepared, as the job may be about to cite what research
     /// just added.
     pub async fn unused_research_sources(&self, program_id: &str) -> Result<Vec<UnusedSource>> {
-        if stored::job_running(&self.pool, LESSON_PREPARATION, program_id).await? {
+        if stored::job_running(&self.database, LESSON_PREPARATION, program_id).await? {
             return Ok(Vec::new());
         }
-        let rested_on = stored::cited_by_reports(&self.pool, program_id).await?;
+        let rested_on = stored::cited_by_reports(&self.database, program_id).await?;
         let mut unused = Vec::new();
         for research in
-            stored::admitted_added_by(&self.pool, program_id, SourceAddedBy::Research.as_str())
+            stored::admitted_added_by(&self.database, program_id, SourceAddedBy::Research.as_str())
                 .await?
         {
             if rested_on.contains(&research.version_id)
                 || !super::repository::reads::version_usage(
-                    &self.pool,
+                    &self.database,
                     program_id,
                     &research.version_id,
                 )

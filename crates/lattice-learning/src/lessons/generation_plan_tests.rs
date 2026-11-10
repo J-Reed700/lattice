@@ -52,7 +52,7 @@ async fn a_lesson_job_makes_the_course_plan_before_the_lesson_is_written() {
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        database: Database::from(pool.clone()),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -75,9 +75,12 @@ async fn a_lesson_job_makes_the_course_plan_before_the_lesson_is_written() {
         tasks.len() > 1 && tasks[1..].iter().all(|task| task != PLAN_TASK),
         "the plan is made once, then the lesson's own calls follow: {tasks:?}"
     );
-    let revision = crate::lessons::course_plan::outline_revision(&pool, &job.program_id)
-        .await
-        .unwrap();
+    let revision = crate::lessons::course_plan::outline_revision(
+        &Database::from(pool.clone()),
+        &job.program_id,
+    )
+    .await
+    .unwrap();
     let saved: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM learning_course_plan_lessons WHERE program_id=? AND outline_revision=?",
     )
@@ -136,15 +139,23 @@ async fn a_lesson_job_writes_from_the_entry_the_learner_edited() {
         .get(&job.program_id)
         .await
         .unwrap();
-    let revision = outline_revision(&pool, &job.program_id).await.unwrap();
+    let revision = outline_revision(&Database::from(pool.clone()), &job.program_id)
+        .await
+        .unwrap();
     let planner = PlansThenStops {
         tasks: Mutex::new(Vec::new()),
     };
-    ensure(&pool, &planner, &program, revision, &Default::default())
-        .await
-        .unwrap();
+    ensure(
+        &Database::from(pool.clone()),
+        &planner,
+        &program,
+        revision,
+        &Default::default(),
+    )
+    .await
+    .unwrap();
     edit_entry(
-        &pool,
+        &Database::from(pool.clone()),
         EditCoursePlanEntryRequestDto {
             program_id: job.program_id.clone(),
             outline_revision: revision,
@@ -167,7 +178,7 @@ async fn a_lesson_job_writes_from_the_entry_the_learner_edited() {
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        database: Database::from(pool.clone()),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -200,7 +211,7 @@ fn worker_on(pool: &SqlitePool, llm: Arc<dyn LLMPort>) -> LessonGenerationWorker
     LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        database: Database::from(pool.clone()),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -240,9 +251,11 @@ async fn learner_rewrites(pool: &SqlitePool, program_id: &str, lesson_id: &str) 
     use crate::lessons::course_plan::{
         edit_entry, outline_revision, EditCoursePlanEntryRequestDto, PlannedLesson,
     };
-    let revision = outline_revision(pool, program_id).await.unwrap();
+    let revision = outline_revision(&Database::from(pool.clone()), program_id)
+        .await
+        .unwrap();
     edit_entry(
-        pool,
+        &Database::from(pool.clone()),
         EditCoursePlanEntryRequestDto {
             program_id: program_id.to_owned(),
             outline_revision: revision,

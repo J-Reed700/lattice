@@ -59,7 +59,7 @@ async fn judge_institutional(course: &Course, saved: &Saved) -> Result<()> {
         .await?
         .expect("capture records provenance");
     let content =
-        super::judgements::content_evidence(course.store.pool(), &course.program_id, &record)
+        super::judgements::content_evidence(&course.database, &course.program_id, &record)
             .await?
             .expect("the version is the course's");
     let key = standing_key(&record.signals, &content, MODEL);
@@ -92,7 +92,7 @@ async fn judge_institutional(course: &Course, saved: &Saved) -> Result<()> {
 async fn an_unjudged_publisher_reads_as_unknown_and_says_why() -> Result<()> {
     let course = course().await?;
     let saved = page(&course, "https://docs.example.org/a").await?;
-    let trust = view(&course.store, &of_source(&course, &saved)).await?;
+    let trust = view(&course.database, &course.store, &of_source(&course, &saved)).await?;
     let entry = &trust.sources[0];
     assert_eq!(entry.source_id, saved.source_id);
     assert_eq!(entry.trust.level, LearningTrustLevel::Unknown);
@@ -108,7 +108,7 @@ async fn a_judged_publisher_is_levelled_with_its_reasons() -> Result<()> {
     let course = course().await?;
     let saved = page(&course, "https://docs.example.org/a").await?;
     judge_institutional(&course, &saved).await?;
-    let trust = view(&course.store, &of_source(&course, &saved)).await?;
+    let trust = view(&course.database, &course.store, &of_source(&course, &saved)).await?;
     let entry = &trust.sources[0];
     assert_eq!(entry.trust.level, LearningTrustLevel::Authoritative);
     assert_eq!(entry.trust.subject, None);
@@ -137,7 +137,7 @@ async fn a_source_override_fixes_the_level_and_names_its_scope() -> Result<()> {
             set_at: 1,
         })
         .await?;
-    let trust = view(&course.store, &of_source(&course, &saved)).await?;
+    let trust = view(&course.database, &course.store, &of_source(&course, &saved)).await?;
     let entry = &trust.sources[0];
     assert_eq!(entry.trust.level, LearningTrustLevel::Primary);
     assert_eq!(
@@ -171,7 +171,7 @@ async fn a_site_override_is_listed_on_its_sites_sources_only() -> Result<()> {
             set_at: 1,
         })
         .await?;
-    let trust = view(&course.store, &request(&course, None)).await?;
+    let trust = view(&course.database, &course.store, &request(&course, None)).await?;
     let listed: Vec<usize> = trust
         .sources
         .iter()
@@ -191,7 +191,12 @@ async fn a_claim_reads_its_profile_its_supports_and_the_bar_for_its_kind() -> Re
         statement: statement.into(),
         source_version_ids: vec![saved.version_id.clone(), saved.version_id.clone()],
     };
-    let unprofiled = view(&course.store, &request(&course, Some(claim.clone()))).await?;
+    let unprofiled = view(
+        &course.database,
+        &course.store,
+        &request(&course, Some(claim.clone())),
+    )
+    .await?;
     let unprofiled = unprofiled.claim.expect("claim asked for");
     assert_eq!(unprofiled.profile, None);
     assert_eq!(unprofiled.bar, None);
@@ -215,7 +220,12 @@ async fn a_claim_reads_its_profile_its_supports_and_the_bar_for_its_kind() -> Re
             assessed_at: 1,
         }])
         .await?;
-    let profiled = view(&course.store, &request(&course, Some(claim))).await?;
+    let profiled = view(
+        &course.database,
+        &course.store,
+        &request(&course, Some(claim)),
+    )
+    .await?;
     let profiled = profiled.claim.expect("claim asked for");
     let subject = profiled
         .profile

@@ -4,6 +4,7 @@ use crate::infrastructure::events::event_bus::EventBus;
 use crate::infrastructure::setup::{setup_app_directories, setup_database, setup_model_directory};
 use lattice_core::application::ports::SettingsRepositoryPort;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::supervised_task::supervise_cancellable;
 // ChunkRepositoryTrait removed - migrated to DDD ports
 use chrono::Utc;
@@ -64,7 +65,7 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 /// This container supports optional AI models - when models aren't installed,
 /// AI-dependent features return helpful error messages guiding users to download models.
 async fn create_container(
-    pool: sqlx::SqlitePool,
+    database: Database,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
     _security_context: Arc<crate::security::SecurityContext>,
     data_dir: PathBuf,
@@ -81,7 +82,7 @@ async fn create_container(
     // `with_app_handle` attaches the Tauri AppHandle so the sidecar
     // dispatch path can spawn `llama-server` via tauri-plugin-shell.
     Container::new(
-        pool,
+        database,
         db_conn,
         Some(app_handle.clone()),
         &ollama_endpoint,
@@ -193,7 +194,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
         let ollama_model = bootstrap_settings.llm.model.clone();
 
         let container = create_container(
-            conn.pool().clone(),
+            conn.database().clone(),
             Arc::new(conn),
             security_context,
             app_dir.clone(),
@@ -254,7 +255,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     match crate::features::indexing::library_owner::LibraryFiles::current() {
         Ok(files) => {
             super::startup_reconciliation::open_gate_if_owner(
-                container.db_pool(),
+                container.database(),
                 &files,
                 &sweep_gate,
             )
@@ -273,7 +274,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     let reconcile_startup_ts = Utc::now();
     let model_repo_for_cleanup = Arc::new(
         crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository::new(
-            container.db_pool().clone(),
+            container.database().clone(),
         ),
     );
 
@@ -330,11 +331,11 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     // A question the last run quit under would show as in flight for good;
     // fail it so it can be retried. The question of a research turn stays: its
     // job is delivered again and answers it.
-    let turns_pool = container.db_pool().clone();
+    let turns_database = container.database().clone();
     let turns_jobs = Arc::clone(container.jobs());
     background.spawn(async move {
         use super::startup_reconciliation::reconcile_stuck_turns;
-        match reconcile_stuck_turns(&turns_pool, turns_jobs.store()).await {
+        match reconcile_stuck_turns(&turns_database, turns_jobs.store()).await {
             Ok(count) if count > 0 => {
                 tracing::info!(count, "Marked interrupted conversation turns as failed");
             }
@@ -347,10 +348,10 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 
     // A grounding check the last run quit under would show "Checking…" for
     // good; mark it not checked before the first conversation loads.
-    let verification_pool = container.db_pool().clone();
+    let verification_database = container.database().clone();
     background.spawn(async move {
         use super::startup_reconciliation::reconcile_interrupted_verifications;
-        match reconcile_interrupted_verifications(&verification_pool).await {
+        match reconcile_interrupted_verifications(&verification_database).await {
             Ok(count) if count > 0 => {
                 tracing::info!(count, "Marked interrupted grounding checks as not checked");
             }
@@ -382,7 +383,7 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
     let orphan_scope = container.document_scope();
     let orphan_delete = container.delete_document_use_case();
     let orphan_intents =
-        crate::infrastructure::storage::FileIntents::new(container.db_pool().clone());
+        crate::infrastructure::storage::FileIntents::new(container.database().clone());
     background.spawn(async move {
         use super::startup_reconciliation::reconcile_orphaned_attachments;
         let delete = |document_id: String| {
@@ -419,27 +420,14 @@ async fn initialize_app_async(app_handle: tauri::AppHandle) -> Result<(), Startu
 
     let downloaded_model_repository = Arc::new(
         crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository::new(
-            container.db_pool().clone(),
+            container.database().clone(),
         ),
     );
-
-    let model_file_repository = Arc::new(
-        crate::infrastructure::persistence::repositories::model_file::SqliteModelFileRepository::new(
-            container.db_pool().clone()
-        )
-    ) as Arc<dyn lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort>;
-
-    let uow_factory = Arc::new(
-        crate::infrastructure::persistence::repositories::unit_of_work::SqliteUnitOfWorkFactory::new(
-            container.db_pool().clone()
-        )
-    ) as Arc<dyn lattice_core::application::ports::UnitOfWorkFactory>;
 
     let download_saga = Arc::new(
         DownloadSaga::new(
             Arc::clone(&event_bus),
-            Arc::clone(&model_file_repository),
-            Arc::clone(&uow_factory),
+            container.database().clone(),
             Arc::clone(&downloaded_model_repository),
         )
         .with_settings(Arc::clone(container.settings_repository())),

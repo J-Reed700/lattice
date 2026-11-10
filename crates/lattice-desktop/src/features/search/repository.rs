@@ -1,6 +1,7 @@
 use crate::infrastructure::persistence::database::connection::query_with_timeout;
 use lattice_core::shared::error::AppError;
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::persistence::driver::DriverPool;
+use sqlx::Row;
 
 pub(super) struct ChunkMetadataRow {
     pub chunk_id: String,
@@ -19,9 +20,10 @@ pub(super) struct ChunkMetadataRow {
 
 /// Metadata for a batch of chunk IDs.
 pub(super) async fn chunk_metadata(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     batch: &[String],
 ) -> Result<Vec<ChunkMetadataRow>, AppError> {
+    let pool = pool.sqlx_pool();
     let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(", ");
 
     let query = format!(

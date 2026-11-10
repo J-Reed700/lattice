@@ -6,12 +6,14 @@
 
 use std::collections::HashSet;
 
-use lattice_core::domain::learning::claim_review::{ClaimLedgerEntry, ClaimState, UnitKind};
+use lattice_core::domain::learning::claim_review::{
+    ClaimLedgerEntry, ClaimState, Ledger, UnitKind,
+};
+use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
-use sqlx::SqliteConnection;
 
-use super::section_edit::{count, endings, record_edit};
+use super::section_edit::{count, endings, record_edit, Ending};
 use super::{provenance, ClaimReviewService};
 use crate::assessment_engine::{
     self as engine, normalize_answer, LearningAssessmentKey, LearningItemFormat,
@@ -20,7 +22,7 @@ use crate::assessment_generation::StoredItem;
 use crate::assessment_repository::{content_hash, LearningAssessmentRepository};
 use crate::content_verification::Rewritten;
 use crate::lessons::claim_reviews::published_edit::update_report;
-use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan};
+use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan, Written};
 use crate::lessons::claim_reviews::repository::{
     blocks, bump_revision, check_revision, questions, teaching_findings,
 };
@@ -112,13 +114,8 @@ fn has_choices(kind: LearningItemFormat) -> bool {
     )
 }
 
-async fn stored_question(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-    lesson_id: &str,
-    index: usize,
-) -> Result<Option<Stored>> {
-    let Some(row) = questions::question_at(connection, program_id, lesson_id, index).await? else {
+fn stored_from(row: Option<questions::QuestionRow>) -> Result<Option<Stored>> {
+    let Some(row) = row else {
         return Ok(None);
     };
     let kind = parse_format(&row.format)?;
@@ -294,9 +291,10 @@ impl ClaimReviewService {
         question_index: usize,
     ) -> Result<QuestionText> {
         self.ensure_in_course(program_id, lesson_id).await?;
-        let mut connection = self.pool().acquire().await.map_err(db)?;
-        stored_question(&mut connection, program_id, lesson_id, question_index)
-            .await?
+        let mut read = self.database.begin_read().await.map_err(db)?;
+        let row = questions::question_at(&mut read, program_id, lesson_id, question_index).await?;
+        read.commit().await.map_err(db)?;
+        stored_from(row)?
             .map(|stored| stored.text)
             .ok_or_else(|| AppError::NotFound(NOT_IN_LESSON.into()))
     }
@@ -317,18 +315,14 @@ impl ClaimReviewService {
         } = edit;
         let ledger = self.editable_ledger(&program_id, &lesson_id).await?;
         validate(before.kind, &after)?;
-        let mut connection = self.pool().acquire().await.map_err(db)?;
-        let stored = stored_question(&mut connection, &program_id, &lesson_id, question_index)
-            .await?
-            .ok_or_else(|| AppError::NotFound(NOT_IN_LESSON.into()))?;
-        let bank_item = LearningAssessmentRepository::stored_candidate_in(
-            &mut connection,
-            &program_id,
-            &stored.id,
-        )
-        .await?;
-        let sections = blocks::section_count(&mut connection, &lesson_id).await?;
-        drop(connection);
+        let mut read = self.database.begin_read().await.map_err(db)?;
+        let row =
+            questions::question_at(&mut read, &program_id, &lesson_id, question_index).await?;
+        let stored = stored_from(row)?.ok_or_else(|| AppError::NotFound(NOT_IN_LESSON.into()))?;
+        let bank_item =
+            LearningAssessmentRepository::stored_candidate_in(&mut read, &program_id, &stored.id)
+                .await?;
+        let sections = blocks::section_count(&mut read, &lesson_id).await?;
         if stored.text != before {
             return Err(AppError::InvalidInput(QUESTION_CHANGED.into()));
         }
@@ -347,14 +341,10 @@ impl ClaimReviewService {
         let edited = edited_candidate(bank_item.candidate, &new);
         engine::validate_candidate(&edited)?;
         let token = content_hash(&StoredItem::from(edited));
-        let mut connection = self.pool().acquire().await.map_err(db)?;
-        let repeated =
-            questions::token_taken_by_another(&mut connection, &program_id, &stored.id, &token)
-                .await?;
-        drop(connection);
-        if repeated {
+        if questions::token_taken_by_another(&mut read, &program_id, &stored.id, &token).await? {
             return Err(AppError::InvalidInput(SAME_QUESTION.into()));
         }
+        read.commit().await.map_err(db)?;
 
         let unit = usize::try_from(sections)
             .unwrap_or_default()
@@ -439,24 +429,62 @@ impl ClaimReviewService {
             return Ok(outcome);
         }
 
-        let at = now();
+        let write = QuestionWrite {
+            program_id: &program_id,
+            lesson_id: &lesson_id,
+            question_index,
+            unit,
+            stored: &stored,
+            token: &token,
+            new: &new,
+            written: &written,
+            ending: &ending,
+            at: now(),
+        };
+        let moved = self.write_question_edit(&ledger, &write).await?;
+        outcome.revision = self.settled_revision(&ledger, &lesson_id, moved).await?;
+        Ok(outcome)
+    }
+
+    /// The edit and its settlement in one unit of work: the question, its
+    /// key, the ledger's events, the stored report, the teaching notes'
+    /// marker and what each ended statement gives the checker examples and
+    /// calibration. Returns the kinds whose bar the settlement moved.
+    async fn write_question_edit(
+        &self,
+        ledger: &Ledger,
+        write: &QuestionWrite<'_>,
+    ) -> Result<Vec<ClaimKind>> {
+        let QuestionWrite {
+            program_id,
+            lesson_id,
+            question_index,
+            unit,
+            stored,
+            token,
+            new,
+            written,
+            ending,
+            at,
+        } = *write;
         let user = ledger.review.as_ref().map(provenance);
-        let mut tx = self.pool().begin_write().await.map_err(db)?;
+        let mut tx = self.database.begin_write().await.map_err(db)?;
         if ledger.review.is_some() {
-            check_revision(&mut tx, &lesson_id, ledger.revision).await?;
+            check_revision(&mut tx, lesson_id, ledger.revision).await?;
         }
-        let now_stored = stored_question(&mut tx, &program_id, &lesson_id, question_index).await?;
+        let row = questions::question_at(&mut tx, program_id, lesson_id, question_index).await?;
+        let now_stored = stored_from(row)?;
         if !now_stored
             .as_ref()
             .is_some_and(|now| now.id == stored.id && now.text == stored.text)
         {
             return Err(AppError::InvalidInput(QUESTION_CHANGED.into()));
         }
-        if questions::token_taken_by_another(&mut tx, &program_id, &stored.id, &token).await? {
+        if questions::token_taken_by_another(&mut tx, program_id, &stored.id, token).await? {
             return Err(AppError::InvalidInput(SAME_QUESTION.into()));
         }
         let planned = match &user {
-            Some(user) => record_edit(&mut tx, &lesson_id, unit, &written, &ending, user).await?,
+            Some(user) => record_edit(&mut tx, lesson_id, unit, written, ending, user).await?,
             None => Vec::new(),
         };
         let single = new.kind == LearningItemFormat::SingleChoice;
@@ -472,7 +500,7 @@ impl ClaimReviewService {
             _ => None,
         };
         let reasons = serde_json::to_string(&new.rationales)?;
-        questions::write_question(&mut tx, &stored.id, &new.prompt, options.as_deref(), &token)
+        questions::write_question(&mut tx, &stored.id, &new.prompt, options.as_deref(), token)
             .await?;
         questions::write_answer_key(
             &mut tx,
@@ -494,8 +522,8 @@ impl ClaimReviewService {
         } else {
             Vec::new()
         };
-        let text = unit_text(&new);
-        update_report(&mut tx, &program_id, &lesson_id, |report| {
+        let text = unit_text(new);
+        update_report(&mut tx, program_id, lesson_id, |report| {
             report.rewritten(&Rewritten {
                 unit,
                 new_title: &new.prompt,
@@ -506,14 +534,31 @@ impl ClaimReviewService {
             })
         })
         .await?;
-        teaching_findings::mark_part_changed(&mut tx, &lesson_id, "question", question_index, at)
+        teaching_findings::mark_part_changed(&mut tx, lesson_id, "question", question_index, at)
             .await?;
         if ledger.review.is_some() {
-            bump_revision(&mut tx, &lesson_id).await?;
+            bump_revision(&mut tx, lesson_id).await?;
         }
+        let moved = self
+            .settle_planned_in(&mut tx, ledger, lesson_id, &planned)
+            .await?;
         tx.commit().await.map_err(db)?;
-
-        outcome.revision = self.settle_planned(&ledger, &lesson_id, planned).await?;
-        Ok(outcome)
+        Ok(moved)
     }
+}
+
+/// What a question edit writes: the question it opened, its new text and
+/// content token, the statements it writes and the ones it ends.
+#[derive(Clone, Copy)]
+struct QuestionWrite<'a> {
+    program_id: &'a str,
+    lesson_id: &'a str,
+    question_index: usize,
+    unit: usize,
+    stored: &'a Stored,
+    token: &'a str,
+    new: &'a QuestionText,
+    written: &'a [(&'a str, UnitKind, &'a Written)],
+    ending: &'a [Ending<'a>],
+    at: i64,
 }

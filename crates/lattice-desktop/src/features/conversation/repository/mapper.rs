@@ -78,24 +78,6 @@ pub struct ConversationSummaryModel {
 pub struct ConversationRowMapper;
 
 impl ConversationRowMapper {
-    /// Converts a domain conversation to its database model.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::Serialization` if the model choice cannot be written
-    pub fn to_model(entity: &Conversation) -> Result<ConversationModel> {
-        Ok(ConversationModel {
-            id: entity.id.to_string(),
-            title: entity.title.clone(),
-            model_choice: ModelChoiceColumn::to_column(&entity.model_choice)?,
-            system_prompt: entity.system_prompt.clone(),
-            created_at: entity.created_at.to_rfc3339(),
-            updated_at: entity.updated_at.to_rfc3339(),
-            message_count: entity.message_count,
-            total_tokens: entity.total_tokens,
-        })
-    }
-
     /// Converts a database model to a domain conversation.
     ///
     /// # Errors
@@ -139,20 +121,6 @@ impl ConversationRowMapper {
 pub struct ConversationMessageMapper;
 
 impl ConversationMessageMapper {
-    /// Convert domain entity to database model.
-    pub fn to_model(entity: &ConversationMessage) -> ConversationMessageModel {
-        ConversationMessageModel {
-            id: entity.id.clone(),
-            conversation_id: entity.conversation_id.to_string(),
-            role: entity.role.to_string(),
-            content: entity.content.clone(),
-            tokens: entity.tokens,
-            created_at: entity.created_at.to_rfc3339(),
-            metadata: entity.metadata.clone(),
-            status: entity.status.clone(),
-        }
-    }
-
     /// Convert database model to domain entity.
     ///
     /// # Errors
@@ -193,16 +161,6 @@ impl ConversationMessageMapper {
 pub struct DocumentReferenceMapper;
 
 impl DocumentReferenceMapper {
-    /// Convert domain entity to database model.
-    pub fn to_model(entity: &DocumentReference) -> DocumentReferenceModel {
-        DocumentReferenceModel {
-            document_id: entity.document_id.clone(),
-            chunk_id: entity.chunk_id.clone(),
-            relevance_score: entity.relevance_score,
-            added_at: entity.added_at.to_rfc3339(),
-        }
-    }
-
     /// Convert database model to domain entity.
     ///
     /// # Errors
@@ -234,21 +192,6 @@ impl DocumentReferenceMapper {
 pub struct ConversationSummaryMapper;
 
 impl ConversationSummaryMapper {
-    /// Convert domain entity to database model.
-    pub fn to_model(entity: &CompactionRecord) -> ConversationSummaryModel {
-        ConversationSummaryModel {
-            id: entity.id.clone(),
-            conversation_id: entity.conversation_id.to_string(),
-            summary_text: entity.summary_text.clone(),
-            up_to_message_id: entity.up_to_message_id.clone(),
-            original_message_count: entity.original_message_count,
-            original_tokens: entity.original_tokens,
-            summary_tokens: entity.summary_tokens,
-            compression_ratio: entity.compression_ratio,
-            created_at: entity.created_at.to_rfc3339(),
-        }
-    }
-
     /// Convert database model to domain entity.
     ///
     /// # Errors
@@ -284,30 +227,43 @@ mod tests {
 
     #[test]
     fn test_conversation_mapper_round_trip() {
-        let entity = Conversation {
-            id: ConversationId::new(),
-            title: "Test Chat".to_string(),
-            model_choice: ChatModelChoice::Explicit {
-                model: ModelRef::Local {
-                    model_id: "ornith-1.5-9b".into(),
-                },
+        let id = ConversationId::new();
+        let choice = ChatModelChoice::Explicit {
+            model: ModelRef::Local {
+                model_id: "ornith-1.5-9b".into(),
             },
+        };
+        let model = ConversationModel {
+            id: id.to_string(),
+            title: "Test Chat".to_string(),
+            model_choice: ModelChoiceColumn::to_column(&choice).unwrap(),
             system_prompt: Some("Be helpful".to_string()),
-            created_at: Utc::now(),
-            updated_at: Utc::now(),
+            created_at: "2026-01-02T03:04:05+00:00".to_string(),
+            updated_at: "2026-01-03T04:05:06+00:00".to_string(),
             message_count: 5,
             total_tokens: 1000,
         };
 
-        let model = ConversationRowMapper::to_model(&entity).unwrap();
         let converted = ConversationRowMapper::to_entity(&model).unwrap();
 
-        assert_eq!(converted.id, entity.id);
-        assert_eq!(converted.title, entity.title);
-        assert_eq!(converted.model_choice, entity.model_choice);
-        assert_eq!(converted.system_prompt, entity.system_prompt);
-        assert_eq!(converted.message_count, entity.message_count);
-        assert_eq!(converted.total_tokens, entity.total_tokens);
+        assert_eq!(converted.id, id);
+        assert_eq!(converted.title, "Test Chat");
+        assert_eq!(converted.model_choice, choice);
+        assert_eq!(converted.system_prompt.as_deref(), Some("Be helpful"));
+        assert_eq!(
+            converted.created_at,
+            DateTime::parse_from_rfc3339("2026-01-02T03:04:05+00:00")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert_eq!(
+            converted.updated_at,
+            DateTime::parse_from_rfc3339("2026-01-03T04:05:06+00:00")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert_eq!(converted.message_count, 5);
+        assert_eq!(converted.total_tokens, 1000);
     }
 
     #[test]
@@ -324,74 +280,91 @@ mod tests {
 
     #[test]
     fn test_message_mapper_round_trip() {
-        let entity = ConversationMessage {
+        let conversation_id = ConversationId::new();
+        let model = ConversationMessageModel {
             id: "msg-123".to_string(),
-            conversation_id: ConversationId::new(),
-            role: MessageRole::User,
+            conversation_id: conversation_id.to_string(),
+            role: MessageRole::User.to_string(),
             content: "Hello!".to_string(),
             tokens: 10,
-            created_at: Utc::now(),
+            created_at: "2026-01-02T03:04:05+00:00".to_string(),
             metadata: Some(r#"{"key":"value"}"#.to_string()),
             status: "completed".to_string(),
         };
 
-        let model = ConversationMessageMapper::to_model(&entity);
         let converted = ConversationMessageMapper::to_entity(&model).unwrap();
 
-        assert_eq!(converted.id, entity.id);
-        assert_eq!(converted.conversation_id, entity.conversation_id);
-        assert_eq!(converted.role, entity.role);
-        assert_eq!(converted.content, entity.content);
-        assert_eq!(converted.tokens, entity.tokens);
-        assert_eq!(converted.metadata, entity.metadata);
-        assert_eq!(converted.status, entity.status);
+        assert_eq!(converted.id, "msg-123");
+        assert_eq!(converted.conversation_id, conversation_id);
+        assert_eq!(converted.role, MessageRole::User);
+        assert_eq!(converted.content, "Hello!");
+        assert_eq!(converted.tokens, 10);
+        assert_eq!(
+            converted.created_at,
+            DateTime::parse_from_rfc3339("2026-01-02T03:04:05+00:00")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
+        assert_eq!(converted.metadata.as_deref(), Some(r#"{"key":"value"}"#));
+        assert_eq!(converted.status, "completed");
     }
 
     #[test]
     fn test_document_reference_mapper_round_trip() {
-        let entity = DocumentReference {
+        let model = DocumentReferenceModel {
             document_id: "doc-123".to_string(),
             chunk_id: Some("chunk-456".to_string()),
             relevance_score: Some(0.95),
-            added_at: Utc::now(),
+            added_at: "2026-01-02T03:04:05+00:00".to_string(),
         };
 
-        let model = DocumentReferenceMapper::to_model(&entity);
         let converted = DocumentReferenceMapper::to_entity(&model).unwrap();
 
-        assert_eq!(converted.document_id, entity.document_id);
-        assert_eq!(converted.chunk_id, entity.chunk_id);
-        assert_eq!(converted.relevance_score, entity.relevance_score);
+        assert_eq!(converted.document_id, "doc-123");
+        assert_eq!(converted.chunk_id.as_deref(), Some("chunk-456"));
+        assert_eq!(converted.relevance_score, Some(0.95));
+        assert_eq!(
+            converted.added_at,
+            DateTime::parse_from_rfc3339("2026-01-02T03:04:05+00:00")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]
     fn test_compaction_summary_mapper_round_trip() {
-        let entity = CompactionRecord {
+        let conversation_id = ConversationId::new();
+        let model = ConversationSummaryModel {
             id: "sum-123".to_string(),
-            conversation_id: ConversationId::new(),
+            conversation_id: conversation_id.to_string(),
             summary_text: "User asked about RAG; assistant explained it.".to_string(),
             up_to_message_id: "msg-456".to_string(),
             original_message_count: 6,
             original_tokens: 4000,
             summary_tokens: 250,
             compression_ratio: 0.0625,
-            created_at: Utc::now(),
+            created_at: "2026-01-02T03:04:05+00:00".to_string(),
         };
 
-        let model = ConversationSummaryMapper::to_model(&entity);
         let converted = ConversationSummaryMapper::to_entity(&model).unwrap();
 
-        assert_eq!(converted.id, entity.id);
-        assert_eq!(converted.conversation_id, entity.conversation_id);
-        assert_eq!(converted.summary_text, entity.summary_text);
-        assert_eq!(converted.up_to_message_id, entity.up_to_message_id);
+        assert_eq!(converted.id, "sum-123");
+        assert_eq!(converted.conversation_id, conversation_id);
         assert_eq!(
-            converted.original_message_count,
-            entity.original_message_count
+            converted.summary_text,
+            "User asked about RAG; assistant explained it."
         );
-        assert_eq!(converted.original_tokens, entity.original_tokens);
-        assert_eq!(converted.summary_tokens, entity.summary_tokens);
-        assert!((converted.compression_ratio - entity.compression_ratio).abs() < f64::EPSILON);
+        assert_eq!(converted.up_to_message_id, "msg-456");
+        assert_eq!(converted.original_message_count, 6);
+        assert_eq!(converted.original_tokens, 4000);
+        assert_eq!(converted.summary_tokens, 250);
+        assert!((converted.compression_ratio - 0.0625).abs() < f64::EPSILON);
+        assert_eq!(
+            converted.created_at,
+            DateTime::parse_from_rfc3339("2026-01-02T03:04:05+00:00")
+                .unwrap()
+                .with_timezone(&Utc)
+        );
     }
 
     #[test]

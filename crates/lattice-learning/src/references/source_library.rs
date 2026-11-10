@@ -10,7 +10,9 @@ use crate::{
 use futures::TryStreamExt;
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
+#[cfg(test)]
+use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
 mod admission;
@@ -24,6 +26,7 @@ mod lifecycle_tests;
 mod reads;
 pub use reads::ActiveVersion;
 mod repository;
+pub(crate) use repository::reads::workspace_in;
 mod user_evidence;
 pub use user_evidence::{ChosenVersion, SavedSource};
 
@@ -113,7 +116,7 @@ fn check_name(value: &LearningSourceCheckStatus) -> &'static str {
 
 #[derive(Clone)]
 pub struct LearningSourceLibraryRepository {
-    pool: SqlitePool,
+    database: Database,
 }
 
 /// Who is adding a source and where it came from. Source capture owns this
@@ -168,8 +171,8 @@ impl LearningSourceLibraryRepository {
             )),
         }
     }
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
     /// Captures a source research found (`added_by = research`); a source the
@@ -196,10 +199,12 @@ impl LearningSourceLibraryRepository {
         payload_hash: &str,
     ) -> Result<bool> {
         uuid(operation_id, "operation")?;
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        source_operation(operation_id, program_id, source_id, kind, payload_hash)
-            .seen(&mut connection)
-            .await
+        let mut read = self.database.begin_read().await.map_err(db)?;
+        let seen = source_operation(operation_id, program_id, source_id, kind, payload_hash)
+            .seen(&mut read)
+            .await?;
+        read.commit().await.map_err(db)?;
+        Ok(seen)
     }
 
     pub async fn preflight_new_source(
@@ -211,24 +216,25 @@ impl LearningSourceLibraryRepository {
         Self::validate_program_id(program_id)?;
         uuid(source_id, "source")?;
         uuid(version_id, "source version")?;
-        let mut connection = self.pool.acquire().await.map_err(db)?;
-        if !repository::active_program_exists(&mut connection, program_id).await? {
+        let mut read = self.database.begin_read().await.map_err(db)?;
+        if !repository::active_program_exists(&mut read, program_id).await? {
             return Err(AppError::NotFound(
                 "Active learning program not found".into(),
             ));
         }
-        if repository::ids_in_use(&mut connection, program_id, source_id, version_id).await? {
+        if repository::ids_in_use(&mut read, program_id, source_id, version_id).await? {
             return Err(invalid(
                 "The requested source or version ID is already in use.",
             ));
         }
+        read.commit().await.map_err(db)?;
         Ok(())
     }
 
     /// Finalize SQL-migrated legacy snapshots before exposing metadata. This is
     /// idempotent and only touches rows explicitly marked as legacy bounded.
     async fn backfill_legacy(&self, program_id: &str) -> Result<()> {
-        repository::backfill_legacy(&self.pool, program_id).await
+        repository::backfill_legacy(&self.database, program_id).await
     }
 }
 
@@ -252,7 +258,7 @@ fn context_excerpt(text: &str, match_char: usize) -> String {
     text.chars().skip(begin).take(420).collect()
 }
 
-async fn lock_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+async fn lock_program(tx: &mut WriteTx, program_id: &str) -> Result<()> {
     if !repository::lock_active_program(tx, program_id).await? {
         return Err(AppError::NotFound(
             "Active learning program not found".into(),
@@ -304,7 +310,7 @@ fn portability_operation<'a>(
     }
 }
 
-async fn require_active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+async fn require_active_program(tx: &mut WriteTx, program_id: &str) -> Result<()> {
     if !repository::active_program_exists(tx, program_id).await? {
         return Err(AppError::NotFound(
             "Active learning program not found".into(),

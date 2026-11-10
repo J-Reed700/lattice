@@ -2,6 +2,8 @@
 //! decks, and the FSRS scheduler both share.
 
 mod interview_deck;
+#[cfg(test)]
+mod interview_deck_write_tests;
 pub(crate) mod recall_content;
 pub mod recall_repository;
 #[cfg(test)]

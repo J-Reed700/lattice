@@ -15,10 +15,9 @@ use crate::persistence::{db, now};
 use lattice_core::application::ports::llm_port::InferencePriority;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 
 mod edit;
@@ -95,9 +94,9 @@ fn lesson_ids(program: &LearningProgramDto) -> Vec<&str> {
 }
 
 /// The outline revision a course's plan is keyed on.
-pub(crate) async fn outline_revision(pool: &SqlitePool, program_id: &str) -> Result<i64> {
-    let mut connection = pool.acquire().await.map_err(db)?;
-    repository::content_revision(&mut connection, program_id).await
+pub(crate) async fn outline_revision(database: &Database, program_id: &str) -> Result<i64> {
+    let mut tx = database.begin_read().await.map_err(db)?;
+    repository::content_revision(&mut tx, program_id).await
 }
 
 /// The plan for `program` at `outline_revision`: read when it is saved, made
@@ -107,23 +106,23 @@ pub(crate) async fn outline_revision(pool: &SqlitePool, program_id: &str) -> Res
 /// transaction, the first to commit wins, and all return what was saved. The
 /// lock is not reentrant: never call this while holding the course's setup.
 pub async fn ensure(
-    pool: &SqlitePool,
+    database: &Database,
     llm: &dyn LLMPort,
     program: &LearningProgramDto,
     outline_revision: i64,
     setups: &CourseSetups,
 ) -> Result<CoursePlan> {
-    if let Some(plan) = stored(pool, program, outline_revision).await? {
+    if let Some(plan) = stored(database, program, outline_revision).await? {
         return Ok(plan);
     }
     let _planning = setups.enter(&program.summary.id).await;
-    if let Some(plan) = stored(pool, program, outline_revision).await? {
+    if let Some(plan) = stored(database, program, outline_revision).await? {
         return Ok(plan);
     }
     crate::lesson_progress::stage("Planning what each lesson of the course teaches");
     let plan = generate(llm, program).await?;
-    save(pool, &program.summary.id, outline_revision, &plan).await?;
-    stored(pool, program, outline_revision)
+    save(database, &program.summary.id, outline_revision, &plan).await?;
+    stored(database, program, outline_revision)
         .await?
         .ok_or_else(|| {
             AppError::InternalError("The course plan was saved but could not be read back".into())
@@ -134,13 +133,13 @@ pub async fn ensure(
 /// seen. A revision is planned when each of its lessons has an entry; an
 /// entry that cannot be read is an error, never a missing one.
 pub(crate) async fn stored(
-    pool: &SqlitePool,
+    database: &Database,
     program: &LearningProgramDto,
     outline_revision: i64,
 ) -> Result<Option<CoursePlan>> {
     let rows = {
-        let mut connection = pool.acquire().await.map_err(db)?;
-        repository::entry_rows(&mut connection, &program.summary.id, outline_revision).await?
+        let mut tx = database.begin_read().await.map_err(db)?;
+        repository::entry_rows(&mut tx, &program.summary.id, outline_revision).await?
     };
     let order = lesson_ids(program);
     let mut entries: HashMap<String, PlannedLesson> = HashMap::new();
@@ -166,12 +165,12 @@ pub(crate) async fn stored(
 /// Every entry of the plan, in one transaction. An entry that is already
 /// saved is kept.
 async fn save(
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
     outline_revision: i64,
     plan: &CoursePlan,
 ) -> Result<()> {
-    let mut tx = pool.begin_write().await.map_err(db)?;
+    let mut tx = database.begin_write().await.map_err(db)?;
     let created = now();
     for entry in &plan.lessons {
         repository::insert_entry(

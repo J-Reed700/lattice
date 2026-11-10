@@ -10,8 +10,9 @@ use crate::{
     portability_dto::{ExportLearningPackRequestDto, LearningPackExportOptionsDto},
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
+use sqlx::{Row, SqliteConnection};
 use std::path::Path;
 
 #[cfg(test)]
@@ -19,12 +20,13 @@ use std::path::Path;
 mod tests;
 
 pub(super) async fn begin_apply(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     managed_dir: &Path,
     preview_id: &str,
     program_id: &str,
     replaces_program: bool,
-) -> Result<(Transaction<'static, Sqlite>, Option<BackupExportRecord>)> {
+) -> Result<(WriteTx, Option<BackupExportRecord>)> {
+    let pool = pool.sqlx_pool();
     let mut tx = pool.begin_write().await.map_err(db)?;
     sqlx::query("PRAGMA defer_foreign_keys=ON")
         .execute(&mut *tx)

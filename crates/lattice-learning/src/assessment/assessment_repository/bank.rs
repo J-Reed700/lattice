@@ -7,10 +7,12 @@ use super::{
 use crate::assessment_engine::{self as engine, LearningBlueprintRequirement};
 use crate::assessment_generation::{AuthoringNeed, MaterialPassage, StoredItem};
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
-use crate::lessons::claim_reviews::teaching_findings::waiting_questions_in;
+use crate::lessons::claim_reviews::repository::waiting_questions_in;
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 use std::collections::{HashMap, HashSet};
@@ -43,7 +45,7 @@ pub(crate) fn content_hash(item: &StoredItem) -> String {
 }
 
 /// Store items, skipping any generated item the bank already holds (same
-/// content, or a near-duplicate stem for the same outcome). A lesson's own
+/// content). A lesson's own
 /// question is always stored in its place: one whose content the program
 /// already holds is stored `dropped`, its token salted by its ID. Returns how
 /// many were stored.
@@ -86,20 +88,6 @@ pub(crate) async fn insert_bank_items_in(
             }
             hash = format!("{:x}", Sha256::digest(format!("{hash}\0{}", item.id)));
             review_status = "dropped";
-        }
-        let near = entry.origin == "bank"
-            && sqlx::query_scalar::<_, String>(
-            "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND outcome_id=? AND review_status<>'dropped'",
-        )
-        .bind(program_id)
-        .bind(outcome)
-        .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
-        .iter()
-        .any(|prompt| engine::near_duplicate(prompt, &item.prompt));
-        if near {
-            continue;
         }
         sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,?,?,?,?,?)")
             .bind(&item.id)
@@ -283,6 +271,35 @@ impl LearningAssessmentRepository {
         rows.iter()
             .map(|row| candidate_from_row(row, vec![]).map(|c| c.candidate.into()))
             .collect()
+    }
+
+    /// [`Self::bank_needs_in`] as a unit of work of its own: working out a
+    /// need stores the outcomes and the blueprint revision it reads.
+    pub(crate) async fn bank_needs(
+        pool: &impl DriverPool,
+        program_id: &str,
+        scope: &LearningQuizScopeDto,
+        top_up: bool,
+    ) -> Result<Vec<AuthoringNeed>> {
+        let pool = pool.sqlx_pool();
+        let mut tx = pool.begin_write().await.map_err(db)?;
+        let needs = Self::bank_needs_in(&mut tx, program_id, scope, top_up).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(needs)
+    }
+
+    /// [`insert_bank_items_in`] as a unit of work of its own.
+    pub(crate) async fn insert_bank_items(
+        pool: &impl DriverPool,
+        program_id: &str,
+        items: &[BankItem],
+        author_model: Option<&str>,
+    ) -> Result<usize> {
+        let pool = pool.sqlx_pool();
+        let mut tx = pool.begin_write().await.map_err(db)?;
+        let stored = insert_bank_items_in(&mut tx, program_id, items, author_model).await?;
+        tx.commit().await.map_err(db)?;
+        Ok(stored)
     }
 
     /// What a quiz still needs written: per requirement, up to three forms'

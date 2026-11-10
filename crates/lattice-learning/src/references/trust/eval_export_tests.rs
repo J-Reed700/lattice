@@ -50,7 +50,7 @@ async fn each_override_labels_the_versions_it_covers() -> Result<()> {
     for entry in &overrides {
         course.store.set_override(entry).await?;
     }
-    let lines: Vec<Value> = lines(&course.store)
+    let lines: Vec<Value> = lines(&course.database, &course.store)
         .await?
         .iter()
         .map(|line| serde_json::from_str(line).expect("a JSON line"))

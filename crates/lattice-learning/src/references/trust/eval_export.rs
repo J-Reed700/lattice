@@ -12,6 +12,7 @@ use super::repository::SqliteSourceTrustStore;
 use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::domain::provenance::{ProvenanceRecord, TrustOverride};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -29,19 +30,23 @@ struct Covered {
     added_by: String,
 }
 
-async fn covered(store: &SqliteSourceTrustStore, entry: &TrustOverride) -> Result<Vec<Covered>> {
+async fn covered(
+    database: &Database,
+    store: &SqliteSourceTrustStore,
+    entry: &TrustOverride,
+) -> Result<Vec<Covered>> {
     let rows: Vec<CoveredRow> = match entry {
         TrustOverride::Source {
             program_id,
             source_id,
             ..
-        } => source_versions(store.pool(), program_id, source_id).await?,
+        } => source_versions(database, program_id, source_id).await?,
         TrustOverride::Site {
             registrable_domain, ..
         }
         | TrustOverride::SiteSubject {
             registrable_domain, ..
-        } => site_versions(store.pool(), registrable_domain).await?,
+        } => site_versions(database, registrable_domain).await?,
     };
     let mut covered = Vec::new();
     for row in rows {
@@ -87,13 +92,13 @@ fn labelled(entry: &TrustOverride) -> (&'static str, Value, Value, Option<&str>)
 }
 
 /// The eval lines, in override order.
-pub async fn lines(store: &SqliteSourceTrustStore) -> Result<Vec<String>> {
-    let entries = all_overrides(store.pool()).await?;
+pub async fn lines(database: &Database, store: &SqliteSourceTrustStore) -> Result<Vec<String>> {
+    let entries = all_overrides(database).await?;
     let mut lines = Vec::new();
     let mut seen = HashSet::new();
     for entry in &entries {
         let (scope, subject, expected, note) = labelled(entry);
-        for version in covered(store, entry).await? {
+        for version in covered(database, store, entry).await? {
             if !seen.insert((
                 scope,
                 subject.to_string(),
@@ -123,8 +128,12 @@ pub async fn lines(store: &SqliteSourceTrustStore) -> Result<Vec<String>> {
 }
 
 /// Writes the lines to `path`; answers how many.
-pub async fn export(store: &SqliteSourceTrustStore, path: &std::path::Path) -> Result<usize> {
-    let lines = lines(store).await?;
+pub async fn export(
+    database: &Database,
+    store: &SqliteSourceTrustStore,
+    path: &std::path::Path,
+) -> Result<usize> {
+    let lines = lines(database, store).await?;
     let mut text = lines.join("\n");
     if !text.is_empty() {
         text.push('\n');

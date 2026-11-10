@@ -9,6 +9,7 @@ use crate::{
     tests,
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqlitePoolOptions;
 
 fn id() -> String {
@@ -147,7 +148,7 @@ async fn recall_and_study_reviews_share_one_fsrs_schedule() -> Result<()> {
 async fn source_tombstone_reimport_selector_search_and_recall_history_persist() -> Result<()> {
     let pool = tests::pool().await?;
     let program = active_program(&pool).await?;
-    let sources = LearningSourceLibraryRepository::new(pool.clone());
+    let sources = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let source_id = id();
     let first_version = id();
     sources

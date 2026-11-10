@@ -20,7 +20,10 @@ use lattice_core::{
         llm_port::{CompletionInput, CompletionRequest, CompletionResponse},
         LLMPort,
     },
-    shared::error::{AppError, Result},
+    shared::{
+        error::{AppError, Result},
+        persistence::Database,
+    },
 };
 use serde_json::{json, Value};
 use std::{
@@ -297,6 +300,7 @@ async fn live_complete_python_course() -> Result<()> {
         }
         println!("Preparing lesson {}/{}", index + 1, lesson_ids.len());
         program = service::prepare(
+            &Database::from(pool.clone()),
             &repo,
             &model,
             &runtimes,
@@ -429,8 +433,14 @@ async fn live_saved_course_checkpoint() -> Result<()> {
         kind: LearningQuizScopeKind::Module,
         id: Some(program.modules[0].id.clone()),
     };
-    let report =
-        quiz_bank_jobs::prepare_bank_now(&pool, &model, &program.summary.id, &scope, false).await?;
+    let report = quiz_bank_jobs::prepare_bank_now(
+        &Database::from(pool.clone()),
+        &model,
+        &program.summary.id,
+        &scope,
+        false,
+    )
+    .await?;
     model.save("checkpoint-bank-report.json", &report.dropped);
     let form = LearningAssessmentRepository::new(pool.clone())
         .start_quiz(

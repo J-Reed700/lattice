@@ -17,6 +17,8 @@ pub mod repository;
 pub mod store;
 
 #[cfg(test)]
+mod queue_tests;
+#[cfg(test)]
 mod tests;
 #[cfg(test)]
 mod write_tests;
@@ -25,7 +27,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use serde_json::json;
-use sqlx::SqlitePool;
 
 pub use dto::{
     WebPageSnapshotChangedEvent, WebPageSnapshotDto, WebPageSnapshotLinkEvent,
@@ -37,8 +38,9 @@ use crate::features::web::traits::page_snapshot::PageCapturePort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::http::normalize_web_source_url;
+use lattice_core::shared::persistence::{Database, Transactions};
 use lattice_core::shared::runtime::background::BackgroundTasks;
-use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, NewJob};
+use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, JobStore, NewJob};
 use repository::{SnapshotRepository, SnapshotRow};
 use store::SnapshotStore;
 
@@ -181,6 +183,7 @@ pub(crate) fn to_dto(
 
 /// The frozen-copy feature: one per process.
 pub struct WebPageSnapshotService {
+    database: Database,
     shared: Arc<Shared>,
     jobs: Arc<JobRuntime>,
     gc: WebSnapshotGc,
@@ -189,7 +192,7 @@ pub struct WebPageSnapshotService {
 
 impl WebPageSnapshotService {
     pub fn new(
-        pool: SqlitePool,
+        database: Database,
         root: PathBuf,
         capture: Arc<dyn PageCapturePort>,
         jobs: Arc<JobRuntime>,
@@ -197,13 +200,13 @@ impl WebPageSnapshotService {
         background: Arc<BackgroundTasks>,
         sweep_gate: Arc<SweepGate>,
     ) -> Self {
-        let repository = SnapshotRepository::new(pool.clone());
+        let repository = SnapshotRepository::new(database.clone());
         let store = SnapshotStore::new(root);
         Self {
             gc: WebSnapshotGc::new(
                 store.clone(),
                 repository.clone(),
-                crate::infrastructure::storage::FileIntents::new(pool),
+                crate::infrastructure::storage::FileIntents::new(database.clone()),
                 sweep_gate,
             ),
             shared: Arc::new(Shared {
@@ -212,6 +215,7 @@ impl WebPageSnapshotService {
                 capture,
                 events,
             }),
+            database,
             jobs,
             background,
         }
@@ -261,16 +265,19 @@ impl WebPageSnapshotService {
             .repository
             .resolve_conversation_for_capture(conversation_id, &normalized)
             .await?;
-        let (mut row, created) = self
-            .shared
-            .repository
-            .insert_or_get(
-                &store::new_id(),
-                &resolved_conversation_id,
-                &normalized,
-                requested,
-            )
-            .await?;
+        let mut tx = self
+            .database
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        let (mut row, created) = SnapshotRepository::insert_or_get_in(
+            &mut tx,
+            &store::new_id(),
+            &resolved_conversation_id,
+            &normalized,
+            requested,
+        )
+        .await?;
         let attempt = if created {
             None
         } else if retry
@@ -278,7 +285,7 @@ impl WebPageSnapshotService {
                 row.status(),
                 WebPageSnapshotStatus::Failed | WebPageSnapshotStatus::Ready
             )
-            && self.shared.repository.reset_for_retry(&row.id).await?
+            && SnapshotRepository::reset_for_retry_in(&mut tx, &row.id).await?
         {
             Some(store::new_id())
         } else {
@@ -287,29 +294,22 @@ impl WebPageSnapshotService {
         row.status = WebPageSnapshotStatus::Pending.as_str().into();
         row.error_code = None;
         row.error_message = None;
+        let admitted =
+            JobStore::submit_in(&mut tx, &Self::capture_job(&row, attempt.as_deref())).await?;
+        SnapshotRepository::set_job_in(&mut tx, &row.id, &admitted.id).await?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(e.to_string()))?;
+        row.job_id = Some(admitted.id.clone());
         // Announce pending before the job can run, so a fast capture's
         // `ready` never arrives ahead of it.
         self.shared
             .emit_changed(to_dto(&row, Some("Queued".into()), None));
-        match self.submit(&row, attempt.as_deref()).await {
-            Ok(job_id) => {
-                self.shared.repository.set_job(&row.id, &job_id).await?;
-                row.job_id = Some(job_id);
-            }
-            Err(error) => {
-                let message = format!("Could not queue the capture: {error}");
-                self.shared
-                    .repository
-                    .mark_failed(&row.id, "queue", &message)
-                    .await?;
-                self.shared.announce(&row.id).await;
-                return Err(error);
-            }
-        }
+        self.jobs.submitted(&admitted.id).await;
         Ok(row)
     }
 
-    async fn submit(&self, row: &SnapshotRow, attempt: Option<&str>) -> Result<String> {
+    fn capture_job(row: &SnapshotRow, attempt: Option<&str>) -> NewJob {
         let base = format!(
             "web-page-snapshot:{}:{}",
             row.conversation_id, row.normalized_url
@@ -318,23 +318,19 @@ impl WebPageSnapshotService {
             None => base,
             Some(attempt) => format!("{base}:retry:{attempt}"),
         };
-        let job = self
-            .jobs
-            .submit(&NewJob {
-                kind: job::KIND.into(),
-                subject_id: Some(row.id.clone()),
-                operation_id,
-                payload_hash: row.id.clone(),
-                requested: json!({
-                    "conversationId": row.conversation_id,
-                    "url": row.requested_url,
-                    "snapshotId": row.id,
-                }),
-                progress_total: 100,
-                message: "Queued".into(),
-            })
-            .await?;
-        Ok(job.id)
+        NewJob {
+            kind: job::KIND.into(),
+            subject_id: Some(row.id.clone()),
+            operation_id,
+            payload_hash: row.id.clone(),
+            requested: json!({
+                "conversationId": row.conversation_id,
+                "url": row.requested_url,
+                "snapshotId": row.id,
+            }),
+            progress_total: 100,
+            message: "Queued".into(),
+        }
     }
 
     /// `ensure_queued`, answered as the viewer's DTO.

@@ -15,8 +15,8 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
     use wiremock::{matchers::path, Mock, MockServer, ResponseTemplate};
     let dir = tempfile::tempdir()?;
     let db = DatabaseConnection::new(dir.path().join("biology.db")).await?;
-    initialize_database(db.pool()).await?;
-    let repo = StudyRepository::new(db.pool().clone());
+    initialize_database(db.database()).await?;
+    let repo = StudyRepository::new(db.database().clone());
     let id = uuid::Uuid::new_v4().to_string();
     let passage = "Photosynthesis converts light energy into chemical energy. Chlorophyll absorbs the light used in photosynthesis.";
     let library = FakeLibrary::default().with_document(&id, &[passage]);

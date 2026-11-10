@@ -132,7 +132,7 @@ impl CourseTurn {
     }
 
     async fn sources(&self) -> Result<Vec<LearningSourceDto>> {
-        LearningSourceLibraryRepository::new(self.pool.clone())
+        LearningSourceLibraryRepository::new(self.database.clone())
             .verification_sources(&self.program_id)
             .await
     }
@@ -210,7 +210,7 @@ impl CourseTurn {
         offset: usize,
         max_chars: usize,
     ) -> Result<Option<SourcePassages>> {
-        let Some((title, text)) = source_text(&self.pool, &self.program_id, version_id).await?
+        let Some((title, text)) = source_text(&self.database, &self.program_id, version_id).await?
         else {
             return Ok(None);
         };

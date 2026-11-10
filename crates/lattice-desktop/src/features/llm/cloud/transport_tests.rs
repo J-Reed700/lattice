@@ -240,6 +240,27 @@ fn an_account_out_of_quota_is_a_setting_to_fix_not_an_outage() {
 }
 
 #[test]
+fn a_payment_required_refusal_says_the_accounts_billing_needs_fixing() {
+    use lattice_core::shared::runtime::jobs::JobFailure;
+    for protocol in [
+        protocols(CloudProvider::Openai).completion,
+        protocols(CloudProvider::Anthropic).completion,
+    ] {
+        let error = status_error(
+            protocol,
+            reqwest::StatusCode::PAYMENT_REQUIRED,
+            &Value::Null,
+        );
+        let AppError::InvalidConfig(text) = &error else {
+            panic!("{error:?}");
+        };
+        assert!(text.contains("HTTP 402"), "{text}");
+        assert!(text.contains("billing"), "{text}");
+        assert!(!JobFailure::is_transient(&error));
+    }
+}
+
+#[test]
 fn any_other_rate_limit_is_a_transient_rate_limit() {
     use lattice_core::shared::runtime::jobs::JobFailure;
     for body in [

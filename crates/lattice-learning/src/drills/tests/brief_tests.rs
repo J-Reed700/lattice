@@ -11,6 +11,7 @@ use crate::tests::pool;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{evidence_units, LessonSentence};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use sqlx::SqlitePool;
 
 fn none() -> ScriptedModel {
@@ -60,7 +61,7 @@ async fn prepared(pool: &SqlitePool) -> Result<LessonContext> {
         ],
     )
     .await?;
-    LessonContext::load(pool, &program, &lesson).await
+    LessonContext::load(&Database::from(pool.clone()), &program, &lesson).await
 }
 
 /// The units of [`prepared`]'s teaching.
@@ -81,7 +82,7 @@ async fn a_prepared_lessons_evidence_is_the_units_of_its_teaching_in_order_with_
 ) -> Result<()> {
     let pool = pool().await?;
     let context = prepared(&pool).await?;
-    let brief = lesson_brief(&none(), &pool, &context, usize::MAX).await?;
+    let brief = lesson_brief(&none(), &Database::from(pool.clone()), &context, usize::MAX).await?;
     assert_eq!(brief.evidence, teaching_units());
     assert_eq!(brief.lesson_id, context.lesson_id);
     assert_eq!(brief.course, "A generic learning program");
@@ -98,7 +99,7 @@ async fn a_prepared_lesson_with_room_for_its_first_two_units_only_takes_exactly_
     let all = teaching_units();
     let room = tokens(&model, &context, &all[..2]);
     assert!(room < tokens(&model, &context, &all[..3]));
-    let brief = lesson_brief(&model, &pool, &context, room).await?;
+    let brief = lesson_brief(&model, &Database::from(pool.clone()), &context, room).await?;
     assert_eq!(brief.evidence, all[..2].to_vec());
     assert!(model.count_tokens(&brief.render()) <= room);
     Ok(())
@@ -114,7 +115,7 @@ async fn a_room_of_nothing_and_a_room_that_holds_the_brief_but_not_its_first_uni
     let bare = tokens(&model, &context, &[]);
     assert!(bare < tokens(&model, &context, &all[..1]));
     for room in [0, bare - 1, bare] {
-        let error = lesson_brief(&model, &pool, &context, room)
+        let error = lesson_brief(&model, &Database::from(pool.clone()), &context, room)
             .await
             .unwrap_err();
         assert!(
@@ -129,7 +130,7 @@ async fn a_room_of_nothing_and_a_room_that_holds_the_brief_but_not_its_first_uni
 async fn outline(pool: &SqlitePool) -> Result<LessonContext> {
     let program = course(pool).await?;
     let lesson = lesson_titled(pool, &program, SPACING_LESSON).await?;
-    LessonContext::load(pool, &program, &lesson).await
+    LessonContext::load(&Database::from(pool.clone()), &program, &lesson).await
 }
 
 #[tokio::test]
@@ -137,7 +138,7 @@ async fn an_outline_lessons_evidence_is_what_the_sources_say_of_it_best_first_un
 ) -> Result<()> {
     let pool = pool().await?;
     let context = outline(&pool).await?;
-    let brief = lesson_brief(&none(), &pool, &context, usize::MAX).await?;
+    let brief = lesson_brief(&none(), &Database::from(pool.clone()), &context, usize::MAX).await?;
     let spacing = units_under(SPACING, "Spacing and memory");
     assert_eq!(
         brief.evidence.first(),
@@ -161,7 +162,7 @@ async fn an_outline_lesson_takes_no_more_than_its_planned_minutes_take_to_read_b
         !spacing.is_empty() && !sleep.is_empty(),
         "each source has units to read"
     );
-    let long = lesson_brief(&none(), &pool, &context, usize::MAX).await?;
+    let long = lesson_brief(&none(), &Database::from(pool.clone()), &context, usize::MAX).await?;
     assert_eq!(long.evidence.get(..spacing.len()), Some(&spacing[..]));
     assert_eq!(
         long.evidence.get(spacing.len()..),
@@ -174,9 +175,15 @@ async fn an_outline_lesson_takes_no_more_than_its_planned_minutes_take_to_read_b
         .execute(&pool)
         .await
         .map_err(db)?;
-    let context = LessonContext::load(&pool, &context.program_id, &context.lesson_id).await?;
+    let context = LessonContext::load(
+        &Database::from(pool.clone()),
+        &context.program_id,
+        &context.lesson_id,
+    )
+    .await?;
     assert_eq!(context.estimated_minutes, 0);
-    let none_planned = lesson_brief(&none(), &pool, &context, usize::MAX).await?;
+    let none_planned =
+        lesson_brief(&none(), &Database::from(pool.clone()), &context, usize::MAX).await?;
     assert_eq!(none_planned.evidence, spacing, "one passage only");
     Ok(())
 }
@@ -193,8 +200,13 @@ async fn an_outline_lesson_the_sources_say_nothing_of_has_no_evidence_and_is_not
     .execute(&pool)
     .await
     .map_err(db)?;
-    let context = LessonContext::load(&pool, &context.program_id, &context.lesson_id).await?;
-    let brief = lesson_brief(&none(), &pool, &context, usize::MAX).await?;
+    let context = LessonContext::load(
+        &Database::from(pool.clone()),
+        &context.program_id,
+        &context.lesson_id,
+    )
+    .await?;
+    let brief = lesson_brief(&none(), &Database::from(pool.clone()), &context, usize::MAX).await?;
     assert!(brief.evidence.is_empty());
     assert_eq!(brief.lesson, "Xylophone tuning");
     assert_eq!(brief.course, "A generic learning program");
@@ -206,8 +218,8 @@ async fn a_course_without_sources_gives_an_outline_lesson_no_evidence() -> Resul
     let pool = pool().await?;
     let program = course_of(&pool, &[]).await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
-    let context = LessonContext::load(&pool, &program, &lesson).await?;
-    let brief = lesson_brief(&none(), &pool, &context, usize::MAX).await?;
+    let context = LessonContext::load(&Database::from(pool.clone()), &program, &lesson).await?;
+    let brief = lesson_brief(&none(), &Database::from(pool.clone()), &context, usize::MAX).await?;
     assert!(brief.evidence.is_empty());
     Ok(())
 }
@@ -219,7 +231,7 @@ async fn an_outline_lesson_whose_first_passage_does_not_fit_the_room_is_a_window
     let context = outline(&pool).await?;
     let model = none();
     let bare = tokens(&model, &context, &[]);
-    let error = lesson_brief(&model, &pool, &context, bare)
+    let error = lesson_brief(&model, &Database::from(pool.clone()), &context, bare)
         .await
         .unwrap_err();
     assert!(

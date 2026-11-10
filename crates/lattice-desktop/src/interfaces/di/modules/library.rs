@@ -1,7 +1,7 @@
 //! The library module: tags, mentions, backlinks, favorites and recent documents.
 
 use super::CoreModule;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - Tags
@@ -45,14 +45,14 @@ pub struct LibraryModule {
 impl LibraryModule {
     /// Build LibraryModule by composing feature-local DI builders.
     pub async fn new(
-        db_pool: SqlitePool,
+        database: Database,
         _core: Arc<CoreModule>,
     ) -> lattice_core::shared::error::Result<Self> {
         Ok(Self {
-            tags: crate::features::tags::di::build(db_pool.clone()),
-            favorites: crate::features::favorites::di::build(db_pool.clone()),
-            recent: crate::features::recent::di::build(db_pool.clone()),
-            mentions: crate::features::mentions::di::build(db_pool),
+            tags: crate::features::tags::di::build(database.clone()),
+            favorites: crate::features::favorites::di::build(database.clone()),
+            recent: crate::features::recent::di::build(database.clone()),
+            mentions: crate::features::mentions::di::build(database),
         })
     }
 

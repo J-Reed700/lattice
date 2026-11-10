@@ -5,6 +5,7 @@ use crate::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
     repository::LearningRepository, service,
 };
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
 use lattice_core::{
     application::ports::llm_port::{CompletionRequest, CompletionResponse},
@@ -46,6 +47,23 @@ impl Model {
         }
         if prompt.starts_with("Verify instructional answer keys independently.") {
             return Ok(json!({"answers":(0..6).map(|index| json!({"index":index,"correctIndices":[0],"reason":"A randomized comparison isolates the intervention."})).collect::<Vec<_>>()} ).to_string());
+        }
+        if prompt.starts_with("Solve quiz questions independently") {
+            let context: serde_json::Value =
+                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
+            let answers: Vec<_> = context["questions"].as_array().into_iter().flatten().map(|question| json!({"index":question["index"],"reason":"The fixture solution follows the question.","correctIndices":[],"answer":"A fixture answer.","blankAnswers":[],"matches":[],"orderedValues":[]})).collect();
+            return Ok(json!({ "answers": answers }).to_string());
+        }
+        if prompt.starts_with("Review quiz questions one at a time") {
+            let context: serde_json::Value =
+                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
+            let checks: Vec<_> = context["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| json!({"id":item["id"],"finding":"","hasDefect":false,"repeats":[]}))
+                .collect();
+            return Ok(json!({ "checks": checks }).to_string());
         }
         if prompt.starts_with("Review instructional quality.") {
             let context: serde_json::Value =
@@ -195,6 +213,7 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         }
     }
     let prepared = service::prepare(
+        &Database::from(pool.clone()),
         &repo,
         &Model(lesson_candidate.to_string()),
         &crate::embedded_runtime::BuiltinRuntimes::for_tests(),
@@ -475,6 +494,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     let first = crate::lesson_progress::run(
         &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
         crate::lesson_drafts::run(
+            &Database::from(pool.clone()),
             &jobs,
             &job.id,
             &lesson.id,
@@ -511,6 +531,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
     let prepared = crate::lesson_progress::run(
         &JobContext::detached(&JobStore::new(pool.clone()), &retry.id).await?,
         crate::lesson_drafts::run(
+            &Database::from(pool.clone()),
             &jobs,
             &retry.id,
             &lesson.id,
@@ -802,7 +823,7 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
     let runtimes = crate::embedded_runtime::BuiltinRuntimes::for_tests();
 
     let prepared = Box::pin(research::run(
-        pool.clone(),
+        Database::from(pool.clone()),
         accepted.summary.id.clone(),
         accepted.summary.goal.clone(),
         Some(research_tests::web(false)),
@@ -1951,6 +1972,7 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
     let prepared = crate::lesson_progress::run(
         &JobContext::detached(&JobStore::new(pool.clone()), &job.id).await?,
         crate::lesson_drafts::run(
+            &Database::from(pool.clone()),
             &jobs,
             &job.id,
             &lesson.id,

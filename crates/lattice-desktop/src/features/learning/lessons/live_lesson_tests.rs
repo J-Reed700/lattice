@@ -12,6 +12,7 @@ use crate::features::learning::review_findings::ReviewFinding;
 use crate::features::llm::llama_cpp::LlamaCppLlm;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::application::ports::LLMPort;
+use lattice_core::shared::persistence::Database;
 
 #[path = "live_claim_pairs_eval.rs"]
 mod claim_pairs;
@@ -1031,7 +1032,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         > = serde_json::from_slice(&std::fs::read(path)?)?;
         let library =
             crate::features::learning::source_library::LearningSourceLibraryRepository::new(
-                pool.clone(),
+                Database::from(pool.clone()),
             );
         for removal in removals {
             assert_eq!(removal.program_id, old.program_id);
@@ -1050,13 +1051,14 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         let model =
             crate::interfaces::di::modules::standalone::open_gguf(std::path::Path::new(&gguf))
                 .await?;
+        let database = Database::from(pool.clone());
         Some(
             crate::features::learning::references::course_index::CourseIndexes::new(
                 indexes.into(),
-                pool.clone(),
+                database.clone(),
                 Arc::new(GivenModel(Some(Arc::new(model)))),
                 Arc::new(crate::features::search::trait_def::HybridSearchUseCaseFactory),
-                lattice_core::shared::runtime::jobs::JobRuntime::new(pool.clone()),
+                lattice_core::shared::runtime::jobs::JobRuntime::new(database),
                 Arc::new(lattice_core::shared::runtime::background::BackgroundTasks::default()),
                 Arc::default(),
             ),
@@ -1075,7 +1077,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             crate::features::web::services::web::WebService::new(web_dir.path())?,
         )),
         verifier: None,
-        pool: pool.clone(),
+        database: pool.clone().into(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -1084,7 +1086,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
         refresh_sources: Arc::new(move |program_id| {
             let pool = source_pool.clone();
             Box::pin(async move {
-                let workspace = crate::features::learning::source_library::LearningSourceLibraryRepository::new(pool).workspace(&program_id).await?;
+                let workspace = crate::features::learning::source_library::LearningSourceLibraryRepository::new(Database::from(pool)).workspace(&program_id).await?;
                 assert!(
                     workspace
                         .sources
@@ -1107,7 +1109,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
             })?;
         let service =
             crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
-                pool.clone(),
+                Database::from(pool.clone()),
             )
             .with_checker_model(Some(checker_name));
         let review = service.review(&old.program_id, lesson_id).await?.unwrap();
@@ -1181,7 +1183,7 @@ async fn live_retry_saved_lesson_through_publication() -> Result<()> {
     for lesson in &held {
         let review =
             crate::features::learning::lessons::claim_reviews::service::ClaimReviewService::new(
-                pool.clone(),
+                Database::from(pool.clone()),
             )
             .review(&job.program_id, lesson)
             .await?;

@@ -17,6 +17,7 @@ use lattice_core::domain::provenance::{
     known_classes, AddedBy, Chosen, ContentEvidence, Judged, JudgementKey, ProvenanceRecord,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 
 fn stored<T>(key: JudgementKey, judged: Judged<T>) -> StoredJudgement<T> {
     StoredJudgement {
@@ -33,11 +34,11 @@ fn stored<T>(key: JudgementKey, judged: Judged<T>) -> StoredJudgement<T> {
 /// origin, and how the course got it. `None` when the version is not in the
 /// program.
 pub(crate) async fn content_evidence(
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     program_id: &str,
     record: &ProvenanceRecord,
 ) -> Result<Option<ContentEvidence>> {
-    let Some(version) = LearningSourceLibraryRepository::new(pool.clone())
+    let Some(version) = LearningSourceLibraryRepository::new(database.clone())
         .chosen_version(program_id, &record.source_version_id)
         .await?
     else {
@@ -64,12 +65,13 @@ pub(crate) async fn content_evidence(
 /// origin's current track record (§12.1: the track record is an input, not
 /// part of the key, so only this re-judges after new verdicts).
 pub async fn reassess_source(
+    database: &Database,
     store: &SqliteSourceTrustStore,
     llm: &dyn LLMPort,
     program_id: &str,
     source_id: &str,
 ) -> Result<()> {
-    let version = active_version_id(store.pool(), program_id, source_id).await?;
+    let version = active_version_id(database, program_id, source_id).await?;
     let version = version
         .ok_or_else(|| AppError::NotFound("This source has no saved version to assess.".into()))?;
     let record = store.provenance(&version).await?.ok_or_else(|| {
@@ -78,7 +80,7 @@ pub async fn reassess_source(
                 .into(),
         )
     })?;
-    let content = content_evidence(store.pool(), program_id, &record)
+    let content = content_evidence(database, program_id, &record)
         .await?
         .ok_or_else(|| AppError::NotFound("This source has no saved version to assess.".into()))?;
     let track_record = store.track_record(&record.origin.key).await?;
@@ -95,12 +97,13 @@ pub async fn reassess_source(
 /// the user's overrides name now (§12.3), and saves it over the cached one.
 /// Answers with the new profile.
 pub async fn reprofile_claim(
+    database: &Database,
     store: &SqliteSourceTrustStore,
     llm: &dyn LLMPort,
     program_id: &str,
     claim_id: &str,
 ) -> Result<LearningClaimProfileDto> {
-    let context = claim_context(store.pool(), program_id, claim_id)
+    let context = claim_context(database, program_id, claim_id)
         .await?
         .ok_or_else(|| {
             AppError::NotFound(

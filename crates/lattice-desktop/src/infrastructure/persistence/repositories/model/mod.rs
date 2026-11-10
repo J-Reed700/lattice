@@ -1,12 +1,7 @@
-//! Model repository: the transaction-scoped SQLite adapter for
-//! `ModelRepositoryPort`, handed out by the unit of work.
+//! Model SQL operations, run inside the caller's unit of work.
 //!
-//! - `ops.rs` - SQL operations that accept any SQLite executor
-//! - `tx.rs` - Transaction-based repository
+//! - `ops.rs` - SQL operations that accept any SQLite connection
 
 pub mod ops;
 #[cfg(test)]
 mod ops_tests;
-pub mod tx;
-
-pub use tx::SqliteModelRepositoryTx;

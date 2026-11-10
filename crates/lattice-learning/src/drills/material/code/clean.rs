@@ -91,16 +91,16 @@ impl CodeMaterial<'_> {
                 "A code drill is built from a lesson of its course.".into(),
             ));
         };
-        let context = LessonContext::load(ctx.pool, program_id, lesson_id).await?;
+        let context = LessonContext::load(ctx.database, program_id, lesson_id).await?;
         let mut trail = Trail::default();
         let check = teaches::basis(&context)?;
-        let fits = match teaches::stored(ctx.pool, &context, &check).await? {
+        let fits = match teaches::stored(ctx.database, &context, &check).await? {
             Some(fits) => fits,
             None => {
                 let taught = teaches::ask(ctx.llm, &context).await?;
                 trail.call("code fit check", ctx.llm.model_name());
                 teaches::record(
-                    ctx.pool,
+                    ctx.database,
                     &context,
                     &check,
                     &taught,
@@ -118,7 +118,7 @@ impl CodeMaterial<'_> {
             )));
         }
         let room = self.brief_room(language, spec, &targets, ctx);
-        let brief = lesson_brief(ctx.llm, ctx.pool, &context, room).await?;
+        let brief = lesson_brief(ctx.llm, ctx.database, &context, room).await?;
         let rules = Rules {
             runner: self.runner,
             wants_tests: targets

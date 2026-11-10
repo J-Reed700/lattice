@@ -22,6 +22,7 @@ use lattice_core::application::ports::hybrid_search::{HybridSearchFactory, Hybri
 use lattice_core::application::ports::vector_search_port::VectorSearchPort;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::application::ports::TextSearchPort;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
 use lattice_core::shared::Result;
 use parking_lot::Mutex;
@@ -118,7 +119,7 @@ impl Rig {
         pool: SqlitePool,
         searches: Arc<dyn HybridSearchFactory>,
     ) -> Arc<FolderIndexManager> {
-        let jobs = JobRuntime::with_poll_interval(pool, Duration::from_millis(50));
+        let jobs = JobRuntime::with_poll_interval(Database::from(pool), Duration::from_millis(50));
         let events = Arc::clone(&self.events);
         jobs.observe(move |job| {
             let status = job

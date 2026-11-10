@@ -2,6 +2,7 @@
 //! for the program source library.
 use super::*;
 use crate::{repository::LearningRepository, tests};
+use lattice_core::shared::persistence::Database;
 
 fn id() -> String {
     uuid::Uuid::new_v4().to_string()
@@ -178,7 +179,7 @@ async fn check_row(
 async fn policy_changes_are_receipted_revision_guarded_and_kind_checked() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let (web, _) = add(
         &library,
         &program_id,
@@ -297,7 +298,7 @@ async fn policy_changes_are_receipted_revision_guarded_and_kind_checked() -> Res
 async fn only_live_web_sources_with_a_refreshable_policy_are_offered_for_refresh() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let (manual, _) = add(
         &library,
         &program_id,
@@ -352,7 +353,7 @@ async fn only_live_web_sources_with_a_refreshable_policy_are_offered_for_refresh
 async fn refresh_guards_its_inputs_and_records_unusable_pages_as_failed_checks() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let (web, _) = add(
         &library,
         &program_id,
@@ -440,7 +441,7 @@ async fn refreshing_to_known_text_reuses_its_version_and_adoption_needs_the_pend
 ) -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let (web, first_version) = add(
         &library,
         &program_id,
@@ -513,7 +514,7 @@ async fn refreshing_to_known_text_reuses_its_version_and_adoption_needs_the_pend
 async fn deleting_a_source_needs_a_reason_and_happens_once() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let (source_id, _) = add(
         &library,
         &program_id,
@@ -561,7 +562,7 @@ async fn deleting_a_source_needs_a_reason_and_happens_once() -> Result<()> {
 async fn capture_validates_metadata_and_keeps_only_a_meaningful_selection_note() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     // The fixture program brings its own selected source.
     let fixture_rows = library_rows(&pool, &program_id).await?;
 
@@ -725,7 +726,7 @@ async fn shown_title_and_publisher(
 async fn a_long_title_or_publisher_is_cut_to_what_the_library_shows_never_refused() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let title = "A headline that runs on and on. "
         .repeat(12)
         .trim()
@@ -762,7 +763,7 @@ async fn a_long_title_or_publisher_is_cut_to_what_the_library_shows_never_refuse
 async fn a_refreshed_page_with_a_long_title_or_publisher_is_cut_never_failed() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let (web, _) = add(
         &library,
         &program_id,
@@ -811,7 +812,7 @@ async fn legacy_snapshot(pool: &SqlitePool, program_id: &str) -> Result<String> 
 async fn backfilling_legacy_snapshots_keeps_none_when_one_is_refused() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     legacy_snapshot(&pool, &program_id).await?;
     legacy_snapshot(&pool, &program_id).await?;
     sqlx::query("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_versions WHEN (SELECT COUNT(*) FROM learning_source_versions WHERE extraction_version='legacy_bounded_extraction_v1' AND content_sha256<>'')>=1 BEGIN SELECT RAISE(ABORT, 'refused for the test'); END")
@@ -834,7 +835,7 @@ async fn backfilling_legacy_snapshots_keeps_none_when_one_is_refused() -> Result
 async fn a_selected_source_whose_note_cannot_be_saved_is_not_added() -> Result<()> {
     let pool = tests::pool().await?;
     let program_id = active_program(&pool).await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     sqlx::query("CREATE TRIGGER refuse_for_test BEFORE UPDATE ON learning_source_library BEGIN SELECT RAISE(ABORT, 'refused for the test'); END")
         .execute(&pool)
         .await

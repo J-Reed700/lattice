@@ -45,13 +45,13 @@ impl ClaimReviewService {
         program_id: &str,
         ledger: &Ledger,
     ) -> Result<HashMap<String, VersionStanding>> {
-        let store = SqliteSourceTrustStore::new(self.pool().clone());
+        let store = SqliteSourceTrustStore::new(self.database.clone());
         let mut standings = HashMap::new();
         for version in support_versions(ledger) {
             let standing = match store.provenance(&version).await? {
                 Some(record) => VersionStanding {
                     site: record.origin.site().map(str::to_owned),
-                    assessment: latest_standing(self.pool(), program_id, &record).await?,
+                    assessment: latest_standing(&self.database, program_id, &record).await?,
                 },
                 None => VersionStanding::default(),
             };

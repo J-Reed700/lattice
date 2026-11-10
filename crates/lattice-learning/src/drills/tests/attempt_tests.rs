@@ -16,6 +16,7 @@ use lattice_core::domain::learning::drills::{
     PatternRating, Score, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
 use serde_json::json;
 use sqlx::SqlitePool;
@@ -51,7 +52,12 @@ async fn open() -> Result<(SqlitePool, Attempt)> {
 /// An open attempt that has been handed in with one finding.
 async fn submitted() -> Result<(SqlitePool, Attempt, String)> {
     let (pool, attempt) = open().await?;
-    let queued = attempts::submit(&pool, &attempt.id, submission(vec![operator_finding()])).await?;
+    let queued = attempts::submit(
+        &Database::from(pool.clone()),
+        &attempt.id,
+        submission(vec![operator_finding()]),
+    )
+    .await?;
     let job = queued.job.expect("a grading job");
     Ok((pool, queued.attempt, job))
 }
@@ -144,9 +150,14 @@ async fn starting_takes_the_drill_opens_an_attempt_and_queues_the_next_build() -
     let spec = code_spec(&pool).await?;
     let program = spec.course().expect("a course").to_owned();
     stock_on(&pool, "drill", &spec).await?;
-    let begun = attempts::start(&pool, Shelf::of(&spec)?, None, AttemptMode::Interview)
-        .await?
-        .expect("a ready drill");
+    let begun = attempts::start(
+        &Database::from(pool.clone()),
+        Shelf::of(&spec)?,
+        None,
+        AttemptMode::Interview,
+    )
+    .await?
+    .expect("a ready drill");
     let attempt = &begun.attempt;
     assert_eq!(attempt.drill_id, "drill");
     assert_eq!(attempt.mode, AttemptMode::Interview);
@@ -174,7 +185,12 @@ async fn starting_takes_the_drill_opens_an_attempt_and_queues_the_next_build() -
         next.subject_id,
         Some(format!("drill:{program}:code:python"))
     );
-    assert_eq!(attempts::get(&pool, &attempt.id).await?.0, *attempt);
+    assert_eq!(
+        attempts::get(&Database::from(pool.clone()), &attempt.id)
+            .await?
+            .0,
+        *attempt
+    );
     Ok(())
 }
 
@@ -196,9 +212,14 @@ async fn with_no_drill_ready_nothing_is_opened() -> Result<()> {
             material: &spec.material,
         },
     ] {
-        assert!(attempts::start(&pool, shelf, None, AttemptMode::Practice)
-            .await?
-            .is_none());
+        assert!(attempts::start(
+            &Database::from(pool.clone()),
+            shelf,
+            None,
+            AttemptMode::Practice
+        )
+        .await?
+        .is_none());
     }
     assert_eq!(
         scalar(&pool, "SELECT count(*) FROM learning_drill_attempts").await?,
@@ -214,12 +235,22 @@ async fn a_drill_is_given_to_one_attempt() -> Result<()> {
     let spec = code_spec(&pool).await?;
     stock_on(&pool, "drill", &spec).await?;
     let shelf = Shelf::of(&spec)?;
-    assert!(attempts::start(&pool, shelf, None, AttemptMode::Practice)
-        .await?
-        .is_some());
-    assert!(attempts::start(&pool, shelf, None, AttemptMode::Practice)
-        .await?
-        .is_none());
+    assert!(attempts::start(
+        &Database::from(pool.clone()),
+        shelf,
+        None,
+        AttemptMode::Practice
+    )
+    .await?
+    .is_some());
+    assert!(attempts::start(
+        &Database::from(pool.clone()),
+        shelf,
+        None,
+        AttemptMode::Practice
+    )
+    .await?
+    .is_none());
     Ok(())
 }
 
@@ -228,7 +259,7 @@ async fn submitting_stores_the_review_and_queues_one_grading_job() -> Result<()>
     let (pool, attempt) = open().await?;
     let findings = vec![operator_finding(), extra_finding()];
     let queued = attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         Submission {
             findings: findings.clone(),
@@ -243,7 +274,12 @@ async fn submitting_stores_the_review_and_queues_one_grading_job() -> Result<()>
     assert_eq!(stored.fix_files, Some(operator_fixed()));
     assert_eq!(stored.time_spent_ms, Some(61_500));
     assert!(stored.submitted_at.is_some());
-    assert_eq!(attempts::get(&pool, &attempt.id).await?.0, *stored);
+    assert_eq!(
+        attempts::get(&Database::from(pool.clone()), &attempt.id)
+            .await?
+            .0,
+        *stored
+    );
 
     let job = JobStore::new(pool.clone())
         .get(&queued.job.expect("a job"))
@@ -277,7 +313,12 @@ async fn a_finding_is_kept_as_the_learner_wrote_it() -> Result<()> {
         text: "  Magic numbers.\n\nUse the constants.  ".into(),
         severity: Some(Severity::Nit),
     };
-    let queued = attempts::submit(&pool, &attempt.id, submission(vec![finding.clone()])).await?;
+    let queued = attempts::submit(
+        &Database::from(pool.clone()),
+        &attempt.id,
+        submission(vec![finding.clone()]),
+    )
+    .await?;
     assert_eq!(queued.attempt.findings, Some(vec![finding]));
     Ok(())
 }
@@ -304,7 +345,7 @@ async fn a_finding_with_no_text_or_on_no_line_of_the_drill_is_refused_and_the_at
     ];
     for (name, bad) in refused {
         let result = attempts::submit(
-            &pool,
+            &Database::from(pool.clone()),
             &attempt.id,
             submission(vec![finding(None, "Fine."), bad]),
         )
@@ -314,7 +355,9 @@ async fn a_finding_with_no_text_or_on_no_line_of_the_drill_is_refused_and_the_at
             "{name}: {result:?}"
         );
     }
-    let kept = attempts::get(&pool, &attempt.id).await?.0;
+    let kept = attempts::get(&Database::from(pool.clone()), &attempt.id)
+        .await?
+        .0;
     assert_eq!(kept.status, AttemptStatus::Open);
     assert_eq!(kept.findings, None);
     assert_eq!(jobs_of(&pool, DRILL_GRADING).await?, 0);
@@ -330,7 +373,7 @@ async fn the_message_for_a_refused_finding_names_it() -> Result<()> {
         severity: None,
     };
     let Err(AppError::InvalidInput(message)) = attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         submission(vec![operator_finding(), bad]),
     )
@@ -371,7 +414,12 @@ async fn nothing_else_about_a_review_is_refused() -> Result<()> {
         text: format!("Remark {n}."),
         severity: None,
     }));
-    let queued = attempts::submit(&pool, &attempt.id, submission(findings)).await?;
+    let queued = attempts::submit(
+        &Database::from(pool.clone()),
+        &attempt.id,
+        submission(findings),
+    )
+    .await?;
     assert_eq!(
         queued.attempt.findings.map(|stored| stored.len()),
         Some(505)
@@ -382,7 +430,12 @@ async fn nothing_else_about_a_review_is_refused() -> Result<()> {
 #[tokio::test]
 async fn a_review_with_no_findings_can_be_handed_in() -> Result<()> {
     let (pool, attempt) = open().await?;
-    let queued = attempts::submit(&pool, &attempt.id, submission(Vec::new())).await?;
+    let queued = attempts::submit(
+        &Database::from(pool.clone()),
+        &attempt.id,
+        submission(Vec::new()),
+    )
+    .await?;
     assert_eq!(queued.attempt.findings, Some(Vec::<Finding>::new()));
     assert!(queued.job.is_some());
     Ok(())
@@ -392,7 +445,7 @@ async fn a_review_with_no_findings_can_be_handed_in() -> Result<()> {
 async fn a_negative_time_is_refused() -> Result<()> {
     let (pool, attempt) = open().await?;
     let result = attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         Submission {
             findings: Vec::new(),
@@ -411,9 +464,13 @@ async fn a_negative_time_is_refused() -> Result<()> {
 #[tokio::test]
 async fn files_left_as_they_were_are_no_fix() -> Result<()> {
     let (pool, attempt) = open().await?;
-    let drill_files = attempts::get(&pool, &attempt.id).await?.1.drill.files;
+    let drill_files = attempts::get(&Database::from(pool.clone()), &attempt.id)
+        .await?
+        .1
+        .drill
+        .files;
     let queued = attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         Submission {
             findings: Vec::new(),
@@ -429,7 +486,11 @@ async fn files_left_as_they_were_are_no_fix() -> Result<()> {
 #[tokio::test]
 async fn the_line_endings_of_a_fix_are_the_ones_of_a_drill() -> Result<()> {
     let (pool, attempt) = open().await?;
-    let drill_files = attempts::get(&pool, &attempt.id).await?.1.drill.files;
+    let drill_files = attempts::get(&Database::from(pool.clone()), &attempt.id)
+        .await?
+        .1
+        .drill
+        .files;
     let windows: Vec<_> = drill_files
         .iter()
         .map(|file| DrillFile {
@@ -438,7 +499,7 @@ async fn the_line_endings_of_a_fix_are_the_ones_of_a_drill() -> Result<()> {
         })
         .collect();
     let unchanged = attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         Submission {
             findings: Vec::new(),
@@ -461,7 +522,7 @@ async fn the_line_endings_of_a_fix_are_the_ones_of_a_drill() -> Result<()> {
         })
         .collect();
     let queued = attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         Submission {
             findings: Vec::new(),
@@ -482,7 +543,7 @@ async fn a_fix_that_sends_some_files_keeps_the_drills_for_the_rest() -> Result<(
         .find(|file| file.path == "src/limiter.py")
         .expect("the limiter");
     let queued = attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         Submission {
             findings: Vec::new(),
@@ -505,7 +566,7 @@ async fn a_file_the_drill_does_not_have_comes_after_the_drills_files() -> Result
     let mut sent = operator_fixed();
     sent.push(helper.clone());
     let queued = attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         Submission {
             findings: Vec::new(),
@@ -523,7 +584,12 @@ async fn a_file_the_drill_does_not_have_comes_after_the_drills_files() -> Result
 #[tokio::test]
 async fn handing_in_the_same_review_again_finds_the_same_job() -> Result<()> {
     let (pool, attempt, job) = submitted().await?;
-    let again = attempts::submit(&pool, &attempt.id, submission(vec![operator_finding()])).await?;
+    let again = attempts::submit(
+        &Database::from(pool.clone()),
+        &attempt.id,
+        submission(vec![operator_finding()]),
+    )
+    .await?;
     assert_eq!(again.job, Some(job));
     assert_eq!(again.attempt, attempt);
     assert_eq!(jobs_of(&pool, DRILL_GRADING).await?, 1);
@@ -540,14 +606,17 @@ async fn handing_in_another_review_is_refused() -> Result<()> {
             ..submission(vec![operator_finding()])
         },
     ] {
-        let result = attempts::submit(&pool, &attempt.id, other).await;
+        let result = attempts::submit(&Database::from(pool.clone()), &attempt.id, other).await;
         assert!(
             matches!(result, Err(AppError::InvalidState(_))),
             "{result:?}"
         );
     }
     assert_eq!(
-        attempts::get(&pool, &attempt.id).await?.0.findings,
+        attempts::get(&Database::from(pool.clone()), &attempt.id)
+            .await?
+            .0
+            .findings,
         Some(vec![operator_finding()])
     );
     Ok(())
@@ -557,27 +626,43 @@ async fn handing_in_another_review_is_refused() -> Result<()> {
 async fn an_attempt_that_is_not_there_is_not_found() -> Result<()> {
     let pool = pool().await?;
     assert!(matches!(
-        attempts::submit(&pool, "nothing", submission(Vec::new())).await,
+        attempts::submit(
+            &Database::from(pool.clone()),
+            "nothing",
+            submission(Vec::new())
+        )
+        .await,
         Err(AppError::NotFound(_))
     ));
     assert!(matches!(
-        attempts::regrade(&pool, "nothing").await,
+        attempts::regrade(&Database::from(pool.clone()), "nothing").await,
         Err(AppError::NotFound(_))
     ));
     assert!(matches!(
-        attempts::get(&pool, "nothing").await,
+        attempts::get(&Database::from(pool.clone()), "nothing").await,
         Err(AppError::NotFound(_))
     ));
-    assert!(attempts::waiting(&pool, "nothing").await?.is_none());
+    assert!(attempts::waiting(&Database::from(pool.clone()), "nothing")
+        .await?
+        .is_none());
     Ok(())
 }
 
 #[tokio::test]
 async fn only_a_submitted_attempt_is_waiting_for_its_grade() -> Result<()> {
     let (pool, attempt) = open().await?;
-    assert!(attempts::waiting(&pool, &attempt.id).await?.is_none());
-    attempts::submit(&pool, &attempt.id, submission(vec![operator_finding()])).await?;
-    let (waiting, drill) = attempts::waiting(&pool, &attempt.id)
+    assert!(
+        attempts::waiting(&Database::from(pool.clone()), &attempt.id)
+            .await?
+            .is_none()
+    );
+    attempts::submit(
+        &Database::from(pool.clone()),
+        &attempt.id,
+        submission(vec![operator_finding()]),
+    )
+    .await?;
+    let (waiting, drill) = attempts::waiting(&Database::from(pool.clone()), &attempt.id)
         .await?
         .expect("a submitted attempt waits");
     assert_eq!(waiting.status, AttemptStatus::Submitted);
@@ -613,7 +698,9 @@ async fn a_grade_is_written_with_the_model_that_gave_it() -> Result<()> {
     .await?;
     assert!(recorded);
     drop(connection);
-    let graded = attempts::get(&pool, &attempt.id).await?.0;
+    let graded = attempts::get(&Database::from(pool.clone()), &attempt.id)
+        .await?
+        .0;
     assert_eq!(graded.status, AttemptStatus::Graded);
     assert_eq!(graded.assessment, Some(assessment.clone()));
     assert_eq!(graded.score, Some(scored.clone()));
@@ -652,7 +739,7 @@ async fn a_grade_is_written_with_the_model_that_gave_it() -> Result<()> {
 async fn a_fix_is_written_beside_its_grade_when_the_attempt_has_one() -> Result<()> {
     let (pool, attempt) = open().await?;
     attempts::submit(
-        &pool,
+        &Database::from(pool.clone()),
         &attempt.id,
         Submission {
             fix_files: Some(operator_fixed()),
@@ -677,7 +764,10 @@ async fn a_fix_is_written_beside_its_grade_when_the_attempt_has_one() -> Result<
     .await?;
     drop(connection);
     assert_eq!(
-        attempts::get(&pool, &attempt.id).await?.0.fix,
+        attempts::get(&Database::from(pool.clone()), &attempt.id)
+            .await?
+            .0
+            .fix,
         Some(Vec::<IssueFix>::new())
     );
     Ok(())
@@ -697,7 +787,9 @@ async fn an_attempt_that_could_not_be_graded_keeps_why_and_regrades() -> Result<
         .await?
     );
     drop(connection);
-    let failed = attempts::get(&pool, &attempt.id).await?.0;
+    let failed = attempts::get(&Database::from(pool.clone()), &attempt.id)
+        .await?
+        .0;
     assert_eq!(failed.status, AttemptStatus::CouldntGrade);
     assert_eq!(failed.error.as_deref(), Some("No answer."));
     assert_eq!(failed.grader_model.as_deref(), Some(MODEL));
@@ -706,7 +798,7 @@ async fn an_attempt_that_could_not_be_graded_keeps_why_and_regrades() -> Result<
         (None, None, None)
     );
 
-    let queued = attempts::regrade(&pool, &attempt.id).await?;
+    let queued = attempts::regrade(&Database::from(pool.clone()), &attempt.id).await?;
     let second = queued.job.clone().expect("a new job");
     assert_ne!(second, first, "a regrade is a new job");
     let regraded = &queued.attempt;
@@ -727,7 +819,7 @@ async fn an_attempt_that_could_not_be_graded_keeps_why_and_regrades() -> Result<
         "each regrade has an operation id of its own"
     );
 
-    let again = attempts::regrade(&pool, &attempt.id).await?;
+    let again = attempts::regrade(&Database::from(pool.clone()), &attempt.id).await?;
     assert_eq!(again.job, Some(second), "asking again finds the job");
     assert_eq!(again.attempt.regrades, 1);
     assert_eq!(jobs_of(&pool, DRILL_GRADING).await?, 2);
@@ -738,10 +830,15 @@ async fn an_attempt_that_could_not_be_graded_keeps_why_and_regrades() -> Result<
 async fn an_open_or_graded_attempt_is_not_regraded() -> Result<()> {
     let (pool, attempt) = open().await?;
     assert!(matches!(
-        attempts::regrade(&pool, &attempt.id).await,
+        attempts::regrade(&Database::from(pool.clone()), &attempt.id).await,
         Err(AppError::InvalidState(_))
     ));
-    attempts::submit(&pool, &attempt.id, submission(vec![operator_finding()])).await?;
+    attempts::submit(
+        &Database::from(pool.clone()),
+        &attempt.id,
+        submission(vec![operator_finding()]),
+    )
+    .await?;
     let (assessment, scored, rated) = grade_of_the_review();
     let mut connection = pool.acquire().await.map_err(db)?;
     attempts::repository::record_graded_in(
@@ -758,7 +855,7 @@ async fn an_open_or_graded_attempt_is_not_regraded() -> Result<()> {
     .await?;
     drop(connection);
     assert!(matches!(
-        attempts::regrade(&pool, &attempt.id).await,
+        attempts::regrade(&Database::from(pool.clone()), &attempt.id).await,
         Err(AppError::InvalidState(_))
     ));
     assert_eq!(jobs_of(&pool, DRILL_GRADING).await?, 1);
