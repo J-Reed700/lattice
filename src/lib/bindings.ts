@@ -7301,8 +7301,9 @@ thinkingOverride: ThinkingOverrideDto;
  */
 thinkingSampling: SamplingProfileDto;
 /**
- * Maximum tokens to generate, for a model nothing more is known about: a
- * connected model's own limits come first (`model_windows`).
+ * Maximum tokens to generate on a local backend (downloaded, llama.cpp,
+ * Ollama). A cloud model's own limits are `model_windows` and what its
+ * provider reports.
  */
 maxTokens: number;
 /**

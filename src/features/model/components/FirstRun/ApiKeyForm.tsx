@@ -49,7 +49,7 @@ export function ApiKeyForm({ onBack, onDone }: ApiKeyFormProps) {
     try {
       await updateSettings.mutateAsync({
         category: 'llm',
-        updates: { provider, model, maxTokens: 8192, learningModel: { kind: 'cloud', provider, model } },
+        updates: { provider, model, learningModel: { kind: 'cloud', provider, model } },
       });
     } catch (error) {
       setUseError(getErrorMessage(error));

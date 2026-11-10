@@ -64,9 +64,9 @@ describe('ChatTab', () => {
 
   describe('provider', () => {
     it.each([
-      ['openai', { provider: 'openai', model: '', maxTokens: 8192 }],
-      ['anthropic', { provider: 'anthropic', model: '', maxTokens: 8192 }],
-      ['google', { provider: 'google', model: '', maxTokens: 8192 }],
+      ['openai', { provider: 'openai', model: '' }],
+      ['anthropic', { provider: 'anthropic', model: '' }],
+      ['google', { provider: 'google', model: '' }],
       ['local', { provider: 'local' }],
     ])('switching to %s saves its defaults', (value, update) => {
       render(<ChatTab />);
