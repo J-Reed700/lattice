@@ -1,6 +1,8 @@
 //! Native OpenAI Responses and Anthropic Messages adapters.
 //! Explicit selection only; Auto never sends local documents to a cloud provider.
+use crate::features::llm::backend::{ignore_text, ModelBackend, Progress, TextSink};
 use crate::features::llm::engine::vision::not_set_up_to_see;
+use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use async_trait::async_trait;
 use lattice_core::application::{
     contracts::settings::LLMSettingsDto,
@@ -48,6 +50,11 @@ impl CloudLlm {
             std::sync::Arc::new(self),
             scheduler,
         ))
+    }
+
+    /// This client as a port, behind a scheduler of its own.
+    pub fn into_port(self) -> std::sync::Arc<dyn LLMPort> {
+        self.schedule(&crate::features::llm::scheduler::SchedulerRegistry::default())
     }
 
     /// A client for `settings.model`, sending replies of at most
@@ -99,23 +106,18 @@ impl CloudLlm {
         self
     }
 
-    fn body(&self, request: &CompletionRequest, stream: bool) -> Result<Value> {
-        if request.has_images() && self.vision.is_none() {
+    fn body(&self, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
+        if fitted.request().has_images() && self.vision.is_none() {
             return Err(not_set_up_to_see(&self.model));
         }
-        self.protocol.body(
-            &self.model,
-            request,
-            stream,
-            self.output_ceiling_for(request),
-        )
+        self.protocol.body(&self.model, fitted, stream)
     }
 
     /// All three attempts and their backoffs share one `deadline`, so a retry
     /// never multiplies the caller's time budget. `bound_body` applies what is
     /// left of it to the whole exchange; without it only the wait for response
     /// headers is bounded and the streamed body is left to stall detection.
-    async fn send(
+    async fn post(
         &self,
         body: &Value,
         deadline: Option<Instant>,
@@ -206,9 +208,9 @@ impl CloudLlm {
         deadline: Option<Instant>,
         bound_body: bool,
     ) -> Result<reqwest::Response> {
-        match self.send(&body, deadline, bound_body).await {
+        match self.post(&body, deadline, bound_body).await {
             Err(error) => match self.protocol.resend_after(&error, &body) {
-                Some(rewritten) => self.send(&rewritten, deadline, bound_body).await,
+                Some(rewritten) => self.post(&rewritten, deadline, bound_body).await,
                 None => Err(error),
             },
             sent => sent,
@@ -216,29 +218,15 @@ impl CloudLlm {
     }
 }
 
-#[async_trait]
-impl LLMPort for CloudLlm {
-    fn vision(&self) -> Option<VisionGeometry> {
-        self.vision
-    }
-    fn supports_tool_calling(&self) -> bool {
-        true
-    }
-    fn thinks_before_answering(&self) -> bool {
-        self.protocol.thinks_unasked(&self.model)
-    }
-    fn model_output_ceiling(&self) -> Option<u32> {
-        self.model_ceiling
-    }
-    fn reasons_for(&self, request: &CompletionRequest) -> bool {
-        self.protocol.reasons(&self.model, request)
-    }
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let deadline = request
+impl CloudLlm {
+    /// The whole answer at once.
+    async fn complete_whole(&self, fitted: &Fitted<'_>) -> Result<CompletionResponse> {
+        let deadline = fitted
+            .request()
             .wall_clock_budget()
             .map(|budget| Instant::now() + budget);
         let response = self
-            .send_with_fallback(self.body(request, false)?, deadline, true)
+            .send_with_fallback(self.body(fitted, false)?, deadline, true)
             .await?;
         let value: Value = response
             .json()
@@ -248,21 +236,15 @@ impl LLMPort for CloudLlm {
         // edge between reading and writing, so it is not timed.
         self.protocol.parse_reply(value)
     }
-    async fn complete_with_progress(
+
+    /// The answer as it is written, text and thinking handed on as they arrive.
+    async fn complete_streamed(
         &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        fitted: &Fitted<'_>,
+        on_text: &TextSink<'_>,
+        on_reasoning: &TextSink<'_>,
     ) -> Result<CompletionResponse> {
-        self.complete_with_reasoning_progress(request, on_text, &|_| Ok(()), &|_| Ok(()))
-            .await
-    }
-    async fn complete_with_reasoning_progress(
-        &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        _on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
-    ) -> Result<CompletionResponse> {
+        let request = fitted.request();
         let deadline = request
             .wall_clock_budget()
             .map(|budget| Instant::now() + budget);
@@ -270,7 +252,7 @@ impl LLMPort for CloudLlm {
             .within_time_budget(async {
                 let sent = Instant::now();
                 let response = self
-                    .send_with_fallback(self.body(request, true)?, deadline, false)
+                    .send_with_fallback(self.body(fitted, true)?, deadline, false)
                     .await?;
                 streaming::drain(
                     self.protocol,
@@ -285,18 +267,56 @@ impl LLMPort for CloudLlm {
             .await
             .map_err(|_| self.budget_error())?
     }
+}
 
+#[async_trait]
+impl ModelBackend for CloudLlm {
     fn model_name(&self) -> &str {
         &self.model
     }
     fn provider_name(&self) -> &str {
         self.protocol.name()
     }
-    fn max_context_tokens(&self) -> usize {
+    fn window(&self) -> usize {
         self.context_window
+    }
+    fn thinking(&self, request: &CompletionRequest) -> Thinking {
+        self.protocol.thinking(&self.model, request)
+    }
+    fn output_limits(&self) -> OutputLimits {
+        OutputLimits::of(self.model_ceiling)
+    }
+    fn supports_tool_calling(&self) -> bool {
+        true
+    }
+    fn vision(&self) -> Option<VisionGeometry> {
+        self.vision
+    }
+    fn keeps_read_prompts(&self) -> bool {
+        false
+    }
+    fn is_alive(&self) -> bool {
+        true
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(!self.key.is_empty())
+    }
+    async fn send(
+        &self,
+        fitted: &Fitted<'_>,
+        progress: Progress<'_>,
+    ) -> Result<CompletionResponse> {
+        match progress {
+            Progress::None => self.complete_whole(fitted).await,
+            Progress::Streamed {
+                on_text,
+                on_reasoning,
+                ..
+            } => {
+                self.complete_streamed(fitted, on_text, on_reasoning.unwrap_or(&ignore_text))
+                    .await
+            }
+        }
     }
 }
 

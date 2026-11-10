@@ -16,6 +16,7 @@ use serde_json::Value;
 use super::catalog::CloudModelDto;
 use super::streaming::Callback;
 use crate::features::llm::engine::vision::pictures_outside_a_user_message;
+use crate::features::llm::fitting::{Fitted, Thinking};
 
 pub(super) mod anthropic;
 mod google;
@@ -73,24 +74,15 @@ pub(super) trait ProviderProtocol: Send + Sync {
     fn sign(&self, request: RequestBuilder, key: &str) -> RequestBuilder;
     /// `request` signed with `key` for the model list and model objects.
     fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder;
-    /// The request body for `request` on `model`, with the reply `ceiling`
-    /// the shared rule settled on.
-    fn body(
-        &self,
-        model: &str,
-        request: &CompletionRequest,
-        stream: bool,
-        ceiling: Option<u32>,
-    ) -> Result<Value>;
+    /// Whether `model` thinks through `request` before answering: the one
+    /// answer the body, the reply ceiling and the port's reasoning flag read.
+    fn thinking(&self, model: &str, request: &CompletionRequest) -> Thinking;
+    /// The request body for the fitted request on `model`.
+    fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value>;
     /// A whole reply, streamed or not, read back into a completion.
     fn parse_reply(&self, value: Value) -> Result<CompletionResponse>;
     /// A fresh decoder for one streamed reply.
     fn event_decoder(&self) -> Box<dyn EventDecoder>;
-    /// Whether `model` thinks with no request asking.
-    fn thinks_unasked(&self, model: &str) -> bool;
-    /// Whether `model` thinks through `request` before answering, so its
-    /// thinking counts toward the reply ceiling.
-    fn reasons(&self, model: &str, request: &CompletionRequest) -> bool;
     /// Whether the API refuses a request that sets no output ceiling.
     fn requires_ceiling(&self) -> bool;
     /// The error for a 400 that refused the structured-output format, when

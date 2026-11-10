@@ -5,9 +5,11 @@
 //! `/tokenize` and slot pinning. The two differ only in where the server is
 //! (the base URL), how it authenticates (default headers) and who owns its
 //! process: a sidecar's client holds the handle that keeps it running.
+use crate::features::llm::backend::{ignore_retry, ignore_text, ModelBackend, Progress};
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
 use crate::features::llm::engine::vision::pictures_outside_a_user_message;
 use crate::features::llm::engine::GenerationConfig;
+use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use crate::features::llm::scheduler::SchedulerRegistry;
 use async_trait::async_trait;
 use futures::StreamExt;
@@ -15,7 +17,7 @@ use lattice_core::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
         invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse,
-        ContentPart, LLMPort, ThinkingMode, ThinkingPolicy,
+        ContentPart, LLMPort, ThinkingPolicy,
     },
 };
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -210,6 +212,12 @@ impl LlamaCppLlm {
             .is_some_and(|process| !process.is_running())
     }
 
+    /// This client as a port, behind the scheduler its server would have on a
+    /// registry of its own.
+    pub async fn into_port(self) -> Arc<dyn LLMPort> {
+        self.schedule(&SchedulerRegistry::default()).await
+    }
+
     /// Behind this server's shared scheduler, with an exact tokenizer when it
     /// answers like a llama-server.
     ///
@@ -385,7 +393,7 @@ fn coalesce_system_messages(messages: Vec<Value>) -> Result<Vec<Value>> {
 }
 
 #[async_trait]
-impl LLMPort for LlamaCppLlm {
+impl ModelBackend for LlamaCppLlm {
     fn supports_tool_calling(&self) -> bool {
         self.config.supports_tools
     }
@@ -405,17 +413,14 @@ impl LLMPort for LlamaCppLlm {
     fn model_name(&self) -> &str {
         &self.config.model
     }
-    fn max_context_tokens(&self) -> usize {
+    fn window(&self) -> usize {
         self.config.context_window
     }
-    fn model_output_ceiling(&self) -> Option<u32> {
-        Some(u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX))
+    fn output_limits(&self) -> OutputLimits {
+        OutputLimits::known(u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX))
     }
-    fn reasons_for(&self, request: &CompletionRequest) -> bool {
-        self.thinking_mode(request) == ThinkingMode::On
-    }
-    fn thinks_before_answering(&self) -> bool {
-        self.thinking_mode(&CompletionRequest::default()) == ThinkingMode::On
+    fn thinking(&self, request: &CompletionRequest) -> Thinking {
+        Thinking::from(self.thinking_mode(request))
     }
     /// A crashed bundled server leaves this client cached with a dead port;
     /// saying so lets the role cache drop it and start a fresh server.
@@ -452,38 +457,26 @@ impl LLMPort for LlamaCppLlm {
                     .any(|model| model.get("id").and_then(Value::as_str) == Some(self.model_name()))
             }))
     }
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.complete_reliably(request, &|_| Ok(()), None, Some(&|_| Ok(())))
-            .await
-    }
-    async fn complete_with_progress(
+    async fn send(
         &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        fitted: &Fitted<'_>,
+        progress: Progress<'_>,
     ) -> Result<CompletionResponse> {
-        // Text-only consumers cannot retract an already delivered draft.
-        self.complete_reliably(request, on_text, None, None).await
-    }
-
-    async fn complete_with_retry_progress(
-        &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
-    ) -> Result<CompletionResponse> {
-        self.complete_reliably(request, on_text, None, Some(on_retry))
-            .await
-    }
-
-    async fn complete_with_reasoning_progress(
-        &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
-    ) -> Result<CompletionResponse> {
-        self.complete_reliably(request, on_text, Some(on_reasoning), Some(on_retry))
-            .await
+        match progress {
+            Progress::None => {
+                self.complete_reliably(fitted, &ignore_text, None, Some(&ignore_retry))
+                    .await
+            }
+            // Text-only consumers cannot retract an already delivered draft.
+            Progress::Streamed {
+                on_text,
+                on_reasoning,
+                on_retry,
+            } => {
+                self.complete_reliably(fitted, on_text, on_reasoning, on_retry)
+                    .await
+            }
+        }
     }
 }
 

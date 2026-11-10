@@ -3,7 +3,7 @@
 use lattice_core::application::contracts::settings::{
     LLMSettingsDto, SamplingProfileDto, ThinkingOverrideDto,
 };
-use lattice_core::application::ports::llm_port::{ThinkingMode, ThinkingPolicy};
+use lattice_core::application::ports::llm_port::ThinkingPolicy;
 use serde::{Deserialize, Serialize};
 
 /// Configuration for text generation.
@@ -104,18 +104,19 @@ impl GenerationConfig {
         }
     }
 
-    /// The profile a request in `mode` is sampled with, before any override
-    /// the request carries.
-    pub fn profile(&self, mode: ThinkingMode) -> SamplingProfile {
-        match mode {
-            ThinkingMode::Off => SamplingProfile {
+    /// The profile a request is sampled with, before any override the request
+    /// carries: the thinking one when the model thinks through it.
+    pub(crate) fn profile(&self, thinks: bool) -> SamplingProfile {
+        if thinks {
+            self.thinking
+        } else {
+            SamplingProfile {
                 temperature: self.temperature,
                 top_p: self.top_p,
                 top_k: self.top_k,
                 presence_penalty: self.presence_penalty,
                 repeat_penalty: self.repeat_penalty,
-            },
-            ThinkingMode::On => self.thinking,
+            }
         }
     }
 }

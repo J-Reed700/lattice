@@ -6,9 +6,11 @@
 //! lives in `application/ports/`.
 
 pub(crate) mod activity;
+pub(crate) mod backend;
 pub mod commands;
 pub mod di;
 pub mod dto;
+pub(crate) mod fitting;
 pub(crate) mod instances;
 pub(crate) mod loading;
 pub mod use_cases;

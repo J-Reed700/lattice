@@ -14,6 +14,7 @@ use super::{api_base, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
 use crate::features::llm::cloud::catalog::CloudModelDto;
 use crate::features::llm::cloud::reply::call_arguments;
 use crate::features::llm::cloud::{field, set_field, timing};
+use crate::features::llm::fitting::{Fitted, Thinking};
 use crate::features::llm::llama_cpp::openai_content_parts;
 
 mod stream;
@@ -53,13 +54,19 @@ impl ProviderProtocol for Google {
         request.header("x-goog-api-key", key)
     }
 
-    fn body(
-        &self,
-        model: &str,
-        request: &CompletionRequest,
-        stream: bool,
-        ceiling: Option<u32>,
-    ) -> Result<Value> {
+    /// Google thinks unless told not to. With no effort set nothing says
+    /// whether the model does, so the ceiling is the model's and the port does
+    /// not claim it reasons first.
+    fn thinking(&self, _model: &str, request: &CompletionRequest) -> Thinking {
+        match request.reasoning_effort.as_deref() {
+            Some("none") => Thinking::Off,
+            Some(_) => Thinking::On,
+            None => Thinking::Unknown,
+        }
+    }
+
+    fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
+        let request = fitted.request();
         let messages = chat_messages(&request.input)?;
         let model = model.strip_prefix("models/").unwrap_or(model);
         let mut body = json!({
@@ -67,7 +74,7 @@ impl ProviderProtocol for Google {
             "messages": messages,
             "stream": stream,
         });
-        if let Some(max_output) = ceiling {
+        if let Some(max_output) = fitted.ceiling() {
             set_field(&mut body, "max_tokens", json!(max_output))?;
         }
         if stream {
@@ -194,14 +201,6 @@ impl ProviderProtocol for Google {
 
     fn event_decoder(&self) -> Box<dyn EventDecoder> {
         Box::new(stream::Events::default())
-    }
-
-    fn thinks_unasked(&self, _model: &str) -> bool {
-        false
-    }
-
-    fn reasons(&self, _model: &str, request: &CompletionRequest) -> bool {
-        request.reasoning_effort.as_deref() != Some("none")
     }
 
     fn requires_ceiling(&self) -> bool {

@@ -5,41 +5,33 @@
 //! the one place that sees both what was sent and the usage reported back, and
 //! the backend's pace, measured from the timing it reports on those requests.
 //!
-//! Before admission, a request whose prompt alone fills the port's configured
-//! context window is refused, whichever backend is behind it: nothing that
-//! cannot fit waits for a slot or reaches a server. Any other request is sent
-//! with the room its prompt leaves ([`WindowFit`]), which the backend's reply
-//! ceiling is cut to.
+//! Before admission, a request whose prompt alone fills the backend's window
+//! is refused, whichever backend is behind it: nothing that cannot fit waits
+//! for a slot or reaches a server. Any other request is fitted ([`fit`]) and
+//! sent with the room its prompt leaves, which the backend's reply ceiling is
+//! cut to.
 
-use std::borrow::Cow;
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
 use super::{
-    cancelled_error, AdmissionRequest, InferenceScheduler, PaceEstimator, Permit, ServerTokenizer,
+    cancelled_error, AdmissionRequest, InferenceScheduler, PaceEstimator, ServerTokenizer,
     TokenEstimator,
 };
+use crate::features::llm::backend::{ModelBackend, Progress};
+use crate::features::llm::fitting::{fit, prompt_chars, TokenCounter};
 use lattice_core::application::ports::llm_port::{
-    tokens_for_chars, CacheHold, CompletionInput, CompletionRequest, CompletionResponse, Pace,
-    RequestLoad,
-};
-use lattice_core::application::ports::llm_port::{
-    window_refusal, RequestSize, WindowFit, TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
+    CacheHold, CompletionInput, CompletionRequest, CompletionResponse, Pace, RequestLoad,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::runtime::jobs::current_rank;
 
-/// The margin on a text estimate that sizes the room for the reply: the
-/// estimate is scaled by this fraction.
-const ESTIMATE_MARGIN: usize = 3;
-const ESTIMATE_MARGIN_DIVISOR: usize = 2;
-
 /// A port whose every model call goes through one backend's scheduler.
 pub(crate) struct ScheduledLlm {
-    inner: Arc<dyn LLMPort>,
+    inner: Arc<dyn ModelBackend>,
     scheduler: Arc<InferenceScheduler>,
     estimator: TokenEstimator,
     pace: PaceEstimator,
@@ -47,7 +39,7 @@ pub(crate) struct ScheduledLlm {
 }
 
 impl ScheduledLlm {
-    pub fn new(inner: Arc<dyn LLMPort>, scheduler: Arc<InferenceScheduler>) -> Self {
+    pub fn new(inner: Arc<dyn ModelBackend>, scheduler: Arc<InferenceScheduler>) -> Self {
         Self {
             inner,
             scheduler,
@@ -63,95 +55,32 @@ impl ScheduledLlm {
         self
     }
 
-    /// How the request's prompt measures against the configured window, or,
-    /// before it is queued, the refusal of a prompt that leaves no room. The
-    /// answer's size is a ceiling, so nothing else is refused. `wanted` is the
-    /// reply ceiling the backend would send, unfitted.
-    ///
-    /// The estimate is scaled by 3/2 to size the room, since four characters a
-    /// token reads low on code, JSON and most non-English text and a low count
-    /// overruns the window. A backend with a tokenizer counts exactly when the
-    /// scaled estimate and the ceiling together do not fit; a server that
-    /// cannot count is judged by the plain estimate. Opaque provider state is
-    /// not counted; pictures count by their declared geometry.
-    async fn fit(&self, request: &CompletionRequest, wanted: Option<u32>) -> Result<WindowFit> {
-        let window = self.inner.max_context_tokens();
-        let image_tokens = request.image_tokens();
-        let estimate = tokens_for_chars(
-            prompt_texts(request).map(|text| text.chars().count()).sum(),
-            self.estimator.chars_per_token(),
-        );
-        let fixed = TEMPLATE_TOKENS_PER_MESSAGE
-            .saturating_mul(request.input.len())
-            .saturating_add(TEMPLATE_TOKENS_FOR_ANSWER)
-            .saturating_add(image_tokens);
-        let plain = estimate.saturating_add(fixed);
-        let margined = (estimate.saturating_mul(ESTIMATE_MARGIN) / ESTIMATE_MARGIN_DIVISOR)
-            .saturating_add(fixed);
-        let reply = usize::try_from(wanted.unwrap_or(0).max(1)).unwrap_or(usize::MAX);
-        let (prompt_tokens, counted_exactly) = if margined.saturating_add(reply) <= window
-            || self.tokenizer.is_none()
-        {
-            (plain, false)
-        } else {
-            match self.count_tokens_exact(&prompt_text(request)).await {
-                Ok(exact) => (exact.saturating_add(fixed), true),
-                Err(error) => {
-                    tracing::debug!(%error, "The server could not count the prompt; keeping the estimate");
-                    (plain, false)
-                }
-            }
-        };
-        if prompt_tokens >= window {
-            return Err(window_refusal(
-                self.inner.model_name(),
-                RequestSize {
-                    prompt_tokens,
-                    counted_exactly,
-                    output_tokens: 0,
-                    image_tokens,
-                    image_count: request.image_count(),
-                },
-                window,
-            ));
-        }
-        Ok(WindowFit {
-            prompt_tokens,
-            counted_exactly,
-            room: u32::try_from(window - prompt_tokens).unwrap_or(u32::MAX),
-        })
-    }
-
-    /// Wait for a slot, and pin the request to it when the backend pins.
-    async fn admit_typed<'r>(
+    /// Fit the request, wait for a slot, pin the request to it when the
+    /// backend pins, and send it.
+    async fn send(
         &self,
-        request: &'r CompletionRequest,
-    ) -> Result<(Permit, Cow<'r, CompletionRequest>)> {
-        let wanted = self.inner.output_ceiling_for(request);
-        let fit = self.fit(request, wanted).await?;
-        let output = wanted.map_or(fit.room, |wanted| wanted.min(fit.room));
-        let opaque = tokens_for_chars(native_chars(request), self.estimator.chars_per_token());
+        request: &CompletionRequest,
+        progress: Progress<'_>,
+    ) -> Result<CompletionResponse> {
+        let fitted = fit(self.inner.as_ref(), self, request).await?;
         let permit = self
             .scheduler
             .admit(
                 AdmissionRequest {
                     priority: request.priority,
-                    tokens: fit
-                        .prompt_tokens
-                        .saturating_add(opaque)
-                        .saturating_add(usize::try_from(output).unwrap_or(usize::MAX)),
+                    tokens: fitted.reservation(),
                     cache_key: request.cache_key.clone(),
                     rank: current_rank(),
                 },
                 request.cancel.as_ref(),
             )
             .await?;
-        let mut request = Cow::Borrowed(request);
-        request.to_mut().window_fit = Some(fit);
-        if let Some(slot) = permit.slot() {
-            request.to_mut().assigned_slot = Some(slot);
-        }
-        Ok((permit, request))
+        let fitted = fitted.in_slot(permit.slot());
+        let response = self
+            .run(request, self.inner.send(&fitted, progress))
+            .await?;
+        self.observe(request, &response);
+        Ok(response)
     }
 
     /// Run an admitted call, aborting it when the request is cancelled.
@@ -193,81 +122,32 @@ impl ScheduledLlm {
         self.estimator
             .observe(prompt_chars(request), response.input_tokens);
     }
+}
 
-    async fn completed(
-        &self,
-        request: &CompletionRequest,
-        call: impl std::future::Future<Output = Result<CompletionResponse>>,
-    ) -> Result<CompletionResponse> {
-        let response = self.run(request, call).await?;
-        self.observe(request, &response);
-        Ok(response)
+#[async_trait]
+impl TokenCounter for ScheduledLlm {
+    fn chars_per_token(&self) -> f64 {
+        self.estimator.chars_per_token()
     }
-}
 
-/// Characters a request puts in front of the model: every message, call and
-/// result, plus the tool schemas, which are read like any other prompt text,
-/// plus opaque provider state, which takes room however it is counted.
-pub(super) fn prompt_chars(request: &CompletionRequest) -> usize {
-    let text: usize = prompt_texts(request).map(|text| text.chars().count()).sum();
-    text + native_chars(request)
-}
-
-/// Characters of opaque provider state in a request, which are not prompt text.
-fn native_chars(request: &CompletionRequest) -> usize {
-    request
-        .input
-        .iter()
-        .map(|item| match item {
-            CompletionInput::Native { value } => value.to_string().chars().count(),
-            _ => 0,
-        })
-        .sum()
-}
-
-/// The text a tokenizer reads in a request: every message with its role,
-/// every call and result, then the tool schemas. Opaque provider state
-/// (signed reasoning) and pictures' bytes are not text and are left out; a
-/// picture's alt stands in for it.
-fn prompt_texts(request: &CompletionRequest) -> impl Iterator<Item = Cow<'_, str>> {
-    let input = request.input.iter().flat_map(|item| match item {
-        CompletionInput::Message { role, content } => {
-            vec![
-                Cow::Borrowed(role.as_str()),
-                Cow::Borrowed(content.as_str()),
-            ]
+    /// The tokenizer's count, when there is one: without it `count_tokens_exact`
+    /// is only the estimate.
+    async fn exact(&self, text: &str) -> Option<usize> {
+        self.tokenizer.as_ref()?;
+        match self.count_tokens_exact(text).await {
+            Ok(exact) => Some(exact),
+            Err(error) => {
+                tracing::debug!(%error, "The server could not count the prompt; keeping the estimate");
+                None
+            }
         }
-        CompletionInput::ToolCall {
-            name, arguments, ..
-        } => vec![
-            Cow::Borrowed(name.as_str()),
-            Cow::Owned(arguments.to_string()),
-        ],
-        CompletionInput::Multimodal { role, .. } => vec![Cow::Borrowed(role.as_str()), item.text()],
-        CompletionInput::ToolResult { output, .. } => vec![Cow::Borrowed(output.as_str())],
-        CompletionInput::Native { .. } => Vec::new(),
-    });
-    let tools = request.tools.iter().flat_map(|tool| {
-        [
-            Cow::Borrowed(tool.name.as_str()),
-            Cow::Borrowed(tool.description.as_str()),
-            Cow::Owned(tool.parameters.to_string()),
-        ]
-    });
-    input.chain(tools)
-}
-
-/// [`prompt_texts`] as one text, for a tokenizer to count.
-fn prompt_text(request: &CompletionRequest) -> String {
-    prompt_texts(request).collect::<Vec<_>>().join("\n")
+    }
 }
 
 #[async_trait]
 impl LLMPort for ScheduledLlm {
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        let (_permit, request) = self.admit_typed(request).await?;
-        self.completed(&request, self.inner.complete(&request))
-            .await
+        self.send(request, Progress::None).await
     }
 
     async fn complete_with_progress(
@@ -275,12 +155,12 @@ impl LLMPort for ScheduledLlm {
         request: &CompletionRequest,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
     ) -> Result<CompletionResponse> {
-        let (_permit, request) = self.admit_typed(request).await?;
-        self.completed(
-            &request,
-            self.inner.complete_with_progress(&request, on_text),
-        )
-        .await
+        let progress = Progress::Streamed {
+            on_text,
+            on_reasoning: None,
+            on_retry: None,
+        };
+        self.send(request, progress).await
     }
 
     async fn complete_with_retry_progress(
@@ -289,13 +169,12 @@ impl LLMPort for ScheduledLlm {
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
     ) -> Result<CompletionResponse> {
-        let (_permit, request) = self.admit_typed(request).await?;
-        self.completed(
-            &request,
-            self.inner
-                .complete_with_retry_progress(&request, on_text, on_retry),
-        )
-        .await
+        let progress = Progress::Streamed {
+            on_text,
+            on_reasoning: None,
+            on_retry: Some(on_retry),
+        };
+        self.send(request, progress).await
     }
 
     async fn complete_with_reasoning_progress(
@@ -305,13 +184,12 @@ impl LLMPort for ScheduledLlm {
         on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
     ) -> Result<CompletionResponse> {
-        let (_permit, request) = self.admit_typed(request).await?;
-        self.completed(
-            &request,
-            self.inner
-                .complete_with_reasoning_progress(&request, on_text, on_reasoning, on_retry),
-        )
-        .await
+        let progress = Progress::Streamed {
+            on_text,
+            on_reasoning: Some(on_reasoning),
+            on_retry: Some(on_retry),
+        };
+        self.send(request, progress).await
     }
 
     fn model_name(&self) -> &str {
@@ -319,7 +197,7 @@ impl LLMPort for ScheduledLlm {
     }
 
     fn max_context_tokens(&self) -> usize {
-        self.inner.max_context_tokens()
+        self.inner.window()
     }
 
     fn chars_per_token(&self) -> f64 {
@@ -370,15 +248,7 @@ impl LLMPort for ScheduledLlm {
     }
 
     fn thinks_before_answering(&self) -> bool {
-        self.inner.thinks_before_answering()
-    }
-
-    fn model_output_ceiling(&self) -> Option<u32> {
-        self.inner.model_output_ceiling()
-    }
-
-    fn reasons_for(&self, request: &CompletionRequest) -> bool {
-        self.inner.reasons_for(request)
+        self.inner.thinking(&CompletionRequest::default()).is_on()
     }
 
     fn vision(&self) -> Option<VisionGeometry> {

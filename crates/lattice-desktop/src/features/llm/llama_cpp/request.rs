@@ -2,7 +2,7 @@
 //! reservation, sampling for the thinking mode, the thinking switch and tools.
 use super::*;
 use crate::features::llm::engine::vision::not_set_up_to_see;
-use lattice_core::application::ports::llm_port::RequestSize;
+use crate::features::llm::fitting::Fitted;
 use lattice_core::application::ports::llm_port::{tool_specs, ThinkingMode};
 
 /// The characters a tokenizer reads in `input`: each message's role and
@@ -24,22 +24,7 @@ pub(super) fn input_chars(input: &[CompletionInput]) -> usize {
         .sum()
 }
 
-/// The text tokens of `input` by the rough estimate the budgeter uses: four
-/// characters a token.
-pub(super) fn text_tokens(input: &[CompletionInput]) -> usize {
-    lattice_core::application::ports::llm_port::tokens_for_chars(
-        input_chars(input),
-        lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
-    )
-}
-
 impl LlamaCppLlm {
-    /// The prompt's tokens by the rough estimate the budgeter uses: four
-    /// characters a token over its text, plus each picture's declared cost.
-    fn plain_prompt_tokens(input: &[CompletionInput]) -> usize {
-        text_tokens(input).saturating_add(input.iter().map(CompletionInput::image_tokens).sum())
-    }
-
     /// The mode the model runs `request` in: the user's pin first, then the
     /// model's own, then the request.
     pub(super) fn thinking_mode(&self, request: &CompletionRequest) -> ThinkingMode {
@@ -50,27 +35,11 @@ impl LlamaCppLlm {
             .mode_for(request)
     }
 
-    /// What `request` asks of the window, for the log and for a rejection's
-    /// diagnosis: the scheduler's measure when it made one, else the plain
-    /// estimate.
-    pub(super) fn request_size(&self, request: &CompletionRequest) -> RequestSize {
-        let (prompt_tokens, counted_exactly) = match request.window_fit {
-            Some(fit) => (fit.prompt_tokens, fit.counted_exactly),
-            None => (Self::plain_prompt_tokens(&request.input), false),
-        };
-        RequestSize {
-            prompt_tokens,
-            counted_exactly,
-            output_tokens: self.output_ceiling_for(request).unwrap_or(0),
-            image_tokens: request.image_tokens(),
-            image_count: request.image_count(),
-        }
-    }
-
-    /// The streamed Chat Completions body for `request`, refusing tool traffic
-    /// a model without a tool-call template would render as text, and
-    /// pictures a model nobody declared able to see would never receive.
-    pub(super) fn body(&self, request: &CompletionRequest) -> Result<Value> {
+    /// The streamed Chat Completions body for the fitted request, refusing
+    /// tool traffic a model without a tool-call template would render as text,
+    /// and pictures a model nobody declared able to see would never receive.
+    pub(super) fn body(&self, fitted: &Fitted<'_>) -> Result<Value> {
+        let request = fitted.request();
         let carries_tools = !request.tools.is_empty()
             || request.input.iter().any(|item| {
                 matches!(
@@ -88,10 +57,10 @@ impl LlamaCppLlm {
         }
         let messages = chat_messages(&request.input)?;
         let generation = &self.config.generation;
-        let thinking = self.thinking_mode(request);
+        let thinks = fitted.thinking().is_on();
         // A caller's explicit override wins field by field; what it leaves
         // unset comes from the profile of the mode the model runs in.
-        let profile = generation.profile(thinking);
+        let profile = generation.profile(thinks);
         let sampling = request.sampling.unwrap_or_default();
         let mut body = serde_json::Map::from_iter([
             ("model".into(), json!(self.config.model)),
@@ -123,7 +92,7 @@ impl LlamaCppLlm {
             ),
             ("repeat_penalty".into(), json!(profile.repeat_penalty)),
         ]);
-        if let Some(max_tokens) = self.output_ceiling_for(request) {
+        if let Some(max_tokens) = fitted.ceiling() {
             body.insert("max_tokens".into(), json!(max_tokens));
         }
         // Templates disagree on their default, and llama-server turns an
@@ -135,13 +104,13 @@ impl LlamaCppLlm {
         // pinned policy turns thinking on.
         body.insert(
             "chat_template_kwargs".into(),
-            json!({"enable_thinking": thinking == ThinkingMode::On}),
+            json!({"enable_thinking": thinks}),
         );
-        if let Some(effort) = request.reasoning_effort.as_deref().filter(|effort| {
-            thinking == ThinkingMode::On
-                && request.thinking == ThinkingMode::On
-                && *effort != "none"
-        }) {
+        if let Some(effort) = request
+            .reasoning_effort
+            .as_deref()
+            .filter(|effort| thinks && request.thinking == ThinkingMode::On && *effort != "none")
+        {
             body.insert("reasoning_effort".into(), json!(effort));
         }
         if !request.tools.is_empty() {
@@ -171,7 +140,7 @@ impl LlamaCppLlm {
         }
         // The scheduler's slot: a conversation returns to the slot whose KV
         // cache holds its prefix. The retry path may still turn reuse off.
-        if let Some(slot) = request.assigned_slot {
+        if let Some(slot) = fitted.slot() {
             body.insert("id_slot".into(), json!(slot));
             body.insert("cache_prompt".into(), json!(true));
         }

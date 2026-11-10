@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 use super::listing::{self, is_text_model};
 use super::{api_base, user_parts, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
 use crate::features::llm::cloud::{field, reply, set_field};
+use crate::features::llm::fitting::{Fitted, Thinking};
 
 mod stream;
 
@@ -40,16 +41,20 @@ impl ProviderProtocol for OpenAi {
         request.bearer_auth(key)
     }
 
-    fn body(
-        &self,
-        model: &str,
-        request: &CompletionRequest,
-        stream: bool,
-        ceiling: Option<u32>,
-    ) -> Result<Value> {
+    fn thinking(&self, model: &str, _request: &CompletionRequest) -> Thinking {
+        if is_reasoning_model(model) {
+            Thinking::On
+        } else {
+            Thinking::Off
+        }
+    }
+
+    fn body(&self, model: &str, fitted: &Fitted<'_>, stream: bool) -> Result<Value> {
+        let request = fitted.request();
+        let reasons = fitted.thinking().is_on();
         let input = input_items(&request.input)?;
         let mut body = json!({"model":model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
-        if let Some(max_output) = ceiling {
+        if let Some(max_output) = fitted.ceiling() {
             set_field(&mut body, "max_output_tokens", json!(max_output))?;
         }
         if !request.tools.is_empty() {
@@ -71,7 +76,7 @@ impl ProviderProtocol for OpenAi {
         // reasoning model always reasons and a chat model never does, so
         // the effort level below is the only control the API offers.
         let effort = reasoning_effort(model, request.reasoning_effort.as_deref());
-        if is_reasoning_model(model) && (effort.is_some() || request.include_reasoning) {
+        if reasons && (effort.is_some() || request.include_reasoning) {
             let mut reasoning = json!({});
             if let Some(effort) = effort {
                 set_field(&mut reasoning, "effort", json!(effort))?;
@@ -86,7 +91,7 @@ impl ProviderProtocol for OpenAi {
         // Reasoning models reject both knobs outright, so an override that
         // would 400 the request is dropped rather than sent: the caller
         // wanted determinism, not a failed call.
-        if let Some(sampling) = request.sampling.filter(|_| !is_reasoning_model(model)) {
+        if let Some(sampling) = request.sampling.filter(|_| !reasons) {
             if let Some(temperature) = sampling.temperature {
                 set_field(&mut body, "temperature", json!(temperature))?;
             }
@@ -148,14 +153,6 @@ impl ProviderProtocol for OpenAi {
 
     fn event_decoder(&self) -> Box<dyn EventDecoder> {
         Box::new(stream::Events::default())
-    }
-
-    fn thinks_unasked(&self, model: &str) -> bool {
-        is_reasoning_model(model)
-    }
-
-    fn reasons(&self, model: &str, _request: &CompletionRequest) -> bool {
-        is_reasoning_model(model)
     }
 
     fn requires_ceiling(&self) -> bool {

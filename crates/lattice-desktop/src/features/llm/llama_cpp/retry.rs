@@ -5,6 +5,7 @@
 //! second time is deterministic and ends as [`AppError::ModelRejected`], as
 //! does a server's refusal of the request itself.
 use super::*;
+use crate::features::llm::fitting::Fitted;
 use crate::features::llm::scheduler::rejection;
 
 const MAX_ATTEMPTS: usize = 5;
@@ -34,9 +35,11 @@ pub(super) const PREFILL_FLOOR_TOKENS_PER_SEC: usize = 20;
 /// progress on the text after it.
 pub(super) fn prefill_allowance(input: &[CompletionInput]) -> Duration {
     let images: usize = input.iter().map(CompletionInput::image_tokens).sum();
-    let tokens = request::text_tokens(input)
-        .min(PREFILL_BATCH_TOKENS)
-        .saturating_add(images);
+    let text_tokens = lattice_core::application::ports::llm_port::tokens_for_chars(
+        request::input_chars(input),
+        lattice_core::application::ports::llm_port::DEFAULT_CHARS_PER_TOKEN,
+    );
+    let tokens = text_tokens.min(PREFILL_BATCH_TOKENS).saturating_add(images);
     FIRST_FRAME_FLOOR + Duration::from_secs((tokens / PREFILL_FLOOR_TOKENS_PER_SEC) as u64)
 }
 
@@ -105,14 +108,15 @@ impl ProgressWatch {
 impl LlamaCppLlm {
     pub(super) async fn complete_reliably(
         &self,
-        request: &CompletionRequest,
+        fitted: &Fitted<'_>,
         on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
         on_reasoning: Option<&(dyn Fn(String) -> Result<()> + Send + Sync)>,
         on_retry: Option<&(dyn Fn(usize) -> Result<()> + Send + Sync)>,
     ) -> Result<CompletionResponse> {
+        let request = fitted.request();
         // Failed drafts and partial tool calls must never enter history.
-        let mut body = self.body(request)?;
-        let size = self.request_size(request);
+        let mut body = self.body(fitted)?;
+        let size = fitted.size();
         let window = self.config.context_window;
         tracing::info!(
             model = %self.config.model,
@@ -120,7 +124,7 @@ impl LlamaCppLlm {
             counted_exactly = size.counted_exactly,
             output_reserved = size.output_tokens,
             window,
-            slot = request.assigned_slot,
+            slot = fitted.slot(),
             "llm.request"
         );
         let first_frame = self
