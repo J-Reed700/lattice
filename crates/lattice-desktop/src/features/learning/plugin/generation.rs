@@ -61,12 +61,11 @@ pub async fn get_learning_generation_job(
 pub(super) fn generation_worker(
     container: &Container,
     runtimes: BuiltinRuntimes,
-    course_setups: crate::features::learning::course_setup::CourseSetups,
 ) -> crate::features::learning::generation_jobs::LessonGenerationWorker {
     let model_container = container.clone();
     let source_deps = source_deps(container);
     crate::features::learning::generation_jobs::LessonGenerationWorker {
-        course_setups,
+        course_setups: Default::default(),
         runtimes,
         research_web: Some(container.web_service()),
         verifier: Some(super::audit::container_verifier(container)),

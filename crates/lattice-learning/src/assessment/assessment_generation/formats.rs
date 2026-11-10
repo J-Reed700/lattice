@@ -247,6 +247,13 @@ pub(super) fn to_candidate(
             .collect(),
     };
     engine::validate_candidate(&candidate).map_err(|e| e.to_string())?;
+    if need
+        .existing_prompts
+        .iter()
+        .any(|p| engine::near_duplicate(p, &candidate.prompt))
+    {
+        return Err("The item repeats a question already in the bank.".into());
+    }
     // Code, not the model, decides where the key sits.
     engine::shuffle_authored(&mut candidate);
     Ok(AuthoredItem {

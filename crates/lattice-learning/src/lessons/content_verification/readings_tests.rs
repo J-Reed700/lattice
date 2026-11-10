@@ -14,7 +14,7 @@ use super::*;
 use crate::lesson_drafts;
 use lattice_core::application::services::claim_verification::PartKind;
 use lattice_core::domain::learning::acceptance::{
-    start, Outcome, Position, Reading, StandardPolicy,
+    AcceptancePolicy, Outcome, Position, Reading, StandardPolicy,
 };
 use std::collections::VecDeque;
 
@@ -272,7 +272,12 @@ pub(super) async fn driven(
     .await?;
     let policy = StandardPolicy::new();
     let sorted = classed();
-    let entry = start(&policy, sorted.class);
+    let entry = Position {
+        class: sorted.class,
+        changed_class: false,
+        reasked: false,
+        node: policy.graph(sorted.class).entry(),
+    };
     let claims = claims_of(inventory);
     let statements: Vec<(Statement<'_>, Position)> = claims
         .iter()

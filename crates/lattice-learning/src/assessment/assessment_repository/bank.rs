@@ -7,7 +7,6 @@ use super::{
 use crate::assessment_engine::{self as engine, LearningBlueprintRequirement};
 use crate::assessment_generation::{AuthoringNeed, MaterialPassage, StoredItem};
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind};
-use crate::lessons::claim_reviews::repository::waiting_questions_in;
 use crate::persistence::{db, now};
 use crate::quiz_blueprints;
 use lattice_core::shared::error::Result;
@@ -15,7 +14,7 @@ use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// An item on its way into the bank.
 #[derive(Debug, Clone)]
@@ -45,7 +44,7 @@ pub(crate) fn content_hash(item: &StoredItem) -> String {
 }
 
 /// Store items, skipping any generated item the bank already holds (same
-/// content). A lesson's own
+/// content, or a near-duplicate stem for the same outcome). A lesson's own
 /// question is always stored in its place: one whose content the program
 /// already holds is stored `dropped`, its token salted by its ID. Returns how
 /// many were stored.
@@ -88,6 +87,20 @@ pub(crate) async fn insert_bank_items_in(
             }
             hash = format!("{:x}", Sha256::digest(format!("{hash}\0{}", item.id)));
             review_status = "dropped";
+        }
+        let near = entry.origin == "bank"
+            && sqlx::query_scalar::<_, String>(
+            "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND outcome_id=? AND review_status<>'dropped'",
+        )
+        .bind(program_id)
+        .bind(outcome)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(db)?
+        .iter()
+        .any(|prompt| engine::near_duplicate(prompt, &item.prompt));
+        if near {
+            continue;
         }
         sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,?,?,?,?,?)")
             .bind(&item.id)
@@ -181,8 +194,7 @@ pub(crate) fn bank_state(
 }
 
 impl LearningAssessmentRepository {
-    /// The bank's agreed items: what forms may draw from, less a lesson question
-    /// whose check finding still waits for the user.
+    /// The bank's agreed items: what forms may draw from.
     pub(crate) async fn bank_in(
         connection: &mut SqliteConnection,
         program_id: &str,
@@ -193,25 +205,7 @@ impl LearningAssessmentRepository {
             .fetch_all(&mut *connection)
             .await
             .map_err(db)?;
-        let waiting = waiting_questions_in(connection, program_id).await?;
-        let mut held_back = HashSet::new();
-        if !waiting.is_empty() {
-            let own: Vec<(String, String)> = sqlx::query_as("SELECT id, lesson_id FROM learning_assessment_candidates WHERE program_id=? AND origin IN ('lesson','migrated') AND lesson_id IS NOT NULL ORDER BY rowid")
-                .bind(program_id)
-                .fetch_all(&mut *connection)
-                .await
-                .map_err(db)?;
-            let mut seen: HashMap<String, usize> = HashMap::new();
-            for (id, lesson_id) in own {
-                let index = seen.entry(lesson_id.clone()).or_insert(0);
-                if waiting.contains(&(lesson_id, *index)) {
-                    held_back.insert(id);
-                }
-                *index += 1;
-            }
-        }
         rows.iter()
-            .filter(|row| !held_back.contains(&row.get::<String, _>("id")))
             .map(|row| {
                 let id: String = row.get("id");
                 candidate_from_row(row, outcomes.get(&id).cloned().unwrap_or_default())

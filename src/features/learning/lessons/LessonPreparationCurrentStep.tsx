@@ -1,6 +1,6 @@
 import { Activity, LoaderCircle } from 'lucide-react';
 
-import { preparationDuration, shownPhase, stageText } from '@/features/learning/lessons/lessonPreparationActivity';
+import { preparationDuration, shownPhase } from '@/features/learning/lessons/lessonPreparationActivity';
 import type { LearningGenerationJob } from '@/lib/bindings';
 
 /** The current step, first behind the preparation status line's Details. */
@@ -20,7 +20,7 @@ export function LessonPreparationCurrentStep({ job, now }: { job: LearningGenera
     <div aria-live="polite" aria-atomic="true" className="mt-3">
       <h4 className="text-lg font-semibold text-text-primary">{phase.title}</h4>
       {followingChecks && checkedAll && <p className="mt-2 text-sm leading-6 text-text-primary">Checking finished. {activity.phase === 'repair' ? 'The affected sections are being corrected before another review.' : 'Additional evidence is being researched before another review.'}</p>}
-      <p className="mt-3 wrap-break-word border-l-2 border-accent pl-3 text-base font-medium leading-6 text-text-primary">{stageText(activity, job.progressMessage)}</p>
+      <p className="mt-3 wrap-break-word border-l-2 border-accent pl-3 text-base font-medium leading-6 text-text-primary">{job.progressMessage}</p>
     </div>
     <p className="mt-3 text-sm leading-6 text-text-secondary">{phase.detail}</p>
     <div className="mt-4 rounded-lg border border-border bg-background p-3 text-sm leading-6">

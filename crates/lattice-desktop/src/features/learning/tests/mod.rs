@@ -10,6 +10,7 @@ mod generation_jobs;
 mod grading;
 mod interview_answers_tests;
 mod lab_runner_tests;
+mod live_coding_eval;
 mod practical_tests;
 mod reference_collection_tests;
 mod study_tests;

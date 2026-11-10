@@ -44,8 +44,6 @@ fn source_deps(container: &Container) -> crate::features::learning::sources::Sou
 
 mod program;
 pub use program::*;
-mod plan_topics;
-pub use plan_topics::*;
 mod memory;
 pub use memory::*;
 mod canvas;
@@ -82,6 +80,8 @@ mod trust;
 pub use trust::*;
 mod code_review;
 pub use code_review::*;
+mod coding;
+pub use coding::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -103,19 +103,6 @@ fn drill_model(container: &Container) -> super::quiz_bank_jobs::ModelLoader {
     std::sync::Arc::new(move || {
         let container = model_container.clone();
         Box::pin(async move { container.learning_llm(model_requirements::drills()).await })
-    })
-}
-
-/// The Learning model, pinned for each run of a course-plan job.
-fn course_plan_model(container: &Container) -> super::quiz_bank_jobs::ModelLoader {
-    let model_container = container.clone();
-    std::sync::Arc::new(move || {
-        let container = model_container.clone();
-        Box::pin(async move {
-            container
-                .learning_llm(model_requirements::course_plan())
-                .await
-        })
     })
 }
 
@@ -145,6 +132,17 @@ fn drill_grading_worker(
     }
 }
 
+fn coding_worker(
+    container: &Container,
+    runtimes: BuiltinRuntimes,
+) -> super::coding::jobs::CodingBuildWorker {
+    super::coding::jobs::CodingBuildWorker {
+        database: container.database().clone(),
+        load_llm: drill_model(container),
+        runtimes,
+    }
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("learning")
         .setup(|app, _api| {
@@ -157,16 +155,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // then starts delivering saved work. A kind that fails to register
             // is retried in the background and never fails setup.
             let (bank_worker, grading_worker) = quiz_workers(&container);
-            // One lock per course for every planner of it.
-            let course_setups = super::course_setup::CourseSetups::default();
             let mut kinds = vec![
                 JobKindRegistration {
                     kind: super::curriculum_repository::LESSON_PREPARATION.into(),
-                    handler: std::sync::Arc::new(generation_worker(
-                        &container,
-                        runtimes.clone(),
-                        course_setups.clone(),
-                    )),
+                    handler: std::sync::Arc::new(generation_worker(&container, runtimes.clone())),
                     config: super::curriculum_repository::lesson_job_config(),
                 },
                 // Quiz banks and grading resume or settle the same way.
@@ -180,16 +172,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                     handler: std::sync::Arc::new(grading_worker),
                     config: super::quiz_bank_jobs::quiz_job_config(),
                 },
-                // A course's topics are planned when its outline is made.
-                JobKindRegistration {
-                    kind: super::course_plan::COURSE_PLAN.into(),
-                    handler: std::sync::Arc::new(super::course_plan::CoursePlanWorker {
-                        database: container.database().clone(),
-                        load_llm: course_plan_model(&container),
-                        course_setups,
-                    }),
-                    config: super::course_plan::course_plan_job_config(),
-                },
                 // Drills are built one ahead per language, and a build resumes from its
                 // checkpoints. A submitted review is graded by a job that a stop leaves
                 // submitted.
@@ -200,8 +182,16 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 },
                 JobKindRegistration {
                     kind: super::drills::jobs::DRILL_GRADING.into(),
-                    handler: std::sync::Arc::new(drill_grading_worker(&container, runtimes)),
+                    handler: std::sync::Arc::new(drill_grading_worker(
+                        &container,
+                        runtimes.clone(),
+                    )),
                     config: super::drills::jobs::grading_job_config(),
+                },
+                JobKindRegistration {
+                    kind: super::coding::jobs::CODING_BUILD.into(),
+                    handler: std::sync::Arc::new(coding_worker(&container, runtimes)),
+                    config: super::coding::jobs::coding_job_config(),
                 },
             ];
             // Course index builds the last process left running resume.
@@ -266,12 +256,6 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             accept_learning_program,
             prepare_learning_lesson,
             prepare_learning_module,
-            get_learning_course_plan,
-            plan_learning_course,
-            edit_learning_course_plan_entry,
-            change_learning_course_plan_entries,
-            undo_learning_course_plan_entry,
-            prepare_learning_ahead,
             complete_learning_lesson,
             delete_learning_program,
             get_learning_memory,
@@ -330,6 +314,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             decide_learning_recall_duplicate,
             review_learning_recall_card,
             get_learning_practice_workspace,
+            get_learning_practice_profile,
+            save_learning_practice_profile,
             get_learning_practice_session,
             start_learning_practice_session,
             save_learning_practice_artifact,
@@ -384,7 +370,26 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             code_review_result,
             regrade_code_review,
             code_review_languages,
-            course_drills
+            course_drills,
+            start_coding_build,
+            start_coding_session,
+            get_coding_session,
+            move_coding_stage,
+            check_coding_example,
+            run_coding_session,
+            ask_coding_hint,
+            send_coding_turn,
+            observe_coding_draft,
+            set_coding_clock,
+            finish_coding_session,
+            practice_due,
+            list_coding_sessions,
+            remove_coding_example,
+            respond_coding_session,
+            set_coding_setting,
+            reveal_coding_solution,
+            get_practice_fit,
+            check_practice_fit
         ])
         .build()
 }

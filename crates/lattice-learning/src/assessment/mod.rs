@@ -6,7 +6,6 @@ pub mod assessment_repository;
 #[cfg(test)]
 pub(crate) mod assessment_tests;
 pub mod grade_rationale;
-pub(crate) mod item_review;
 pub(crate) mod key_review;
 pub mod quiz_bank_jobs;
 #[cfg(test)]

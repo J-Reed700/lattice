@@ -72,7 +72,7 @@ impl ClaimLedger {
             };
             self.append(id, evidence).await?;
         }
-        self.publish_if_unverified(id, &step.then).await
+        Ok(())
     }
 
     /// Records the outcome of a remedy for `id`: the `Stepped` the policy's
@@ -104,7 +104,6 @@ impl ClaimLedger {
             }
             _ => String::new(),
         };
-        let ended = then.clone();
         let stepped = ClaimEvent::Stepped {
             policy: policy.version().to_owned(),
             step,
@@ -126,7 +125,6 @@ impl ClaimLedger {
             };
             self.append(id, evidence).await?;
         }
-        self.publish_if_unverified(id, &ended).await?;
         Ok(true)
     }
 

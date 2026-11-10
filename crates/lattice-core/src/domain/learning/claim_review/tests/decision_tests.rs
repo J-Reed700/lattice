@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::domain::learning::acceptance::{
-    check_record, decide, rewrite_ahead, start, AcceptancePolicy, End, Goal, Outcome, Reading,
+    check_record, decide, rewrite_ahead, AcceptancePolicy, End, Goal, Outcome, Position, Reading,
     StandardPolicy, Step, Taken, Then,
 };
 use serde_json::json;
@@ -905,7 +905,12 @@ fn the_decisions_and_the_steps_of_a_claim_are_read_from_its_record() {
 #[test]
 fn a_claim_follows_the_policy_step_by_step_and_its_record_walks() {
     let policy = StandardPolicy::new();
-    let first = start(&policy, Class::Common);
+    let start = Position {
+        class: Class::Common,
+        changed_class: false,
+        reasked: false,
+        node: policy.graph(Class::Common).entry(),
+    };
     let rewrite_step = Step::Rewrite(Goal::AsTheFieldHasIt);
     let path = [
         (
@@ -930,7 +935,7 @@ fn a_claim_follows_the_policy_step_by_step_and_its_record_walks() {
         ),
     ];
     let mut entry = claim("c1");
-    let mut at = first;
+    let mut at = start;
     for (index, (step, outcome, state)) in path.into_iter().enumerate() {
         let taken = Taken { step, outcome };
         let (then, next) = decide(&policy, at, taken).unwrap();
@@ -946,7 +951,7 @@ fn a_claim_follows_the_policy_step_by_step_and_its_record_walks() {
             at = next;
         }
     }
-    assert_eq!(check_record(&policy, first, &entry.steps()), Ok(()));
+    assert_eq!(check_record(&policy, start, &entry.steps()), Ok(()));
     assert_eq!(entry.decided(), Some(&Then::End(End::GeneralKnowledge)));
 
     // Stored and read back, the record replays to the same claim.

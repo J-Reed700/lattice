@@ -33,7 +33,9 @@ impl LearningPracticalRepository {
         .ok_or_else(|| AppError::NotFound("Practical activity not found".into()))?;
         let current_revision: i64 = activity.get("revision");
         if current_revision != request.activity_revision {
-            return Err(invalid("Practical activity changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "Practical activity changed; reload and retry.".into(),
+            ));
         }
         if let Some(row) = sqlx::query("SELECT draft_revision,files_json,updated_at FROM learning_practical_drafts WHERE program_id=? AND activity_id=? AND activity_revision=?")
             .bind(&request.program_id).bind(&request.activity_id).bind(request.activity_revision)
@@ -151,7 +153,9 @@ impl LearningPracticalRepository {
         .map_err(db)?
         .ok_or_else(|| AppError::NotFound("Practical activity not found".into()))?;
         if activity.get::<i64, _>("revision") != request.activity_revision {
-            return Err(invalid("Practical activity changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "Practical activity changed; reload and retry.".into(),
+            ));
         }
         let allowed_rows = sqlx::query("SELECT path FROM learning_practical_files WHERE activity_id=? AND role='starter' AND editable=1 ORDER BY ordinal")
             .bind(&request.activity_id).fetch_all(&mut *tx).await.map_err(db)?;
@@ -176,7 +180,9 @@ impl LearningPracticalRepository {
             .map(|row| row.get::<i64, _>("draft_revision"))
             .unwrap_or(0);
         if current_revision != request.expected_draft_revision {
-            return Err(invalid("Practical draft changed; reload and retry."));
+            return Err(AppError::Conflict(
+                "Practical draft changed; reload and retry.".into(),
+            ));
         }
         let result_revision = current_revision + 1;
         let timestamp = now();

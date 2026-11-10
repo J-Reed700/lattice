@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { callsLine, preparationState, preparationSummary, preparingLine, stageText, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
+import { callsLine, preparationState, preparationSummary, preparingLine, statementsLine } from '@/features/learning/lessons/lessonPreparationActivity';
 import type { LearningGenerationJob } from '@/lib/bindings';
 
 const job = (overrides: Partial<LearningGenerationJob> = {}): LearningGenerationJob => ({
@@ -34,25 +34,6 @@ describe('Lesson preparation in one line', () => {
     expect(line(job({ status: 'completed' }))).toBeNull();
     expect(line(undefined, true)).toBe('Preparing lesson · Starting');
     expect(line(undefined, false, 'The request could not be saved.')).toBe('Lesson preparation failed');
-  });
-});
-
-describe('A preparing lesson that waits for the model', () => {
-  const waiting = { ...job().activity!, waitingForModel: true };
-
-  it('shows that instead of its stage, and its stage again without the flag', () => {
-    expect(stageText(waiting, 'Checking claims')).toBe('Waiting for the model');
-    expect(stageText({ ...waiting, waitingForModel: false }, 'Checking claims')).toBe('Checking claims');
-    expect(stageText(job().activity!, 'Checking claims')).toBe('Checking claims');
-    expect(stageText(null, 'Checking claims')).toBe('Checking claims');
-  });
-
-  it('says so in its row and in the one-line summary', () => {
-    expect(preparingLine(waiting)).toBe('Preparing · Waiting for the model');
-    expect(preparingLine({ ...waiting, phase: 'evidence', checksCompleted: 40, checksTotal: 44 })).toBe('Preparing · Waiting for the model');
-    expect(preparingLine({ ...waiting, waitingForModel: false })).toBe('Preparing · Reviewing teaching and assessments');
-    expect(line(job({ activity: waiting }))).toBe('Preparing lesson: Boiling · Waiting for the model');
-    expect(line(job({ activity: { ...waiting, waitingForModel: false } }))).toBe('Preparing lesson: Boiling · Reviewing teaching and assessments');
   });
 });
 

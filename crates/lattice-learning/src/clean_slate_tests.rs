@@ -114,13 +114,13 @@ const JOBS: &[&str] = &[
     "INSERT INTO learning_jobs (job_id, program_id) VALUES ('j-running', 'p1')",
     "INSERT INTO job_events (job_id, ordinal, status, progress_current, message, created_at) VALUES ('j-running', 0, 'pending', 0, 'Queued', 1000)",
     // Lesson checkpoints are saved as `<lesson>/<key>`.
-    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-running', 'l-out/prepared-v2', '{}', 1)",
+    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-running', 'l-out/prepared-v1', '{}', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-running', 'l-ready/claim-v1:abc', '{}', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-running', 'numbered-sources', '[]', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-pending', 'l-out/inventory-section-v1:x', '{}', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-done', 'l-held/claim-walk-v1:y', '{}', 1)",
-    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-done', 'l-ready/prepared-v2', '{}', 1)",
-    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-failed', 'l-out/prepared-v2', '{}', 1)",
+    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-done', 'l-ready/prepared-v1', '{}', 1)",
+    "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-failed', 'l-out/prepared-v1', '{}', 1)",
     "INSERT INTO job_checkpoints (job_id, key, data_json, updated_at) VALUES ('j-other', 'index/progress', '{}', 1)",
 ];
 
@@ -233,7 +233,7 @@ async fn the_clean_slate_ends_unfinished_preparation_and_drops_the_old_pipelines
             "SELECT group_concat(job_id || ':' || key, ';') FROM (SELECT * FROM job_checkpoints WHERE job_id <> 'j-other' ORDER BY job_id, key)"
         )
         .await,
-        "j-done:l-ready/prepared-v2"
+        "j-done:l-ready/prepared-v1"
     );
     assert_eq!(
         scalar(

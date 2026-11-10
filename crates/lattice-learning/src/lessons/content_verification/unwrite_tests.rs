@@ -16,23 +16,23 @@ use lattice_core::domain::learning::claim_review::{
 /// A sentence that states a figure no source gives and, beside it, what the
 /// course states.
 const SENTENCE: &str =
-    "DictReader buffers 100 rows before parsing, and missing values default to None in nonblank rows.";
+    "DictReader buffers 100 rows before parsing, and missing values in nonblank rows default to None.";
 const BUFFERS: &str = "DictReader buffers 100 rows before parsing.";
-const MISSING: &str = "Missing values default to None in nonblank rows.";
+const MISSING: &str = "Missing values in nonblank rows default to None.";
 /// The figure's part said anew, beside the same neighbour.
 const READS: &str =
-    "DictReader reads one row at a time, and missing values default to None in nonblank rows.";
+    "DictReader reads one row at a time, and missing values in nonblank rows default to None.";
 const READS_ONE: &str = "DictReader reads one row at a time.";
 /// A statement no sentence of these lessons makes.
 const NAMES: &str = "DictReader names each field after its header.";
 /// The neighbour's statement alone, at more length than the whole sentence it
 /// stood on.
-const MISSING_ALONE: &str = "Missing values default to None in nonblank rows, whatever DictReader does with the rows before them.";
+const MISSING_ALONE: &str = "Missing values in nonblank rows default to None, whatever DictReader does with the rows before them.";
 /// The figure's part said anew as a sentence of its own.
 const BUFFERS_ONE: &str = "DictReader buffers rows one at a time before parsing.";
 /// The sentence said anew with another figure no source gives.
 const STILL_FAILING: &str =
-    "DictReader buffers 200 rows before parsing, and missing values default to None in nonblank rows.";
+    "DictReader buffers 200 rows before parsing, and missing values in nonblank rows default to None.";
 const BUFFERS_200: &str = "DictReader buffers 200 rows before parsing.";
 /// A second failed sentence, its correction, and a sentence that states
 /// nothing to keep the two apart.
@@ -41,7 +41,7 @@ const CACHED: &str = "DictReader caches the header row once per file.";
 const BETWEEN: &str = "Open the sample file before you read on.";
 
 /// A model that extracts the statements each scripted sentence makes from a
-/// passage that holds it, finds the `failing` ones contradicted and the others
+/// passage that holds it, finds the `failing` ones unsupported and the others
 /// supported, and answers its repair requests in turn, each by writing its
 /// replacements into the section. It keeps every repair request and every
 /// statement it is asked to sort; a repair request past the script ends the
@@ -126,9 +126,10 @@ impl Script {
                 .iter()
                 .any(|failing| claim.starts_with(*failing))
             {
-                return Ok(format!(
-                    "contradicted\nReason: The reference gives another figure.\nSource quote: {GOOD}\nSource passage: passage-0"
-                ));
+                return Ok(
+                    "unsupported\nReason: The reference does not state it.\nSource passage: none"
+                        .into(),
+                );
             }
         }
         self.inner.respond(prompt).await
@@ -522,7 +523,7 @@ async fn only_the_hunk_that_wrote_a_statement_is_put_back_and_only_its_target_is
 }
 
 #[tokio::test]
-async fn a_narrowing_that_wrote_a_statement_is_put_back_and_spent_and_the_next_round_keeps_its_sentence_and_publishes_it_not_verified(
+async fn a_narrowing_that_wrote_a_statement_is_put_back_and_spent_and_the_next_round_cuts_its_sentence_whole(
 ) -> Result<()> {
     // The figure's correction is as unsupported as the figure, so the
     // statement comes to its cut; the neighbour stands on its sentence, so the
@@ -580,17 +581,19 @@ async fn a_narrowing_that_wrote_a_statement_is_put_back_and_spent_and_the_next_r
             _ => None,
         })
         .collect();
-    assert_eq!(after, [(Step::Cut, Outcome::CannotCut)], "{events:?}");
-    assert_eq!(target.decided(), Some(&Then::End(End::Unverified)));
-    // The sentence stays, the neighbour's words with it.
+    assert_eq!(after, [(Step::Cut, Outcome::Cut)], "{events:?}");
     assert_eq!(
-        run.published().as_deref(),
-        Some(section(&format!("{STILL_FAILING} {GOOD}")).as_str())
+        target.decided(),
+        Some(&Then::End(End::Removed {
+            section_goes: false
+        }))
     );
+    // Cut whole: the neighbour's words went with the sentence.
+    assert_eq!(run.published().as_deref(), Some(section(GOOD).as_str()));
     assert_eq!(
         model.requests().len(),
         2,
-        "the correction and the narrowing; the code refuses the cut"
+        "the correction and the narrowing; the code makes the cut"
     );
     Ok(())
 }

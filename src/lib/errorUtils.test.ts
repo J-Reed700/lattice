@@ -26,6 +26,15 @@ describe('getErrorMessage', () => {
     expect(getErrorMessage(error)).toBe('Unknown error');
   });
 
+  it('unwraps nested error objects with an inner message', () => {
+    expect(getErrorMessage({ error: { message: 'Inner error message' } })).toBe('Inner error message');
+  });
+
+  it('uses fallback when provided and error cannot provide a meaningful message', () => {
+    expect(getErrorMessage(null, 'Default fallback error')).toBe('Default fallback error');
+    expect(getErrorMessage(undefined, 'Default fallback error')).toBe('Default fallback error');
+  });
+
   it('falls back to String() for values JSON cannot write', () => {
     const circular: Record<string, unknown> = {};
     circular.self = circular;

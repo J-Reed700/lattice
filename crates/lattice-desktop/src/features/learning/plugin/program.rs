@@ -202,7 +202,7 @@ pub async fn prepare_learning_lesson(
         .map_err(ApiError::from)?;
     if program.summary.revision != request.expected_revision {
         return Err(ApiError::from(
-            lattice_core::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::Conflict(
                 "Program changed; reload and retry.".into(),
             ),
         ));
@@ -264,27 +264,6 @@ pub async fn prepare_learning_module(
         module_id: request.module_id,
         expected_revision: request.expected_revision,
     })
-    .await
-    .map_err(ApiError::from)?;
-    for job in &jobs {
-        container.jobs().submitted(&job.id).await;
-    }
-    LearningRepository::new(container.database().clone())
-        .get(&request.program_id)
-        .await
-        .map_err(ApiError::from)
-}
-
-#[tauri::command]
-#[specta::specta]
-pub async fn prepare_learning_ahead(
-    request: PrepareLearningAheadRequestDto,
-    container: State<'_, Container>,
-) -> Result<LearningProgramDto, ApiError> {
-    let jobs = crate::features::learning::curriculum_repository::LearningCurriculumRepository::new(
-        container.database().clone(),
-    )
-    .start_jobs_ahead(&request.program_id, &request.lesson_id)
     .await
     .map_err(ApiError::from)?;
     for job in &jobs {

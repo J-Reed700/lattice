@@ -15,7 +15,7 @@ import type { CourseIndexStatusDto, JobDto } from '@/lib/bindings';
 const api = vi.hoisted(() => ({
   status: vi.fn(), review: vi.fn(), audit: vi.fn(), workspace: vi.fn(), version: vi.fn(), semantic: vi.fn(),
 }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   courseIndexStatus: api.status,
   getLearningLessonClaimReview: api.review,
   getLearningLessonAudit: api.audit,

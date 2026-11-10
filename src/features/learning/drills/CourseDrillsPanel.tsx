@@ -1,3 +1,5 @@
+import { useEffect, useRef } from 'react';
+
 import { ArrowLeft } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
@@ -13,13 +15,20 @@ import { DrillReveal } from './reveal/DrillReveal';
 import { useCodeReviewDrill } from './useCodeReviewDrill';
 
 /** A course's review drills, from the choice of a lesson to the reveal of what was planted in it. */
-export function CourseDrillsPanel({ programId }: { programId: string }) {
+export function CourseDrillsPanel({ programId, attemptId = null }: { programId: string; attemptId?: string | null }) {
   const drill = useCodeReviewDrill(programId);
+  const opened = useRef<string | null>(null);
+  useEffect(() => {
+    if (attemptId && attemptId !== opened.current) {
+      opened.current = attemptId;
+      drill.restore(attemptId);
+    }
+  }, [attemptId, drill]);
   const { stage, failure, result, session } = drill;
   const back = (
     <Button type="button" variant="ghost" className="-ml-3 gap-2" onClick={drill.toChoices}>
       <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-      Review drills
+      Back to drill setup
     </Button>
   );
 

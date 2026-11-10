@@ -21,7 +21,6 @@ mod readings;
 mod receipts;
 mod stops;
 mod successor;
-mod teaching;
 mod unverified;
 mod written;
 
@@ -726,24 +725,16 @@ impl ClaimLedger {
     }
 
     /// The last attempt on these statements took their sentence out
-    /// (`Outcome::Cut`, also when it was out already) or could not
-    /// (`Outcome::CannotCut`): the repair is closed as the removal it was or
-    /// as not applied, and the policy's step ends the claims removed or
-    /// published not verified.
+    /// (`Outcome::Cut`, also when it was out already) or, refused, took their
+    /// section out (`Outcome::CannotCut`): the repair is closed as the removal
+    /// it was, and the policy's step ends the claims removed.
     pub(super) async fn cut(
         &mut self,
         policy: &dyn AcceptancePolicy,
         claims: &[ClaimId],
         outcome: Outcome,
     ) -> Result<()> {
-        let closed = if outcome == Outcome::CannotCut {
-            RepairOutcome::Rejected {
-                reason: "The sentence could not be cut out.".into(),
-            }
-        } else {
-            RepairOutcome::Removed
-        };
-        self.close_records(claims, closed).await?;
+        self.close_records(claims, RepairOutcome::Removed).await?;
         for id in claims {
             self.record_step(policy, id, Step::Cut, outcome).await?;
         }

@@ -12,7 +12,7 @@ use crate::curriculum::{
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
 use lattice_core::domain::learning::claim_review::{ClaimId, Class};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{observing, AdmissionObserver, JobContext, QueueExit};
+use lattice_core::shared::runtime::jobs::JobContext;
 use std::sync::{Arc, Mutex};
 
 #[derive(Default)]
@@ -21,10 +21,6 @@ struct State {
     completed: u32,
     activity: LearningGenerationActivity,
     active_model_calls: usize,
-    /// Requests of the job queued at a scheduler for a slot.
-    queued_requests: usize,
-    /// Slots the job's requests hold at a scheduler.
-    held_slots: usize,
     /// The course this job prepares; its model calls share the course's
     /// sources as a prompt prefix.
     program_id: Option<String>,
@@ -53,46 +49,6 @@ tokio::task_local! {
     static CURRENT: Progress;
     /// Whether the work running is the plan's checks.
     static CHECKS: bool;
-}
-
-impl State {
-    fn refresh_waiting(&mut self) {
-        self.activity.waiting_for_model = self.queued_requests > 0 && self.held_slots == 0;
-    }
-}
-
-impl AdmissionObserver for Progress {
-    fn queued(&self) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.queued_requests += 1;
-        state.refresh_waiting();
-    }
-
-    fn left_queue(&self, _exit: QueueExit) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.queued_requests = state.queued_requests.saturating_sub(1);
-        state.refresh_waiting();
-    }
-
-    fn holding(&self) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.held_slots += 1;
-        state.refresh_waiting();
-    }
-
-    fn released(&self) {
-        let mut state = self.0.lock().unwrap_or_else(|e| e.into_inner());
-        state.held_slots = state.held_slots.saturating_sub(1);
-        state.refresh_waiting();
-    }
-}
-
-/// Runs `future` as the current lesson job's work, with `progress` recording it.
-async fn scoped<F: std::future::Future>(progress: &Progress, future: F) -> F::Output {
-    let observer: Arc<dyn AdmissionObserver> = Arc::new(progress.clone());
-    CURRENT
-        .scope(progress.clone(), observing(observer, future))
-        .await
 }
 
 pub(crate) fn active() -> bool {
@@ -582,7 +538,6 @@ fn resumed(saved: Option<serde_json::Value>) -> LearningGenerationActivity {
     // stopped in that same phase. Do not count time with the app closed.
     activity.phase_started_at = 0;
     activity.reached = LearningGenerationPhase::default();
-    activity.waiting_for_model = false;
     activity.model_calls = 0;
     activity.model_calls_ceiling = None;
     activity.model_calls_ceiling_rises = 0;
@@ -660,49 +615,50 @@ pub(crate) async fn run<T>(
         state.activity = resumed(job.activity.clone());
         state.program_id = job.subject_id.clone();
     }
-    scoped(&progress, async {
-        phase(Phase::References, "Checking saved references");
-        let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
-        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
-        let persist = async {
-            let mut previous = None;
-            loop {
-                interval.tick().await;
-                let snapshot = progress.snapshot();
-                if previous.as_ref() != Some(&snapshot) {
-                    if !context
-                        .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
-                        .await?
-                    {
-                        return Err(AppError::InvalidState(
-                            "Lesson preparation is no longer running.".into(),
-                        ));
+    CURRENT
+        .scope(progress.clone(), async {
+            phase(Phase::References, "Checking saved references");
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(2));
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Skip);
+            let persist = async {
+                let mut previous = None;
+                loop {
+                    interval.tick().await;
+                    let snapshot = progress.snapshot();
+                    if previous.as_ref() != Some(&snapshot) {
+                        if !context
+                            .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
+                            .await?
+                        {
+                            return Err(AppError::InvalidState(
+                                "Lesson preparation is no longer running.".into(),
+                            ));
+                        }
+                        previous = Some(snapshot);
                     }
-                    previous = Some(snapshot);
+                }
+            };
+            // Keep polling preparation while progress waits for the database.
+            // Preparation may hold the only connection across an await; waiting
+            // inside a select branch would otherwise deadlock both operations.
+            let result = tokio::select! {
+                result = future => result,
+                result = persist => result,
+            };
+            if result.is_ok() {
+                let snapshot = progress.snapshot();
+                if !context
+                    .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
+                    .await?
+                {
+                    return Err(AppError::InvalidState(
+                        "Lesson preparation is no longer running.".into(),
+                    ));
                 }
             }
-        };
-        // Keep polling preparation while progress waits for the database.
-        // Preparation may hold the only connection across an await; waiting
-        // inside a select branch would otherwise deadlock both operations.
-        let result = tokio::select! {
-            result = future => result,
-            result = persist => result,
-        };
-        if result.is_ok() {
-            let snapshot = progress.snapshot();
-            if !context
-                .progress(snapshot.0, &snapshot.1, Some(&activity_value(&snapshot.2)?))
-                .await?
-            {
-                return Err(AppError::InvalidState(
-                    "Lesson preparation is no longer running.".into(),
-                ));
-            }
-        }
-        result
-    })
-    .await
+            result
+        })
+        .await
 }
 
 #[cfg(test)]

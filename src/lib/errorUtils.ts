@@ -8,6 +8,7 @@
  * Extract a readable error message from an unknown error type.
  *
  * @param error - The error to extract a message from
+ * @param fallback - Optional fallback message to return when error is null/undefined
  * @returns A human-readable error message string
  *
  * @example
@@ -18,11 +19,24 @@
  *   console.error(message); // "Actual error message" instead of "[object Object]"
  * }
  */
-export function getErrorMessage(error: unknown): string {
+export function getErrorMessage(error: unknown, fallback?: string): string {
+  if (error == null && fallback !== undefined) {
+    return fallback;
+  }
+
   try {
     if (typeof error === 'string') return error;
-    if (error && typeof error === 'object' && 'message' in error) {
-      return String(error.message);
+    if (error && typeof error === 'object') {
+      if ('message' in error && (error as { message: unknown }).message !== undefined) {
+        return String((error as { message: unknown }).message);
+      }
+      if ('error' in error) {
+        const inner = (error as { error: unknown }).error;
+        if (typeof inner === 'string') return inner;
+        if (inner && typeof inner === 'object' && 'message' in inner && (inner as { message: unknown }).message !== undefined) {
+          return String((inner as { message: unknown }).message);
+        }
+      }
     }
     const serialized = JSON.stringify(error);
     if (serialized !== undefined) return serialized;
@@ -33,6 +47,6 @@ export function getErrorMessage(error: unknown): string {
   try {
     return String(error);
   } catch {
-    return 'Unknown error';
+    return fallback ?? 'Unknown error';
   }
 }

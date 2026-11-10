@@ -12,7 +12,7 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::application::services::claim_verification::BRIDGE_SYSTEM;
 use lattice_core::domain::learning::acceptance::{
-    most_calls, start, End, Outcome, Reading, Step, Then,
+    most_calls, AcceptancePolicy, End, Outcome, Position, Reading, Step, Then,
 };
 use lattice_core::domain::learning::claim_review::{
     ClaimEvent, ClaimLedgerEntry, ClaimState, VerdictKind,
@@ -21,7 +21,7 @@ use lattice_core::domain::learning::claim_review::{
 const COMMON: &str = "A page number identifies the page of a document that a value appears on.";
 const REASONED: &str =
     "The reader hands over one row at a time, so memory stays flat however long the file is.";
-const RUBRIC_LINE: &str = "The answer names two trade-offs between the designs.";
+const OWN: &str = "The sources name two trade-offs between the designs.";
 const REWRITTEN: &str =
     "The reader hands over one row at a time, so it never holds the whole file in memory.";
 
@@ -217,10 +217,11 @@ fn outcomes(report: &LessonVerificationReport) -> Vec<(&str, ClaimVerdict, Optio
 }
 
 #[tokio::test]
-async fn each_statement_meets_the_check_its_class_names() -> Result<()> {
-    let model = Classes::new(&[COMMON, REASONED, GOOD])
+async fn each_statement_meets_the_check_its_class_names_and_the_lessons_own_is_left_out(
+) -> Result<()> {
+    let model = Classes::new(&[COMMON, REASONED, OWN, GOOD])
         .classed(&[(COMMON, "common"), (REASONED, "reasoning")]);
-    let body = format!("{COMMON} {REASONED} {GOOD}");
+    let body = format!("{COMMON} {REASONED} {OWN} {GOOD}");
 
     let (_, report) = verify_and_repair(
         &model,
@@ -240,7 +241,7 @@ async fn each_statement_meets_the_check_its_class_names() -> Result<()> {
             (GOOD, ClaimVerdict::Supported, Some(Class::Sourced)),
         ]
     );
-    // The report accounts for the three.
+    // The lesson's own remark is no claim: the report accounts for three.
     let accounted: Vec<&str> = report.coverage[0]
         .claims
         .iter()
@@ -248,10 +249,10 @@ async fn each_statement_meets_the_check_its_class_names() -> Result<()> {
         .collect();
     assert_eq!(accounted, [COMMON, REASONED, GOOD]);
     assert!(report.issues.is_empty(), "{:?}", report.issues);
-    // The model sorted the three in one call. The Common statement and the
-    // Reasoning one met the knowledge judge's three samples, the Reasoning
-    // one also the consistency judge, and only the Sourced one the strict
-    // check.
+    // The rule layer sorted the remark; the model sorted the other three in
+    // one call. The Common statement and the Reasoning one met the knowledge
+    // judge's three samples, the Reasoning one also the consistency judge,
+    // and only the Sourced one the strict check.
     assert_eq!(model.calls("sort"), 1);
     assert_eq!(model.calls("consistency"), 1);
     assert_eq!(model.calls("knowledge"), 6);
@@ -333,17 +334,17 @@ async fn a_sentence_the_writer_cited_is_sourced_by_the_writer_with_no_sort_call(
 
 /// A worked example's figures are its case's own, as the writer's rule has
 /// it: the writer cites none of them, so the rules do not send them to a
-/// source, and the model sorts them. What the example quotes the rules still
-/// send.
+/// source, and the model sorts them. What the example attributes to a source
+/// the rules still send.
 #[tokio::test]
-async fn a_worked_examples_figures_are_the_models_to_sort_and_its_quotations_the_rules(
+async fn a_worked_examples_figures_are_the_models_to_sort_and_its_attributions_the_rules(
 ) -> Result<()> {
     const CASE: &str = "5 documents have confidence scores below 0.70.";
-    const QUOTED: &str = "The page reads \"Total due on receipt of goods\" at the foot.";
-    let model = Classes::new(&[CASE, QUOTED]).classed(&[(CASE, "internal")]);
+    const ATTRIBUTED: &str = "According to the survey, most teams retrain monthly.";
+    let model = Classes::new(&[CASE, ATTRIBUTED]).classed(&[(CASE, "internal")]);
     let example = json!({"blocks":[{"kind":"worked_example","title":"Thresholds",
-        "body":format!("{CASE} {QUOTED}"),"rubric":[]}],"questions":[]});
-    let claims: Vec<(usize, Claim)> = [CASE, QUOTED]
+        "body":format!("{CASE} {ATTRIBUTED}"),"rubric":[]}],"questions":[]});
+    let claims: Vec<(usize, Claim)> = [CASE, ATTRIBUTED]
         .into_iter()
         .map(|statement| {
             (
@@ -381,8 +382,7 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_quotations_the
             },
         ]
     );
-    // An explanation states what is so: there a figure statement is never left
-    // Internal, and what the model calls Internal is read as Reasoning.
+    // An explanation states what is so: there the figure is the rules' to send.
     let stated = class_checks::sort(
         &model,
         &StandardPolicy::new(),
@@ -396,8 +396,8 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_quotations_the
     assert_eq!(
         stated,
         [Classed {
-            class: Class::Reasoning,
-            by: ClassifiedBy::Model
+            class: Class::Sourced,
+            by: ClassifiedBy::Rule
         }]
     );
     Ok(())
@@ -405,8 +405,8 @@ async fn a_worked_examples_figures_are_the_models_to_sort_and_its_quotations_the
 
 /// An answer explanation reasons from its question's givens: a figure it
 /// shares with the question's prompt or options is the question's, and the
-/// model sorts a statement that states no other. A figure of its own is
-/// never left Internal: the model sorts it, and Internal is read as Reasoning.
+/// model sorts a statement that states no other. A figure of its own is the
+/// rules' to send to a source.
 #[tokio::test]
 async fn a_figure_an_answer_shares_with_its_question_is_a_given_not_a_specific() -> Result<()> {
     const GIVEN: &str =
@@ -451,7 +451,7 @@ async fn a_figure_an_answer_shares_with_its_question_is_a_given_not_a_specific()
             },
             Classed {
                 class: Class::Sourced,
-                by: ClassifiedBy::Model
+                by: ClassifiedBy::Rule
             },
         ]
     );
@@ -849,51 +849,6 @@ async fn a_cited_sentence_whose_every_part_is_common_stays_loses_its_own_citatio
 }
 
 #[tokio::test]
-async fn a_sourced_statement_the_passages_do_not_state_but_every_sample_confirms_is_general_knowledge_and_never_rewritten(
-) -> Result<()> {
-    let pool = crate::tests::pool().await?;
-    let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
-    let model = Reads::new(
-        Classes::new(&[COMMON, REWORDED, GOOD])
-            .knows(&[(COMMON, ["true_common"; 3])])
-            .rewrites(COMMON, REWORDED),
-        &["specific_missing"],
-    )
-    .finds_unstated(&[COMMON]);
-
-    let (raw, _) = prepare(
-        &Database::from(pool.clone()),
-        &repo,
-        &job,
-        &lesson_id,
-        &model,
-        Some(two_sections(COMMON, GOOD, true).to_string()),
-        &[source()],
-    )
-    .await?;
-
-    assert_eq!(model.inner.calls("repair"), 0);
-    let written: Value = serde_json::from_str(&raw)?;
-    assert_eq!(written["blocks"][0]["body"], section(COMMON));
-    let ledger = ClaimReviewRepository::new(pool.clone())
-        .load(&lesson_id)
-        .await?;
-    let claim = ledger
-        .claims
-        .iter()
-        .find(|claim| claim.statement() == COMMON);
-    assert!(
-        matches!(
-            claim.map(|claim| claim.state()),
-            Some(ClaimState::GeneralKnowledge { .. })
-        ),
-        "{:?}",
-        claim.map(|claim| claim.state())
-    );
-    Ok(())
-}
-
-#[tokio::test]
 async fn a_common_statement_most_samples_call_false_stays_and_passes_when_its_sections_passages_state_it(
 ) -> Result<()> {
     // §1 #5 of the acceptance policy design
@@ -1230,10 +1185,15 @@ async fn the_calls_ceiling_only_comes_down_while_the_loop_checks_a_mix_of_classe
 }
 
 #[tokio::test]
-async fn a_statement_a_repair_wrote_keeps_its_parents_class_with_no_sort_and_is_read_where_its_rewrite_left_it(
+async fn a_rule_that_leaves_a_statement_out_does_not_apply_to_a_statement_a_repair_wrote_and_it_is_read(
 ) -> Result<()> {
     let policy = StandardPolicy::new();
     let model = Classes::new(&[]);
+    // Alone, a remark about the lesson's sources is left out of its claims.
+    let mut fresh = open().await?;
+    let alone = identified(&mut fresh, &model, &lesson(OWN), &[(OWN, OWN)], &[]).await?;
+    assert!(alone.statements.is_empty());
+
     // A repair that wrote it over a checked statement keeps that statement's
     // class, and the check.
     let mut ledger = open().await?;
@@ -1256,14 +1216,7 @@ async fn a_statement_a_repair_wrote_keeps_its_parents_class_with_no_sort_and_is_
         .begin_repairs(&policy, &lesson(COMMON), std::slice::from_ref(&parent))
         .await?;
 
-    let pass = identified(
-        &mut ledger,
-        &model,
-        &lesson(REWRITTEN),
-        &[(REWRITTEN, REWRITTEN)],
-        &[],
-    )
-    .await?;
+    let pass = identified(&mut ledger, &model, &lesson(OWN), &[(OWN, OWN)], &[]).await?;
 
     let [kept] = pass.statements.as_slice() else {
         panic!("the rewrite is a statement: {:?}", pass.statements.len());
@@ -1569,9 +1522,9 @@ async fn what_the_rules_make_internal_never_enters_the_ledger_and_asks_the_model
     const RUBRIC: &str = "The answer names two trade-offs between the designs.";
     const OPTION: &str = "Each stage re-reads the page image.";
     let model = Classes::new(&[]);
-    // A rubric line and an option.
+    // A remark that opens "The sources", a rubric line and an option.
     let candidate = json!({
-        "blocks": [{"kind":"explanation","title":"Rows","body":"A stage hands its output to the next.",
+        "blocks": [{"kind":"explanation","title":"Rows","body":OWN,
             "rubric":[{"title":"Trade-offs","description":RUBRIC}]}],
         "questions": [{"kind":"practice","prompt":"Which stage re-reads the page?",
             "options":["Only the first stage.", OPTION],"correctIndex":1,
@@ -1585,7 +1538,7 @@ async fn what_the_rules_make_internal_never_enters_the_ledger_and_asks_the_model
         &StandardPolicy::new(),
         &mut ledger,
         (&candidate, &references),
-        extracting(&[(0, RUBRIC), (1, OPTION)]),
+        extracting(&[(0, OWN), (0, RUBRIC), (1, OPTION)]),
         &ClaimChecks::default(),
     )
     .await?;
@@ -1609,9 +1562,8 @@ async fn the_ceiling_after_the_sort_counts_a_statement_the_model_calls_internal_
 ) -> Result<()> {
     let policy = StandardPolicy::new();
     let model = Classes::new(&[SCENARIO]).classed(&[(SCENARIO, "internal")]);
-    let candidate = json!({"blocks":[{"kind":"explanation","title":"Rows","body":SCENARIO,
-        "rubric":[{"title":"Trade-offs","description":RUBRIC_LINE}]}],"questions":[]});
-    let claims: Vec<(usize, Claim)> = [SCENARIO, RUBRIC_LINE]
+    let candidate = lesson(&format!("{SCENARIO} {OWN}"));
+    let claims: Vec<(usize, Claim)> = [SCENARIO, OWN]
         .into_iter()
         .map(|statement| {
             (
@@ -1652,8 +1604,13 @@ async fn the_ceiling_after_the_sort_counts_a_statement_the_model_calls_internal_
     );
     // The one sorting call, made; the model's statement at the longest path of
     // the Internal graph from its entry; a flow repair for its section; and
-    // nothing for the rubric line the rules left out.
-    let entry = start(&policy, Class::Internal);
+    // nothing for the remark the rules left out.
+    let entry = Position {
+        class: Class::Internal,
+        changed_class: false,
+        reasked: false,
+        node: policy.graph(Class::Internal).entry(),
+    };
     assert_eq!(trace.calls, 1);
     assert_eq!(trace.ceilings, [1 + most_calls(&policy, entry) + 1]);
     Ok(())
@@ -1750,39 +1707,6 @@ async fn the_plan_and_the_pass_agree_on_which_statements_are_checked_so_the_ceil
         "{} calls, ceilings {:?}",
         trace.calls,
         trace.ceilings
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_sentence_that_only_names_the_documentation_is_the_models_to_sort() -> Result<()> {
-    const NAMES: &str = "The documentation is available from the tool's own help screen.";
-    let model = Classes::new(&[NAMES]).classed(&[(NAMES, "common")]);
-    let claims = [(
-        0,
-        Claim {
-            quote: NAMES.to_owned(),
-            statement: NAMES.to_owned(),
-        },
-    )];
-
-    let classes = class_checks::sort(
-        &model,
-        &StandardPolicy::new(),
-        &lesson(NAMES),
-        &claims,
-        &[None],
-        &claim_ledger::Rewrites::default(),
-        &Citations::default(),
-    )
-    .await?;
-
-    assert_eq!(
-        classes,
-        [Classed {
-            class: Class::Common,
-            by: ClassifiedBy::Model
-        }]
     );
     Ok(())
 }

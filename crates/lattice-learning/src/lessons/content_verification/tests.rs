@@ -21,9 +21,6 @@ mod incremental_tests;
 
 const BAD: &str = "DictReader strips field-name whitespace by default.";
 const GOOD: &str = "DictReader preserves field-name whitespace by default.";
-/// What a repair writes for [`BAD`]: the same fact in the lesson's own words,
-/// since a repair may not write a sentence that copies a source.
-const FIXED: &str = "By default, DictReader preserves field-name whitespace.";
 const SOURCE: &str = "DictReader preserves field-name whitespace by default. Missing values in nonblank rows default to None. The optional skipinitialspace setting ignores spaces immediately after delimiters; it defaults to false.";
 
 /// A deterministic protocol fixture, not evidence of a live model's accuracy.
@@ -78,11 +75,6 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
         assert_schema_request_holds_the_shape(request, schema);
     }
     let (system, user) = fixture_messages(request);
-    if system.starts_with(crate::lessons::teaching::contract::SYSTEM)
-        || system.starts_with(crate::lessons::teaching::contract::confirm::SYSTEM)
-    {
-        return Vec::new();
-    }
     if let Some(batch) = fixture_batch(user) {
         return batch
             .into_iter()
@@ -103,18 +95,6 @@ pub(crate) fn fixture_prompts(request: &CompletionRequest) -> Vec<String> {
     vec![format!("{system}\n\n{user}")]
 }
 
-/// What a fixture model answers a lesson's check against its course plan
-/// with, unless a test routes that call itself (`teaching::contract_tests`).
-pub(crate) const CONTRACT_NOTHING: &str =
-    "{\"planned\":[],\"usedBeforeTaught\":[],\"contradictions\":[],\"unseen\":[]}";
-
-/// What a fixture model answers a confirming read of the lesson's check with:
-/// not taught, and an item belongs in no part in particular.
-pub(crate) const CONFIRM_PLANNED_NOTHING: &str =
-    "{\"taught\":false,\"quote\":\"\",\"belongs\":\"\"}";
-pub(crate) const CONFIRM_USE_NOTHING: &str =
-    "{\"taught\":false,\"where\":\"thisLesson\",\"quote\":\"\"}";
-
 /// The fixture's replies to [`fixture_prompts`], answered in the typed
 /// protocol: one batched reply, a check's verdict as its last line, or the
 /// reply text unchanged.
@@ -126,23 +106,6 @@ pub(crate) fn fixture_completion(
         return CompletionResponse::from_text(crate::lessons::structured_call::FIXTURE_DRAFT);
     }
     let (system, user) = fixture_messages(request);
-    if system.starts_with(crate::lessons::teaching::contract::confirm::SYSTEM) {
-        return CompletionResponse::from_text(
-            if user.contains(crate::lessons::teaching::contract::confirm::PLANNED_TASK) {
-                CONFIRM_PLANNED_NOTHING
-            } else {
-                CONFIRM_USE_NOTHING
-            },
-        );
-    }
-    if system.starts_with(crate::lessons::teaching::contract::SYSTEM) {
-        let text = replies.concat();
-        return CompletionResponse::from_text(if text.is_empty() {
-            CONTRACT_NOTHING
-        } else {
-            text.as_str()
-        });
-    }
     let text = if let Some(batch) = fixture_batch(user) {
         let checks: Vec<Value> = batch
             .iter()
@@ -169,81 +132,9 @@ pub(crate) fn fixture_completion(
             .map(|reply| part_wise_reply(&reply, user))
             .unwrap_or_default()
     } else {
-        fixture_repair_edits(request, user, replies.concat())
+        replies.concat()
     };
     CompletionResponse::from_text(text)
-}
-
-/// A scripted repair answer made to obey the schema it was asked under: when
-/// the schema has each edit name its finding, every edit, citation and
-/// uncite that names none gets the finding sent for its part; when it does
-/// not, the names are taken away. A change that names a finding keeps it, and
-/// any other reply is returned as written.
-fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -> String {
-    let Ok(Value::Object(mut answer)) = serde_json::from_str::<Value>(&text) else {
-        return text;
-    };
-    if !["edits", "citations", "uncite"]
-        .iter()
-        .any(|key| answer.contains_key(*key))
-    {
-        return text;
-    }
-    let names = request.json_schema.as_ref().is_some_and(|schema| {
-        schema
-            .pointer("/properties/edits/items/properties/finding")
-            .is_some()
-    });
-    let sent: Vec<Value> = serde_json::from_str::<Value>(user)
-        .ok()
-        .and_then(|prompt| prompt.get("issuesToFix").and_then(Value::as_array).cloned())
-        .unwrap_or_default();
-    let finding_for = |path: &str| -> Value {
-        let mut segments = path.split('/').skip(1);
-        let part = match (segments.next(), segments.next()) {
-            (Some(list @ ("blocks" | "questions")), Some(index)) => format!("/{list}/{index}"),
-            _ => String::new(),
-        };
-        let entry = sent
-            .iter()
-            .find(|entry| {
-                entry["part"].as_str() == Some(part.as_str())
-                    || entry["also"].as_str() == Some(part.as_str())
-            })
-            .or_else(|| sent.iter().find(|entry| entry["part"].is_null()))
-            .or_else(|| sent.first());
-        entry.map_or(Value::Null, |entry| entry["id"].clone())
-    };
-    for key in ["edits", "citations"] {
-        let Some(Value::Array(changes)) = answer.get_mut(key) else {
-            continue;
-        };
-        for change in changes {
-            let Some(fields) = change.as_object_mut() else {
-                continue;
-            };
-            if !names {
-                fields.remove("finding");
-            } else if !fields.contains_key("finding") {
-                let path = fields.get("path").and_then(Value::as_str).unwrap_or("");
-                let finding = finding_for(path);
-                fields.insert("finding".into(), finding);
-            }
-        }
-    }
-    if let Some(Value::Array(unciting)) = answer.get_mut("uncite") {
-        for entry in unciting.iter_mut() {
-            if names {
-                if let Some(path) = entry.as_str().map(str::to_owned) {
-                    *entry = json!({"finding": finding_for(&path), "path": path});
-                }
-            } else if let Some(path) = entry.get("path").and_then(Value::as_str).map(str::to_owned)
-            {
-                *entry = json!(path);
-            }
-        }
-    }
-    Value::Object(answer).to_string()
 }
 
 /// A fixture's label-first verdict ("supported\nReason: …\nSource passage:
@@ -416,9 +307,6 @@ fn verdict_last(reply: &str, ids: &[String]) -> String {
 
 /// Shared with course fixtures so they exercise the additional protocol calls.
 pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
-    if let Some(plan) = crate::lessons::course_plan::fixture_response(prompt) {
-        return Some(plan);
-    }
     if prompt.starts_with("You sort statements extracted from a lesson") {
         // The fixtures' statements are the ones the strict check was written
         // for.
@@ -445,7 +333,7 @@ pub(crate) fn fixture_response(prompt: &str) -> Option<String> {
             let passage = passages.iter().find(|p|p["field"]=="/body" || p["field"]=="/explanation").unwrap();
             let quote = passage["text"].as_str().unwrap();
             let index = v["index"].as_u64().unwrap() as usize;
-            let statement = if quote.contains(BAD) { BAD } else if quote.contains(GOOD) { GOOD } else if quote.contains(FIXED) { FIXED } else { quote };
+            let statement = if quote.contains(BAD) { BAD } else if quote.contains(GOOD) { GOOD } else { quote };
             json!({"index":index,"claims":[{"passageId":passage["id"],"statement":statement}],"nonFactualReason":""})
         }).collect::<Vec<_>>()).to_string());
     }
@@ -556,22 +444,12 @@ impl Model {
             *self.repaired.lock().unwrap() = true;
             return Ok(repair_body(
                 prompt,
-                candidate(FIXED)["blocks"][0]["body"].clone(),
+                candidate(GOOD)["blocks"][0]["body"].clone(),
             ));
         }
         if prompt.starts_with("Review instructional quality.") {
             let data = context(prompt);
-            let asked = data["sectionIndicesToReview"].as_array().cloned();
-            let checks = data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().filter(|(index,_)|asked.as_ref().is_none_or(|asked|asked.contains(&json!(index)))).map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>();
-            let mut answer =
-                json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)});
-            if let Some(open) = data["openFindings"].as_array() {
-                answer["openFindings"] = open
-                    .iter()
-                    .map(|finding| json!({"id":finding["id"],"verdict":"resolved","note":""}))
-                    .collect();
-            }
-            return Ok(answer.to_string());
+            return Ok(json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(data["candidate"]["blocks"].as_array().unwrap().iter().enumerate().map(|(index,block)|json!({"index":index,"passageId":block["bodyPassages"][0]["id"],"finding":"The corrected field-name statement agrees with the concrete example.","hasDefect":false})).collect::<Vec<_>>())} ).to_string());
         }
         if prompt.starts_with("Source passages:") {
             *self.judge_calls.lock().unwrap() += 1;
@@ -730,9 +608,6 @@ mod class_checks_tests;
 
 #[path = "call_ceiling_tests.rs"]
 mod call_ceiling_tests;
-
-#[path = "teaching_release_tests.rs"]
-mod teaching_release_tests;
 
 #[path = "evidence_paging_tests.rs"]
 mod evidence_paging_tests;
@@ -1110,12 +985,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
                 }
                 let mut patch = self::context(prompt)["candidate"].clone();
                 for block in patch["blocks"].as_array_mut().unwrap() {
-                    let good = if block["title"].as_str().unwrap().contains("second") {
-                        format!("Note that {FIXED}")
-                    } else {
-                        FIXED.to_owned()
-                    };
-                    block["body"] = json!(block["body"].as_str().unwrap().replace(BAD, &good));
+                    block["body"] = json!(block["body"].as_str().unwrap().replace(BAD, GOOD));
                 }
                 return Ok(repair_body(prompt, patch["blocks"][0]["body"].clone()));
             }
@@ -1190,7 +1060,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
     assert!(partial["blocks"][0]["body"]
         .as_str()
         .unwrap()
-        .contains(FIXED));
+        .contains(GOOD));
     assert!(partial["blocks"][1]["body"].as_str().unwrap().contains(BAD));
     let retry = jobs
         .retry_job(&LearningGenerationJobActionRequestDto {
@@ -1212,8 +1082,7 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
                 has_pending_repair(
                     &model,
                     "{}",
-                    &crate::lessons::shape::FixedSchema(json!({})),
-                    0,
+                    &json!({}),
                     &saved,
                     &ReferenceCollection::lexical(&sources)?
                 )
@@ -1402,7 +1271,7 @@ async fn contradictory_claim_is_repaired_and_rechecked_against_references() -> R
     )
     .await?;
     assert!(*model.repaired.lock().unwrap());
-    assert!(raw.contains(FIXED));
+    assert!(raw.contains(GOOD));
     assert!(report.issues.is_empty());
     assert!(report
         .findings
@@ -1850,18 +1719,12 @@ async fn exact_worked_code_is_executed_and_bad_output_cannot_hide_a_failed_run()
     assert!(observed[0].evidence().contains('5'));
     let bad = json!({"blocks":[{"kind":"worked_example","body":"```javascript\nthrow new Error('broken example');\n```"}]});
     assert!(!execution::observe(&runtimes, &bad).await?[0].passed());
-    Ok(())
-}
-
-#[tokio::test]
-async fn an_open_fence_is_no_example_and_the_closed_ones_still_run() -> Result<()> {
-    let runtimes = BuiltinRuntimes::for_tests();
-    let body = "```javascript\nconsole.log(1);\n```\nThen:\n```javascript\nconsole.log(2);\n";
-    let lesson = json!({"blocks":[{"kind":"worked_example","body":body}]});
-    let observed = execution::observe(&runtimes, &lesson).await?;
-    assert_eq!(observed.len(), 1);
-    assert_eq!(observed[0].id, "block-0-example-0");
-    assert!(observed[0].passed());
+    assert!(execution::observe(
+        &runtimes,
+        &json!({"blocks":[{"kind":"worked_example","body":"```python\nprint(1)"}]})
+    )
+    .await
+    .is_err());
     Ok(())
 }
 
@@ -1888,35 +1751,6 @@ async fn unlabeled_data_and_code_are_labeled_without_changing_their_bytes() -> R
     assert!(observed[0].evidence().contains(" a  b "));
     let titled = json!({"blocks":[{"kind":"worked_example","body":"```javascript title=example.js\nconsole.log(42);\n```"}]});
     assert!(execution::observe(&runtimes, &titled).await?[0].passed());
-    Ok(())
-}
-
-#[tokio::test]
-async fn an_unclosed_fence_is_left_as_written_and_a_closed_one_elsewhere_is_still_labeled(
-) -> Result<()> {
-    use crate::lessons::course_generation_tests::ScriptedModel;
-    let model = ScriptedModel {
-        outputs: Mutex::new(
-            vec![json!({"fences":[{"id":"block-1-fence-0","language":"text"}]}).to_string()].into(),
-        ),
-        prompts: Mutex::new(Vec::new()),
-    };
-    let open = "Try it:\n```\nprint(1)\nand the example goes on";
-    let tree = "project/\n";
-    let lesson = json!({"blocks":[
-        {"kind":"worked_example","title":"Open","body":open},
-        {"kind":"worked_example","title":"Closed","body":format!("Layout:\n```\n{tree}```\n")},
-    ],"questions":[]});
-
-    let corrected: Value =
-        serde_json::from_str(&normalize_example_fences(&model, lesson.to_string()).await?)?;
-
-    assert_eq!(corrected["blocks"][0]["body"], open);
-    assert_eq!(
-        corrected["blocks"][1]["body"],
-        format!("Layout:\n```text\n{tree}```\n")
-    );
-    assert_eq!(model.prompts.lock().unwrap().len(), 1);
     Ok(())
 }
 

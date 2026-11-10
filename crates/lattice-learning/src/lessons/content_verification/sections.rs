@@ -11,15 +11,14 @@
 use super::claim_ledger::ClaimLedger;
 use super::repair_work::rejected;
 use super::*;
+use crate::dto::LessonQuestionKind;
 use crate::generation::{parse_json, split_check, teaching_sentences};
-use crate::lessons::copied_wording::Wording;
-use crate::lessons::shape::{LessonShape, ShapePolicy};
 use crate::lessons::text_edits;
 use lattice_core::domain::learning::claim_review::ClaimId;
 use std::collections::{BTreeMap, BTreeSet};
 
 /// What the flow repair is told besides the edit protocol.
-const FLOW: &str = "Sentences were taken out of this lesson section because they were shown to be wrong. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. If the section reads well as it is, give no edits.";
+const FLOW: &str = "Sentences were taken out of this lesson section because the course's sources do not support them. Restore the flow of what is left: fix a word that now points at nothing (\"this\", \"these\", \"as above\", a step number) and join the sentences on either side of a gap if they no longer follow, changing as little as you can. gaps lists, for each place a sentence was taken out, the sentence kept before it and the one kept after it: change only those sentences, or add a short connecting sentence between them. verifiedSentences are checked and must stay exactly as they are; connect around them. Add no statement of fact: no new claim, figure, name, quotation, cause or consequence. If the section reads well as it is, give no edits.";
 
 /// What a lesson is told when the cuts leave it no statement: the part of it
 /// that would have to be taken out.
@@ -118,10 +117,6 @@ impl Going {
 
     pub(super) fn is_empty(&self) -> bool {
         self.0.is_empty()
-    }
-
-    pub(super) fn units(&self) -> &BTreeSet<usize> {
-        &self.0
     }
 
     pub(super) fn contains(&self, unit: usize) -> bool {
@@ -254,39 +249,9 @@ pub(super) fn unit_label(lesson: &Value, unit: usize) -> Option<String> {
         .map(str::to_owned)
 }
 
-/// The sections `cuts` leaves with too little to teach in `lesson`, whatever
-/// else of it could be published.
-pub(super) fn left_with_too_little(
-    lesson: &Value,
-    cuts: &Cuts,
-    shape: &dyn ShapePolicy,
-) -> Vec<usize> {
-    let mut cuts = cuts.clone();
-    cuts.keep_current(lesson);
-    too_little(lesson, &cuts, shape)
-}
-
-/// Puts `units` of `lesson` back as they are in `from`, and what `cuts` took
-/// from them back as it is in `earlier`.
-pub(super) fn restore_units(
-    (lesson, cuts): (&mut Value, &mut Cuts),
-    (from, earlier): (&Value, &Cuts),
-    units: &[usize],
-) {
-    for unit in units {
-        if let Some(section) = unit_at(from, *unit).cloned() {
-            set_unit(lesson, *unit, section);
-        }
-        match earlier.taken.get(unit) {
-            Some(taken) => cuts.taken.insert(*unit, taken.clone()),
-            None => cuts.taken.remove(unit),
-        };
-    }
-}
-
-/// The sections that took cuts and are left with too little to teach, by the
-/// shape policy's measure.
-fn too_little(lesson: &Value, cuts: &Cuts, shape: &dyn ShapePolicy) -> Vec<usize> {
+/// The sections that took cuts and are left with too little to teach: fewer
+/// than two teaching sentences, or a check whose answer went.
+fn too_little(lesson: &Value, cuts: &Cuts) -> Vec<usize> {
     let blocks = lesson
         .get("blocks")
         .and_then(Value::as_array)
@@ -295,50 +260,70 @@ fn too_little(lesson: &Value, cuts: &Cuts, shape: &dyn ShapePolicy) -> Vec<usize
         .iter()
         .filter(|(unit, _)| **unit < blocks)
         .filter(|(unit, taken)| {
-            shape.too_little(
-                lesson
+            taken.answer_lost
+                || lesson
                     .pointer(&format!("/blocks/{unit}/body"))
                     .and_then(Value::as_str)
-                    .unwrap_or_default(),
-                taken.answer_lost,
-            )
+                    .is_none_or(|body| teaching_sentences(body).len() < 2)
         })
         .map(|(unit, _)| *unit)
         .collect()
 }
 
-/// Sends the sections that go out of `lesson` into `cuts`: those left with too
-/// little to teach, then the checks that lose the worked example they follow.
-/// Whether it sent any.
-fn send_out(lesson: &Value, cuts: &mut Cuts, shape: &dyn ShapePolicy) -> bool {
-    let mut sent = false;
-    for unit in too_little(lesson, cuts, shape) {
-        if let (false, Some(label)) = (cuts.going.contains_key(&unit), unit_label(lesson, unit)) {
-            cuts.go(unit, label);
-            sent = true;
-        }
-    }
-    for unit in shape.dependants(lesson, cuts.units().units()) {
-        if let (false, Some(label)) = (cuts.going.contains_key(&unit), unit_label(lesson, unit)) {
-            cuts.go(unit, label);
-            sent = true;
-        }
-    }
-    sent
-}
-
-/// Why `lesson`, with the sections `cuts` takes out, those left with too
-/// little and the checks that lose their example, could not be published, when
-/// it could not.
-pub(super) fn unpublishable(
-    lesson: &Value,
-    cuts: &Cuts,
-    shape: &dyn ShapePolicy,
-) -> Option<String> {
+/// Why `lesson`, with the sections `cuts` takes out and those left with too
+/// little, could not be published, when it could not.
+pub(super) fn unpublishable(lesson: &Value, cuts: &Cuts) -> Option<String> {
     let mut cuts = cuts.clone();
     cuts.keep_current(lesson);
-    send_out(lesson, &mut cuts, shape);
-    shape.floor(lesson, cuts.units().units())
+    for unit in too_little(lesson, &cuts) {
+        if let Some(label) = unit_label(lesson, unit) {
+            cuts.go(unit, label);
+        }
+    }
+    thin(lesson, &cuts.units())
+}
+
+/// Why a lesson that loses the sections that go cannot be published, when it
+/// cannot: more than a third of its sections, its first explanation, all its
+/// questions or every question of a kind it asks, without which it cannot be
+/// saved.
+fn thin(lesson: &Value, going: &Going) -> Option<String> {
+    let blocks = lesson.get("blocks")?.as_array()?;
+    let sections = blocks.len();
+    let lost = (0..sections).filter(|unit| going.contains(*unit)).count();
+    let first = blocks
+        .iter()
+        .position(|block| block.get("kind").and_then(Value::as_str) == Some("explanation"));
+    let questions = lesson
+        .get("questions")
+        .and_then(Value::as_array)
+        .map_or(0, Vec::len);
+    let questions_lost = (sections..sections + questions)
+        .filter(|unit| going.contains(*unit))
+        .count();
+    let asks = |unit: usize, kind: &LessonQuestionKind| {
+        lesson
+            .pointer(&format!("/questions/{}/kind", unit - sections))
+            .and_then(Value::as_str)
+            == Some(kind.as_str())
+    };
+    let kind_lost = LessonQuestionKind::ALL.into_iter().find(|kind| {
+        let asked: Vec<usize> = (sections..sections + questions)
+            .filter(|unit| asks(*unit, kind))
+            .collect();
+        !asked.is_empty() && asked.iter().all(|unit| going.contains(*unit))
+    });
+    if first.is_some_and(|unit| going.contains(unit)) {
+        Some("its first explanation would have to be taken out".to_owned())
+    } else if 3 * lost > sections {
+        Some(format!(
+            "{lost} of its {sections} sections would have to be taken out"
+        ))
+    } else if questions > 0 && questions_lost == questions {
+        Some("all of its questions would have to be taken out".to_owned())
+    } else {
+        kind_lost.map(|kind| format!("it would be left without a {} question", kind.as_str()))
+    }
 }
 
 /// Whether a cut took the answer of a check: the first teaching sentence under
@@ -420,7 +405,6 @@ async fn mend_section(
     (schema, output_tokens): (&Value, usize),
     (unit, block, section): (usize, bool, &Value),
     (taken, protected): (&Taken, &[Protected]),
-    (lesson, wording): (&Value, &Wording),
 ) -> Result<Option<Value>> {
     let stands = |gap: &Gap, sentence: &Option<String>| -> Option<String> {
         let text = section.pointer(&format!("/{}", gap.field))?.as_str()?;
@@ -450,7 +434,6 @@ async fn mend_section(
                 unit,
                 field: gap.field.clone(),
                 quote: quote.clone(),
-                released: false,
             });
         }
     }
@@ -484,28 +467,13 @@ async fn mend_section(
     if !asked("edits") && !asked("citations") {
         return Ok(None);
     }
-    let repaired = match text_edits::apply_in(&original, &raw, lesson, wording) {
-        Ok(repaired) => repaired,
-        Err(error) if rejected(&error) => {
-            tracing::info!(%error, "claim.state: a flow repair's edits could not stand; the section keeps the text as cut");
-            return Ok(None);
-        }
-        Err(error) => return Err(error),
-    };
+    let repaired = text_edits::apply(&original, &raw)?;
     let pointer = format!("/{list}/0");
     let (Some(before), Some(after)) = (original.pointer(&pointer), repaired.pointer(&pointer))
     else {
         return Ok(None);
     };
     let confined = confine(before, after, &targets, protected)?.section;
-    if crate::generation::reads_as_part(before, block)
-        && !crate::generation::reads_as_part(&confined, block)
-    {
-        tracing::info!(
-            "claim.state: a flow repair left the section no lesson; it keeps the text as cut"
-        );
-        return Ok(None);
-    }
     Ok((confined != *before).then_some(confined))
 }
 
@@ -531,19 +499,29 @@ pub(super) enum Settled {
 /// one flow repair, and the teaching review reads the lesson as it will be.
 pub(super) async fn settle(
     llm: &dyn LLMPort,
-    (prompt, shape, output_tokens): (&str, LessonShape<'_>, usize),
+    (prompt, schema, output_tokens): (&str, &Value, usize),
     references: &ReferenceCollection<'_>,
     raw: &str,
     ledger: &mut ClaimLedger,
 ) -> Result<Settled> {
     let lesson: Value = parse_json(raw)?;
     ledger.cuts.keep_current(&lesson);
-    if send_out(&lesson, &mut ledger.cuts, shape.policy) {
+    let mut grew = false;
+    for unit in too_little(&lesson, &ledger.cuts) {
+        if let (false, Some(label)) = (
+            ledger.cuts.going.contains_key(&unit),
+            unit_label(&lesson, unit),
+        ) {
+            ledger.cuts.go(unit, label);
+            grew = true;
+        }
+    }
+    if grew {
         ledger.save_cuts().await?;
         return Ok(Settled::Again(raw.to_owned()));
     }
     let going = ledger.cuts.units();
-    if let Some(what) = shape.policy.floor(&lesson, going.units()) {
+    if let Some(what) = thin(&lesson, &going) {
         return Ok(Settled::Stopped(ledger.stop_unsupported(raw, &what).await?));
     }
     if ledger.nothing_left(&[]) {
@@ -569,7 +547,6 @@ pub(super) async fn settle(
         .get("blocks")
         .and_then(Value::as_array)
         .map_or(0, Vec::len);
-    let wording = Wording::of(references);
     let mut edited = lesson.clone();
     for (position, unit) in todo.into_iter().enumerate() {
         crate::lesson_progress::phase(
@@ -593,10 +570,9 @@ pub(super) async fn settle(
         let known = ledger.live_in(unit);
         let outcome = match mend_section(
             llm,
-            (shape.value(), output_tokens),
+            (schema, output_tokens),
             (unit, unit < blocks, &section),
             (&taken, &protected),
-            (&edited, &wording),
         )
         .await
         {
@@ -642,7 +618,7 @@ pub(super) async fn settle(
             llm,
             crate::teaching::LESSON_REPAIR_SYSTEM,
             prompt,
-            shape,
+            schema,
             without_going.to_string(),
             output_tokens,
             references,

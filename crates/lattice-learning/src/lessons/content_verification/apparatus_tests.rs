@@ -1,7 +1,7 @@
 //! A lesson's text never holds the schema's citation apparatus: a source
 //! mentioned by the schema's index, a list of bare quotations, and the
 //! heading over such a list.
-use super::super::{fences, strip_citation_apparatus};
+use super::super::strip_citation_apparatus;
 
 const LIST: &str = "**Citations:**\n*   \"Energy refers to a combination of loudness and density.\" (SourceIndex: 0)\n*   \"Segments with high energy are loud and dense.\" (SourceIndex: 0)";
 
@@ -170,71 +170,4 @@ fn a_choices_reason_loses_its_apparatus_like_the_explanation() {
         cleaned["questions"][0]["rationales"],
         serde_json::json!(["", "B fails.", "C fails."])
     );
-}
-
-/// The fenced text of each closed fence, and whether each names a language.
-fn closed(body: &str) -> Vec<(&str, bool)> {
-    fences(body)
-        .closed
-        .into_iter()
-        .map(|fence| {
-            (
-                body.get(fence.text).unwrap_or_default(),
-                !fence.language.is_empty(),
-            )
-        })
-        .collect()
-}
-
-#[test]
-fn a_fence_the_body_closes_is_closed_whatever_marks_it_uses() {
-    for (body, expected) in [
-        ("```python\nx = 1\n```\n", vec![("x = 1\n", true)]),
-        ("~~~\nplain\n~~~\n", vec![("plain\n", false)]),
-        ("```\nplain\n````\n", vec![("plain\n", false)]),
-        ("  ```text\nindented\n  ```", vec![("indented\n", true)]),
-        (
-            "```\none\n```\nbetween\n~~~sh\ntwo\n~~~\n",
-            vec![("one\n", false), ("two\n", true)],
-        ),
-    ] {
-        let found = fences(body);
-        assert!(!found.unclosed, "{body:?}");
-        assert_eq!(closed(body), expected, "{body:?}");
-    }
-}
-
-#[test]
-fn a_fence_inside_a_longer_fence_is_its_text_and_closes_nothing() {
-    let body = "````markdown\n```\ninner\n```\n````\nafter\n";
-    let found = fences(body);
-    assert!(!found.unclosed);
-    assert_eq!(closed(body), [("```\ninner\n```\n", true)]);
-}
-
-#[test]
-fn a_fence_the_body_never_closes_is_left_open_and_the_closed_ones_before_it_stay() {
-    for (body, expected) in [
-        ("```python\nprint(1)\n", vec![]),
-        ("```\nx\n~~~\n", vec![]),
-        ("```\nx\n``\n", vec![]),
-        ("```\none\n```\nthen\n~~~\ntwo\n", vec![("one\n", false)]),
-    ] {
-        let found = fences(body);
-        assert!(found.unclosed, "{body:?}");
-        assert_eq!(closed(body), expected, "{body:?}");
-    }
-}
-
-#[test]
-fn text_without_a_fence_has_none_and_inline_marks_are_not_one() {
-    for body in [
-        "",
-        "No code here.\n",
-        "Run ```x``` inline.\n",
-        "`one` and `two`",
-    ] {
-        let found = fences(body);
-        assert!(found.closed.is_empty() && !found.unclosed, "{body:?}");
-    }
 }

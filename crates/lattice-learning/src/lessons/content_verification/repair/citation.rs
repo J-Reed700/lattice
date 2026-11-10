@@ -80,6 +80,38 @@ pub(in crate::lessons::content_verification) fn quotation<'s>(
         .find(|run| validate_excerpt_quote(run, source).is_ok())
 }
 
+/// Every `sourceIndex` of a lesson `schema` allows the `count` sources the
+/// lesson numbers, once verification has numbered one more.
+pub(in crate::lessons::content_verification) fn number_sources(schema: &mut Value, count: usize) {
+    fn allow(index: &mut Value, count: usize) {
+        if let Some(maximum) = index.get_mut("maximum") {
+            *maximum = json!(count.saturating_sub(1));
+        }
+        if let Some(options) = index.get_mut("anyOf").and_then(Value::as_array_mut) {
+            for option in options {
+                allow(option, count);
+            }
+        }
+    }
+    match schema {
+        Value::Object(fields) => {
+            for (name, value) in fields.iter_mut() {
+                if name == "sourceIndex" {
+                    allow(value, count);
+                } else {
+                    number_sources(value, count);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                number_sources(item, count);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Names, in the repair context's evidence table, the `sourceIndex` of each
 /// passage whose source the lesson numbers, so a repair that cites a passage
 /// can say which excerpt it is.

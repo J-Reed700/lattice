@@ -1,5 +1,6 @@
 //! Resuming, completing and checkpointing the claim inventory and its coverage audit.
 use super::claim_ledger::Rewrites;
+use super::classify::{rule_class, Case};
 use super::*;
 use lattice_core::domain::learning::claim_review::{identities, ClaimLedgerEntry, ExtractedClaim};
 
@@ -65,10 +66,12 @@ pub(super) fn valid_saved_coverage(coverage: &Coverage, content: &[Value]) -> bo
 }
 
 /// A gap the audit found in a passage the inventory reads is a statement the
-/// lesson makes: it joins the inventory here, before the checks, and is
-/// located, sorted and checked like any other. After the first pass only a gap
-/// in a sentence written since the last is adopted, so the audit cannot widen
-/// the inventory again and again (claim classes design §3.4).
+/// lesson makes, unless the rule layer makes it Internal (a remark about the
+/// lesson's own sources or options): it joins the inventory here, before the
+/// checks, and is located, sorted and checked like any other. A gap that is
+/// Internal by rule stays on the section's coverage. After the first pass only
+/// a gap in a sentence written since the last is adopted, so the audit cannot
+/// widen the inventory again and again (claim classes design §3.4).
 pub(super) fn adopt_missing(
     inventory: &mut Inventory,
     coverage: &mut Coverage,
@@ -93,15 +96,19 @@ pub(super) fn adopt_missing(
         };
         let mut kept = Vec::new();
         let mut located: Vec<String> = Vec::new();
+        let case = Case::of(candidate, unit.index);
         for missing in std::mem::take(&mut unit.missing_assertions) {
             let claim = passages
                 .iter()
                 .find(|passage| passage["id"] == missing.passage_id)
                 .and_then(|passage| {
-                    Some(Claim {
-                        quote: passage["text"].as_str()?.to_owned(),
-                        statement: missing.statement.clone(),
-                    })
+                    let (field, quote) = (passage["field"].as_str()?, passage["text"].as_str()?);
+                    (rule_class(&missing.statement, field, &case) != Some(Class::Internal)).then(
+                        || Claim {
+                            quote: quote.to_owned(),
+                            statement: missing.statement.clone(),
+                        },
+                    )
                 })
                 .filter(|claim| {
                     let extracted = ExtractedClaim {

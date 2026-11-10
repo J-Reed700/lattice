@@ -282,6 +282,14 @@ impl CodeRunner for FakeRunner {
         }
         Ok(outcome)
     }
+    async fn run_capturing(
+        &self,
+        _files: &[crate::lab_runtime::LearningLabFile],
+        _read_only_paths: &[String],
+        _cancel: CancellationToken,
+    ) -> Result<(RunOutcome, String)> {
+        Ok((RunOutcome::Passed, String::new()))
+    }
 }
 
 /// What the grader was asked to judge.

@@ -37,9 +37,7 @@ use tokio_util::sync::CancellationToken;
 
 use lattice_core::application::ports::llm_port::{InferencePriority, RequestLoad};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::runtime::jobs::{
-    current_observer, HeldSlot, QueuedRequest, RankTicket, RankWatcher,
-};
+use lattice_core::shared::runtime::jobs::{RankTicket, RankWatcher};
 use std::sync::Weak;
 use tokio::sync::watch;
 
@@ -172,7 +170,6 @@ struct Grant {
 pub(crate) struct Permit {
     scheduler: Arc<InferenceScheduler>,
     grant: Grant,
-    _held: Option<HeldSlot>,
 }
 
 impl Permit {
@@ -306,7 +303,6 @@ impl InferenceScheduler {
             None => request.tokens,
         };
         let queued_at = std::time::Instant::now();
-        let observer = current_observer();
         // Outside the lock: if the scope has just ended, this is where that is
         // announced, and the announcement takes the lock.
         if let Some(rank) = &request.rank {
@@ -314,7 +310,7 @@ impl InferenceScheduler {
             rank.watch(watcher);
         }
         let lane = Lane::of(request.priority, request.rank.as_ref());
-        let (key, woken, granted_at_once) = {
+        let (key, woken) = {
             let mut state = self.state.lock();
             let key = (lane, state.next_ticket);
             state.next_ticket += 1;
@@ -335,14 +331,9 @@ impl InferenceScheduler {
                 },
             );
             self.dispatch(&mut state);
-            let granted_at_once = state.granted.contains_key(&key.1);
-            (key, woken, granted_at_once)
+            (key, woken)
         };
         self.moved();
-        let queued = observer
-            .clone()
-            .filter(|_| !granted_at_once)
-            .map(QueuedRequest::new);
         let mut waiting = Waiting {
             scheduler: self,
             key,
@@ -358,10 +349,6 @@ impl InferenceScheduler {
         };
         match waiting.settle(admitted) {
             Some(grant) => {
-                let held = observer.map(HeldSlot::new);
-                if let Some(queued) = queued {
-                    queued.granted();
-                }
                 let waited = queued_at.elapsed();
                 if waited >= SLOW_ADMISSION {
                     tracing::info!(
@@ -374,7 +361,6 @@ impl InferenceScheduler {
                 Ok(Permit {
                     scheduler: Arc::clone(self),
                     grant,
-                    _held: held,
                 })
             }
             None => {
@@ -589,6 +575,3 @@ mod tests;
 
 #[cfg(test)]
 mod vision_tests;
-
-#[cfg(test)]
-mod waiting_tests;

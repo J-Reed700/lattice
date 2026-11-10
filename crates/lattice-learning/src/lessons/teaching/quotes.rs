@@ -72,13 +72,13 @@ pub(super) fn lesson_quote_checks(candidate: &Value, authoring: &Value) -> Vec<V
 }
 
 /// The exact words of the excerpt `index` names that a quotation of it
-/// matches but for typography; `None` when it is those words already or
-/// matches none.
+/// matches but for typography; `None` when it already holds or matches none.
 fn restored_quote(sources: &[Value], index: Option<u64>, quote: &str) -> Option<String> {
     let excerpt = excerpt_of(sources, index)?;
-    crate::outline_citations::exact_source_quote(excerpt, quote)
-        .filter(|exact| *exact != quote)
-        .map(str::to_owned)
+    if crate::generation::validate_excerpt_quote(quote, excerpt).is_ok() {
+        return None;
+    }
+    crate::outline_citations::exact_source_quote(excerpt, quote).map(str::to_owned)
 }
 
 pub(super) fn restore_lesson_quotes(candidate: &mut Value, authoring: &Value) -> usize {
