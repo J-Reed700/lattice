@@ -585,8 +585,16 @@ impl Model {
             return Ok(format!("{}\nReason: The captured reference and runtime preserve the header spaces.\nSource quote: {GOOD}\nSource passage: passage-0", if bad { "contradicted" } else { "supported" }));
         }
         Err(invalid(format!(
-            "Unexpected fixture prompt: {}",
-            prompt.chars().take(100).collect::<String>()
+            "Unexpected fixture prompt: {} ... {}",
+            prompt.chars().take(100).collect::<String>(),
+            prompt
+                .chars()
+                .rev()
+                .take(400)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<String>()
         )))
     }
 }
