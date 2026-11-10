@@ -809,7 +809,7 @@ async fn the_contract_check_describes_learner_actions_in_no_subjects_terms() -> 
 #[tokio::test]
 async fn an_untaught_idea_or_contrast_is_told_its_name_is_the_plans_label_and_a_term_is_not(
 ) -> Result<()> {
-    let label = "is the course plan's label";
+    let label = "is a short label for it";
     let idea = finding_note_in(
         context_planning(&["A first idea"], &[], &[], ""),
         json!([not_taught("idea-0", 1)]),
@@ -826,6 +826,7 @@ async fn an_untaught_idea_or_contrast_is_told_its_name_is_the_plans_label_and_a_
     .await?;
     for note in [&idea, &contrast] {
         assert!(!note.is_empty());
+        assert!(!note.contains("course plan"), "{note}");
         assert!(note.contains(label), "{note}");
         assert!(note.contains("without copying the label"), "{note}");
     }
