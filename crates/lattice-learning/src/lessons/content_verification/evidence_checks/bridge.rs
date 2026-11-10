@@ -124,14 +124,20 @@ pub(super) fn weigh(
     let (verdict, quote, reason) = match outcome.decision() {
         BridgeDecision::Supported => {
             let common = of_kind(PartKind::Common);
-            let reason = if common.is_empty() {
-                said.to_owned()
-            } else {
-                format!(
-                    "{said} Common knowledge, not in the passages: {}.",
+            let own = of_kind(PartKind::Own);
+            let mut reason = said.to_owned();
+            if !common.is_empty() {
+                reason = format!(
+                    "{reason} Common knowledge, not in the passages: {}.",
                     common.join("; ")
-                )
-            };
+                );
+            }
+            if !own.is_empty() {
+                reason = format!(
+                    "{reason} The lesson's own figures, not in the passages: {}.",
+                    own.join("; ")
+                );
+            }
             (ClaimVerdict::Supported, cited(PartKind::Stated), reason)
         }
         BridgeDecision::Contradicted => (

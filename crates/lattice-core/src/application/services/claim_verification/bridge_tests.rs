@@ -65,7 +65,7 @@ fn the_prompt_is_the_prompt_of_record_by_its_text_and_by_its_digest() {
     assert_eq!(BRIDGE_SYSTEM, recorded_prompt());
     assert_eq!(
         text_sha256(BRIDGE_SYSTEM),
-        "8fc4942348f7f4d6cbb2512dc340350c6940da0def823cda48d9aa564fb0f386"
+        "c8b758da6f11a83720add10eb0b4641855139bb84f2cee840103b676e6ce31fa"
     );
 }
 
@@ -101,7 +101,13 @@ async fn a_part_wise_check_sends_the_prompt_of_record_and_the_passages_under_the
     let schema = sent[0].json_schema.as_ref().unwrap();
     assert_eq!(
         schema["properties"]["parts"]["items"]["properties"]["kind"]["enum"],
-        json!(["stated", "common", "specific_missing", "contradicted"])
+        json!([
+            "stated",
+            "common",
+            "own",
+            "specific_missing",
+            "contradicted"
+        ])
     );
 }
 

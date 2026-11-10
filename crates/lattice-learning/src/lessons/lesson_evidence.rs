@@ -73,6 +73,8 @@ pub enum LearningClaimPartKindDto {
     Stated,
     /// No passage states it, and it is standard knowledge of the field.
     Common,
+    /// No passage states it and none needs to: one of the lesson's own figures.
+    Own,
     /// No passage gives a specific it states.
     SpecificMissing,
     /// A passage says otherwise.
