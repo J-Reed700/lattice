@@ -860,7 +860,8 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     let model = GatedModel::new();
     model.gate.add_permits(2);
     let llm = scheduled(model.clone());
-    // "user" and 31 564 characters: 7 892 tokens by the estimate, 300 left.
+    // "user" and 31 564 characters: 7 892 tokens by the estimate and 24 of
+    // framing, 276 left.
     let prompt = "x".repeat(31_564);
     llm.complete(&CompletionRequest {
         max_output_tokens: Some(302),
@@ -881,7 +882,7 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
         Some(302),
         "the caller's cap is not rewritten"
     );
-    assert_eq!(seen[0].output_ceiling(None, false), Some(300));
+    assert_eq!(seen[0].output_ceiling(None, false), Some(276));
     assert_eq!(seen[1].output_ceiling(None, false), Some(256));
 }
 

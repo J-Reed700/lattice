@@ -1308,13 +1308,14 @@ mod local_reply_ceiling_on_the_wire {
     #[tokio::test]
     async fn an_ollama_answer_that_does_not_fit_is_cut_to_the_room_the_estimate_leaves() {
         // "user" and 23,996 characters are 24,000, which the scheduler's
-        // four-characters-a-token estimate reads as exactly 6,000 tokens.
+        // four-characters-a-token estimate reads as exactly 6,000 tokens, and
+        // the framing adds 24.
         let prompt = "x".repeat(23_996);
         let request = CompletionRequest {
             max_output_tokens: None,
             ..ask(&prompt)
         };
         let options = ollama_options(&configured(8_192, 4_096), request).await;
-        assert_eq!(options["num_predict"], json!(8_192 - 6_000));
+        assert_eq!(options["num_predict"], json!(8_192 - (6_000 + 24)));
     }
 }

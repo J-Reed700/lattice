@@ -81,29 +81,24 @@ impl ScheduledLlm {
             prompt_texts(request).map(|text| text.chars().count()).sum(),
             self.estimator.chars_per_token(),
         );
-        let plain = estimate.saturating_add(image_tokens);
-        let (prompt_tokens, counted_exactly) = match &self.tokenizer {
-            None => (plain, false),
-            Some(_) => {
-                let margined = (estimate * ESTIMATE_MARGIN / ESTIMATE_MARGIN_DIVISOR)
-                    .saturating_add(image_tokens);
-                let reply = usize::try_from(wanted.unwrap_or(0).max(1)).unwrap_or(usize::MAX);
-                if margined.saturating_add(reply) <= window {
-                    (margined, false)
-                } else {
-                    match self.count_tokens_exact(&prompt_text(request)).await {
-                        Ok(exact) => (
-                            exact
-                                .saturating_add(TEMPLATE_TOKENS_PER_MESSAGE * request.input.len())
-                                .saturating_add(TEMPLATE_TOKENS_FOR_ANSWER)
-                                .saturating_add(image_tokens),
-                            true,
-                        ),
-                        Err(error) => {
-                            tracing::debug!(%error, "The server could not count the prompt; keeping the estimate");
-                            (plain, false)
-                        }
-                    }
+        let fixed = TEMPLATE_TOKENS_PER_MESSAGE
+            .saturating_mul(request.input.len())
+            .saturating_add(TEMPLATE_TOKENS_FOR_ANSWER)
+            .saturating_add(image_tokens);
+        let plain = estimate.saturating_add(fixed);
+        let margined = (estimate.saturating_mul(ESTIMATE_MARGIN) / ESTIMATE_MARGIN_DIVISOR)
+            .saturating_add(fixed);
+        let reply = usize::try_from(wanted.unwrap_or(0).max(1)).unwrap_or(usize::MAX);
+        let (prompt_tokens, counted_exactly) = if margined.saturating_add(reply) <= window
+            || self.tokenizer.is_none()
+        {
+            (plain, false)
+        } else {
+            match self.count_tokens_exact(&prompt_text(request)).await {
+                Ok(exact) => (exact.saturating_add(fixed), true),
+                Err(error) => {
+                    tracing::debug!(%error, "The server could not count the prompt; keeping the estimate");
+                    (plain, false)
                 }
             }
         };
@@ -135,14 +130,16 @@ impl ScheduledLlm {
         let wanted = self.inner.output_ceiling_for(request);
         let fit = self.fit(request, wanted).await?;
         let output = wanted.map_or(fit.room, |wanted| wanted.min(fit.room));
-        let prompt = tokens_for_chars(prompt_chars(request), self.estimator.chars_per_token())
-            .saturating_add(request.image_tokens());
+        let opaque = tokens_for_chars(native_chars(request), self.estimator.chars_per_token());
         let permit = self
             .scheduler
             .admit(
                 AdmissionRequest {
                     priority: request.priority,
-                    tokens: prompt.saturating_add(usize::try_from(output).unwrap_or(usize::MAX)),
+                    tokens: fit
+                        .prompt_tokens
+                        .saturating_add(opaque)
+                        .saturating_add(usize::try_from(output).unwrap_or(usize::MAX)),
                     cache_key: request.cache_key.clone(),
                     rank: current_rank(),
                 },
@@ -213,15 +210,19 @@ impl ScheduledLlm {
 /// plus opaque provider state, which takes room however it is counted.
 pub(super) fn prompt_chars(request: &CompletionRequest) -> usize {
     let text: usize = prompt_texts(request).map(|text| text.chars().count()).sum();
-    let native: usize = request
+    text + native_chars(request)
+}
+
+/// Characters of opaque provider state in a request, which are not prompt text.
+fn native_chars(request: &CompletionRequest) -> usize {
+    request
         .input
         .iter()
         .map(|item| match item {
             CompletionInput::Native { value } => value.to_string().chars().count(),
             _ => 0,
         })
-        .sum();
-    text + native
+        .sum()
 }
 
 /// The text a tokenizer reads in a request: every message with its role,
