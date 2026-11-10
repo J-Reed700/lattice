@@ -1,5 +1,5 @@
 //! The repair call: the model's answer to a review's findings.
-use crate::copied_wording::Wording;
+use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits;
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::outline_progress::OutlineProgress;
@@ -272,8 +272,14 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
 
+    /// One finding for each site: findings at one site are one finding.
     fn at(site: FindingSite, note: &str) -> ReviewFinding {
-        ReviewFinding::reviewer(Some(site), note)
+        let number = match site {
+            FindingSite::Lesson => 0,
+            FindingSite::Section(index) => 2 * index + 1,
+            FindingSite::Question(index) => 2 * index + 2,
+        };
+        ReviewFinding::reviewer(u32::try_from(number).unwrap(), Some(site), note)
     }
 
     fn request<'a>(issues: Vec<Issue<'a>>, schema: &'a Value, wording: &'a Wording) -> Request<'a> {
@@ -301,14 +307,14 @@ mod tests {
     fn a_change_may_touch_its_findings_part_and_its_second_part_only() {
         let finding = at(FindingSite::Section(0), "n").with_also(FindingSite::Section(2));
         let may = reach([&finding]);
-        assert_eq!(may(Some("reviewer/section-0"), "/blocks/0"), Ok(()));
-        assert_eq!(may(Some("reviewer/section-0"), "/blocks/2"), Ok(()));
-        let refused = may(Some("reviewer/section-0"), "/blocks/1").unwrap_err();
+        assert_eq!(may(Some("reviewer/1"), "/blocks/0"), Ok(()));
+        assert_eq!(may(Some("reviewer/1"), "/blocks/2"), Ok(()));
+        let refused = may(Some("reviewer/1"), "/blocks/1").unwrap_err();
         assert!(
             refused.contains("/blocks/1") && refused.contains("(/blocks/0 and /blocks/2)"),
             "{refused}"
         );
-        let outside = may(Some("reviewer/section-0"), "").unwrap_err();
+        let outside = may(Some("reviewer/1"), "").unwrap_err();
         assert!(
             outside.contains("a field outside every block and question"),
             "{outside}"
@@ -319,16 +325,16 @@ mod tests {
     fn a_finding_with_one_part_names_only_that_part_when_it_refuses() {
         let finding = at(FindingSite::Section(1), "n");
         let may = reach([&finding]);
-        let refused = may(Some("reviewer/section-1"), "/blocks/0").unwrap_err();
+        let refused = may(Some("reviewer/3"), "/blocks/0").unwrap_err();
         assert!(refused.contains("(/blocks/1)"), "{refused}");
     }
 
     #[test]
     fn a_finding_about_the_whole_material_may_change_any_part() {
-        let finding = ReviewFinding::reviewer(None, "n");
+        let finding = ReviewFinding::reviewer(0, None, "n");
         let may = reach([&finding]);
         for part in ["/blocks/0", "/questions/1", ""] {
-            assert_eq!(may(Some("reviewer/lesson"), part), Ok(()), "{part}");
+            assert_eq!(may(Some("reviewer/0"), part), Ok(()), "{part}");
         }
     }
 
@@ -337,9 +343,9 @@ mod tests {
         let finding = at(FindingSite::Section(0), "n");
         let may = reach([&finding]);
         assert_eq!(may(None, "/blocks/0"), Err("names no finding.".to_owned()));
-        let unknown = may(Some("reviewer/section-5"), "/blocks/0").unwrap_err();
+        let unknown = may(Some("reviewer/11"), "/blocks/0").unwrap_err();
         assert!(
-            unknown.contains("reviewer/section-5") && unknown.contains("not a finding"),
+            unknown.contains("reviewer/11") && unknown.contains("not a finding"),
             "{unknown}"
         );
     }
@@ -347,13 +353,13 @@ mod tests {
     #[test]
     fn findings_that_share_an_id_each_open_their_own_part() {
         let first = at(FindingSite::Section(0), "one");
-        let second = ReviewFinding::reviewer(None, "two");
+        let second = ReviewFinding::reviewer(0, None, "two");
         let may = reach([&first, &second]);
-        assert_eq!(may(Some("reviewer/section-0"), "/blocks/0"), Ok(()));
-        assert!(may(Some("reviewer/section-0"), "/blocks/1").is_err());
+        assert_eq!(may(Some("reviewer/1"), "/blocks/0"), Ok(()));
+        assert!(may(Some("reviewer/1"), "/blocks/1").is_err());
         let sibling = at(FindingSite::Section(0), "three").with_also(FindingSite::Section(1));
         let may = reach([&first, &sibling]);
-        assert_eq!(may(Some("reviewer/section-0"), "/blocks/1"), Ok(()));
+        assert_eq!(may(Some("reviewer/1"), "/blocks/1"), Ok(()));
     }
 
     #[test]
@@ -362,7 +368,7 @@ mod tests {
         let mut sentenced = at(FindingSite::Question(1), "note two");
         sentenced.sentence = Some("Whole sentence.".to_owned());
         let both = at(FindingSite::Section(1), "note three").with_also(FindingSite::Section(3));
-        let whole = ReviewFinding::reviewer(None, "note four");
+        let whole = ReviewFinding::reviewer(0, None, "note four");
         let schema = Value::Null;
         let wording = Wording::default();
         let sent = request(
@@ -381,10 +387,10 @@ mod tests {
         assert_eq!(
             sent.issues_to_fix(),
             json!([
-                {"id":"reviewer/section-0","part":"/blocks/0","also":null,"passage":"Passage one.","note":"note one","lastAttempt":"it named no finding"},
-                {"id":"reviewer/question-1","part":"/questions/1","also":null,"passage":"Whole sentence.","note":"note two","lastAttempt":null},
-                {"id":"reviewer/section-1","part":"/blocks/1","also":"/blocks/3","passage":null,"note":"note three","lastAttempt":null},
-                {"id":"reviewer/lesson","part":null,"also":null,"passage":null,"note":"note four","lastAttempt":null}
+                {"id":"reviewer/1","part":"/blocks/0","also":null,"passage":"Passage one.","note":"note one","lastAttempt":"it named no finding"},
+                {"id":"reviewer/4","part":"/questions/1","also":null,"passage":"Whole sentence.","note":"note two","lastAttempt":null},
+                {"id":"reviewer/3","part":"/blocks/1","also":"/blocks/3","passage":null,"note":"note three","lastAttempt":null},
+                {"id":"reviewer/0","part":null,"also":null,"passage":null,"note":"note four","lastAttempt":null}
             ])
         );
     }
@@ -401,9 +407,6 @@ mod tests {
             &schema,
             &wording,
         );
-        assert_eq!(
-            sent.finding_ids(),
-            ["reviewer/section-0", "reviewer/section-2"]
-        );
+        assert_eq!(sent.finding_ids(), ["reviewer/1", "reviewer/5"]);
     }
 }

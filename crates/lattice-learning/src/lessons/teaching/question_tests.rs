@@ -22,7 +22,7 @@ fn check_lesson() -> Value {
 }
 
 fn finding(site: FindingSite, passage: &str) -> ReviewFinding {
-    ReviewFinding::reviewer(Some(site), "the key is wrong").with_passage(passage)
+    ReviewFinding::reviewer(1, Some(site), "the key is wrong").with_passage(passage)
 }
 
 fn kept(

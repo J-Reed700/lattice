@@ -16,6 +16,10 @@ pub(in crate::lessons::claim_reviews) struct HeldRow {
     pub site: String,
     pub unit_index: Option<i64>,
     pub unit_sha256: String,
+    pub note: String,
+    pub summary: Option<String>,
+    pub passage: Option<String>,
+    pub sentence: Option<String>,
 }
 
 /// A finding as stored.
@@ -61,6 +65,10 @@ fn held_row(row: &SqliteRow) -> HeldRow {
         site: row.get("site"),
         unit_index: row.get("unit_index"),
         unit_sha256: row.get("unit_sha256"),
+        note: row.get("note"),
+        summary: row.get("summary"),
+        passage: row.get("passage"),
+        sentence: row.get("sentence"),
     }
 }
 
@@ -69,7 +77,7 @@ pub(in crate::lessons::claim_reviews) async fn held_rows(
     lesson_id: &str,
 ) -> Result<Vec<HeldRow>> {
     let rows = sqlx::query(
-        "SELECT finding_key, identity, kind, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=?",
+        "SELECT finding_key, identity, kind, site, unit_index, unit_sha256, note, summary, passage, sentence FROM learning_lesson_teaching_findings WHERE lesson_id=?",
     )
     .bind(lesson_id)
     .fetch_all(pool)
@@ -84,7 +92,7 @@ pub(in crate::lessons::claim_reviews) async fn place_rows(
     lesson_id: &str,
 ) -> Result<Vec<HeldRow>> {
     let rows = sqlx::query(
-        "SELECT finding_key, identity, kind, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=? AND identity='place'",
+        "SELECT finding_key, identity, kind, site, unit_index, unit_sha256, note, summary, passage, sentence FROM learning_lesson_teaching_findings WHERE lesson_id=? AND identity='place'",
     )
     .bind(lesson_id)
     .fetch_all(&mut *connection)

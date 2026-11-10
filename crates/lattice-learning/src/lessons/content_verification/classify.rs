@@ -1,8 +1,9 @@
 //! Claim classes (docs/design/2026-11-01-lesson-claim-classes.md §3.1): a
 //! statement of a lesson gets one class before any evidence is read, and the
 //! class decides the check it meets. The rule layer decides what the text's
-//! structure can and no model overrides it; the model sorts only what the
-//! rules leave, twenty statements to a call.
+//! structure can and no model overrides it (a rubric, an option, quoted
+//! wording); for a figure in a part that states what is so it only refuses
+//! Internal. The model sorts the rest, twenty statements to a call.
 
 use super::invalid;
 use lattice_core::application::ports::LLMPort;
@@ -47,7 +48,7 @@ pub(crate) const CITED_KINDS: [&str; 3] = ["explanation", "contrast", "recap"];
 /// The figures of a text: each run of digits, with its decimal or thousands
 /// separators, except a number a label word precedes ("Source 0", "Option
 /// 2", "Step 3"): that numbers a part of the text and states nothing.
-pub(crate) fn figures(text: &str) -> impl Iterator<Item = &str> {
+pub(super) fn figures(text: &str) -> impl Iterator<Item = &str> {
     lazy_regex::regex!(
         r"(?i)\b(?:source|option|choice|idea|step|example|exercise|question|lesson|module)s?\s+#?\d+(?:[.,]\d+)*\b|(\d+(?:[.,]\d+)*)"
     )
@@ -60,13 +61,13 @@ pub(crate) fn figures(text: &str) -> impl Iterator<Item = &str> {
 /// without needing a source: a question's prompt and options state the
 /// givens its answer explanation reasons from. A section has none.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub(crate) struct Givens(BTreeSet<String>);
+pub(super) struct Givens(BTreeSet<String>);
 
 impl Givens {
-    pub(crate) const NONE: Self = Self(BTreeSet::new());
+    pub(super) const NONE: Self = Self(BTreeSet::new());
 
     /// The figures of `part`'s prompt and options.
-    pub(crate) fn of(part: &Value) -> Self {
+    pub(super) fn of(part: &Value) -> Self {
         let options = part
             .get("options")
             .and_then(Value::as_array)
@@ -81,7 +82,7 @@ impl Givens {
         Self(texts.flat_map(figures).map(str::to_owned).collect())
     }
 
-    pub(crate) fn holds(&self, figure: &str) -> bool {
+    pub(super) fn holds(&self, figure: &str) -> bool {
         self.0.contains(figure)
     }
 }
@@ -89,7 +90,7 @@ impl Givens {
 /// Whether a part of a lesson states what is so or works a hypothetical
 /// case, as the writer's rule reads it (claim classes design §3.4).
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) enum Case {
+pub(super) enum Case {
     /// A section that states what is so, or an answer explanation, whose
     /// question's figures are its givens.
     Stated(Givens),
@@ -102,7 +103,7 @@ impl Case {
     /// The case of the part at `unit` of `candidate`: a block whose kind is
     /// not one of [`CITED_KINDS`] works a hypothetical case, and a question's
     /// answer explanation states what is so from its question's givens.
-    pub(crate) fn of(candidate: &Value, unit: usize) -> Self {
+    pub(super) fn of(candidate: &Value, unit: usize) -> Self {
         let blocks = candidate
             .get("blocks")
             .and_then(Value::as_array)
@@ -121,9 +122,10 @@ impl Case {
     }
 }
 
-/// A mark of a specific in a text: what a quote cited for it must hold.
+/// A mark of a specific in a text: a figure beyond the part's givens, or quoted
+/// wording, which a quote cited for the sentence must hold.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum Marker<'a> {
+pub(super) enum Marker<'a> {
     /// A figure the part's givens do not state.
     Figure(&'a str),
     /// Wording between double quotation marks, long enough to be a quotation.
@@ -133,7 +135,7 @@ pub(crate) enum Marker<'a> {
 /// The marks of a specific in `text`: in a stated case its figures beyond the
 /// givens, then its quoted wording; in a hypothetical case, whose figures are
 /// its own, only the quoted wording.
-pub(crate) fn markers<'a>(text: &'a str, case: &'a Case) -> impl Iterator<Item = Marker<'a>> + 'a {
+pub(super) fn markers<'a>(text: &'a str, case: &'a Case) -> impl Iterator<Item = Marker<'a>> + 'a {
     let givens = match case {
         Case::Stated(givens) => Some(givens),
         Case::Hypothetical => None,
@@ -148,66 +150,55 @@ pub(crate) fn markers<'a>(text: &'a str, case: &'a Case) -> impl Iterator<Item =
         .chain(quoted_wording(text).map(Marker::Quoted))
 }
 
-/// The classes a statement may take, as the rules alone read it.
+/// What the rules alone make of a statement.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(super) enum Offer {
+pub(super) enum Ruling {
     /// The rules decide: no model is asked.
-    Only(Class),
-    /// A figure beyond the givens, in a part that states what is so: a class
-    /// whose check can send the statement to a source.
+    Decided(Class),
+    /// A figure beyond the givens, in a part that states what is so: the model
+    /// sorts it, and it is never left Internal.
     Checked,
     /// The model sorts it.
-    Any,
+    Open,
 }
 
-impl Offer {
-    /// The classes the statement may take, in the order the prompt lists them.
-    pub(super) fn classes(&self) -> &'static [Class] {
-        match self {
-            Self::Only(Class::Sourced) => &[Class::Sourced],
-            Self::Only(Class::Reasoning) => &[Class::Reasoning],
-            Self::Only(Class::Common) => &[Class::Common],
-            Self::Only(Class::Internal) => &[Class::Internal],
-            Self::Checked => &[Class::Sourced, Class::Reasoning, Class::Common],
-            Self::Any => &[
-                Class::Sourced,
-                Class::Reasoning,
-                Class::Common,
-                Class::Internal,
-            ],
-        }
-    }
-
-    /// Whether the statement may take `class`.
-    pub(super) fn holds(&self, class: Class) -> bool {
-        self.classes().contains(&class)
-    }
-
+impl Ruling {
     /// The class the rules give the statement, when they decide.
-    pub(super) fn rule_class(&self) -> Option<Class> {
+    pub(super) fn decided(self) -> Option<Class> {
         match self {
-            Self::Only(class) => Some(*class),
-            Self::Checked | Self::Any => None,
+            Self::Decided(class) => Some(class),
+            Self::Checked | Self::Open => None,
+        }
+    }
+
+    /// The class of a statement the model sorted as `class`: a checked
+    /// statement it calls Internal is Reasoning, the lightest class whose
+    /// check can send it to a source.
+    pub(super) fn settle(self, class: Class) -> Class {
+        match (self, class) {
+            (Self::Checked, Class::Internal) => Class::Reasoning,
+            _ => class,
         }
     }
 }
 
-/// What the rules allow a statement to be. Internal only: anything in a rubric
-/// or an option. Sourced only: quoted wording, which is a property of the
-/// string. A figure beyond the givens in a part that states what is so bars
-/// Internal, and the model sorts the rest: whether a figure is the lesson's
-/// own or is reported as a fact is a question of meaning (design §3.13).
-pub(super) fn offer(statement: &str, field: &str, case: &Case) -> Offer {
+/// What the rules make of a statement. Decided: a rubric or an option is
+/// Internal, and quoted wording is Sourced, a property of the string. Checked:
+/// a figure beyond the givens in a part that states what is so, which is never
+/// left Internal: whether it is the lesson's own or is reported as a fact is a
+/// question of meaning, which the model answers (design §3.13). Open: the
+/// model sorts the rest.
+pub(super) fn ruling(statement: &str, field: &str, case: &Case) -> Ruling {
     if field.starts_with("rubric/") || field.starts_with("options/") {
-        return Offer::Only(Class::Internal);
+        return Ruling::Decided(Class::Internal);
     }
     let marks: Vec<Marker<'_>> = markers(statement, case).collect();
     if marks.iter().any(|mark| matches!(mark, Marker::Quoted(_))) {
-        Offer::Only(Class::Sourced)
+        Ruling::Decided(Class::Sourced)
     } else if marks.is_empty() {
-        Offer::Any
+        Ruling::Open
     } else {
-        Offer::Checked
+        Ruling::Checked
     }
 }
 
@@ -259,17 +250,13 @@ pub(super) async fn classify(
     llm: &dyn LLMPort,
     statements: &[ToSort<'_>],
 ) -> Result<Vec<(Class, ClassifiedBy)>> {
-    let offers: Vec<Offer> = statements
+    let rulings: Vec<Ruling> = statements
         .iter()
-        .map(|to_sort| offer(to_sort.statement, to_sort.field, &to_sort.case))
+        .map(|to_sort| ruling(to_sort.statement, to_sort.field, &to_sort.case))
         .collect();
-    let mut sorted: Vec<Option<(Class, ClassifiedBy)>> = offers
+    let mut sorted: Vec<Option<(Class, ClassifiedBy)>> = rulings
         .iter()
-        .map(|allowed| {
-            allowed
-                .rule_class()
-                .map(|class| (class, ClassifiedBy::Rule))
-        })
+        .map(|ruling| ruling.decided().map(|class| (class, ClassifiedBy::Rule)))
         .collect();
     let open: Vec<usize> = sorted
         .iter()
@@ -277,19 +264,11 @@ pub(super) async fn classify(
         .filter_map(|(index, slot)| slot.is_none().then_some(index))
         .collect();
     for batch in open.chunks(BATCH) {
-        let asked: Vec<(String, Offer)> = batch
-            .iter()
-            .map(|index| {
-                (
-                    format!("s{index}"),
-                    offers.get(*index).copied().unwrap_or(Offer::Any),
-                )
-            })
-            .collect();
+        let ids: Vec<String> = batch.iter().map(|index| format!("s{index}")).collect();
         let shown: Map<String, Value> = batch
             .iter()
-            .zip(&asked)
-            .filter_map(|(index, (id, _))| {
+            .zip(&ids)
+            .filter_map(|(index, id)| {
                 statements
                     .get(*index)
                     .map(|to_sort| (id.clone(), json!(to_sort.statement)))
@@ -304,16 +283,16 @@ pub(super) async fn classify(
             llm,
             SYSTEM,
             Value::Object(shown).to_string(),
-            schema(&asked),
+            schema(&ids),
             OUTPUT_TOKENS,
             None,
             None,
-            |raw| classes_of(raw, &asked),
+            |raw| classes_of(raw, &ids),
         )
         .await?;
         for (index, class) in batch.iter().zip(classes) {
-            if let Some(slot) = sorted.get_mut(*index) {
-                *slot = Some((class, ClassifiedBy::Model));
+            if let (Some(slot), Some(ruling)) = (sorted.get_mut(*index), rulings.get(*index)) {
+                *slot = Some((ruling.settle(class), ClassifiedBy::Model));
             }
         }
     }
@@ -323,80 +302,38 @@ pub(super) async fn classify(
         .ok_or_else(|| AppError::InternalError("A statement was left without a class".into()))
 }
 
-/// The answer's shape: one entry for each of `asked`, each one of the classes
-/// its statement may take.
-fn schema(asked: &[(String, Offer)]) -> Value {
-    let properties: Map<String, Value> = asked
-        .iter()
-        .map(|(id, offer)| {
-            let names: Vec<&str> = offer
-                .classes()
-                .iter()
-                .map(|class| name_of(*class))
-                .collect();
-            (id.clone(), json!({"type": "string", "enum": names}))
-        })
-        .collect();
-    let required: Vec<&String> = asked.iter().map(|(id, _)| id).collect();
+/// The answer's shape: one entry for each of `ids`, each one of the classes.
+fn schema(ids: &[String]) -> Value {
+    let class = json!({"type": "string", "enum": ["sourced", "reasoning", "common", "internal"]});
+    let properties: Map<String, Value> = ids.iter().map(|id| (id.clone(), class.clone())).collect();
     json!({
         "type": "object",
         "properties": properties,
-        "required": required,
+        "required": ids,
         "additionalProperties": false,
     })
 }
 
-/// The classes the model gave `asked`, in order: each id once, each a class
-/// its statement may take.
-fn classes_of(raw: &str, asked: &[(String, Offer)]) -> Result<Vec<Class>> {
+/// The classes the model gave `ids`, in order: each id once, each a class.
+fn classes_of(raw: &str, ids: &[String]) -> Result<Vec<Class>> {
     let answer: BTreeMap<String, String> = crate::generation::parse_json(raw)?;
-    if let Some(extra) = answer
-        .keys()
-        .find(|id| !asked.iter().any(|(known, _)| known == *id))
-    {
+    if let Some(extra) = answer.keys().find(|id| !ids.contains(id)) {
         return Err(invalid(format!(
             "Sort only the statements supplied; {extra} is not one of them."
         )));
     }
-    asked
-        .iter()
-        .map(|(id, offer)| {
+    ids.iter()
+        .map(|id| {
             let name = answer
                 .get(id)
                 .ok_or_else(|| invalid(format!("Give {id} a class.")))?;
-            class_named(name)
-                .filter(|class| offer.holds(*class))
-                .ok_or_else(|| {
-                    invalid(format!(
-                        "{name} is not a class {id} may take: give {id} {}.",
-                        may_take(offer)
-                    ))
-                })
+            class_named(name).ok_or_else(|| {
+                invalid(format!(
+                    "{name} is not a class: give {id} sourced, reasoning, common or internal."
+                ))
+            })
         })
         .collect()
-}
-
-/// The classes `offer` allows, as "sourced, reasoning or common".
-fn may_take(offer: &Offer) -> String {
-    let names: Vec<&str> = offer
-        .classes()
-        .iter()
-        .map(|class| name_of(*class))
-        .collect();
-    match names.split_last() {
-        Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
-        Some((last, _)) => (*last).to_owned(),
-        None => String::new(),
-    }
-}
-
-fn name_of(class: Class) -> &'static str {
-    match class {
-        Class::Sourced => "sourced",
-        Class::Reasoning => "reasoning",
-        Class::Common => "common",
-        Class::Internal => "internal",
-    }
 }
 
 fn class_named(name: &str) -> Option<Class> {

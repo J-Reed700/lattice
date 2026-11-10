@@ -1,14 +1,17 @@
 //! The review of generated material, one loop over a subject: fit, review,
 //! decide, repair, confine, save.
+use std::collections::VecDeque;
+
 use super::repair;
 use super::subject::{Decision, Pass, Settled, Step, Subject};
 use super::{json_or_text, ReviewSchema};
 use crate::outline_progress::OutlineStage;
-use crate::review_findings::SetAside;
+use crate::review_findings::{ReviewFinding, SetAside};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
+use serde_json::Value;
 
 /// The reviewed material, and what the repairs could not settle: a lesson
 /// publishes with these waiting for the user.
@@ -19,8 +22,9 @@ pub(super) struct Reviewed {
 
 /// A second model call critiques the actual candidate, and one targeted
 /// repair is allowed; what the subject does with the rest is its own (a
-/// lesson repairs while each pass fixes something and publishes with what is
-/// left waiting; other material fails closed).
+/// lesson sends every open finding to a repair, has the reviewer judge again
+/// only what a repair changed, and publishes only from a pass whose content was reviewed, with
+/// what is left waiting; other material fails closed).
 /// This is an AI review, not a claim of independent expert verification.
 pub(super) async fn review_material(
     llm: &dyn LLMPort,
@@ -32,8 +36,12 @@ pub(super) async fn review_material(
     subject: &mut dyn Subject,
 ) -> Result<Reviewed> {
     subject.resume(&candidate).await?;
-    subject.save(&candidate).await?;
     let mut authoring = json_or_text(prompt);
+    if let ReviewSchema::Lesson(shape) = schema {
+        shape.state_in(&mut authoring);
+    }
+    subject.given(llm, &authoring);
+    subject.save(&candidate).await?;
     for attempt in 0usize.. {
         if let Some(progress) = subject.progress() {
             progress.stage(if attempt == 0 {
@@ -61,55 +69,98 @@ pub(super) async fn review_material(
         };
         let found = subject.find(llm, &pass).await?;
         let edits = found.edits;
-        // decide
-        let send = match subject.decide(attempt, &value, found.findings)? {
-            Decision::Publish(set_aside) => {
-                return Ok(Reviewed {
-                    candidate,
-                    set_aside,
-                })
+        // decide, and repair until the material changes
+        loop {
+            let send = match subject.decide(attempt, &value, found.findings.clone())? {
+                Decision::Publish(set_aside) => {
+                    return Ok(Reviewed {
+                        candidate,
+                        set_aside,
+                    })
+                }
+                Decision::Repair(send) => send,
+                Decision::Review => break,
+            };
+            if let Some(progress) = subject.progress() {
+                progress.stage(OutlineStage::Repairing);
             }
-            Decision::Repair(send) => send,
-        };
-        // repair
-        if let Some(progress) = subject.progress() {
-            progress.stage(OutlineStage::Repairing);
-        }
-        subject.step(Step::Repairing);
-        let request = repair::Request {
-            system,
-            schema: schema.value(),
-            authoring: &authoring,
-            candidate: &value,
-            quote_checks: &quote_checks,
-            issues: send
-                .iter()
-                .map(|finding| repair::Issue {
-                    finding,
-                    last_attempt: subject.last_attempt(finding),
-                })
-                .collect(),
-            edits,
-            wording: subject.wording(),
-            output_tokens,
-        };
-        let result = repair::ask(llm, &request, subject.progress()).await;
-        // confine → save
-        match subject.settle_repair(&value, &send, result)? {
-            Settled::Changed(text) => {
-                candidate = text;
-                subject.save(&candidate).await?;
-            }
-            Settled::Unchanged => {}
-            Settled::Publish(set_aside) => {
-                return Ok(Reviewed {
-                    candidate,
-                    set_aside,
-                })
+            subject.step(Step::Repairing);
+            let repairs = Repairs {
+                llm,
+                system,
+                schema,
+                authoring: &authoring,
+                edits,
+                output_tokens,
+                attempt,
+            };
+            if repairs.make(subject, &mut candidate, send).await? {
+                break;
             }
         }
     }
     Err(AppError::InternalError(
         "Teaching review did not complete".into(),
     ))
+}
+
+/// The repairs of one pass: what each needs besides the findings it is sent.
+struct Repairs<'a> {
+    llm: &'a dyn LLMPort,
+    system: &'a str,
+    schema: ReviewSchema<'a>,
+    authoring: &'a Value,
+    edits: bool,
+    output_tokens: usize,
+    attempt: usize,
+}
+
+impl Repairs<'_> {
+    /// Repairs `send` in groups: a group whose repair cannot be made is
+    /// repaired as its two halves, the second against what the first made.
+    /// Returns whether the candidate changed.
+    async fn make(
+        &self,
+        subject: &mut dyn Subject,
+        candidate: &mut String,
+        send: Vec<ReviewFinding>,
+    ) -> Result<bool> {
+        let mut changed = false;
+        let mut groups = VecDeque::from([send]);
+        while let Some(group) = groups.pop_front() {
+            let previous = json_or_text(candidate);
+            let quote_checks = subject.quote_checks(&previous, self.authoring, self.attempt)?;
+            let request = repair::Request {
+                system: self.system,
+                schema: self.schema.value(),
+                authoring: self.authoring,
+                candidate: &previous,
+                quote_checks: &quote_checks,
+                issues: group
+                    .iter()
+                    .map(|finding| repair::Issue {
+                        finding,
+                        last_attempt: subject.last_attempt(finding),
+                    })
+                    .collect(),
+                edits: self.edits,
+                wording: subject.wording(),
+                output_tokens: self.output_tokens,
+            };
+            let result = repair::ask(self.llm, &request, subject.progress()).await;
+            match subject.settle_repair(&previous, &group, self.edits, result)? {
+                Settled::Changed(text) => {
+                    *candidate = text;
+                    changed = true;
+                    subject.save(candidate).await?;
+                }
+                Settled::Unchanged => subject.save(candidate).await?,
+                Settled::Split(first, second) => {
+                    groups.push_front(second);
+                    groups.push_front(first);
+                }
+            }
+        }
+        Ok(changed)
+    }
 }

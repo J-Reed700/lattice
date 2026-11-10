@@ -171,3 +171,48 @@ fn path_like_values_are_distinct_in_a_multi_select_item() {
     };
     assert!(validate_candidate(&item).is_ok());
 }
+
+fn owned(options: &[&str]) -> Vec<String> {
+    options.iter().map(|o| (*o).to_owned()).collect()
+}
+
+#[test]
+fn choices_that_differ_only_by_letter_case_are_distinct() {
+    assert!(distinct_options(&owned(&[
+        "Alpha", "alpha", "Bravo", "Charlie"
+    ])));
+}
+
+#[test]
+fn choices_that_differ_only_by_an_accent_are_distinct() {
+    assert!(distinct_options(&owned(&[
+        "Resume",
+        "R\u{e9}sum\u{e9}",
+        "Bravo",
+        "Charlie"
+    ])));
+}
+
+#[test]
+fn choices_that_differ_only_by_a_compatibility_form_are_distinct() {
+    assert!(distinct_options(&owned(&[
+        "x\u{b2}", "x2", "Bravo", "Charlie"
+    ])));
+}
+
+#[test]
+fn choices_a_reader_cannot_tell_apart_are_not_distinct() {
+    let pairs: [(&str, &str); 5] = [
+        ("It\u{2019}s done", "It's done"),
+        ("\u{201C}Alpha\u{201D}", "\"Alpha\""),
+        ("Alpha   beta", "Alpha beta"),
+        ("Alpha beta.", "Alpha beta"),
+        ("R\u{e9}sum\u{e9}", "Re\u{301}sume\u{301}"),
+    ];
+    for (a, b) in pairs {
+        assert!(
+            !distinct_options(&owned(&[a, b, "Bravo", "Charlie"])),
+            "{a:?} {b:?}"
+        );
+    }
+}

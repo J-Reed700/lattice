@@ -486,7 +486,7 @@ fn a_reason_is_held_to_the_citation_rule_like_the_explanation() {
     let mut candidate = lesson();
     candidate["questions"][3]["rationales"] = json!([
         "",
-        "The cache holds 128 entries.",
+        "The guide says \"the cache holds at most 128 entries\" in each node.",
         "Three fails.",
         "Four fails."
     ]);
@@ -496,7 +496,7 @@ fn a_reason_is_held_to_the_citation_rule_like_the_explanation() {
     assert_eq!(findings[0].kind, FindingKind::Quotation);
 
     candidate["questions"][3]["citations"] = json!([
-        {"sentence":"The cache holds 128 entries.","sourceIndex":0,"quote":"The cache holds at most 128 entries at a time."}
+        {"sentence":"The guide says \"the cache holds at most 128 entries\" in each node.","sourceIndex":0,"quote":"The cache holds at most 128 entries at a time."}
     ]);
     assert!(lesson_rules(&candidate).is_empty());
 }
@@ -504,7 +504,8 @@ fn a_reason_is_held_to_the_citation_rule_like_the_explanation() {
 #[test]
 fn a_question_explanation_is_held_to_the_same_rule() {
     let mut candidate = lesson();
-    candidate["questions"][2]["explanation"] = json!("The cache holds 128 entries.");
+    candidate["questions"][2]["explanation"] =
+        json!("The guide says \"the cache holds at most 128 entries\" in each node.");
 
     let findings = lesson_rules(&candidate);
 
@@ -1021,4 +1022,11 @@ fn quoted_wording_without_a_citation_is_still_a_finding_and_names_no_general_for
     );
     assert!(note.contains("\" without citing it."), "{note}");
     assert!(!note.contains("general form"), "{note}");
+}
+
+#[test]
+fn choices_that_differ_only_by_letter_case_are_not_a_finding() {
+    let mut candidate = lesson();
+    candidate["questions"][0]["options"] = json!(["Alpha", "alpha", "Bravo", "Charlie"]);
+    assert!(lesson_rules(&candidate).is_empty());
 }
