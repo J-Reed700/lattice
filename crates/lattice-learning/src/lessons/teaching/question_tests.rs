@@ -31,10 +31,9 @@ fn kept(
     finding: ReviewFinding,
     protected: &[Protected],
 ) -> Value {
-    let (text, _) =
-        protected::confine_review(previous, &repaired.to_string(), &[finding], protected).unwrap();
-    assert!(text.is_some(), "the confined repair kept nothing");
-    serde_json::from_str(&text.unwrap()).unwrap()
+    let part = finding.site.and_then(FindingSite::pointer).unwrap();
+    let touched = std::collections::BTreeMap::from([(part, vec![&finding])]);
+    protected::confine_review(previous, repaired, &touched, protected).unwrap()
 }
 
 fn whole_question_repair(previous: &Value) -> Value {
@@ -93,14 +92,10 @@ fn a_question_repair_that_rewrites_a_protected_sentence_keeps_it_as_it_was() {
         quote: PROTECTED.into(),
         released: false,
     }];
-    let result = protected::confine_review(
-        &previous,
-        &repaired.to_string(),
-        &[finding(FindingSite::Question(0), PROMPT)],
-        &protected,
-    );
-    if let Ok((Some(text), _)) = result {
-        let out: Value = serde_json::from_str(&text).unwrap();
+    let named = finding(FindingSite::Question(0), PROMPT);
+    let touched = std::collections::BTreeMap::from([("/questions/0".to_owned(), vec![&named])]);
+    let result = protected::confine_review(&previous, &repaired, &touched, &protected);
+    if let Ok(out) = result {
         assert!(out["questions"][0]["explanation"]
             .as_str()
             .unwrap()

@@ -9,6 +9,7 @@ use crate::lessons::content_verification::{confine, unit_fields, Protected};
 use crate::review_findings::{FindingId, FindingSite, ReviewFinding};
 use lattice_core::shared::error::Result;
 use serde_json::Value;
+use std::collections::BTreeMap;
 
 /// The lesson's sections in unit order: blocks, then questions.
 fn sections(lesson: &Value) -> Vec<(&'static str, usize)> {
@@ -270,17 +271,16 @@ fn targets_of(
     targets
 }
 
-/// `repaired`, the review's repair of `previous`, confined section by
-/// section to the sentences `sent` names, `protected` kept byte-identical.
-/// `(None, unchanged)` when the confined repair changes nothing: it fixed nothing the
-/// findings name, which waits for the user like an unusable answer.
+/// The repaired lesson with every change outside what its findings may
+/// change put back. `touched` gives, for each part (`/blocks/N`,
+/// `/questions/N`), the findings whose changes touched it.
 pub(super) fn confine_review(
     previous: &Value,
-    repaired: &str,
-    sent: &[ReviewFinding],
+    repaired: &Value,
+    touched: &BTreeMap<String, Vec<&ReviewFinding>>,
     protected: &[Protected],
-) -> Result<(Option<String>, Vec<FindingId>)> {
-    let mut lesson: Value = crate::generation::parse_json(repaired)?;
+) -> Result<Value> {
+    let mut lesson = repaired.clone();
     let blocks = blocks_in(previous);
     for (unit, (field, index)) in sections(previous).into_iter().enumerate() {
         let pointer = format!("/{field}/{index}");
@@ -289,19 +289,14 @@ pub(super) fn confine_review(
         else {
             continue;
         };
-        let names = |finding: &&ReviewFinding| match finding.site {
-            Some(FindingSite::Section(section)) => section == unit,
-            Some(FindingSite::Question(question)) => blocks + question == unit,
-            Some(FindingSite::Lesson) | None => true,
-        };
-        let here: Vec<&ReviewFinding> = sent.iter().filter(names).collect();
+        let here: &[&ReviewFinding] = touched.get(&pointer).map(Vec::as_slice).unwrap_or_default();
         let guarded = in_unit(protected, unit);
         let fixed: Vec<Protected> = guarded
             .iter()
             .filter(|item| !item.released)
             .cloned()
             .collect();
-        let targets = targets_of(before, (unit, unit < blocks), &here, &fixed);
+        let targets = targets_of(before, (unit, unit < blocks), here, &fixed);
         let named = |item: &Protected| {
             item.released
                 && targets.iter().any(|target| {
@@ -317,17 +312,5 @@ pub(super) fn confine_review(
             .collect();
         *after = confine(before, after, &targets, &kept)?.section;
     }
-    let unchanged: Vec<FindingId> = sent
-        .iter()
-        .filter(|finding| match unit_of(previous, finding) {
-            Some(unit) => section_at(previous, unit) == section_at(&lesson, unit),
-            None => true,
-        })
-        .map(ReviewFinding::id)
-        .collect();
-    if lesson == *previous {
-        Ok((None, sent.iter().map(ReviewFinding::id).collect()))
-    } else {
-        Ok((Some(lesson.to_string()), unchanged))
-    }
+    Ok(lesson)
 }
