@@ -1,38 +1,79 @@
 //! Source wording stands only in double quotation marks. A lesson states a
 //! fact in its own sentence; the words of the source are the citation's
-//! quote. A teaching sentence that holds one of its part's quotes outside
+//! quote. A teaching sentence that holds a source's wording outside
 //! quotation marks, or sits inside one, has copied the source.
 use super::same_text::fold;
 use super::text_edits::citable_texts;
 use crate::generation::{long_enough_quote, teaching_sentences};
+use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 
-/// The quotes among `quotes` that are long enough to be a quotation; a copy
-/// of a shorter span is no copy of the source's wording.
-pub(crate) fn kept<'a>(quotes: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    quotes
-        .into_iter()
-        .filter(|quote| long_enough_quote(quote))
-        .map(str::to_owned)
-        .collect()
-}
+/// Source wording as folded runs of words, each long enough to be quoted: a
+/// copy of a shorter span is no copy of the source. Folded once, when built.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Wording(Vec<Vec<String>>);
 
-/// The quotes of `part`, a block or question: its own and its citations'.
-pub(crate) fn quotes_of(part: &Value) -> Vec<String> {
-    let cited = part
-        .get("citations")
-        .and_then(Value::as_array)
-        .into_iter()
-        .flatten()
-        .filter_map(|entry| entry.get("quote"));
-    kept(
-        part.get("quote")
+impl Wording {
+    /// The wording of `quotes`, those long enough to be a quotation.
+    pub(crate) fn of_quotes<'a>(quotes: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut wording = Self::default();
+        wording.add(quotes);
+        wording
+    }
+
+    /// The quotes of `part`, a block or question: its own and its citations',
+    /// and those of citations a patch appends.
+    pub(crate) fn of_part<'a>(part: &Value, appended: impl IntoIterator<Item = &'a str>) -> Self {
+        let cited = part
+            .get("citations")
+            .and_then(Value::as_array)
             .into_iter()
-            .chain(cited)
-            .filter_map(Value::as_str),
-    )
+            .flatten()
+            .filter_map(|entry| entry.get("quote"));
+        Self::of_quotes(
+            part.get("quote")
+                .into_iter()
+                .chain(cited)
+                .filter_map(Value::as_str)
+                .chain(appended),
+        )
+    }
+
+    /// The saved excerpts: each whole, and each of its sentences.
+    pub(crate) fn of_excerpts<'a>(excerpts: impl IntoIterator<Item = &'a str>) -> Self {
+        let mut wording = Self::default();
+        for excerpt in excerpts {
+            wording.add([excerpt]);
+            wording.add(
+                sentences(excerpt)
+                    .into_iter()
+                    .filter_map(|(from, to)| excerpt.get(from..to)),
+            );
+        }
+        wording
+    }
+
+    /// The excerpts of a lesson's reference collection.
+    pub(crate) fn of(references: &ReferenceCollection<'_>) -> Self {
+        Self::of_excerpts(
+            references
+                .sources
+                .iter()
+                .map(|source| source.excerpt.as_str()),
+        )
+    }
+
+    fn add<'a>(&mut self, texts: impl IntoIterator<Item = &'a str>) {
+        self.0.extend(
+            texts
+                .into_iter()
+                .filter(|text| long_enough_quote(text))
+                .map(words)
+                .filter(|run| !run.is_empty()),
+        );
+    }
 }
 
 /// `text` without its double-quoted spans, each left as a space. A quotation
@@ -75,20 +116,19 @@ fn holds(hay: &[String], needle: &[String]) -> bool {
     !needle.is_empty() && hay.windows(needle.len()).any(|run| run == needle)
 }
 
-/// The teaching sentences of `text` that copy one of `quotes` outside double
-/// quotation marks: they hold its words, or are a span of them long enough
-/// to be quoted.
-pub(crate) fn copies(text: &str, quotes: &[String]) -> Vec<String> {
-    let quotes: Vec<Vec<String>> = quotes.iter().map(|quote| words(quote)).collect();
-    if quotes.iter().all(Vec::is_empty) {
+/// The teaching sentences of `text` that copy the wording of the part or the
+/// lesson outside double quotation marks: they hold a run of it, or are a
+/// span of one long enough to be quoted.
+pub(crate) fn copies(text: &str, part: &Wording, lesson: &Wording) -> Vec<String> {
+    if part.0.is_empty() && lesson.0.is_empty() {
         return Vec::new();
     }
     teaching_sentences(text)
         .into_iter()
         .filter(|sentence| {
             let own = words(&outside_quotes(sentence));
-            quotes.iter().any(|quote| {
-                holds(&own, quote) || (holds(quote, &own) && long_enough_quote(&own.join(" ")))
+            part.0.iter().chain(&lesson.0).any(|run| {
+                holds(&own, run) || (holds(run, &own) && long_enough_quote(&own.join(" ")))
             })
         })
         .collect()
@@ -100,10 +140,15 @@ pub(crate) fn is_taught_text(path: &str) -> bool {
     path.ends_with("/body") || path.ends_with("/explanation") || path.contains("/rationales/")
 }
 
-/// The first sentence `after` copies from `quotes` that `before` did not.
-pub(crate) fn gained(before: &str, after: &str, quotes: &[String]) -> Option<String> {
-    let had = copies(before, quotes);
-    copies(after, quotes)
+/// The first sentence `after` copies that `before` did not.
+pub(crate) fn gained(
+    before: &str,
+    after: &str,
+    part: &Wording,
+    lesson: &Wording,
+) -> Option<String> {
+    let had = copies(before, part, lesson);
+    copies(after, part, lesson)
         .into_iter()
         .find(|sentence| !had.contains(sentence))
 }
@@ -112,45 +157,15 @@ pub(crate) fn gained(before: &str, after: &str, quotes: &[String]) -> Option<Str
 pub(crate) const SAY_IT_YOURSELF: &str =
     "Say it in the lesson's own words, or put the source's words in double quotation marks.";
 
-/// The source wording a lesson may not copy outside quotation marks, from
-/// the saved excerpts: each excerpt whole, and each of its sentences long
-/// enough to be quoted.
-pub(crate) fn excerpt_wording<'a>(excerpts: impl IntoIterator<Item = &'a str>) -> Vec<String> {
-    let mut wording = Vec::new();
-    for excerpt in excerpts {
-        wording.push(excerpt.to_owned());
-        wording.extend(
-            sentences(excerpt)
-                .into_iter()
-                .filter_map(|(from, to)| excerpt.get(from..to))
-                .filter(|sentence| long_enough_quote(sentence))
-                .map(str::to_owned),
-        );
-    }
-    wording
-}
-
-/// A finding for every sentence of `candidate`'s blocks and questions that
-/// copies a quote its part cites.
-pub(crate) fn findings(candidate: &Value) -> Vec<ReviewFinding> {
-    report(candidate, &[])
-}
-
-/// A finding for every sentence that copies `wording` and no quote its part
-/// cites, which [`findings`] reports already.
-pub(crate) fn excerpt_findings(candidate: &Value, wording: &[String]) -> Vec<ReviewFinding> {
-    if wording.is_empty() {
-        return Vec::new();
-    }
-    report(candidate, wording)
-}
-
-fn report(candidate: &Value, wording: &[String]) -> Vec<ReviewFinding> {
+/// A finding for every teaching sentence of `candidate`'s blocks and
+/// questions that copies a quote its part cites or the lesson's `wording`,
+/// each sentence once.
+pub(crate) fn findings(candidate: &Value, wording: &Wording) -> Vec<ReviewFinding> {
     let mut found = Vec::new();
     for (list, question) in [("blocks", false), ("questions", true)] {
         let parts = candidate.get(list).and_then(Value::as_array);
         for (index, part) in parts.into_iter().flatten().enumerate() {
-            let quotes = quotes_of(part);
+            let quotes = Wording::of_part(part, []);
             let (site, label, plain) = if question {
                 let name = format!("Question {}", index + 1);
                 (FindingSite::Question(index), name.clone(), name)
@@ -162,16 +177,7 @@ fn report(candidate: &Value, wording: &[String]) -> Vec<ReviewFinding> {
                 )
             };
             for text in citable_texts(part, question) {
-                let cited = copies(text, &quotes);
-                let copied = if wording.is_empty() {
-                    cited
-                } else {
-                    copies(text, wording)
-                        .into_iter()
-                        .filter(|sentence| !cited.contains(sentence))
-                        .collect()
-                };
-                for sentence in copied {
+                for sentence in copies(text, &quotes, wording) {
                     found.push(
                         ReviewFinding::new(
                             FindingKind::Teaching,

@@ -1,6 +1,6 @@
 //! Apply explicit edits atomically. Unmentioned lesson bytes and items cannot
 //! change as a side effect of asking a model to correct one fact.
-use super::copied_wording::{self, SAY_IT_YOURSELF};
+use super::copied_wording::{self, Wording, SAY_IT_YOURSELF};
 use super::repeats::{self, Counts};
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use lattice_core::shared::error::{AppError, Result};
@@ -304,26 +304,20 @@ fn part_of(path: &str) -> String {
 
 /// The quotes of the block or question at `part`, and those of the citations
 /// the patch appends to it: the source wording its sentences may not copy.
-fn quotes_for(
-    candidate: &Value,
-    part: &str,
-    (cites, wording): (&[Cite], &[String]),
-) -> Vec<String> {
+fn quotes_for(candidate: &Value, part: &str, cites: &[Cite]) -> Wording {
     let Some(held) = Some(part)
         .filter(|part| !part.is_empty())
         .and_then(|part| candidate.pointer(part))
     else {
-        return Vec::new();
+        return Wording::default();
     };
-    let mut quotes = copied_wording::quotes_of(held);
-    quotes.extend_from_slice(wording);
-    quotes.extend(copied_wording::kept(
+    Wording::of_part(
+        held,
         cites
             .iter()
             .filter(|cite| cite.path == part)
             .map(|cite| cite.quote.as_str()),
-    ));
-    quotes
+    )
 }
 
 /// The new value of one field under its edits, or the first problem with
@@ -332,7 +326,7 @@ fn field_value(
     path: &str,
     original: &Value,
     edits: Vec<(usize, Edit)>,
-    (lesson, quotes): (&Counts, &[String]),
+    (lesson, part, wording): (&Counts, &Wording, &Wording),
 ) -> std::result::Result<Value, (usize, String)> {
     let first = edits.first().map_or(0, |(index, _)| *index);
     if let Some(text) = original.as_str() {
@@ -370,7 +364,7 @@ fn field_value(
                 ));
             }
             let copied = copied_wording::is_taught_text(path)
-                .then(|| copied_wording::gained(text, &alone, quotes))
+                .then(|| copied_wording::gained(text, &alone, part, wording))
                 .flatten();
             if let Some(sentence) = copied {
                 return Err((
@@ -417,7 +411,7 @@ fn part_values(
     candidate: &Value,
     allowed: &[String],
     edits: Vec<(usize, Edit)>,
-    held: (&Counts, &[String]),
+    held: (&Counts, &Wording, &Wording),
 ) -> std::result::Result<FieldValues, Problems> {
     let mut problems = Vec::new();
     let mut fields = std::collections::BTreeMap::<String, Vec<(usize, Edit)>>::new();
@@ -459,7 +453,7 @@ fn part_values(
 /// any problem are left out and the other parts' edits apply.
 #[cfg(test)]
 pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
-    apply_in(candidate, patch, &Value::Null, &[])
+    apply_in(candidate, patch, &Value::Null, &Wording::default())
 }
 
 /// [`apply`] where `lesson`, the lesson `candidate` is a part of, also holds
@@ -469,7 +463,7 @@ pub(super) fn apply_in(
     candidate: &Value,
     patch: &str,
     lesson: &Value,
-    wording: &[String],
+    wording: &Wording,
 ) -> Result<Value> {
     let fail = |reason: String| {
         AppError::InvalidInput(format!(
@@ -496,8 +490,8 @@ pub(super) fn apply_in(
     let mut problems = Vec::new();
     let mut applied = false;
     for (part, edits) in parts {
-        let quotes = quotes_for(candidate, &part, (&patch.citations, wording));
-        match part_values(candidate, &allowed, edits, (&held, &quotes)) {
+        let quotes = quotes_for(candidate, &part, &patch.citations);
+        match part_values(candidate, &allowed, edits, (&held, &quotes, wording)) {
             Ok(values) => {
                 applied |= !values.is_empty();
                 for (path, value) in values {

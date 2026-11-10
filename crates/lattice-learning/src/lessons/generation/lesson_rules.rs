@@ -10,8 +10,9 @@ use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key,
 use crate::content_verification::{
     names_a_source, needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS,
 };
+use crate::lessons::copied_wording::{self, Wording};
+use crate::lessons::repeats;
 use crate::lessons::same_text::{fold, overlap};
-use crate::lessons::{copied_wording, repeats};
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -318,10 +319,14 @@ pub(crate) enum Counts {
 }
 
 pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
-    lesson_rules_holding(candidate, Counts::Asked)
+    lesson_rules_holding(candidate, Counts::Asked, &Wording::default())
 }
 
-pub(crate) fn lesson_rules_holding(candidate: &Value, counts: Counts) -> Vec<ReviewFinding> {
+pub(crate) fn lesson_rules_holding(
+    candidate: &Value,
+    counts: Counts,
+    wording: &Wording,
+) -> Vec<ReviewFinding> {
     let items = |field| {
         candidate
             .get(field)
@@ -330,7 +335,7 @@ pub(crate) fn lesson_rules_holding(candidate: &Value, counts: Counts) -> Vec<Rev
             .unwrap_or_default()
     };
     let (blocks, questions) = (items("blocks"), items("questions"));
-    let mut findings = copied_wording::findings(candidate);
+    let mut findings = copied_wording::findings(candidate, wording);
     let mut titles = HashMap::new();
     for (index, block) in blocks.iter().enumerate() {
         let section = format!("Section {} (candidate blocks-{index})", index + 1);

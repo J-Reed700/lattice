@@ -91,7 +91,7 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
         &lesson_schema(1),
         &off_shape_value(true).to_string(),
         crate::generation::Counts::Asked,
-        &[],
+        &Default::default(),
     )
     .unwrap();
     let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.key().id()).collect();
@@ -439,7 +439,7 @@ fn a_lessons_text_of_any_length_is_no_schema_finding() {
             &schema,
             &lesson.to_string(),
             crate::generation::Counts::Asked,
-            &[],
+            &Default::default(),
         )
         .unwrap()
         .into_iter()

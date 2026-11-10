@@ -8,7 +8,8 @@ use super::repair_work::{
     withdraw_resolved,
 };
 use super::*;
-use crate::lessons::{copied_wording, text_edits};
+use crate::lessons::copied_wording::Wording;
+use crate::lessons::text_edits;
 use lattice_core::application::services::grounded_generation::{GroundedRequest, HistoryItem};
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal};
 use std::collections::{BTreeSet, VecDeque};
@@ -360,7 +361,7 @@ const WHOLE_SECTION: &str = "Give the corrected section itself instead: correct 
 async fn apply_or_replace_section(
     llm: &dyn LLMPort,
     (system, local): (&str, &Value),
-    (original, lesson, wording): (&Value, &Value, &[String]),
+    (original, lesson, wording): (&Value, &Value, &Wording),
     schema: &Value,
     field: &str,
     output_tokens: usize,
@@ -493,12 +494,7 @@ async fn repair_sections(
     if pending.is_empty() {
         return Err(invalid("No affected sections were recorded for repair."));
     }
-    let wording = copied_wording::excerpt_wording(
-        references
-            .sources
-            .iter()
-            .map(|source| source.excerpt.as_str()),
-    );
+    let wording = Wording::of(references);
     // Every claim this repair was sent for, and those standing on their
     // sentences, which it changes with them; the ledger's other live claims
     // are what it leaves as it is (claim sources design §18.5).
@@ -660,7 +656,7 @@ async fn repair_sections(
 async fn repair_group(
     llm: &dyn LLMPort,
     system: &str,
-    (local, original, lesson, wording): (&Value, &Value, &Value, &[String]),
+    (local, original, lesson, wording): (&Value, &Value, &Value, &Wording),
     schema: &Value,
     field: &str,
     output_tokens: usize,
