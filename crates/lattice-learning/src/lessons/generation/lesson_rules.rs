@@ -424,7 +424,7 @@ pub(crate) fn lesson_rules(
             .and_then(|right| usize::try_from(right).ok());
         let choices_fault = if options.len() != 4 {
             Some(format!(
-                "{label} has {} answer choices; it needs four.",
+                "{label} needs four answer choices; it has {}.",
                 options.len()
             ))
         } else if options.iter().any(|option| !validate_text(option)) {
