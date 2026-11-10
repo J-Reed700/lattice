@@ -3,11 +3,35 @@ use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits;
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
 use crate::outline_progress::OutlineProgress;
+use crate::review_findings::{FindingSite, ReviewFinding};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
 use serde_json::{json, Map, Value};
+
+/// One finding sent to a repair.
+pub(super) struct Issue<'a> {
+    pub finding: &'a ReviewFinding,
+    /// What became of the last repair's attempt at it, when there was one.
+    pub last_attempt: Option<String>,
+}
+
+impl Issue<'_> {
+    /// The finding as `issuesToFix` lists it for the model.
+    fn entry(&self) -> Value {
+        let finding = self.finding;
+        let id = finding.id();
+        json!({
+            "id": id.as_str(),
+            "part": finding.site.and_then(FindingSite::pointer),
+            "also": finding.also.and_then(FindingSite::pointer),
+            "passage": finding.passage.as_deref().or(finding.sentence.as_deref()),
+            "note": finding.note,
+            "lastAttempt": self.last_attempt,
+        })
+    }
+}
 
 pub(super) struct Request<'a> {
     pub system: &'a str,
@@ -15,8 +39,8 @@ pub(super) struct Request<'a> {
     pub authoring: &'a Value,
     pub candidate: &'a Value,
     pub quote_checks: &'a [Value],
-    /// `issuesToFix` for the model.
-    pub issues: Value,
+    /// The findings the repair is asked to correct.
+    pub issues: Vec<Issue<'a>>,
     /// The repair may give edits; otherwise it rewrites the material whole.
     pub edits: bool,
     pub wording: &'a Wording,
@@ -30,11 +54,79 @@ pub(super) enum Repaired {
     Whole(String),
 }
 
-/// The candidate a repair's answer makes.
-pub(super) fn apply(previous: &Value, repaired: Repaired, wording: &Wording) -> Result<String> {
+impl Request<'_> {
+    /// `issuesToFix`: one entry for each finding sent.
+    fn issues_to_fix(&self) -> Value {
+        Value::Array(self.issues.iter().map(Issue::entry).collect())
+    }
+
+    /// The ids a change may name: each distinct id sent, in the order they
+    /// first appear.
+    fn finding_ids(&self) -> Vec<String> {
+        let mut ids: Vec<String> = Vec::new();
+        for issue in &self.issues {
+            let id = issue.finding.id();
+            if !ids.iter().any(|known| known == id.as_str()) {
+                ids.push(id.as_str().to_owned());
+            }
+        }
+        ids
+    }
+}
+
+/// Which parts a change naming one of `findings` may touch: its own part or
+/// its second part; any part when it is about the whole material.
+pub(super) fn reach<'a>(
+    findings: impl IntoIterator<Item = &'a ReviewFinding>,
+) -> impl Fn(Option<&str>, &str) -> std::result::Result<(), String> + 'a {
+    let findings: Vec<&'a ReviewFinding> = findings.into_iter().collect();
+    move |named, part| {
+        let Some(id) = named else {
+            return Err("names no finding.".to_owned());
+        };
+        let mut refusal = None;
+        for finding in findings
+            .iter()
+            .filter(|finding| finding.id().as_str() == id)
+        {
+            let Some(own) = finding.site.and_then(FindingSite::pointer) else {
+                return Ok(());
+            };
+            let also = finding.also.and_then(FindingSite::pointer);
+            if part == own || also.as_deref() == Some(part) {
+                return Ok(());
+            }
+            refusal.get_or_insert_with(|| {
+                let what = if part.is_empty() {
+                    "a field outside every block and question"
+                } else {
+                    part
+                };
+                let allowed = match &also {
+                    Some(also) => format!("{own} and {also}"),
+                    None => own.clone(),
+                };
+                format!("is for {id} and changes {what}, which is outside that finding's part ({allowed}).")
+            });
+        }
+        Err(refusal
+            .unwrap_or_else(|| format!("is for {id}, which is not a finding of this repair.")))
+    }
+}
+
+/// The candidate a repair's answer makes, from the `sent` findings it
+/// answered.
+pub(super) fn apply(
+    previous: &Value,
+    repaired: Repaired,
+    sent: &[ReviewFinding],
+    wording: &Wording,
+) -> Result<String> {
     match repaired {
-        Repaired::Patch(raw) => text_edits::apply_in(previous, &raw, &Value::Null, wording)
-            .map(|value| value.to_string()),
+        Repaired::Patch(raw) => {
+            text_edits::apply_for(previous, &raw, &Value::Null, wording, &reach(sent))
+                .map(|applied| applied.value.to_string())
+        }
         Repaired::Whole(text) => Ok(text),
     }
 }
@@ -60,17 +152,17 @@ fn parts(request: &Request<'_>, requirements: Value) -> [(&'static str, Value); 
         ("originalRequirements", requirements),
         ("candidate", request.candidate.clone()),
         ("sourceQuoteChecks", json!(request.quote_checks)),
-        ("issuesToFix", request.issues.clone()),
+        ("issuesToFix", request.issues_to_fix()),
     ]
 }
 
 impl Form for Edits {
     fn system(&self, request: &Request<'_>) -> String {
-        format!("You are editing a rejected draft. Correct only the established teaching defects. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. The learner sees only the lesson: added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. {}", text_edits::instructions(request.schema))
+        format!("You are editing a rejected draft. Correct only the established teaching defects. issuesToFix lists them, one entry each: its id, the part it is about (the path of a block or question; null when it is about the material as a whole), a second part when it is about two (also), the words it is about when it names any (passage), what to correct (note), and what became of the last repair's attempt at it (lastAttempt; null on a first attempt). Each edit, citation and uncite names in finding the id of the entry it is for, and changes only that entry's part or its also part; one for an entry whose part is null may change any part. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. The learner sees only the lesson: added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. {}", text_edits::instructions(request.schema))
     }
 
     fn schema(&self, request: &Request<'_>) -> Value {
-        text_edits::schema_for(request.candidate, request.schema)
+        text_edits::schema_for_findings(request.candidate, request.schema, &request.finding_ids())
     }
 
     fn prompt(&self, request: &Request<'_>, requirements: Value) -> Map<String, Value> {
@@ -81,7 +173,15 @@ impl Form for Edits {
     }
 
     fn accept(&self, request: &Request<'_>, raw: &str) -> Result<()> {
-        text_edits::apply_in(request.candidate, raw, &Value::Null, request.wording).map(|_| ())
+        let may_change = reach(request.issues.iter().map(|issue| issue.finding));
+        text_edits::apply_for(
+            request.candidate,
+            raw,
+            &Value::Null,
+            request.wording,
+            &may_change,
+        )
+        .map(|_| ())
     }
 
     fn repaired(&self, raw: String) -> Repaired {
@@ -165,4 +265,145 @@ pub(super) async fn ask(
         Err(_) => {}
     }
     result.map(|raw| form.repaired(raw))
+}
+
+#[cfg(test)]
+mod tests {
+    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
+    use super::*;
+
+    fn at(site: FindingSite, note: &str) -> ReviewFinding {
+        ReviewFinding::reviewer(Some(site), note)
+    }
+
+    fn request<'a>(issues: Vec<Issue<'a>>, schema: &'a Value, wording: &'a Wording) -> Request<'a> {
+        Request {
+            system: "",
+            schema,
+            authoring: schema,
+            candidate: schema,
+            quote_checks: &[],
+            issues,
+            edits: true,
+            wording,
+            output_tokens: 0,
+        }
+    }
+
+    fn plain(finding: &ReviewFinding) -> Issue<'_> {
+        Issue {
+            finding,
+            last_attempt: None,
+        }
+    }
+
+    #[test]
+    fn a_change_may_touch_its_findings_part_and_its_second_part_only() {
+        let finding = at(FindingSite::Section(0), "n").with_also(FindingSite::Section(2));
+        let may = reach([&finding]);
+        assert_eq!(may(Some("reviewer/section-0"), "/blocks/0"), Ok(()));
+        assert_eq!(may(Some("reviewer/section-0"), "/blocks/2"), Ok(()));
+        let refused = may(Some("reviewer/section-0"), "/blocks/1").unwrap_err();
+        assert!(
+            refused.contains("/blocks/1") && refused.contains("(/blocks/0 and /blocks/2)"),
+            "{refused}"
+        );
+        let outside = may(Some("reviewer/section-0"), "").unwrap_err();
+        assert!(
+            outside.contains("a field outside every block and question"),
+            "{outside}"
+        );
+    }
+
+    #[test]
+    fn a_finding_with_one_part_names_only_that_part_when_it_refuses() {
+        let finding = at(FindingSite::Section(1), "n");
+        let may = reach([&finding]);
+        let refused = may(Some("reviewer/section-1"), "/blocks/0").unwrap_err();
+        assert!(refused.contains("(/blocks/1)"), "{refused}");
+    }
+
+    #[test]
+    fn a_finding_about_the_whole_material_may_change_any_part() {
+        let finding = ReviewFinding::reviewer(None, "n");
+        let may = reach([&finding]);
+        for part in ["/blocks/0", "/questions/1", ""] {
+            assert_eq!(may(Some("reviewer/lesson"), part), Ok(()), "{part}");
+        }
+    }
+
+    #[test]
+    fn a_change_naming_no_finding_or_one_not_sent_is_refused() {
+        let finding = at(FindingSite::Section(0), "n");
+        let may = reach([&finding]);
+        assert_eq!(may(None, "/blocks/0"), Err("names no finding.".to_owned()));
+        let unknown = may(Some("reviewer/section-5"), "/blocks/0").unwrap_err();
+        assert!(
+            unknown.contains("reviewer/section-5") && unknown.contains("not a finding"),
+            "{unknown}"
+        );
+    }
+
+    #[test]
+    fn findings_that_share_an_id_each_open_their_own_part() {
+        let first = at(FindingSite::Section(0), "one");
+        let second = ReviewFinding::reviewer(None, "two");
+        let may = reach([&first, &second]);
+        assert_eq!(may(Some("reviewer/section-0"), "/blocks/0"), Ok(()));
+        assert!(may(Some("reviewer/section-0"), "/blocks/1").is_err());
+        let sibling = at(FindingSite::Section(0), "three").with_also(FindingSite::Section(1));
+        let may = reach([&first, &sibling]);
+        assert_eq!(may(Some("reviewer/section-0"), "/blocks/1"), Ok(()));
+    }
+
+    #[test]
+    fn issues_to_fix_lists_one_entry_for_each_finding_sent() {
+        let named = at(FindingSite::Section(0), "note one").with_passage("Passage one.");
+        let mut sentenced = at(FindingSite::Question(1), "note two");
+        sentenced.sentence = Some("Whole sentence.".to_owned());
+        let both = at(FindingSite::Section(1), "note three").with_also(FindingSite::Section(3));
+        let whole = ReviewFinding::reviewer(None, "note four");
+        let schema = Value::Null;
+        let wording = Wording::default();
+        let sent = request(
+            vec![
+                Issue {
+                    finding: &named,
+                    last_attempt: Some("it named no finding".to_owned()),
+                },
+                plain(&sentenced),
+                plain(&both),
+                plain(&whole),
+            ],
+            &schema,
+            &wording,
+        );
+        assert_eq!(
+            sent.issues_to_fix(),
+            json!([
+                {"id":"reviewer/section-0","part":"/blocks/0","also":null,"passage":"Passage one.","note":"note one","lastAttempt":"it named no finding"},
+                {"id":"reviewer/question-1","part":"/questions/1","also":null,"passage":"Whole sentence.","note":"note two","lastAttempt":null},
+                {"id":"reviewer/section-1","part":"/blocks/1","also":"/blocks/3","passage":null,"note":"note three","lastAttempt":null},
+                {"id":"reviewer/lesson","part":null,"also":null,"passage":null,"note":"note four","lastAttempt":null}
+            ])
+        );
+    }
+
+    #[test]
+    fn a_shared_id_is_offered_to_the_repair_once() {
+        let first = at(FindingSite::Section(0), "one");
+        let again = at(FindingSite::Section(0), "two");
+        let other = at(FindingSite::Section(2), "three");
+        let schema = Value::Null;
+        let wording = Wording::default();
+        let sent = request(
+            vec![plain(&first), plain(&again), plain(&other)],
+            &schema,
+            &wording,
+        );
+        assert_eq!(
+            sent.finding_ids(),
+            ["reviewer/section-0", "reviewer/section-2"]
+        );
+    }
 }

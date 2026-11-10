@@ -542,3 +542,229 @@ fn an_edit_adding_a_sentence_too_short_to_quote_that_the_lesson_has_is_applied()
         "The second section opens here. No."
     );
 }
+
+fn anything(_: Option<&str>, _: &str) -> std::result::Result<(), String> {
+    Ok(())
+}
+
+fn only_f1_in_block_0(finding: Option<&str>, part: &str) -> std::result::Result<(), String> {
+    if finding == Some("f1") && part == "/blocks/0" {
+        Ok(())
+    } else {
+        Err("is outside its finding's part.".to_owned())
+    }
+}
+
+fn apply_named(candidate: &Value, patch: Value, rule: MayChange<'_>) -> Result<AppliedFor> {
+    apply_for(
+        candidate,
+        &patch.to_string(),
+        &Value::Null,
+        &Wording::default(),
+        rule,
+    )
+}
+
+#[test]
+fn two_findings_edits_to_one_field_both_apply_and_each_owns_its_sentence() -> Result<()> {
+    let done = apply_named(
+        &two_sections(),
+        json!({"edits":[
+            {"finding":"f1","path":"/blocks/0/body","before":"Alpha is the first of them all.","after":"Alpha opens them all."},
+            {"finding":"f2","path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."}
+        ]}),
+        &anything,
+    )?;
+    assert_eq!(
+        done.value["blocks"][0]["body"],
+        "Alpha opens them all. Beta comes second."
+    );
+    for finding in ["f1", "f2"] {
+        assert_eq!(
+            done.named[finding].applied,
+            BTreeSet::from(["/blocks/0/body".to_owned()])
+        );
+    }
+    let wrote = |finding: &str, sentence: &str| {
+        done.written.iter().any(|(who, path, text)| {
+            who == finding && path == "/blocks/0/body" && text.trim() == sentence
+        })
+    };
+    assert!(wrote("f1", "Alpha opens them all."), "{:?}", done.written);
+    assert!(wrote("f2", "Beta comes second."), "{:?}", done.written);
+    Ok(())
+}
+
+#[test]
+fn an_edit_overlapping_another_findings_edit_is_left_out_and_the_earlier_one_stays() -> Result<()> {
+    let done = apply_named(
+        &two_sections(),
+        json!({"edits":[
+            {"finding":"f1","path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."},
+            {"finding":"f2","path":"/blocks/0/body","before":"is second.","after":"is last."}
+        ]}),
+        &anything,
+    )?;
+    assert_eq!(
+        done.value["blocks"][0]["body"],
+        "Alpha is the first of them all. Beta comes second."
+    );
+    assert!(done.named["f1"].problems.is_empty());
+    assert!(done.named["f2"].applied.is_empty());
+    assert_eq!(
+        done.named["f2"].problems,
+        ["edit 1 to /blocks/0/body overlaps an edit for another finding."]
+    );
+    Ok(())
+}
+
+#[test]
+fn a_refused_group_reports_its_reason_under_its_finding_and_the_others_apply() -> Result<()> {
+    let both = |rule: MayChange<'_>| {
+        apply_named(
+            &two_sections(),
+            json!({"edits":[
+                {"finding":"f1","path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."},
+                {"finding":"f2","path":"/blocks/1/body","before":"Delta ends it.","after":"Delta closes it."}
+            ]}),
+            rule,
+        )
+    };
+    let done = both(&only_f1_in_block_0)?;
+    assert_eq!(
+        done.value["blocks"][0]["body"],
+        "Alpha is the first of them all. Beta comes second."
+    );
+    assert_eq!(done.value["blocks"][1], two_sections()["blocks"][1]);
+    assert_eq!(
+        done.named["f2"].problems,
+        ["edit 1 is outside its finding's part."]
+    );
+    assert!(done.named["f2"].applied.is_empty());
+    assert_eq!(
+        done.named["f1"].applied,
+        BTreeSet::from(["/blocks/0/body".to_owned()])
+    );
+    Ok(())
+}
+
+#[test]
+fn an_edit_naming_no_finding_is_left_out_when_the_rule_wants_one() -> Result<()> {
+    let wants_one = |finding: Option<&str>, _: &str| match finding {
+        Some(_) => Ok(()),
+        None => Err("names no finding.".to_owned()),
+    };
+    let done = apply_named(
+        &two_sections(),
+        json!({"edits":[
+            {"path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."},
+            {"finding":"f1","path":"/blocks/1/body","before":"Delta ends it.","after":"Delta closes it."}
+        ]}),
+        &wants_one,
+    )?;
+    assert_eq!(done.value["blocks"][0], two_sections()["blocks"][0]);
+    assert_eq!(
+        done.value["blocks"][1]["body"],
+        "Gamma stands here. Delta closes it."
+    );
+    assert_eq!(done.named.len(), 1);
+    Ok(())
+}
+
+#[test]
+fn a_citation_and_a_withdrawn_citation_are_refused_outside_their_findings_part() -> Result<()> {
+    let cite = |path: &str, sentence: &str| json!({"finding":"f1","path":path,"sentence":sentence,"sourceIndex":0,"quote":"A timeout of 30 seconds applies to each request."});
+    let done = apply_named(
+        &cited_lesson(),
+        json!({"edits":[],"citations":[
+            cite("/blocks/0", TIMEOUT),
+            cite("/questions/0", "The cache holds 128 entries.")
+        ]}),
+        &only_f1_in_block_0,
+    )?;
+    assert_eq!(
+        done.value["blocks"][0]["citations"]
+            .as_array()
+            .map(Vec::len),
+        Some(1)
+    );
+    assert_eq!(done.value["questions"][0]["citations"], json!([]));
+    assert_eq!(
+        done.named["f1"].applied,
+        BTreeSet::from(["/blocks/0/citations".to_owned()])
+    );
+    assert_eq!(
+        done.named["f1"].problems,
+        ["citation 1 is outside its finding's part."]
+    );
+
+    let mut held = cited_lesson();
+    held["blocks"][0]["citations"] = json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":"A timeout of 30 seconds applies to each request."}]);
+    held["questions"][0]["citations"] = json!([{"sentence":"The cache holds 128 entries.","sourceIndex":0,"quote":"The cache holds at most 128 entries at a time."}]);
+    let done = apply_named(
+        &held,
+        json!({"edits":[],"citations":[],"uncite":[
+            {"finding":"f1","path":"/blocks/0/citations/0"},
+            {"finding":"f1","path":"/questions/0/citations/0"}
+        ]}),
+        &only_f1_in_block_0,
+    )?;
+    assert_eq!(done.value["blocks"][0]["citations"], json!([]));
+    assert_eq!(
+        done.value["questions"][0]["citations"],
+        held["questions"][0]["citations"]
+    );
+    assert_eq!(
+        done.named["f1"].problems,
+        ["uncite 1 is outside its finding's part."]
+    );
+    Ok(())
+}
+
+#[test]
+fn the_schema_for_findings_names_the_finding_of_every_change() {
+    let mut original = cited_lesson();
+    original["blocks"][0]["citations"] = json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":"A timeout of 30 seconds applies to each request."}]);
+    let lesson = crate::generation::lesson_schema(2);
+    let ids = vec!["f1".to_owned(), "f2".to_owned()];
+
+    let named = schema_for_findings(&original, &lesson, &ids);
+    let edit = &named["properties"]["edits"]["items"];
+    assert_eq!(
+        edit["properties"]["finding"],
+        json!({"type":"string","enum":ids})
+    );
+    assert_eq!(
+        edit["required"],
+        json!(["finding", "path", "before", "after"])
+    );
+    let cite = &named["properties"]["citations"]["items"];
+    assert_eq!(cite["properties"]["finding"]["enum"], json!(["f1", "f2"]));
+    assert_eq!(
+        cite["required"],
+        json!(["finding", "path", "sentence", "sourceIndex", "quote"])
+    );
+    assert_eq!(
+        named["properties"]["uncite"]["items"]["required"],
+        json!(["finding", "path"])
+    );
+    assert!(named["properties"]["citations"].get("maxItems").is_none());
+    assert!(named["properties"]["uncite"].get("uniqueItems").is_none());
+
+    let plain = schema_for(&original, &lesson);
+    assert!(plain["properties"]["edits"]["items"]["properties"]
+        .get("finding")
+        .is_none());
+    assert_eq!(
+        plain["properties"]["uncite"]["items"],
+        json!({"type":"string","enum":["/blocks/0/citations/0"]})
+    );
+    assert!(plain["properties"]["citations"].get("maxItems").is_none());
+
+    let alone = schema_for_findings(&original, &json!({"type":"object"}), &ids);
+    assert_eq!(alone["required"], json!(["edits"]));
+    assert_eq!(
+        alone["properties"]["edits"]["items"]["properties"]["finding"]["enum"],
+        json!(["f1", "f2"])
+    );
+}

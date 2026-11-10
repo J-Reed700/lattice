@@ -1,6 +1,7 @@
 //! When a lesson's teaching review stops repairing. Every finding gets a
-//! repair. A finding that was sent to `REPAIRS_PER_FINDING` repairs stops
-//! being repaired; when a repair fixes none of the open findings, the findings
+//! repair. A repair is charged to each finding it was sent (`charge`, with
+//! what became of its attempt at it), not when it is sent: a finding charged
+//! `REPAIRS_PER_FINDING` repairs stops being repaired; when a repair fixes none of the open findings, the findings
 //! that repair was sent stop, and every finding not yet sent to a repair still
 //! gets one. The review ends when no repairable finding is left. Stopped
 //! findings wait for the user, and the lesson publishes: no teaching-review
@@ -22,9 +23,24 @@ use crate::review_findings::{sentences_of, subject_of, FindingId, Held, ReviewFi
 /// Findings sent to one repair, as many as one request handles well.
 pub(super) const PER_REPAIR: usize = 6;
 
-/// Attempts one finding is given: a first, and one retry. The loop must end
-/// on a defect no repair fixes.
+/// Attempts one finding is given: a first, and one retry that is told what
+/// became of the first. The loop must end on a defect no repair fixes.
 const REPAIRS_PER_FINDING: u8 = 2;
+
+/// What became of one repair's attempt at a finding.
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
+pub(super) enum Outcome {
+    /// A change naming it was applied and stands.
+    Applied,
+    /// It was named, and none of its changes could be applied.
+    NotApplied(Vec<String>),
+    /// Its changes were applied and put back: they touched a sentence that must stay.
+    Reverted,
+    /// No change named it.
+    Unnamed,
+    /// The repair's answer could not be used at all.
+    Unusable(String),
+}
 
 pub(super) enum Next {
     /// Nothing is left to repair; these findings wait for the user.
@@ -41,9 +57,11 @@ pub(super) struct Passes {
     /// Findings the user already has, for text that has not changed since,
     /// and findings held during this review.
     held: Held,
-    /// Repairs each finding was sent to, or started with (words an earlier
+    /// Repairs each finding was charged, or started with (words an earlier
     /// repair worked on).
     spent: BTreeMap<FindingId, u8>,
+    /// What became of the last repair's attempt at each finding.
+    last: BTreeMap<FindingId, Outcome>,
     /// Sentence digest to the repairs those words have been through.
     worked: BTreeMap<String, u8>,
     /// The findings that were open when the last repair ran.
@@ -60,6 +78,7 @@ pub(super) struct Passes {
 #[derive(Deserialize, Serialize)]
 struct Kept {
     spent: Vec<(FindingId, u8)>,
+    last: Vec<(FindingId, Outcome)>,
     worked: BTreeMap<String, u8>,
     open_at_repair: Option<BTreeSet<FindingId>>,
     sent_at_repair: BTreeSet<FindingId>,
@@ -83,6 +102,11 @@ impl Passes {
                 .iter()
                 .map(|(id, count)| (id.clone(), *count))
                 .collect(),
+            last: self
+                .last
+                .iter()
+                .map(|(id, outcome)| (id.clone(), outcome.clone()))
+                .collect(),
             worked: self.worked.clone(),
             open_at_repair: self.open_at_repair.clone(),
             sent_at_repair: self.sent_at_repair.clone(),
@@ -95,6 +119,7 @@ impl Passes {
     pub fn resume(&mut self, saved: &str) {
         if let Ok(kept) = serde_json::from_str::<Kept>(saved) {
             self.spent = kept.spent.into_iter().collect();
+            self.last = kept.last.into_iter().collect();
             self.worked = kept.worked;
             self.open_at_repair = kept.open_at_repair;
             self.sent_at_repair = kept.sent_at_repair;
@@ -187,17 +212,38 @@ impl Passes {
         self.open_at_repair = Some(open.iter().map(ReviewFinding::id).collect());
         let carried = open.split_off(open.len().min(PER_REPAIR));
         self.sent_at_repair = open.iter().map(ReviewFinding::id).collect();
-        for finding in &open {
-            *self.spent.entry(finding.id()).or_default() += 1;
-        }
         Next::Repair {
             send: open,
             carried,
         }
     }
 
+    /// A repair was sent `finding` and this became of its attempt at it: the
+    /// repair is charged to it.
+    pub fn charge(&mut self, finding: &ReviewFinding, outcome: Outcome) {
+        let id = finding.id();
+        *self.spent.entry(id.clone()).or_default() += 1;
+        self.last.insert(id, outcome);
+    }
+
+    /// What became of the last repair's attempt at `id`, told to its next one.
+    pub fn last_attempt(&self, id: &FindingId) -> Option<String> {
+        Some(match self.last.get(id)? {
+            Outcome::Applied => "The last repair's edits for this finding were applied and the defect is still there.".to_owned(),
+            Outcome::NotApplied(reasons) => format!(
+                "The last repair's edits for this finding could not be applied: {}",
+                reasons.join(" ")
+            ),
+            Outcome::Reverted => "The last repair's edits for this finding changed a sentence that must stay as it is; they were put back.".to_owned(),
+            Outcome::Unnamed => "The last repair gave no edit for this finding.".to_owned(),
+            Outcome::Unusable(reason) => {
+                format!("The last repair's answer could not be used: {reason}")
+            }
+        })
+    }
+
     /// An applied repair put these sentences through the repairs `id` had
-    /// been sent to: what it wrote, or the words it was applied for. A new
+    /// been charged: what it wrote, or the words it was applied for. A new
     /// finding about them starts at that count.
     pub fn worked_on(&mut self, id: &FindingId, sentences: impl IntoIterator<Item = String>) {
         let count = self.spent.get(id).copied().unwrap_or_default();
@@ -250,9 +296,19 @@ mod tests {
         .with_passage(words)
     }
 
-    fn sent(next: Next) -> Vec<FindingId> {
-        match next {
-            Next::Repair { send, .. } => send.iter().map(ReviewFinding::id).collect(),
+    /// The ids the next repair is sent, each charged as a repair that applied.
+    fn sent(
+        passes: &mut Passes,
+        candidate: &Value,
+        findings: Vec<ReviewFinding>,
+    ) -> Vec<FindingId> {
+        match passes.next(candidate, findings) {
+            Next::Repair { send, .. } => {
+                for finding in &send {
+                    passes.charge(finding, Outcome::Applied);
+                }
+                send.iter().map(ReviewFinding::id).collect()
+            }
             Next::Done(_) => panic!("expected a repair"),
         }
     }
@@ -276,11 +332,20 @@ mod tests {
     fn a_pass_that_fixes_something_continues_even_with_its_wording_rewritten() {
         let mut passes = Passes::default();
         assert_eq!(
-            sent(passes.next(&Value::Null, vec![section(0, "A"), section(1, "B")])).len(),
+            sent(
+                &mut passes,
+                &Value::Null,
+                vec![section(0, "A"), section(1, "B")]
+            )
+            .len(),
             2
         );
         // Section 1 is fixed; section 0 survives one repair, reworded.
-        let again = sent(passes.next(&Value::Null, vec![section(0, "A, said differently")]));
+        let again = sent(
+            &mut passes,
+            &Value::Null,
+            vec![section(0, "A, said differently")],
+        );
         assert_eq!(again, vec![section(0, "").id()]);
         // Fixed at the second repair: the lesson publishes clean.
         assert!(done(passes.next(&Value::Null, vec![])).is_empty());
@@ -289,14 +354,23 @@ mod tests {
     #[test]
     fn a_finding_that_survives_two_repairs_is_set_aside_while_others_continue() {
         let mut passes = Passes::default();
-        sent(passes.next(
+        sent(
+            &mut passes,
             &Value::Null,
             vec![section(0, "A"), section(1, "B"), section(2, "C")],
-        ));
-        sent(passes.next(&Value::Null, vec![section(0, "A"), section(1, "B")]));
+        );
+        sent(
+            &mut passes,
+            &Value::Null,
+            vec![section(0, "A"), section(1, "B")],
+        );
         // B was fixed, so the review goes on; A survived two repairs and
         // stops; D is new and is repaired.
-        let third = sent(passes.next(&Value::Null, vec![section(0, "A"), section(3, "D")]));
+        let third = sent(
+            &mut passes,
+            &Value::Null,
+            vec![section(0, "A"), section(3, "D")],
+        );
         assert_eq!(third, vec![section(3, "").id()]);
         // D fixed; A is the only finding left and it stays set aside.
         assert_eq!(
@@ -308,11 +382,16 @@ mod tests {
     #[test]
     fn a_repair_that_fixes_nothing_stops_only_the_findings_it_was_sent() {
         let mut passes = Passes::default();
-        sent(passes.next(&Value::Null, vec![section(0, "A"), section(1, "B")]));
-        let third = sent(passes.next(
+        sent(
+            &mut passes,
+            &Value::Null,
+            vec![section(0, "A"), section(1, "B")],
+        );
+        let third = sent(
+            &mut passes,
             &Value::Null,
             vec![section(0, "A"), section(1, "B"), section(2, "C, new")],
-        ));
+        );
         assert_eq!(third, vec![section(2, "").id()]);
         assert_eq!(
             done(passes.next(&Value::Null, vec![section(0, "A"), section(1, "B")])),
@@ -325,10 +404,10 @@ mod tests {
         let mut passes = Passes::default();
         let findings: Vec<_> = (0..9).map(|i| section(i, "x")).collect();
         assert_eq!(
-            sent(passes.next(&Value::Null, findings.clone())).len(),
+            sent(&mut passes, &Value::Null, findings.clone()).len(),
             PER_REPAIR
         );
-        let second = sent(passes.next(&Value::Null, findings));
+        let second = sent(&mut passes, &Value::Null, findings);
         assert_eq!(
             second,
             vec![
@@ -355,7 +434,7 @@ mod tests {
         assert!(passes.sent_at_repair.is_empty());
         // Nothing was kept, so the finding gets a repair as a new one.
         assert_eq!(
-            sent(passes.next(&Value::Null, vec![section(3, "x")])),
+            sent(&mut passes, &Value::Null, vec![section(3, "x")]),
             vec![section(3, "").id()]
         );
     }
@@ -364,9 +443,9 @@ mod tests {
     fn an_unusable_repair_stops_what_it_was_sent_and_leaves_the_rest() {
         let mut passes = Passes::default();
         let findings: Vec<_> = (0..8).map(|i| section(i, "x")).collect();
-        sent(passes.next(&Value::Null, findings.clone()));
+        sent(&mut passes, &Value::Null, findings.clone());
         assert!(passes.stop_sent());
-        let next = sent(passes.next(&Value::Null, findings));
+        let next = sent(&mut passes, &Value::Null, findings);
         assert_eq!(next, vec![section(6, "").id(), section(7, "").id()]);
         assert!(!passes.stop_sent());
     }
@@ -374,8 +453,12 @@ mod tests {
     #[test]
     fn state_saved_mid_review_keeps_what_stopped() {
         let mut passes = Passes::default();
-        sent(passes.next(&Value::Null, vec![section(0, "A")]));
-        sent(passes.next(&Value::Null, vec![section(0, "A"), section(1, "B")]));
+        sent(&mut passes, &Value::Null, vec![section(0, "A")]);
+        sent(
+            &mut passes,
+            &Value::Null,
+            vec![section(0, "A"), section(1, "B")],
+        );
         let saved = passes.saved().unwrap();
         let mut resumed = Passes::default();
         resumed.resume(&saved);
@@ -391,8 +474,11 @@ mod tests {
         };
         assert_eq!(send.len(), PER_REPAIR);
         assert_eq!(carried.len(), 3);
+        for finding in &send {
+            passes.charge(finding, Outcome::Applied);
+        }
         // One fixed: the carried three are sent before any second attempt.
-        let second = sent(passes.next(&Value::Null, findings[1..].to_vec()));
+        let second = sent(&mut passes, &Value::Null, findings[1..].to_vec());
         assert_eq!(
             &second[..3],
             &[
@@ -445,10 +531,11 @@ mod tests {
     #[test]
     fn two_findings_with_their_own_ids_at_one_place_stay_two() {
         let mut passes = Passes::default();
-        let both = sent(passes.next(
+        let both = sent(
+            &mut passes,
             &Value::Null,
             vec![own(0, "A first sentence."), own(0, "A second sentence.")],
-        ));
+        );
         assert_eq!(both.len(), 2);
     }
 
@@ -457,11 +544,11 @@ mod tests {
         let candidate = serde_json::json!({"blocks":[{"body":"A first sentence. A second sentence."}],"questions":[]});
         let mut passes = Passes::default();
         let first = own(0, "A first sentence.");
-        sent(passes.next(&candidate, vec![first.clone()]));
+        sent(&mut passes, &candidate, vec![first.clone()]);
         passes.worked_on(&first.id(), ["A second sentence.".to_owned()]);
         let second = own(0, "A second sentence.");
         assert_eq!(
-            sent(passes.next(&candidate, vec![second.clone()])),
+            sent(&mut passes, &candidate, vec![second.clone()]),
             vec![second.id()]
         );
         assert_eq!(
@@ -480,8 +567,12 @@ mod tests {
         ],"questions":[]});
         let mut passes = Passes::default();
         let first = own(0, "A first sentence.");
-        sent(passes.next(&candidate, vec![first.clone(), own(1, "A filler.")]));
-        sent(passes.next(&candidate, vec![first.clone()]));
+        sent(
+            &mut passes,
+            &candidate,
+            vec![first.clone(), own(1, "A filler.")],
+        );
+        sent(&mut passes, &candidate, vec![first.clone()]);
         passes.worked_on(&first.id(), ["A second sentence.".to_owned()]);
         let second = own(2, "A second sentence.");
         assert_eq!(
@@ -528,5 +619,64 @@ mod tests {
         assert_eq!(merged(vec![about("One."), about("Two.")]), None);
         assert_eq!(merged(vec![about("One."), section(0, "Other.")]), None);
         assert_eq!(merged(vec![section(0, "Other."), about("One.")]), None);
+    }
+
+    #[test]
+    fn a_finding_that_was_sent_is_not_charged_until_the_repair_is_settled() {
+        let mut passes = Passes::default();
+        let Next::Repair { send, .. } = passes.next(&Value::Null, vec![section(0, "A")]) else {
+            panic!("expected a repair");
+        };
+        assert!(passes.spent.is_empty());
+        passes.charge(&send[0], Outcome::Unnamed);
+        assert_eq!(passes.spent.get(&send[0].id()), Some(&1));
+        assert_eq!(passes.last.get(&send[0].id()), Some(&Outcome::Unnamed));
+    }
+
+    #[test]
+    fn a_second_attempt_is_told_what_became_of_the_first() {
+        let mut passes = Passes::default();
+        let finding = section(0, "A");
+        let id = finding.id();
+        assert_eq!(passes.last_attempt(&id), None);
+        let told = |passes: &mut Passes, outcome: Outcome| {
+            passes.charge(&finding, outcome);
+            passes.last_attempt(&id).unwrap()
+        };
+        assert_eq!(
+            told(&mut passes, Outcome::Applied),
+            "The last repair's edits for this finding were applied and the defect is still there."
+        );
+        assert_eq!(
+            told(
+                &mut passes,
+                Outcome::NotApplied(vec!["edit 0 first.".into(), "edit 1 second.".into()])
+            ),
+            "The last repair's edits for this finding could not be applied: edit 0 first. edit 1 second."
+        );
+        assert_eq!(
+            told(&mut passes, Outcome::Reverted),
+            "The last repair's edits for this finding changed a sentence that must stay as it is; they were put back."
+        );
+        assert_eq!(
+            told(&mut passes, Outcome::Unnamed),
+            "The last repair gave no edit for this finding."
+        );
+        assert_eq!(
+            told(&mut passes, Outcome::Unusable("it was empty.".into())),
+            "The last repair's answer could not be used: it was empty."
+        );
+    }
+
+    #[test]
+    fn what_became_of_the_last_attempt_survives_a_saved_review() {
+        let mut passes = Passes::default();
+        let finding = section(0, "A");
+        passes.charge(&finding, Outcome::Reverted);
+        let saved = passes.saved().unwrap();
+        let mut resumed = Passes::default();
+        resumed.resume(&saved);
+        assert_eq!(resumed.last.get(&finding.id()), Some(&Outcome::Reverted));
+        assert_eq!(resumed.spent.get(&finding.id()), Some(&1));
     }
 }

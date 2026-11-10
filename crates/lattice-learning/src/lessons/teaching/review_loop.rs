@@ -9,7 +9,6 @@ use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
 };
-use serde_json::json;
 
 /// The reviewed material, and what the repairs could not settle: a lesson
 /// publishes with these waiting for the user.
@@ -83,10 +82,13 @@ pub(super) async fn review_material(
             authoring: &authoring,
             candidate: &value,
             quote_checks: &quote_checks,
-            issues: json!(send
+            issues: send
                 .iter()
-                .map(|finding| finding.note.as_str())
-                .collect::<Vec<_>>()),
+                .map(|finding| repair::Issue {
+                    finding,
+                    last_attempt: subject.last_attempt(finding),
+                })
+                .collect(),
             edits,
             wording: subject.wording(),
             output_tokens,

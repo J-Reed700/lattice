@@ -403,8 +403,8 @@ fn findings(
         };
         let mut digests = [subject_of(one), subject_of(other)];
         digests.sort();
-        found.push(
-            ReviewFinding::plan(
+        let both_open = !guarded(first.part, one) && !guarded(second.part, other);
+        let finding = ReviewFinding::plan(
                 PlanCheck::Contradiction,
                 digests.join("-"),
                 at.site,
@@ -419,8 +419,12 @@ fn findings(
                 label(first.part.site),
                 label(second.part.site)
             ))
-            .with_passage(passage),
-        );
+            .with_passage(passage);
+        found.push(if both_open {
+            finding.with_also(second.part.site)
+        } else {
+            finding
+        });
     }
     for pointer in &answer.unseen {
         for hit in hits(parts, &pointer.quote) {

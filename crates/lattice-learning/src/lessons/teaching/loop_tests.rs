@@ -595,17 +595,10 @@ fn a_finding_with_no_passage_about_a_released_sentence_changes_that_sentence_and
     assert!(
         protected::on_protected(&previous, std::slice::from_ref(&finding), &protected).is_empty()
     );
-    let (kept, unchanged) = protected::confine_review(
-        &previous,
-        &repaired.to_string(),
-        std::slice::from_ref(&finding),
-        &protected,
-    )
-    .unwrap();
+    let touched = std::collections::BTreeMap::from([("/blocks/0".to_owned(), vec![&finding])]);
+    let kept = protected::confine_review(&previous, &repaired, &touched, &protected).unwrap();
 
-    let kept: Value = serde_json::from_str(&kept.expect("the repair is kept")).unwrap();
     assert_eq!(kept["blocks"][0]["body"], repaired["blocks"][0]["body"]);
-    assert!(unchanged.is_empty());
 }
 
 #[tokio::test]
@@ -765,9 +758,12 @@ async fn a_short_review_issue_is_checked_and_repaired_not_dropped() -> Result<()
     assert!(reviewed.set_aside.is_empty(), "{:?}", reviewed.set_aside);
     let candidate: Value = serde_json::from_str(&reviewed.candidate)?;
     assert_eq!(candidate["blocks"][0]["title"], "Corrected example");
-    let prompts = model.prompts.lock().unwrap();
-    assert_eq!(prompts.len(), 4);
-    assert!(prompts[2].contains("\"issuesToFix\":[\"Wrong.\"]"));
+    assert_eq!(model.prompts.lock().unwrap().len(), 4);
+    let asked = repair_requests(&model);
+    assert_eq!(asked.len(), 1);
+    let entries = asked[0]["issuesToFix"].as_array().unwrap();
+    assert_eq!(entries.len(), 1);
+    assert_eq!(entries[0]["note"], "Wrong.");
     Ok(())
 }
 
@@ -826,10 +822,14 @@ async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Resul
         .iter()
         .find(|prompt| prompt.contains("issuesToFix"))
         .unwrap();
-    assert!(
-        sent.contains(&format!("\"issuesToFix\":{}", json!(issues))),
-        "{sent}"
-    );
+    let request: Value = serde_json::from_str(sent.rsplit("\n\n").next().unwrap())?;
+    let notes: Vec<&str> = request["issuesToFix"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|entry| entry["note"].as_str().unwrap())
+        .collect();
+    assert_eq!(notes, issues, "{sent}");
     Ok(())
 }
 
@@ -1236,169 +1236,14 @@ fn a_review_repair_with_no_passage_cannot_rewrite_the_kind_or_quote() -> Result<
     repaired["blocks"][0]["kind"] = json!("example");
     let finding =
         ReviewFinding::reviewer(Some(FindingSite::Section(0)), "improve the second sentence");
-    let (confined, _) =
-        protected::confine_review(&previous, &repaired.to_string(), &[finding], &protected)?;
-    let confined: Value = serde_json::from_str(&confined.unwrap())?;
+    let touched = std::collections::BTreeMap::from([("/blocks/0".to_owned(), vec![&finding])]);
+    let confined = protected::confine_review(&previous, &repaired, &touched, &protected)?;
     assert_eq!(
         confined["blocks"][0]["quote"],
         previous["blocks"][0]["quote"]
     );
     assert_eq!(confined["blocks"][0]["kind"], previous["blocks"][0]["kind"]);
     assert_eq!(confined["blocks"][0]["body"], repaired["blocks"][0]["body"]);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_edit_was_reverted(
-) -> Result<()> {
-    use crate::lessons::content_verification::Protected;
-    const V1: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
-    const V2: &str = "Their inner membrane folds into cristae that enlarge its surface.";
-    let block0_body = format!(
-        "{V1} {V2} They carry their own circular DNA, passed down from the mother, and divide on their own whenever the cell needs more energy.\n\nFor example, a muscle cell that works harder grows fewer mitochondria over time.\n\nTry it yourself: find an electron micrograph of a muscle cell, count the mitochondria you can see in one part of it, then count them in a micrograph of a skin cell taken at the same scale, and write down which cell holds more of them and why you think it does."
-    );
-    let block1_body = "The ribosome is a complex molecular machine found within all living cells that serves as the site of biological protein synthesis. Ribosomes link amino acids together in the specified order.";
-    let candidate = json!({
-        "blocks": [
-            {
-                "kind": "explanation",
-                "title": "Block 0",
-                "body": block0_body,
-                "rubric": [],
-                "sourceIndex": 0,
-                "quote": EXCERPT,
-            },
-            {
-                "kind": "explanation",
-                "title": "Block 1",
-                "body": block1_body,
-                "rubric": [],
-                "sourceIndex": 0,
-                "quote": EXCERPT,
-            }
-        ],
-        "questions": []
-    });
-    let protected = vec![Protected {
-        unit: 0,
-        field: "body".into(),
-        quote: V1.into(),
-        released: false,
-    }];
-
-    let pass1_review = json!({
-        "issues": [],
-        "blockChecks": crate::teaching_review::fixture_checks(vec![
-            json!({
-                "index": 0,
-                "passageId": "section-0-passage-1",
-                "finding": "The example contradicts the rule on mitochondrial division.",
-                "hasDefect": true,
-            }),
-            json!({
-                "index": 1,
-                "passageId": "section-1-passage-0",
-                "finding": "Block 1 needs a clearer description.",
-                "hasDefect": true,
-            }),
-        ])
-    })
-    .to_string();
-
-    let pass1_evidence = json!({"decisions": [
-        {
-            "issueId": "issue-0",
-            "verdict": "actionable",
-            "basis": "internal_conflict",
-            "evidenceIds": ["blocks-0"],
-            "partId": "blocks-0",
-            "requirementId": null,
-            "reason": "Section 0 defect."
-        },
-        {
-            "issueId": "issue-1",
-            "verdict": "actionable",
-            "basis": "internal_conflict",
-            "evidenceIds": ["blocks-1"],
-            "partId": "blocks-1",
-            "requirementId": null,
-            "reason": "Section 1 defect."
-        }
-    ]})
-    .to_string();
-
-    let repair = json!({
-        "edits": [
-            {
-                "path": "/blocks/0/body",
-                "before": block0_body,
-                "after": block0_body.replace(V1, "Mitochondria make ATP directly."),
-            },
-            {
-                "path": "/blocks/1/body",
-                "before": "Ribosomes link amino acids together in the specified order.",
-                "after": "Ribosomes link amino acids together in the order messenger RNA specifies.",
-            }
-        ]
-    })
-    .to_string();
-
-    let pass2_review = json!({
-        "issues": [],
-        "blockChecks": crate::teaching_review::fixture_checks(vec![
-            json!({
-                "index": 0,
-                "passageId": "section-0-passage-1",
-                "finding": "The example contradicts the rule on mitochondrial division.",
-                "hasDefect": true,
-            }),
-            json!({
-                "index": 1,
-                "passageId": "section-1-passage-0",
-                "finding": "Block 1 is now fine.",
-                "hasDefect": false,
-            }),
-        ])
-    })
-    .to_string();
-
-    let pass2_evidence = json!({"decisions": [
-        {
-            "issueId": "issue-0",
-            "verdict": "actionable",
-            "basis": "internal_conflict",
-            "evidenceIds": ["blocks-0"],
-            "partId": "blocks-0",
-            "requirementId": null,
-            "reason": "Section 0 defect."
-        }
-    ]})
-    .to_string();
-
-    let model = model(vec![
-        pass1_review,
-        pass1_evidence,
-        repair,
-        pass2_review,
-        pass2_evidence,
-    ]);
-
-    let reviewed = review_protecting(&model, &candidate, &protected).await?;
-
-    assert_eq!(reviewed.set_aside.len(), 1);
-    assert_eq!(
-        reviewed.set_aside[0].finding.place().id(),
-        "teaching:section-0"
-    );
-
-    let after: Value = serde_json::from_str(&reviewed.candidate)?;
-    assert_eq!(after["blocks"][0]["body"], block0_body);
-    assert_eq!(
-        after["blocks"][1]["body"],
-        "The ribosome is a complex molecular machine found within all living cells that serves as the site of biological protein synthesis. Ribosomes link amino acids together in the order messenger RNA specifies."
-    );
-
-    assert_eq!(model.prompts.lock().unwrap().len(), 5);
     Ok(())
 }
 
@@ -1449,17 +1294,25 @@ fn better_idea(index: usize, finding: &str) -> Value {
 }
 
 fn parts_review(count: usize, defective: &[usize]) -> String {
+    let at_first: Vec<(usize, usize)> = defective.iter().map(|part| (*part, 0)).collect();
+    parts_review_at(count, &at_first)
+}
+
+/// A review whose defective parts are `(part, paragraph)`: the paragraph
+/// each one's finding is about.
+fn parts_review_at(count: usize, defective: &[(usize, usize)]) -> String {
     let checks: Vec<Value> = (0..count)
         .map(|index| {
+            let found = defective.iter().find(|(part, _)| *part == index);
             json!({
                 "index": index,
-                "passageId": format!("section-{index}-passage-0"),
-                "finding": if defective.contains(&index) {
+                "passageId": format!("section-{index}-passage-{}", found.map_or(0, |(_, paragraph)| *paragraph)),
+                "finding": if found.is_some() {
                     "The first idea is wrong."
                 } else {
                     "Nothing is wrong here."
                 },
-                "hasDefect": defective.contains(&index),
+                "hasDefect": found.is_some(),
             })
         })
         .collect();
@@ -1607,12 +1460,9 @@ async fn a_finding_no_edit_named_is_told_so_on_its_second_attempt() -> Result<()
 #[tokio::test]
 async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
     use crate::lessons::content_verification::Protected;
-    const V1: &str = "Mitochondria produce most of a cell's ATP through oxidative phosphorylation.";
-    const V2: &str = "Their inner membrane folds into cristae that enlarge its surface.";
-    let block0_body =
-        format!("{V1} {V2} They carry their own circular DNA, passed down from the mother.");
-    let block1_body =
-        "Part B states one plain fact about the tool. Part B then gives a first idea.";
+    const KEPT: &str = "Part A states one plain fact about the tool.";
+    let block0_body = format!("{KEPT}\n\nPart A then gives a first idea.");
+    let block1_body = part_body(1);
     let candidate = json!({
         "blocks": [
             {
@@ -1637,23 +1487,23 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
     let protected = vec![Protected {
         unit: 0,
         field: "body".into(),
-        quote: V1.into(),
+        quote: KEPT.into(),
         released: false,
     }];
     let touches_the_protected_sentence = json!({
         "finding": "reviewer/section-0",
         "path": "/blocks/0/body",
-        "before": block0_body,
-        "after": block0_body.replace(V1, "Mitochondria make ATP directly."),
+        "before": KEPT,
+        "after": "Part A states a different fact about the tool.",
     });
     let model = model(vec![
-        parts_review(2, &[0, 1]),
+        parts_review_at(2, &[(0, 1), (1, 0)]),
         parts_evidence(&[0, 1]),
         edits_answer(vec![
             touches_the_protected_sentence.clone(),
             better_idea(1, "reviewer/section-1"),
         ]),
-        parts_review(2, &[0]),
+        parts_review_at(2, &[(0, 1)]),
         parts_evidence(&[0]),
         edits_answer(vec![touches_the_protected_sentence]),
     ]);
@@ -2021,9 +1871,16 @@ async fn a_repair_s_answer_is_kept_as_it_was_given() -> Result<()> {
     .await?;
     let kept = kept_repairs(&pool, &job, &lesson_id).await;
     assert!(kept.iter().all(|row| row["answer"].is_string()), "{kept:?}");
-    let first = retitle("Corrected example");
+    let first = json!({"edits":[{"finding":"reviewer/section-0","path":"/blocks/0/title","before":"Example","after":"Corrected example"}]});
+    let given = |row: &Value| {
+        row["answer"]
+            .as_str()
+            .and_then(|answer| serde_json::from_str::<Value>(answer).ok())
+    };
     assert_eq!(
-        kept.iter().filter(|row| row["answer"] == first).count(),
+        kept.iter()
+            .filter(|row| given(row).as_ref() == Some(&first))
+            .count(),
         1,
         "{kept:?}"
     );

@@ -68,6 +68,16 @@ impl FindingSite {
         }
     }
 
+    /// The pointer of the block or question this site is, or none for the
+    /// whole lesson.
+    pub fn pointer(self) -> Option<String> {
+        match self {
+            Self::Lesson => None,
+            Self::Section(index) => Some(format!("/blocks/{index}")),
+            Self::Question(index) => Some(format!("/questions/{index}")),
+        }
+    }
+
     /// The site a candidate part names: an evidence ID (`blocks-3`,
     /// `questions-1`) or a quotation check's path (`blocks[3]`).
     pub fn of_part(id: &str) -> Option<Self> {
@@ -238,6 +248,9 @@ pub struct ReviewFinding {
     /// The whole sentence a sentence-level quotation finding is about.
     #[serde(default)]
     pub sentence: Option<String>,
+    /// The second part a finding about two parts is about.
+    #[serde(default)]
+    pub also: Option<FindingSite>,
 }
 
 impl ReviewFinding {
@@ -255,6 +268,7 @@ impl ReviewFinding {
             summary: String::new(),
             passage: None,
             sentence: None,
+            also: None,
         }
     }
 
@@ -331,6 +345,13 @@ impl ReviewFinding {
     /// This finding with the whole `sentence` it is about; none when blank.
     pub fn with_sentence(mut self, sentence: &str) -> Self {
         self.sentence = (!sentence.trim().is_empty()).then(|| sentence.trim().to_owned());
+        self
+    }
+
+    /// This finding also about the part at `site`; no change when that is the
+    /// part it is already at.
+    pub fn with_also(mut self, site: FindingSite) -> Self {
+        self.also = (Some(site) != self.site).then_some(site);
         self
     }
 
@@ -634,6 +655,42 @@ mod tests {
         );
         assert_eq!(FindingSite::of_part("reference-0"), None);
         assert_eq!(FindingSite::of_part("requirements"), None);
+    }
+
+    #[test]
+    fn a_site_is_a_pointer_to_its_block_or_question() {
+        assert_eq!(
+            FindingSite::Section(3).pointer().as_deref(),
+            Some("/blocks/3")
+        );
+        assert_eq!(
+            FindingSite::Question(1).pointer().as_deref(),
+            Some("/questions/1")
+        );
+        assert_eq!(FindingSite::Lesson.pointer(), None);
+    }
+
+    #[test]
+    fn a_finding_is_also_about_a_second_part_only_when_it_is_another_one() {
+        let finding = ReviewFinding::reviewer(Some(FindingSite::Section(1)), "x");
+        assert_eq!(finding.also, None);
+        assert_eq!(
+            finding.clone().with_also(FindingSite::Section(1)).also,
+            None
+        );
+        assert_eq!(
+            finding.with_also(FindingSite::Section(2)).also,
+            Some(FindingSite::Section(2))
+        );
+    }
+
+    #[test]
+    fn a_finding_stored_without_a_second_part_is_read_back() {
+        let finding = ReviewFinding::reviewer(Some(FindingSite::Section(1)), "x");
+        let mut stored = serde_json::to_value(&finding).unwrap();
+        stored.as_object_mut().unwrap().remove("also");
+        let read: ReviewFinding = serde_json::from_value(stored).unwrap();
+        assert_eq!(read, finding);
     }
 
     #[test]
