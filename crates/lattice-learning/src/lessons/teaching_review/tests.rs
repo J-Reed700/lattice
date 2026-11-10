@@ -745,3 +745,39 @@ async fn the_correction_lists_each_retained_issue_by_part_and_note() {
         ])
     );
 }
+
+#[test]
+fn a_schema_that_asks_about_open_findings_has_each_report_say_which_it_continues() {
+    let (_, passages) = review_candidate(&candidate());
+    let with = schema(&[0], &passages, &["reviewer/1", "reviewer/2"]);
+    let choices = json!(["reviewer/1", "reviewer/2", "none"]);
+    assert_eq!(
+        with.pointer("/properties/blockChecks/items/properties/continues/enum"),
+        Some(&choices)
+    );
+    assert!(with["properties"]["blockChecks"]["items"]["required"]
+        .as_array()
+        .unwrap()
+        .contains(&json!("continues")));
+    assert_eq!(
+        with.pointer("/properties/issues/items/properties/continues/enum"),
+        Some(&choices)
+    );
+    assert_eq!(
+        with.pointer("/properties/issues/items/properties/note/minLength"),
+        Some(&json!(1))
+    );
+}
+
+#[test]
+fn a_schema_that_asks_about_nothing_is_the_one_it_was_before_reports_could_continue() {
+    let (_, passages) = review_candidate(&candidate());
+    let expected = json!({"type":"object","additionalProperties":false,"required":["issues","blockChecks"],"properties":{
+        "issues":{"type":"array","items":{"type":"string","minLength":1}},
+        "blockChecks":{"type":"array","items":{"type":"object","additionalProperties":false,"required":["sectionId","passageId","finding","hasDefect"],"properties":{
+            "sectionId":{"type":"string","enum":["section-0"]},
+            "passageId":{"type":"string","enum":passages[0]},
+            "finding":{"type":"string","minLength":1},
+            "hasDefect":{"type":"boolean"}}}}}});
+    assert_eq!(schema(&[0], &passages, &[]), expected);
+}

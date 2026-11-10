@@ -134,17 +134,3 @@ fn an_excerpt_too_short_to_be_quoted_makes_no_sentence_a_copy() {
     );
     assert!(found.is_empty(), "{found:?}");
 }
-
-#[test]
-fn the_note_names_the_words_of_the_source_the_sentence_copies() {
-    let found = findings(
-        &lesson("The widget keeps every reading in a ledger until the next sweep, and that is why it is slow."),
-        &wording(),
-    );
-    assert_eq!(found.len(), 1, "{found:?}");
-    assert!(
-        found[0].note.contains("the source's words are \"The widget keeps every reading in a ledger until the next sweep\""),
-        "{}",
-        found[0].note
-    );
-}

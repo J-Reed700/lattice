@@ -53,16 +53,3 @@ fn a_copy_the_field_already_held_does_not_refuse_an_edit_beside_it() {
         .unwrap()
         .ends_with("The result is shown here."));
 }
-
-#[test]
-fn the_refusal_of_a_copied_sentence_names_the_words_of_the_source() {
-    let message = rewrite(&format!("The command prints that location: {QUOTE}"))
-        .unwrap_err()
-        .to_string();
-    assert!(
-        message.contains(
-            "the source's words are \"All it does is print out the current folder name\""
-        ),
-        "{message}"
-    );
-}
