@@ -17,9 +17,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-use crate::review_findings::{
-    sentences_of, subject_of, FindingId, FindingKey, ReviewFinding, SetAside,
-};
+use crate::review_findings::{sentences_of, subject_of, FindingId, Held, ReviewFinding, SetAside};
 
 /// Findings sent to one repair, as many as one request handles well.
 pub(super) const PER_REPAIR: usize = 6;
@@ -40,11 +38,9 @@ pub(super) enum Next {
 
 #[derive(Default)]
 pub(super) struct Passes {
-    /// Stored findings the user already has, by place (rows from before
-    /// finding ids), for text that has not changed since.
-    held: BTreeSet<FindingKey>,
-    /// Findings held during this review.
-    held_ids: BTreeSet<FindingId>,
+    /// Findings the user already has, for text that has not changed since,
+    /// and findings held during this review.
+    held: Held,
     /// Repairs each finding was sent to, or started with (words an earlier
     /// repair worked on).
     spent: BTreeMap<FindingId, u8>,
@@ -71,7 +67,7 @@ struct Kept {
 }
 
 impl Passes {
-    pub fn new(held: BTreeSet<FindingKey>) -> Self {
+    pub fn new(held: Held) -> Self {
         Self {
             held,
             ..Self::default()
@@ -109,8 +105,8 @@ impl Passes {
     /// The machine no longer repairs this finding.
     fn stopped(&self, finding: &ReviewFinding) -> bool {
         let id = finding.id();
-        self.held_ids.contains(&id)
-            || self.held.contains(&finding.place())
+        self.held.ids.contains(&id)
+            || self.held.places.contains(&finding.place())
             || self.stalled.contains(&id)
             || self.spent.get(&id).copied().unwrap_or_default() >= REPAIRS_PER_FINDING
     }
@@ -118,7 +114,7 @@ impl Passes {
     /// Holds these findings for the user: the machine does not repair them
     /// (a finding about a sentence a live claim stands on, §10.3).
     pub fn hold(&mut self, ids: impl IntoIterator<Item = FindingId>) {
-        self.held_ids.extend(ids);
+        self.held.ids.extend(ids);
     }
 
     /// Whether a deterministic finding still blocks the content review: one
@@ -410,7 +406,10 @@ mod tests {
     #[test]
     fn a_finding_the_user_already_holds_is_never_repaired() {
         let held = section(4, "kept as written");
-        let mut passes = Passes::new(BTreeSet::from([held.place()]));
+        let mut passes = Passes::new(Held {
+            places: BTreeSet::from([held.place()]),
+            ..Held::default()
+        });
         assert!(!passes.repairable(&held));
         assert_eq!(
             done(passes.next(&Value::Null, vec![section(4, "still there")])),
