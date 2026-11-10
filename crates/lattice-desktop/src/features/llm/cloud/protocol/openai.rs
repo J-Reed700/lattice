@@ -8,7 +8,7 @@ use reqwest::{Client, RequestBuilder};
 use serde_json::{json, Value};
 
 use super::listing::{self, is_text_model};
-use super::{api_base, user_parts, EventDecoder, LimitsApi, ModelPage, ProviderProtocol, Rooms};
+use super::{api_base, user_parts, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
 use crate::features::llm::cloud::{field, reply, set_field};
 
 mod stream;
@@ -45,11 +45,11 @@ impl ProviderProtocol for OpenAi {
         model: &str,
         request: &CompletionRequest,
         stream: bool,
-        rooms: &dyn Rooms,
+        ceiling: Option<u32>,
     ) -> Result<Value> {
         let input = input_items(&request.input)?;
         let mut body = json!({"model":model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
-        if let Some(max_output) = rooms.optional() {
+        if let Some(max_output) = ceiling {
             set_field(&mut body, "max_output_tokens", json!(max_output))?;
         }
         if !request.tools.is_empty() {
@@ -152,6 +152,10 @@ impl ProviderProtocol for OpenAi {
 
     fn thinks_unasked(&self, _model: &str) -> bool {
         false
+    }
+
+    fn reasons(&self, model: &str, _request: &CompletionRequest) -> bool {
+        is_reasoning_model(model)
     }
 
     fn requires_ceiling(&self) -> bool {

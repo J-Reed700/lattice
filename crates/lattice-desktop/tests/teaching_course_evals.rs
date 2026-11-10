@@ -172,7 +172,8 @@ impl LLMPort for ConfiguredModel {
                     && saved["model"] == self.model
                     && saved["input"] == json!(messages)
                     && saved["reasoningEffort"] == json!(request.reasoning_effort)
-                    && saved["maxOutputTokens"] == request.effective_max_output_tokens(self.output)
+                    && saved["maxOutputTokens"]
+                        == json!(request.output_ceiling(Some(self.output), false))
                     && saved["finishReason"] == "stop"
                 {
                     println!(
@@ -193,7 +194,7 @@ impl LLMPort for ConfiguredModel {
         let began = Instant::now();
         println!("Model call {number} started");
         let response = self.inner.complete(request).await?;
-        self.save(&format!("call-{number:03}.json"), &json!({"transport":"production llama.cpp streaming adapter","model":self.model,"reasoningEffort":request.reasoning_effort,"maxOutputTokens":request.effective_max_output_tokens(self.output),"latencyMs":began.elapsed().as_millis(),"input":messages,"output":response.text,"finishReason":response.finish_reason,"usage":{"prompt_tokens":response.input_tokens,"completion_tokens":response.output_tokens}}));
+        self.save(&format!("call-{number:03}.json"), &json!({"transport":"production llama.cpp streaming adapter","model":self.model,"reasoningEffort":request.reasoning_effort,"maxOutputTokens":request.output_ceiling(Some(self.output), false),"latencyMs":began.elapsed().as_millis(),"input":messages,"output":response.text,"finishReason":response.finish_reason,"usage":{"prompt_tokens":response.input_tokens,"completion_tokens":response.output_tokens}}));
         println!(
             "Model call {number} completed in {}s ({})",
             began.elapsed().as_secs(),

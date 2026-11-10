@@ -1,7 +1,6 @@
 //! The thinking switch, per-mode sampling, tool choice and server timings.
 use super::*;
 use lattice_core::application::contracts::settings::ThinkingOverrideDto;
-use lattice_core::application::ports::llm_port::RequestSize;
 use lattice_core::application::ports::llm_port::{
     SamplingOverride, ServedTiming, ThinkingMode, ThinkingPolicy, ToolChoice, ToolDefinition,
 };
@@ -369,151 +368,6 @@ fn a_model_that_needs_thinking_thinks_on_every_request_unless_the_user_pins_it_o
     assert_eq!(body["chat_template_kwargs"]["enable_thinking"], false);
 }
 
-/// A server with an 8,192-token window whose tokenizer answers `tokens`, or
-/// does not exist, sizing a request that fixes its answer at `asked` tokens
-/// or, with `None`, takes the room it is given.
-async fn measured(
-    tokens: Option<usize>,
-    content: &str,
-    asked: Option<u32>,
-) -> Result<(u64, RequestSize)> {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-    let server = MockServer::start().await;
-    let reply = match tokens {
-        Some(tokens) => {
-            ResponseTemplate::new(200).set_body_json(json!({"tokens": vec![1; tokens]}))
-        }
-        None => ResponseTemplate::new(404),
-    };
-    Mock::given(method("POST"))
-        .and(path("/tokenize"))
-        .respond_with(reply)
-        .mount(&server)
-        .await;
-    let settings = LLMSettingsDto::default();
-    let config = ServerConfig {
-        model: "laguna".into(),
-        generation: GenerationConfig::from_settings(&settings),
-        context_window: 8192,
-        stall_timeout: Duration::from_secs(30),
-        supports_tools: false,
-        model_thinking: ThinkingPolicy::default(),
-        prefill_guard: false,
-        vision: None,
-    };
-    let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
-    let (body, size) = client
-        .measured_body(&CompletionRequest {
-            input: user(content),
-            max_output_tokens: asked,
-            ..Default::default()
-        })
-        .await?;
-    Ok((body["max_tokens"].as_u64().unwrap(), size))
-}
-
-#[tokio::test]
-async fn a_prompt_the_estimate_overcounts_keeps_the_output_it_asked_for() {
-    let long = "word ".repeat(8_000);
-    // The server counts 2,000 tokens, so 2,000 more still fit.
-    let (reserved, size) = measured(Some(2_000), &long, Some(2_000)).await.unwrap();
-    assert_eq!(reserved, 2_000);
-    assert!(size.counted_exactly);
-}
-
-#[tokio::test]
-async fn an_answer_the_window_cannot_hold_is_cut_to_the_room_left_not_refused() {
-    let long = "word ".repeat(8_000);
-    // The server counts 6,500 tokens and the framing 24 more: the answer gets
-    // the 1,668 left, not the 2,000 asked.
-    let (reserved, size) = measured(Some(6_500), &long, Some(2_000)).await.unwrap();
-    assert_eq!(reserved, 1_668);
-    assert!(size.counted_exactly);
-    // Only a prompt that fills the window is refused.
-    for (tokens, counted) in [(Some(8_200), "(counted exactly)"), (None, "(estimated)")] {
-        let refused = measured(tokens, &long, Some(2_000)).await.unwrap_err();
-        assert!(
-            matches!(
-                refused,
-                AppError::PromptExceedsWindow { window: 8_192, counted_exactly, .. }
-                    if counted_exactly == tokens.is_some()
-            ),
-            "{refused}"
-        );
-        let told = refused.to_string();
-        for expected in [
-            counted,
-            "leaves no room for an answer",
-            "configured context window is 8192",
-        ] {
-            assert!(told.contains(expected), "{told}");
-        }
-    }
-}
-
-#[tokio::test]
-async fn a_server_that_cannot_count_is_not_refused_on_the_reservations_margin() {
-    // About 6,000 tokens at four characters a token: the margin reads 9,000,
-    // past the 8,192 window; the plain estimate leaves room.
-    let prose = "word ".repeat(4_800);
-    let (reserved, size) = measured(None, &prose, Some(2_000)).await.unwrap();
-    assert_eq!(reserved, 2_000);
-    assert!(!size.counted_exactly);
-    let (reserved, size) = measured(None, &prose, None).await.unwrap();
-    assert_eq!(size.prompt_tokens + reserved as usize, 8_192);
-    assert!(!size.counted_exactly);
-}
-
-#[tokio::test]
-async fn an_open_answer_takes_the_room_the_prompt_leaves_and_never_more() {
-    let long = "word ".repeat(8_000);
-    // The estimate leaves nothing; the exact count leaves 2,168 of the 8,192.
-    let (reserved, size) = measured(Some(6_000), &long, None).await.unwrap();
-    assert_eq!(size.prompt_tokens + reserved as usize, 8_192);
-    assert!(size.counted_exactly);
-    // A prompt that fills the window leaves no room, and is refused.
-    let refused = measured(Some(8_192), &long, None).await.unwrap_err();
-    assert!(
-        refused.to_string().contains("leaves no room for an answer"),
-        "{refused}"
-    );
-}
-
-#[tokio::test]
-async fn a_prompt_the_estimate_fits_is_not_counted_again() {
-    use wiremock::matchers::path;
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-    let server = MockServer::start().await;
-    Mock::given(path("/tokenize"))
-        .respond_with(ResponseTemplate::new(200))
-        .expect(0)
-        .mount(&server)
-        .await;
-    let settings = LLMSettingsDto::default();
-    let config = ServerConfig {
-        model: "laguna".into(),
-        generation: GenerationConfig::from_settings(&settings),
-        context_window: 8192,
-        stall_timeout: Duration::from_secs(30),
-        supports_tools: false,
-        model_thinking: ThinkingPolicy::default(),
-        prefill_guard: false,
-        vision: None,
-    };
-    let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
-    let (body, size) = client
-        .measured_body(&CompletionRequest {
-            input: user("A short question."),
-            max_output_tokens: Some(2_000),
-            ..Default::default()
-        })
-        .await
-        .unwrap();
-    assert_eq!(body["max_tokens"], 2_000);
-    assert!(!size.counted_exactly);
-}
-
 /// One 400 KB picture from the user, costing `tokens`, before `text`.
 fn picture_request(role: &str, text: &str, tokens: u32) -> CompletionRequest {
     use lattice_core::application::ports::llm_port::{ContentPart, ImagePart};
@@ -578,9 +432,12 @@ fn a_pictures_bytes_never_count_as_prompt_text() {
     let client = seeing(client());
     let request = picture_request("user", "What is this?", 1_282);
     // 400 KB of base64 read as text would be 100,000 tokens and leave nothing.
-    let window = client.config.context_window as u32;
-    let room = client.output_room_for(&request.input, 4_096);
-    assert_eq!(room, 4_096.min(window.saturating_sub(1_300)));
+    let size = client.request_size(&request);
+    assert!(
+        (1_282..1_300).contains(&size.prompt_tokens),
+        "{}",
+        size.prompt_tokens
+    );
     // The prefill allowance adds the picture's declared tokens, not its bytes.
     let allowance = retry::prefill_allowance(&request.input);
     assert_eq!(
@@ -590,48 +447,34 @@ fn a_pictures_bytes_never_count_as_prompt_text() {
     );
 }
 
-#[tokio::test]
-async fn the_exact_count_adds_the_pictures_and_a_refusal_names_them() {
-    use wiremock::matchers::{method, path};
-    use wiremock::{Mock, MockServer, ResponseTemplate};
-    let server = MockServer::start().await;
-    Mock::given(method("POST"))
-        .and(path("/tokenize"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(json!({"tokens": vec![1; 1_000]})))
-        .mount(&server)
-        .await;
-    let settings = LLMSettingsDto::default();
-    let config = ServerConfig {
-        model: "qwen-vl".into(),
-        generation: GenerationConfig::from_settings(&settings),
-        context_window: 8192,
-        stall_timeout: Duration::from_secs(30),
-        supports_tools: false,
-        model_thinking: ThinkingPolicy::default(),
-        prefill_guard: false,
-        vision: Some(lattice_core::domain::models::vision::VisionPreset::Qwen25Vl.geometry()),
+#[test]
+fn the_ceiling_sent_is_the_one_the_shared_rule_settles_on() {
+    let client = client();
+    let capped = CompletionRequest {
+        input: user("hi"),
+        max_output_tokens: Some(512),
+        ..Default::default()
     };
-    let client = LlamaCppLlm::connect(&server.uri(), "token", config).unwrap();
-    // The estimate's margin puts 6,000 text tokens at 9,000; the server counts
-    // 1,000, plus framing, plus the picture's 5,000.
-    let request = CompletionRequest {
-        max_output_tokens: Some(2_000),
-        ..picture_request("user", &"x".repeat(24_000), 5_000)
+    assert_eq!(client.body(&capped).unwrap()["max_tokens"], 512);
+    let open = CompletionRequest {
+        input: user("hi"),
+        ..Default::default()
     };
-    let (_, size) = client.measured_body(&request).await.unwrap();
-    assert!(size.counted_exactly);
-    assert_eq!(size.prompt_tokens, 1_000 + 8 + 16 + 5_000);
-    assert_eq!((size.image_tokens, size.image_count), (5_000, 1));
-    let refused = client
-        .measured_body(&CompletionRequest {
-            max_output_tokens: Some(2_000),
-            ..picture_request("user", &"x".repeat(24_000), 7_200)
-        })
-        .await
-        .unwrap_err()
-        .to_string();
-    assert!(
-        refused.contains("text counted exactly; 7200 tokens for 1 picture"),
-        "{refused}"
+    let configured = client.model_output_ceiling().unwrap();
+    assert_eq!(client.body(&open).unwrap()["max_tokens"], configured);
+    // The room the scheduler measured cuts it.
+    let cut = CompletionRequest {
+        window_fit: Some(lattice_core::application::ports::llm_port::WindowFit {
+            prompt_tokens: 8_000,
+            counted_exactly: true,
+            room: 100,
+        }),
+        ..open
+    };
+    assert_eq!(client.body(&cut).unwrap()["max_tokens"], 100);
+    let size = client.request_size(&cut);
+    assert_eq!(
+        (size.prompt_tokens, size.counted_exactly, size.output_tokens),
+        (8_000, true, 100)
     );
 }

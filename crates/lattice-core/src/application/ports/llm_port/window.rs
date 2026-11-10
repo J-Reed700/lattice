@@ -2,6 +2,18 @@
 
 use crate::shared::error::AppError;
 
+/// How a prompt measured against the window, and the room it left for the
+/// answer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct WindowFit {
+    /// The prompt's tokens, pictures included.
+    pub prompt_tokens: usize,
+    /// Whether the backend's tokenizer counted the prompt's text.
+    pub counted_exactly: bool,
+    /// Tokens the window has left after the prompt.
+    pub room: u32,
+}
+
 /// What one request asks of the context window.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub struct RequestSize {

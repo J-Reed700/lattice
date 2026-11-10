@@ -15,7 +15,7 @@ use lattice_core::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
         invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse,
-        ContentPart, LLMPort, ThinkingPolicy,
+        ContentPart, LLMPort, ThinkingMode, ThinkingPolicy,
     },
 };
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -267,8 +267,7 @@ impl LlamaCppLlm {
         }
         let tokenizer =
             is_llama_server.then(|| ServerTokenizer::new(self.client.clone(), self.server_root()));
-        let output_limit = u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX);
-        let scheduled = ScheduledLlm::new(Arc::new(self), scheduler, Some(output_limit));
+        let scheduled = ScheduledLlm::new(Arc::new(self), scheduler);
         Arc::new(match tokenizer {
             Some(tokenizer) => scheduled.with_tokenizer(tokenizer),
             None => scheduled,
@@ -408,6 +407,12 @@ impl LLMPort for LlamaCppLlm {
     }
     fn max_context_tokens(&self) -> usize {
         self.config.context_window
+    }
+    fn model_output_ceiling(&self) -> Option<u32> {
+        Some(u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX))
+    }
+    fn reasons_for(&self, request: &CompletionRequest) -> bool {
+        self.thinking_mode(request) == ThinkingMode::On
     }
     /// A crashed bundled server leaves this client cached with a dead port;
     /// saying so lets the role cache drop it and start a fresh server.

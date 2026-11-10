@@ -355,7 +355,7 @@ fn scheduled_judge(llm: Arc<ScriptedLlm>, slots: usize) -> ClaimJudge {
         "judge-test",
         BackendCapacity::concurrent(slots),
     ));
-    ClaimJudge::new(Arc::new(ScheduledLlm::new(llm, scheduler, Some(4096))) as Arc<dyn LLMPort>)
+    ClaimJudge::new(Arc::new(ScheduledLlm::new(llm, scheduler)) as Arc<dyn LLMPort>)
 }
 
 /// A slow judge is not a failed one: three two-minute calls in a row are all

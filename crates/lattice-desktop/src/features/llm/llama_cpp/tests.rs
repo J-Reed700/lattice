@@ -1694,31 +1694,6 @@ fn a_long_prompt_gets_a_batch_of_prefill_on_top_of_the_floor() {
     );
 }
 
-#[test]
-fn the_estimated_reservation_never_reaches_past_the_window() {
-    let client = LlamaCppLlm::connect(
-        "http://127.0.0.1:9",
-        "token",
-        ServerConfig {
-            context_window: 8_192,
-            ..server_config(true)
-        },
-    )
-    .unwrap();
-    let prompt = |chars: usize| {
-        vec![CompletionInput::Message {
-            role: "user".into(),
-            content: "x".repeat(chars),
-        }]
-    };
-    // A prompt the estimate puts past the window leaves no room at all.
-    assert_eq!(client.output_room_for(&prompt(30_000), 4_096), 0);
-    assert_eq!(client.output_room_for(&prompt(30_000), 512), 0);
-    // A small prompt gets what it asked for, up to the room left.
-    assert_eq!(client.output_room_for(&prompt(100), 4_096), 4_096);
-    assert_eq!(client.output_room_for(&prompt(100), 512), 512);
-}
-
 /// A server failure the server reports in its HTTP status, with its words.
 fn server_failure(status: u16, message: &str) -> ResponseTemplate {
     ResponseTemplate::new(status)
@@ -1879,6 +1854,8 @@ async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
     };
     let error = LlamaCppLlm::new(&settings)
         .unwrap()
+        .schedule(&SchedulerRegistry::default())
+        .await
         .complete(&CompletionRequest {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
@@ -1930,6 +1907,8 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     // "user" and 11 996 characters: 3 000 tokens by the estimate, 1 096 left.
     LlamaCppLlm::new(&settings)
         .unwrap()
+        .schedule(&SchedulerRegistry::default())
+        .await
         .complete(&CompletionRequest {
             input: vec![CompletionInput::Message {
                 role: "user".into(),

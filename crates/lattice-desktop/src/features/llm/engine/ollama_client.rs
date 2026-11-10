@@ -76,6 +76,12 @@ pub struct OllamaClient {
 const FALLBACK_CONTEXT_WINDOW: usize = 131_072;
 
 impl OllamaClient {
+    /// The mode the model runs `request` in: the user's pin, or the request
+    /// with tool rounds held off.
+    fn thinking_mode(&self, request: &CompletionRequest) -> ThinkingMode {
+        self.config.thinking_override.mode_for(request)
+    }
+
     /// A client for `model_name` with the default probe and stream timeouts.
     pub fn with_model(base_url: impl Into<String>, model_name: impl Into<String>) -> Result<Self> {
         Self::with_model_and_timeouts(
@@ -357,7 +363,7 @@ impl OllamaClient {
         let sampling = request.sampling.unwrap_or_default();
         // Thinking is a template switch on Ollama as on llama.cpp, decided the
         // same way: the user's pin, or the request with tool rounds held off.
-        let thinking = self.config.thinking_override.mode_for(request);
+        let thinking = self.thinking_mode(request);
         let profile = self.config.profile(thinking);
         let mut options = HashMap::from([
             (
@@ -386,13 +392,10 @@ impl OllamaClient {
                 "num_ctx".to_string(),
                 serde_json::json!(self.context_window),
             ),
-            (
-                "num_predict".to_string(),
-                serde_json::json!(request.effective_max_output_tokens(
-                    u32::try_from(self.config.max_tokens).unwrap_or(u32::MAX)
-                )),
-            ),
         ]);
+        if let Some(num_predict) = self.output_ceiling_for(request) {
+            options.insert("num_predict".to_string(), serde_json::json!(num_predict));
+        }
         if !request.stop.is_empty() {
             options.insert("stop".to_string(), serde_json::json!(request.stop));
         }
@@ -724,6 +727,14 @@ impl LLMPort for OllamaClient {
 
     fn max_context_tokens(&self) -> usize {
         self.context_window
+    }
+
+    fn model_output_ceiling(&self) -> Option<u32> {
+        Some(u32::try_from(self.config.max_tokens).unwrap_or(u32::MAX))
+    }
+
+    fn reasons_for(&self, request: &CompletionRequest) -> bool {
+        self.thinking_mode(request) == ThinkingMode::On
     }
 
     async fn is_ready(&self) -> Result<bool> {

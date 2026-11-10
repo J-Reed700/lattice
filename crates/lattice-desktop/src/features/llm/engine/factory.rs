@@ -561,7 +561,6 @@ pub(crate) async fn create_ollama_llm(
         }
     })?;
 
-    let output_limit = u32::try_from(generation_config.max_tokens).unwrap_or(u32::MAX);
     let client = client
         .with_generation_config(generation_config)
         .with_vision(vision);
@@ -586,11 +585,7 @@ pub(crate) async fn create_ollama_llm(
         endpoint,
         crate::features::llm::engine::ollama_client::ollama_max_concurrency(),
     );
-    Ok(Arc::new(ScheduledLlm::new(
-        Arc::new(client),
-        scheduler,
-        Some(output_limit),
-    )))
+    Ok(Arc::new(ScheduledLlm::new(Arc::new(client), scheduler)))
 }
 
 /// Infer model information from file path.

@@ -43,7 +43,7 @@ fn scheduled(model: Arc<Recorder>) -> ScheduledLlm {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    ScheduledLlm::new(model, scheduler, Some(512))
+    ScheduledLlm::new(model, scheduler)
 }
 
 /// `text` from the user with one picture of 400 KB of base64 costing `tokens`.
@@ -122,7 +122,7 @@ async fn the_exact_count_adds_the_pictures_to_the_counted_text() {
     llm.complete(&with_picture(&text, 4_000)).await.unwrap();
     let refused = llm.complete(&with_picture(&text, 5_200)).await.unwrap_err();
     let told = refused.to_string();
-    assert!(told.contains("prompt is 8200 tokens"), "{told}");
+    assert!(told.contains("prompt is 8224 tokens"), "{told}");
     assert!(told.contains("text counted exactly; 5200 tokens"), "{told}");
     assert_eq!(model.seen.lock().len(), 1);
 }

@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::listing::{invalid_list, is_text_model};
-use super::{api_base, EventDecoder, LimitsApi, ModelPage, ProviderProtocol, Rooms};
+use super::{api_base, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
 use crate::features::llm::cloud::catalog::CloudModelDto;
 use crate::features::llm::cloud::reply::call_arguments;
 use crate::features::llm::cloud::{field, set_field, timing};
@@ -58,7 +58,7 @@ impl ProviderProtocol for Google {
         model: &str,
         request: &CompletionRequest,
         stream: bool,
-        rooms: &dyn Rooms,
+        ceiling: Option<u32>,
     ) -> Result<Value> {
         let messages = chat_messages(&request.input)?;
         let model = model.strip_prefix("models/").unwrap_or(model);
@@ -67,7 +67,7 @@ impl ProviderProtocol for Google {
             "messages": messages,
             "stream": stream,
         });
-        if let Some(max_output) = rooms.optional() {
+        if let Some(max_output) = ceiling {
             set_field(&mut body, "max_tokens", json!(max_output))?;
         }
         if stream {
@@ -198,6 +198,10 @@ impl ProviderProtocol for Google {
 
     fn thinks_unasked(&self, _model: &str) -> bool {
         false
+    }
+
+    fn reasons(&self, _model: &str, request: &CompletionRequest) -> bool {
+        request.reasoning_effort.as_deref() != Some("none")
     }
 
     fn requires_ceiling(&self) -> bool {

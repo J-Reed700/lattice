@@ -4,14 +4,11 @@ use crate::features::llm::engine::vision::not_set_up_to_see;
 use async_trait::async_trait;
 use lattice_core::application::{
     contracts::settings::LLMSettingsDto,
-    ports::llm_port::{
-        tool_specs, CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
-        TEMPLATE_TOKENS_FOR_ANSWER, TEMPLATE_TOKENS_PER_MESSAGE,
-    },
+    ports::llm_port::{CompletionRequest, CompletionResponse, LLMPort},
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
-use protocol::{protocol_for, ProviderProtocol, Rooms};
+use protocol::{protocol_for, ProviderProtocol};
 use serde_json::Value;
 use std::time::{Duration, Instant};
 
@@ -30,10 +27,9 @@ pub struct CloudLlm {
     client: reqwest::Client,
     /// Longest silence tolerated inside a streamed response.
     stall_timeout: Duration,
-    max_tokens: u32,
-    /// Whether `max_tokens` is a ceiling someone knows for this model (chosen,
-    /// the role's own, or the provider's report) rather than the generic fallback.
-    output_ceiling_known: bool,
+    /// The most this model can generate in a reply, when someone knows it
+    /// (chosen, the role's own, or the provider's report).
+    model_ceiling: Option<u32>,
     context_window: usize,
     /// The geometry the model was declared to see with; `None` refuses
     /// pictures.
@@ -48,11 +44,9 @@ impl CloudLlm {
         schedulers: &crate::features::llm::scheduler::SchedulerRegistry,
     ) -> std::sync::Arc<dyn LLMPort> {
         let scheduler = schedulers.cloud(self.protocol.name());
-        let output_limit = self.default_ceiling();
         std::sync::Arc::new(crate::features::llm::scheduler::ScheduledLlm::new(
             std::sync::Arc::new(self),
             scheduler,
-            output_limit,
         ))
     }
 
@@ -78,8 +72,7 @@ impl CloudLlm {
             endpoint,
             client,
             stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
-            max_tokens: settings.max_tokens,
-            output_ceiling_known: true,
+            model_ceiling: Some(settings.max_tokens),
             context_window: settings.context_window as usize,
             vision: None,
         })
@@ -91,10 +84,14 @@ impl CloudLlm {
         self
     }
 
-    /// This client told whether its output ceiling is known. When it is not,
-    /// OpenAI and Google are sent no ceiling unless the request sets one.
-    pub fn with_output_ceiling_known(mut self, known: bool) -> Self {
-        self.output_ceiling_known = known;
+    /// This client told the model's output ceiling, when it is known. When it
+    /// is not, OpenAI and Google are sent no ceiling unless the request sets
+    /// one; a protocol that requires one is sent the Settings ceiling the
+    /// client was built from.
+    pub fn with_output_ceiling(mut self, known: Option<u32>) -> Self {
+        if known.is_some() || !self.protocol.requires_ceiling() {
+            self.model_ceiling = known;
+        }
         self
     }
 
@@ -105,82 +102,6 @@ impl CloudLlm {
         self
     }
 
-    /// The output ceiling to send: the request's or the configured one, cut to
-    /// the room the prompt leaves in the window, since a provider refuses a prompt
-    /// and ceiling that together exceed it. A ceiling that fits is kept.
-    fn output_room(&self, request: &CompletionRequest) -> u32 {
-        self.room_for(
-            request.effective_max_output_tokens(self.max_tokens),
-            request,
-        )
-    }
-
-    /// What is sent when a request sets no ceiling: `None` when no one knows
-    /// this model's and the provider does not require one.
-    fn default_ceiling(&self) -> Option<u32> {
-        (self.output_ceiling_known || self.protocol.requires_ceiling()).then_some(self.max_tokens)
-    }
-
-    /// The ceiling sent to a provider that does not require one, if any.
-    fn optional_output_room(&self, request: &CompletionRequest) -> Option<u32> {
-        let requested = request.max_output_tokens.filter(|requested| *requested > 0);
-        let ceiling = match (requested, self.default_ceiling()) {
-            (Some(requested), Some(limit)) => Some(requested.min(limit)),
-            (requested, limit) => requested.or(limit),
-        };
-        ceiling.map(|ceiling| self.room_for(ceiling, request))
-    }
-
-    /// The output ceiling for a request Claude thinks through: the configured one,
-    /// not the request's, since thinking counts toward `max_tokens`.
-    fn thinking_room(&self, request: &CompletionRequest) -> u32 {
-        self.room_for(self.max_tokens, request)
-    }
-
-    /// `requested`, cut to the room the prompt leaves in the window.
-    fn room_for(&self, requested: u32, request: &CompletionRequest) -> u32 {
-        let prompt_tokens = self.prompt_tokens(request);
-        let window = self.context_window;
-        let room = u32::try_from(window.saturating_sub(prompt_tokens)).unwrap_or(u32::MAX);
-        let allowed = requested.min(room);
-        if allowed < requested {
-            tracing::debug!(
-                requested,
-                allowed,
-                prompt_tokens,
-                window,
-                "Capped the cloud output reservation to what the window has left"
-            );
-        }
-        allowed
-    }
-
-    /// The prompt's tokens by this backend's count: every message with its
-    /// role, every call and result and the tool schemas, plus the chat
-    /// template's framing and each picture's declared cost. Opaque provider
-    /// state (signed reasoning) is not text and is left out, as the scheduler
-    /// leaves it out, so it never cuts an answer.
-    fn prompt_tokens(&self, request: &CompletionRequest) -> usize {
-        let text = request
-            .input
-            .iter()
-            .filter_map(|item| match item {
-                CompletionInput::Native { .. } => None,
-                CompletionInput::Message { role, .. }
-                | CompletionInput::Multimodal { role, .. } => {
-                    Some(format!("{role}\n{}", item.text()))
-                }
-                _ => Some(item.text().into_owned()),
-            })
-            .chain((!request.tools.is_empty()).then(|| tool_specs(&request.tools).to_string()))
-            .collect::<Vec<_>>()
-            .join("\n");
-        self.count_tokens(&text)
-            + TEMPLATE_TOKENS_PER_MESSAGE * request.input.len()
-            + TEMPLATE_TOKENS_FOR_ANSWER
-            + request.image_tokens()
-    }
-
     fn body(&self, request: &CompletionRequest, stream: bool) -> Result<Value> {
         if request.has_images() && self.vision.is_none() {
             return Err(not_set_up_to_see(&self.model));
@@ -189,7 +110,7 @@ impl CloudLlm {
             &self.model,
             request,
             stream,
-            &RoomsFor { llm: self, request },
+            self.output_ceiling_for(request),
         )
     }
 
@@ -305,24 +226,6 @@ impl CloudLlm {
     }
 }
 
-/// The output ceilings of one request, worked out when a protocol asks.
-struct RoomsFor<'a> {
-    llm: &'a CloudLlm,
-    request: &'a CompletionRequest,
-}
-
-impl Rooms for RoomsFor<'_> {
-    fn optional(&self) -> Option<u32> {
-        self.llm.optional_output_room(self.request)
-    }
-    fn answer(&self) -> u32 {
-        self.llm.output_room(self.request)
-    }
-    fn thinking(&self) -> u32 {
-        self.llm.thinking_room(self.request)
-    }
-}
-
 #[async_trait]
 impl LLMPort for CloudLlm {
     fn vision(&self) -> Option<VisionGeometry> {
@@ -333,6 +236,12 @@ impl LLMPort for CloudLlm {
     }
     fn thinks_before_answering(&self) -> bool {
         self.protocol.thinks_unasked(&self.model)
+    }
+    fn model_output_ceiling(&self) -> Option<u32> {
+        self.model_ceiling
+    }
+    fn reasons_for(&self, request: &CompletionRequest) -> bool {
+        self.protocol.reasons(&self.model, request)
     }
     async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
         let deadline = request

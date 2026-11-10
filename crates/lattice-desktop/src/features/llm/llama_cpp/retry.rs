@@ -111,7 +111,8 @@ impl LlamaCppLlm {
         on_retry: Option<&(dyn Fn(usize) -> Result<()> + Send + Sync)>,
     ) -> Result<CompletionResponse> {
         // Failed drafts and partial tool calls must never enter history.
-        let (mut body, size) = self.measured_body(request).await?;
+        let mut body = self.body(request)?;
+        let size = self.request_size(request);
         let window = self.config.context_window;
         tracing::info!(
             model = %self.config.model,

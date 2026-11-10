@@ -7302,7 +7302,8 @@ thinkingOverride: ThinkingOverrideDto;
 thinkingSampling: SamplingProfileDto;
 /**
  * Maximum tokens to generate, for a model nothing more is known about: a
- * connected model's own limits come first (`model_windows`).
+ * connected model's own limits come first (`model_windows`). A cloud model
+ * with no known ceiling is sent none, except to a provider that requires one.
  */
 maxTokens: number;
 /**

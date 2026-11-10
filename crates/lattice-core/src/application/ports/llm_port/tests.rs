@@ -29,42 +29,75 @@ async fn interactive_completions_can_opt_out_without_changing_default_limits() {
 }
 
 #[test]
-fn a_request_output_cap_can_tighten_the_providers_limit_but_never_raise_it() {
-    let provider_limit = 4096;
-    let uncapped = CompletionRequest::default();
+fn a_request_cap_tightens_the_model_ceiling_but_never_raises_it() {
+    let request = |cap| CompletionRequest {
+        max_output_tokens: cap,
+        ..Default::default()
+    };
+    assert_eq!(request(None).output_ceiling(Some(4096), false), Some(4096));
     assert_eq!(
-        uncapped.effective_max_output_tokens(provider_limit),
-        provider_limit,
-        "no request cap leaves the configured limit alone"
+        request(Some(512)).output_ceiling(Some(4096), false),
+        Some(512)
     );
+    assert_eq!(
+        request(Some(100_000)).output_ceiling(Some(4096), false),
+        Some(4096)
+    );
+    // Zero would produce an empty reply, so it counts as unset.
+    assert_eq!(
+        request(Some(0)).output_ceiling(Some(4096), false),
+        Some(4096)
+    );
+}
 
-    let tighter = CompletionRequest {
+#[test]
+fn no_ceiling_is_made_up_when_none_is_known() {
+    let request = |cap| CompletionRequest {
+        max_output_tokens: cap,
+        ..Default::default()
+    };
+    assert_eq!(request(None).output_ceiling(None, false), None);
+    assert_eq!(request(None).output_ceiling(None, true), None);
+    assert_eq!(request(Some(0)).output_ceiling(None, false), None);
+    assert_eq!(request(Some(512)).output_ceiling(None, false), Some(512));
+}
+
+#[test]
+fn a_model_that_reasons_gets_its_whole_ceiling_whatever_the_request_caps() {
+    let capped = CompletionRequest {
         max_output_tokens: Some(512),
         ..Default::default()
     };
-    assert_eq!(tighter.effective_max_output_tokens(provider_limit), 512);
+    assert_eq!(capped.output_ceiling(Some(4096), true), Some(4096));
+}
 
-    // A budget that reserved more room than the user configured must not
-    // silently grant it: the configured ceiling is the user's decision.
-    let looser = CompletionRequest {
-        max_output_tokens: Some(100_000),
+#[test]
+fn the_room_the_window_leaves_cuts_the_ceiling() {
+    let fit = |room| {
+        Some(WindowFit {
+            prompt_tokens: 100,
+            counted_exactly: true,
+            room,
+        })
+    };
+    let request = CompletionRequest {
+        max_output_tokens: Some(300),
+        window_fit: fit(200),
         ..Default::default()
     };
-    assert_eq!(
-        looser.effective_max_output_tokens(provider_limit),
-        provider_limit
-    );
-
-    // Zero is meaningless as a generation cap and would produce an empty
-    // response rather than an error, so it is treated as "unset".
-    let zero = CompletionRequest {
-        max_output_tokens: Some(0),
+    assert_eq!(request.output_ceiling(Some(4096), false), Some(200));
+    assert_eq!(request.output_ceiling(Some(4096), true), Some(200));
+    let roomy = CompletionRequest {
+        window_fit: fit(10_000),
+        ..request.clone()
+    };
+    assert_eq!(roomy.output_ceiling(Some(4096), false), Some(300));
+    assert_eq!(roomy.output_ceiling(None, false), Some(300));
+    let unbounded = CompletionRequest {
+        window_fit: fit(50),
         ..Default::default()
     };
-    assert_eq!(
-        zero.effective_max_output_tokens(provider_limit),
-        provider_limit
-    );
+    assert_eq!(unbounded.output_ceiling(None, false), None);
 }
 
 #[test]

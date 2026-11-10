@@ -837,7 +837,7 @@ async fn a_streams_own_timings_win_over_the_clock() {
     ]);
     let sent = Instant::now().checked_sub(Duration::from_secs(10)).unwrap();
     let response = streaming::drain(
-        LLMProvider::Google,
+        protocol_for(LLMProvider::Google).unwrap(),
         futures::stream::iter([Ok::<_, String>(bytes)]),
         Duration::from_secs(1),
         sent,
@@ -852,10 +852,12 @@ async fn a_streams_own_timings_win_over_the_clock() {
 }
 
 /// A provider refuses a prompt and output ceiling that together exceed the
-/// model's window rather than writing less, so each is asked for no more than
-/// the window has left; a ceiling that fits is sent as asked.
+/// model's window rather than writing less, so each is sent no more than the
+/// room the scheduler measured the window to have left; a ceiling that fits is
+/// sent as asked.
 #[test]
-fn each_provider_is_asked_for_no_more_than_the_window_has_left() {
+fn each_provider_is_sent_no_more_than_the_window_has_left() {
+    use lattice_core::application::ports::llm_port::WindowFit;
     for provider in [
         LLMProvider::Openai,
         LLMProvider::Anthropic,
@@ -876,27 +878,80 @@ fn each_provider_is_asked_for_no_more_than_the_window_has_left() {
                 _ => body["max_tokens"].clone(),
             }
         };
-        let long = CompletionRequest {
-            input: vec![CompletionInput::Message {
-                role: "user".into(),
-                content: "word ".repeat(1_600),
-            }],
-            ..Default::default()
-        };
-        let room = 3_000 - cloud.prompt_tokens(&long);
-        assert!(room < 4_096, "{provider:?}: {room}");
-        assert_eq!(ceiling(&long), json!(room), "{provider:?}");
-
-        let short = CompletionRequest {
+        let fitted = |max_output_tokens, room| CompletionRequest {
             input: vec![CompletionInput::Message {
                 role: "user".into(),
                 content: "When did the bridge open?".into(),
             }],
-            max_output_tokens: Some(512),
+            max_output_tokens,
+            window_fit: Some(WindowFit {
+                prompt_tokens: 3_000 - room as usize,
+                counted_exactly: false,
+                room,
+            }),
             ..Default::default()
         };
-        assert_eq!(ceiling(&short), json!(512), "{provider:?}");
+        assert_eq!(ceiling(&fitted(None, 1_400)), json!(1_400), "{provider:?}");
+        assert_eq!(
+            ceiling(&fitted(Some(512), 2_000)),
+            json!(512),
+            "{provider:?}"
+        );
+        assert_eq!(ceiling(&fitted(None, 9_000)), json!(4_096), "{provider:?}");
     }
+}
+
+/// A model whose ceiling nobody knows is sent none by a provider that does not
+/// require one, whatever the Settings fallback says; Claude's API requires
+/// one, so it is sent the Settings ceiling.
+#[test]
+fn an_unknown_ceiling_is_not_made_up_unless_the_api_requires_one() {
+    let sent = |provider, known: Option<u32>, asked: Option<u32>| {
+        let settings = LLMSettingsDto {
+            provider,
+            model: match provider {
+                LLMProvider::Anthropic => "claude-opus-4-8",
+                _ => "gpt-4.1",
+            }
+            .into(),
+            max_tokens: 8_192,
+            ..Default::default()
+        };
+        let cloud = CloudLlm::new(&settings, "test".into())
+            .unwrap()
+            .with_output_ceiling(known);
+        let body = cloud
+            .body(
+                &CompletionRequest {
+                    input: vec![CompletionInput::Message {
+                        role: "user".into(),
+                        content: "hi".into(),
+                    }],
+                    max_output_tokens: asked,
+                    ..Default::default()
+                },
+                false,
+            )
+            .unwrap();
+        match provider {
+            LLMProvider::Openai => body.get("max_output_tokens").cloned(),
+            _ => body.get("max_tokens").cloned(),
+        }
+    };
+    let openai = LLMProvider::Openai;
+    assert_eq!(sent(openai, None, None), None);
+    assert_eq!(sent(openai, None, Some(300)), Some(json!(300)));
+    assert_eq!(sent(openai, Some(4_000), None), Some(json!(4_000)));
+    // Gemini thinks unless told not to, and its thinking counts toward the
+    // ceiling, so the request's own cap is not sent.
+    let google = LLMProvider::Google;
+    assert_eq!(sent(google, None, Some(300)), None);
+    assert_eq!(sent(google, Some(4_000), Some(300)), Some(json!(4_000)));
+    assert_eq!(sent(LLMProvider::Anthropic, None, None), Some(json!(8_192)));
+    assert_eq!(
+        sent(LLMProvider::Anthropic, Some(4_000), Some(9_000)),
+        Some(json!(4_000))
+    );
 }
 
 /// Claude thinks unasked from the 5 family on, and its thinking counts toward

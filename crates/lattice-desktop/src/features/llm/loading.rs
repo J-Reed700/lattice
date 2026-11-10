@@ -401,14 +401,14 @@ fn with_generation(settings: &LLMSettingsDto, generation: &GenerationConfig) -> 
 
 /// `settings` for a client of `model`, at the window and output ceiling it
 /// runs with. A role with an output ceiling of its own keeps it, within what
-/// the model allows. Also whether that ceiling is known for the model: chosen,
+/// the model allows. Also that ceiling when it is known for the model: chosen,
 /// the role's own, or reported, rather than `settings.max_tokens`.
 fn cloud_connection(
     settings: &LLMSettingsDto,
     model: &ModelRef,
     tuning: Tuning,
     reported: &ModelWindowDto,
-) -> (LLMSettingsDto, bool) {
+) -> (LLMSettingsDto, Option<u32>) {
     let generation = tuning.generation(settings);
     let chosen = settings.model_window(model);
     let chosen = ModelWindowDto {
@@ -418,10 +418,7 @@ fn cloud_connection(
         },
         ..chosen
     };
-    let ceiling_known = chosen
-        .max_output_tokens
-        .or(reported.max_output_tokens)
-        .is_some();
+    let ceiling_known = chosen.max_output_known(reported);
     let connection = LLMSettingsDto {
         context_window: chosen.context_window_within(reported, settings.context_window),
         max_tokens: chosen.max_output_within(reported, settings.max_tokens),
@@ -450,7 +447,7 @@ fn cloud_client(
     connection.model = name.clone();
     Ok(
         crate::features::llm::cloud::CloudLlm::new(&connection, key)?
-            .with_output_ceiling_known(ceiling_known)
+            .with_output_ceiling(ceiling_known)
             .with_vision(declared_vision(settings, model)),
     )
 }

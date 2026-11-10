@@ -166,6 +166,12 @@ impl LLMPort for PatientModel<'_> {
     fn thinks_before_answering(&self) -> bool {
         self.inner.thinks_before_answering()
     }
+    fn model_output_ceiling(&self) -> Option<u32> {
+        self.inner.model_output_ceiling()
+    }
+    fn reasons_for(&self, request: &CompletionRequest) -> bool {
+        self.inner.reasons_for(request)
+    }
     fn pace(&self) -> Option<lattice_core::application::ports::llm_port::Pace> {
         self.inner.pace()
     }

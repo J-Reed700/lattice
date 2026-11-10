@@ -22,17 +22,6 @@ mod google;
 mod listing;
 mod openai;
 
-/// The output ceilings a request could be sent with, each worked out only
-/// when the protocol asks for it.
-pub(super) trait Rooms {
-    /// The ceiling a provider that does not require one is sent, if any.
-    fn optional(&self) -> Option<u32>;
-    /// The ceiling for a reply with no thinking in it.
-    fn answer(&self) -> u32;
-    /// The ceiling for a reply that is thought through first.
-    fn thinking(&self) -> u32;
-}
-
 /// One page of a provider's model list.
 pub(super) struct ModelPage {
     pub(super) models: Vec<CloudModelDto>,
@@ -84,13 +73,14 @@ pub(super) trait ProviderProtocol: Send + Sync {
     fn sign(&self, request: RequestBuilder, key: &str) -> RequestBuilder;
     /// `request` signed with `key` for the model list and model objects.
     fn sign_management(&self, request: RequestBuilder, key: &str) -> RequestBuilder;
-    /// The request body for `request` on `model`.
+    /// The request body for `request` on `model`, with the reply `ceiling`
+    /// the shared rule settled on.
     fn body(
         &self,
         model: &str,
         request: &CompletionRequest,
         stream: bool,
-        rooms: &dyn Rooms,
+        ceiling: Option<u32>,
     ) -> Result<Value>;
     /// A whole reply, streamed or not, read back into a completion.
     fn parse_reply(&self, value: Value) -> Result<CompletionResponse>;
@@ -98,6 +88,9 @@ pub(super) trait ProviderProtocol: Send + Sync {
     fn event_decoder(&self) -> Box<dyn EventDecoder>;
     /// Whether `model` thinks with no request asking.
     fn thinks_unasked(&self, model: &str) -> bool;
+    /// Whether `model` thinks through `request` before answering, so its
+    /// thinking counts toward the reply ceiling.
+    fn reasons(&self, model: &str, request: &CompletionRequest) -> bool;
     /// Whether the API refuses a request that sets no output ceiling.
     fn requires_ceiling(&self) -> bool;
     /// The error for a 400 that refused the structured-output format, when

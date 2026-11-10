@@ -13,7 +13,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 
 use super::listing;
-use super::{api_base, user_parts, EventDecoder, LimitsApi, ModelPage, ProviderProtocol, Rooms};
+use super::{api_base, user_parts, EventDecoder, LimitsApi, ModelPage, ProviderProtocol};
 use crate::features::llm::cloud::{field, reply, set_field};
 
 pub(in crate::features::llm::cloud) mod schema;
@@ -59,7 +59,7 @@ impl ProviderProtocol for Anthropic {
         model: &str,
         request: &CompletionRequest,
         stream: bool,
-        rooms: &dyn Rooms,
+        ceiling: Option<u32>,
     ) -> Result<Value> {
         let (system, messages) = messages(&request.input)?;
         // No sampling knobs are sent: current Claude models reject `temperature`,
@@ -69,11 +69,9 @@ impl ProviderProtocol for Anthropic {
         // adaptive thinking means think.
         let effort = request.reasoning_effort.as_deref();
         let thinking = Thinking::of(model, request);
-        let max_tokens = if thinking.on {
-            rooms.thinking()
-        } else {
-            rooms.answer()
-        };
+        let max_tokens = ceiling.ok_or_else(|| {
+            AppError::InvalidState("Anthropic needs a reply ceiling and none was set".into())
+        })?;
         let mut body =
             json!({"model":model,"messages":messages,"max_tokens":max_tokens,"stream":stream});
         if !system.is_empty() {
@@ -192,6 +190,10 @@ impl ProviderProtocol for Anthropic {
 
     fn thinks_unasked(&self, model: &str) -> bool {
         claude_thinks_unasked(model)
+    }
+
+    fn reasons(&self, model: &str, request: &CompletionRequest) -> bool {
+        Thinking::of(model, request).on
     }
 
     /// The Messages API refuses a request without `max_tokens`.

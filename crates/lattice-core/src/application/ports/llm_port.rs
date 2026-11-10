@@ -40,7 +40,7 @@ pub use multimodal::{ContentPart, ImagePart};
 pub use pace::{Pace, ServedTiming};
 pub use requests::RequestLoad;
 pub use tools::{invalid_tool_arguments, invalid_tool_call_problem, tool_specs};
-pub use window::{window_refusal, RequestSize};
+pub use window::{window_refusal, RequestSize, WindowFit};
 
 /// Lazily resolves an optional model without exposing the application's container.
 pub type OptionalLlmLoader = std::sync::Arc<
@@ -261,6 +261,28 @@ pub trait LLMPort: Send + Sync {
     /// Default: `false`.
     fn thinks_before_answering(&self) -> bool {
         false
+    }
+
+    /// The most this model can generate in one reply, when known. Decorators
+    /// delegate it to the port they wrap.
+    ///
+    /// Default: `None`.
+    fn model_output_ceiling(&self) -> Option<u32> {
+        None
+    }
+
+    /// Whether the model thinks through `request` before answering, so its
+    /// thinking counts toward the reply ceiling. Decorators delegate it.
+    ///
+    /// Default: `false`.
+    fn reasons_for(&self, _request: &CompletionRequest) -> bool {
+        false
+    }
+
+    /// The reply ceiling to send for `request`: [`CompletionRequest::output_ceiling`]
+    /// for this model. Every backend sends exactly this.
+    fn output_ceiling_for(&self, request: &CompletionRequest) -> Option<u32> {
+        request.output_ceiling(self.model_output_ceiling(), self.reasons_for(request))
     }
 
     /// The provider behind this port (e.g. "ollama", "llamacpp",
@@ -488,8 +510,9 @@ pub struct CompletionRequest {
     /// see [`ThinkingMode`] for why tool rounds never think.
     #[serde(default)]
     pub thinking: ThinkingMode,
-    /// Caps generated tokens for this request, overriding the provider's own
-    /// configured ceiling when it is lower.
+    /// Caps generated tokens for this request, overriding the model's own
+    /// ceiling when it is lower. A model that thinks first spends its thinking
+    /// out of the same ceiling, so there the model's ceiling alone applies.
     ///
     /// The context assembler reserves output room out of the model's window, and
     /// a reservation nothing enforces is only bookkeeping: without this the model
@@ -537,6 +560,11 @@ pub struct CompletionRequest {
     /// Set by the scheduler on the copy it forwards; callers leave it unset.
     #[serde(skip)]
     pub assigned_slot: Option<u32>,
+    /// How the prompt measured against the window and the room it left for
+    /// the answer. Set by the scheduler on the copy it forwards; callers leave
+    /// it unset.
+    #[serde(skip)]
+    pub window_fit: Option<WindowFit>,
 }
 
 /// Tool-use policy for one request, mirroring the OpenAI `tool_choice` field.
@@ -566,15 +594,21 @@ impl CompletionRequest {
         }
     }
 
-    /// The output ceiling to send, given the provider's own configured limit.
-    ///
-    /// The smaller of the two always wins: a request-level cap must be able to
-    /// tighten the provider's default, and must never be able to raise it past
-    /// what the user configured.
-    pub fn effective_max_output_tokens(&self, provider_limit: u32) -> u32 {
-        match self.max_output_tokens {
-            Some(requested) if requested > 0 => requested.min(provider_limit),
-            _ => provider_limit,
+    /// The reply ceiling to send, given the model's own (`None` when unknown)
+    /// and whether the model reasons: the request's own cap within the model's
+    /// ceiling; the model's ceiling alone when it reasons, since thinking
+    /// counts toward it; `None` when neither is known. Cut to the room the
+    /// window leaves when the scheduler measured one.
+    pub fn output_ceiling(&self, model_ceiling: Option<u32>, reasons: bool) -> Option<u32> {
+        let own = self.max_output_tokens.filter(|cap| *cap > 0);
+        let ceiling = match (own, model_ceiling) {
+            _ if reasons => model_ceiling,
+            (Some(own), Some(model)) => Some(own.min(model)),
+            (own, model) => own.or(model),
+        };
+        match self.window_fit {
+            Some(fit) => ceiling.map(|ceiling| ceiling.min(fit.room)),
+            None => ceiling,
         }
     }
 
