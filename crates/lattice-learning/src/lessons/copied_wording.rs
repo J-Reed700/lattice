@@ -146,3 +146,15 @@ pub(crate) fn findings(candidate: &Value) -> Vec<ReviewFinding> {
     }
     found
 }
+
+/// The source wording a lesson may not copy outside quotation marks, from
+/// the saved excerpts.
+pub(crate) fn excerpt_wording<'a>(_excerpts: impl IntoIterator<Item = &'a str>) -> Vec<String> {
+    Vec::new()
+}
+
+/// A finding for every sentence of `candidate` that copies `wording` and no
+/// quote its part cites.
+pub(crate) fn excerpt_findings(_candidate: &Value, _wording: &[String]) -> Vec<ReviewFinding> {
+    Vec::new()
+}

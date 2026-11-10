@@ -8,6 +8,8 @@ mod copied_wording;
 pub(crate) mod course_generation_tests;
 pub mod course_plan;
 pub mod course_setup;
+#[cfg(test)]
+mod excerpt_copy_tests;
 pub mod generation;
 pub mod generation_jobs;
 pub mod lesson_drafts;

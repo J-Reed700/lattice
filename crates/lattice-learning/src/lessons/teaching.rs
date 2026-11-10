@@ -113,6 +113,15 @@ pub(crate) const LESSON_REPAIR_SYSTEM: &str = "Teach a rigorous lesson.";
 
 pub const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts are a partial selection, not the complete saved evidence collection. Subsequent research and factual repairs can introduce details supported by other saved references. Do not report a teaching defect solely because a detail is absent from these original excerpts. Evidence completeness is checked separately, for every extracted factual claim, against the current saved collection before publication. Still reject concrete factual or mathematical errors, internal contradictions, and citations that misrepresent their attached source. Missing evidence is not proof that a claim is false, and this teaching review is not factual publication approval.";
 
+pub(crate) fn structural_findings_with(
+    schema: &Value,
+    candidate: &str,
+    counts: Counts,
+    _wording: &[String],
+) -> Result<Vec<ReviewFinding>> {
+    structural_findings(schema, candidate, counts)
+}
+
 /// Deterministic findings: the schema, each section's body and rubric,
 /// and, under a lesson's schema, the lesson's own rules. Nothing is
 /// dropped; a caller that sends six at a time decides what waits. `counts`

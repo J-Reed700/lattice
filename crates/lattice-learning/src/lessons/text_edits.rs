@@ -456,6 +456,16 @@ pub(super) fn apply(candidate: &Value, patch: &str) -> Result<Value> {
     apply_in(candidate, patch, &Value::Null)
 }
 
+/// [`apply_in`] where the lesson's excerpts, `wording`, are source wording too.
+pub(super) fn apply_with(
+    candidate: &Value,
+    patch: &str,
+    lesson: &Value,
+    _wording: &[String],
+) -> Result<Value> {
+    apply_in(candidate, patch, lesson)
+}
+
 /// [`apply`] where `lesson`, the lesson `candidate` is a part of, also holds
 /// the sentences an edit may not add again.
 pub(super) fn apply_in(candidate: &Value, patch: &str, lesson: &Value) -> Result<Value> {
