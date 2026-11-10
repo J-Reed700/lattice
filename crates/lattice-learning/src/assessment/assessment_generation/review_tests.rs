@@ -6,7 +6,7 @@ use crate::assessment_engine::LearningBlueprintRequirement;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use serde_json::json;
 use std::collections::VecDeque;
-use std::sync::atomic::{AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 
 const PASSAGE: &str =
@@ -27,6 +27,11 @@ struct Script {
     solve: Reply,
     judge: Reply,
     seen: Mutex<Vec<(&'static str, String)>>,
+    /// A window that holds one judged item but not two.
+    chunked: bool,
+    /// The kind whose first request for two or more items is cut off.
+    cut: Option<&'static str>,
+    cut_done: AtomicBool,
 }
 
 #[async_trait::async_trait]
@@ -44,13 +49,30 @@ impl LLMPort for Script {
         };
         self.seen.lock().unwrap().push((kind, user.to_owned()));
         let context: Value = serde_json::from_str(user).unwrap_or(Value::Null);
+        let held = match kind {
+            "solve" => context["questions"].as_array().map_or(0, Vec::len),
+            "judge" => context["items"].as_array().map_or(0, Vec::len),
+            _ => 0,
+        };
+        if self.cut == Some(kind) && held > 1 && !self.cut_done.swap(true, Ordering::SeqCst) {
+            return Ok(CompletionResponse {
+                finish_reason: "length".into(),
+                ..CompletionResponse::from_text("{\"answers\":[{\"index\":0")
+            });
+        }
         let reply = match kind {
-            "write" => self
-                .writes
-                .lock()
-                .unwrap()
-                .pop_front()
-                .unwrap_or_else(|| json!({"items": []})),
+            "write" => {
+                let next = self
+                    .writes
+                    .lock()
+                    .unwrap()
+                    .pop_front()
+                    .unwrap_or_else(|| json!({"items": []}));
+                if next.get("fail").is_some() {
+                    return Err(AppError::ServiceNotAvailable("the model is gone".into()));
+                }
+                next
+            }
             "solve" => (self.solve)(&context),
             "judge" => (self.judge)(&context),
             _ => return Err(AppError::InvalidInput("an unscripted request".into())),
@@ -62,6 +84,12 @@ impl LLMPort for Script {
     }
     fn max_context_tokens(&self) -> usize {
         131_072
+    }
+    fn count_tokens(&self, text: &str) -> usize {
+        if self.chunked && text.matches("\"independentSolution\":").count() > 1 {
+            return 10_000_000;
+        }
+        text.len() / 4
     }
     async fn is_ready(&self) -> Result<bool> {
         Ok(true)
@@ -75,7 +103,20 @@ impl Script {
             solve,
             judge,
             seen: Mutex::new(Vec::new()),
+            chunked: false,
+            cut: None,
+            cut_done: AtomicBool::new(false),
         }
+    }
+
+    fn chunked(mut self) -> Self {
+        self.chunked = true;
+        self
+    }
+
+    fn cut_off(mut self, kind: &'static str) -> Self {
+        self.cut = Some(kind);
+        self
     }
 
     fn kinds(&self) -> Vec<&'static str> {
@@ -221,7 +262,10 @@ fn prompts(authored: &Authored) -> Vec<&str> {
 async fn a_flawed_item_is_repaired_alone_and_the_others_are_kept_as_written() -> Result<()> {
     const FINDING: &str = "The question depends on a value it never gives.";
     let llm = Script::new(
-        vec![written(&[FIRST, SECOND, "A third case."]), written(&[SECOND_FIXED])],
+        vec![
+            written(&[FIRST, SECOND, "A third case."]),
+            written(&[SECOND_FIXED]),
+        ],
         agrees(),
         finds(|item| {
             if item["prompt"] == SECOND {
@@ -454,4 +498,109 @@ async fn items_whose_review_cannot_be_read_twice_are_dropped_as_not_reviewed() -
         .iter()
         .all(|reason| reason.starts_with("The question could not be reviewed")));
     Ok(())
+}
+
+#[tokio::test]
+async fn items_in_different_chunks_see_each_other_and_a_repeat_across_them_is_found() -> Result<()>
+{
+    let llm = Script::new(
+        vec![written(&[FIRST, SECOND]), written(&[SECOND_FIXED])],
+        agrees(),
+        finds(|item| {
+            if item["prompt"] == SECOND {
+                (String::new(), vec!["new-0".into()])
+            } else {
+                (String::new(), vec![])
+            }
+        }),
+    )
+    .chunked();
+
+    let result = author_items(&llm, &need(LearningItemFormat::SingleChoice, 2, &[])).await;
+
+    llm.no_lesson_review();
+    let first = llm.request("judge", 0);
+    let second = llm.request("judge", 1);
+    assert_eq!(first["items"].as_array().unwrap().len(), 1);
+    assert_eq!(second["items"][0]["id"], "new-1");
+    assert_eq!(
+        second["otherItems"],
+        json!([{"id": "new-0", "prompt": FIRST}])
+    );
+    let repair = llm.request("write", 1);
+    assert_eq!(repair["repair"]["question"], SECOND);
+    assert_eq!(
+        repair["repair"]["findings"],
+        json!([format!(
+            "It asks for the same decision as another new question: “{FIRST}”."
+        )])
+    );
+    assert_eq!(prompts(&result?), [FIRST, SECOND_FIXED]);
+    let alone = llm.request("judge", 2);
+    assert!(alone.get("otherItems").is_none(), "{alone}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_off_judge_answer_for_two_items_is_asked_again_as_two_single_item_requests(
+) -> Result<()> {
+    let llm = Script::new(vec![written(&[FIRST, SECOND])], agrees(), sound()).cut_off("judge");
+
+    let result = author_items(&llm, &need(LearningItemFormat::SingleChoice, 2, &[])).await;
+
+    llm.no_lesson_review();
+    assert_eq!(llm.kinds(), ["write", "solve", "judge", "judge", "judge"]);
+    assert_eq!(
+        llm.request("judge", 1)["items"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(
+        llm.request("judge", 2)["items"].as_array().unwrap().len(),
+        1
+    );
+    assert_eq!(prompts(&result?), [FIRST, SECOND]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_cut_off_solver_answer_for_two_items_is_asked_again_as_two_single_item_requests(
+) -> Result<()> {
+    let llm = Script::new(vec![written(&[FIRST, SECOND])], agrees(), sound()).cut_off("solve");
+
+    let result = author_items(&llm, &need(LearningItemFormat::SingleChoice, 2, &[])).await;
+
+    llm.no_lesson_review();
+    assert_eq!(llm.kinds(), ["write", "solve", "solve", "solve", "judge"]);
+    assert_eq!(
+        llm.request("solve", 1)["questions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        llm.request("solve", 2)["questions"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(prompts(&result?), [FIRST, SECOND]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_repair_write_failing_for_another_reason_fails_the_call() {
+    let llm = Script::new(
+        vec![written(&[FIRST]), json!({"fail": true})],
+        agrees(),
+        finds(|_| ("The question needs a value.".into(), vec![])),
+    );
+
+    let result = author_items(&llm, &need(LearningItemFormat::SingleChoice, 1, &[])).await;
+
+    assert!(
+        matches!(result, Err(AppError::ServiceNotAvailable(_))),
+        "{result:?}"
+    );
 }

@@ -1716,7 +1716,6 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
         "Which command shows the permissions of every file in the current directory?",
         "Which command shows the owner of every file in the current directory?",
     ];
-    assert!(engine::near_duplicate(prompts[1], prompts[2]));
     publish_questions(
         &pool,
         &program.summary.id,

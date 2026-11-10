@@ -48,6 +48,23 @@ impl Model {
         if prompt.starts_with("Verify instructional answer keys independently.") {
             return Ok(json!({"answers":(0..6).map(|index| json!({"index":index,"correctIndices":[0],"reason":"A randomized comparison isolates the intervention."})).collect::<Vec<_>>()} ).to_string());
         }
+        if prompt.starts_with("Solve quiz questions independently") {
+            let context: serde_json::Value =
+                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
+            let answers: Vec<_> = context["questions"].as_array().into_iter().flatten().map(|question| json!({"index":question["index"],"reason":"The fixture solution follows the question.","correctIndices":[],"answer":"A fixture answer.","blankAnswers":[],"matches":[],"orderedValues":[]})).collect();
+            return Ok(json!({ "answers": answers }).to_string());
+        }
+        if prompt.starts_with("Review quiz questions one at a time") {
+            let context: serde_json::Value =
+                serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
+            let checks: Vec<_> = context["items"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .map(|item| json!({"id":item["id"],"finding":"","hasDefect":false,"repeats":[]}))
+                .collect();
+            return Ok(json!({ "checks": checks }).to_string());
+        }
         if prompt.starts_with("Review instructional quality.") {
             let context: serde_json::Value =
                 serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
