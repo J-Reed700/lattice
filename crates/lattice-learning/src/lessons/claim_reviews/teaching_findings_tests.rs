@@ -1,6 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
 use super::*;
-use crate::review_findings::ReviewFinding;
+use crate::review_findings::{PlanCheck, ReviewFinding};
 use serde_json::json;
 
 async fn pool() -> SqlitePool {
@@ -197,6 +197,137 @@ async fn keep_as_written_holds_until_the_part_s_text_changes() {
         store.list("l1").await.unwrap()[0].state,
         TeachingFindingStateDto::Waiting
     );
+}
+
+fn plan_finding(subject: &str, note: &str) -> SetAside {
+    SetAside {
+        finding: ReviewFinding::plan(PlanCheck::Used, subject, FindingSite::Section(0), note),
+        repairs: 0,
+    }
+}
+
+/// A row recorded before finding ids: keyed by kind and place.
+async fn place_row(store: &TeachingFindingsRepository, state: &str, sha: &str, note: &str) {
+    sqlx::query(
+        "INSERT INTO learning_lesson_teaching_findings (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, passage, repairs, state, job_id, found_at, kept_at)          VALUES ('l1', 'teaching:section-0', 'teaching', 'section', 0, 'T', ?, ?, NULL, 0, ?, NULL, 1, CASE WHEN ?='kept' THEN 5 END)",
+    )
+    .bind(sha)
+    .bind(note)
+    .bind(state)
+    .bind(state)
+    .execute(&store.pool)
+    .await
+    .unwrap();
+}
+
+async fn note_of(store: &TeachingFindingsRepository, key: &str) -> String {
+    sqlx::query_scalar("SELECT note FROM learning_lesson_teaching_findings WHERE finding_key=?")
+        .bind(key)
+        .fetch_one(&store.pool)
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn two_findings_in_one_section_are_two_rows() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    let first = plan_finding(
+        "aaaa000000000001",
+        "A first idea is used without being shown.",
+    );
+    let second = plan_finding(
+        "aaaa000000000002",
+        "A second idea is used without being shown.",
+    );
+    store
+        .record(
+            "l1",
+            "j1",
+            &lesson(),
+            &[first.clone(), second.clone()],
+            true,
+        )
+        .await
+        .unwrap();
+    let listed = store.list("l1").await.unwrap();
+    assert_eq!(listed.len(), 2, "{listed:?}");
+    assert_eq!(
+        listed
+            .iter()
+            .map(|f| f.finding_key.as_str())
+            .collect::<Vec<_>>(),
+        [first.finding.id().as_str(), second.finding.id().as_str()]
+    );
+}
+
+#[tokio::test]
+async fn a_row_stored_by_place_still_stands_for_its_place() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    let sha = site_sha256(&lesson(), FindingSite::Section(0));
+    place_row(&store, "kept", &sha, "The user's own note.").await;
+    store
+        .record(
+            "l1",
+            "j1",
+            &lesson(),
+            &[set_aside(
+                FindingKind::Teaching,
+                FindingSite::Section(0),
+                "A new note.",
+                0,
+            )],
+            true,
+        )
+        .await
+        .unwrap();
+    let listed = store.list("l1").await.unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].finding_key, "teaching:section-0");
+    assert_eq!(listed[0].state, TeachingFindingStateDto::Kept);
+    assert_eq!(
+        note_of(&store, "teaching:section-0").await,
+        "The user's own note."
+    );
+}
+
+#[tokio::test]
+async fn a_row_stored_by_place_gives_way_when_its_text_changes() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    place_row(&store, "kept", "an earlier text", "The user's own note.").await;
+    let finding = set_aside(
+        FindingKind::Teaching,
+        FindingSite::Section(0),
+        "A new note.",
+        0,
+    );
+    store
+        .record("l1", "j1", &lesson(), std::slice::from_ref(&finding), true)
+        .await
+        .unwrap();
+    let listed = store.list("l1").await.unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].finding_key, finding.finding.id().as_str());
+    assert_eq!(listed[0].state, TeachingFindingStateDto::Waiting);
+}
+
+#[tokio::test]
+async fn a_finding_recorded_after_the_review_takes_over_a_lapsed_place_row() {
+    let store = TeachingFindingsRepository::new(pool().await);
+    place_row(&store, "waiting", "an earlier text", "An old note.").await;
+    let finding = set_aside(
+        FindingKind::Teaching,
+        FindingSite::Section(0),
+        "A new note.",
+        0,
+    );
+    store
+        .record("l1", "j1", &lesson(), std::slice::from_ref(&finding), false)
+        .await
+        .unwrap();
+    let listed = store.list("l1").await.unwrap();
+    assert_eq!(listed.len(), 1, "{listed:?}");
+    assert_eq!(listed[0].finding_key, finding.finding.id().as_str());
+    assert_eq!(listed[0].state, TeachingFindingStateDto::Waiting);
 }
 
 #[tokio::test]
