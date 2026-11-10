@@ -347,7 +347,6 @@ mod support {
         pub(crate) fn sent(&self) -> Sent {
             Sent {
                 request: self.request.clone(),
-                thinking: self.thinking,
                 ceiling: self.ceiling,
                 size: self.size(),
                 room: self.room,
@@ -359,7 +358,6 @@ mod support {
     #[derive(Debug, Clone)]
     pub(crate) struct Sent {
         pub request: CompletionRequest,
-        pub thinking: Thinking,
         pub ceiling: Option<u32>,
         pub size: RequestSize,
         pub room: u32,
