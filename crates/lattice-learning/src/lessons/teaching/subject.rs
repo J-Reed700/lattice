@@ -130,6 +130,8 @@ const LESSON_CHANGED_CHECKS: &str = concat!(
     lesson_block_checks!()
 );
 const LESSON_PRIORITY: &str = "Before evaluating teaching style, check each worked example against its stated premises and expected result, preserving meaningful details. Use supplied execution evidence when available; do not claim to have executed an example yourself.";
+/// What the reviewer of quiz material is told to check first; no separate fact check stands behind it.
+const MATERIAL_PRIORITY: &str = "Before evaluating teaching style, check each worked example against its stated premises and expected result, preserving meaningful details. Use supplied execution evidence when available; do not claim to have executed an example yourself. Check concrete factual errors whether or not they were in the original findings.";
 
 /// What a pass's checks found, before stopping is decided.
 pub(super) struct Found {

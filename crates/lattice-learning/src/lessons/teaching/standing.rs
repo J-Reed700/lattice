@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::review_findings::{
-    sentences_in, sentences_of, site_sha256, subject_of, FindingId, FindingSite, Held,
+    sentences_in, sentences_of, site_sha256, subject_of, FindingId, FindingSite, Held, Origin,
     ReviewFinding,
 };
 use crate::teaching_review::{label, passages_of, Asked, Judged, Scope};
@@ -280,12 +280,34 @@ impl Standing {
             let Some(position) = self.open.iter().position(|finding| finding.id() == id) else {
                 continue;
             };
-            let report = reported
+            let mut reports = reported
                 .iter()
                 .zip(&continued)
-                .find(|(_, continues)| continues.as_ref() == Some(&id))
+                .filter(|(_, continues)| continues.as_ref() == Some(&id))
                 .map(|(report, _)| report);
-            if !present && report.is_none() {
+            let report = reports.next();
+            for _ in reports {
+                tracing::info!(
+                    finding = %id.as_str(),
+                    "A second report continues the same open finding and is not kept apart"
+                );
+            }
+            if let Some(report) = report {
+                let number = match self.open.get(position).map(|finding| &finding.origin) {
+                    Some(Origin::Reviewer { number }) => *number,
+                    _ => continue,
+                };
+                let replaced = report.clone().finding(number);
+                self.about.insert(
+                    id.clone(),
+                    sentence_digests(&sentences_of(candidate, &replaced)),
+                );
+                if let Some(finding) = self.open.get_mut(position) {
+                    *finding = replaced;
+                }
+                continue;
+            }
+            if !present {
                 self.open.remove(position);
                 self.about.remove(&id);
                 continue;
@@ -299,9 +321,6 @@ impl Standing {
                 if !note.is_empty() {
                     finding.note = note.clone();
                     finding.summary = note;
-                } else if let Some(report) = report {
-                    finding.note = report.note.clone();
-                    finding.summary = report.summary.clone();
                 }
                 finding.passage = now;
             }

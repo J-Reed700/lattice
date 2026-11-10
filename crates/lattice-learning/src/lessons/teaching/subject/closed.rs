@@ -3,11 +3,11 @@ use super::super::quotes::lesson_quote_checks;
 use super::super::repair::{self, Repaired};
 use super::super::standing::Standing;
 use super::super::{
-    holds_up_review, structural_findings, OutlineReviewContext, LESSON_REVIEW_EVIDENCE_SCOPE,
+    holds_up_review, structural_findings, OutlineReviewContext, MATERIAL_REVIEW_EVIDENCE_SCOPE,
 };
 use super::{
     review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, ReviewTexts,
-    Settled, Step, Subject, LESSON_PRIORITY, REVIEW_SYSTEM,
+    Settled, Step, Subject, MATERIAL_PRIORITY, REVIEW_SYSTEM,
 };
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::copied_wording::Wording;
@@ -59,8 +59,8 @@ fn material_lens() -> Lens<'static> {
     Lens {
         first_system: REVIEW_SYSTEM,
         block_checks: true,
-        scope: LESSON_REVIEW_EVIDENCE_SCOPE,
-        priority: LESSON_PRIORITY,
+        scope: MATERIAL_REVIEW_EVIDENCE_SCOPE,
+        priority: MATERIAL_PRIORITY,
         edits: true,
         progress: None,
     }
