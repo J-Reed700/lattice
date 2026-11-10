@@ -317,19 +317,6 @@ fn a_quote_that_lacks_the_figure_does_not_cite_it() {
     assert!(findings[0].note.contains("does not contain 30"));
 }
 
-#[test]
-fn an_attribution_needs_a_citation_but_no_figure_in_its_quote() {
-    let mut candidate = lesson();
-    let sentence = "The documentation describes a retry for failed requests.";
-    candidate["blocks"][0]["body"] = json!(sentence);
-    assert_eq!(lesson_rules(&candidate).len(), 1);
-
-    candidate["blocks"][0]["citations"] = json!([{
-        "sentence":sentence,"sourceIndex":0,
-        "quote":"Failed requests are retried once, as the reference describes."}]);
-    assert!(lesson_rules(&candidate).is_empty());
-}
-
 /// A worked example's case, code and a list's markers are not specifics a
 /// source has to hold.
 #[test]

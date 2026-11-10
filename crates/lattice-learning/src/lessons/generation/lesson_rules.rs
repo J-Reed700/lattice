@@ -8,7 +8,7 @@
 use super::{normalize, validate_text};
 use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
 use crate::content_verification::{
-    figures, names_a_source, needs_citation, quoted_wording, Givens, CITED_KINDS,
+    names_a_source, needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS,
 };
 use crate::lessons::repeats;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
@@ -161,16 +161,6 @@ pub(crate) fn prose_sentences(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The figures beyond its part's `givens` and the quoted wording of
-/// `sentence`, which the quote cited for it must hold.
-fn specifics(sentence: &str, givens: &Givens) -> Vec<String> {
-    let own = figures(sentence)
-        .filter(|figure| !givens.holds(figure))
-        .map(str::to_owned);
-    let quoted = quoted_wording(sentence).map(str::to_owned);
-    own.chain(quoted).collect()
-}
-
 fn same_sentence(a: &str, b: &str) -> bool {
     let (a, b) = (normalize(a), normalize(b));
     !a.is_empty() && !b.is_empty() && (a == b || a.contains(&b) || b.contains(&a))
@@ -209,7 +199,9 @@ fn uncited_specifics(
             .filter(|(cited, _)| same_sentence(cited, &sentence))
             .map(|(_, quote)| *quote)
             .collect();
-        let wanted = specifics(&sentence, &givens);
+        let wanted: Vec<String> = specifics_in(&sentence, &givens)
+            .map(str::to_owned)
+            .collect();
         let lacking = |quote: &str| -> Vec<String> {
             let held = normalize(quote);
             wanted
