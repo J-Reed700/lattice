@@ -597,71 +597,26 @@ async fn a_figure_in_a_part_that_states_what_is_so_is_the_model_s_to_sort() -> R
     Ok(())
 }
 
-struct Recording<'a> {
-    model: &'a crate::lessons::course_generation_tests::ScriptedModel,
-    schemas: Mutex<Vec<Value>>,
-}
-
-#[async_trait::async_trait]
-impl LLMPort for Recording<'_> {
-    async fn complete(
-        &self,
-        request: &lattice_core::application::ports::llm_port::CompletionRequest,
-    ) -> Result<lattice_core::application::ports::llm_port::CompletionResponse> {
-        if let Some(schema) = &request.json_schema {
-            self.schemas.lock().unwrap().push(schema.clone());
-        }
-        self.model.complete(request).await
-    }
-    fn model_name(&self) -> &str {
-        self.model.model_name()
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        self.model.count_tokens(text)
-    }
-    fn max_context_tokens(&self) -> usize {
-        self.model.max_context_tokens()
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
+#[tokio::test]
+async fn a_figure_statement_the_model_calls_internal_is_read_as_reasoning() -> Result<()> {
+    let model = scripted(vec![json!({"s0": "internal"})]);
+    let sorted = classify(
+        &model,
+        &[body("The sample batch holds 12 of the 48 units.")],
+    )
+    .await?;
+    assert_eq!(sorted, vec![(Class::Reasoning, ClassifiedBy::Model)]);
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+    Ok(())
 }
 
 #[tokio::test]
-async fn a_statement_with_such_a_figure_is_never_offered_internal() {
-    let model = scripted(vec![json!({"s0": "reasoning", "s1": "common"})]);
-    let recording = Recording {
-        model: &model,
-        schemas: Mutex::new(Vec::new()),
-    };
-    let _ = classify(
-        &recording,
-        &[
-            body("Dividing 12 by 48 gives 0.25."),
-            body("A stage hands its output to the next stage."),
-        ],
-    )
-    .await;
-    let schemas = recording.schemas.lock().unwrap();
-    let offered = |schema: &Value, id: &str| -> Option<Vec<String>> {
-        schema["properties"][id]["enum"].as_array().map(|classes| {
-            classes
-                .iter()
-                .filter_map(|class| class.as_str().map(str::to_owned))
-                .collect()
-        })
-    };
-    let first = schemas.first().cloned().unwrap_or(Value::Null);
-    let with_figure = offered(&first, "s0").unwrap_or_default();
-    assert!(
-        !with_figure.is_empty() && !with_figure.iter().any(|class| class == "internal"),
-        "a statement with a figure beyond the givens is offered {with_figure:?}"
-    );
-    assert_eq!(
-        offered(&first, "s1").unwrap_or_default().len(),
-        4,
-        "a statement without a figure is offered all four classes"
-    );
+async fn a_statement_without_a_figure_the_model_calls_internal_stays_internal() -> Result<()> {
+    let model = scripted(vec![json!({"s0": "internal"})]);
+    let sorted = classify(&model, &[body("The sample batch is set by the exercise.")]).await?;
+    assert_eq!(sorted, vec![(Class::Internal, ClassifiedBy::Model)]);
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+    Ok(())
 }
 
 #[tokio::test]
