@@ -1,6 +1,7 @@
 //! What a bank item must satisfy before any form may use it (section 5.2).
-use super::answers::{folded, whole_words};
+use super::answers::whole_words;
 use super::*;
+use unicode_normalization::UnicodeNormalization;
 
 /// The leak check (section 5.2): the key's own text in the stem. Comparison
 /// stems name several options, so a short key counts only when it is the one
@@ -90,8 +91,8 @@ pub fn cloze_blanks(prompt: &str) -> Vec<usize> {
 }
 
 fn comparable(option: &str) -> String {
-    let folded: String = folded(option)
-        .chars()
+    let composed: String = option
+        .nfc()
         .map(|c| match c {
             '\u{2018}' | '\u{2019}' => '\'',
             '\u{201C}' | '\u{201D}' => '"',
@@ -99,7 +100,7 @@ fn comparable(option: &str) -> String {
             other => other,
         })
         .collect();
-    let words = folded.split_whitespace().collect::<Vec<_>>().join(" ");
+    let words = composed.split_whitespace().collect::<Vec<_>>().join(" ");
     words
         .strip_suffix('.')
         .unwrap_or(&words)
@@ -108,11 +109,19 @@ fn comparable(option: &str) -> String {
 }
 
 /// Two choices are the same only when a reader could not tell them apart:
-/// case, typography, spacing and a closing full stop do not count; path
-/// punctuation does.
+/// typography, spacing and a closing full stop do not count; letter case,
+/// accents and path punctuation do.
 pub fn distinct_options(options: &[String]) -> bool {
-    let compared: HashSet<String> = options.iter().map(|o| comparable(o)).collect();
-    compared.len() == options.len() && options.iter().all(|o| !o.trim().is_empty())
+    repeated_option(options).is_none() && options.iter().all(|o| !o.trim().is_empty())
+}
+
+/// The first choice that repeats an earlier one, as `distinct_options` reads them.
+pub fn repeated_option(options: &[String]) -> Option<&str> {
+    let mut seen = HashSet::new();
+    options
+        .iter()
+        .find(|option| !seen.insert(comparable(option)))
+        .map(String::as_str)
 }
 
 /// What is wrong with a single-choice item's key beyond its choices.

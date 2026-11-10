@@ -400,11 +400,7 @@ pub(super) fn validate_prepared(
                 "Questions need 2–8 answer options.".into(),
             ));
         }
-        let mut opts = std::collections::HashSet::new();
-        if q.options
-            .iter()
-            .any(|o| !opts.insert(o.trim().to_lowercase()))
-        {
+        if !crate::assessment_engine::distinct_options(&q.options) {
             return Err(AppError::InvalidInput(
                 "Question options must be unique.".into(),
             ));
