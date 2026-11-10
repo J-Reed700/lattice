@@ -1828,3 +1828,70 @@ fn a_form_draw_of_a_lesson_question_shuffles_and_each_reason_moves_with_its_choi
     assert_eq!(reveal.correct_indices, vec![right]);
     assert_eq!(reveal.distractor_rationales[right], "");
 }
+
+#[test]
+fn a_lesson_question_that_cannot_be_asked_is_stored_dropped_in_its_place() {
+    let kind = LessonQuestionKind::Quiz;
+    let texts = |options: &[&str]| options.iter().map(|o| (*o).to_owned()).collect::<Vec<_>>();
+    let cases: [(&str, Vec<String>, usize); 6] = [
+        (
+            "Which layer holds most weather?",
+            texts(&["Alpha", "Bravo", "Charlie", "Delta"]),
+            1,
+        ),
+        ("  ", texts(&["Alpha", "Bravo", "Charlie", "Delta"]), 1),
+        ("Which of these is named first?", texts(&["Alpha"]), 0),
+        (
+            "Which of these is named second?",
+            texts(&["Alpha", "Bravo", "Bravo", "Delta"]),
+            1,
+        ),
+        (
+            "Which of these is named third?",
+            texts(&["Alpha", "Bravo", "Charlie", "Delta"]),
+            9,
+        ),
+        (
+            "Which of these is named last?",
+            texts(&["Echo", "Foxtrot", "Golf", "Hotel"]),
+            2,
+        ),
+    ];
+    let (questions, keys): (Vec<_>, Vec<_>) = cases
+        .into_iter()
+        .map(|(prompt, options, correct_index)| {
+            let question_id = id();
+            (
+                LessonQuestion {
+                    id: question_id.clone(),
+                    kind: kind.clone(),
+                    prompt: prompt.into(),
+                    options,
+                    source_ids: vec![],
+                },
+                LessonAnswerKey {
+                    question_id,
+                    correct_index,
+                    explanation: "Because.".into(),
+                    rationales: vec![],
+                },
+            )
+        })
+        .unzip();
+    let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
+    let seen: Vec<(&str, &str)> = seeded
+        .iter()
+        .map(|item| (item.item.prompt.as_str(), item.review_status))
+        .collect();
+    assert_eq!(
+        seen,
+        [
+            ("Which layer holds most weather?", "agreed"),
+            ("  ", "dropped"),
+            ("Which of these is named first?", "dropped"),
+            ("Which of these is named second?", "dropped"),
+            ("Which of these is named third?", "dropped"),
+            ("Which of these is named last?", "agreed"),
+        ]
+    );
+}
