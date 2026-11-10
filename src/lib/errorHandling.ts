@@ -40,6 +40,7 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   // Database Errors
   [ErrorCode.DATABASE_ERROR]: "Lattice couldn't save your work. Try again.",
   [ErrorCode.DATABASE_CONNECTION_ERROR]: 'Failed to connect to database.',
+  [ErrorCode.DATABASE_BUSY]: 'The database is busy. Please try again.',
   [ErrorCode.MIGRATION_ERROR]: 'Database migration failed.',
 
   // Network Errors
@@ -80,16 +81,27 @@ const USER_MESSAGES: Record<ErrorCode, string> = {
   [ErrorCode.UNKNOWN]: 'Something went wrong.',
 };
 
-const WAITING_MESSAGES: Partial<Record<ErrorCode, string>> = {
-  [ErrorCode.NETWORK_ERROR]: "Can't reach the model server. Lattice keeps trying.",
-  [ErrorCode.HTTP_STATUS]: 'The website is busy. Lattice tries again shortly.',
-  [ErrorCode.RATE_LIMIT_EXCEEDED]: 'The model is getting too many requests. Lattice keeps trying.',
-  [ErrorCode.SERVICE_NOT_AVAILABLE]: 'The model server is busy or starting. Lattice keeps trying.',
+/** For each wait: the sentence a learner reads, and whether the model is what it waits on. */
+const WAITS: Partial<Record<ErrorCode, { sentence: string; onModel: boolean }>> = {
+  [ErrorCode.NETWORK_ERROR]: { sentence: "Can't reach the model server. Lattice keeps trying.", onModel: true },
+  [ErrorCode.HTTP_STATUS]: { sentence: 'The website is busy. Lattice tries again shortly.', onModel: false },
+  [ErrorCode.RATE_LIMIT_EXCEEDED]: { sentence: 'The model is getting too many requests. Lattice keeps trying.', onModel: true },
+  [ErrorCode.SERVICE_NOT_AVAILABLE]: { sentence: 'The model server is busy or starting. Lattice keeps trying.', onModel: true },
+  [ErrorCode.DATABASE_BUSY]: { sentence: 'Another task is using the database. Lattice keeps trying.', onModel: false },
 };
+
+const UNKNOWN_WAIT = { sentence: 'Lattice is waiting to try again.', onModel: false };
+
+const wait = (code: ErrorCode | null | undefined) => (code && WAITS[code]) || UNKNOWN_WAIT;
 
 /** What a learner reads while work waits out an outage and retries, from the code of the error it is waiting on. */
 export function waitingSentence(code: ErrorCode | null | undefined): string {
-  return (code && WAITING_MESSAGES[code]) ?? "The model server isn't answering. Lattice keeps trying.";
+  return wait(code).sentence;
+}
+
+/** Whether the work is waiting on the model, so that the model settings are where to look. */
+export function waitsOnModel(code: ErrorCode | null | undefined): boolean {
+  return wait(code).onModel;
 }
 
 const KNOWN_CODES: ReadonlySet<string> = new Set(Object.values(ErrorCode));

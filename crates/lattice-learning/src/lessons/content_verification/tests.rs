@@ -584,11 +584,32 @@ impl Model {
             }
             return Ok(format!("{}\nReason: The captured reference and runtime preserve the header spaces.\nSource quote: {GOOD}\nSource passage: passage-0", if bad { "contradicted" } else { "supported" }));
         }
+        if let Some(declined) = declined_teaching_edits(prompt) {
+            return Ok(declined);
+        }
         Err(invalid(format!(
-            "Unexpected fixture prompt: {}",
-            prompt.chars().take(100).collect::<String>()
+            "Unexpected fixture prompt: {} ... {}",
+            prompt.chars().take(100).collect::<String>(),
+            prompt
+                .chars()
+                .rev()
+                .take(400)
+                .collect::<Vec<_>>()
+                .into_iter()
+                .rev()
+                .collect::<String>()
         )))
     }
+}
+
+/// The answer of a model that finds nothing to change in a teaching repair's
+/// request for edits: none.
+pub(crate) fn declined_teaching_edits(prompt: &str) -> Option<String> {
+    prompt
+        .starts_with(
+            "You are editing a rejected draft. Correct only the established teaching defects.",
+        )
+        .then(|| json!({"edits": []}).to_string())
 }
 
 fn candidate(statement: &str) -> Value {

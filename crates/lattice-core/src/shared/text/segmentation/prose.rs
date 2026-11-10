@@ -411,7 +411,7 @@ fn list_marker_end(line: &str) -> Option<usize> {
 
 /// The inline code spans of `line`: a backtick run to the next run of the
 /// same length.
-fn code_spans(line: &str) -> Vec<Span> {
+pub fn code_spans(line: &str) -> Vec<Span> {
     let bytes = line.as_bytes();
     let run = |from: usize| {
         bytes.get(from..).map_or(0, |rest| {

@@ -7,7 +7,7 @@ use super::text_edits::citable_texts;
 use crate::generation::{long_enough_quote, teaching_sentences};
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule};
-use lattice_core::shared::text::sentences;
+use lattice_core::shared::text::{code_spans, sentences};
 use serde_json::Value;
 
 /// Source wording as folded runs of words, each long enough to be quoted: a
@@ -79,28 +79,54 @@ impl Wording {
     }
 }
 
-/// `text` without its double-quoted spans, each left as a space. A quotation
-/// mark that is never closed hides the rest of its text.
-fn outside_quotes(text: &str) -> String {
-    let mut out = String::new();
-    let mut rest = text;
-    while let Some(open) = rest.find(['"', '\u{201C}']) {
-        out.push_str(rest.get(..open).unwrap_or_default());
-        let mut chars = rest.get(open..).unwrap_or_default().chars();
-        let closer = if chars.next() == Some('\u{201C}') {
-            '\u{201D}'
-        } else {
-            '"'
-        };
-        let body = chars.as_str();
-        let Some(close) = body.find(closer) else {
-            return out;
-        };
-        out.push(' ');
-        rest = body.get(close + closer.len_utf8()..).unwrap_or_default();
+/// The lesson's own prose in `sentence`, read left to right: a double-quoted
+/// span is left as a space in its stretch, and an inline code span ends the
+/// stretch. Whichever opens first holds everything up to its own close; a
+/// quotation mark that is never closed hides the rest of the sentence.
+fn own_prose(sentence: &str) -> Vec<String> {
+    let spans = code_spans(sentence);
+    let mut stretches = Vec::new();
+    let mut current = String::new();
+    let mut at = 0;
+    loop {
+        let rest = sentence.get(at..).unwrap_or_default();
+        let quote = rest.find(['"', '\u{201C}']).map(|found| at + found);
+        let code = spans.iter().find(|span| span.start >= at);
+        match (quote, code) {
+            (Some(open), Some(span)) if span.start < open => {
+                current.push_str(sentence.get(at..span.start).unwrap_or_default());
+                stretches.push(std::mem::take(&mut current));
+                at = span.end;
+            }
+            (None, Some(span)) => {
+                current.push_str(sentence.get(at..span.start).unwrap_or_default());
+                stretches.push(std::mem::take(&mut current));
+                at = span.end;
+            }
+            (Some(open), _) => {
+                current.push_str(sentence.get(at..open).unwrap_or_default());
+                let opened = sentence.get(open..).unwrap_or_default();
+                let mut chars = opened.chars();
+                let closer = if chars.next() == Some('\u{201C}') {
+                    '\u{201D}'
+                } else {
+                    '"'
+                };
+                let body = chars.as_str();
+                let Some(close) = body.find(closer) else {
+                    break;
+                };
+                current.push(' ');
+                at = sentence.len() - body.len() + close + closer.len_utf8();
+            }
+            (None, None) => {
+                current.push_str(rest);
+                break;
+            }
+        }
     }
-    out.push_str(rest);
-    out
+    stretches.push(current);
+    stretches
 }
 
 /// The words of `text` as sentences are compared here: folded, without the
@@ -128,23 +154,31 @@ pub(crate) struct Copied {
     pub words: String,
 }
 
-/// The words of `sentence` that copy a run of the part's or the lesson's
-/// wording outside double quotation marks: it holds a run of it, or is a span
-/// of one long enough to be quoted.
-fn copied_words(sentence: &str, part: &Wording, lesson: &Wording) -> Option<String> {
-    let own = words(&outside_quotes(sentence));
+/// The words of `stretch`, a stretch of the lesson's own prose, that copy a run
+/// of the part's or the lesson's wording: it holds a run of it, or is a span of
+/// one long enough to be quoted.
+fn copied_stretch(stretch: &str, part: &Wording, lesson: &Wording) -> Option<String> {
+    let own = words(stretch);
     part.0.iter().chain(&lesson.0).find_map(|run| {
         if holds(&own, run) {
-            let exact = find(sentence, &run.join(" "))
-                .and_then(|(from, to)| sentence.get(from..to))
-                .unwrap_or(sentence);
+            let exact = find(stretch, &run.join(" "))
+                .and_then(|(from, to)| stretch.get(from..to))
+                .unwrap_or(stretch);
             Some(exact.to_owned())
         } else if holds(run, &own) && long_enough_quote(&own.join(" ")) {
-            Some(sentence.to_owned())
+            Some(stretch.trim().to_owned())
         } else {
             None
         }
     })
+}
+
+/// The words of `sentence` that copy the wording outside double quotation
+/// marks and inline code: those of its first prose stretch that does.
+fn copied_words(sentence: &str, part: &Wording, lesson: &Wording) -> Option<String> {
+    own_prose(sentence)
+        .iter()
+        .find_map(|stretch| copied_stretch(stretch, part, lesson))
 }
 
 /// The teaching sentences of `text` that copy the wording of the part or the
@@ -223,3 +257,6 @@ pub(crate) fn findings(candidate: &Value, wording: &Wording) -> Vec<ReviewFindin
     }
     found
 }
+
+#[cfg(test)]
+mod tests;

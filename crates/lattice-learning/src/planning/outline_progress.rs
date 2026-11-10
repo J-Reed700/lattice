@@ -407,6 +407,17 @@ mod tests {
     }
 
     #[test]
+    fn a_wait_on_a_busy_database_publishes_the_database_code() {
+        let progress = OutlineProgress::default();
+        progress.model_wait(
+            Some(30),
+            Some(&AppError::Database("database is locked".into())),
+        );
+        let wire = serde_json::to_value(progress.snapshot().waiting).unwrap();
+        assert_eq!(wire["errorCode"], "DATABASE_BUSY");
+    }
+
+    #[test]
     fn unrelated_errors_keep_the_shared_sanitization_policy() {
         let progress = OutlineProgress::default();
         let wire = progress.api_error(AppError::ServiceNotAvailable(

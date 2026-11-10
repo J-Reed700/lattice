@@ -181,18 +181,7 @@ impl JobFailure {
     /// Whether another connection kept this attempt out of the database:
     /// SQLite's busy and locked errors, or a connection pool that timed out.
     pub fn is_database_busy(error: &crate::shared::error::AppError) -> bool {
-        use crate::shared::error::AppError;
-        match error {
-            AppError::Database(message) => {
-                message.contains("database is locked")
-                    || message.contains("database table is locked")
-            }
-            AppError::ServiceNotAvailable(message) => {
-                message.contains("database is temporarily busy")
-                    || message.contains("Passage index: busy")
-            }
-            _ => false,
-        }
+        error.is_database_busy()
     }
 
     /// Whether an error says the service was not reached, or asked to be left
@@ -209,10 +198,15 @@ impl JobFailure {
     /// Outages are deferred; anything else fails the attempt.
     pub fn classify(error: &crate::shared::error::AppError) -> Self {
         if Self::is_transient(error) {
+            let progress_message = if Self::is_database_busy(error) {
+                "Waiting for another task to finish with the database"
+            } else {
+                "Waiting to retry after a service outage"
+            };
             Self::Defer(Deferral {
                 code: "temporarily_unavailable".into(),
                 message: error.to_string(),
-                progress_message: "Waiting to retry after a service outage".into(),
+                progress_message: progress_message.into(),
                 activity: None,
             })
         } else {
