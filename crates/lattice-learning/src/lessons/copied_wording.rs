@@ -25,7 +25,10 @@ impl Wording {
 
     /// The quotes of `part`, a block or question: its own and its citations',
     /// and those of citations a patch appends.
-    pub(crate) fn of_part<'a>(part: &Value, appended: impl IntoIterator<Item = &'a str>) -> Self {
+    pub(crate) fn of_part<'a>(
+        part: &'a Value,
+        appended: impl IntoIterator<Item = &'a str>,
+    ) -> Self {
         let cited = part
             .get("citations")
             .and_then(Value::as_array)
