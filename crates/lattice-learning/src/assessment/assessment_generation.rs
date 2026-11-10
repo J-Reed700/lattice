@@ -504,4 +504,6 @@ use formats::{item_schema, to_candidate, RawItem};
 pub use grading::{grade_written, judge_short_answers, RawGrade, ShortAnswer, WrittenAnswer};
 
 #[cfg(test)]
+mod review_tests;
+#[cfg(test)]
 mod tests;
