@@ -1043,7 +1043,7 @@ fn choices_note(options: Value) -> String {
 fn a_wrong_number_of_choices_is_named_with_its_count() {
     assert_eq!(
         choices_note(json!(["Alpha", "Bravo", "Charlie"])),
-        "Question 3 has 3 answer choices; it needs four."
+        "Question 3 needs four answer choices; it has 3."
     );
 }
 
