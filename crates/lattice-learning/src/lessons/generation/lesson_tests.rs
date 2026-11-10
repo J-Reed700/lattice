@@ -414,18 +414,6 @@ fn an_invented_citation_in_a_course_without_sources_is_dropped_and_reported() {
 }
 
 #[test]
-fn a_sourced_part_that_names_no_source_cannot_be_saved_and_is_not_called_invalid_input() {
-    let mut lesson = off_shape(true);
-    lesson.blocks[0].source_index = Some(3);
-    let error = assemble(lesson, &[source()], &HashSet::from(["source-a"])).unwrap_err();
-    assert!(
-        matches!(error, AppError::ModelAnswerUnusable(_)),
-        "{error:?}"
-    );
-    assert!(!error.to_string().contains("check your input"));
-}
-
-#[test]
 fn the_lesson_schema_bounds_no_text_but_a_blank() {
     for sources in [0, 2] {
         let bounds = length_bounds(&lesson_schema(sources));

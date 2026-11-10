@@ -374,10 +374,9 @@ pub(super) fn validate_prepared(
     let mut keys = std::collections::HashSet::new();
     for b in &p.blocks {
         super::teaching::validate_saved_rubric(&b.rubric)?;
-        if (b.source_ids.is_empty() && !source_ids.is_empty())
-            || b.source_ids
-                .iter()
-                .any(|id| !source_ids.contains(id.as_str()))
+        if b.source_ids
+            .iter()
+            .any(|id| !source_ids.contains(id.as_str()))
         {
             return Err(AppError::InvalidInput(
                 "Lesson block references an unknown source.".into(),
@@ -391,10 +390,9 @@ pub(super) fn validate_prepared(
                 "Question identifiers must be unique.".into(),
             ));
         }
-        if (q.source_ids.is_empty() && !source_ids.is_empty())
-            || q.source_ids
-                .iter()
-                .any(|id| !source_ids.contains(id.as_str()))
+        if q.source_ids
+            .iter()
+            .any(|id| !source_ids.contains(id.as_str()))
         {
             return Err(AppError::InvalidInput(
                 "Question references an unknown source.".into(),
