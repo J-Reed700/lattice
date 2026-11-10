@@ -162,9 +162,11 @@ fn grounding_instructions(has_sources: bool) -> &'static str {
 /// §3.4, §3.5): a specific stands only in a sentence it lists in its
 /// citations, with a quote that holds it.
 fn citation_instructions(has_sources: bool) -> String {
-    use super::text_edits::{NEVER_SAY_WHERE, OWN_SENTENCE, QUOTED_WORDING, UNQUOTED_REMARKS};
+    use super::text_edits::{
+        NEVER_SAY_WHERE, OWN_FIGURES, OWN_SENTENCE, QUOTED_WORDING, UNQUOTED_REMARKS,
+    };
     if has_sources {
-        format!("Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim from the block's or question's text, the sourceIndex of the excerpt that states it and a verbatim quote from that excerpt that contains the specific. A sentence that would state a specific no excerpt contains is written in its general form instead. {NEVER_SAY_WHERE} State what the excerpt says as the lesson's own sentence and cite that sentence in the citations list. {OWN_SENTENCE} A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps, question explanations and the reasons for wrong choices state what is so: a worked example, a practice or a check works a hypothetical case and cites nothing. {QUOTED_WORDING} {UNQUOTED_REMARKS}")
+        format!("Cite per sentence. A specific (a figure, date, version, product behaviour, quoted wording, study result) may appear only in a sentence you list in that block's or question's citations: the sentence copied verbatim from the block's or question's text, the sourceIndex of the excerpt that states it and a verbatim quote from that excerpt that contains the specific. A sentence that would state a specific no excerpt contains is written in its general form instead. {OWN_FIGURES} They are not specifics: write them plainly wherever the lesson works a case, and never cite them. {NEVER_SAY_WHERE} State what the excerpt says as the lesson's own sentence and cite that sentence in the citations list. {OWN_SENTENCE} A block or question with nothing to cite has an empty citations list. Only explanations, contrasts, recaps, question explanations and the reasons for wrong choices state what is so: a worked example, a practice or a check works a hypothetical case and cites nothing. {QUOTED_WORDING} {UNQUOTED_REMARKS}")
     } else {
         format!("Every citations list is empty: no sources are supplied, so nothing is cited. Quotation marks mark wording quoted from a source, so none appears in the text. {UNQUOTED_REMARKS}")
     }

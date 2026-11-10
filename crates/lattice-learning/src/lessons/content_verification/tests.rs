@@ -168,9 +168,81 @@ pub(crate) fn fixture_completion(
             .map(|reply| part_wise_reply(&reply, user))
             .unwrap_or_default()
     } else {
-        replies.concat()
+        fixture_repair_edits(request, user, replies.concat())
     };
     CompletionResponse::from_text(text)
+}
+
+/// A scripted repair answer made to obey the schema it was asked under: when
+/// the schema has each edit name its finding, every edit, citation and
+/// uncite that names none gets the finding sent for its part; when it does
+/// not, the names are taken away. A change that names a finding keeps it, and
+/// any other reply is returned as written.
+fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -> String {
+    let Ok(Value::Object(mut answer)) = serde_json::from_str::<Value>(&text) else {
+        return text;
+    };
+    if !["edits", "citations", "uncite"]
+        .iter()
+        .any(|key| answer.contains_key(*key))
+    {
+        return text;
+    }
+    let names = request.json_schema.as_ref().is_some_and(|schema| {
+        schema
+            .pointer("/properties/edits/items/properties/finding")
+            .is_some()
+    });
+    let sent: Vec<Value> = serde_json::from_str::<Value>(user)
+        .ok()
+        .and_then(|prompt| prompt.get("issuesToFix").and_then(Value::as_array).cloned())
+        .unwrap_or_default();
+    let finding_for = |path: &str| -> Value {
+        let mut segments = path.split('/').skip(1);
+        let part = match (segments.next(), segments.next()) {
+            (Some(list @ ("blocks" | "questions")), Some(index)) => format!("/{list}/{index}"),
+            _ => String::new(),
+        };
+        let entry = sent
+            .iter()
+            .find(|entry| {
+                entry["part"].as_str() == Some(part.as_str())
+                    || entry["also"].as_str() == Some(part.as_str())
+            })
+            .or_else(|| sent.iter().find(|entry| entry["part"].is_null()))
+            .or_else(|| sent.first());
+        entry.map_or(Value::Null, |entry| entry["id"].clone())
+    };
+    for key in ["edits", "citations"] {
+        let Some(Value::Array(changes)) = answer.get_mut(key) else {
+            continue;
+        };
+        for change in changes {
+            let Some(fields) = change.as_object_mut() else {
+                continue;
+            };
+            if !names {
+                fields.remove("finding");
+            } else if !fields.contains_key("finding") {
+                let path = fields.get("path").and_then(Value::as_str).unwrap_or("");
+                let finding = finding_for(path);
+                fields.insert("finding".into(), finding);
+            }
+        }
+    }
+    if let Some(Value::Array(unciting)) = answer.get_mut("uncite") {
+        for entry in unciting.iter_mut() {
+            if names {
+                if let Some(path) = entry.as_str().map(str::to_owned) {
+                    *entry = json!({"finding": finding_for(&path), "path": path});
+                }
+            } else if let Some(path) = entry.get("path").and_then(Value::as_str).map(str::to_owned)
+            {
+                *entry = json!(path);
+            }
+        }
+    }
+    Value::Object(answer).to_string()
 }
 
 /// A fixture's label-first verdict ("supported\nReason: …\nSource passage:

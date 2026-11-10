@@ -199,7 +199,7 @@ async fn an_assertion_the_sources_contradict_is_adopted_and_checked() -> Result<
 
 /// A figure the extractor missed in an exercise is a statement the lesson
 /// makes, and a source must back it: the audit's gap joins the inventory,
-/// located at the judged passage, and the rule layer sorts it Sourced.
+/// located at the judged passage, and the model sorts it Sourced.
 #[tokio::test]
 async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_check() -> Result<()>
 {
@@ -225,7 +225,7 @@ async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_ch
         finding.class,
         Some(Classed {
             class: Class::Sourced,
-            by: ClassifiedBy::Rule
+            by: ClassifiedBy::Model
         })
     );
     assert_eq!(finding.verdict, ClaimVerdict::Unsupported);
@@ -417,16 +417,6 @@ fn a_gap_the_rule_layer_leaves_unsorted_is_adopted() {
     assert_eq!(
         adopt_one(UNSOURCED, &claim_ledger::Rewrites::default()),
         (1, 1, true)
-    );
-}
-
-/// A remark about the lesson's own sources is Internal by rule: it is no claim.
-#[test]
-fn a_gap_the_rule_layer_makes_internal_is_not_adopted() {
-    let remark = "The sources above do not say how many rows it buffers.";
-    assert_eq!(
-        adopt_one(remark, &claim_ledger::Rewrites::default()),
-        (0, 0, false)
     );
 }
 

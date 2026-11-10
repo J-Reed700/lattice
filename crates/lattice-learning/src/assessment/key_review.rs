@@ -4,7 +4,7 @@
 //! reviews quiz bank items of every keyed format (docs/design/2026-10-23-
 //! quizzes-and-tests.md, section 5.2).
 use crate::lessons::structured_call::{complete_reasoned_json, CallKind, ReasonFirst};
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::ReviewFinding;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -33,7 +33,7 @@ struct AnswerCheck {
 /// One finding per question whose authored key an independent solution
 /// disputes, placed at that question.
 pub(crate) async fn check(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<ReviewFinding>> {
-    let key = format!("answer-review-v2:{}", crate::content_verification::digest(
+    let key = format!("answer-review-v3:{}", crate::content_verification::digest(
         &json!({"model":llm.model_name(),"context":llm.max_context_tokens(),"questions":candidate.get("questions")}).to_string()
     ));
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
@@ -156,7 +156,7 @@ async fn check_answers(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<Revie
                 let question = questions.get(answer.index)?;
                 let authored = question.get("correctIndex")?.as_u64()? as usize;
                 (answer.correct_indices != vec![authored]).then(|| {
-                    let mut finding = ReviewFinding::new(FindingKind::AnswerKey, Some(FindingSite::Question(answer.index)), format!(
+                    let mut finding = ReviewFinding::answer_key(answer.index, format!(
                         "Question {} has a disputed or ambiguous answer key: its authored index is {authored}, but an independent solution found indices {:?}. {} Rewrite the question and choices so exactly one answer follows from the literal prompt; verify its key and explanation.",
                         answer.index + 1, answer.correct_indices, answer.reason
                     )).with_summary("A second, independent solution disagreed with the answer key.");
@@ -352,6 +352,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
     use crate::lessons::course_generation_tests::ScriptedModel;
+    use crate::review_findings::FindingSite;
     use std::sync::Mutex;
 
     fn candidate() -> Value {

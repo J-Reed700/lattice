@@ -124,14 +124,20 @@ pub(super) fn weigh(
     let (verdict, quote, reason) = match outcome.decision() {
         BridgeDecision::Supported => {
             let common = of_kind(PartKind::Common);
-            let reason = if common.is_empty() {
-                said.to_owned()
-            } else {
-                format!(
-                    "{said} Common knowledge, not in the passages: {}.",
+            let own = of_kind(PartKind::Own);
+            let mut reason = said.to_owned();
+            if !common.is_empty() {
+                reason = format!(
+                    "{reason} Common knowledge, not in the passages: {}.",
                     common.join("; ")
-                )
-            };
+                );
+            }
+            if !own.is_empty() {
+                reason = format!(
+                    "{reason} The lesson's own figures, not in the passages: {}.",
+                    own.join("; ")
+                );
+            }
             (ClaimVerdict::Supported, cited(PartKind::Stated), reason)
         }
         BridgeDecision::Contradicted => (
@@ -275,6 +281,43 @@ mod tests {
         parts.iter().map(|part| part.kind).collect()
     }
 
+    #[tokio::test]
+    async fn a_part_of_the_lesson_s_own_is_named_in_the_reason() {
+        let statement = "A rule set of 48 checks has 12 that fail, which is 25%.";
+        let reply = json!({
+            "parts": [
+                stated("A rule set holds checks"),
+                unplaced("12 of 48 is 25%", "own"),
+            ],
+            "verdict": "supported",
+            "reason": "The judge's reason.",
+        })
+        .to_string();
+        let model = Said(Mutex::new(VecDeque::from([reply.clone(), reply])));
+        let texts = vec![CITED.to_owned()];
+        let checker = ClaimChecker::new(
+            &model,
+            SamplingOverride::deterministic(),
+            OUTPUT_TOKENS,
+            CheckPolicy::Bridge,
+        );
+        let answered = checker.check_bridge(statement, &texts).await.judgments;
+        assert!(matches!(answered, ClassJudgment::Judged(_)), "{answered:?}");
+        let ClassJudgment::Judged(outcome) = answered else {
+            unreachable!()
+        };
+        let (judgment, _) = weigh(outcome, &pending(statement), &texts, states_a_specific);
+        let judged = match judgment {
+            ClaimJudgment::Judged(judged) => judged,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(judged.verdict, ClaimVerdict::Supported);
+        assert!(judged
+            .reason
+            .unwrap()
+            .contains("The lesson's own figures, not in the passages: 12 of 48 is 25%."),);
+    }
+
     /// The five planted rows of design 4.5, as the model answered them, through
     /// the reading, the guard and the decision.
     #[tokio::test]
@@ -358,11 +401,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_common_part_that_names_a_figure_a_quotation_or_an_attribution_is_a_specific() {
+    async fn a_common_part_that_names_a_figure_or_a_quotation_is_a_specific() {
         for smuggled in [
             "it was released in 2006",
-            "it is known as \"the page reader\"",
-            "the documentation states that it reads pixels",
+            "it is known as \"the page that reads text from images\"",
         ] {
             let (judged, parts) = weighed(
                 "Tesseract is an OCR engine and a specific.",
