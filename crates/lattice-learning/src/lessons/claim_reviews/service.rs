@@ -14,9 +14,8 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
 use serde_json::Value;
-use sqlx::SqlitePool;
 
 use super::actions::{in_section_body, refusal, whole_sentence, ONLY_SECTION};
 use super::checker_examples::LabelSource;
@@ -62,7 +61,7 @@ const NOT_A_SENTENCE: &str =
 
 #[derive(Clone)]
 pub struct ClaimReviewService {
-    pool: SqlitePool,
+    pool: Database,
     store: ClaimReviewRepository,
     drafts: LearningCurriculumRepository,
     checker_model: Option<String>,
@@ -94,7 +93,8 @@ struct Planned<'a> {
 }
 
 impl ClaimReviewService {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.database();
         Self {
             store: ClaimReviewRepository::new(pool.clone()),
             drafts: LearningCurriculumRepository::new(pool.clone()),
@@ -110,7 +110,7 @@ impl ClaimReviewService {
         self
     }
 
-    pub(super) fn pool(&self) -> &SqlitePool {
+    pub(super) fn pool(&self) -> &Database {
         &self.pool
     }
 

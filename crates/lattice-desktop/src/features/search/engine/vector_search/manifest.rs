@@ -29,12 +29,12 @@
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 use crate::infrastructure::vector_index::index_config::{manifest_path_for, IndexConfig};
 use crate::infrastructure::vector_index::usearch_index::write_file_atomically;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 /// Bumped whenever the meaning of anything the index persists changes. A
 /// manifest written under a different version is not read; the index is
@@ -57,7 +57,7 @@ pub struct SourceStamp {
 /// Two aggregate queries against covering indexes; no embedding blob is
 /// touched. The counter is a single-row primary key lookup.
 pub async fn read_source_stamp(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     identity: &str,
     dimension: usize,
 ) -> Result<SourceStamp> {
@@ -206,6 +206,7 @@ mod tests {
     use crate::infrastructure::vector_index::compression::{
         VectorIndexCompression, VectorQuantization,
     };
+    use sqlx::SqlitePool;
     use std::path::PathBuf;
 
     fn config() -> IndexConfig {

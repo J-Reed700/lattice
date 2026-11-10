@@ -79,7 +79,7 @@ pub(crate) struct LessonBank {
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn lesson_bank_stage(
     llm: &dyn LLMPort,
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     lesson_id: &str,
     title: &str,

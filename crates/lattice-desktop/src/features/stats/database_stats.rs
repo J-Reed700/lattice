@@ -1,14 +1,15 @@
 use async_trait::async_trait;
 use lattice_core::application::ports::DatabaseStatsPort;
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 
 pub struct DatabaseStatsAdapter {
-    pool: SqlitePool,
+    pool: Database,
 }
 
 impl DatabaseStatsAdapter {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.database();
         Self { pool }
     }
 }

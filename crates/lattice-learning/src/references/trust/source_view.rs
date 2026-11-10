@@ -27,8 +27,7 @@ use lattice_core::domain::provenance::{
     TrackRecord, TrustOverride, POLICY,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
 use std::collections::BTreeSet;
 
 /// The relations through which a version inherits a level (§5 step 4), as
@@ -76,7 +75,7 @@ pub async fn view(
 
 /// The latest profile of `statement` under the current class vocabulary.
 pub async fn latest_profile(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     statement: &str,
     known_classes: &[String],
 ) -> Result<Option<ClaimProfile>> {
@@ -90,7 +89,7 @@ pub async fn latest_profile(
 /// it, as the gate computes it (claim sources design §4.3). A version judged
 /// only under v1 has none: the view shows it as not judged yet.
 pub(crate) async fn latest_standing(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     record: &ProvenanceRecord,
 ) -> Result<Option<StandingAssessment>> {
@@ -103,7 +102,7 @@ pub(crate) async fn latest_standing(
 }
 
 async fn latest_authority(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     origin: &OriginKey,
     subject: &SubjectKey,
@@ -126,7 +125,7 @@ fn reason(code: &str, text: &str) -> LearningTrustReasonDto {
 }
 
 impl Course<'_> {
-    fn pool(&self) -> &SqlitePool {
+    fn pool(&self) -> &Database {
         self.store.pool()
     }
 

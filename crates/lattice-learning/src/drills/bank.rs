@@ -7,8 +7,7 @@ use super::spec::DrillSpec;
 use crate::persistence::{db, now};
 use lattice_core::domain::learning::drills::Material;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 
 mod store;
 pub use store::queue_build_in;
@@ -48,7 +47,11 @@ impl<'a> Shelf<'a> {
 /// Queues a `learning.drill_build` job for `spec` and returns its id. The operation ID derives from `seed`, so
 /// asking again with the same seed finds the same job, and the same seed with another spec is refused. The caller
 /// tells the job runtime once the job is committed.
-pub async fn queue_build(pool: &SqlitePool, spec: &DrillSpec, seed: &str) -> Result<String> {
+pub async fn queue_build(
+    pool: &impl DatabaseHandle,
+    spec: &DrillSpec,
+    seed: &str,
+) -> Result<String> {
     let mut transaction = pool.begin_write().await.map_err(db)?;
     let id = queue_build_in(&mut transaction, spec, seed).await?;
     transaction.commit().await.map_err(db)?;
@@ -61,7 +64,7 @@ pub async fn queue_build(pool: &SqlitePool, spec: &DrillSpec, seed: &str) -> Res
 /// each time they ask. Refused when no lesson is asked for and none of the course's can be drilled on the material.
 /// The caller tells the job runtime once the job is committed.
 pub async fn ensure_build(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     shelf: Shelf<'_>,
     lesson: Option<&str>,
     lines: u32,
@@ -130,7 +133,7 @@ pub struct Taken {
 /// The lesson and the patterns come from the schedules: the taken drill's lesson and patterns, and those of drills
 /// ready or waiting for their grade, are pending, so they come last.
 pub async fn take(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     shelf: Shelf<'_>,
     lesson: Option<&str>,
 ) -> Result<Option<Taken>> {

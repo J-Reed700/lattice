@@ -22,13 +22,12 @@ use futures::future::BoxFuture;
 use lattice_core::application::ports::llm_port::PinnedModel;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobFailure, JobHandler, JobKindConfig, JobOutcome, JobRecord,
     RecoveryPolicy,
 };
 use serde_json::json;
-use sqlx::SqlitePool;
 use std::sync::Arc;
 
 pub const QUIZ_BANK: &str = "learning.quiz_bank";
@@ -52,7 +51,7 @@ pub fn quiz_job_config() -> JobKindConfig {
 /// Queue writing a quiz's questions: its missing bank, or with `top_up` one
 /// more form's worth.
 pub async fn queue_bank(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     operation_id: &str,
     program_id: &str,
     scope: &LearningQuizScopeDto,
@@ -94,7 +93,7 @@ pub struct BankReport {
 /// blinded key review), without the job runner. For the course eval's live
 /// hook and other callers that hold a model already.
 pub async fn prepare_bank_now(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     llm: &dyn LLMPort,
     program_id: &str,
     scope: &LearningQuizScopeDto,
@@ -137,7 +136,7 @@ fn requested_str<'a>(job: &'a JobRecord, field: &str) -> Result<&'a str> {
 /// Writes a quiz's question bank.
 #[derive(Clone)]
 pub struct QuizBankWorker {
-    pub pool: SqlitePool,
+    pub pool: Database,
     pub load_llm: ModelLoader,
 }
 

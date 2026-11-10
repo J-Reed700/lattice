@@ -8,6 +8,7 @@ use lattice_core::application::ports::download_manager::{
     DownloadBatchItem, DownloadManager, DownloadRequest,
 };
 use lattice_core::domain::download::DownloadSession;
+use lattice_core::shared::persistence::DatabaseHandle;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -28,7 +29,7 @@ async fn fixture() -> Fixture {
             .unwrap(),
     );
     sqlx::migrate!("./migrations")
-        .run(connection.pool())
+        .run(connection.pool().sqlx_pool())
         .await
         .unwrap();
     let repository = Arc::new(SqliteDownloadRepository::new(connection.clone()));
@@ -67,7 +68,7 @@ async fn refuse(connection: &DatabaseConnection, event: &str) {
         "CREATE TRIGGER refuse_{event} BEFORE {event} ON download_sessions
          BEGIN SELECT RAISE(ABORT, 'injected'); END"
     ))
-    .execute(connection.pool())
+    .execute(connection.pool().sqlx_pool())
     .await
     .unwrap();
 }

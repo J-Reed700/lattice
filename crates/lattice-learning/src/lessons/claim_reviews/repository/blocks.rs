@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 use lattice_core::shared::error::Result;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::DatabaseHandle;
+use sqlx::{Row, SqliteConnection};
 
 use crate::persistence::db;
 
@@ -86,9 +87,10 @@ pub(in crate::lessons::claim_reviews) async fn write_section(
 
 /// The published sections' text, by section index.
 pub(in crate::lessons::claim_reviews) async fn section_bodies(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     lesson_id: &str,
 ) -> Result<HashMap<usize, String>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query("SELECT ordinal, body FROM learning_blocks WHERE lesson_id=?")
         .bind(lesson_id)
         .fetch_all(pool)
@@ -106,10 +108,11 @@ pub(in crate::lessons::claim_reviews) async fn section_bodies(
 }
 
 pub(in crate::lessons::claim_reviews) async fn lesson_in_course(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<bool> {
+    let pool = pool.sqlx_pool();
     let in_course: Option<i64> =
         sqlx::query_scalar("SELECT 1 FROM learning_lessons WHERE id=? AND program_id=?")
             .bind(lesson_id)

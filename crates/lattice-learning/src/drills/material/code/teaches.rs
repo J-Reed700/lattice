@@ -9,9 +9,9 @@ use crate::model_call;
 use crate::persistence::hash;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::DatabaseHandle;
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::SqlitePool;
 
 mod repository;
 
@@ -79,7 +79,7 @@ pub(super) async fn ask(llm: &dyn LLMPort, context: &LessonContext) -> Result<Ta
 
 /// The verdict stored for the lesson of `context` on `basis`, if any.
 pub(super) async fn stored(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     context: &LessonContext,
     basis: &str,
 ) -> Result<Option<bool>> {
@@ -89,7 +89,7 @@ pub(super) async fn stored(
 /// Stores the verdict `taught` for the lesson of `context`, replacing its earlier one; nothing, when the lesson is no
 /// longer one of the course's.
 pub(super) async fn record(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     context: &LessonContext,
     basis: &str,
     taught: &Taught,

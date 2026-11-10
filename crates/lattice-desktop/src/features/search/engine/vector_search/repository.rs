@@ -1,13 +1,14 @@
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 /// Both values in one SQLite snapshot: separate SELECTs can combine an old
 /// count with a new counter when a writer commits between them.
 pub(super) async fn source_stamp_counts(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     identity: &str,
     dimension: i64,
 ) -> Result<(i64, i64)> {
+    let pool = pool.sqlx_pool();
     Ok(sqlx::query_as(
         "SELECT COUNT(*), COALESCE((SELECT write_counter FROM vector_index_state WHERE id = 1), 0) FROM text_chunks tc \
          LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? \

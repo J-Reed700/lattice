@@ -40,7 +40,7 @@ pub async fn setup_test_container() -> Result<Container> {
     let db_conn = Arc::new(DatabaseConnection::new(temp_db_path).await?);
 
     Container::new(
-        db_pool,
+        db_pool.into(),
         db_conn,
         None,                     // No embedding model for smoke tests
         "http://localhost:11434", // Ollama default (won't be called in smoke tests)

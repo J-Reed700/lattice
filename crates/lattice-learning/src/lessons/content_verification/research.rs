@@ -9,6 +9,7 @@ use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::http::url_identity::identity;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
@@ -21,7 +22,7 @@ use saving::Saving;
 
 #[derive(Clone)]
 struct Context {
-    pool: sqlx::SqlitePool,
+    pool: Database,
     program_id: String,
     topic: String,
     web: Arc<dyn WebServiceTrait>,
@@ -251,12 +252,13 @@ fn selection(raw: &str, results: &[WebSearchResult]) -> Result<Vec<(WebSearchRes
 tokio::task_local! { static CURRENT:Context; }
 
 pub(crate) async fn run<T>(
-    pool: sqlx::SqlitePool,
+    pool: impl DatabaseHandle,
     program_id: String,
     topic: String,
     web: Option<Arc<dyn WebServiceTrait>>,
     future: impl std::future::Future<Output = T>,
 ) -> T {
+    let pool = pool.database();
     match web {
         Some(web) => {
             CURRENT

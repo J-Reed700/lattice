@@ -2,6 +2,7 @@
 
 use crate::features::conversation::chat::resumable_research_questions;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::DatabaseHandle;
 use lattice_core::shared::runtime::jobs::JobStore;
 
 /// Close out grounding checks the last run never finished.
@@ -11,8 +12,8 @@ use lattice_core::shared::runtime::jobs::JobStore;
 /// message would show "Checking…" forever. Nothing re-runs the check (its
 /// evidence lived in the turn), so the honest state is "not checked".
 pub async fn reconcile_interrupted_verifications(
-    pool: &sqlx::SqlitePool,
-) -> Result<u64, sqlx::Error> {
+    pool: &impl DatabaseHandle,
+) -> Result<u64, AppError> {
     super::repository::mark_interrupted_verifications(pool).await
 }
 
@@ -26,7 +27,7 @@ pub async fn reconcile_interrupted_verifications(
 /// so that row stays `pending`. Every other such row has nothing left to
 /// finish it, and is failed so it can be retried.
 pub async fn reconcile_stuck_turns(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DatabaseHandle,
     jobs: &JobStore,
 ) -> Result<u64, AppError> {
     let resuming = resumable_research_questions(jobs).await?;

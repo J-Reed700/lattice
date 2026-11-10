@@ -26,9 +26,8 @@ use lattice_core::application::ports::{
 use lattice_core::domain::entities::Chunk;
 use lattice_core::domain::ports::article_archive::ArticleArchive;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions, WriteTx};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 /// Request to delete a document.
 ///
@@ -67,7 +66,7 @@ pub struct DeleteDocumentResponseDto {
 /// - A file Lattice does not own is never deleted
 pub struct DeleteDocumentUseCase {
     vector_search: Arc<dyn VectorSearchPort>,
-    pool: SqlitePool,
+    pool: Database,
     library: Arc<dyn ContentAddressedStoragePort>,
     library_gc: Arc<LibraryGc>,
     web_archive: Arc<dyn ArticleArchive>,
@@ -82,11 +81,12 @@ impl DeleteDocumentUseCase {
     /// Create a new delete document use case.
     pub fn new(
         vector_search: Arc<dyn VectorSearchPort>,
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         library: Arc<dyn ContentAddressedStoragePort>,
         library_gc: Arc<LibraryGc>,
         web_archive: Arc<dyn ArticleArchive>,
     ) -> Self {
+        let pool = pool.database();
         Self {
             vector_search,
             pool,

@@ -7,7 +7,7 @@
 use super::attempt::Attempt;
 use super::{Admitted, Backoff, Deferral, JobRecord, JobStatus, NewJob, RecoveryPolicy};
 use crate::shared::error::{AppError, Result};
-use crate::shared::persistence::{Transactions, WriteTx};
+use crate::shared::persistence::{DatabaseHandle, Transactions, WriteTx};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 
 const SUSPENDED: &str = "Saved; resumes when the app opens";
@@ -115,7 +115,8 @@ pub struct JobStore {
 }
 
 impl JobStore {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

@@ -4,6 +4,7 @@ use crate::infrastructure::events::event_bus::EventBus;
 use crate::infrastructure::setup::{setup_app_directories, setup_database, setup_model_directory};
 use lattice_core::application::ports::SettingsRepositoryPort;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::supervised_task::supervise_cancellable;
 // ChunkRepositoryTrait removed - migrated to DDD ports
 use chrono::Utc;
@@ -64,7 +65,7 @@ fn initialize_security_layer() -> Arc<crate::security::SecurityContext> {
 /// This container supports optional AI models - when models aren't installed,
 /// AI-dependent features return helpful error messages guiding users to download models.
 async fn create_container(
-    pool: sqlx::SqlitePool,
+    pool: Database,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
     _security_context: Arc<crate::security::SecurityContext>,
     data_dir: PathBuf,

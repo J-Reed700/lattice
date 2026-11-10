@@ -2,7 +2,7 @@
 
 use super::CoreModule;
 use crate::infrastructure::persistence::repositories::file_library::SqliteFileLibrary;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - File Operations
@@ -47,7 +47,7 @@ impl FileOpsModule {
     }
     /// Build FileOpsModule by composing the file + extraction feature builders.
     pub async fn new(
-        db_pool: SqlitePool,
+        db_pool: Database,
         core: Arc<CoreModule>,
         extraction_workers: crate::features::indexing::engine::extraction::ExtractionWorkers,
     ) -> lattice_core::shared::error::Result<Self> {

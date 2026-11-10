@@ -1,6 +1,7 @@
 use crate::persistence::db;
 use lattice_core::shared::error::Result;
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::DatabaseHandle;
+use sqlx::{Row, SqliteConnection};
 
 /// One saved or about-to-be-saved text of a course.
 pub(in crate::references::trust) struct CourseText {
@@ -10,9 +11,10 @@ pub(in crate::references::trust) struct CourseText {
 }
 
 pub(in crate::references::trust) async fn active_texts(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
 ) -> Result<Vec<CourseText>> {
+    let pool = pool.sqlx_pool();
     let mut connection = pool.acquire().await.map_err(db)?;
     active_texts_in(&mut connection, program_id).await
 }

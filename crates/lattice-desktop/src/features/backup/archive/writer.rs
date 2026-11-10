@@ -9,10 +9,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
 use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 
 use super::config::ArchiveConfig;
 use super::crypto::{self, MasterKey};
@@ -118,7 +118,7 @@ pub fn list_archives(destination: &Path) -> Vec<ArchiveFileInfo> {
 /// Writes archives. Holds no mutable state; every run re-reads the config so
 /// a destination change between the scheduler tick and the run is honoured.
 pub struct ArchiveWriter {
-    pool: SqlitePool,
+    pool: Database,
     app_data_dir: PathBuf,
     settings_repo: Arc<dyn SettingsRepositoryPort>,
     key_store: Arc<MasterKeyStore>,
@@ -134,13 +134,14 @@ pub struct ArchiveWriter {
 
 impl ArchiveWriter {
     pub fn new(
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         app_data_dir: PathBuf,
         settings_repo: Arc<dyn SettingsRepositoryPort>,
         key_store: Arc<MasterKeyStore>,
         files_root: Option<PathBuf>,
         web_archive_root: Option<PathBuf>,
     ) -> Self {
+        let pool = pool.database();
         Self {
             pool,
             app_data_dir,

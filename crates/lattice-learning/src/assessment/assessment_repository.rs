@@ -6,6 +6,7 @@ use crate::{
     persistence::{db, now},
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::DatabaseHandle;
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
@@ -421,12 +422,9 @@ pub struct LearningAssessmentRepository {
 }
 
 impl LearningAssessmentRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
-    }
-
-    pub fn pool(&self) -> &SqlitePool {
-        &self.pool
     }
 
     async fn active_program(connection: &mut SqliteConnection, program_id: &str) -> Result<()> {

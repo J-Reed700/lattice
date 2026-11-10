@@ -1,7 +1,7 @@
 //! The indexing module: indexing files and web pages, transcription and OCR.
 
 use super::CoreModule;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - Indexing
@@ -51,7 +51,7 @@ pub struct IndexingModule {
 impl IndexingModule {
     /// Build IndexingModule by composing the indexing and web features.
     pub async fn new(
-        db_pool: SqlitePool,
+        db_pool: Database,
         core: Arc<CoreModule>,
         model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
         vector_search: Arc<dyn VectorSearchPort>,

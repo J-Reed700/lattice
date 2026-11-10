@@ -7,11 +7,11 @@ use crate::assessment_repository::LearningAssessmentRepository;
 use crate::curriculum_repository::lesson_rank_in;
 use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqliteConnection;
 
 /// What a lesson's bank stage reads of the lesson.
 pub(super) struct LessonInputs {
@@ -23,10 +23,11 @@ pub(super) struct LessonInputs {
 
 /// The lesson's heading, blocks and reviewed questions, read in one unit of work.
 pub(super) async fn lesson_inputs(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<LessonInputs> {
+    let pool = pool.sqlx_pool();
     let mut tx = pool.begin_read().await.map_err(db)?;
     let (title, objective) = lesson_title_objective_in(&mut tx, program_id, lesson_id)
         .await?

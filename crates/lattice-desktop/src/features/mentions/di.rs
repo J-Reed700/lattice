@@ -2,8 +2,6 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use crate::features::mentions::mapper::MentionMapper;
 use crate::features::mentions::use_cases::{
     CreateMentionUseCase, DeleteMentionUseCase, ExtractMentionsUseCase, GetBacklinksUseCase,
@@ -12,6 +10,7 @@ use crate::features::mentions::use_cases::{
 use crate::infrastructure::persistence::repositories::mentions::MentionRepository;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::MentionRepositoryPort;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 #[derive(Clone)]
 pub struct MentionsDi {
@@ -25,7 +24,8 @@ pub struct MentionsDi {
     pub delete_mention_use_case: Arc<DeleteMentionUseCase>,
 }
 
-pub fn build(db_pool: SqlitePool) -> MentionsDi {
+pub fn build(db_pool: impl DatabaseHandle) -> MentionsDi {
+    let db_pool = db_pool.database();
     let mention_repo = Arc::new(MentionRepository::new(db_pool)) as Arc<dyn MentionRepositoryPort>;
     let mapper = Arc::new(MentionMapper::new());
 

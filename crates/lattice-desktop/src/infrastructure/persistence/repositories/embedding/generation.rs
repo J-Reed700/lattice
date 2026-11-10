@@ -1,25 +1,29 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::embedding_encoding;
+use lattice_core::shared::persistence::{embedding_encoding, DatabaseHandle};
 use sha2::{Digest, Sha256};
-use sqlx::SqlitePool;
 
 pub fn content_hash(text: &str) -> String {
     format!("{:x}", Sha256::digest(text.as_bytes()))
 }
 
-pub async fn chunk_page_after(pool: &SqlitePool, cursor: &str) -> Result<Vec<(String, String)>> {
+pub async fn chunk_page_after(
+    pool: &impl DatabaseHandle,
+    cursor: &str,
+) -> Result<Vec<(String, String)>> {
+    let pool = pool.sqlx_pool();
     Ok(sqlx::query_as("SELECT id, COALESCE(NULLIF(contextualized_content, ''), content) FROM text_chunks WHERE id > ? ORDER BY id LIMIT 64")
         .bind(cursor).fetch_all(pool).await?)
 }
 
 pub async fn is_prepared(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     identity: &str,
     chunk_id: &str,
     hash: &str,
     dimension: usize,
 ) -> Result<bool> {
+    let pool = pool.sqlx_pool();
     let exists: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM embedding_generation_vectors WHERE model_identity = ? AND chunk_id = ? AND content_hash = ? AND dimension = ?")
         .bind(identity).bind(chunk_id).bind(hash).bind(dimension as i64).fetch_one(pool).await?;
     Ok(exists > 0)
@@ -28,19 +32,21 @@ pub async fn is_prepared(
 /// The statement rechecks the chunk's text, so a chunk deleted or edited while
 /// inference ran stores nothing.
 pub async fn store_prepared(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     identity: &str,
     hash: &str,
     vector: &[f32],
     chunk_id: &str,
     text: &str,
 ) -> Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query("INSERT OR REPLACE INTO embedding_generation_vectors (model_identity, chunk_id, content_hash, embedding, dimension) SELECT ?, id, ?, ?, ? FROM text_chunks WHERE id = ? AND COALESCE(NULLIF(contextualized_content, ''), content) = ?")
         .bind(identity).bind(hash).bind(embedding_encoding::encode_embedding(vector)).bind(vector.len() as i64).bind(chunk_id).bind(text).execute(pool).await?;
     Ok(())
 }
 
-pub async fn count_chunks_with_content(pool: &SqlitePool) -> Result<i64> {
+pub async fn count_chunks_with_content(pool: &impl DatabaseHandle) -> Result<i64> {
+    let pool = pool.sqlx_pool();
     Ok(
         sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE content != ''")
             .fetch_one(pool)
@@ -50,10 +56,11 @@ pub async fn count_chunks_with_content(pool: &SqlitePool) -> Result<i64> {
 
 /// Never restore vectors from another model, even if dimensions happen to match.
 pub async fn restore(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     identity: &str,
     dimension: usize,
 ) -> Result<Vec<(String, Vec<f32>, String, String, String)>> {
+    let pool = pool.sqlx_pool();
     let mut result = Vec::new();
     let mut cursor = String::new();
     loop {
@@ -75,12 +82,13 @@ pub struct RestorePage {
 }
 
 pub async fn restore_page(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     identity: &str,
     dimension: usize,
     after_chunk_id: &str,
     limit: i64,
 ) -> Result<RestorePage> {
+    let pool = pool.sqlx_pool();
     if limit <= 0 {
         return Err(AppError::InvalidInput(
             "Embedding restore page limit must be positive".into(),
@@ -124,6 +132,7 @@ pub async fn restore_page(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::SqlitePool;
     async fn database() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)

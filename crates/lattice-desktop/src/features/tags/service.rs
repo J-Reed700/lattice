@@ -1,5 +1,4 @@
 use async_trait::async_trait;
-use sqlx::SqlitePool;
 use std::collections::hash_map::DefaultHasher;
 use std::hash::{Hash, Hasher};
 use std::sync::Arc;
@@ -7,6 +6,7 @@ use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
 
 use lattice_core::application::ports::{DocumentLockGuard, TagServiceTrait};
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 
 const DOCUMENT_LOCK_STRIPES: usize = 64;
 
@@ -45,11 +45,12 @@ impl DocumentLockTable {
 #[derive(Debug, Clone)]
 pub struct TagService {
     document_locks: DocumentLockTable,
-    pub(crate) db_pool: SqlitePool,
+    pub(crate) db_pool: Database,
 }
 
 impl TagService {
-    pub fn new(db_pool: SqlitePool) -> Self {
+    pub fn new(db_pool: impl DatabaseHandle) -> Self {
+        let db_pool = db_pool.database();
         Self {
             document_locks: DocumentLockTable::default(),
             db_pool,
@@ -431,6 +432,7 @@ impl TagServiceTrait for TagService {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::SqlitePool;
 
     #[test]
     fn test_merge_tags() {

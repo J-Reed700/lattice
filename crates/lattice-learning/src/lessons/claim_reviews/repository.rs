@@ -13,7 +13,7 @@ use lattice_core::domain::learning::claim_review::{
     Ledger, LessonReview, LessonReviewState, RecordedEvent, Revision, StopReason, UnitKind,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions, WriteTx};
 use serde::{Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
@@ -53,7 +53,8 @@ pub struct ClaimReviewRepository {
 }
 
 impl ClaimReviewRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

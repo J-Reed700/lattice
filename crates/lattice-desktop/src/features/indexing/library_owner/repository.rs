@@ -1,8 +1,10 @@
-use sqlx::{SqliteConnection, SqlitePool};
+use sqlx::SqliteConnection;
 
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::DatabaseHandle;
 
-pub async fn recorded_owner(pool: &SqlitePool) -> Result<Option<String>> {
+pub async fn recorded_owner(pool: &impl DatabaseHandle) -> Result<Option<String>> {
+    let pool = pool.sqlx_pool();
     Ok(
         sqlx::query_scalar::<_, String>("SELECT owner_id FROM library_owner WHERE id = 1")
             .fetch_optional(pool)
@@ -10,7 +12,8 @@ pub async fn recorded_owner(pool: &SqlitePool) -> Result<Option<String>> {
     )
 }
 
-pub async fn holds_documents(pool: &SqlitePool) -> Result<bool> {
+pub async fn holds_documents(pool: &impl DatabaseHandle) -> Result<bool> {
+    let pool = pool.sqlx_pool();
     Ok(
         sqlx::query_scalar::<_, bool>("SELECT EXISTS(SELECT 1 FROM documents)")
             .fetch_one(pool)

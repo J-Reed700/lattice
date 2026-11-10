@@ -23,19 +23,20 @@ use crate::{
     source_library::workspace_in,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use serde::Serialize;
 use sha2::{Digest, Sha256};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
 /// A user-requested export: refused while the course is still being
 /// generated or before it has an outline another computer could import.
 pub(crate) async fn snapshot(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     options: &LearningPackExportOptionsDto,
 ) -> Result<LearningPackInput> {
+    let pool = pool.sqlx_pool();
     let mut tx = pool.begin_read().await.map_err(db)?;
     guards::require_exportable(&mut tx, program_id).await?;
     let input = snapshot_on(&mut tx, program_id, options).await?;

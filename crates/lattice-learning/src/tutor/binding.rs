@@ -4,9 +4,8 @@
 use super::repository;
 use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::DatabaseHandle;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
@@ -27,7 +26,7 @@ pub(super) struct CourseBinding {
 /// Binds a conversation to an accepted course and, optionally, one of its
 /// lessons. A conversation reads one source, so a folder's thread is refused.
 pub async fn bind_conversation(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     request: &SetConversationCourseRequestDto,
 ) -> Result<()> {
     let mut tx = pool.begin_write().await.map_err(db)?;

@@ -14,7 +14,7 @@ use crate::features::web::{
 };
 use crate::interfaces::di::Container;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 use tokenizers::Tokenizer;
 
 #[derive(Clone)]
@@ -74,7 +74,7 @@ pub fn build(
 /// snapshot directory, the one job runtime its captures run on, and the
 /// window events the app attaches once it is running.
 pub fn build_page_snapshots(
-    db_pool: SqlitePool,
+    db_pool: impl DatabaseHandle,
     jobs: Arc<lattice_core::shared::runtime::jobs::JobRuntime>,
     events: Arc<crate::features::web::snapshots::AppEvents>,
     background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
@@ -96,7 +96,7 @@ pub fn build_page_snapshots(
 /// Chat pictures: rows, files under `~/.lattice/chat-images`, and fetches
 /// through the one web service so they share its guard, client and pacer.
 pub fn build_chat_images(
-    db_pool: SqlitePool,
+    db_pool: impl DatabaseHandle,
     web_service: Arc<crate::features::web::services::web::WebService>,
     background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
     sweep_gate: Arc<lattice_core::shared::fs::SweepGate>,

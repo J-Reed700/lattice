@@ -1,7 +1,7 @@
 //! The library module: tags, mentions, backlinks, favorites and recent documents.
 
 use super::CoreModule;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - Tags
@@ -45,7 +45,7 @@ pub struct LibraryModule {
 impl LibraryModule {
     /// Build LibraryModule by composing feature-local DI builders.
     pub async fn new(
-        db_pool: SqlitePool,
+        db_pool: Database,
         _core: Arc<CoreModule>,
     ) -> lattice_core::shared::error::Result<Self> {
         Ok(Self {

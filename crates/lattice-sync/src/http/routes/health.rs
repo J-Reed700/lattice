@@ -12,7 +12,7 @@ pub struct HealthResponse {
 }
 
 pub async fn healthz(State(state): State<AppState>) -> AppResult<Json<HealthResponse>> {
-    crate::persistence::db::ping(&state.pool).await?;
+    state.pool.ping().await?;
 
     Ok(Json(HealthResponse {
         status: "ok",

@@ -4,7 +4,7 @@ use chrono::{DateTime, Utc};
 use lattice_core::domain::download::{
     Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
 };
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions, WriteTx};
 use sqlx::{FromRow, SqliteConnection};
 use std::sync::Arc;
 
@@ -332,7 +332,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             "#,
         )
         .bind(id)
-        .fetch_optional(self.db_conn.pool())
+        .fetch_optional(self.db_conn.pool().sqlx_pool())
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to get session: {}", e)))?;
 
@@ -466,7 +466,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             SELECT * FROM download_sessions ORDER BY created_at DESC
             "#,
         )
-        .fetch_all(self.db_conn.pool())
+        .fetch_all(self.db_conn.pool().sqlx_pool())
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list sessions: {}", e)))?;
 
@@ -485,7 +485,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             "#,
         )
         .bind(state_str)
-        .fetch_all(self.db_conn.pool())
+        .fetch_all(self.db_conn.pool().sqlx_pool())
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list sessions by state: {}", e)))?;
 
@@ -502,7 +502,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             .bind(after_id)
             .bind(after_id)
             .bind(limit)
-            .fetch_all(self.db_conn.pool())
+            .fetch_all(self.db_conn.pool().sqlx_pool())
             .await
             .map_err(|e| {
                 DownloadError::IoError(format!(
@@ -522,7 +522,7 @@ impl DownloadRepository for SqliteDownloadRepository {
             ORDER BY created_at DESC
             "#,
         )
-        .fetch_all(self.db_conn.pool())
+        .fetch_all(self.db_conn.pool().sqlx_pool())
         .await
         .map_err(|e| DownloadError::IoError(format!("Failed to list active sessions: {}", e)))?;
 

@@ -10,6 +10,7 @@ use lattice_core::application::ports::{
     EmbeddingIndexBinding, EmbeddingPort, SearchServiceTrait, VectorSearchPort,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use std::{
     collections::HashSet,
@@ -41,7 +42,7 @@ pub struct RuntimeVectorIndex {
     /// already active, or by [`Self::bind_first`] for the first one.
     persistence: OnceLock<Arc<IndexPersistence>>,
     /// The database the first bind prepares and restores its generation from.
-    pool: sqlx::SqlitePool,
+    pool: Database,
     /// Where the persistence worker runs, so shutdown flushes and stops it.
     background: Arc<BackgroundTasks>,
 }
@@ -53,9 +54,10 @@ impl RuntimeVectorIndex {
         path: PathBuf,
         compression: VectorIndexCompression,
         persistence: Option<Arc<IndexPersistence>>,
-        pool: sqlx::SqlitePool,
+        pool: impl DatabaseHandle,
         background: Arc<BackgroundTasks>,
     ) -> Self {
+        let pool = pool.database();
         let bound = OnceLock::new();
         if let Some(identity) = identity {
             let _ = bound.set((identity, initial.clone()));

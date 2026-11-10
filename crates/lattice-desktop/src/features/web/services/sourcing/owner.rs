@@ -10,7 +10,7 @@ use lattice_core::application::services::sourcing::cache_policy;
 use lattice_core::domain::sourcing::{
     Identifier, Origin, OwnerResolution, OwnerSource, SourcingPolicy, SubjectHint,
 };
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use url::Url;
 
 use super::owner_cache_repository;
@@ -24,7 +24,7 @@ pub(crate) struct OwnerResolver {
     wikidata: Arc<Wikidata>,
     _wikipedia: Arc<Wikipedia>,
     cache: parking_lot::Mutex<HashMap<String, CachedOwnerEntry>>,
-    pool: Option<SqlitePool>,
+    pool: Option<Database>,
     policy: SourcingPolicy,
     clock: Arc<dyn Clock>,
 }
@@ -33,7 +33,7 @@ impl OwnerResolver {
     pub(crate) fn new(
         wikidata: Arc<Wikidata>,
         wikipedia: Arc<Wikipedia>,
-        pool: Option<SqlitePool>,
+        pool: Option<Database>,
         policy: SourcingPolicy,
         clock: Arc<dyn Clock>,
     ) -> Self {
@@ -50,7 +50,7 @@ impl OwnerResolver {
     pub(crate) fn with_system_clock(
         wikidata: Arc<Wikidata>,
         wikipedia: Arc<Wikipedia>,
-        pool: Option<SqlitePool>,
+        pool: Option<Database>,
         policy: SourcingPolicy,
     ) -> Self {
         Self::new(

@@ -24,8 +24,7 @@ use lattice_core::domain::provenance::{
     RelationTarget, ShingleSet, Sketch, SourceDates, SourceRelation, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{ReadTx, WriteTx};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{DatabaseHandle, ReadTx, WriteTx};
 use std::collections::BTreeSet;
 
 /// The extraction version of a library document's signals.
@@ -196,7 +195,7 @@ pub async fn saved_texts(conn: &mut ReadTx, program_id: &str) -> Result<SavedTex
 
 /// Compares a version with the course's active sources.
 pub async fn compare(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     version: VersionText<'_>,
 ) -> Result<Comparison> {
@@ -215,7 +214,7 @@ pub async fn compare_saved(saved: SavedTexts, version: VersionText<'_>) -> Resul
 /// [`compare`] for versions saved together: each is compared with the ones
 /// before it too, as it would be if they were saved in turn.
 pub async fn compare_all(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     versions: &[VersionText<'_>],
 ) -> Result<Vec<Comparison>> {

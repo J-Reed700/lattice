@@ -31,7 +31,7 @@ use std::time::Duration;
 /// judge that grades reviews, as the app wires it.
 fn worker(pool: &SqlitePool, model: Arc<dyn LLMPort>) -> DrillBuildWorker {
     DrillBuildWorker {
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm: Arc::new(move || {
             let model = model.clone();
             Box::pin(async move { Ok(pinned_for_test(model)) })
@@ -202,7 +202,7 @@ async fn a_model_outage_defers_the_build_and_stores_nothing() -> Result<()> {
     let pool = pool().await?;
     let id = queue_build(&pool, &code_spec(&pool).await?, "outage").await?;
     let outage = DrillBuildWorker {
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm: Arc::new(|| {
             Box::pin(async { Err(AppError::Network("The model is down.".into())) })
         }),

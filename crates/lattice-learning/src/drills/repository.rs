@@ -9,7 +9,8 @@ use super::spec::DrillSpec;
 use crate::persistence::{db, decode, encode, now};
 use lattice_core::domain::learning::drills::{Drill, DrillFile, KeyIssue, Material};
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{sqlite::SqliteRow, Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::DatabaseHandle;
+use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 use std::collections::HashMap;
 
 /// Whether a drill is waiting in the bank or a learner has it.
@@ -206,9 +207,10 @@ pub(crate) async fn any_ready_in(
 
 /// The source passages the drills of the course `program_id` were built on, ready or taken.
 pub(crate) async fn drilled_passages(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
 ) -> Result<Vec<SourcePassage>> {
+    let pool = pool.sqlx_pool();
     let stored: Vec<String> = sqlx::query_scalar(
         "SELECT source_json FROM learning_drills WHERE material='passage' AND program_id=? AND source_json IS NOT NULL ORDER BY created_at,rowid",
     )
@@ -221,9 +223,10 @@ pub(crate) async fn drilled_passages(
 
 /// For each version of the course's sources, the source it is a version of.
 pub(crate) async fn source_owners(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
 ) -> Result<HashMap<String, String>> {
+    let pool = pool.sqlx_pool();
     let rows: Vec<(String, String)> =
         sqlx::query_as("SELECT id,source_id FROM learning_source_versions WHERE program_id=?")
             .bind(program_id)

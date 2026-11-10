@@ -1,7 +1,7 @@
 //! The AI module: conversations, models and their downloads, and tagging.
 
 use super::CoreModule;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - Conversation
@@ -67,7 +67,7 @@ pub struct AIModule {
 impl AIModule {
     /// Build AIModule by composing conversation + llm + ai-tags features.
     pub async fn new(
-        db_pool: SqlitePool,
+        db_pool: Database,
         core: Arc<CoreModule>,
         model_provider: Arc<dyn LoadedChatModelPort>,
         _llm_endpoint: &str,

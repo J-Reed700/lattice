@@ -13,7 +13,7 @@ use async_trait::async_trait;
 use lattice_core::application::contracts::search::SearchResultRecord;
 use lattice_core::application::ports::TextSearchPort;
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use std::collections::HashSet;
 
 #[cfg(test)]
@@ -156,15 +156,15 @@ mod scope_tests {
 /// Uses the chunks_fts and chunks_trigram virtual tables, which are kept in
 /// sync with text_chunks by triggers (see the schema migration).
 pub struct SqliteTextSearch {
-    pool: SqlitePool,
+    pool: Database,
     header_weight: f64,
 }
 
 impl SqliteTextSearch {
     /// Create a new SQLite text search instance
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
         Self {
-            pool,
+            pool: pool.database(),
             header_weight: fts_query::HEADER_BM25_WEIGHT,
         }
     }
@@ -249,6 +249,7 @@ impl TextSearchPort for SqliteTextSearch {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::SqlitePool;
 
     async fn corpus() -> SqlitePool {
         let pool = sqlx::sqlite::SqlitePoolOptions::new()

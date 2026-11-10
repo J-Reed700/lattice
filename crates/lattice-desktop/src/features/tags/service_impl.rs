@@ -20,7 +20,7 @@ use lattice_core::application::ports::{LoadedChatModelPort, RepositoryPort};
 use lattice_core::application::services::completion_input::{complete_text, TextCall};
 use lattice_core::domain::entities::Tag;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tokio::time::{timeout, Duration};
@@ -29,14 +29,15 @@ use tracing::warn;
 /// Production tag service implementation
 #[derive(Clone)]
 pub struct TagServiceImpl {
-    pub(crate) db_pool: SqlitePool,
+    pub(crate) db_pool: Database,
     document_locks: DocumentLockTable,
     model_provider: Arc<dyn LoadedChatModelPort>,
 }
 
 impl TagServiceImpl {
     /// Create a new tag service
-    pub fn new(db_pool: SqlitePool, model_provider: Arc<dyn LoadedChatModelPort>) -> Self {
+    pub fn new(db_pool: impl DatabaseHandle, model_provider: Arc<dyn LoadedChatModelPort>) -> Self {
+        let db_pool = db_pool.database();
         Self {
             db_pool,
             document_locks: DocumentLockTable::default(),

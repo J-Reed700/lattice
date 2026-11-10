@@ -25,8 +25,7 @@ use lattice_core::application::services::live_index::{
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
 use tracing::instrument;
 
 mod prepare;
@@ -83,7 +82,7 @@ pub struct IndexFileUseCase {
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn DocumentRepositoryPort>,
     embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
-    pool: SqlitePool,
+    pool: Database,
     /// Shared in-memory vector index for runtime updates.
     /// When new embeddings are persisted, they are also added here
     /// so that newly indexed documents are immediately searchable.
@@ -108,8 +107,9 @@ impl IndexFileUseCase {
         embedding_service: Arc<dyn EmbeddingPort>,
         document_repo: Arc<dyn DocumentRepositoryPort>,
         embedding_repo: Arc<dyn EmbeddingRepositoryPort>,
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
     ) -> Self {
+        let pool = pool.database();
         Self {
             content_storage,
             file_storage,
@@ -267,7 +267,7 @@ impl IndexFileUseCase {
     pub async fn commit_prepared(
         &self,
         prepared: PreparedDocument,
-        pool: &SqlitePool,
+        pool: &impl DatabaseHandle,
     ) -> Result<String> {
         let PreparedDocument {
             mut document,
@@ -378,7 +378,7 @@ mod tests;
 /// Writes the document with its chunks and vectors in one unit of work, and
 /// returns the chunk ids whose vectors the new set replaces.
 async fn save_document(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     document: &Document,
     embeddings: &[EmbeddingWithVector],
 ) -> Result<Vec<String>> {

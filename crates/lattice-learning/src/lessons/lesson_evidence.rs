@@ -2,8 +2,8 @@
 //! stay on the backend; only teaching claims and original source passages leave.
 use lattice_core::domain::learning::claim_review::UnverifiedReason;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::DatabaseHandle;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 mod repository;
 pub(crate) use repository::SavedEvidenceVersion;
@@ -148,7 +148,7 @@ pub struct LearningLessonEvidenceDto {
 
 /// Read a single database snapshot, then project the typed private report.
 pub async fn get(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<Option<LearningLessonEvidenceDto>> {

@@ -4,10 +4,9 @@
 //! Migrations are automatically discovered from the migrations/ directory.
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use sha2::{Digest, Sha384};
 use sqlx::migrate::Migrator;
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 /// Run all pending migrations from the migrations/ directory
@@ -16,7 +15,8 @@ use std::collections::HashMap;
 /// migration files from the migrations/ directory at compile time. Stored
 /// checksums that differ from the embedded ones only in line endings are
 /// reconciled first.
-pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
+pub async fn run_migrations(pool: &impl DatabaseHandle) -> Result<()> {
+    let pool = pool.sqlx_pool();
     tracing::info!("Starting database migrations...");
 
     let migrator = sqlx::migrate!("./migrations");
@@ -38,7 +38,11 @@ pub async fn run_migrations(pool: &SqlitePool) -> Result<()> {
 /// Rewrites the stored checksum of an applied migration to the embedded one when it is the
 /// checksum of the same SQL with the other line endings. Any other difference is left for sqlx
 /// to refuse. Does nothing before `_sqlx_migrations` exists.
-pub(crate) async fn reconcile_line_endings(pool: &SqlitePool, migrator: &Migrator) -> Result<()> {
+pub(crate) async fn reconcile_line_endings(
+    pool: &impl DatabaseHandle,
+    migrator: &Migrator,
+) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let mut tx = pool.begin_write().await?;
 
     let has_table: i64 = sqlx::query_scalar(

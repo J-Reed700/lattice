@@ -22,8 +22,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
 use std::sync::Arc;
 
 use self::acquire::Acquired;
@@ -100,7 +99,7 @@ pub struct LessonSourceRequest<'a> {
 
 /// What the attach works with; the command assembles it from the container.
 pub struct AttachDeps<'a> {
-    pub pool: &'a SqlitePool,
+    pub pool: &'a Database,
     pub store: &'a dyn ClaimReviewStore,
     pub web: &'a dyn WebServiceTrait,
     pub snapshots: &'a dyn ReferenceSnapshotPort,
@@ -266,7 +265,7 @@ async fn record_check(
 /// The unit of work of [`record_check`]; returns the kinds whose bar the
 /// outcome moved.
 async fn write_check(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     (program_id, lesson_id): (&str, &str),
     flagged: &ClaimLedgerEntry,
     shown: &[ShownPassage],

@@ -9,6 +9,7 @@
 use sqlx::SqlitePool;
 
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
 pub struct ExportConversationRow {
@@ -62,7 +63,8 @@ pub struct ExportRepository {
 }
 
 impl ExportRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

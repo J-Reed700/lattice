@@ -3,10 +3,14 @@
 
 mod driver_error;
 
+pub mod database;
 pub mod embedding_encoding;
 pub mod sql_like;
 pub mod timestamps;
 pub mod transactions;
+pub use database::{Database, DatabaseHandle};
 pub use transactions::{ReadTx, Transactions, WriteTx};
+#[cfg(test)]
+mod database_tests;
 #[cfg(test)]
 mod transactions_tests;

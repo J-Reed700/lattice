@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{DocumentRepositoryPort, Filter, RepositoryPort};
 use lattice_core::domain::entities::Document as DocumentEntity;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use sqlx::SqlitePool;
 
 use super::ops;
@@ -17,7 +17,8 @@ pub struct SqliteDocumentRepository {
 }
 
 impl SqliteDocumentRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

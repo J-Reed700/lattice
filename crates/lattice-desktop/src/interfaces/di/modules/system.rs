@@ -1,7 +1,7 @@
 //! The system module: health, initialization, the model manager and settings.
 
 use super::CoreModule;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - Health
@@ -68,7 +68,7 @@ pub struct SystemModule {
 impl SystemModule {
     /// Build SystemModule by composing system-level feature builders.
     pub async fn new(
-        db_pool: SqlitePool,
+        db_pool: Database,
         core: Arc<CoreModule>,
         backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
     ) -> lattice_core::shared::error::Result<Self> {

@@ -4,18 +4,18 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use crate::features::favorites::repository::FavoritesRepository;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::FavoritesRepositoryPort;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 #[derive(Clone)]
 pub struct FavoritesDi {
     pub favorites_repo: Arc<dyn FavoritesRepositoryPort>,
 }
 
-pub fn build(db_pool: SqlitePool) -> FavoritesDi {
+pub fn build(db_pool: impl DatabaseHandle) -> FavoritesDi {
+    let db_pool = db_pool.database();
     let favorites_repo =
         Arc::new(FavoritesRepository::new(db_pool)) as Arc<dyn FavoritesRepositoryPort>;
     FavoritesDi { favorites_repo }

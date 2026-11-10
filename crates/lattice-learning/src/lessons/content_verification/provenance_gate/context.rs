@@ -21,7 +21,7 @@ use lattice_core::domain::provenance::{
     StandingAssessment, TrustLevel, POLICY,
 };
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -40,7 +40,7 @@ const COPY_RELATIONS: [RelationKind; 4] = [
 /// The course a lesson preparation job weighs its claims' support in.
 #[derive(Clone)]
 struct Course {
-    pool: SqlitePool,
+    pool: Database,
     program_id: String,
     /// The course and lesson the judgements are asked about (§12).
     topic: String,
@@ -56,11 +56,12 @@ tokio::task_local! {
 /// (`research::run`); outside it, nothing is weighed and the claim ledger's
 /// gate applies the quotation rule alone.
 pub(crate) async fn with_trust<T>(
-    pool: SqlitePool,
+    pool: impl DatabaseHandle,
     program_id: String,
     topic: String,
     future: impl std::future::Future<Output = T>,
 ) -> T {
+    let pool = pool.database();
     COURSE
         .scope(
             Course {
@@ -74,7 +75,7 @@ pub(crate) async fn with_trust<T>(
 }
 
 tokio::task_local! {
-    static OUTLINE_POOL: SqlitePool;
+    static OUTLINE_POOL: Database;
 }
 
 /// Turns the provenance gate on for the outline that `future` drafts or
@@ -83,9 +84,10 @@ tokio::task_local! {
 /// review and repair loop opens the course's scope itself
 /// ([`outline_trust`]). Outside it (unit tests) no outline is weighed.
 pub async fn with_outline_trust<T>(
-    pool: SqlitePool,
+    pool: impl DatabaseHandle,
     future: impl std::future::Future<Output = T>,
 ) -> T {
+    let pool = pool.database();
     OUTLINE_POOL.scope(pool, future).await
 }
 
@@ -143,7 +145,7 @@ struct VersionRecord {
 /// The judgements of one verification pass.
 pub(crate) struct Judgements {
     store: SqliteSourceTrustStore,
-    pool: SqlitePool,
+    pool: Database,
     program_id: String,
     topic: String,
     model: String,
@@ -172,9 +174,13 @@ impl Judgements {
     /// course's overrides, relations and bars as they are now: what a trust
     /// change re-decides from. Nothing here calls a model; a judgement the
     /// store lacks is an error (`facts` with no model).
-    pub(crate) async fn cached(pool: SqlitePool, program_id: &str, model: &str) -> Result<Self> {
+    pub(crate) async fn cached(
+        pool: impl DatabaseHandle,
+        program_id: &str,
+        model: &str,
+    ) -> Result<Self> {
         let course = Course {
-            pool,
+            pool: pool.database(),
             program_id: program_id.to_owned(),
             topic: String::new(),
         };

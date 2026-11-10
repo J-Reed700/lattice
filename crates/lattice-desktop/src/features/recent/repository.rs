@@ -13,7 +13,7 @@ use chrono::Utc;
 use lattice_core::application::contracts::recent_documents::RecentDocumentRecord as RecentDocumentDto;
 use lattice_core::application::ports::RecentDocumentsRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use sqlx::{Row, SqlitePool};
 
 /// SQLite implementation of recent documents repository.
@@ -31,7 +31,8 @@ pub struct RecentDocumentsRepository {
 
 impl RecentDocumentsRepository {
     /// Create a new recent documents repository.
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 }

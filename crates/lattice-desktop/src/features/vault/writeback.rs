@@ -4,7 +4,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
 #[cfg(test)]
 use tokio::sync::mpsc;
 use tokio::sync::Notify;
@@ -12,6 +11,7 @@ use tokio::sync::Notify;
 use lattice_core::application::ports::NoteIndexSink;
 use lattice_core::application::ports::SettingsReaderPort;
 use lattice_core::application::ports::WorkspaceNotesPort;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 
 /// The note transaction already persisted its outbox entry. A notification
 /// merely avoids waiting for the periodic recovery tick.
@@ -87,7 +87,7 @@ pub struct VaultWriterHandle {
 impl VaultWriterHandle {
     pub async fn enqueue_backfill(
         &self,
-        pool: &SqlitePool,
+        pool: &impl DatabaseHandle,
     ) -> lattice_core::shared::error::Result<()> {
         super::repository::enqueue_all(pool).await?;
         self.wake.notify_one();
@@ -121,9 +121,10 @@ impl VaultWriterHandle {
 pub fn start_vault_writer(
     settings_uc: Arc<impl SettingsReaderPort + 'static>,
     suppression: super::watcher::WriteSuppressionRegistry,
-    pool: SqlitePool,
+    pool: impl DatabaseHandle,
     background: &lattice_core::shared::runtime::background::BackgroundTasks,
 ) -> VaultWriterHandle {
+    let pool = pool.database();
     let wake = Arc::new(Notify::new());
     let app_handle = Arc::new(std::sync::RwLock::new(None));
     let note_index_sink = Arc::new(std::sync::RwLock::new(None));
@@ -152,7 +153,7 @@ async fn run_worker(
     app_handle: Arc<std::sync::RwLock<Option<tauri::AppHandle>>>,
     note_index_sink: Arc<std::sync::RwLock<Option<Arc<dyn NoteIndexSink>>>>,
     suppression: super::watcher::WriteSuppressionRegistry,
-    pool: SqlitePool,
+    pool: Database,
     cancel: tokio_util::sync::CancellationToken,
 ) {
     let repository = super::repository::workspace_notes(&pool);
@@ -305,7 +306,7 @@ pub(super) fn safe_note_id(id: &str) -> bool {
 }
 
 async fn settle_write(
-    pool: &SqlitePool,
+    pool: &Database,
     write: &super::repository::PendingWrite,
     apply_result: std::result::Result<(), String>,
 ) -> lattice_core::shared::error::Result<()> {
@@ -464,6 +465,7 @@ async fn atomic_write(target: &Path, contents: &str) -> std::io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use sqlx::SqlitePool;
 
     #[test]
     fn non_empty_write_is_indexed() {
@@ -644,11 +646,13 @@ mod tests {
         super::super::repository::mark_mirrored(&pool, &write)
             .await
             .unwrap();
-        assert!(
-            settle_write(&pool, &write, Err("simulated index failure".into()))
-                .await
-                .is_err()
-        );
+        assert!(settle_write(
+            &pool.database(),
+            &write,
+            Err("simulated index failure".into())
+        )
+        .await
+        .is_err());
         assert!(!super::super::repository::has_pending(&pool, "note")
             .await
             .unwrap());

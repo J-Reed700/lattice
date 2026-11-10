@@ -4,6 +4,7 @@ use lattice_core::domain::provenance::{
     AddedBy, AuthorityAssessment, ClaimProfile, StandingAssessment,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::DatabaseHandle;
 use sqlx::{Row, SqlitePool};
 
 /// One version as the trust view reads it.
@@ -26,10 +27,11 @@ fn version(row: &sqlx::sqlite::SqliteRow) -> Result<Version> {
 }
 
 pub(in crate::references::trust) async fn latest_claim_profile(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     input_sha256: &str,
     policy: &str,
 ) -> Result<Option<ClaimProfile>> {
+    let pool = pool.sqlx_pool();
     latest(
         pool,
         "SELECT profile_json AS judgement FROM claim_profiles WHERE input_sha256=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
@@ -40,10 +42,11 @@ pub(in crate::references::trust) async fn latest_claim_profile(
 }
 
 pub(in crate::references::trust) async fn latest_standing(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     signals_sha256: &str,
     policy: &str,
 ) -> Result<Option<StandingAssessment>> {
+    let pool = pool.sqlx_pool();
     latest(
         pool,
         "SELECT judgement_json AS judgement FROM source_standing_assessments WHERE signals_sha256=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
@@ -54,12 +57,13 @@ pub(in crate::references::trust) async fn latest_standing(
 }
 
 pub(in crate::references::trust) async fn latest_authority(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     origin_key: &str,
     subject_key: &str,
     policy: &str,
 ) -> Result<Option<AuthorityAssessment>> {
+    let pool = pool.sqlx_pool();
     latest(
         pool,
         "SELECT judgement_json AS judgement FROM source_subject_authority WHERE program_id=? AND origin_key=? AND subject_key=? AND policy=? ORDER BY assessed_at DESC LIMIT 1",
@@ -88,9 +92,10 @@ async fn latest<T: serde::de::DeserializeOwned>(
 }
 
 pub(in crate::references::trust) async fn active_versions(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
 ) -> Result<Vec<Version>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT id AS source_id, active_version_id AS version_id, added_by FROM learning_source_library \
          WHERE program_id=? AND deleted_at IS NULL AND active_version_id IS NOT NULL ORDER BY created_at, id",
@@ -103,10 +108,11 @@ pub(in crate::references::trust) async fn active_versions(
 }
 
 pub(in crate::references::trust) async fn version_of(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<Version>> {
+    let pool = pool.sqlx_pool();
     sqlx::query(
         "SELECT v.source_id, v.id AS version_id, l.added_by FROM learning_source_versions v \
          JOIN learning_source_library l ON l.id = v.source_id AND l.program_id = v.program_id \

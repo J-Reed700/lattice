@@ -10,8 +10,7 @@ use lattice_core::domain::learning::claim_review::{
     LessonReview, LessonReviewState, NewInformation, ReopenCause, SourceChange,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Transactions, WriteTx};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions, WriteTx};
 
 use super::repository::{append_in, bump_revision, check_revision, load_in, reviews};
 use super::trust_changed::machine;
@@ -44,7 +43,7 @@ pub(crate) async fn reopen_for_deleted_source(
 /// ledger again: something was written, or the review moved meanwhile and
 /// nothing was.
 pub(super) async fn reopen_lost(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     ledger: &Ledger,
 ) -> Result<bool> {

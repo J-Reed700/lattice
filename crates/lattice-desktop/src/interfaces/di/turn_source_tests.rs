@@ -5,6 +5,7 @@ use crate::features::conversation::chat::ports::ChatStorage;
 use crate::features::learning::tutor::{bind_conversation, SetConversationCourseRequestDto};
 use crate::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
 use lattice_core::application::contracts::tools::FunctionCall;
+use lattice_core::shared::persistence::DatabaseHandle;
 use serde_json::json;
 use std::sync::Arc;
 
@@ -13,9 +14,9 @@ async fn a_turn_gets_the_course_or_folder_its_chat_is_bound_to() -> anyhow::Resu
     let data = tempfile::tempdir()?;
     let database = Arc::new(DatabaseConnection::new(data.path().join("app.db")).await?);
     initialize_database(database.pool()).await?;
-    let pool = database.pool().clone();
+    let pool = database.pool().sqlx_pool().clone();
     let container = Container::new(
-        pool.clone(),
+        pool.clone().into(),
         database,
         None,
         "http://127.0.0.1:1",

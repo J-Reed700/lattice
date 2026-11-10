@@ -15,8 +15,8 @@ use lattice_core::application::ports::turn_source::{
 };
 use lattice_core::application::ports::ToolDefinition;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use serde_json::Value;
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use tokio::sync::OnceCell;
 use tracing::warn;
@@ -30,7 +30,7 @@ const CARDS_SHOWN: usize = 5;
 pub type NoteWritten = Arc<dyn Fn() + Send + Sync>;
 
 pub struct CourseTurn {
-    pub(super) pool: SqlitePool,
+    pub(super) pool: Database,
     pub(super) courses: Option<Arc<CourseIndexes>>,
     pub(super) conversation_id: String,
     pub(super) program_id: String,
@@ -53,7 +53,7 @@ impl CourseTurn {
     /// `None` for a chat bound to no course. One whose binding cannot be read
     /// also gives `None`: the turn then runs as a plain chat rather than failing.
     pub async fn resolve(
-        pool: &SqlitePool,
+        pool: &impl DatabaseHandle,
         courses: Option<Arc<CourseIndexes>>,
         conversation_id: &str,
         note_written: NoteWritten,
@@ -66,7 +66,7 @@ impl CourseTurn {
             }
         };
         Some(Self {
-            pool: pool.clone(),
+            pool: pool.database(),
             courses,
             conversation_id: conversation_id.to_string(),
             program_id: binding.program_id,

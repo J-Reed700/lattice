@@ -6,7 +6,7 @@ use crate::features::conversation::space_dto::*;
 use crate::infrastructure::persistence::database::{initialize_database, DatabaseConnection};
 use lattice_core::domain::conversation::MessageRole;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use std::time::Duration;
 
 const HELD: Duration = Duration::from_millis(300);
@@ -18,8 +18,8 @@ async fn open() -> (tempfile::TempDir, ConversationRepository) {
         .await
         .unwrap();
     initialize_database(database.pool()).await.unwrap();
-    let first = database.pool().acquire().await.unwrap();
-    let second = database.pool().acquire().await.unwrap();
+    let first = database.pool().sqlx_pool().acquire().await.unwrap();
+    let second = database.pool().sqlx_pool().acquire().await.unwrap();
     drop(first);
     drop(second);
     (

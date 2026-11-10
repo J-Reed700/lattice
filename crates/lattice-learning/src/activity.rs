@@ -9,11 +9,11 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{
     ActivityItem, ActivityProgress, ActivityResource, ActivitySource, ActivityState, ActivityTarget,
 };
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime, JobStatus};
 use lattice_core::shared::Result;
 pub(crate) use repository::course_titles;
 use repository::lesson_titles;
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -21,7 +21,7 @@ mod repository;
 
 /// Learning's live work, read from its jobs, its tables and its outline runs.
 pub struct LearningActivity {
-    pool: SqlitePool,
+    pool: Database,
     jobs: Arc<JobRuntime>,
     courses: Option<Arc<CourseIndexes>>,
     outlines: OutlineRunRegistry,
@@ -29,11 +29,12 @@ pub struct LearningActivity {
 
 impl LearningActivity {
     pub fn new(
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         jobs: Arc<JobRuntime>,
         courses: Option<Arc<CourseIndexes>>,
         outlines: OutlineRunRegistry,
     ) -> Self {
+        let pool = pool.database();
         Self {
             pool,
             jobs,

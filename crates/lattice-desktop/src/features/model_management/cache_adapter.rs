@@ -26,12 +26,12 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use lattice_core::application::ports::{ExternalModelMetadata, ModelCatalogPort};
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 
 /// Cache-key schema version.
 ///
@@ -42,7 +42,7 @@ const CACHE_KEY_VERSION: &str = "v6";
 ///
 /// Wraps a `ModelCatalogPort` with SQLite-based caching.
 pub struct ModelCacheAdapter {
-    pool: SqlitePool,
+    pool: Database,
     upstream: Arc<dyn ModelCatalogPort>,
     ttl_seconds: i64,
 }
@@ -50,9 +50,10 @@ pub struct ModelCacheAdapter {
 impl ModelCacheAdapter {
     /// Create a new cache adapter.
     pub async fn new(
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         upstream: Arc<dyn ModelCatalogPort>,
     ) -> Result<Self, AppError> {
+        let pool = pool.database();
         let adapter = Self {
             pool,
             upstream,
@@ -66,10 +67,11 @@ impl ModelCacheAdapter {
 
     /// Create with custom TTL.
     pub async fn with_ttl(
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         upstream: Arc<dyn ModelCatalogPort>,
         ttl_seconds: i64,
     ) -> Result<Self, AppError> {
+        let pool = pool.database();
         let adapter = Self {
             pool,
             upstream,
@@ -255,6 +257,7 @@ impl ModelCatalogPort for ModelCacheAdapter {
 mod tests {
     use super::*;
     use lattice_core::application::ports::MockModelCatalogPort;
+    use sqlx::SqlitePool;
     use tokio::time::Duration;
 
     async fn create_test_cache() -> ModelCacheAdapter {

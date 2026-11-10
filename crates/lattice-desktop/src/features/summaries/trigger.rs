@@ -3,8 +3,8 @@
 use crate::features::summaries::use_cases::GenerateDocumentSummariesUseCase;
 use async_trait::async_trait;
 use lattice_core::application::ports::DocumentIndexObserver;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use lattice_core::shared::runtime::background::BackgroundTasks;
-use sqlx::SqlitePool;
 use std::path::Path;
 use std::sync::{Arc, RwLock};
 use tokio::sync::{Mutex, Notify};
@@ -12,7 +12,7 @@ use tokio_util::sync::CancellationToken;
 
 struct Hook {
     use_case: Arc<GenerateDocumentSummariesUseCase>,
-    pool: SqlitePool,
+    pool: Database,
     wake: Notify,
     cancel: CancellationToken,
     operation: Mutex<()>,
@@ -35,9 +35,10 @@ impl SummaryTrigger {
     pub fn register_post_index_hook(
         &self,
         use_case: Arc<GenerateDocumentSummariesUseCase>,
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         background: &BackgroundTasks,
     ) {
+        let pool = pool.database();
         self.clear_post_index_hook();
         let cancel = background.token().child_token();
         let hook = Arc::new(Hook {
@@ -103,7 +104,7 @@ impl SummaryTrigger {
             .is_some_and(|h| h.use_case.is_enabled() && !h.cancel.is_cancelled())
     }
 
-    pub async fn notify_document_at_path(&self, pool: &SqlitePool, path: &Path) {
+    pub async fn notify_document_at_path(&self, pool: &impl DatabaseHandle, path: &Path) {
         if !self.is_active() {
             return;
         }

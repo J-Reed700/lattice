@@ -45,7 +45,7 @@ async fn worker_defers_outages_but_preserves_terminal_validation_errors() {
         let worker = LessonGenerationWorker {
             course_setups: Default::default(),
             runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-            pool: pool.clone(),
+            pool: pool.clone().into(),
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })
             }),
@@ -477,7 +477,7 @@ async fn run_with_model(load_llm: super::ModelLoader) -> crate::curriculum::Lear
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm,
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -599,7 +599,7 @@ async fn a_lesson_job_for_a_course_without_sources_asks_for_them_in_plain_words(
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -625,7 +625,7 @@ async fn a_failed_lesson_job_records_the_code_of_its_error() {
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm: Arc::new(|| Box::pin(async { panic!("refused before the model loads") })),
         courses: None,
         refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
@@ -664,7 +664,7 @@ async fn a_lesson_job_waiting_out_an_outage_records_the_code_of_its_cause() {
         let worker = LessonGenerationWorker {
             course_setups: Default::default(),
             runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-            pool: pool.clone(),
+            pool: pool.clone().into(),
             load_llm: Arc::new(|| {
                 Box::pin(async { panic!("Reference refresh must finish first") })
             }),

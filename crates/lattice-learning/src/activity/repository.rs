@@ -1,12 +1,14 @@
+use lattice_core::shared::persistence::DatabaseHandle;
 use lattice_core::shared::{AppError, Result};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
 /// The titles of `programs` by id; a course deleted meanwhile is left out.
 pub(crate) async fn course_titles(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     programs: &[String],
 ) -> Result<HashMap<String, String>> {
+    let pool = pool.sqlx_pool();
     titles(
         pool,
         "SELECT id, title FROM learning_programs WHERE id IN (SELECT value FROM json_each(?))",
@@ -16,9 +18,10 @@ pub(crate) async fn course_titles(
 }
 
 pub(super) async fn lesson_titles(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     lessons: &[String],
 ) -> Result<HashMap<String, String>> {
+    let pool = pool.sqlx_pool();
     titles(
         pool,
         "SELECT id, title FROM learning_lessons WHERE id IN (SELECT value FROM json_each(?))",

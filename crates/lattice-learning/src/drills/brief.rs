@@ -9,7 +9,7 @@ use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{evidence_units, LessonBrief, LessonSentence};
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 /// The mean silent reading rate of adults for non-fiction, in words a minute (Brysbaert, 2019): an outline lesson's
 /// evidence is as much as its planned minutes take to read.
@@ -21,7 +21,7 @@ const READING_WORDS_PER_MINUTE: usize = 238;
 /// read, and always the first. An error when the brief without evidence, or its first unit, does not fit.
 pub(crate) async fn lesson_brief(
     llm: &dyn LLMPort,
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     context: &LessonContext,
     room: usize,
 ) -> Result<LessonBrief> {
@@ -67,11 +67,11 @@ pub(crate) async fn lesson_brief(
 /// minutes take to read and `fits` accepts, and always the first.
 async fn outline_evidence(
     llm: &dyn LLMPort,
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     context: &LessonContext,
     fits: &impl Fn(&[LessonSentence]) -> bool,
 ) -> Result<Vec<LessonSentence>> {
-    let sources: Vec<LearningSourceDto> = LearningSourceLibraryRepository::new(pool.clone())
+    let sources: Vec<LearningSourceDto> = LearningSourceLibraryRepository::new(pool.database())
         .verification_sources(&context.program_id)
         .await?
         .into_iter()

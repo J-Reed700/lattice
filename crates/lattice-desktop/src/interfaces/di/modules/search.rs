@@ -1,7 +1,7 @@
 //! The search module: embeddings, the vector index and the search services.
 
 use super::CoreModule;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - Search
@@ -47,7 +47,7 @@ impl SearchModule {
     /// ahead of the container's model load — avoiding a startup loop where
     /// each restart wipes-then-fails.
     pub async fn new(
-        db_pool: SqlitePool,
+        db_pool: Database,
         core: Arc<CoreModule>,
         model_provider: Arc<dyn lattice_core::application::ports::LoadedEmbeddingModelPort>,
         embedding_starter: Arc<dyn EmbeddingServerStarter>,
@@ -170,7 +170,7 @@ async fn read_search_settings(
 /// a `dims` the model cannot satisfy: the setting is a preference, and a
 /// preference must never leave the app unable to open its index.
 async fn resolve_vector_compression(
-    db_pool: &SqlitePool,
+    db_pool: &Database,
     settings: &crate::features::settings::dto::SearchSettingsDto,
     active_embedding_dimension: Option<usize>,
 ) -> crate::infrastructure::vector_index::VectorIndexCompression {
@@ -220,7 +220,7 @@ async fn resolve_vector_compression(
 }
 
 /// The catalog id of the active embedding model, when there is one.
-async fn active_embedding_model_id(db_pool: &SqlitePool) -> Option<String> {
+async fn active_embedding_model_id(db_pool: &Database) -> Option<String> {
     let repo = DownloadedModelRepository::new(db_pool.clone());
     let active = repo.get_active_embedding_model().await.ok().flatten()?;
     Some(active.model_id().to_owned())

@@ -7,6 +7,7 @@ use super::{
 };
 use crate::shared::{
     error::{AppError, Result},
+    persistence::DatabaseHandle,
     runtime::background::BackgroundTasks,
 };
 use async_trait::async_trait;
@@ -283,14 +284,14 @@ pub struct JobRuntime {
 }
 
 impl JobRuntime {
-    pub fn new(pool: sqlx::SqlitePool) -> Arc<Self> {
+    pub fn new(pool: impl DatabaseHandle) -> Arc<Self> {
         Self::with_poll_interval(pool, POLL)
     }
 
     /// The saved pending rows are the outbox. Besides wakeups, the dispatcher
     /// rereads them on this interval, so a missed wakeup, a transient database
     /// error or a deferred job's retry time cannot strand work.
-    pub fn with_poll_interval(pool: sqlx::SqlitePool, poll: Duration) -> Arc<Self> {
+    pub fn with_poll_interval(pool: impl DatabaseHandle, poll: Duration) -> Arc<Self> {
         Arc::new(Self {
             events: Arc::new(Events {
                 store: JobStore::new(pool),

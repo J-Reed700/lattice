@@ -11,7 +11,7 @@ use super::dto_map;
 use crate::dto::{LearningSourceTrustCalibrationDto, LearningTrustPolicyParameterDto};
 use lattice_core::domain::provenance::{Policy, POLICY};
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 /// The parameters calibration and the copy rule compare against, each with
 /// the derivation `policy.rs` states for it.
@@ -50,7 +50,7 @@ fn parameters(policy: &Policy) -> Vec<LearningTrustPolicyParameterDto> {
     ]
 }
 
-pub async fn calibration(pool: &SqlitePool) -> Result<LearningSourceTrustCalibrationDto> {
+pub async fn calibration(pool: &impl DatabaseHandle) -> Result<LearningSourceTrustCalibrationDto> {
     let view = calibration::view(pool).await?;
     Ok(LearningSourceTrustCalibrationDto {
         policy_version: view.bars.policy.clone(),

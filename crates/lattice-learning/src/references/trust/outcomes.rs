@@ -13,8 +13,7 @@ use lattice_core::domain::provenance::{
     ClaimKind, LabelSource, OriginKey, OutcomeRecord, TRUST_POLICY_VERSION,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{DatabaseHandle, WriteTx};
 
 use super::calibration::{bars_of, moved_kinds};
 use super::repository::outcomes as stored;
@@ -31,7 +30,7 @@ pub struct VerdictScope<'a> {
 /// before the verdict) and returns the kinds whose bar the new outcomes
 /// moved. A claim the gate did not decide gives none.
 pub async fn record(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     scope: VerdictScope<'_>,
     entry: &ClaimLedgerEntry,
     verdict: TrustVerdict,
@@ -94,7 +93,7 @@ async fn write_in(
 /// §5.1 Undo, as `CheckerExamples::forget` does) and returns the kinds whose
 /// bar that moved.
 pub async fn forget(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     claim_id: &str,
     verdict: TrustVerdict,
 ) -> Result<Vec<ClaimKind>> {

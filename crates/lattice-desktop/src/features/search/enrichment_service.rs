@@ -23,13 +23,13 @@ use crate::features::search::trait_def::SearchEnrichmentServiceTrait;
 use async_trait::async_trait;
 use futures::stream::{self, StreamExt};
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 /// Service for enriching search results with document metadata
 pub struct SearchEnrichmentService {
-    db_pool: SqlitePool,
+    db_pool: Database,
 }
 
 /// Document metadata for a chunk
@@ -52,8 +52,10 @@ pub struct DocumentMetadata {
 
 impl SearchEnrichmentService {
     /// Create a new search enrichment service
-    pub fn new(db_pool: SqlitePool) -> Self {
-        Self { db_pool }
+    pub fn new(db_pool: impl DatabaseHandle) -> Self {
+        Self {
+            db_pool: db_pool.database(),
+        }
     }
 
     /// Enrich search results with document metadata using parallel batch processing
@@ -108,7 +110,7 @@ impl SearchEnrichmentService {
     /// Fetch metadata for a batch of chunk IDs
     async fn fetch_metadata_batch(
         &self,
-        pool: &SqlitePool,
+        pool: &Database,
         batch: Vec<String>,
     ) -> Result<HashMap<String, DocumentMetadata>, AppError> {
         let rows = super::repository::chunk_metadata(pool, &batch).await?;

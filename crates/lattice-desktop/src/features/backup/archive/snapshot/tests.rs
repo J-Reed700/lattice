@@ -6,6 +6,9 @@ use crate::features::backup::archive::format::{
     Manifest, DB_ENTRY, FORMAT_VERSION, MANIFEST_ENTRY,
 };
 use lattice_core::shared::testing::links;
+use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
+use sqlx::SqlitePool;
+use std::collections::HashSet;
 use std::io;
 use std::io::Cursor;
 use tempfile::tempdir;

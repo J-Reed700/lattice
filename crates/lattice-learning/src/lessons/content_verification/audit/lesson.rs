@@ -10,7 +10,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 use lattice_core::application::ports::llm_port::PinnedModel;
 use lattice_core::domain::models::model_ref::ModelRef;
@@ -89,10 +89,10 @@ pub enum LessonAudit {
 /// Storage failures, and the audit's own (see [`super::run`]).
 pub async fn audit_lesson(
     verifier: &dyn VerifierAccess,
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     request: &LessonAuditRequest<'_>,
 ) -> Result<LessonAudit> {
-    let programs = LearningCurriculumRepository::new(pool.clone());
+    let programs = LearningCurriculumRepository::new(pool.database());
     let setting = programs.verifier_audit(request.program_id).await?;
     if !setting.on {
         return Ok(LessonAudit::Off);
@@ -127,8 +127,8 @@ pub async fn audit_lesson(
             "The Verifier cannot call tools, so the audit used the cited passages only.".to_owned()
         }
     });
-    let store = ClaimReviewRepository::new(pool.clone());
-    let runs = SqliteAuditRuns::new(pool.clone());
+    let store = ClaimReviewRepository::new(pool.database());
+    let runs = SqliteAuditRuns::new(pool.database());
     let gate = ProgramGate {
         programs,
         program_id: request.program_id.to_owned(),

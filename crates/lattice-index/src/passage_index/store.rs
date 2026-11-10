@@ -112,7 +112,7 @@ pub struct Counts {
 
 /// Documents and passages under `prefix`. Every passage has its document's
 /// row (both are written in one transaction), so the join drops nothing.
-pub(super) async fn read_counts(
+async fn read_counts(
     connection: &mut SqliteConnection,
     prefix: &str,
 ) -> std::result::Result<Counts, sqlx::Error> {
@@ -141,7 +141,7 @@ pub(super) async fn read_counts(
     })
 }
 
-pub(super) async fn read_meta(
+async fn read_meta(
     connection: &mut SqliteConnection,
 ) -> std::result::Result<HashMap<String, String>, sqlx::Error> {
     let rows = sqlx::query("SELECT key, value FROM meta")
@@ -153,7 +153,7 @@ pub(super) async fn read_meta(
         .collect())
 }
 
-pub(super) async fn read_document_keys(
+async fn read_document_keys(
     connection: &mut SqliteConnection,
 ) -> std::result::Result<Vec<String>, sqlx::Error> {
     sqlx::query_scalar::<_, String>("SELECT key FROM index_documents")
@@ -163,7 +163,7 @@ pub(super) async fn read_document_keys(
 
 /// A short-lived connection to `dir`'s store; `None` when it has none or it
 /// will not open. Reading through one leaves a live store's pool untouched.
-pub(super) async fn connect(dir: &Path) -> Option<SqliteConnection> {
+async fn connect(dir: &Path) -> Option<SqliteConnection> {
     let db = dir.join(DB_FILE);
     if !db.exists() {
         return None;
@@ -172,6 +172,52 @@ pub(super) async fn connect(dir: &Path) -> Option<SqliteConnection> {
         .filename(&db)
         .busy_timeout(Duration::from_secs(2));
     SqliteConnection::connect_with(&options).await.ok()
+}
+
+async fn connect_or_fail(dir: &Path) -> Result<SqliteConnection> {
+    connect(dir).await.ok_or_else(|| {
+        AppError::Database(format!(
+            "Passage index: could not open {}",
+            dir.join(DB_FILE).display()
+        ))
+    })
+}
+
+/// The meta of `dir`'s store, read through a short-lived connection; empty
+/// when it has none or it is unreadable.
+pub(super) async fn read_meta_of(dir: &Path) -> HashMap<String, String> {
+    match connect(dir).await {
+        Some(mut connection) => {
+            let meta = read_meta(&mut connection).await;
+            let _ = connection.close().await;
+            meta.unwrap_or_default()
+        }
+        None => HashMap::new(),
+    }
+}
+
+/// The counts under `prefix` and the meta of `dir`'s store.
+pub(super) async fn read_counts_and_meta_of(
+    dir: &Path,
+    prefix: &str,
+) -> Result<(Counts, HashMap<String, String>)> {
+    let mut connection = connect_or_fail(dir).await?;
+    let read = async {
+        let meta = read_meta(&mut connection).await?;
+        let counts = read_counts(&mut connection, prefix).await?;
+        Ok::<_, sqlx::Error>((counts, meta))
+    }
+    .await;
+    let _ = connection.close().await;
+    read.map_err(db_error("read the index"))
+}
+
+/// The document keys `dir`'s store holds.
+pub(super) async fn read_document_keys_of(dir: &Path) -> Result<Vec<String>> {
+    let mut connection = connect_or_fail(dir).await?;
+    let keys = read_document_keys(&mut connection).await;
+    let _ = connection.close().await;
+    keys.map_err(db_error("read the index's documents"))
 }
 
 /// The store file of the index layout before this one, which a rebuild

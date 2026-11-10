@@ -1,4 +1,5 @@
 use super::*;
+use crate::features::conversation::repository::space_rows::ConversationSpaceRow;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::SqliteConnection;
 
@@ -58,7 +59,7 @@ pub(super) async fn ensure_standard_space(
 
 impl ConversationRepository {
     pub async fn list_conversation_spaces(&self) -> Result<Vec<ConversationSpaceDto>, AppError> {
-        let spaces = sqlx::query_as::<_, ConversationSpaceDto>(
+        let spaces = sqlx::query_as::<_, ConversationSpaceRow>(
             r#"
         SELECT
             id, name, description, icon, accent_color, space_prompt,
@@ -71,7 +72,7 @@ impl ConversationRepository {
         .await
         .map_err(|e| AppError::Database(format!("Failed to list spaces: {}", e)))?;
 
-        Ok(spaces)
+        Ok(spaces.into_iter().map(Into::into).collect())
     }
 
     pub async fn update_conversation_space(
@@ -128,7 +129,7 @@ impl ConversationRepository {
             )));
         }
 
-        let updated = sqlx::query_as::<_, ConversationSpaceDto>(
+        let updated = sqlx::query_as::<_, ConversationSpaceRow>(
             r#"
         SELECT
             id, name, description, icon, accent_color, space_prompt,
@@ -146,7 +147,7 @@ impl ConversationRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
-        Ok(updated)
+        Ok(updated.into())
     }
 
     pub async fn archive_conversation_space(

@@ -3,8 +3,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use crate::features::file::repository::{
     CitingConversationsRepositoryPort, SqliteCitingConversationsRepository,
 };
@@ -20,6 +18,7 @@ use lattice_core::application::ports::{
     ContentExtractionPort, DocumentRepository, DocumentRepositoryPort, FileStoragePort,
     FileSystemPort,
 };
+use lattice_core::shared::persistence::DatabaseHandle;
 
 #[derive(Clone)]
 pub struct FileDi {
@@ -41,9 +40,10 @@ pub fn build(
     tag_service: Arc<dyn TagServiceTrait>,
     file_access_config: Arc<FileAccessConfig>,
     vault_path: PathBuf,
-    db_pool: SqlitePool,
+    db_pool: impl DatabaseHandle,
     preview_extractor: Arc<dyn ContentExtractionPort>,
 ) -> FileDi {
+    let db_pool = db_pool.database();
     FileDi {
         open_file_use_case: Arc::new(OpenFileUseCase::new(
             file_system.clone(),

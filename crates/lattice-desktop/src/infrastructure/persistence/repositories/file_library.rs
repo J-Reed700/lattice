@@ -2,7 +2,7 @@
 use lattice_core::application::contracts::file_library::{IndexedFolder, IndexingActivity};
 use lattice_core::application::ports::file_library::FileLibraryPort;
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use sqlx::SqlitePool;
 
 const FOLDER_COUNTS: &str = "SELECT json_extract(folder.value,'$[0]'), (
@@ -30,7 +30,8 @@ fn folder_scope(path: &str) -> (&str, String, String) {
     (path, prefix, end)
 }
 
-pub async fn watch_folder_paths(pool: &SqlitePool) -> Result<Vec<String>> {
+pub async fn watch_folder_paths(pool: &impl DatabaseHandle) -> Result<Vec<String>> {
+    let pool = pool.sqlx_pool();
     Ok(
         sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
             .fetch_all(pool)
@@ -42,7 +43,8 @@ pub struct SqliteFileLibrary {
     pool: SqlitePool,
 }
 impl SqliteFileLibrary {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 }

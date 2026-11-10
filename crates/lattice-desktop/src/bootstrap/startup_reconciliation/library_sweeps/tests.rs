@@ -32,6 +32,7 @@ use crate::infrastructure::storage::{ContentAddressedStorage, FileIntents};
 use lattice_core::application::ports::ChatImagesPort;
 use lattice_core::shared::constants::RERANKER_MODEL_DIR;
 use lattice_core::shared::fs::SweepGate;
+use lattice_core::shared::persistence::DatabaseHandle;
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::JobRuntime;
 
@@ -359,21 +360,21 @@ async fn the_library_survives_corruption_recovery_even_once_the_new_database_has
 
     // The database that imported the library takes it at its first start.
     let database = setup_database(db_path.clone()).await.unwrap();
-    start_up(database.pool(), home.path()).await;
+    start_up(database.pool().sqlx_pool(), home.path()).await;
     let (_, paper) = imported_file(home.path(), "an imported paper");
     let library = [paper, snapshot(home.path()), picture(home.path())];
     let owner = filed(home.path());
 
     let database = corrupt_and_recover(database, &db_path).await;
 
-    start_up(database.pool(), home.path()).await;
+    start_up(database.pool().sqlx_pool(), home.path()).await;
     let gone = deleted(&library);
     assert!(gone.is_empty(), "the sweep after recovery deleted {gone:?}");
 
     // A document is added to the new database; it is not one of the library's.
     let (hash, newer) = imported_file(home.path(), "a paper imported since");
-    reference(database.pool(), &hash, &newer).await;
-    start_up(database.pool(), home.path()).await;
+    reference(database.pool().sqlx_pool(), &hash, &newer).await;
+    start_up(database.pool().sqlx_pool(), home.path()).await;
     let gone = deleted(&library);
     assert!(
         gone.is_empty(),
@@ -381,7 +382,7 @@ async fn the_library_survives_corruption_recovery_even_once_the_new_database_has
     );
     assert!(newer.exists());
     assert_eq!(filed(home.path()), owner, "the owner file is untouched");
-    assert_eq!(recorded(database.pool()).await, None);
+    assert_eq!(recorded(database.pool().sqlx_pool()).await, None);
     database.close().await.unwrap();
 }
 
@@ -393,16 +394,16 @@ async fn deleting_a_chat_after_corruption_recovery_leaves_the_old_snapshots_and_
 
     // The database that imported the library takes it at its first start.
     let database = setup_database(db_path.clone()).await.unwrap();
-    start_up(database.pool(), home.path()).await;
+    start_up(database.pool().sqlx_pool(), home.path()).await;
     let library = [snapshot(home.path()), picture(home.path())];
 
     let database = corrupt_and_recover(database, &db_path).await;
 
-    let run = start_up(database.pool(), home.path()).await;
+    let run = start_up(database.pool().sqlx_pool(), home.path()).await;
     let gone = deleted(&library);
     assert!(gone.is_empty(), "the start after recovery deleted {gone:?}");
 
-    run.delete_a_chat(database.pool()).await;
+    run.delete_a_chat(database.pool().sqlx_pool()).await;
 
     let gone = deleted(&library);
     assert!(gone.is_empty(), "deleting a chat deleted {gone:?}");

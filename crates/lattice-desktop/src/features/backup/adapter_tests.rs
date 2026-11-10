@@ -1,7 +1,8 @@
 //! Tests for the backup adapter.
 use super::*;
 use lattice_core::shared::testing::links::{self, LinkKind};
-use sqlx::sqlite::SqlitePoolOptions;
+use sqlx::sqlite::{SqliteConnectOptions, SqlitePoolOptions};
+use sqlx::SqlitePool;
 use tempfile::tempdir;
 
 #[tokio::test]

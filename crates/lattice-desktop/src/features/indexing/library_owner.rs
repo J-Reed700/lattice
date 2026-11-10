@@ -11,12 +11,11 @@
 
 use std::path::{Path, PathBuf};
 
-use sqlx::SqlitePool;
 use tokio::io::AsyncWriteExt;
 
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::roots;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 
 mod repository;
 use repository::{holds_documents, recorded_owner};
@@ -48,7 +47,7 @@ impl LibraryFiles {
 /// what it does not reference. A database with no id yet takes the files when
 /// nothing else claims them, writing its id to the database and to the home.
 /// Any error means no; it is logged, never raised.
-pub async fn may_sweep(pool: &SqlitePool, files: &LibraryFiles) -> bool {
+pub async fn may_sweep(pool: &impl DatabaseHandle, files: &LibraryFiles) -> bool {
     match claim(pool, files).await {
         Ok(None) => true,
         Ok(Some(reason)) => {
@@ -71,7 +70,7 @@ pub async fn may_sweep(pool: &SqlitePool, files: &LibraryFiles) -> bool {
 }
 
 /// `None` when this database owns the files, else why it does not.
-async fn claim(pool: &SqlitePool, files: &LibraryFiles) -> Result<Option<&'static str>> {
+async fn claim(pool: &impl DatabaseHandle, files: &LibraryFiles) -> Result<Option<&'static str>> {
     let recorded = recorded_owner(pool).await?;
     let filed = filed_owner(&files.owner_file).await?;
     match (recorded, filed) {
@@ -143,7 +142,7 @@ async fn holds_files(directories: &[PathBuf]) -> Result<bool> {
 /// Give this database an id and the home a file naming it. The file is written
 /// before the id commits, so a file that cannot be written leaves the database
 /// as it was and the next start tries again.
-async fn adopt(pool: &SqlitePool, owner_file: &Path) -> Result<()> {
+async fn adopt(pool: &impl DatabaseHandle, owner_file: &Path) -> Result<()> {
     let id = uuid::Uuid::new_v4().to_string();
     let mut tx = pool.begin_write().await?;
     repository::record_owner(&mut tx, &id).await?;

@@ -14,7 +14,7 @@ use crate::recall_repository::LearningRecallRepository;
 use crate::source_library::LearningSourceLibraryRepository;
 use futures::TryStreamExt;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 use std::collections::VecDeque;
 use std::fmt::Write as _;
 
@@ -73,7 +73,7 @@ fn plain_words(text: &str) -> String {
 
 /// Whether a reply of the chat put `front` to the learner. Newest first, as the
 /// card asked last is the one answered.
-async fn asked_in(pool: &SqlitePool, conversation_id: &str, front: &str) -> Result<bool> {
+async fn asked_in(pool: &impl DatabaseHandle, conversation_id: &str, front: &str) -> Result<bool> {
     let front = plain_words(front);
     let mut replies = assistant_replies(pool, conversation_id);
     while let Some(reply) = replies.try_next().await? {

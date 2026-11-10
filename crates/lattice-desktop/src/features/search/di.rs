@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::llama_reranker::{LlamaReranker, RerankServerStarter};
@@ -72,7 +72,7 @@ pub struct VectorSpace {
 /// index is left untouched on disk and a fresh one is rebuilt from the
 /// f32 vectors SQLite already holds.
 pub async fn build_with_compression(
-    db_pool: SqlitePool,
+    db_pool: Database,
     usearch_index_path: std::path::PathBuf,
     models_path: std::path::PathBuf,
     embedding: Arc<dyn EmbeddingPort>,

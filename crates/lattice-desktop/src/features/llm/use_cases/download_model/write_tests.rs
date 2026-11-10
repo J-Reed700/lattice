@@ -12,6 +12,7 @@ use lattice_core::domain::models::metadata::ModelFileMetadata;
 use lattice_core::domain::models::selection::{
     ModelCategory, ModelFormat, ModelMetadata, PerformanceTier,
 };
+use sqlx::SqlitePool;
 use tokio::sync::{mpsc, RwLock};
 
 /// A download manager that refuses every start.

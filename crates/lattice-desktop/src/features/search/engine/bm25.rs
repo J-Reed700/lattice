@@ -3,7 +3,7 @@ use async_trait::async_trait;
 use lattice_core::application::contracts::search::engine::BM25Result;
 use lattice_core::application::ports::BM25SearchTrait;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use tracing::warn;
 
 /// Ranked lexical retrieval over the chunk FTS5 indexes.
@@ -12,12 +12,14 @@ use tracing::warn;
 /// two indexes a query can be answered from.
 #[derive(Debug)]
 pub struct BM25Search {
-    pool: SqlitePool,
+    pool: Database,
 }
 
 impl BM25Search {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        Self {
+            pool: pool.database(),
+        }
     }
 
     pub async fn search(&self, query: &str, top_k: usize) -> Result<Vec<BM25Result>> {
@@ -114,6 +116,7 @@ impl BM25SearchTrait for BM25Search {
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;
+    use sqlx::SqlitePool;
 
     /// The two chunk indexes and the triggers that keep them in step, copied
     /// from `migrations/20261012090000_fts_header_column.sql`.

@@ -3,6 +3,7 @@ use chrono::{DateTime, Utc};
 use sqlx::{PgPool, Postgres, Transaction};
 use uuid::Uuid;
 
+use super::db::Database;
 use crate::error::{AppError, AppResult};
 use crate::sync::repository::{
     AckResult, DeviceRecord, PullBatch, PushBatchResult, SyncRepository,
@@ -32,8 +33,10 @@ impl<'r> sqlx::FromRow<'r, sqlx::postgres::PgRow> for DeviceRecord {
 }
 
 impl PgSyncRepository {
-    pub fn new(pool: PgPool) -> Self {
-        Self { pool }
+    pub fn new(pool: Database) -> Self {
+        Self {
+            pool: pool.sqlx_pool().clone(),
+        }
     }
 
     async fn get_device_tx(

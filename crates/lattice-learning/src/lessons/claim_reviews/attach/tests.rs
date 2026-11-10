@@ -422,7 +422,7 @@ impl LLMPort for Judge {
 }
 
 struct World {
-    pool: sqlx::SqlitePool,
+    pool: lattice_core::shared::persistence::Database,
     program_id: String,
     ledger: MemoryLedger,
 }
@@ -450,7 +450,7 @@ async fn world_with(claims: Vec<ClaimLedgerEntry>) -> World {
     let program_id = program.summary.id.clone();
     let ledger = MemoryLedger::new(&program_id, claims);
     World {
-        pool,
+        pool: pool.into(),
         program_id,
         ledger,
     }

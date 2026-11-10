@@ -2,18 +2,18 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use crate::features::health::use_cases::HealthCheckUseCase;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::{EmbeddingPort, MockEmbeddingPort};
+use lattice_core::shared::persistence::DatabaseHandle;
 
 #[derive(Clone)]
 pub struct HealthDi {
     pub health_check_use_case: Arc<HealthCheckUseCase>,
 }
 
-pub fn build(db_pool: SqlitePool) -> HealthDi {
+pub fn build(db_pool: impl DatabaseHandle) -> HealthDi {
+    let db_pool = db_pool.database();
     // Health uses a degraded embedding port — the real check is that DB is
     // reachable. No embedding model is wired here, so it reports not ready.
     // LLM readiness is read from the loaded models when the check runs.

@@ -21,8 +21,7 @@ use lattice_core::domain::learning::drills::{
     language_of_code, LessonStanding, Material, LANGUAGES,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{ReadTx, Transactions};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{DatabaseHandle, ReadTx, Transactions};
 use std::collections::HashMap;
 
 mod repository;
@@ -61,7 +60,7 @@ pub struct CourseDrill {
 /// refused, and nothing is taken, as is a course that is not there and, for a passage with none ready, a course whose
 /// sources hold no text.
 pub async fn start(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     asked: &CourseDrill,
     mode: AttemptMode,
     lines: u32,
@@ -100,7 +99,7 @@ pub async fn start(
 }
 
 /// Refuses a course that is not there and a lesson the course does not drill.
-async fn check_asked(pool: &SqlitePool, asked: &CourseDrill) -> Result<()> {
+async fn check_asked(pool: &impl DatabaseHandle, asked: &CourseDrill) -> Result<()> {
     let mut tx = pool.begin_read().await.map_err(db)?;
     if !repository::course_exists_in(&mut tx, &asked.program_id).await? {
         return Err(not_found());
@@ -129,7 +128,7 @@ struct CourseRead {
 
 /// Reads the course's drills state in one read unit; the course not being there is refused.
 async fn read_course(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     language: Option<&str>,
     at: i64,
@@ -197,7 +196,7 @@ async fn read_course(
 /// A course's review drills as its Practice view reads them, with code drills offered in `language` or, when none is
 /// asked for, in the one the course suggests.
 pub async fn course_drills(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     language: Option<&str>,
 ) -> Result<CourseDrillsDto> {
@@ -278,8 +277,8 @@ fn not_found() -> AppError {
 }
 
 /// Whether the course has a source with text, which a passage drill's passage is taken from.
-async fn has_sources(pool: &SqlitePool, program_id: &str) -> Result<bool> {
-    let sources = LearningSourceLibraryRepository::new(pool.clone())
+async fn has_sources(pool: &impl DatabaseHandle, program_id: &str) -> Result<bool> {
+    let sources = LearningSourceLibraryRepository::new(pool.database())
         .verification_sources(program_id)
         .await?;
     Ok(sources
@@ -307,7 +306,7 @@ async fn suggested_language_in(tx: &mut ReadTx, program_id: &str) -> Result<Opti
 /// Hands in an open attempt: the learner's findings and, when they wrote one, their fix, with the time they spent as the
 /// client measured it. The grading job is queued.
 pub async fn submit(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     attempt_id: &str,
     findings: Vec<CodeReviewFindingDto>,
     fix_files: Option<Vec<CodeReviewFileDto>>,
@@ -329,18 +328,18 @@ pub async fn submit(
 }
 
 /// The attempt: where it stands and, once it is graded, the reveal.
-pub async fn result(pool: &SqlitePool, attempt_id: &str) -> Result<CodeReviewResultDto> {
+pub async fn result(pool: &impl DatabaseHandle, attempt_id: &str) -> Result<CodeReviewResultDto> {
     let (attempt, stored) = attempts::get(pool, attempt_id).await?;
     result_of(&attempt, &stored)
 }
 
 /// Asks for the grade of an attempt that could not be graded again. The grading job is queued.
-pub async fn regrade(pool: &SqlitePool, attempt_id: &str) -> Result<Acted> {
+pub async fn regrade(pool: &impl DatabaseHandle, attempt_id: &str) -> Result<Acted> {
     let queued = attempts::regrade(pool, attempt_id).await?;
     acted(pool, &queued.attempt.id, queued.job).await
 }
 
-async fn acted(pool: &SqlitePool, attempt_id: &str, job: Option<String>) -> Result<Acted> {
+async fn acted(pool: &impl DatabaseHandle, attempt_id: &str, job: Option<String>) -> Result<Acted> {
     Ok(Acted {
         dto: result(pool, attempt_id).await?,
         job,

@@ -9,7 +9,7 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 use crate::features::tags::service::TagService;
 use crate::features::tags::service_impl::TagServiceImpl;
@@ -34,7 +34,8 @@ pub struct TagsDi {
     pub search_by_tag_use_case: Arc<SearchByTagUseCase>,
 }
 
-pub fn build(db_pool: SqlitePool) -> TagsDi {
+pub fn build(db_pool: impl DatabaseHandle) -> TagsDi {
+    let db_pool = db_pool.database();
     let tag_service = Arc::new(TagService::new(db_pool)) as Arc<dyn TagServiceTrait>;
 
     TagsDi {
@@ -59,7 +60,11 @@ pub struct AiTagsDi {
     pub auto_tag_all_documents_use_case: Arc<AutoTagAllDocumentsUseCase>,
 }
 
-pub fn build_ai(db_pool: SqlitePool, model_provider: Arc<dyn LoadedChatModelPort>) -> AiTagsDi {
+pub fn build_ai(
+    db_pool: impl DatabaseHandle,
+    model_provider: Arc<dyn LoadedChatModelPort>,
+) -> AiTagsDi {
+    let db_pool = db_pool.database();
     let tag_service =
         Arc::new(TagServiceImpl::new(db_pool, model_provider)) as Arc<dyn TagServiceTrait>;
 

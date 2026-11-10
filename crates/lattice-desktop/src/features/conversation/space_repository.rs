@@ -7,11 +7,12 @@
 use chrono::Utc;
 use sqlx::SqlitePool;
 
+use crate::features::conversation::repository::space_rows::ConversationSpaceRow;
 use crate::features::conversation::space_dto::{
     ConversationSpaceDto, CreateConversationSpaceRequestDto,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 
 /// Synthetic single-user owner. Spaces always have an "owner" membership
 /// pointing at this profile so the per-space membership table has a
@@ -24,7 +25,8 @@ pub struct ConversationSpaceRepository {
 }
 
 impl ConversationSpaceRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -109,7 +111,7 @@ impl ConversationSpaceRepository {
             ))
         })?;
 
-        let space = sqlx::query_as::<_, ConversationSpaceDto>(
+        let space = sqlx::query_as::<_, ConversationSpaceRow>(
             r#"
             SELECT
                 id, name, description, icon, accent_color, space_prompt,
@@ -127,6 +129,6 @@ impl ConversationSpaceRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to commit space create: {}", e)))?;
 
-        Ok(space)
+        Ok(space.into())
     }
 }

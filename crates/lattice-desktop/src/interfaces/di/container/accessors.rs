@@ -4,12 +4,12 @@
 use super::Container;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
 use crate::infrastructure::storage::ContentAddressedStorage;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 impl Container {
-    pub fn db_pool(&self) -> &SqlitePool {
+    pub fn db_pool(&self) -> &Database {
         self.core.db_pool()
     }
 

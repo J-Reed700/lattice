@@ -35,6 +35,7 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::DatabaseHandle;
 use serde_json::{json, Value};
 use std::collections::HashSet;
 
@@ -647,7 +648,7 @@ async fn a_source_the_user_attaches_that_supports_a_published_not_verified_state
 
     attach_to(
         &AttachDeps {
-            pool: &course.pool,
+            pool: &course.pool.database(),
             store: &store,
             web: &NoWeb,
             snapshots: &NoSnapshots,

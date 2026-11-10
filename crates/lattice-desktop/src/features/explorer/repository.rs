@@ -1,17 +1,18 @@
 //! What Explorer keeps in `lattice.db`: `conversations.explorer_root`, and
 //! the folders list in `explorer_folders`.
 
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use lattice_core::shared::{AppError, Result};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
 /// Binds a conversation to a folder (a canonical root), or unbinds it.
 pub async fn set_conversation_root(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     conversation_id: &str,
     root: Option<&str>,
 ) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let mut tx = pool
         .begin_write()
         .await
@@ -43,7 +44,11 @@ pub async fn set_conversation_root_in(
 }
 
 /// The folder a conversation is bound to; `None` for an ordinary chat.
-pub async fn conversation_root(pool: &SqlitePool, conversation_id: &str) -> Result<Option<String>> {
+pub async fn conversation_root(
+    pool: &impl DatabaseHandle,
+    conversation_id: &str,
+) -> Result<Option<String>> {
+    let pool = pool.sqlx_pool();
     let mut conn = pool
         .acquire()
         .await
@@ -94,11 +99,12 @@ fn folder_not_found(root: &str) -> AppError {
 
 /// Adds the folder (named `name`), or marks it opened at `now`.
 pub async fn record_folder_opened(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     root: &str,
     name: &str,
     now: &str,
 ) -> Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query(
         "INSERT INTO explorer_folders (root, name, pinned, added_at, last_opened_at)
          VALUES (?1, ?2, 0, ?3, ?3)
@@ -116,11 +122,12 @@ pub async fn record_folder_opened(
 /// Adds a folder whose index is on disk but which has no row (one indexed
 /// before the list existed). A row already there wins.
 pub async fn adopt_folder(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     root: &str,
     name: &str,
     opened_at: &str,
 ) -> Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query(
         "INSERT INTO explorer_folders (root, name, pinned, added_at, last_opened_at)
          VALUES (?1, ?2, 0, ?3, ?3)
@@ -136,7 +143,8 @@ pub async fn adopt_folder(
 }
 
 /// Every folder: pinned first, then the most recently opened.
-pub async fn list_folders(pool: &SqlitePool) -> Result<Vec<FolderRow>> {
+pub async fn list_folders(pool: &impl DatabaseHandle) -> Result<Vec<FolderRow>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT root, name, pinned, added_at, last_opened_at, instructions, space_id,
                 last_thread_id
@@ -161,7 +169,8 @@ pub async fn list_folders(pool: &SqlitePool) -> Result<Vec<FolderRow>> {
         .collect())
 }
 
-pub async fn rename_folder(pool: &SqlitePool, root: &str, name: &str) -> Result<()> {
+pub async fn rename_folder(pool: &impl DatabaseHandle, root: &str, name: &str) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let result = sqlx::query("UPDATE explorer_folders SET name = ? WHERE root = ?")
         .bind(name)
         .bind(root)
@@ -174,7 +183,8 @@ pub async fn rename_folder(pool: &SqlitePool, root: &str, name: &str) -> Result<
     Ok(())
 }
 
-pub async fn set_folder_pinned(pool: &SqlitePool, root: &str, pinned: bool) -> Result<()> {
+pub async fn set_folder_pinned(pool: &impl DatabaseHandle, root: &str, pinned: bool) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let result = sqlx::query("UPDATE explorer_folders SET pinned = ? WHERE root = ?")
         .bind(i64::from(pinned))
         .bind(root)
@@ -295,7 +305,8 @@ pub async fn move_thread_to_space_in(
 }
 
 /// Drops the folder's row. Its threads and index are the caller's business.
-pub async fn delete_folder(pool: &SqlitePool, root: &str) -> Result<()> {
+pub async fn delete_folder(pool: &impl DatabaseHandle, root: &str) -> Result<()> {
+    let pool = pool.sqlx_pool();
     sqlx::query("DELETE FROM explorer_folders WHERE root = ?")
         .bind(root)
         .execute(pool)
@@ -305,7 +316,8 @@ pub async fn delete_folder(pool: &SqlitePool, root: &str) -> Result<()> {
 }
 
 /// How many threads each folder has, keyed by root.
-pub async fn thread_counts(pool: &SqlitePool) -> Result<HashMap<String, u32>> {
+pub async fn thread_counts(pool: &impl DatabaseHandle) -> Result<HashMap<String, u32>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT explorer_root, COUNT(*) AS threads FROM conversations
          WHERE explorer_root IS NOT NULL AND tangent_parent_id IS NULL GROUP BY explorer_root",
@@ -327,7 +339,8 @@ pub async fn thread_counts(pool: &SqlitePool) -> Result<HashMap<String, u32>> {
 
 /// The ids of the folder's top-level threads. Their tangents cascade with
 /// them, so returning both would try to delete a child that is already gone.
-pub async fn folder_threads(pool: &SqlitePool, root: &str) -> Result<Vec<String>> {
+pub async fn folder_threads(pool: &impl DatabaseHandle, root: &str) -> Result<Vec<String>> {
+    let pool = pool.sqlx_pool();
     sqlx::query_scalar(
         "SELECT id FROM conversations WHERE explorer_root = ? AND tangent_parent_id IS NULL",
     )
@@ -335,4 +348,72 @@ pub async fn folder_threads(pool: &SqlitePool, root: &str) -> Result<Vec<String>
     .fetch_all(pool)
     .await
     .map_err(folder_error("list the Explorer threads"))
+}
+
+fn save_error(error: sqlx::Error) -> AppError {
+    AppError::Database(format!("Failed to save the Explorer folder: {error}"))
+}
+
+/// Sets a folder's instructions and space and moves its threads with it, in
+/// one unit of work. A named space must be open.
+pub async fn save_folder_settings(
+    pool: &impl DatabaseHandle,
+    root: &str,
+    instructions: Option<&str>,
+    own_space: Option<&str>,
+    now: &str,
+) -> Result<u64> {
+    let pool = pool.sqlx_pool();
+    let mut tx = pool.begin_write().await.map_err(save_error)?;
+    if let Some(space) = own_space {
+        if !space_is_open_in(&mut tx, space).await? {
+            return Err(AppError::NotFound(format!(
+                "Space not found or archived: {space}"
+            )));
+        }
+    }
+    let moved = set_folder_settings_in(&mut tx, root, instructions, own_space, now).await?;
+    tx.commit().await.map_err(save_error)?;
+    Ok(moved)
+}
+
+/// Binds a thread to a folder and files it in the folder's space, in one unit
+/// of work.
+pub async fn bind_thread_to_folder(
+    pool: &impl DatabaseHandle,
+    conversation_id: &str,
+    root: Option<&str>,
+    now: &str,
+) -> Result<()> {
+    let pool = pool.sqlx_pool();
+    let mut tx = pool.begin_write().await.map_err(save_error)?;
+    set_conversation_root_in(&mut tx, conversation_id, root).await?;
+    if let Some(root) = root {
+        let space = folder_space_in(&mut tx, root).await?;
+        move_thread_to_space_in(&mut tx, conversation_id, &space, now).await?;
+    }
+    tx.commit().await.map_err(save_error)
+}
+
+/// Records the thread a folder's chat shows, if the thread is bound to the
+/// folder. `Ok(false)` when it is not.
+pub async fn remember_folder_thread(
+    pool: &impl DatabaseHandle,
+    root: &str,
+    name: &str,
+    conversation_id: &str,
+    now: &str,
+) -> Result<bool> {
+    let pool = pool.sqlx_pool();
+    let mut tx = pool.begin_write().await.map_err(save_error)?;
+    if conversation_root_in(&mut tx, conversation_id)
+        .await?
+        .as_deref()
+        != Some(root)
+    {
+        return Ok(false);
+    }
+    set_folder_last_thread_in(&mut tx, root, name, conversation_id, now).await?;
+    tx.commit().await.map_err(save_error)?;
+    Ok(true)
 }

@@ -299,7 +299,7 @@ async fn an_attempt_that_could_not_be_graded_is_graded_by_a_regrade() -> Result<
 
 fn worker(pool: &SqlitePool, model: Arc<dyn LLMPort>) -> DrillGradingWorker {
     DrillGradingWorker {
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm: Arc::new(move || {
             let model = model.clone();
             Box::pin(async move { Ok(pinned_for_test(model)) })
@@ -376,7 +376,7 @@ async fn a_model_that_cannot_be_reached_leaves_the_attempt_ungraded_with_the_rea
 {
     let waiting = Waiting::unclaimed(findings(), None).await?;
     let unreachable = DrillGradingWorker {
-        pool: waiting.pool.clone(),
+        pool: waiting.pool.clone().into(),
         load_llm: Arc::new(|| {
             Box::pin(async { Err(AppError::InvalidConfig("No Learning model is set.".into())) })
         }),

@@ -8,20 +8,21 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{
     ActivityItem, ActivityProgress, ActivitySource, ActivityTarget,
 };
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use lattice_core::shared::runtime::jobs::{JobRecord, JobRuntime};
 use lattice_core::shared::Result;
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 use std::sync::Arc;
 
 /// Research turns and syntheses, read from their jobs.
 pub struct ConversationActivity {
-    pool: SqlitePool,
+    pool: Database,
     jobs: Arc<JobRuntime>,
 }
 
 impl ConversationActivity {
-    pub fn new(pool: SqlitePool, jobs: Arc<JobRuntime>) -> Self {
+    pub fn new(pool: impl DatabaseHandle, jobs: Arc<JobRuntime>) -> Self {
+        let pool = pool.database();
         Self { pool, jobs }
     }
 

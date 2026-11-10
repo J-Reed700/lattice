@@ -2,6 +2,7 @@
 use super::*;
 use crate::review_findings::ReviewFinding;
 use serde_json::json;
+use sqlx::SqlitePool;
 
 async fn pool() -> SqlitePool {
     let pool = crate::tests::pool().await.unwrap();
@@ -437,7 +438,7 @@ async fn reopening_returns_kept_findings_to_waiting_and_clears_when_they_were_ke
     let kept_at: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM learning_lesson_teaching_findings WHERE kept_at IS NOT NULL",
     )
-    .fetch_one(&store.pool)
+    .fetch_one(store.pool.sqlx_pool())
     .await
     .unwrap();
     assert_eq!(kept_at, 0);
@@ -526,7 +527,7 @@ async fn old_row(
     .bind(index)
     .bind(note)
     .bind(passage)
-    .execute(&store.pool)
+    .execute(store.pool.sqlx_pool())
     .await
     .unwrap();
     key
@@ -560,7 +561,7 @@ async fn section_text(store: &TeachingFindingsRepository, ordinal: i64, body: &s
     )
     .bind(ordinal)
     .bind(body)
-    .execute(&store.pool)
+    .execute(store.pool.sqlx_pool())
     .await
     .unwrap();
 }
@@ -611,7 +612,7 @@ async fn an_old_row_completes_a_cut_sentence_from_the_published_section() {
     .bind(format!(
         "Requests are retried. {LONG} Nothing else applies."
     ))
-    .execute(&store.pool)
+    .execute(store.pool.sqlx_pool())
     .await
     .unwrap();
     let cut: String = LONG.chars().take(90).collect();
@@ -1066,7 +1067,7 @@ async fn settling_source_added_resolves_a_waiting_note_with_that_resolution() {
     let kept_at: i64 = sqlx::query_scalar(
         "SELECT count(*) FROM learning_lesson_teaching_findings WHERE kept_at IS NOT NULL",
     )
-    .fetch_one(&store.pool)
+    .fetch_one(store.pool.sqlx_pool())
     .await
     .unwrap();
     assert_eq!(kept_at, 0);

@@ -12,10 +12,9 @@ use lattice_core::domain::learning::claim_review::{
     AttachOutcome, Checker, ClaimEvent, ClaimLedgerEntry, VerdictKind,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::WriteTx;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, WriteTx};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
-use sqlx::SqlitePool;
 
 use super::repository::{self, ShownPassage};
 use crate::persistence::now;
@@ -243,11 +242,12 @@ pub fn export_file_name(date: &str) -> String {
 
 #[derive(Clone)]
 pub struct CheckerExamples {
-    pool: SqlitePool,
+    pool: Database,
 }
 
 impl CheckerExamples {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.database();
         Self { pool }
     }
 

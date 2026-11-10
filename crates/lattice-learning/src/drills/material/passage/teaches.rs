@@ -10,9 +10,9 @@ use crate::model_call;
 use crate::persistence::hash;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::DatabaseHandle;
 use serde::Deserialize;
 use serde_json::json;
-use sqlx::SqlitePool;
 use std::collections::HashMap;
 
 mod repository;
@@ -80,7 +80,7 @@ pub(super) async fn ask(
 
 /// The verdicts stored for the lesson of `context` on `basis`, by the version, start and end of the passage.
 pub(super) async fn stored(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     context: &LessonContext,
     basis: &str,
 ) -> Result<HashMap<(String, usize, usize), bool>> {
@@ -97,7 +97,7 @@ pub(super) async fn stored(
 
 /// Stores the verdict `taught` on `passage` for the lesson of `context`, replacing the passage's earlier one.
 pub(super) async fn record(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     context: &LessonContext,
     passage: &SourcePassage,
     basis: &str,

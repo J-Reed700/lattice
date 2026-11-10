@@ -14,9 +14,11 @@ use lattice_core::{
     application::ports::llm_port::PinnedModel,
     shared::{
         error::{AppError, Result},
+        persistence::Database,
         runtime::jobs::{JobContext, JobFailure, JobHandler, JobOutcome, JobRecord},
     },
 };
+#[cfg(test)]
 use sqlx::SqlitePool;
 use std::sync::Arc;
 
@@ -44,7 +46,7 @@ pub fn pinned_for_test(llm: Arc<dyn lattice_core::application::ports::LLMPort>) 
 
 #[derive(Clone)]
 pub struct LessonGenerationWorker {
-    pub pool: SqlitePool,
+    pub pool: Database,
     /// Where a lesson's worked examples run while it is verified.
     pub runtimes: crate::embedded_runtime::BuiltinRuntimes,
     pub load_llm: ModelLoader,
@@ -570,7 +572,7 @@ mod repository_tests {
                 research_web: None,
                 verifier: None,
                 courses: None,
-                pool: pool.clone(),
+                pool: pool.clone().into(),
                 refresh_sources: Arc::new(|_| Box::pin(async { Ok(()) })),
                 load_llm: Arc::new(move || {
                     let entered = notification.clone();

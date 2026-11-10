@@ -16,12 +16,12 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
 use crate::features::backup::adapter::roll_back_database;
 use crate::features::backup::database_repository;
 use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 
 use super::config::ArchiveConfig;
 use super::crypto::{self, MasterKey};
@@ -65,7 +65,7 @@ pub enum RestoreOutcome {
 
 /// Restores from an archive file. One instance per app, built in the backup DI.
 pub struct ArchiveRestorer {
-    pool: SqlitePool,
+    pool: Database,
     db_path: PathBuf,
     app_data_dir: PathBuf,
     settings_repo: Arc<dyn SettingsRepositoryPort>,
@@ -79,7 +79,7 @@ pub struct ArchiveRestorer {
 
 impl ArchiveRestorer {
     pub fn new(
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         db_path: PathBuf,
         app_data_dir: PathBuf,
         settings_repo: Arc<dyn SettingsRepositoryPort>,
@@ -87,6 +87,7 @@ impl ArchiveRestorer {
         files_root: Option<PathBuf>,
         web_archive_root: Option<PathBuf>,
     ) -> Self {
+        let pool = pool.database();
         Self {
             pool,
             db_path,
@@ -302,14 +303,7 @@ impl ArchiveRestorer {
     /// Highest applied migration in the *live* database — what this build's
     /// schema actually is, rather than what the binary claims.
     async fn newest_local_migration(&self) -> Result<Option<i64>, ArchiveError> {
-        let mut connection = match self.pool.acquire().await {
-            Ok(connection) => connection,
-            Err(e) => {
-                warn!(error = %e, "could not read local migration version; skipping the newer-backup check");
-                return Ok(None);
-            }
-        };
-        match database_repository::newest_migration(&mut connection).await {
+        match database_repository::database_newest_migration(&self.pool).await {
             Ok(version) => Ok(version),
             Err(e) => {
                 // A database with no migration table is a test fixture or a

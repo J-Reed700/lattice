@@ -7,13 +7,13 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use notify::{RecursiveMode, Watcher};
-use sqlx::SqlitePool;
 use std::sync::atomic::{AtomicBool, Ordering};
 use tokio::io::AsyncReadExt;
 use tokio::sync::Mutex;
 
 use lattice_core::application::contracts::notes::VaultNoteUpsert;
 use lattice_core::application::ports::{SettingsReaderPort, WorkspaceNotesPort};
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
 mod rescan;
@@ -71,12 +71,13 @@ fn filename_key(path: &Path) -> Option<String> {
 
 pub fn start_vault_watcher(
     settings_uc: Arc<impl SettingsReaderPort + 'static>,
-    db_pool: SqlitePool,
+    db_pool: impl DatabaseHandle,
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
     background: Arc<BackgroundTasks>,
     rescan_lock: RescanLock,
 ) {
+    let db_pool = db_pool.database();
     let scope = Arc::clone(&background);
     scope.spawn(async move {
         let settings = match settings_uc.current_settings().await {
@@ -144,7 +145,7 @@ pub fn start_vault_watcher(
 
 async fn run_watcher(
     vault_root: PathBuf,
-    db_pool: SqlitePool,
+    db_pool: Database,
     app_handle: tauri::AppHandle,
     suppression: WriteSuppressionRegistry,
     background: Arc<BackgroundTasks>,
@@ -283,7 +284,7 @@ async fn read_note(path: &Path) -> std::io::Result<String> {
 /// not necessarily the file stem: a note renamed in Finder keeps its id.
 pub(crate) async fn import_one(
     path: &Path,
-    db_pool: &SqlitePool,
+    db_pool: &impl DatabaseHandle,
     app_handle: &tauri::AppHandle,
 ) -> Option<String> {
     let contents = match read_note(path).await {
@@ -443,7 +444,11 @@ async fn find_renamed_note(removed: &Path, id: &str) -> Option<PathBuf> {
 }
 
 /// Trusts the writer's `<id>.md` naming invariant — id is the file stem.
-async fn handle_external_delete(path: &Path, db_pool: &SqlitePool, app_handle: &tauri::AppHandle) {
+async fn handle_external_delete(
+    path: &Path,
+    db_pool: &impl DatabaseHandle,
+    app_handle: &tauri::AppHandle,
+) {
     let Some(id) = path.file_stem().and_then(|s| s.to_str()) else {
         tracing::debug!(
             path = %path.display(),

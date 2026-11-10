@@ -3,8 +3,6 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use crate::features::backup::adapter::BackupAdapter;
 use crate::features::backup::archive::key_store::MasterKeyStore;
 use crate::features::backup::archive::restore::ArchiveRestorer;
@@ -17,6 +15,7 @@ use crate::features::backup::use_cases::{
 };
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::{BackupPort, BackupSchedulerPort, SettingsRepositoryPort};
+use lattice_core::shared::persistence::DatabaseHandle;
 
 #[derive(Clone)]
 pub struct BackupDi {
@@ -33,12 +32,13 @@ pub struct BackupDi {
 }
 
 pub fn build(
-    db_pool: SqlitePool,
+    db_pool: impl DatabaseHandle,
     db_path: PathBuf,
     app_data_dir: PathBuf,
     settings_repo: Arc<dyn SettingsRepositoryPort>,
     background: Arc<lattice_core::shared::runtime::background::BackgroundTasks>,
 ) -> BackupDi {
+    let db_pool = db_pool.database();
     let backup =
         Arc::new(BackupAdapter::new(db_pool.clone(), db_path.clone())) as Arc<dyn BackupPort>;
 

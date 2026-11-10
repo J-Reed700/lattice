@@ -2,8 +2,8 @@
 //! background scope and credentials.
 
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::background::BackgroundTasks;
-use sqlx::SqlitePool;
 use std::path::PathBuf;
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ use lattice_core::application::ports::CredentialsPort;
 #[derive(Clone)]
 pub struct CoreModule {
     // Cross-cutting shared infrastructure — not owned by any feature slice.
-    db_pool: SqlitePool,
+    db_pool: Database,
     db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
     security_context: Arc<SecurityContext>,
     file_access_config: Arc<FileAccessConfig>,
@@ -40,7 +40,7 @@ pub struct CoreModule {
 impl CoreModule {
     /// Build shared Layer-1 infrastructure plus the credentials feature slice.
     pub async fn new(
-        db_pool: SqlitePool,
+        db_pool: Database,
         db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         data_dir: PathBuf,
         background: Arc<BackgroundTasks>,
@@ -78,7 +78,7 @@ impl CoreModule {
     }
 
     // Infrastructure getters
-    pub fn db_pool(&self) -> &SqlitePool {
+    pub fn db_pool(&self) -> &Database {
         &self.db_pool
     }
 

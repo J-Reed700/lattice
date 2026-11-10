@@ -3,6 +3,7 @@
 
 use super::{reconcile_line_endings, run_migrations};
 use crate::infrastructure::persistence::database::DatabaseConnection;
+use lattice_core::shared::persistence::DatabaseHandle;
 use parking_lot::Mutex;
 use sha2::{Digest, Sha384};
 use sqlx::migrate::{Migration, Migrator};
@@ -358,14 +359,17 @@ async fn a_database_file_recorded_with_the_other_line_endings_opens_on_the_next_
     let first_start = DatabaseConnection::new(path.clone()).await.unwrap();
     run_migrations(first_start.pool()).await.unwrap();
     for migration in migrator.iter() {
-        set_other_line_endings(first_start.pool(), migration).await;
+        set_other_line_endings(first_start.pool().sqlx_pool(), migration).await;
     }
     first_start.close().await.unwrap();
 
     let next_start = DatabaseConnection::new(path).await.unwrap();
     run_migrations(next_start.pool()).await.unwrap();
 
-    assert_eq!(recorded(next_start.pool()).await, embedded_rows(&migrator));
+    assert_eq!(
+        recorded(next_start.pool().sqlx_pool()).await,
+        embedded_rows(&migrator)
+    );
     next_start.close().await.unwrap();
 }
 

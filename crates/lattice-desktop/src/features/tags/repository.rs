@@ -5,7 +5,7 @@ use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::{Filter, RepositoryPort};
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use lattice_core::shared::types::TagName;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
@@ -73,7 +73,8 @@ async fn tag_by_name(connection: &mut SqliteConnection, name: &str) -> Result<Op
 
 impl TagRepository {
     /// Create a new tag repository.
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

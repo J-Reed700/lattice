@@ -13,7 +13,7 @@ use chrono::Utc;
 use lattice_core::application::contracts::favorites::FavoriteRecord as FavoriteDto;
 use lattice_core::application::ports::FavoritesRepositoryPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use sqlx::{Row, SqlitePool};
 use uuid::Uuid;
 
@@ -31,7 +31,8 @@ pub struct FavoritesRepository {
 
 impl FavoritesRepository {
     /// Create a new favorites repository.
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 }

@@ -6,7 +6,7 @@ use async_trait::async_trait;
 use lattice_core::application::ports::{ChunkRepositoryPort, Filter, RepositoryPort};
 use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -51,7 +51,8 @@ pub struct ChunkRepository {
 
 impl ChunkRepository {
     /// Create a new chunk repository.
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

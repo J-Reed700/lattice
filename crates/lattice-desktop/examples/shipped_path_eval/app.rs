@@ -52,7 +52,7 @@ pub async fn open(
     let connection = setup_database(data_dir.join("lattice.db")).await?;
     let pool = connection.pool().clone();
     let container = Container::new(
-        pool,
+        pool.into(),
         Arc::new(connection),
         None,
         &settings.llm.ollama_url,

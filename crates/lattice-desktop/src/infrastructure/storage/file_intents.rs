@@ -8,7 +8,7 @@ use sqlx::sqlite::{SqliteConnectOptions, SqliteJournalMode, SqlitePoolOptions};
 use sqlx::SqlitePool;
 
 use lattice_core::shared::error::Result;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 
 /// Which files a row names, and what its `name` is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -92,7 +92,8 @@ pub struct FileIntents {
 }
 
 impl FileIntents {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

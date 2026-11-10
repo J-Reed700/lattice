@@ -3,11 +3,10 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
-
 use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::parse_db_timestamp;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 
 use super::{emit_note_imported, import_one, RescanLock, WriteSuppressionRegistry};
@@ -15,13 +14,14 @@ use super::{emit_note_imported, import_one, RescanLock, WriteSuppressionRegistry
 /// Catches edits the watcher dropped (sleep/wake, AV interference, etc.).
 /// Idempotent. Frontend invokes on window focus.
 pub async fn rescan_vault(
-    db_pool: SqlitePool,
+    db_pool: impl DatabaseHandle,
     vault_root: PathBuf,
     suppression: WriteSuppressionRegistry,
     rescan_lock: &RescanLock,
     app_handle: tauri::AppHandle,
     background: Arc<BackgroundTasks>,
 ) -> Result<RescanSummary> {
+    let db_pool = db_pool.database();
     let notes_dir = vault_root.join("notes");
     // repository-barrier-allow: rescan reconciles the configured vault resource with its repository.
     if !notes_dir.exists() {
@@ -291,7 +291,7 @@ pub struct RescanSummary {
 }
 
 struct RescanMembershipGuard {
-    pool: SqlitePool,
+    pool: Database,
     run_id: String,
     active: bool,
     /// Where the release runs when the guard drops mid-scan.

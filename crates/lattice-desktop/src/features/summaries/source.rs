@@ -8,11 +8,10 @@
 //! The whole text is read: the summarizer describes a long document from all
 //! of it, part by part, rather than from its opening.
 
-use async_trait::async_trait;
-use sqlx::SqlitePool;
-
 use crate::features::summaries::repository;
+use async_trait::async_trait;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 
 /// One top-level section's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -90,12 +89,14 @@ pub fn assemble(
 }
 
 pub struct SqliteSummarySource {
-    pool: SqlitePool,
+    pool: Database,
 }
 
 impl SqliteSummarySource {
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        Self {
+            pool: pool.database(),
+        }
     }
 }
 

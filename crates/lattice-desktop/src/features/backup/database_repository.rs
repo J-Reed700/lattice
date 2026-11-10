@@ -1,7 +1,80 @@
 //! Statements run on the live database and on backup snapshots.
-use sqlx::SqliteConnection;
+use std::path::Path;
+
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
+use sqlx::sqlite::SqliteConnectOptions;
+use sqlx::{SqliteConnection, SqlitePool};
 
 type Result<T> = std::result::Result<T, sqlx::Error>;
+
+/// Opens an existing backup file read-only, built from `SqliteConnectOptions`
+/// rather than a `sqlite://…?mode=ro` DSN: a canonical Windows path
+/// (`\\?\C:\...`) contains a `?`, where sqlx splits a DSN.
+pub async fn open_read_only(path: &Path) -> Result<Database> {
+    let options = SqliteConnectOptions::new().filename(path).read_only(true);
+    SqlitePool::connect_with(options).await.map(Database::from)
+}
+
+/// `vacuum_into` on a connection of its own.
+pub async fn vacuum_database_into(
+    database: &impl DatabaseHandle,
+    destination: &str,
+) -> Result<()> {
+    let mut connection = database.sqlx_pool().acquire().await?;
+    vacuum_into(&mut connection, destination).await
+}
+
+/// `integrity_check` on a connection of its own.
+pub async fn database_integrity_check(database: &impl DatabaseHandle) -> Result<String> {
+    let mut connection = database.sqlx_pool().acquire().await?;
+    integrity_check(&mut connection).await
+}
+
+/// `document_count` on a connection of its own.
+pub async fn database_document_count(database: &impl DatabaseHandle) -> Result<i64> {
+    let mut connection = database.sqlx_pool().acquire().await?;
+    document_count(&mut connection).await
+}
+
+/// `newest_migration` on a connection of its own.
+pub async fn database_newest_migration(database: &impl DatabaseHandle) -> Result<Option<i64>> {
+    let mut connection = database.sqlx_pool().acquire().await?;
+    newest_migration(&mut connection).await
+}
+
+/// What a backup's `schema_version` table says.
+pub enum SchemaVersion {
+    NoTable,
+    Table(Option<i64>),
+}
+
+/// Which step of reading a backup's schema version failed.
+pub enum SchemaVersionError {
+    Check(sqlx::Error),
+    Read(sqlx::Error),
+}
+
+/// Whether the backup has a `schema_version` table and its latest row, on one
+/// connection.
+pub async fn backup_schema_version(
+    database: &impl DatabaseHandle,
+) -> std::result::Result<SchemaVersion, SchemaVersionError> {
+    let mut connection = database
+        .sqlx_pool()
+        .acquire()
+        .await
+        .map_err(SchemaVersionError::Check)?;
+    if !has_schema_version_table(&mut connection)
+        .await
+        .map_err(SchemaVersionError::Check)?
+    {
+        return Ok(SchemaVersion::NoTable);
+    }
+    let version = latest_schema_version(&mut connection)
+        .await
+        .map_err(SchemaVersionError::Read)?;
+    Ok(SchemaVersion::Table(version))
+}
 
 /// `VACUUM INTO` takes a string literal, not a bind parameter, so the single
 /// quotes of `destination` are doubled.

@@ -5,7 +5,6 @@
 use std::collections::HashMap;
 
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
 
 use lattice_core::application::ports::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{ClaimId, LessonReviewState};
@@ -19,7 +18,7 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::persistence::db;
 use crate::repository::LearningRepository;
 use crate::source_library::workspace_in;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 
 pub struct AuditMaterial {
     pub draft_sha256: String,
@@ -31,7 +30,7 @@ impl AuditMaterial {
     /// `candidate`, the draft a preparation is about to publish, whose
     /// digest is `draft_sha256`.
     pub(crate) async fn of_draft(
-        pool: &SqlitePool,
+        pool: &impl DatabaseHandle,
         program_id: &str,
         lesson_id: &str,
         candidate: &Value,
@@ -46,8 +45,12 @@ impl AuditMaterial {
 
     /// The lesson as its review stands: the draft that waits for review, or
     /// the published lesson once it is ready ("Audit this lesson now").
-    pub async fn of_lesson(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<Self> {
-        let review = ClaimReviewRepository::new(pool.clone())
+    pub async fn of_lesson(
+        pool: &impl DatabaseHandle,
+        program_id: &str,
+        lesson_id: &str,
+    ) -> Result<Self> {
+        let review = ClaimReviewRepository::new(pool.database())
             .load(lesson_id)
             .await?
             .review
@@ -56,7 +59,7 @@ impl AuditMaterial {
         let waiting = if review.state == LessonReviewState::Ready {
             None
         } else {
-            LearningCurriculumRepository::new(pool.clone())
+            LearningCurriculumRepository::new(pool.database())
                 .lesson_draft(&review.job_id, lesson_id)
                 .await?
         };
@@ -83,8 +86,8 @@ fn units(candidate: &Value) -> Vec<AuditUnit> {
 
 /// The published lesson in the draft's shape, its reviewed questions and
 /// their explanations included, so its units index as the report's do.
-async fn published(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<Value> {
-    let program = LearningRepository::new(pool.clone())
+async fn published(pool: &impl DatabaseHandle, program_id: &str, lesson_id: &str) -> Result<Value> {
+    let program = LearningRepository::new(pool.database())
         .get(program_id)
         .await?;
     let lesson = program
@@ -101,11 +104,11 @@ async fn published(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Resu
 /// Each claim's passages as its card shows them, with each source
 /// version's title (deleted sources included: a card still names them).
 async fn passages(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<HashMap<ClaimId, Vec<AuditPassage>>> {
-    let claims = ClaimReviewRepository::new(pool.clone());
+    let claims = ClaimReviewRepository::new(pool.database());
     let shown = claims.shown_passages(lesson_id).await?;
     let mut read = pool.begin_read().await.map_err(db)?;
     let workspace = workspace_in(&mut read, program_id, true).await?;

@@ -4,7 +4,7 @@ use crate::infrastructure::persistence::repositories::embedding::generation::{
 };
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 /// Reuses completed work only when both model artifacts and source content match.
 /// A passage the new model's window cannot take in one pass is represented by
@@ -14,7 +14,7 @@ use sqlx::SqlitePool;
 /// The text embedded is `contextualized_content` — the context prefix plus the
 /// chunk, exactly what the indexer embedded — so the prefix never has to be
 /// rebuilt from the document row here.
-pub async fn prepare(pool: &SqlitePool, model: &dyn EmbeddingPort) -> Result<usize> {
+pub async fn prepare(pool: &impl DatabaseHandle, model: &dyn EmbeddingPort) -> Result<usize> {
     let identity = model.model_identity();
     let mut cursor = String::new();
     let mut completed = 0;
@@ -79,6 +79,7 @@ mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::embedding::generation::restore;
     use lattice_core::application::ports::embedding_port::EmbeddingTextChunk;
+    use sqlx::SqlitePool;
     use std::sync::atomic::{AtomicUsize, Ordering};
     struct Model {
         identity: &'static str,

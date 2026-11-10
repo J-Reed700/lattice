@@ -45,7 +45,7 @@ pub async fn judge_short_answer(llm: &dyn LLMPort, answer: &ShortAnswer) -> Resu
 /// Grades a submitted quiz's pending items, or regrades a contest.
 #[derive(Clone)]
 pub struct QuizGradingWorker {
-    pub pool: SqlitePool,
+    pub pool: Database,
     pub load_llm: ModelLoader,
 }
 

@@ -109,6 +109,7 @@ mod tests {
     use crate::infrastructure::persistence::repositories::{
         ChunkRepository, DocumentRepositoryImpl,
     };
+    use lattice_core::shared::persistence::DatabaseHandle;
 
     const STAMP: &str = "2026-10-02T00:00:00Z";
 
@@ -118,7 +119,7 @@ mod tests {
         let dir = tempfile::tempdir()?;
         let db = DatabaseConnection::new(dir.path().join("library.db")).await?;
         initialize_database(db.pool()).await?;
-        let pool = db.pool().clone();
+        let pool = db.pool().sqlx_pool().clone();
         let document_id = uuid::Uuid::new_v4().to_string();
         sqlx::query("INSERT INTO documents(id,file_path,file_name,size_bytes,modified_at,indexed_at,created_at,updated_at,checksum,status) VALUES(?,?,?,?,?,?,?,?,?,?)")
             .bind(&document_id).bind(format!("/tmp/{document_id}.txt")).bind("Field notes.txt")

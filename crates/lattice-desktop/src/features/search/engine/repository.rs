@@ -4,8 +4,8 @@ use crate::infrastructure::persistence::database::connection::{
 };
 use lattice_core::application::contracts::search::engine::BM25Result;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, SqlitePool};
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use sqlx::Row;
 
 /// One statement per index. Written out rather than built by string
 /// concatenation so `scripts/check-sql-contracts.py` can prepare both against
@@ -51,10 +51,11 @@ const TRIGRAM_SQL: &str = "SELECT
      LIMIT ?";
 
 pub(super) async fn bm25_results(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     query: &FtsQuery,
     top_k: usize,
 ) -> Result<Vec<BM25Result>> {
+    let pool = pool.sqlx_pool();
     let pool = pool.clone();
     let sql = match query.index {
         FtsIndex::Words => WORDS_SQL,
@@ -98,7 +99,8 @@ pub(super) async fn bm25_results(
         .collect())
 }
 
-pub(super) async fn optimize_chunk_indexes(pool: &SqlitePool) -> Result<()> {
+pub(super) async fn optimize_chunk_indexes(pool: &impl DatabaseHandle) -> Result<()> {
+    let pool = pool.sqlx_pool();
     query_with_heavy_timeout(|| async {
         let mut tx = pool.begin_write().await?;
         sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('optimize')")
@@ -112,7 +114,8 @@ pub(super) async fn optimize_chunk_indexes(pool: &SqlitePool) -> Result<()> {
     .await
 }
 
-pub(super) async fn rebuild_chunk_indexes(pool: &SqlitePool) -> Result<()> {
+pub(super) async fn rebuild_chunk_indexes(pool: &impl DatabaseHandle) -> Result<()> {
+    let pool = pool.sqlx_pool();
     query_with_heavy_timeout(|| async {
         let mut tx = pool.begin_write().await?;
         sqlx::query("INSERT INTO chunks_fts(chunks_fts) VALUES('rebuild')")
@@ -127,9 +130,10 @@ pub(super) async fn rebuild_chunk_indexes(pool: &SqlitePool) -> Result<()> {
 }
 
 pub(super) async fn document_updated_at(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     document_ids: &[String],
 ) -> Result<Vec<(String, String)>> {
+    let pool = pool.sqlx_pool();
     let placeholders = document_ids
         .iter()
         .map(|_| "?")

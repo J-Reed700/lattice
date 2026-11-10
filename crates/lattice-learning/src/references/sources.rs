@@ -6,7 +6,7 @@ use crate::references::trust::capture;
 use lattice_core::application::ports::LibraryPassagesPort;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::collections::HashSet;
 use std::sync::Arc;
 
@@ -26,7 +26,7 @@ pub struct SourceDeps {
     /// The host's safe web service for URL references.
     pub web: Arc<dyn WebServiceTrait>,
     /// Source-library rows: before-use refreshes persist here.
-    pub pool: SqlitePool,
+    pub pool: Database,
 }
 
 #[derive(Debug, Clone)]

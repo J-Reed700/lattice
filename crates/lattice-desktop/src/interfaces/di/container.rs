@@ -30,7 +30,7 @@ use lattice_core::application::ports::EmbeddingPort as EmbeddingServiceTrait;
 use lattice_core::application::ports::SettingsSideEffectsPort;
 use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -209,7 +209,7 @@ impl Container {
     ///
     /// **Architecture**: Layer 0 (raw params) → Layer 1 (CoreModule) → Layer 2 (Features)
     pub async fn new(
-        db_pool: SqlitePool,
+        db_pool: Database,
         db_conn: Arc<crate::infrastructure::persistence::database::DatabaseConnection>,
         app_handle: Option<tauri::AppHandle>,
         llm_endpoint: &str,

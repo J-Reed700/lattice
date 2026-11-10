@@ -13,7 +13,7 @@
 use crate::features::initialization::dto::InitializeDatabaseResponseDto;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 /// Initialize database use case.
@@ -21,12 +21,12 @@ use std::sync::Arc;
 /// Ensures database schema is created and up to date.
 pub struct InitializeDatabaseUseCase {
     /// SQLite database pool
-    database_pool: Arc<SqlitePool>,
+    database_pool: Arc<Database>,
 }
 
 impl InitializeDatabaseUseCase {
     /// Create a new instance of the use case.
-    pub fn new(database_pool: Arc<SqlitePool>) -> Self {
+    pub fn new(database_pool: Arc<Database>) -> Self {
         Self { database_pool }
     }
 
@@ -43,7 +43,7 @@ impl InitializeDatabaseUseCase {
 
         // 1. Run database initialization (idempotent)
         crate::infrastructure::persistence::database::init::initialize_database(
-            &self.database_pool,
+            &*self.database_pool,
         )
         .await
         .map_err(|e| AppError::Database(format!("Failed to initialize database: {}", e)))?;
@@ -64,13 +64,13 @@ impl InitializeDatabaseUseCase {
     }
 
     async fn has_schema_version_table(&self) -> Result<bool> {
-        crate::features::initialization::repository::has_schema_version_table(&self.database_pool)
+        crate::features::initialization::repository::has_schema_version_table(&*self.database_pool)
             .await
     }
 
     /// Get current schema version from database.
     async fn get_schema_version(&self) -> Result<i64> {
-        crate::features::initialization::repository::schema_version(&self.database_pool).await
+        crate::features::initialization::repository::schema_version(&*self.database_pool).await
     }
 
     /// Get database file path.
@@ -87,14 +87,16 @@ impl InitializeDatabaseUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::persistence::DatabaseHandle;
     use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn create_test_pool() -> SqlitePool {
+    async fn create_test_pool() -> Database {
         SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("Failed to create test database pool")
+            .into()
     }
 
     #[tokio::test]
@@ -118,7 +120,7 @@ mod tests {
         use_case.execute().await.unwrap();
 
         let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM schema_version")
-            .fetch_one(&pool)
+            .fetch_one(pool.sqlx_pool())
             .await
             .unwrap();
 

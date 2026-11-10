@@ -2,7 +2,10 @@
 use super::{study_dto::*, study_repository::StudyRepository};
 use lattice_core::{
     application::ports::{LLMPort, LibraryPassagesPort},
-    shared::error::{AppError, Result},
+    shared::{
+        error::{AppError, Result},
+        persistence::DatabaseHandle,
+    },
 };
 
 fn text(value: &str, label: &str, max: usize) -> Result<()> {
@@ -225,7 +228,7 @@ pub async fn set_target(
 /// new date.
 pub async fn create_interview_deck(
     repo: &StudyRepository,
-    pool: &sqlx::SqlitePool,
+    pool: &impl DatabaseHandle,
     request: CreateInterviewStudyDeckRequestDto,
 ) -> Result<StudyDeckDto> {
     let now = chrono::Utc::now().timestamp_millis();

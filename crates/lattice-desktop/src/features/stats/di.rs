@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 use crate::features::stats::corpus_shape_repository::{
     CorpusShapeRepositoryPort, SqliteCorpusShapeRepository,
@@ -25,7 +25,11 @@ pub struct StatsDi {
 }
 
 /// `tag_repo` is the tags feature's store; stats only counts its rows.
-pub fn build(db_pool: SqlitePool, tag_repo: Arc<dyn RepositoryPort<TagEntity>>) -> StatsDi {
+pub fn build(
+    db_pool: impl DatabaseHandle,
+    tag_repo: Arc<dyn RepositoryPort<TagEntity>>,
+) -> StatsDi {
+    let db_pool = db_pool.database();
     let document_repo = Arc::new(DocumentRepositoryImpl::new(db_pool.clone()))
         as Arc<dyn RepositoryPort<DocumentEntity>>;
     let chunk_repo =

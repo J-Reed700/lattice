@@ -7,8 +7,7 @@ use crate::infrastructure::persistence::repositories::mentions::MentionRepositor
 use chrono::Utc;
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_MODEL_NAME;
 use lattice_core::shared::fs::path::path_to_string;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use std::path::{Path, PathBuf};
 use uuid::Uuid;
 
@@ -20,12 +19,13 @@ pub type ChunkedDocuments = Vec<ChunkedDocument>;
 
 /// Store a document with text chunks and embeddings.
 pub async fn store_document(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     path: &Path,
     mime_type: &str,
     chunks: Vec<TextChunk>,
     embeddings: Vec<Vec<f32>>,
 ) -> Result<String> {
+    let pool = pool.sqlx_pool();
     if chunks.len() != embeddings.len() {
         return Err(IndexingError::InvalidConfig(format!(
             "Chunks and embeddings must have same length: {} chunks vs {} embeddings",
@@ -175,9 +175,10 @@ pub async fn store_document(
 
 /// Store multiple documents in batch.
 pub async fn batch_store_documents(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     documents: ChunkedDocuments,
 ) -> Result<Vec<String>> {
+    let pool = pool.sqlx_pool();
     let mut doc_ids = Vec::new();
 
     for (path, mime_type, chunks, embeddings) in documents {

@@ -9,7 +9,7 @@ use super::items::{BatchItem, ItemCounts};
 use super::repository::BatchItems;
 use crate::features::web::services::web::check_public_url;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::WriteTx;
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRecord, JobRuntime, JobStore, NewJob},
@@ -129,7 +129,6 @@ impl BatchImports {
         };
         let mut tx = self
             .items
-            .pool()
             .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -252,7 +251,6 @@ impl BatchImports {
         }
         let mut tx = self
             .items
-            .pool()
             .begin_read()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -320,7 +318,6 @@ impl BatchImports {
     pub async fn cancel(&self, job_id: &str) -> Result<usize> {
         let mut tx = self
             .items
-            .pool()
             .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;
@@ -356,7 +353,6 @@ impl BatchImports {
     ) -> Result<(String, usize)> {
         let mut tx = self
             .items
-            .pool()
             .begin_write()
             .await
             .map_err(|e| AppError::Database(e.to_string()))?;

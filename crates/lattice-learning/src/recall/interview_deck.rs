@@ -13,8 +13,7 @@ use crate::practice::{
     practical_generation::INTERVIEW_PLAN_FILE_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 use std::collections::HashMap;
 
 fn decode<T: serde::de::DeserializeOwned>(content: &str, what: &str) -> Result<T> {
@@ -34,7 +33,7 @@ pub(crate) struct InterviewMaterial {
 }
 
 pub(crate) async fn load(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     activity_id: &str,
 ) -> Result<InterviewMaterial> {
@@ -303,6 +302,7 @@ mod tests {
     use super::*;
     use crate::persistence::db;
     use serde_json::json;
+    use sqlx::SqlitePool;
 
     fn plan() -> LearningInterviewPlanDto {
         serde_json::from_value(json!({

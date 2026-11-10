@@ -7,7 +7,7 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 use lattice_core::application::ports::{ReferenceSnapshotPort, WebServiceTrait};
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
@@ -22,7 +22,7 @@ use crate::source_library::LearningSourceLibraryRepository;
 
 /// One course's web, as its Verifier audit may use it.
 pub struct VerifierPages {
-    pub pool: SqlitePool,
+    pub pool: Database,
     pub program_id: String,
     pub web: Arc<dyn WebServiceTrait>,
     pub snapshots: Arc<dyn ReferenceSnapshotPort>,

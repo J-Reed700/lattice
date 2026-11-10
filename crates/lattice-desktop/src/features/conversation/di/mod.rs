@@ -5,7 +5,7 @@ use crate::infrastructure::persistence::repositories::document_scope::SqliteDocu
 use std::sync::Arc;
 
 use lattice_core::application::ports::ConversationHistoryPort;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 
 use crate::features::conversation::handoff::HandoffsInFlight;
 use crate::features::conversation::memory::CompactionSlots;
@@ -38,7 +38,8 @@ pub struct ConversationDi {
     pub planner_health: Arc<crate::features::conversation::chat::retrieval::PlannerHealth>,
 }
 
-pub fn build(db_pool: SqlitePool) -> ConversationDi {
+pub fn build(db_pool: impl DatabaseHandle) -> ConversationDi {
+    let db_pool = db_pool.database();
     let document_scope = Arc::new(SqliteDocumentScope::new(db_pool.clone()));
     let conversation_context = Arc::new(SqliteConversationContext::new(db_pool.clone()));
     let repository = Arc::new(ConversationRepository::new(db_pool));

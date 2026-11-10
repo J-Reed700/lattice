@@ -136,7 +136,7 @@ pub(crate) async fn run_lesson_job(pool: &SqlitePool, model: Arc<Recorder>) -> R
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm: Arc::new(move || {
             let llm = llm.clone();
             Box::pin(async move { Ok(pinned_for_test(llm)) })
@@ -559,7 +559,7 @@ async fn the_lesson_worker_runs_inside_its_jobs_rank() -> Result<()> {
     let worker = LessonGenerationWorker {
         course_setups: Default::default(),
         runtimes: crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        pool: pool.clone(),
+        pool: pool.clone().into(),
         load_llm: {
             let (rank_at_load, entered) = (rank_at_load.clone(), entered.clone());
             Arc::new(move || {

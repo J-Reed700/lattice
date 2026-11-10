@@ -7,7 +7,7 @@ use sqlx::{SqliteConnection, SqlitePool};
 
 use super::dto::WebPageSnapshotStatus;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 
 fn db(error: sqlx::Error) -> AppError {
     AppError::Database(error.to_string())
@@ -171,7 +171,8 @@ pub struct SnapshotRepository {
 }
 
 impl SnapshotRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 

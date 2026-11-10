@@ -18,11 +18,11 @@ use crate::reference_collection::{ReferenceCollection, ReferencePassage};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::DatabaseHandle;
 use lattice_core::shared::text::segmentation::{
     flowed_sentences, Boundaries, Break, Flowed, Span, Strength,
 };
 use lattice_index::passage_index::indexed_term;
-use sqlx::SqlitePool;
 use std::cmp::Ordering;
 use std::collections::{BTreeSet, HashMap};
 
@@ -40,7 +40,7 @@ pub(super) struct Picked {
 /// passage of the page was drilled or turned down. `passage` is `None` when no place of the lesson's sources teaches
 /// it.
 pub(super) async fn pick(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     llm: &dyn LLMPort,
     context: &LessonContext,
     wanted: u32,
@@ -57,7 +57,7 @@ pub(super) async fn pick(
         .iter()
         .map(|version| owner(version))
         .collect();
-    let sources: Vec<LearningSourceDto> = LearningSourceLibraryRepository::new(pool.clone())
+    let sources: Vec<LearningSourceDto> = LearningSourceLibraryRepository::new(pool.database())
         .verification_sources(&context.program_id)
         .await?
         .into_iter()

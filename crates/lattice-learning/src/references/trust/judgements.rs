@@ -17,6 +17,7 @@ use lattice_core::domain::provenance::{
     known_classes, AddedBy, Chosen, ContentEvidence, Judged, JudgementKey, ProvenanceRecord,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::DatabaseHandle;
 
 fn stored<T>(key: JudgementKey, judged: Judged<T>) -> StoredJudgement<T> {
     StoredJudgement {
@@ -33,11 +34,11 @@ fn stored<T>(key: JudgementKey, judged: Judged<T>) -> StoredJudgement<T> {
 /// origin, and how the course got it. `None` when the version is not in the
 /// program.
 pub(crate) async fn content_evidence(
-    pool: &sqlx::SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     record: &ProvenanceRecord,
 ) -> Result<Option<ContentEvidence>> {
-    let Some(version) = LearningSourceLibraryRepository::new(pool.clone())
+    let Some(version) = LearningSourceLibraryRepository::new(pool.database())
         .chosen_version(program_id, &record.source_version_id)
         .await?
     else {

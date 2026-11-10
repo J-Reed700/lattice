@@ -17,11 +17,10 @@ use crate::quiz_bank_jobs::ModelLoader;
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, Transactions};
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, RecoveryPolicy,
 };
-use sqlx::SqlitePool;
 
 pub const DRILL_BUILD: &str = "learning.drill_build";
 pub const DRILL_GRADING: &str = "learning.drill_grading";
@@ -49,7 +48,7 @@ pub fn judge_grader(llm: &dyn LLMPort) -> Box<dyn ReviewGrader + '_> {
 /// Builds drills, on the Learning model, pinned for the whole build.
 #[derive(Clone)]
 pub struct DrillBuildWorker {
-    pub pool: SqlitePool,
+    pub pool: Database,
     pub load_llm: ModelLoader,
     pub runtimes: BuiltinRuntimes,
     pub grader: GraderFactory,
@@ -104,7 +103,7 @@ pub fn grading_job_config() -> JobKindConfig {
 /// Grades submitted attempts, on the Learning model, pinned for the whole job.
 #[derive(Clone)]
 pub struct DrillGradingWorker {
-    pub pool: SqlitePool,
+    pub pool: Database,
     pub load_llm: ModelLoader,
     pub runtimes: BuiltinRuntimes,
     pub grader: GraderFactory,

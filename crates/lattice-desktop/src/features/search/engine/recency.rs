@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::DatabaseHandle;
 use std::collections::HashMap;
 
 /// The most a perfectly fresh document can gain, at the highest recency
@@ -84,7 +84,7 @@ impl RecencyScorer {
 
     pub async fn get_document_timestamps(
         &self,
-        pool: &SqlitePool,
+        pool: &impl DatabaseHandle,
         document_ids: &[String],
     ) -> Result<HashMap<String, DateTime<Utc>>> {
         if document_ids.is_empty() {

@@ -15,8 +15,7 @@ use lattice_core::domain::models::downloaded::{DownloadedModel, ModelLocation};
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::domain::value_objects::model_status::FileStatus;
 use lattice_core::domain::value_objects::ArtifactIdentity;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
 use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -27,7 +26,7 @@ use uuid::Uuid;
 
 pub struct DownloadSaga {
     event_bus: Arc<EventBus<ModelDownloadEvent>>,
-    pool: SqlitePool,
+    pool: Database,
     downloaded_model_repo: Arc<DownloadedModelRepository>,
     settings: Option<Arc<dyn SettingsRepositoryPort>>,
 }
@@ -77,9 +76,10 @@ impl DownloadSaga {
 
     pub fn new(
         event_bus: Arc<EventBus<ModelDownloadEvent>>,
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         downloaded_model_repo: Arc<DownloadedModelRepository>,
     ) -> Self {
+        let pool = pool.database();
         Self {
             event_bus,
             pool,

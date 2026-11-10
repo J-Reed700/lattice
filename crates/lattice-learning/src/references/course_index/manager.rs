@@ -13,6 +13,7 @@ use super::sync::{self, CourseProgress};
 use super::{IndexMode, COURSE_INDEX};
 use crate::source_library::LearningSourceLibraryRepository;
 use lattice_core::application::ports::hybrid_search::HybridSearchFactory;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, NewJob};
 use lattice_core::shared::{AppError, Result};
@@ -20,7 +21,6 @@ use lattice_index::passage_index::job::build_job_config;
 use lattice_index::passage_index::{
     registry, Claim, EmbedTurns, EmbedderSource, LiveIndex, LiveIndexes,
 };
-use sqlx::SqlitePool;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -35,7 +35,7 @@ pub use status::CourseIndexStatusDto;
 pub struct CourseIndexes {
     /// `<data_dir>/course-index`.
     base_dir: PathBuf,
-    pool: SqlitePool,
+    pool: Database,
     embedders: Arc<dyn EmbedderSource>,
     searches: Arc<dyn HybridSearchFactory>,
     pub jobs: Arc<JobRuntime>,
@@ -54,13 +54,14 @@ pub struct CourseIndexes {
 impl CourseIndexes {
     pub fn new(
         base_dir: PathBuf,
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         embedders: Arc<dyn EmbedderSource>,
         searches: Arc<dyn HybridSearchFactory>,
         jobs: Arc<JobRuntime>,
         background: Arc<BackgroundTasks>,
         turns: Arc<EmbedTurns>,
     ) -> Arc<Self> {
+        let pool = pool.database();
         Arc::new(Self {
             base_dir,
             pool,

@@ -10,10 +10,9 @@
 use std::collections::{BTreeSet, HashMap};
 
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
-use sqlx::SqlitePool;
 
 use super::repository::blocks;
 use super::repository::teaching_findings::{self as table, FindingWrite, Settle, StoredFinding};
@@ -156,11 +155,12 @@ fn site_of(site: &str, index: Option<i64>) -> Option<FindingSite> {
 
 #[derive(Clone)]
 pub struct TeachingFindingsRepository {
-    pool: SqlitePool,
+    pool: Database,
 }
 
 impl TeachingFindingsRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.database();
         Self { pool }
     }
 

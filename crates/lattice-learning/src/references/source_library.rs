@@ -10,7 +10,8 @@ use crate::{
 use futures::TryStreamExt;
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions, WriteTx};
+#[cfg(test)]
 use sqlx::{Row, SqlitePool};
 use std::collections::HashMap;
 
@@ -115,7 +116,7 @@ fn check_name(value: &LearningSourceCheckStatus) -> &'static str {
 
 #[derive(Clone)]
 pub struct LearningSourceLibraryRepository {
-    pool: SqlitePool,
+    pool: Database,
 }
 
 /// Who is adding a source and where it came from. Source capture owns this
@@ -170,7 +171,8 @@ impl LearningSourceLibraryRepository {
             )),
         }
     }
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.database();
         Self { pool }
     }
 

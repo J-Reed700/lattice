@@ -30,6 +30,7 @@ use lattice_core::application::ports::{
     ReferenceSnapshot, ReferenceSnapshotPort, WebServiceTrait,
 };
 use lattice_core::domain::learning::claim_review::{ClaimId, ClaimState, LessonReviewState};
+use lattice_core::shared::persistence::DatabaseHandle;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
 const PAGE_URL: &str = "https://docs.example.org/csv/dictreader-buffering";
@@ -397,7 +398,7 @@ async fn evidence_the_user_links_resolves_the_claim_and_resume_publishes_the_les
     };
     let report = attach(
         &AttachDeps {
-            pool: &course.pool,
+            pool: &course.pool.database(),
             store: &store,
             web: &page,
             snapshots: &Frozen,

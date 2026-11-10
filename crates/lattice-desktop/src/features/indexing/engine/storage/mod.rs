@@ -30,7 +30,7 @@ use crate::features::indexing::IndexStorageTrait;
 use async_trait::async_trait;
 use lattice_core::application::ports::IngestedDocumentStorePort;
 use lattice_core::domain::value_objects::ContextualizedChunk;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
 use sqlx::{SqliteConnection, SqlitePool};
 use std::path::{Path, PathBuf};
 
@@ -39,13 +39,15 @@ use std::path::{Path, PathBuf};
 /// Provides methods for storing, retrieving, and managing documents
 /// with their associated text chunks and embeddings.
 pub struct IndexStorage {
-    pub pool: SqlitePool,
+    pool: SqlitePool,
 }
 
 impl IndexStorage {
     /// Create a new storage instance.
-    pub fn new(pool: SqlitePool) -> Self {
-        Self { pool }
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        Self {
+            pool: pool.sqlx_pool().clone(),
+        }
     }
 
     // Document operations

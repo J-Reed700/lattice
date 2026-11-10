@@ -27,7 +27,6 @@ use std::path::PathBuf;
 use std::sync::{Arc, OnceLock};
 
 use serde_json::json;
-use sqlx::SqlitePool;
 
 pub use dto::{
     WebPageSnapshotChangedEvent, WebPageSnapshotDto, WebPageSnapshotLinkEvent,
@@ -39,7 +38,7 @@ use crate::features::web::traits::page_snapshot::PageCapturePort;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::fs::SweepGate;
 use lattice_core::shared::http::normalize_web_source_url;
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
 use lattice_core::shared::runtime::background::BackgroundTasks;
 use lattice_core::shared::runtime::jobs::{JobKindRegistration, JobRuntime, JobStore, NewJob};
 use repository::{SnapshotRepository, SnapshotRow};
@@ -184,7 +183,7 @@ pub(crate) fn to_dto(
 
 /// The frozen-copy feature: one per process.
 pub struct WebPageSnapshotService {
-    pool: SqlitePool,
+    pool: Database,
     shared: Arc<Shared>,
     jobs: Arc<JobRuntime>,
     gc: WebSnapshotGc,
@@ -193,7 +192,7 @@ pub struct WebPageSnapshotService {
 
 impl WebPageSnapshotService {
     pub fn new(
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         root: PathBuf,
         capture: Arc<dyn PageCapturePort>,
         jobs: Arc<JobRuntime>,
@@ -201,6 +200,7 @@ impl WebPageSnapshotService {
         background: Arc<BackgroundTasks>,
         sweep_gate: Arc<SweepGate>,
     ) -> Self {
+        let pool = pool.database();
         let repository = SnapshotRepository::new(pool.clone());
         let store = SnapshotStore::new(root);
         Self {

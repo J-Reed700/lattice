@@ -2,7 +2,7 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
 use crate::features::indexing::engine::extraction::{ContentExtractor, ExtractionWorkers};
@@ -74,7 +74,7 @@ pub struct IndexingPorts {
 }
 
 pub fn build(
-    db_pool: SqlitePool,
+    db_pool: Database,
     ports: IndexingPorts,
     vector_search: Arc<dyn VectorSearchPort>,
     web_archive: Arc<dyn ArticleArchive>,

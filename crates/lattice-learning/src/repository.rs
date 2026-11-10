@@ -7,13 +7,14 @@ use super::recall::{
 };
 use super::references::trust::capture;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::{Transactions, WriteTx};
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions, WriteTx};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 mod memory;
 #[cfg(test)]
 mod memory_tests;
+mod outline_draft;
 mod progress;
 mod tangents;
 
@@ -76,11 +77,12 @@ fn parse_block(s: &str) -> Result<LearningBlockKind> {
 
 #[derive(Clone)]
 pub struct LearningRepository {
-    pub(super) pool: SqlitePool,
+    pool: SqlitePool,
 }
 
 impl LearningRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -325,7 +327,7 @@ fn source_text(
 /// Compares sources about to be saved together, one [`capture::Comparison`]
 /// per source in order.
 pub(super) async fn compare_sources(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     sources: &[LearningSourceDto],
     references: &[super::sources::InitialReference],

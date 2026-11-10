@@ -1,7 +1,7 @@
 //! The source library's statements, their bindings and their row mapping.
 use super::*;
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqliteConnection;
+use lattice_core::shared::persistence::{DatabaseHandle, Transactions};
+use sqlx::{Row, SqliteConnection};
 
 pub(super) mod admission;
 pub(super) mod capture;
@@ -44,7 +44,8 @@ pub(super) async fn ids_in_use(
 }
 
 /// Finalizes SQL-migrated legacy snapshots in one transaction.
-pub(super) async fn backfill_legacy(pool: &SqlitePool, program_id: &str) -> Result<()> {
+pub(super) async fn backfill_legacy(pool: &impl DatabaseHandle, program_id: &str) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let waiting: Option<i64> = {
         let mut read = pool.begin_read().await.map_err(db)?;
         let waiting = sqlx::query_scalar("SELECT 1 FROM learning_source_versions WHERE program_id=? AND extraction_version=? AND content_sha256='' LIMIT 1")

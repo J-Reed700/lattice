@@ -6,7 +6,8 @@ use crate::persistence::db;
 use futures::stream::BoxStream;
 use futures::{StreamExt, TryStreamExt};
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqliteConnection, SqlitePool};
+use lattice_core::shared::persistence::DatabaseHandle;
+use sqlx::{Row, SqliteConnection};
 
 pub(super) async fn program_status(
     conn: &mut SqliteConnection,
@@ -55,9 +56,10 @@ pub(super) async fn bind_course(
 }
 
 pub(super) async fn conversation_course(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     conversation_id: &str,
 ) -> Result<Option<CourseBinding>> {
+    let pool = pool.sqlx_pool();
     let row = sqlx::query("SELECT program_id, lesson_id FROM conversations WHERE id=?")
         .bind(conversation_id)
         .fetch_optional(pool)
@@ -74,9 +76,10 @@ pub(super) async fn conversation_course(
 
 /// The completed tutor replies of a chat, newest first.
 pub(super) fn assistant_replies<'a>(
-    pool: &'a SqlitePool,
+    pool: &'a impl DatabaseHandle,
     conversation_id: &'a str,
 ) -> BoxStream<'a, Result<String>> {
+    let pool = pool.sqlx_pool();
     sqlx::query_scalar::<_, String>(
         "SELECT content FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' ORDER BY sequence DESC",
     )
@@ -86,7 +89,12 @@ pub(super) fn assistant_replies<'a>(
     .boxed()
 }
 
-pub(super) async fn due_count(pool: &SqlitePool, program_id: &str, at: i64) -> Result<i64> {
+pub(super) async fn due_count(
+    pool: &impl DatabaseHandle,
+    program_id: &str,
+    at: i64,
+) -> Result<i64> {
+    let pool = pool.sqlx_pool();
     sqlx::query_scalar(
         "SELECT count(*) FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE m.program_id=? AND c.due_at<=?",
     )
@@ -99,10 +107,11 @@ pub(super) async fn due_count(pool: &SqlitePool, program_id: &str, at: i64) -> R
 
 /// The deck's cards due at `at`, soonest first.
 pub(super) async fn due_cards(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     at: i64,
 ) -> Result<Vec<DueCard>> {
+    let pool = pool.sqlx_pool();
     let rows = sqlx::query(
         "SELECT c.id,c.question,c.options_json,COALESCE(l.module_id,c.topic) group_key FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id LEFT JOIN learning_card_origins o ON o.card_id=c.id AND o.program_id=m.program_id LEFT JOIN learning_lessons l ON l.id=o.lesson_id WHERE m.program_id=? AND c.due_at<=? ORDER BY c.due_at,c.id",
     )
@@ -134,10 +143,11 @@ pub(super) struct CardToRate {
 }
 
 pub(super) async fn card_to_rate(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     card_id: &str,
 ) -> Result<Option<CardToRate>> {
+    let pool = pool.sqlx_pool();
     let row = sqlx::query(
         "SELECT c.due_at,c.review_count,c.format,c.question FROM study_cards c JOIN learning_memory m ON m.deck_id=c.deck_id WHERE c.id=? AND m.program_id=?",
     )
@@ -154,7 +164,8 @@ pub(super) async fn card_to_rate(
     }))
 }
 
-pub(super) async fn card_due_at(pool: &SqlitePool, card_id: &str) -> Result<i64> {
+pub(super) async fn card_due_at(pool: &impl DatabaseHandle, card_id: &str) -> Result<i64> {
+    let pool = pool.sqlx_pool();
     sqlx::query_scalar("SELECT due_at FROM study_cards WHERE id=?")
         .bind(card_id)
         .fetch_one(pool)
@@ -164,10 +175,11 @@ pub(super) async fn card_due_at(pool: &SqlitePool, card_id: &str) -> Result<i64>
 
 /// A source version's title and saved text.
 pub(super) async fn source_text(
-    pool: &SqlitePool,
+    pool: &impl DatabaseHandle,
     program_id: &str,
     version_id: &str,
 ) -> Result<Option<(String, String)>> {
+    let pool = pool.sqlx_pool();
     let row = sqlx::query(
         "SELECT title, full_text FROM learning_source_versions WHERE program_id=? AND id=?",
     )

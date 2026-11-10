@@ -12,7 +12,7 @@ async fn library_preview_survives_policy_refresh_without_allowing_siblings() -> 
     let database = Arc::new(DatabaseConnection::new(data.path().join("app.db")).await?);
     initialize_database(database.pool()).await?;
     let container = Container::new(
-        database.pool().clone(),
+        database.pool().clone().into(),
         database,
         None,
         "http://127.0.0.1:1",

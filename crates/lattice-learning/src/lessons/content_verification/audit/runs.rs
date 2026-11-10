@@ -6,8 +6,8 @@
 //! receipts), not this table's.
 
 use async_trait::async_trait;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 use serde::{Deserialize, Serialize};
-use sqlx::SqlitePool;
 
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::{AppError, Result};
@@ -121,11 +121,12 @@ pub struct CourseAuditUsage {
 
 #[derive(Clone)]
 pub struct SqliteAuditRuns {
-    pool: SqlitePool,
+    pool: Database,
 }
 
 impl SqliteAuditRuns {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.database();
         Self { pool }
     }
 

@@ -9,12 +9,12 @@
 //! 4. Overall system status determination
 
 use chrono::Utc;
-use sqlx::SqlitePool;
 use std::sync::Arc;
 
 use crate::features::health::dto::HealthCheckResponseDto;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::{Database, DatabaseHandle};
 
 /// Health check use case.
 ///
@@ -32,15 +32,15 @@ use lattice_core::shared::error::Result;
 /// - `db_pool` - Database connection pool for health checks
 /// - `embedding_service` - Embedding service to verify availability
 pub struct HealthCheckUseCase {
-    db_pool: SqlitePool,
+    db_pool: Database,
     embedding_service: Arc<dyn EmbeddingPort>,
 }
 
 impl HealthCheckUseCase {
     /// Create a new health check use case.
-    pub fn new(db_pool: SqlitePool, embedding_service: Arc<dyn EmbeddingPort>) -> Self {
+    pub fn new(db_pool: impl DatabaseHandle, embedding_service: Arc<dyn EmbeddingPort>) -> Self {
         Self {
-            db_pool,
+            db_pool: db_pool.database(),
             embedding_service,
         }
     }
@@ -83,7 +83,7 @@ impl HealthCheckUseCase {
     /// Attempts to acquire a connection from the pool. If successful,
     /// the database is considered healthy.
     async fn check_database(&self) -> bool {
-        self.db_pool.acquire().await.is_ok()
+        self.db_pool.is_reachable().await
     }
 
     /// Check embedding service availability.
@@ -120,6 +120,7 @@ impl HealthCheckUseCase {
 mod tests {
     use super::*;
     use async_trait::async_trait;
+    use sqlx::SqlitePool;
 
     struct MockEmbedder {
         is_ready: bool,

@@ -22,8 +22,7 @@ use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
 use lattice_core::domain::value_objects::chunking_strategy::ChunkingStrategy;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::{Database, DatabaseHandle, Transactions};
 
 /// Reindex document use case.
 ///
@@ -40,7 +39,7 @@ pub struct ReindexDocumentUseCase {
     content_extractor: Option<Arc<dyn lattice_core::application::ports::ContentExtractionPort>>,
     embedding_service: Arc<dyn EmbeddingPort>,
     document_repo: Arc<dyn RepositoryPort<Document>>,
-    pool: SqlitePool,
+    pool: Database,
     /// The live vector index, updated alongside SQLite: the persisted index is
     /// rebuilt only when empty, so a reindex that skipped it would leave dangling
     /// vectors and miss the new chunks until then.
@@ -94,9 +93,10 @@ impl ReindexDocumentUseCase {
         file_storage: Arc<dyn FileStoragePort>,
         embedding_service: Arc<dyn EmbeddingPort>,
         document_repo: Arc<dyn RepositoryPort<Document>>,
-        pool: SqlitePool,
+        pool: impl DatabaseHandle,
         vector_search: Arc<dyn VectorSearchPort>,
     ) -> Self {
+        let pool = pool.database();
         Self {
             file_storage,
             content_extractor: None,

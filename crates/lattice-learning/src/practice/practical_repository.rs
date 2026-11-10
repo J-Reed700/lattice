@@ -11,6 +11,7 @@ use crate::{
 };
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::DatabaseHandle;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
 use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
@@ -258,7 +259,8 @@ pub struct LearningPracticalRepository {
 }
 
 impl LearningPracticalRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DatabaseHandle) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
