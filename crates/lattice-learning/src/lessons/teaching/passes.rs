@@ -497,6 +497,57 @@ mod tests {
     }
 
     #[test]
+    fn a_finding_about_words_a_reverted_repair_was_charged_for_starts_at_that_charge() {
+        let candidate = serde_json::json!({"blocks":[{"body":"A first sentence. A second sentence."}],"questions":[]});
+        let about = |number| {
+            ReviewFinding::reviewer(number, Some(FindingSite::Section(0)), "It is wrong.")
+                .with_passage("A first sentence.")
+        };
+        let mut passes = Passes::default();
+        let first = about(1);
+        assert!(matches!(
+            passes.next(&candidate, vec![first.clone()]),
+            Next::Repair(_)
+        ));
+        passes.charge(&first, Outcome::Reverted);
+        let again = about(2);
+        assert!(matches!(
+            passes.next(&candidate, vec![again.clone()]),
+            Next::Repair(_)
+        ));
+        assert_eq!(
+            passes.spent.get(&again.id()),
+            Some(&1),
+            "the defect was charged one repair before this finding named it"
+        );
+    }
+
+    #[test]
+    fn a_reviewer_finding_about_words_a_stored_finding_is_about_is_not_repaired() {
+        let candidate = serde_json::json!({"blocks":[{"body":"A first sentence. A second sentence."}],"questions":[]});
+        let about = |number, words| {
+            ReviewFinding::reviewer(number, Some(FindingSite::Section(0)), "It is wrong.")
+                .with_passage(words)
+        };
+        let held = Held {
+            reviewer: vec![(about(1, "A first sentence."), String::new())],
+            next_number: 2,
+            ..Held::default()
+        };
+        let mut passes = Passes::new(held);
+        let restated = about(2, "A first sentence.");
+        assert!(matches!(
+            passes.next(&candidate, vec![restated.clone()]),
+            Next::Done(_)
+        ));
+        let other = about(3, "A second sentence.");
+        assert!(matches!(
+            passes.next(&candidate, vec![other]),
+            Next::Repair(_)
+        ));
+    }
+
+    #[test]
     fn a_new_finding_about_words_that_went_through_the_limit_is_not_repaired() {
         let candidate = serde_json::json!({"blocks":[
             {"body":"A first sentence."},

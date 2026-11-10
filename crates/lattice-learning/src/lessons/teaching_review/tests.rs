@@ -652,3 +652,97 @@ async fn a_first_review_sends_no_finding_keys_and_known_findings_are_sent_only_w
     assert!(prompt.get("openFindings").is_none());
     Ok(())
 }
+
+#[tokio::test]
+async fn a_correction_asks_only_for_the_verdicts_still_wanted() -> Result<()> {
+    let asked = [asked(1, 0), asked(2, 0)];
+    let model = model(vec![
+        json!({"openFindings":[verdict_entry(1, "resolved", "")],"issues":[],"blockChecks":fixture_checks(vec![check(0)])}),
+        json!({"openFindings":[verdict_entry(2, "resolved", "")],"issues":[],"blockChecks":[]}),
+    ]);
+    super::review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &candidate(),
+        Scope {
+            sections: Some(&[0]),
+            asked: Some(&asked),
+            known: &[],
+        },
+        None,
+        LengthRule::Fail,
+    )
+    .await?;
+    let ids = |call: usize| -> Vec<Value> {
+        sent(&model, call)["openFindings"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|entry| entry["id"].clone())
+            .collect()
+    };
+    assert_eq!(ids(0), [json!("reviewer/1"), json!("reviewer/2")]);
+    assert_eq!(ids(1), [json!("reviewer/2")]);
+    Ok(())
+}
+
+/// A first answer whose defect check for Section 2 names a passage of
+/// another section, then a correction with the same finding and `passage`.
+async fn a_defect_named_with_a_wrong_passage(passage: &str) -> (Judged, ScriptedModel) {
+    let finding = "The claimed membrane behavior contradicts the stated boundary condition.";
+    let mut wrong = check(1);
+    wrong["passageId"] = json!("section-0-passage-0");
+    wrong["hasDefect"] = json!(true);
+    wrong["finding"] = json!(finding);
+    let mut right = wrong.clone();
+    right["passageId"] = json!(passage);
+    let model = model(vec![
+        json!({"issues":["A general issue."],"blockChecks":fixture_checks(vec![check(0),wrong,check(2)])}),
+        json!({"issues":[],"blockChecks":fixture_checks(vec![right])}),
+    ]);
+    let judged = super::review(
+        &model,
+        "Review instructional quality.",
+        json!({}),
+        &candidate(),
+        Scope::default(),
+        None,
+        LengthRule::Fail,
+    )
+    .await
+    .unwrap();
+    (judged, model)
+}
+
+#[tokio::test]
+async fn a_report_takes_its_passage_from_the_check_that_was_accepted() {
+    let (judged, _) = a_defect_named_with_a_wrong_passage("section-1-passage-0").await;
+    let section: Vec<_> = judged
+        .reported
+        .iter()
+        .filter(|reported| reported.site == Some(FindingSite::Section(1)))
+        .collect();
+    assert_eq!(section.len(), 1);
+    assert_eq!(
+        section[0].passage_id.as_deref(),
+        Some("section-1-passage-0")
+    );
+    let (shown, _) = review_candidate(&candidate());
+    assert_eq!(
+        section[0].passage.as_deref(),
+        shown["blocks"][1]["bodyPassages"][0]["text"].as_str()
+    );
+}
+
+#[tokio::test]
+async fn the_correction_lists_each_retained_issue_by_part_and_note() {
+    let (_, model) = a_defect_named_with_a_wrong_passage("section-1-passage-0").await;
+    assert_eq!(
+        sent(&model, 1)["retainedIssues"],
+        json!([
+            {"part":null,"note":"A general issue."},
+            {"part":"Section 2","note":"Section 2 (candidate blocks-1): The claimed membrane behavior contradicts the stated boundary condition."}
+        ])
+    );
+}
