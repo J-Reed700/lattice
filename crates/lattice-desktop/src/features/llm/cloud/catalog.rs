@@ -90,7 +90,7 @@ async fn fetch_models(
     let mut seen_ids = HashSet::new();
     let mut seen_cursors = HashSet::new();
     let mut cursor: Option<String> = None;
-    for _ in 0..32 {
+    loop {
         let request = protocol.list_request(&client, endpoint, key, cursor.as_deref());
         let response = request.send().await.map_err(|_| {
             AppError::Network(format!(
@@ -129,9 +129,6 @@ async fn fetch_models(
         }
         cursor = Some(next);
     }
-    Err(AppError::Network(format!(
-        "{label} model list exceeded the page limit"
-    )))
 }
 
 #[cfg(test)]

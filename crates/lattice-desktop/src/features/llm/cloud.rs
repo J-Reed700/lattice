@@ -376,6 +376,10 @@ fn status_error(api: &dyn ProviderApi, status: reqwest::StatusCode, reply: &Valu
             "{shown} does not offer the configured model (HTTP {status}): choose another in \
              Settings → AI"
         )),
+        402 => AppError::InvalidConfig(format!(
+            "{shown} needs the account's billing or payment details fixed (HTTP {status}): fix them \
+             on the provider's account page, or choose another model in Settings → AI"
+        )),
         429 if api.out_of_credit(status, reply) => AppError::InvalidConfig(format!(
             "{shown} says the account has no credit or quota left (HTTP 429): add credit to the \
              account, or choose another model in Settings → AI"
