@@ -6,8 +6,7 @@ use super::repair;
 use super::subject::{Decision, Pass, Settled, Step, Subject};
 use super::{json_or_text, ReviewSchema};
 use crate::outline_progress::OutlineStage;
-use crate::review_findings::ReviewFinding;
-use crate::review_findings::SetAside;
+use crate::review_findings::{ReviewFinding, SetAside};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -24,8 +23,8 @@ pub(super) struct Reviewed {
 /// A second model call critiques the actual candidate, and one targeted
 /// repair is allowed; what the subject does with the rest is its own (a
 /// lesson sends every open finding to a repair, reviews again once a repair
-/// changed it, and publishes with what is left waiting; other material fails
-/// closed).
+/// changed it, and publishes only from a pass whose content was reviewed, with
+/// what is left waiting; other material fails closed).
 /// This is an AI review, not a claim of independent expert verification.
 pub(super) async fn review_material(
     llm: &dyn LLMPort,
@@ -79,6 +78,7 @@ pub(super) async fn review_material(
                     })
                 }
                 Decision::Repair(send) => send,
+                Decision::Review => break,
             };
             if let Some(progress) = subject.progress() {
                 progress.stage(OutlineStage::Repairing);
@@ -117,7 +117,7 @@ struct Repairs<'a> {
 impl Repairs<'_> {
     /// Repairs `send` in groups: a group whose repair cannot be made is
     /// repaired as its two halves, the second against what the first made.
-    /// Whether the candidate changed.
+    /// Returns whether the candidate changed.
     async fn make(
         &self,
         subject: &mut dyn Subject,
@@ -147,7 +147,7 @@ impl Repairs<'_> {
                 output_tokens: self.output_tokens,
             };
             let result = repair::ask(self.llm, &request, subject.progress()).await;
-            match subject.settle_repair(&previous, &group, result)? {
+            match subject.settle_repair(&previous, &group, self.edits, result)? {
                 Settled::Changed(text) => {
                     *candidate = text;
                     changed = true;

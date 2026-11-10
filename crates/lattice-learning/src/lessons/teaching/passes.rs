@@ -3,7 +3,8 @@
 //! with what became of its attempt at it), not when it is sent: a finding
 //! charged `REPAIRS_PER_FINDING` repairs stops being repaired, as does one the
 //! user holds or one held during this review. The review ends when no
-//! repairable finding is left. Stopped findings wait for the user, and the
+//! repairable finding is left, and a pass held up by structure is followed by
+//! one that reviews the content. Stopped findings wait for the user, and the
 //! lesson publishes: no teaching-review finding fails a lesson job.
 //!
 //! A finding is followed by its id (`FindingId`): what raised it and what it

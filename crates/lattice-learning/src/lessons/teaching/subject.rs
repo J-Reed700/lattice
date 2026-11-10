@@ -43,6 +43,9 @@ pub(super) struct Found {
 pub(super) enum Decision {
     Publish(Vec<SetAside>),
     Repair(Vec<ReviewFinding>),
+    /// Nothing is left to repair, and the pass's content review was held up by
+    /// structure that has now stopped: review again.
+    Review,
 }
 
 /// A step of the review, reported to whoever watches the subject.
@@ -68,7 +71,7 @@ pub(super) enum Settled {
     Changed(String),
     /// The material is as it was; what the repair came to is kept with it.
     Unchanged,
-    /// The repair could not be made for these together: send each half as its own repair.
+    /// The edit repair could not be made for these together: send each half as its own repair.
     Split(Vec<ReviewFinding>, Vec<ReviewFinding>),
 }
 
@@ -116,11 +119,13 @@ pub(super) trait Subject: Send + Sync {
     fn last_attempt(&self, _finding: &ReviewFinding) -> Option<String> {
         None
     }
-    /// Takes one repair call's result into the candidate, or says how to send its findings again.
+    /// Takes one repair call's result into the candidate, or says how to send its findings
+    /// again. `edits` is how the repair was asked: for edits, or for the whole material.
     fn settle_repair(
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
+        edits: bool,
         result: Result<Repaired>,
     ) -> Result<Settled>;
 }
@@ -300,6 +305,8 @@ pub(super) struct LessonSubject<'a> {
     references: &'a ReferenceCollection<'a>,
     wording: Wording,
     original_issues: Vec<String>,
+    /// Whether structure held up the latest pass's content review.
+    held_up: bool,
 }
 
 impl<'a> LessonSubject<'a> {
@@ -318,6 +325,7 @@ impl<'a> LessonSubject<'a> {
             references,
             wording: Wording::of(references),
             original_issues: Vec::new(),
+            held_up: false,
         }
     }
 }
@@ -394,6 +402,7 @@ impl Subject for LessonSubject<'_> {
                 .hold(whole_repairs(&structure).map(ReviewFinding::id));
         }
         let blocking = holds_up_review(&structure, Some(&self.passes));
+        self.held_up = blocking;
         let issues = if !blocking {
             self.step(Step::CheckingKeys);
             let answer_issues = crate::key_review::check(llm, pass.value).await?;
@@ -467,6 +476,13 @@ impl Subject for LessonSubject<'_> {
         found: Vec<ReviewFinding>,
     ) -> Result<Decision> {
         match self.passes.next(candidate, found) {
+            Next::Done(_) if self.held_up => {
+                tracing::info!(
+                    passes = attempt + 1,
+                    "The structure that held up the content review has stopped; the content is reviewed now"
+                );
+                Ok(Decision::Review)
+            }
             Next::Done(set_aside) => {
                 if !set_aside.is_empty() {
                     tracing::info!(
@@ -488,6 +504,7 @@ impl Subject for LessonSubject<'_> {
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
+        edits: bool,
         result: Result<Repaired>,
     ) -> Result<Settled> {
         let made = match result {
@@ -506,14 +523,15 @@ impl Subject for LessonSubject<'_> {
             }
             // An answer that cannot be used, or a request that does not fit
             // the window, is a repair that could not be made, not a lesson
-            // that cannot be published: it fails no job.
+            // that cannot be published: it fails no job. Only edits are
+            // halved: a rewrite is the whole lesson whatever it is sent.
             Err(
                 error @ (AppError::ModelAnswerUnusable(_)
                 | AppError::PromptExceedsWindow { .. }
                 | AppError::InvalidConfig(_)),
             ) => {
-                let (first, second) = send.split_at(send.len() / 2);
-                if !first.is_empty() {
+                if edits && send.len() > 1 {
+                    let (first, second) = send.split_at(send.len() / 2);
                     tracing::info!(%error, findings = send.len(), "The teaching repair could not be made for these findings together; each half is repaired on its own");
                     return Ok(Settled::Split(first.to_vec(), second.to_vec()));
                 }
@@ -526,7 +544,7 @@ impl Subject for LessonSubject<'_> {
                         }
                     }
                     error => {
-                        tracing::warn!(%error, "The teaching repair did not fit the window; its finding waits for the user");
+                        tracing::warn!(%error, "The teaching repair did not fit the window; its findings wait for the user");
                         self.passes.hold(send.iter().map(ReviewFinding::id));
                     }
                 }
@@ -882,6 +900,7 @@ impl Subject for OutlineSubject<'_> {
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
+        _edits: bool,
         result: Result<Repaired>,
     ) -> Result<Settled> {
         closed_settle(previous, send, result, &self.wording)
@@ -968,6 +987,7 @@ impl Subject for MaterialSubject {
         &mut self,
         previous: &Value,
         send: &[ReviewFinding],
+        _edits: bool,
         result: Result<Repaired>,
     ) -> Result<Settled> {
         closed_settle(previous, send, result, &self.wording)
