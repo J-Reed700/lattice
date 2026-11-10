@@ -85,7 +85,7 @@ struct EvalConfig {
     log_dir: PathBuf,
 }
 
-fn client() -> Result<(Box<dyn LLMPort>, EvalConfig, bool)> {
+async fn client() -> Result<(std::sync::Arc<dyn LLMPort>, EvalConfig, bool)> {
     let model = std::env::var("LATTICE_LEARNING_EVAL_MODEL")
         .map_err(|_| invalid("An explicit LATTICE_LEARNING_EVAL_MODEL is required."))?;
     let provider =
@@ -99,8 +99,8 @@ fn client() -> Result<(Box<dyn LLMPort>, EvalConfig, bool)> {
         .unwrap_or(300);
     let header_name = std::env::var("LATTICE_LEARNING_EVAL_AUTH_HEADER_NAME").unwrap_or_default();
     let header_value = std::env::var("LATTICE_LEARNING_EVAL_AUTH_HEADER_VALUE").unwrap_or_default();
-    let inner: Box<dyn LLMPort> = match provider.as_str() {
-        "llama_cpp" => Box::new(lattice::features::llm::llama_cpp::LlamaCppLlm::new(
+    let inner: std::sync::Arc<dyn LLMPort> = match provider.as_str() {
+        "llama_cpp" => lattice::features::llm::llama_cpp::LlamaCppLlm::new(
             &LLMSettingsDto {
                 context_window: std::env::var("LATTICE_LEARNING_EVAL_CONTEXT_TOKENS")
                     .ok()
@@ -116,16 +116,19 @@ fn client() -> Result<(Box<dyn LLMPort>, EvalConfig, bool)> {
                 },
                 ..Default::default()
             },
-        )?),
-        "ollama" => Box::new(
+        )?
+        .into_port()
+        .await,
+        "ollama" => {
             lattice::features::llm::engine::ollama_client::OllamaClient::with_model_and_timeouts_and_header(
                 endpoint,
                 model.clone(),
                 Duration::from_secs(30),
                 Duration::from_secs(u64::from(timeout)),
                 (!header_name.is_empty()).then_some((header_name, header_value)),
-            )?,
-        ),
+            )?
+            .into_port()
+        }
         _ => return Err(invalid("Unsupported explicitly configured provider.")),
     };
     let config = EvalConfig {
@@ -135,7 +138,8 @@ fn client() -> Result<(Box<dyn LLMPort>, EvalConfig, bool)> {
             .map(PathBuf::from)
             .unwrap_or_else(|_| std::env::temp_dir()),
     };
-    let recording: Box<dyn LLMPort> = Box::new(recording::RecordingLlm::new(inner, config.clone()));
+    let recording: std::sync::Arc<dyn LLMPort> =
+        std::sync::Arc::new(recording::RecordingLlm::new(inner, config.clone()));
     let two_step =
         std::env::var("LATTICE_INTERVIEW_REFERENCE_REASON_FIRST").is_ok_and(|value| value == "1");
     let model = if two_step {
@@ -345,7 +349,7 @@ fn known_false_acceptance_cannot_pass_the_diagnosis_control() {
 #[tokio::test]
 #[ignore = "contacts an explicitly selected model; web responses are recorded official excerpts"]
 async fn live_research_rejects_or_corrects_the_retained_rust_counterexample() -> Result<()> {
-    let (model, config, two_step) = client()?;
+    let (model, config, two_step) = client().await?;
     create_dir_all(&config.log_dir)?;
     let fixture = fixture();
     let compiler_stderr = compiler_control(&fixture.question.question)?;

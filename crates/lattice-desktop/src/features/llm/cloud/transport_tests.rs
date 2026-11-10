@@ -1,5 +1,6 @@
 use super::protocol::protocol_for;
 use super::*;
+use crate::features::llm::fitting::SendUnscheduled;
 use lattice_core::application::contracts::settings::LLMProvider;
 use lattice_core::application::ports::llm_port::CompletionInput;
 use serde_json::json;
