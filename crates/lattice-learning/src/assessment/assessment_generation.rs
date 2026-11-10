@@ -4,6 +4,7 @@
 //!
 //! Every call goes through `model_call`: sized to the model's window (a batch
 //! halves until it fits), never timed. Answer keys stay internal.
+use super::item_review::{self, Context, Entry};
 use crate::assessment_engine::{
     self as engine, LearningAssessmentCandidate, LearningAssessmentKey,
     LearningBlueprintRequirement, LearningItemFormat, LearningNumericKey, LearningRubricCriterion,
@@ -11,7 +12,6 @@ use crate::assessment_engine::{
 };
 use crate::dto::LearningSourceDto;
 use crate::grade_rationale::{GraderCriterion, GraderItem, GraderVerdict};
-use crate::key_review::{self, KeyVerdict};
 use crate::lessons::structured_call::cut_off;
 use crate::model_call;
 use crate::reference_collection::{ReferenceCollection, ReferencePassage};
@@ -282,10 +282,9 @@ impl Batch<'_> {
         llm: &dyn LLMPort,
         collection: &ReferenceCollection<'_>,
     ) -> Result<Option<Vec<std::result::Result<AuthoredItem, String>>>> {
-        let Some((prompt, response, chosen)) = self.send(llm, collection).await? else {
+        let Some((_, response, chosen)) = self.send(llm, collection).await? else {
             return Ok(None);
         };
-        let schema = self.schema(chosen.len());
         // One item's problem sinks the batch it came in, so a batch asks again
         // in halves; a single item is refused with the reason, and the bank
         // comes out smaller rather than the job failing (§5.2).
@@ -293,24 +292,8 @@ impl Batch<'_> {
         if cut_off(&response.finish_reason) {
             return refused("The answer was cut off at the model's output limit.".into());
         }
-        let raw = match crate::teaching::review_and_repair(
-            llm,
-            SYSTEM,
-            &prompt,
-            &schema,
-            response.text,
-            self.output_tokens(),
-        )
-        .await
-        {
-            Ok(raw) => raw,
-            Err(error @ (AppError::InvalidInput(_) | AppError::ModelAnswerUnusable(_))) => {
-                return refused(format!("The batch did not pass teaching review: {error}"));
-            }
-            Err(error) => return Err(error),
-        };
-        let Ok(parsed) = crate::generation::parse_json::<Value>(&raw) else {
-            return refused("The reviewed batch was not valid JSON.".into());
+        let Ok(parsed) = crate::generation::parse_json::<Value>(&response.text) else {
+            return refused("The batch was not valid JSON.".into());
         };
         let items = parsed
             .get("items")
@@ -339,18 +322,12 @@ pub struct Authored {
     pub dropped: Vec<String>,
 }
 
-/// `need` for repairing the item asked as `prompt`: its own prompt is not a
-/// question the repair may not repeat.
-fn repair_need(need: &AuthoringNeed, prompt: &str) -> AuthoringNeed {
-    let mut own = need.clone();
-    own.existing_prompts.retain(|existing| existing != prompt);
-    own
-}
-
-/// Write up to `need.count` items: validate each in code, re-request what
-/// fails, solve each keyed item blind, repair a disputed key once and drop it
-/// if the second solve still disagrees. A model that cannot produce a valid
-/// item leaves a smaller bank, never a broken item.
+/// Write up to `need.count` items. Each round validates what was written in
+/// code, then reviews it as a question (`item_review`): a blind solve and a
+/// judge read of every item, with one repair for each that has findings and a
+/// second review of the repairs. An item that is still flawed is dropped and
+/// the next round writes in its place. A model that cannot produce a sound
+/// item leaves a smaller bank, never a flawed item.
 pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Authored> {
     if need.count == 0 {
         return Ok(Authored::default());
@@ -398,102 +375,149 @@ pub async fn author_items(llm: &dyn LLMPort, need: &AuthoringNeed) -> Result<Aut
                 }
             }
         };
+        let mut fresh = Vec::new();
         for result in written {
             match result {
-                Ok(item) => {
-                    if out.items.iter().any(|i| {
-                        engine::near_duplicate(&i.candidate.prompt, &item.candidate.prompt)
-                    }) {
-                        notes.push("Two items asked the same question.".into());
-                        continue;
-                    }
-                    need.existing_prompts.push(item.candidate.prompt.clone());
-                    out.items.push(item);
-                }
+                Ok(item) => fresh.push(item),
                 Err(reason) => {
                     out.dropped.push(reason.clone());
                     notes.push(reason);
                 }
             }
         }
+        let (kept, dropped) = reviewed_round(llm, &need, &collection, fresh).await?;
+        for item in kept {
+            need.existing_prompts.push(item.candidate.prompt.clone());
+            out.items.push(item);
+        }
+        out.dropped.extend(dropped);
         notes.sort();
         notes.dedup();
     }
     out.items.truncate(need.count);
-    if !need.requirement.format.is_keyed() || out.items.is_empty() {
-        return Ok(out);
-    }
-    // Blinded key review, then one targeted repair per disputed item. A key
-    // review with no usable answer leaves the keys unchecked, and an unchecked
-    // key may be wrong: those items are dropped, not kept and not fatal.
-    let verdicts = match review(llm, &out.items).await {
-        Ok(verdicts) => verdicts,
-        Err(error @ (AppError::InvalidInput(_) | AppError::ModelAnswerUnusable(_))) => {
-            let reason = format!("The answer key could not be checked: {error}");
-            out.dropped
-                .extend(std::iter::repeat_n(reason, out.items.len()));
-            out.items.clear();
-            return Ok(out);
-        }
-        Err(error) => return Err(error),
-    };
-    let mut kept = Vec::new();
-    for (item, verdict) in out.items.into_iter().zip(verdicts) {
-        match verdict {
-            KeyVerdict::Agreed => kept.push(item),
-            KeyVerdict::Disputed(reason) => {
-                let own = repair_need(&need, &item.candidate.prompt);
-                let repair = Batch {
-                    need: &own,
-                    count: 1,
-                    notes: vec![],
-                    repair: Some(json!({
-                        "instruction": "Rewrite this question so exactly one answer follows from it as worded. Keep its point and passage.",
-                        "question": item.candidate.prompt,
-                        "options": item.candidate.options,
-                        "dispute": reason,
-                    })),
-                };
-                let repaired = repair
-                    .author(llm, &collection)
-                    .await
-                    .ok()
-                    .flatten()
-                    .and_then(|items| items.into_iter().find_map(std::result::Result::ok));
-                let Some(repaired) = repaired else {
-                    out.dropped.push(reason);
-                    continue;
-                };
-                match review(llm, std::slice::from_ref(&repaired))
-                    .await
-                    .as_deref()
-                    .map(<[KeyVerdict]>::first)
-                {
-                    Ok(Some(KeyVerdict::Agreed)) => kept.push(repaired),
-                    Err(error @ (AppError::InvalidInput(_) | AppError::ModelAnswerUnusable(_))) => {
-                        out.dropped.push(format!(
-                            "{reason}; the repair's key could not be checked: {error}"
-                        ));
-                    }
-                    Err(error) => return Err(error.clone()),
-                    Ok(_) => out.dropped.push(reason),
-                }
-            }
-        }
-    }
-    out.items = kept;
+    tracing::info!(
+        format = ?need.requirement.format,
+        kept = out.items.len(),
+        dropped = out.dropped.len(),
+        reasons = ?out.dropped,
+        "Quiz items authored"
+    );
     Ok(out)
 }
 
-async fn review(llm: &dyn LLMPort, items: &[AuthoredItem]) -> Result<Vec<KeyVerdict>> {
+/// What reviewing a set of items made of them: a finding list per item, or
+/// the reason none could be reviewed.
+async fn review_items(
+    llm: &dyn LLMPort,
+    need: &AuthoringNeed,
+    items: &[AuthoredItem],
+    learner_has: &[String],
+) -> Result<std::result::Result<Vec<Vec<String>>, String>> {
     let candidates: Vec<LearningAssessmentCandidate> =
         items.iter().map(|i| i.candidate.clone().into()).collect();
-    let pairs: Vec<(&LearningAssessmentCandidate, &str)> = candidates
+    let entries: Vec<Entry<'_>> = candidates
         .iter()
         .zip(items)
-        .map(|(c, i)| (c, i.source_quote.as_str()))
+        .map(|(item, authored)| Entry {
+            item,
+            quote: &authored.source_quote,
+        })
         .collect();
-    key_review::review_bank_items(llm, &pairs).await
+    let context = Context {
+        outcome: &need.outcome_title,
+        outcome_description: &need.outcome_description,
+        learner_has,
+    };
+    match item_review::review(llm, &entries, &context).await {
+        Ok(findings) => Ok(Ok(findings)),
+        Err(error @ (AppError::InvalidInput(_) | AppError::ModelAnswerUnusable(_))) => {
+            Ok(Err(format!("The question could not be reviewed: {error}")))
+        }
+        Err(error) => Err(error),
+    }
+}
+
+/// Review one round's fresh items: the sound ones are kept as written, each
+/// with findings is rewritten once, concurrently, and the rewrites are
+/// reviewed together. Returns the items kept and why the others were dropped.
+async fn reviewed_round(
+    llm: &dyn LLMPort,
+    need: &AuthoringNeed,
+    collection: &ReferenceCollection<'_>,
+    fresh: Vec<AuthoredItem>,
+) -> Result<(Vec<AuthoredItem>, Vec<String>)> {
+    if fresh.is_empty() {
+        return Ok((vec![], vec![]));
+    }
+    let findings = match review_items(llm, need, &fresh, &need.existing_prompts).await? {
+        Ok(findings) => findings,
+        Err(reason) => {
+            let dropped = std::iter::repeat_n(reason, fresh.len()).collect();
+            return Ok((vec![], dropped));
+        }
+    };
+    let mut kept = Vec::new();
+    let mut flawed = Vec::new();
+    for (item, findings) in fresh.into_iter().zip(findings) {
+        if findings.is_empty() {
+            kept.push(item);
+        } else {
+            flawed.push((item, findings));
+        }
+    }
+    if flawed.is_empty() {
+        return Ok((kept, vec![]));
+    }
+    let mut known = need.existing_prompts.clone();
+    known.extend(kept.iter().map(|i| i.candidate.prompt.clone()));
+    let mut own = need.clone();
+    own.existing_prompts = known.clone();
+    let repairs = flawed.iter().map(|(item, findings)| {
+        let batch = Batch {
+            need: &own,
+            count: 1,
+            notes: vec![],
+            repair: Some(json!({
+                "instruction": "Write a question in this one's place that has none of these defects.",
+                "question": item.candidate.prompt,
+                "options": item.candidate.options,
+                "findings": findings,
+            })),
+        };
+        async move {
+            batch
+                .author(llm, collection)
+                .await
+                .ok()
+                .flatten()
+                .and_then(|items| items.into_iter().find_map(std::result::Result::ok))
+        }
+    });
+    let repaired = futures::future::join_all(repairs).await;
+    let mut dropped = Vec::new();
+    let mut again = Vec::new();
+    for ((_, findings), repair) in flawed.into_iter().zip(repaired) {
+        match repair {
+            Some(repair) => again.push(repair),
+            None => dropped.push(findings.join(" ")),
+        }
+    }
+    if again.is_empty() {
+        return Ok((kept, dropped));
+    }
+    match review_items(llm, need, &again, &known).await? {
+        Ok(second) => {
+            for (item, findings) in again.into_iter().zip(second) {
+                if findings.is_empty() {
+                    kept.push(item);
+                } else {
+                    dropped.push(findings.join(" "));
+                }
+            }
+        }
+        Err(reason) => dropped.extend(std::iter::repeat_n(reason, again.len())),
+    }
+    Ok((kept, dropped))
 }
 
 mod formats;
