@@ -9,8 +9,8 @@ use super::super::{
     LESSON_REVIEW_EVIDENCE_SCOPE,
 };
 use super::{
-    review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, Settled, Step,
-    Subject, LESSON_PRIORITY, REVIEW_SYSTEM,
+    review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, ReviewTexts,
+    Settled, Step, Subject, LESSON_PRIORITY,
 };
 use crate::lessons::content_verification::Protected;
 use crate::lessons::copied_wording::Wording;
@@ -111,7 +111,7 @@ impl Subject for LessonSubject<'_> {
         let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY,"referenceVersions":self.reference_versions()});
         self.standing.under(&crate::teaching_review::basis(
             llm,
-            REVIEW_SYSTEM,
+            &ReviewTexts::LESSON.joined(),
             LESSON_REVIEW_EVIDENCE_SCOPE,
             &inputs,
         ));
@@ -169,7 +169,7 @@ impl Subject for LessonSubject<'_> {
             let (judged, plan_findings) = match &round {
                 Some(round) => {
                     let instructions = review_instructions(
-                        REVIEW_SYSTEM,
+                        &ReviewTexts::LESSON,
                         round,
                         true,
                         LESSON_REVIEW_EVIDENCE_SCOPE,

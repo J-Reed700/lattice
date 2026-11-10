@@ -252,18 +252,42 @@ impl Standing {
         round: &Round,
         judged: Judged,
     ) -> Vec<ReviewFinding> {
-        let settled: Vec<(FindingId, bool, String)> = judged
-            .verdicts
+        let Judged { verdicts, reported } = judged;
+        // A report that names an open finding asked about is that finding.
+        let continued: Vec<Option<FindingId>> = reported
+            .iter()
+            .map(|report| {
+                report.continues.clone().filter(|id| {
+                    round.asked.iter().any(|asked| asked.id == *id)
+                        && self.open.iter().any(|finding| finding.id() == *id)
+                })
+            })
+            .collect();
+        let settled: Vec<(FindingId, bool, String)> = verdicts
             .into_iter()
             .map(|verdict| (verdict.id, verdict.present, verdict.note))
             .collect();
-        for (id, present, note) in &settled {
-            let Some(position) = self.open.iter().position(|finding| finding.id() == *id) else {
+        let mut decided: BTreeMap<FindingId, (bool, String)> = settled
+            .iter()
+            .map(|(id, present, note)| (id.clone(), (*present, note.clone())))
+            .collect();
+        for id in continued.iter().flatten() {
+            decided
+                .entry(id.clone())
+                .or_insert_with(|| (false, String::new()));
+        }
+        for (id, (present, note)) in decided {
+            let Some(position) = self.open.iter().position(|finding| finding.id() == id) else {
                 continue;
             };
-            if !present {
+            let report = reported
+                .iter()
+                .zip(&continued)
+                .find(|(_, continues)| continues.as_ref() == Some(&id))
+                .map(|(report, _)| report);
+            if !present && report.is_none() {
                 self.open.remove(position);
-                self.about.remove(id);
+                self.about.remove(&id);
                 continue;
             }
             let now = self
@@ -274,13 +298,19 @@ impl Standing {
             if let Some(finding) = self.open.get_mut(position) {
                 if !note.is_empty() {
                     finding.note = note.clone();
-                    finding.summary = note.clone();
+                    finding.summary = note;
+                } else if let Some(report) = report {
+                    finding.note = report.note.clone();
+                    finding.summary = report.summary.clone();
                 }
                 finding.passage = now;
             }
         }
         let mut fresh = Vec::new();
-        for report in judged.reported {
+        for (report, continues) in reported.into_iter().zip(continued) {
+            if continues.is_some() {
+                continue;
+            }
             let folded = report.passage_id.as_deref().and_then(|passage| {
                 round.asked.iter().find(|asked| {
                     asked.passage_id.as_deref() == Some(passage)

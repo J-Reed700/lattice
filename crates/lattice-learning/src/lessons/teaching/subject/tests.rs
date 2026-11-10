@@ -26,6 +26,7 @@ fn recheck(before: &Value, after: &Value) -> Round {
         summary: "A defect.".to_owned(),
         passage: None,
         passage_id: None,
+        continues: None,
     };
     let judged = Judged {
         verdicts: Vec::new(),
@@ -46,14 +47,22 @@ fn a_first_review_of_everything_reads_as_it_did_before_rounds() {
     let scope = "A scope.";
     let round = Standing::new(&Held::default()).round(&lesson(2)).unwrap();
     assert_eq!(
-        review_instructions(REVIEW_SYSTEM, &round, true, scope),
+        review_instructions(&ReviewTexts::GENERAL, &round, true, scope),
         format!("{REVIEW_SYSTEM}\n{SHARED_CHECKS}\n{scope}")
     );
     let outline = Standing::new(&Held::default())
         .round(&json!({"modules":[]}))
         .unwrap();
     assert_eq!(
-        review_instructions("First.", &outline, false, ""),
+        review_instructions(
+            &ReviewTexts {
+                first: "First.",
+                ..ReviewTexts::GENERAL
+            },
+            &outline,
+            false,
+            ""
+        ),
         "First.\n\n"
     );
 }
@@ -64,7 +73,7 @@ fn a_recheck_is_told_to_judge_the_correction_and_to_check_only_the_sections_that
     let mut after = before.clone();
     after["blocks"][0]["body"] = json!("Part 0 states another fact.");
     let round = recheck(&before, &after);
-    let text = review_instructions(REVIEW_SYSTEM, &round, true, "A scope.");
+    let text = review_instructions(&ReviewTexts::GENERAL, &round, true, "A scope.");
     assert!(text.starts_with(RECHECK_SYSTEM));
     assert!(text.contains(CHANGED_CHECKS));
     assert!(!text.contains(SHARED_CHECKS));
@@ -79,7 +88,7 @@ fn a_recheck_of_every_section_holds_the_shared_checks() {
         after["blocks"][n]["body"] = json!(format!("Part {n} states another fact."));
     }
     let round = recheck(&before, &after);
-    let text = review_instructions(REVIEW_SYSTEM, &round, true, "A scope.");
+    let text = review_instructions(&ReviewTexts::GENERAL, &round, true, "A scope.");
     assert!(text.contains(SHARED_CHECKS));
     assert!(!text.contains(CHANGED_CHECKS));
 }
@@ -91,13 +100,16 @@ fn known_findings_are_explained_only_when_there_are_some() {
     after["blocks"][2]["body"] = json!("Part 2 states another fact.");
     let round = recheck(&before, &after);
     assert_eq!(round.known.len(), 1);
-    let text = review_instructions(REVIEW_SYSTEM, &round, true, "A scope.");
+    let text = review_instructions(&ReviewTexts::GENERAL, &round, true, "A scope.");
     assert!(text.contains(KNOWN_FINDINGS));
     let alone = Round {
         known: Vec::<Asked>::new(),
         ..round
     };
-    assert!(!review_instructions(REVIEW_SYSTEM, &alone, true, "A scope.").contains(KNOWN_FINDINGS));
+    assert!(
+        !review_instructions(&ReviewTexts::GENERAL, &alone, true, "A scope.")
+            .contains(KNOWN_FINDINGS)
+    );
 }
 
 #[test]
@@ -111,7 +123,7 @@ fn a_first_review_with_findings_open_is_the_first_review_told_how_to_judge_them(
     let round = Standing::new(&held).round(&lesson(2)).unwrap();
     assert!(round.first);
     assert_eq!(round.asked.len(), 1);
-    let text = review_instructions(REVIEW_SYSTEM, &round, true, "A scope.");
+    let text = review_instructions(&ReviewTexts::GENERAL, &round, true, "A scope.");
     assert!(text.starts_with(REVIEW_SYSTEM));
     assert!(text.contains(OPEN_VERDICTS));
     assert!(text.contains(SHARED_CHECKS));
@@ -145,20 +157,92 @@ fn the_general_instructions_are_the_text_they_were_before_lessons_had_their_own(
     );
 }
 
+const FOREIGN: [&str; 7] = [
+    "citations support",
+    "answer key",
+    "contradiction",
+    "Universal claims",
+    "prerequisite order",
+    "preceding instruction",
+    "factual",
+];
+
 #[test]
 fn the_lessons_reviewer_is_not_asked_what_other_checks_own() {
-    let round = Standing::new(&Held::default()).round(&lesson(2)).unwrap();
-    let text = review_instructions(
-        REVIEW_SYSTEM,
-        &round,
-        true,
-        crate::lessons::teaching::LESSON_REVIEW_EVIDENCE_SCOPE,
-    );
-    assert!(!text.contains("citations support"));
+    let texts = ReviewTexts::LESSON;
+    let scope = crate::lessons::teaching::LESSON_REVIEW_EVIDENCE_SCOPE;
+    // The mechanics of a section's check say how to write a "factual finding".
+    for (text, facts_too) in [
+        (texts.first, true),
+        (texts.recheck, true),
+        (LESSON_PRIORITY, true),
+        (scope, true),
+        (texts.whole, false),
+        (texts.changed, false),
+    ] {
+        for phrase in FOREIGN {
+            assert!(
+                !(text.contains(phrase) && (facts_too || phrase != "factual")),
+                "{phrase} in {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn a_lessons_instructions_are_told_to_name_the_open_finding_a_report_continues() {
+    let before = lesson(3);
+    let mut after = before.clone();
+    after["blocks"][0]["body"] = json!("Part 0 states another fact.");
+    let round = recheck(&before, &after);
+    let text = review_instructions(&ReviewTexts::LESSON, &round, true, "A scope.");
+    assert!(text.starts_with(LESSON_RECHECK_SYSTEM));
+    assert!(text.contains(CONTINUES));
+    assert!(text.contains(LESSON_CHANGED_CHECKS));
+    let first = Standing::new(&Held::default()).round(&lesson(2)).unwrap();
+    let text = review_instructions(&ReviewTexts::LESSON, &first, true, "A scope.");
+    assert!(text.starts_with(LESSON_REVIEW_SYSTEM));
+    assert!(text.contains(LESSON_SHARED_CHECKS));
+    assert!(!text.contains(CONTINUES));
+}
+
+#[test]
+fn a_lesson_shares_the_mechanics_of_a_sections_check_with_the_general_text() {
+    for sentence in [
+        "Read the WHOLE block, not only the selected passage.",
+        "Never copy a quotation or invent a passage ID.",
+        "Put assessment findings in issues.",
+        "This is a model review, not execution or independent expert verification.",
+    ] {
+        assert!(SHARED_CHECKS.contains(sentence));
+        assert!(LESSON_SHARED_CHECKS.contains(sentence));
+        assert!(LESSON_CHANGED_CHECKS.contains(sentence));
+    }
+    assert!(LESSON_SHARED_CHECKS.contains("For a worked example, inspect"));
+    assert!(LESSON_SHARED_CHECKS.contains("can be done as written"));
+    assert!(!LESSON_SHARED_CHECKS.contains("Compare explanations with exceptions"));
+}
+
+#[test]
+fn what_a_lessons_verdicts_stand_under_changes_with_any_of_its_texts() {
+    let texts = ReviewTexts::LESSON;
+    for part in [
+        texts.first,
+        texts.recheck,
+        texts.whole,
+        texts.changed,
+        CONTINUES,
+    ] {
+        assert!(texts.joined().contains(part));
+    }
+    assert_ne!(texts.joined(), ReviewTexts::GENERAL.joined());
 }
 
 #[test]
 fn the_lessons_priority_and_evidence_scope_leave_facts_to_the_checks_that_own_them() {
-    assert!(!LESSON_PRIORITY.contains("factual"));
-    assert!(!crate::lessons::teaching::LESSON_REVIEW_EVIDENCE_SCOPE.contains("factual"));
+    assert!(LESSON_PRIORITY.starts_with("Before evaluating teaching style"));
+    assert!(LESSON_PRIORITY.ends_with("do not claim to have executed an example yourself."));
+    assert!(
+        crate::lessons::teaching::LESSON_REVIEW_EVIDENCE_SCOPE.contains("do not report it here")
+    );
 }

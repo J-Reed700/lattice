@@ -6,8 +6,8 @@ use super::super::{
     holds_up_review, structural_findings, OutlineReviewContext, LESSON_REVIEW_EVIDENCE_SCOPE,
 };
 use super::{
-    review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, Settled, Step,
-    Subject, LESSON_PRIORITY, REVIEW_SYSTEM,
+    review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, ReviewTexts,
+    Settled, Step, Subject, LESSON_PRIORITY, REVIEW_SYSTEM,
 };
 use crate::generation::{MIN_QUOTE_CHARS, MIN_QUOTE_WORDS};
 use crate::lessons::copied_wording::Wording;
@@ -107,8 +107,11 @@ async fn closed_find(
             } else {
                 Step::Rechecking
             });
-            let instructions =
-                review_instructions(lens.first_system, &round, lens.block_checks, lens.scope);
+            let texts = ReviewTexts {
+                first: lens.first_system,
+                ..ReviewTexts::GENERAL
+            };
+            let instructions = review_instructions(&texts, &round, lens.block_checks, lens.scope);
             let judged = crate::teaching_review::review(
                 llm,
                 &instructions,
