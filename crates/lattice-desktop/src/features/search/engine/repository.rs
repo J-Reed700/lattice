@@ -110,7 +110,8 @@ pub(super) async fn optimize_chunk_indexes(pool: &impl DriverPool) -> Result<()>
         sqlx::query("INSERT INTO chunks_trigram(chunks_trigram) VALUES('optimize')")
             .execute(&mut *tx)
             .await?;
-        tx.commit().await
+        tx.commit().await?;
+        Ok(())
     })
     .await
 }
@@ -125,7 +126,8 @@ pub(super) async fn rebuild_chunk_indexes(pool: &impl DriverPool) -> Result<()> 
         sqlx::query("INSERT INTO chunks_trigram(chunks_trigram) VALUES('rebuild')")
             .execute(&mut *tx)
             .await?;
-        tx.commit().await
+        tx.commit().await?;
+        Ok(())
     })
     .await
 }

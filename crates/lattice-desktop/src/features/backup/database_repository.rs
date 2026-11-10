@@ -2,7 +2,7 @@
 use std::path::Path;
 
 use lattice_core::shared::persistence::driver::DriverPool;
-use lattice_core::shared::persistence::{Database, Transactions};
+use lattice_core::shared::persistence::Database;
 use sqlx::sqlite::SqliteConnectOptions;
 use sqlx::{SqliteConnection, SqlitePool};
 

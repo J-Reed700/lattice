@@ -89,10 +89,11 @@ async fn a_thread_that_cannot_be_filed_in_its_folders_space_is_not_bound() {
 async fn a_space_archived_meanwhile_is_not_given_to_a_folder() {
     let (pool, _directory) = database().await;
 
+    let database = Database::from(pool.clone());
     let result = after_another_writer(
         &pool,
         "UPDATE conversation_spaces SET is_archived = 1 WHERE id = 'space_music'",
-        || folders::set_settings(&Database::from(pool.clone()), ROOT, "", "space_music"),
+        || folders::set_settings(&database, ROOT, "", "space_music"),
     )
     .await;
 
@@ -115,8 +116,9 @@ async fn a_thread_unbound_meanwhile_is_not_remembered_as_the_folders() {
         .unwrap();
     let unbind = format!("UPDATE conversations SET explorer_root = NULL WHERE id = '{id}'");
 
+    let database = Database::from(pool.clone());
     let result = after_another_writer(&pool, &unbind, || {
-        folders::remember_thread(&Database::from(pool.clone()), ROOT, &id)
+        folders::remember_thread(&database, ROOT, &id)
     })
     .await;
 
