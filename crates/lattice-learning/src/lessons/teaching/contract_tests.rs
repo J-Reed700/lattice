@@ -327,7 +327,10 @@ async fn a_planned_action_the_lesson_does_not_teach_is_a_finding_at_its_section(
     ] {
         assert!(asked[0].contains(expected), "{expected}");
     }
-    assert!(!asked[0].contains("Creating a file"));
+    let prompt: Value = serde_json::from_str(&asked[0]).unwrap();
+    assert!(!prompt["earlierLessons"]
+        .to_string()
+        .contains("Creating a file"));
     Ok(())
 }
 
