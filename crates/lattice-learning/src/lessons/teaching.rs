@@ -498,6 +498,7 @@ async fn review_material(
         .is_some()
         .then(|| Passes::new(context.held));
     let is_lesson = passes.is_some();
+    let mut receipts = contract::Receipts::default();
     // A review cut short resumes with the repairs it had made to this draft.
     if let Some(passes) = passes.as_mut() {
         if let Some(saved) = crate::lesson_drafts::teaching_passes(&candidate).await? {
@@ -654,8 +655,14 @@ async fn review_material(
             );
             let against_plan = async {
                 if is_lesson && !is_outline {
-                    contract::check(llm, &authoring_context, &candidate_value, context.protected)
-                        .await
+                    contract::check(
+                        llm,
+                        &authoring_context,
+                        &candidate_value,
+                        context.protected,
+                        &mut receipts,
+                    )
+                    .await
                 } else {
                     Ok(Vec::new())
                 }
