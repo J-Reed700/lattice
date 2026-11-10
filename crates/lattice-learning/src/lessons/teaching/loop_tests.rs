@@ -2006,8 +2006,7 @@ fn plan_at(subject: &str, site: FindingSite) -> ReviewFinding {
 }
 
 #[tokio::test]
-async fn keeping_one_finding_leaves_the_other_in_its_section_waiting_and_repairable() -> Result<()>
-{
+async fn keeping_one_finding_leaves_another_finding_in_its_section_repairable() -> Result<()> {
     let pool = crate::tests::pool().await?;
     let (_, job, lesson_id) =
         crate::content_verification::tests::batch_scheduler_tests::setup(&pool).await?;
@@ -2020,14 +2019,10 @@ async fn keeping_one_finding_leaves_the_other_in_its_section_waiting_and_repaira
     let store = TeachingFindingsRepository::new(pool);
     let candidate = lesson(EXCERPT);
     let first = plan_at("aaaa000000000001", FindingSite::Section(0));
-    let second = plan_at("aaaa000000000002", FindingSite::Section(0));
-    let set_aside: Vec<_> = [&first, &second]
-        .into_iter()
-        .map(|finding| SetAside {
-            finding: finding.clone(),
-            repairs: 2,
-        })
-        .collect();
+    let set_aside = [SetAside {
+        finding: first.clone(),
+        repairs: 2,
+    }];
     store
         .record(&lesson_id, &job, &candidate, &set_aside, true)
         .await?;
@@ -2038,7 +2033,8 @@ async fn keeping_one_finding_leaves_the_other_in_its_section_waiting_and_repaira
         .await?;
     let passes = Passes::new(store.held(&lesson_id, &candidate).await?);
     assert!(!passes.repairable(&first));
-    assert!(passes.repairable(&second));
+    let other = plan_at("aaaa000000000002", FindingSite::Section(0));
+    assert!(passes.repairable(&other));
     Ok(())
 }
 

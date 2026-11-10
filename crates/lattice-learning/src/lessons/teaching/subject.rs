@@ -501,7 +501,13 @@ impl Subject for LessonSubject<'_> {
         };
         match made {
             Ok(Made::Changed(text)) => Ok(Settled::Changed(text)),
-            Ok(Made::Nothing) => Ok(self.after_nothing()),
+            Ok(Made::Nothing) => {
+                tracing::warn!(
+                    sent = send.len(),
+                    "The teaching repair changed nothing that could stay; the findings it was sent wait for the user"
+                );
+                Ok(self.after_nothing())
+            }
             // A repair whose answer cannot be used fixed nothing: the
             // findings it was sent wait for the user instead of failing the
             // job, and the others still get a repair.
