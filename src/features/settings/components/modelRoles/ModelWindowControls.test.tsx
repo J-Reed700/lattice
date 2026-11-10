@@ -137,10 +137,12 @@ describe('ModelWindowControls', () => {
     }));
   });
 
-  it('keeps Anthropic on the Settings ceiling when it could not be asked', () => {
+  it('shows no output ceiling when the provider could not be asked', () => {
     state.limits = { data: undefined as never, isLoading: false, isError: true };
     render(<ModelWindowControls modelRef={claude} />);
-    expect(screen.getByLabelText('Max output')).toHaveValue(128000);
+    const field = screen.getByLabelText('Max output');
+    expect(field).toHaveValue(null);
+    expect(field).toHaveAttribute('placeholder', 'Not known');
   });
 
   it('offers an Ollama model its trained length, and no output ceiling', () => {
