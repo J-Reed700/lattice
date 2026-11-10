@@ -2580,6 +2580,7 @@ fn a_clean_stage_saved_before_passages_still_loads() {
 #[tokio::test]
 async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()> {
     let pool = pool().await?;
+    let database = Database::from(pool.clone());
     let first = course(&pool).await?;
     let second = course(&pool).await?;
     let first_lessons = lessons_of(&pool, &first).await?;
@@ -2595,7 +2596,7 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
 
     assert_eq!(
         take(
-            &pool,
+            &database,
             Shelf {
                 program_id: &first,
                 material: &python
@@ -2607,7 +2608,7 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
         "no passage is on a language's shelf"
     );
     let taken = take(
-        &pool,
+        &database,
         Shelf {
             program_id: &first,
             material: &passages,
@@ -2620,7 +2621,7 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
     assert_eq!(taken.next_build, None, "first-new is ready");
 
     let taken = take(
-        &pool,
+        &database,
         Shelf {
             program_id: &second,
             material: &passages,
@@ -2650,7 +2651,7 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
     );
     assert_eq!(
         take(
-            &pool,
+            &database,
             Shelf {
                 program_id: &second,
                 material: &passages
@@ -2661,7 +2662,7 @@ async fn the_bank_keeps_passage_drills_on_a_shelf_for_each_course() -> Result<()
         None
     );
     let again = take(
-        &pool,
+        &database,
         Shelf {
             program_id: &first,
             material: &passages,

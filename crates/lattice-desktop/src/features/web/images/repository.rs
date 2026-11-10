@@ -13,6 +13,7 @@ use chrono::Utc;
 use lattice_core::application::contracts::images::{ChatImageDto, ImageOrigin};
 use lattice_core::application::ports::chat_images::DRAFT_REQUEST_PREFIX;
 use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::PersistenceError;
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{QueryBuilder, Sqlite, SqliteConnection, SqlitePool};
 
@@ -20,8 +21,8 @@ use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id};
 use crate::infrastructure::storage::{FileIntents, FileStore};
 use lattice_core::shared::error::{AppError, Result};
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
+fn db(error: impl Into<PersistenceError>) -> AppError {
+    AppError::from(error.into())
 }
 
 const COLUMNS: &str = "id, conversation_id, request_id, message_id, ref AS image_ref, ext, mime, \

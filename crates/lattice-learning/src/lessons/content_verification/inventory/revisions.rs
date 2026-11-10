@@ -7,6 +7,8 @@
 //! replaced. Coverage of the entire changed section is still audited
 //! independently before fact checking.
 use super::*;
+#[cfg(any(test, feature = "test-support"))]
+use lattice_core::shared::persistence::Database;
 
 mod locations;
 

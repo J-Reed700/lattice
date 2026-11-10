@@ -8,10 +8,11 @@ use sqlx::{SqliteConnection, SqlitePool};
 use super::dto::WebPageSnapshotStatus;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::PersistenceError;
 use lattice_core::shared::persistence::Transactions;
 
-fn db(error: sqlx::Error) -> AppError {
-    AppError::Database(error.to_string())
+fn db(error: impl Into<PersistenceError>) -> AppError {
+    AppError::from(error.into())
 }
 
 /// The conversation frozen copies belong to when no chat cited the page.

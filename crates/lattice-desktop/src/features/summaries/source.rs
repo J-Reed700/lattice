@@ -94,9 +94,7 @@ pub struct SqliteSummarySource {
 
 impl SqliteSummarySource {
     pub fn new(database: Database) -> Self {
-        Self {
-            database: database.database(),
-        }
+        Self { database }
     }
 }
 

@@ -8,6 +8,7 @@ use crate::reference_collection::ReferenceCollection;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use lattice_core::shared::persistence::Database;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Mutex;
 

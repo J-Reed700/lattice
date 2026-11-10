@@ -163,6 +163,7 @@ mod tests {
     #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
     use crate::lessons::course_generation_tests::ScriptedModel;
+    use lattice_core::shared::persistence::Database;
     use std::sync::Mutex;
 
     fn units() -> Vec<Value> {

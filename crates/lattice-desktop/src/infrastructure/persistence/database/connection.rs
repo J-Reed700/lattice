@@ -258,7 +258,7 @@ where
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::shared::persistence::DriverPool;
+    use lattice_core::shared::persistence::driver::DriverPool;
 
     #[tokio::test]
     async fn file_backed_pool_applies_connection_pragmas_and_closes_with_a_clone() {

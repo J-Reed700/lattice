@@ -6,6 +6,7 @@ use tracing::{error, info, warn};
 use lattice_core::domain::models::downloaded::DownloadedModel;
 use lattice_core::domain::value_objects::ArtifactIdentity;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::PersistenceError;
 use lattice_core::shared::persistence::Transactions;
 
 use super::rows::{build_model_select_query, DownloadedModelRecord};
@@ -242,8 +243,8 @@ const CHAT_FILTER: &str = "WHERE m.is_active_for_chat = 1 LIMIT 1";
 const EMBEDDING_FILTER: &str = "WHERE m.is_active_for_embedding = 1 LIMIT 1";
 const UTILITY_FILTER: &str = "WHERE m.is_active_for_utility = 1 LIMIT 1";
 
-fn tx_error(e: sqlx::Error) -> AppError {
-    AppError::Database(format!("Failed to run a transaction: {}", e))
+fn tx_error(e: impl Into<PersistenceError>) -> AppError {
+    AppError::Database(format!("Failed to run a transaction: {}", e.into()))
 }
 
 /// The active model of one slot, ignoring a selection whose files are gone.

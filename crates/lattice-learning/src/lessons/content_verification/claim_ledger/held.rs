@@ -3,6 +3,7 @@
 //! row that says why each stopped (§6.1).
 
 use super::*;
+use lattice_core::shared::persistence::Database;
 
 /// The prefix of a job's result reference when lessons wait for review.
 const NEEDS_REVIEW_REF: &str = "needs_review:";

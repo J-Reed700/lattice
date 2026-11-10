@@ -91,7 +91,7 @@ impl<'ast> Visit<'ast> for Calls<'_> {
 }
 
 /// Rule 5(c): the calls of `sqlx_pool()` in a file that is not a data module.
-pub(super) fn calls(path: &str, ast: &syn::File) -> Vec<Violation> {
+pub(in super::super) fn calls(path: &str, ast: &syn::File) -> Vec<Violation> {
     let mut scan = Calls {
         path,
         found: Vec::new(),
