@@ -325,6 +325,30 @@ mod tests {
     }
 
     #[test]
+    fn every_open_finding_goes_to_one_repair() {
+        let mut passes = Passes::default();
+        let findings: Vec<_> = (0..9).map(|i| section(i, "x")).collect();
+        assert_eq!(sent(&mut passes, &Value::Null, findings).len(), 9);
+    }
+
+    #[test]
+    fn state_saved_with_fields_no_longer_kept_still_resumes() {
+        let id = serde_json::to_value(section(3, "").id()).unwrap();
+        let saved = serde_json::json!({
+            "spent": [[id, 1]],
+            "last": [[id, "Applied"]],
+            "worked": {},
+            "open_at_repair": [id],
+            "sent_at_repair": [],
+            "stalled": [],
+        })
+        .to_string();
+        let mut passes = Passes::default();
+        passes.resume(&saved);
+        assert_eq!(passes.spent.get(&section(3, "").id()), Some(&1));
+    }
+
+    #[test]
     fn a_clean_first_pass_publishes_with_nothing_set_aside() {
         assert!(done(Passes::default().next(&Value::Null, vec![])).is_empty());
     }
