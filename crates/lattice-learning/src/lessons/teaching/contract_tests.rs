@@ -1366,6 +1366,9 @@ async fn a_use_the_confirming_read_finds_taught_raises_nothing_and_asks_for_no_r
     Ok(())
 }
 
+/// A second sentence of the opening section, where the second check finds a use.
+const LISTED: &str = "Look at the list of names.";
+
 #[tokio::test]
 async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() -> Result<()> {
     let scripted = scripted(vec![
@@ -1387,7 +1390,7 @@ async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() ->
     );
     let second = answer(
         json!([not_taught("idea-0")]),
-        json!([used("Read the names.", "reading names")]),
+        json!([used(LISTED, "reading names")]),
         json!([]),
         json!([]),
     );
@@ -1401,7 +1404,12 @@ async fn an_item_found_taught_is_not_asked_again_until_its_sentence_changes() ->
         "Typing commands",
         json!({"taught":false,"quote":"","belongs":"section-0"}),
     );
-    let candidate = lesson([TYPED, "Type ls -l to see sizes.", "Read the names."]);
+    let opening = format!("{TYPED} {LISTED}");
+    let candidate = lesson([
+        opening.as_str(),
+        "Type ls -l to see sizes.",
+        "Read the names.",
+    ]);
     let ctx = context(&["Typing commands"], &[]);
     let result = run(&model, &candidate, &ctx, &[]).await?;
     let asked = model.asked();

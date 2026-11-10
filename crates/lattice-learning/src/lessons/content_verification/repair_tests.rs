@@ -689,7 +689,7 @@ fn the_evidence_table_names_the_lessons_source_index_of_a_numbered_source() {
     assert!(context["evidence"][1].get("sourceIndex").is_none());
 }
 
-/// A rewrite to the figure an evidence passage states cites that passage in
+/// A rewrite to the wording an evidence passage states cites that passage in
 /// the same response, so the final structural pass finds nothing uncited in
 /// it; confinement, which takes back what changed outside the failed
 /// sentence, keeps the citation of the sentence it allowed.
@@ -698,7 +698,8 @@ async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncite
 ) -> Result<()> {
     let original = json!({"blocks":[{"kind":"explanation","title":"T","body":"Keep this. Fix this.","citations":[]}],"questions":[]});
     let local = json!({"candidate":original,"failedClaims":[{"unit":0,"statement":"Fix this."}]});
-    let sentence = "The default timeout is 30 seconds.";
+    let sentence =
+        "The guide says \"a timeout of 30 seconds applies to each request\" before it fails.";
     let quote = "A timeout of 30 seconds applies to each request.";
     let response = json!({
         "edits":[{"path":"/blocks/0/body","before":"Fix this.","after":sentence}],
