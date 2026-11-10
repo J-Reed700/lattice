@@ -1365,7 +1365,8 @@ async fn a_job_deferred_on_a_busy_database_records_the_database_as_its_cause() -
             "The database is temporarily busy. Saved work is retained.".into(),
         ),
     ] {
-        let runtime = JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
+        let runtime =
+            JobRuntime::with_poll_interval(Database::from(pool().await), Duration::from_millis(10));
         runtime
             .register(
                 KIND,
