@@ -214,6 +214,11 @@ mod tests {
         )
     }
 
+    /// A finding in section `index` about `words`.
+    fn own(index: usize, words: &str) -> ReviewFinding {
+        section(index, words).with_passage(words)
+    }
+
     fn sent(next: Next) -> Vec<FindingKey> {
         match next {
             Next::Repair { send, .. } => send.iter().map(ReviewFinding::key).collect(),
@@ -375,6 +380,16 @@ mod tests {
         };
         assert_eq!(send.len(), 1);
         assert_eq!(send[0].note, "First. Second.");
+    }
+
+    #[test]
+    fn two_findings_with_their_own_ids_at_one_place_stay_two() {
+        let mut passes = Passes::default();
+        let both = sent(passes.next(vec![
+            own(0, "A first sentence."),
+            own(0, "A second sentence."),
+        ]));
+        assert_eq!(both.len(), 2);
     }
 
     #[test]

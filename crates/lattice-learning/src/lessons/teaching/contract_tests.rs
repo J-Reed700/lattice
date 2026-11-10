@@ -10,6 +10,7 @@ use crate::reference_collection::ReferenceCollection;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
+use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
@@ -242,12 +243,7 @@ async fn run_under(
         ReviewSchema::Other(schema),
         candidate.to_string(),
         4000,
-        ReviewContext {
-            outline: None,
-            protected,
-            lesson_references: Some(&references),
-            held: BTreeSet::new(),
-        },
+        &mut LessonSubject::new(&references, protected, BTreeSet::new()),
     )
     .await
 }
@@ -560,6 +556,191 @@ async fn a_recheck_after_a_repair_checks_the_whole_lesson_again() -> Result<()> 
     Ok(())
 }
 
+fn repairs_asked(model: &ScriptedModel) -> usize {
+    model
+        .prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|prompt| prompt.contains("issuesToFix"))
+        .count()
+}
+
+const FIRST_USE: &str = "Use the first tool to list names.";
+const SECOND_USE: &str = "Use the second tool to sort names.";
+const THIRD_USE: &str = "Use the third tool to count names.";
+
+fn uses_of(sentences: &[(&str, &str)]) -> String {
+    let uses: Vec<Value> = sentences
+        .iter()
+        .map(|(sentence, what)| used(sentence, what))
+        .collect();
+    answer(json!([]), json!(uses), json!([]), json!([]))
+}
+
+fn replace_in_listing(before: &str, after: &str) -> String {
+    edits(json!([{"path":"/blocks/1/body","before":before,"after":after}]))
+}
+
+#[tokio::test]
+async fn a_third_defect_in_a_section_gets_its_own_repairs() -> Result<()> {
+    let scripted = scripted(vec![
+        reviewed(3),
+        replace_in_listing(FIRST_USE, "Name the first tool before listing names."),
+        reviewed(3),
+        replace_in_listing(SECOND_USE, "Name the second tool before sorting names."),
+        reviewed(3),
+        replace_in_listing(THIRD_USE, "Name the third tool before counting names."),
+        reviewed(3),
+    ]);
+    let model = Routed::new(
+        &scripted,
+        vec![
+            uses_of(&[(FIRST_USE, "the first tool")]),
+            uses_of(&[(SECOND_USE, "the second tool")]),
+            uses_of(&[(THIRD_USE, "the third tool")]),
+        ],
+    );
+    let listing = format!("{FIRST_USE} {SECOND_USE} {THIRD_USE}");
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        listing.as_str(),
+        "Read the names.",
+    ]);
+    let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    assert_eq!(repairs_asked(&scripted), 3);
+    assert!(result.set_aside.is_empty(), "{:?}", waiting(&result));
+    Ok(())
+}
+
+#[tokio::test]
+async fn two_defects_in_one_section_are_two_entries_for_the_repair() -> Result<()> {
+    let scripted = scripted(vec![
+        reviewed(3),
+        replace_in_listing(
+            &format!("{FIRST_USE} {SECOND_USE}"),
+            "Name both tools before listing and sorting names.",
+        ),
+        reviewed(3),
+    ]);
+    let model = Routed::new(
+        &scripted,
+        vec![uses_of(&[
+            (FIRST_USE, "the first tool"),
+            (SECOND_USE, "the second tool"),
+        ])],
+    );
+    let listing = format!("{FIRST_USE} {SECOND_USE}");
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        listing.as_str(),
+        "Read the names.",
+    ]);
+    run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    let prompts = scripted.prompts.lock().unwrap();
+    let repair = prompts
+        .iter()
+        .find(|prompt| prompt.contains("issuesToFix"))
+        .unwrap();
+    let key = "\"issuesToFix\":";
+    let start = repair.find(key).unwrap() + key.len();
+    let issues: Value = serde_json::Deserializer::from_str(&repair[start..])
+        .into_iter::<Value>()
+        .next()
+        .unwrap()
+        .unwrap();
+    assert_eq!(issues.as_array().unwrap().len(), 2, "{issues}");
+    Ok(())
+}
+
+#[tokio::test]
+async fn one_fixed_defect_does_not_charge_the_other_in_its_section() -> Result<()> {
+    let scripted = scripted(vec![
+        reviewed(3),
+        replace_in_listing(FIRST_USE, "Name the first tool before listing names."),
+        reviewed(3),
+        retitle(),
+        reviewed(3),
+    ]);
+    let model = Routed::new(
+        &scripted,
+        vec![
+            uses_of(&[
+                (FIRST_USE, "the first tool"),
+                (SECOND_USE, "the second tool"),
+            ]),
+            uses_of(&[(SECOND_USE, "the second tool")]),
+            uses_of(&[(SECOND_USE, "the second tool")]),
+        ],
+    );
+    let listing = format!("{FIRST_USE} {SECOND_USE}");
+    let candidate = lesson([
+        "A terminal takes typed commands.",
+        listing.as_str(),
+        "Read the names.",
+    ]);
+    let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    assert_eq!(repairs_asked(&scripted), 2);
+    assert_eq!(result.set_aside.len(), 1, "{:?}", waiting(&result));
+    let left = &result.set_aside[0];
+    assert_eq!(left.repairs, 2);
+    assert!(
+        !left.finding.note.contains("first tool"),
+        "{}",
+        left.finding.note
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_defect_in_words_a_repair_wrote_continues_that_repair_s_count() -> Result<()> {
+    let written = "Sorting the list with the second tool leaves names unchanged.";
+    let theirs = "Rename a file with the third tool.";
+    let scripted = scripted(vec![
+        reviewed(3),
+        replace_in_listing("Listing may change names.", written),
+        reviewed(3),
+        edits(json!([{"path":"/blocks/2/body","before":theirs,"after":"Read the names again."}])),
+        reviewed(3),
+        retitle(),
+        reviewed(3),
+    ]);
+    let clash = answer(
+        json!([]),
+        json!([]),
+        json!([{
+            "quote":"Names never change when listed.",
+            "otherQuote":"Listing may change names."
+        }]),
+        json!([]),
+    );
+    let in_written = ("the second tool", "the second tool");
+    let model = Routed::new(
+        &scripted,
+        vec![
+            clash,
+            uses_of(&[in_written, (theirs, "the third tool")]),
+            uses_of(&[in_written]),
+            uses_of(&[in_written]),
+        ],
+    );
+    let third = format!("Read the names. {theirs}");
+    let candidate = lesson([
+        "A terminal takes typed commands. Names never change when listed.",
+        "Listing may change names. The list shows names in order.",
+        third.as_str(),
+    ]);
+    let result = run(&model, &candidate, &context(&[], &[]), &[]).await?;
+    assert_eq!(repairs_asked(&scripted), 2);
+    assert_eq!(result.set_aside.len(), 1, "{:?}", waiting(&result));
+    assert_eq!(result.set_aside[0].repairs, 2);
+    assert_eq!(
+        result.set_aside[0].finding.passage.as_deref(),
+        Some("the second tool")
+    );
+    Ok(())
+}
+
 #[tokio::test]
 async fn words_that_point_at_what_the_learner_never_sees_are_a_finding() -> Result<()> {
     let scripted = scripted(vec![reviewed(3), retitle(), reviewed(3)]);
@@ -592,6 +773,14 @@ async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
     let model = Routed::new(&scripted, vec![]);
     let outline = json!({"modules":[{"title":"A module","lessons":[]}]});
     let schema = json!({"type":"object","properties":{"modules":{"type":"array"}}});
+    let progress = crate::outline_progress::OutlineProgress::default();
+    let sources = vec![crate::dto::LearningSourceDto {
+        id: "saved-reference".into(),
+        title: "Example reference".into(),
+        url: None,
+        acquired_at: 0,
+        excerpt: EXCERPT.into(),
+    }];
     review_and_repair_with_progress(
         &model,
         "Author a curriculum outline",
@@ -599,7 +788,10 @@ async fn an_outline_review_never_checks_against_a_course_plan() -> Result<()> {
         &schema,
         outline.to_string(),
         4000,
-        None,
+        OutlineReviewContext {
+            progress: &progress,
+            sources: &sources,
+        },
     )
     .await?;
     assert!(model.asked().is_empty());

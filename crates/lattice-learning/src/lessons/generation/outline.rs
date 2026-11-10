@@ -119,7 +119,7 @@ pub async fn generate_outline_with_progress(
         &outline_schema(request.course_depth, sources.len()),
         raw,
         output_tokens,
-        Some(crate::teaching::OutlineReviewContext { progress, sources }),
+        crate::teaching::OutlineReviewContext { progress, sources },
     )
     .await?;
     decode_outline(&raw, request, sources)
