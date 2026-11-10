@@ -10,7 +10,7 @@ use super::dto::{
     CourseDrillAttemptDto, CourseDrillsDto, DrillLessonDto, DrillMaterialDto, DrillModuleDto,
     StartedCodeReviewDto,
 };
-use super::lesson::prepared_bodies_in;
+use super::lesson::repository::prepared_bodies_in;
 use super::reveal::{learner_drill, lesson_of, result_of};
 use super::schedules;
 use super::spec::{check_language, check_request};
@@ -21,6 +21,8 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 use sqlx::{SqliteConnection, SqlitePool};
 use std::collections::HashMap;
+
+mod repository;
 
 /// The most of a course's attempts its drills view lists.
 const RECENT_ATTEMPTS: u32 = 10;
@@ -64,12 +66,14 @@ pub async fn start(
 ) -> Result<Started> {
     let count = usize::try_from(issues).unwrap_or(usize::MAX);
     check_request(&asked.material, lines, count)?;
-    if !course_exists(pool, &asked.program_id).await? {
+    if !repository::course_exists(pool, &asked.program_id).await? {
         return Err(not_found());
     }
     if let Some(lesson) = asked.lesson_id.as_deref() {
         let mut connection = pool.acquire().await.map_err(db)?;
-        if !schedules::drills_lesson_in(&mut connection, &asked.program_id, lesson).await? {
+        if !schedules::repository::drills_lesson_in(&mut connection, &asked.program_id, lesson)
+            .await?
+        {
             return Err(AppError::InvalidInput(
                 "The lesson is not one the course drills.".into(),
             ));
@@ -111,7 +115,7 @@ pub async fn course_drills(
     program_id: &str,
     language: Option<&str>,
 ) -> Result<CourseDrillsDto> {
-    if !course_exists(pool, program_id).await? {
+    if !repository::course_exists(pool, program_id).await? {
         return Err(not_found());
     }
     let language = match language {
@@ -152,13 +156,7 @@ pub async fn course_drills(
             .await?,
         );
     }
-    let titles: Vec<(String, String, String, String)> = sqlx::query_as(
-        "SELECT l.id,l.title,m.id,m.title FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=?",
-    )
-    .bind(program_id)
-    .fetch_all(&mut *transaction)
-    .await
-    .map_err(db)?;
+    let titles = repository::lesson_titles_in(&mut transaction, program_id).await?;
     let next_code = bank::next_up_in(
         &mut transaction,
         Shelf {
@@ -244,15 +242,6 @@ fn not_found() -> AppError {
     AppError::NotFound("Learning program not found.".into())
 }
 
-/// Whether the course is there.
-async fn course_exists(pool: &SqlitePool, program_id: &str) -> Result<bool> {
-    sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM learning_programs WHERE id=?)")
-        .bind(program_id)
-        .fetch_one(pool)
-        .await
-        .map_err(db)
-}
-
 /// Whether the course has a source with text, which a passage drill's passage is taken from.
 async fn has_sources(pool: &SqlitePool, program_id: &str) -> Result<bool> {
     let sources = LearningSourceLibraryRepository::new(pool.clone())
@@ -270,13 +259,7 @@ async fn suggested_language_in(
     connection: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Option<String>> {
-    let in_course: Option<String> = sqlx::query_scalar(
-        "SELECT d.language FROM learning_drill_attempts a JOIN learning_drills d ON d.id=a.drill_id WHERE d.program_id=? AND d.material='code' ORDER BY a.started_at DESC,a.rowid DESC LIMIT 1",
-    )
-    .bind(program_id)
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
+    let in_course = repository::course_language_in(connection, program_id).await?;
     if let Some(language) = in_course.filter(|language| check_language(language).is_ok()) {
         return Ok(Some(language));
     }
@@ -285,12 +268,7 @@ async fn suggested_language_in(
     if let Some(language) = language_of_code(&texts) {
         return Ok(Some(language.to_owned()));
     }
-    let anywhere: Option<String> = sqlx::query_scalar(
-        "SELECT d.language FROM learning_drill_attempts a JOIN learning_drills d ON d.id=a.drill_id WHERE d.material='code' ORDER BY a.started_at DESC,a.rowid DESC LIMIT 1",
-    )
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?;
+    let anywhere = repository::latest_language_in(connection).await?;
     Ok(anywhere.filter(|language| check_language(language).is_ok()))
 }
 

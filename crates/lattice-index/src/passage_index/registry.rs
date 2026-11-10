@@ -5,7 +5,9 @@
 //! the meta keys mean is the owner's: the registry hands them over as they
 //! are stored.
 
-use super::store::{connect, db_error, read_counts, read_meta, Counts, DB_FILE};
+use super::store::{
+    connect, db_error, read_counts, read_document_keys, read_meta, Counts, DB_FILE,
+};
 use lattice_core::shared::{AppError, Result};
 use sqlx::Connection;
 use std::collections::HashMap;
@@ -85,9 +87,7 @@ pub async fn document_keys(dir: &Path) -> Result<Option<Vec<String>>> {
             dir.join(DB_FILE).display()
         ))
     })?;
-    let keys = sqlx::query_scalar::<_, String>("SELECT key FROM index_documents")
-        .fetch_all(&mut connection)
-        .await;
+    let keys = read_document_keys(&mut connection).await;
     let _ = connection.close().await;
     keys.map(Some)
         .map_err(db_error("read the index's documents"))

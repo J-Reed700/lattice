@@ -27,7 +27,10 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different practical activity data.",
         );
-        if operation.seen(&self.pool).await? {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let seen = operation.seen(&mut connection).await?;
+        drop(connection);
+        if seen {
             return Ok(Some(self.workspace(program_id).await?));
         }
         Ok(None)
@@ -50,7 +53,10 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different simulation data.",
         );
-        if operation.seen(&self.pool).await? {
+        let mut connection = self.pool.acquire().await.map_err(db)?;
+        let seen = operation.seen(&mut connection).await?;
+        drop(connection);
+        if seen {
             return Ok(Some(self.simulation(session_id).await?));
         }
         Ok(None)
@@ -145,7 +151,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different simulation data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.simulation(&request.session_id).await;
         }
@@ -188,7 +194,7 @@ impl LearningPracticalRepository {
                 .bind(&question.question).bind(&activity.generator_model).bind(timestamp)
                 .execute(&mut *tx).await.map_err(db)?;
         }
-        operation.record(&mut *tx, &request.session_id).await?;
+        operation.record(&mut tx, &request.session_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await
     }
@@ -217,7 +223,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different turn data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.simulation(&request.session_id).await;
         }
@@ -261,7 +267,7 @@ impl LearningPracticalRepository {
         if updated.rows_affected() != 1 {
             return Err(invalid("Simulation changed; reload and retry."));
         }
-        operation.record(&mut *tx, &reply_id).await?;
+        operation.record(&mut tx, &reply_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await
     }
@@ -286,7 +292,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different finish data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.simulation(&request.session_id).await;
         }
@@ -345,7 +351,7 @@ impl LearningPracticalRepository {
                 .bind(json(&serde_json::json!({"mode":activity.practice_mode,"allowedAids":activity.allowed_aids}))?)
                 .bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         }
-        operation.record(&mut *tx, &feedback_id).await?;
+        operation.record(&mut tx, &feedback_id).await?;
         tx.commit().await.map_err(db)?;
         self.simulation(&request.session_id).await
     }

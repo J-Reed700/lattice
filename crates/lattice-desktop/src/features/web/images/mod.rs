@@ -18,6 +18,8 @@ pub mod store;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod write_tests;
 
 pub use fetch::ImageNetwork;
 pub use gc::{ChatImageGc, ImageSweepReport};

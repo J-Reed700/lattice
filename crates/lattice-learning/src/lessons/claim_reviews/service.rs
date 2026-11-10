@@ -13,6 +13,7 @@ use lattice_core::domain::learning::claim_review::{
     HumanBinding, Ledger, LessonReview, LessonReviewState, Revision, TrustVerdict, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use serde_json::Value;
 use sqlx::SqlitePool;
 
@@ -24,10 +25,10 @@ use super::published_remove;
 use super::published_restore;
 use super::put_back;
 use super::repository::{
-    append_in, bump_revision, check_revision, revision_conflict, ClaimReviewRepository,
+    append_in, blocks, bump_revision, check_revision, reviews, revision_conflict,
+    ClaimReviewRepository,
 };
-use super::source_deleted::deleted_versions;
-use super::teaching_claims::{name_claims, removable_span, section_bodies};
+use super::teaching_claims::{name_claims, removable_span};
 use super::teaching_findings::{TeachingFindingDto, TeachingFindingsRepository};
 use super::trust_changed::{forget_verdict, record_verdict, Redecided};
 
@@ -340,7 +341,7 @@ impl ClaimReviewService {
         let mut findings = TeachingFindingsRepository::new(self.pool.clone())
             .list(lesson_id)
             .await?;
-        let bodies = section_bodies(&self.pool, lesson_id).await?;
+        let bodies = blocks::section_bodies(&self.pool, lesson_id).await?;
         name_claims(&ledger, &bodies, &mut findings);
         let mut chosen: Vec<&TeachingFindingDto> = Vec::new();
         for key in finding_keys {
@@ -371,7 +372,7 @@ impl ClaimReviewService {
         }
 
         let user = provenance(&review);
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         check_revision(&mut tx, lesson_id, ledger.revision).await?;
         let mut ended: Vec<ClaimId> = Vec::new();
         let mut through_claims: Vec<ClaimId> = Vec::new();
@@ -504,7 +505,7 @@ impl ClaimReviewService {
     ) -> Result<Revision> {
         let published = review.state == LessonReviewState::Ready;
         let user = provenance(review);
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         check_revision(&mut tx, lesson_id, revision).await?;
         let mut ended: HashSet<ClaimId> = HashSet::new();
         for item in planned {
@@ -651,7 +652,7 @@ impl ClaimReviewService {
                 source_version_ids,
             } => {
                 let quote = self.bound_quote(review, lesson_id, entry).await;
-                let deleted = deleted_versions(&self.pool, &review.program_id).await?;
+                let deleted = reviews::deleted_versions(&self.pool, &review.program_id).await?;
                 let source_version_ids = source_version_ids
                     .into_iter()
                     .filter(|id| !deleted.contains(id))

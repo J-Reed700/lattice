@@ -42,6 +42,7 @@ pub mod di;
 pub mod mapper;
 pub mod plugin;
 pub mod query_cache;
+mod repository;
 pub mod reranker_setup;
 pub mod trait_def;
 pub mod use_cases;

@@ -143,15 +143,16 @@ impl LearningRepository {
     }
 
     pub async fn discard_card_draft(&self, program_id: &str, draft_id: &str) -> Result<()> {
+        let mut tx = self.pool.begin_write().await.map_err(db)?;
         let result = sqlx::query("UPDATE learning_card_drafts SET status='discarded',updated_at=? WHERE id=? AND program_id=? AND status='pending'")
-            .bind(chrono::Utc::now().timestamp_millis()).bind(draft_id).bind(program_id).execute(&self.pool).await.map_err(db)?;
+            .bind(chrono::Utc::now().timestamp_millis()).bind(draft_id).bind(program_id).execute(&mut *tx).await.map_err(db)?;
         if result.rows_affected() == 0 {
             let status: Option<String> = sqlx::query_scalar(
                 "SELECT status FROM learning_card_drafts WHERE id=? AND program_id=?",
             )
             .bind(draft_id)
             .bind(program_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?;
             if status.as_deref() != Some("discarded") {
@@ -160,7 +161,7 @@ impl LearningRepository {
                 ));
             }
         }
-        Ok(())
+        tx.commit().await.map_err(db)
     }
 
     pub async fn accept_card_draft(&self, program_id: &str, draft_id: &str) -> Result<String> {
@@ -284,9 +285,10 @@ impl LearningRepository {
     }
 
     pub async fn memory_state(&self, program_id: &str) -> Result<LearningMemoryState> {
+        let mut read = self.pool.begin_read().await.map_err(db)?;
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM learning_programs WHERE id=?")
             .bind(program_id)
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *read)
             .await
             .map_err(db)?;
         if exists == 0 {
@@ -294,7 +296,7 @@ impl LearningRepository {
         }
         let root = sqlx::query("SELECT journal_id,deck_id FROM learning_memory WHERE program_id=?")
             .bind(program_id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(db)?;
         let (journal_id, deck_id) = match root {
@@ -305,16 +307,17 @@ impl LearningRepository {
             None => (None, None),
         };
         let lesson_notes = sqlx::query("SELECT lesson_id,note_id FROM learning_lesson_note_links WHERE program_id=? ORDER BY rowid")
-            .bind(program_id).fetch_all(&self.pool).await.map_err(db)?.into_iter().map(|r| (r.get("lesson_id"),r.get("note_id"))).collect();
+            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.into_iter().map(|r| (r.get("lesson_id"),r.get("note_id"))).collect();
         let drafts = sqlx::query("SELECT * FROM learning_card_drafts WHERE program_id=? AND status='pending' ORDER BY created_at,id")
-            .bind(program_id).fetch_all(&self.pool).await.map_err(db)?.into_iter().map(|r| Ok(LearningCardDraftDto {
+            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.into_iter().map(|r| Ok(LearningCardDraftDto {
                 id:r.get("id"),lesson_id:r.get("lesson_id"),question:r.get("question"),answer:r.get("answer"),explanation:r.get("explanation"),
                 source_ids:decode(r.get("source_ids_json"))?,origin:parse_draft_origin(r.get("origin"))?,created_at:r.get("created_at"),
             })).collect::<Result<Vec<_>>>()?;
         let accepted_cards = sqlx::query("SELECT card_id,lesson_id,origin,source_ids_json,accepted_at FROM learning_card_origins WHERE program_id=? ORDER BY accepted_at,card_id")
-            .bind(program_id).fetch_all(&self.pool).await.map_err(db)?.into_iter().map(|r| Ok(LearningCardOriginDto {
+            .bind(program_id).fetch_all(&mut *read).await.map_err(db)?.into_iter().map(|r| Ok(LearningCardOriginDto {
                 card_id:r.get("card_id"),lesson_id:r.get("lesson_id"),origin:parse_draft_origin(r.get("origin"))?,source_ids:decode(r.get("source_ids_json"))?,accepted_at:r.get("accepted_at"),
             })).collect::<Result<Vec<_>>>()?;
+        read.commit().await.map_err(db)?;
         Ok(LearningMemoryState {
             journal_id,
             deck_id,

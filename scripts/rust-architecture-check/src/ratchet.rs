@@ -742,7 +742,7 @@ impl<'ast> Visit<'ast> for UseAliases {
     }
 }
 
-fn impl_item_attrs(item: &ImplItem) -> Option<&[Attribute]> {
+pub(crate) fn impl_item_attrs(item: &ImplItem) -> Option<&[Attribute]> {
     match item {
         ImplItem::Const(i) => Some(&i.attrs),
         ImplItem::Fn(i) => Some(&i.attrs),
@@ -752,7 +752,7 @@ fn impl_item_attrs(item: &ImplItem) -> Option<&[Attribute]> {
     }
 }
 
-fn trait_item_attrs(item: &TraitItem) -> Option<&[Attribute]> {
+pub(crate) fn trait_item_attrs(item: &TraitItem) -> Option<&[Attribute]> {
     match item {
         TraitItem::Const(i) => Some(&i.attrs),
         TraitItem::Fn(i) => Some(&i.attrs),
@@ -1050,7 +1050,7 @@ impl<'ast> Visit<'ast> for Collector<'_> {
 }
 
 /// `a::b::c` sequences in unparsed macro input, with their first line.
-fn token_paths(tokens: TokenStream) -> Vec<(Vec<String>, bool, usize)> {
+pub(crate) fn token_paths(tokens: TokenStream) -> Vec<(Vec<String>, bool, usize)> {
     struct Paths {
         out: Vec<(Vec<String>, bool, usize)>,
         current: Vec<String>,

@@ -10,6 +10,7 @@ use crate::{
     portability_dto::{ExportLearningPackRequestDto, LearningPackExportOptionsDto},
 };
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Transactions;
 use sqlx::{Row, Sqlite, SqliteConnection, SqlitePool, Transaction};
 use std::path::Path;
 
@@ -24,7 +25,7 @@ pub(super) async fn begin_apply(
     program_id: &str,
     replaces_program: bool,
 ) -> Result<(Transaction<'static, Sqlite>, Option<BackupExportRecord>)> {
-    let mut tx = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
+    let mut tx = pool.begin_write().await.map_err(db)?;
     sqlx::query("PRAGMA defer_foreign_keys=ON")
         .execute(&mut *tx)
         .await

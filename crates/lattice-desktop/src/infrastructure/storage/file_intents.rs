@@ -195,16 +195,18 @@ pub async fn forget_all_in(path: &Path) -> Result<()> {
 }
 
 async fn forget_all(pool: &SqlitePool) -> Result<()> {
+    let mut tx = pool.begin_write().await?;
     let exists: bool = sqlx::query_scalar(
         "SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'file_intents')",
     )
-    .fetch_one(pool)
+    .fetch_one(&mut *tx)
     .await?;
     if exists {
         sqlx::query("DELETE FROM file_intents")
-            .execute(pool)
+            .execute(&mut *tx)
             .await?;
     }
+    tx.commit().await?;
     Ok(())
 }
 
@@ -312,5 +314,30 @@ mod tests {
             .unwrap();
         pool.close().await;
         forget_all_in(&bare).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn forgetting_all_waits_for_a_writer_that_drops_the_table() {
+        let dir = tempfile::tempdir().unwrap();
+        let pool = SqlitePoolOptions::new()
+            .max_connections(5)
+            .connect_with(crate::tests::sqlite::file_options(dir.path().join("t.db")))
+            .await
+            .unwrap();
+        sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+
+        let mut writer = pool.begin_write().await.unwrap();
+        sqlx::query("DROP TABLE file_intents")
+            .execute(&mut *writer)
+            .await
+            .unwrap();
+        let forgetting = tokio::spawn({
+            let pool = pool.clone();
+            async move { forget_all(&pool).await }
+        });
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+        writer.commit().await.unwrap();
+
+        forgetting.await.unwrap().unwrap();
     }
 }

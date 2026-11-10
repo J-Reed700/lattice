@@ -5,16 +5,16 @@
 //! claims.
 
 use lattice_core::application::ports::ClaimReviewStore;
-use lattice_core::domain::learning::claim_review::{Ledger, LessonReviewState};
+use lattice_core::domain::learning::claim_review::Ledger;
 use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 use super::attach::report::ClaimAttachProgressDto;
 use super::attach::{check_others, course_material, AttachDeps, Checking, OtherClaims, Others};
+use super::repository;
 use crate::curriculum::LearningGenerationJobStatus;
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::dto::WaitingClaimsRecheckDto;
-use crate::persistence::db;
 use crate::reference_collection::ReferenceCollection;
 
 /// Every claim a new source is checked for: open or waiting, in any lesson.
@@ -31,7 +31,7 @@ pub async fn waiting_lessons(
     program_id: &str,
 ) -> Result<Vec<Ledger>> {
     let mut ledgers = Vec::new();
-    for lesson_id in held_lessons(pool, program_id).await? {
+    for lesson_id in repository::reviews::held_lessons(pool, program_id).await? {
         let ledger = store.load(&lesson_id).await?;
         if ledger.claims.iter().any(|entry| WAITING.take(entry)) {
             ledgers.push(ledger);
@@ -95,20 +95,6 @@ pub async fn waiting_claims(
     }
     progress(ClaimAttachProgressDto::Done);
     Ok(recheck)
-}
-
-/// The course's lessons held for review: waiting for the user, or being
-/// verified.
-async fn held_lessons(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
-    sqlx::query_scalar(
-        "SELECT lesson_id FROM learning_lesson_reviews WHERE program_id=? AND state IN (?,?) ORDER BY opened_at,lesson_id",
-    )
-    .bind(program_id)
-    .bind(LessonReviewState::NeedsReview.as_str())
-    .bind(LessonReviewState::Verifying.as_str())
-    .fetch_all(pool)
-    .await
-    .map_err(db)
 }
 
 /// The lesson's preparation job while it runs, for event provenance.

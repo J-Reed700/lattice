@@ -11,8 +11,6 @@ use std::collections::HashMap;
 use lattice_core::domain::learning::claim_review::{
     span_of, Actor, ClaimLedgerEntry, ClaimState, Ledger,
 };
-use lattice_core::shared::error::Result;
-use sqlx::{Row, SqlitePool};
 
 use super::actions::{in_section_body, whole_sentence};
 use super::published_edit::{gone, placed};
@@ -21,28 +19,6 @@ use super::teaching_findings::{
     TeachingFindingDto, TeachingFindingSiteDto, TeachingFindingStateDto, TeachingResolutionDto,
 };
 use crate::content_verification::claim_quote;
-use crate::persistence::db;
-
-/// The published sections' text, by section index.
-pub(super) async fn section_bodies(
-    pool: &SqlitePool,
-    lesson_id: &str,
-) -> Result<HashMap<usize, String>> {
-    let rows = sqlx::query("SELECT ordinal, body FROM learning_blocks WHERE lesson_id=?")
-        .bind(lesson_id)
-        .fetch_all(pool)
-        .await
-        .map_err(db)?;
-    Ok(rows
-        .iter()
-        .filter_map(|row| {
-            Some((
-                usize::try_from(row.get::<i64, _>("ordinal")).ok()?,
-                row.get::<String, _>("body"),
-            ))
-        })
-        .collect())
-}
 
 /// Where the sentence of a waiting section note is in `body` when "Remove this
 /// sentence" can take it out: it occurs once and is a whole sentence.

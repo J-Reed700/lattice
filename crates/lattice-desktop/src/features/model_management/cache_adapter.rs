@@ -26,7 +26,7 @@
 
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -83,24 +83,7 @@ impl ModelCacheAdapter {
 
     /// Initialize cache schema.
     async fn initialize_schema(&self) -> Result<(), AppError> {
-        sqlx::query(
-            r#"
-            CREATE TABLE IF NOT EXISTS model_catalog_cache (
-                query TEXT PRIMARY KEY,
-                results_json TEXT NOT NULL,
-                cached_at INTEGER NOT NULL,
-                expires_at INTEGER NOT NULL
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_model_catalog_cache_expires
-            ON model_catalog_cache(expires_at);
-            "#,
-        )
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to initialize cache schema: {}", e)))?;
-
-        Ok(())
+        super::repository::initialize_cache_schema(&self.pool).await
     }
 
     /// Get current Unix timestamp.
@@ -130,21 +113,9 @@ impl ModelCacheAdapter {
         let cache_key = Self::normalize_query(query, limit);
         let now = Self::now();
 
-        let row = sqlx::query(
-            r#"
-            SELECT results_json, expires_at
-            FROM model_catalog_cache
-            WHERE query = ? AND expires_at > ?
-            "#,
-        )
-        .bind(&cache_key)
-        .bind(now)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Cache lookup failed: {}", e)))?;
+        let row = super::repository::cached_results_json(&self.pool, &cache_key, now).await?;
 
-        if let Some(row) = row {
-            let results_json: String = row.get("results_json");
+        if let Some(results_json) = row {
             let results: Vec<ExternalModelMetadata> =
                 serde_json::from_str(&results_json).map_err(|e| {
                     AppError::Serialization(format!("Failed to deserialize cache: {}", e))
@@ -172,23 +143,14 @@ impl ModelCacheAdapter {
         let results_json = serde_json::to_string(results)
             .map_err(|e| AppError::Serialization(format!("Failed to serialize results: {}", e)))?;
 
-        sqlx::query(
-            r#"
-            INSERT INTO model_catalog_cache (query, results_json, cached_at, expires_at)
-            VALUES (?, ?, ?, ?)
-            ON CONFLICT(query) DO UPDATE SET
-                results_json = excluded.results_json,
-                cached_at = excluded.cached_at,
-                expires_at = excluded.expires_at
-            "#,
+        super::repository::store_results_json(
+            &self.pool,
+            &cache_key,
+            &results_json,
+            now,
+            expires_at,
         )
-        .bind(&cache_key)
-        .bind(&results_json)
-        .bind(now)
-        .bind(expires_at)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to store cache: {}", e)))?;
+        .await?;
 
         tracing::debug!("Cached results for query: {}", cache_key);
         Ok(())
@@ -198,18 +160,7 @@ impl ModelCacheAdapter {
     pub async fn clear_expired(&self) -> Result<u64, AppError> {
         let now = Self::now();
 
-        let result = sqlx::query(
-            r#"
-            DELETE FROM model_catalog_cache
-            WHERE expires_at <= ?
-            "#,
-        )
-        .bind(now)
-        .execute(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to clear expired cache: {}", e)))?;
-
-        let deleted = result.rows_affected();
+        let deleted = super::repository::delete_expired(&self.pool, now).await?;
         if deleted > 0 {
             tracing::info!("Cleared {} expired cache entries", deleted);
         }
@@ -219,12 +170,7 @@ impl ModelCacheAdapter {
 
     /// Clear all cache entries.
     pub async fn clear_all(&self) -> Result<u64, AppError> {
-        let result = sqlx::query("DELETE FROM model_catalog_cache")
-            .execute(&self.pool)
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to clear cache: {}", e)))?;
-
-        let deleted = result.rows_affected();
+        let deleted = super::repository::delete_all(&self.pool).await?;
         tracing::info!("Cleared {} cache entries", deleted);
 
         Ok(deleted)
@@ -234,26 +180,7 @@ impl ModelCacheAdapter {
     pub async fn get_stats(&self) -> Result<ModelCatalogStats, AppError> {
         let now = Self::now();
 
-        let row = sqlx::query(
-            r#"
-            SELECT
-                COUNT(*) as total_entries,
-                SUM(CASE WHEN expires_at > ? THEN 1 ELSE 0 END) as valid_entries,
-                SUM(CASE WHEN expires_at <= ? THEN 1 ELSE 0 END) as expired_entries
-            FROM model_catalog_cache
-            "#,
-        )
-        .bind(now)
-        .bind(now)
-        .fetch_one(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to get cache stats: {}", e)))?;
-
-        Ok(ModelCatalogStats {
-            total_entries: row.get::<i64, _>("total_entries") as u64,
-            valid_entries: row.get::<i64, _>("valid_entries") as u64,
-            expired_entries: row.get::<i64, _>("expired_entries") as u64,
-        })
+        super::repository::cache_stats(&self.pool, now).await
     }
 }
 

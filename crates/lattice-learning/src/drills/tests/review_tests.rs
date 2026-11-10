@@ -347,7 +347,13 @@ async fn an_attempt_not_yet_graded_shows_the_learner_nothing_of_the_key() -> Res
     assert_nothing_of_the_key(&serde_json::to_value(&acted.dto).expect("a DTO is JSON"));
 
     let mut connection = pool.acquire().await.map_err(db)?;
-    attempts::record_ungraded_in(&mut connection, &attempt_id, Some(GRADER), "No answer.").await?;
+    attempts::repository::record_ungraded_in(
+        &mut connection,
+        &attempt_id,
+        Some(GRADER),
+        "No answer.",
+    )
+    .await?;
     drop(connection);
     let ungraded = review::result(&pool, &attempt_id).await?;
     assert_eq!(ungraded.status, AttemptStatus::CouldntGrade);

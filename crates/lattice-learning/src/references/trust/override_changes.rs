@@ -4,9 +4,9 @@
 //! (`claim_reviews::trust_overrides`).
 
 use super::dto_map;
+use super::repository::overrides::site_outcome_counts;
 use super::repository::SqliteSourceTrustStore;
 use crate::dto::{LearningSiteTrustOverrideDto, LearningTrackRecordDto};
-use crate::persistence::db;
 use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::domain::provenance::TrustOverride;
 use lattice_core::shared::error::{AppError, Result};
@@ -34,18 +34,7 @@ pub async fn list(store: &SqliteSourceTrustStore) -> Result<Vec<LearningSiteTrus
     }
     // A site can contain many snapshots from the same origin. Deduplicate
     // origins before joining outcomes so their history is counted only once.
-    let rows: Vec<(String, i64, i64)> = sqlx::query_as(
-        "SELECT p.site, SUM(o.decision_sufficient=o.decision_right),
-                        SUM(o.decision_sufficient<>o.decision_right)
-         FROM (SELECT DISTINCT site,origin_key FROM source_provenance
-               WHERE site IN (SELECT value FROM json_each(?))) p
-         JOIN source_trust_outcomes o ON o.origin_key=p.origin_key
-         GROUP BY p.site,p.origin_key",
-    )
-    .bind(serde_json::to_string(&sites)?)
-    .fetch_all(store.pool())
-    .await
-    .map_err(db)?;
+    let rows = site_outcome_counts(store.pool(), &sites).await?;
     let mut records: HashMap<String, (u32, u32)> = HashMap::new();
     for (site, held, failed) in rows {
         let count = |value| {

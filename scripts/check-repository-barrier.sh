@@ -2,15 +2,17 @@
 # Repository Barrier (SSOT) check.
 #
 # High-level feature code must not decide persisted state by inspecting the
-# filesystem, and orchestration code must not own SQL. Filesystem-backed
-# repositories and legitimate file-resource workflows may opt out at a
-# specific call site with:
+# filesystem. Filesystem-backed repositories and legitimate file-resource
+# workflows may opt out at a specific call site with:
 #
 #   // repository-barrier-allow: <why the file itself is the resource>
 #
 # The marker must be on the matching line or one of the two lines above it.
 # Test modules are excluded: assertions about their own fixtures are not
 # application state decisions.
+#
+# SQL outside data modules is checked by the architecture check
+# (scripts/rust-architecture-check, rule 2), which parses the code.
 
 set -euo pipefail
 
@@ -26,7 +28,6 @@ for src in "${SOURCES[@]}"; do
 done
 
 FS_PATTERN='((tokio::fs|std::fs)::(read_dir|metadata|try_exists)|\.(exists|is_file|is_dir|try_exists)\(\))'
-SQL_PATTERN='sqlx::(query|query_as|query_scalar|raw_sql|QueryBuilder)'
 violations=0
 checked_files=0
 
@@ -43,19 +44,6 @@ is_high_level_file() {
     [[ "$base" == watcher*.rs ]] ||
     [[ "$base" == service*.rs ]] ||
     [[ "$base" == repository*.rs ]]
-}
-
-owns_no_sql() {
-  local file="$1"
-  local base
-  base="$(basename "$file")"
-  [[ "$file" == */use_cases/* ]] ||
-    [[ "$file" == */commands/* ]] ||
-    [[ "$file" == */plugin/* ]] ||
-    [[ "$base" == commands*.rs ]] ||
-    [[ "$base" == plugin*.rs ]] ||
-    [[ "$base" == watcher*.rs ]] ||
-    [[ "$base" == service*.rs ]]
 }
 
 has_allow_marker() {
@@ -104,9 +92,6 @@ while IFS= read -r -d '' file; do
   esac
   checked_files=$((checked_files + 1))
   check_matches "$file" "filesystem state" "$FS_PATTERN"
-  if owns_no_sql "$file"; then
-    check_matches "$file" "raw SQL outside repository" "$SQL_PATTERN"
-  fi
 done < <(find "${SOURCES[@]}" -type f -name '*.rs' -print0)
 
 if ((violations > 0)); then

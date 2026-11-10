@@ -15,6 +15,7 @@ use crate::persistence::{db, now};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::drills::{lesson_rating, ratings, score, validate};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
 use sqlx::{Sqlite, SqlitePool, Transaction};
 use tokio_util::sync::CancellationToken;
@@ -121,8 +122,9 @@ impl<'a> AttemptGrading<'a> {
             fix: fix.as_deref(),
             model: self.llm.model_name(),
         };
-        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        let recorded = attempts::record_graded_in(&mut transaction, &attempt.id, &graded).await?;
+        let mut transaction = self.pool.begin_write().await.map_err(db)?;
+        let recorded =
+            attempts::repository::record_graded_in(&mut transaction, &attempt.id, &graded).await?;
         if recorded {
             schedules::record_in(
                 &mut transaction,
@@ -174,10 +176,14 @@ pub(crate) async fn give_up(
         return Ok(JobOutcome::Stopped);
     }
     tracing::warn!(attempt = attempt_id, %error, "A drill attempt could not be graded");
-    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-    let recorded =
-        attempts::record_ungraded_in(&mut transaction, attempt_id, model, &error.to_string())
-            .await?;
+    let mut transaction = pool.begin_write().await.map_err(db)?;
+    let recorded = attempts::repository::record_ungraded_in(
+        &mut transaction,
+        attempt_id,
+        model,
+        &error.to_string(),
+    )
+    .await?;
     finish(
         transaction,
         context,

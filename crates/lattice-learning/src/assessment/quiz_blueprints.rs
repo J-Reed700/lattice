@@ -10,12 +10,13 @@ use crate::assessment_engine::{
     LearningAssessmentPurpose, LearningBlueprintRequirement, LearningItemFormat,
 };
 use crate::dto::{LearningQuizScopeDto, LearningQuizScopeKind, LearningQuizSettingsDto};
-use crate::persistence::{db, decode, encode, now};
+use crate::persistence::{decode, encode, now};
 use lattice_core::shared::error::{AppError, Result};
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 use std::collections::{BTreeSet, HashSet};
 
 mod names;
+pub(crate) mod repository;
 use names::scope_kind_name;
 pub use names::{format_name, parse_format, purpose_name, validate_scope};
 
@@ -386,20 +387,9 @@ pub async fn settings_in(
     connection: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<LearningQuizSettingsDto> {
-    let row = sqlx::query("SELECT * FROM learning_quiz_settings WHERE program_id=?")
-        .bind(program_id)
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
-    Ok(match row {
-        Some(row) => LearningQuizSettingsDto {
-            quiz_pass: row.get("quiz_pass"),
-            test_pass: row.get("test_pass"),
-            exam_pass: row.get("exam_pass"),
-            written_answers: row.get::<i64, _>("written_answers") != 0,
-        },
-        None => default_settings(),
-    })
+    Ok(repository::quiz_settings_in(connection, program_id)
+        .await?
+        .unwrap_or_else(default_settings))
 }
 
 /// The lesson's outcome: the existing one, or a new one with `preferred_id`
@@ -410,40 +400,30 @@ pub async fn ensure_lesson_outcome_in(
     lesson_id: &str,
     preferred_id: Option<&str>,
 ) -> Result<String> {
-    if let Some(existing) = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM learning_outcome_definitions WHERE program_id=? AND lesson_id=? ORDER BY created_at,id LIMIT 1",
-    )
-    .bind(program_id)
-    .bind(lesson_id)
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?
+    if let Some(existing) = repository::lesson_outcome_in(connection, program_id, lesson_id).await?
     {
         return Ok(existing);
     }
-    let lesson = sqlx::query(
-        "SELECT title,objective,ordinal FROM learning_lessons WHERE id=? AND program_id=?",
-    )
-    .bind(lesson_id)
-    .bind(program_id)
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?
-    .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
+    let (title, objective, ordinal) =
+        repository::lesson_heading_in(connection, program_id, lesson_id)
+            .await?
+            .ok_or_else(|| AppError::NotFound("Lesson not found in this course".into()))?;
     let id = preferred_id
         .map(str::to_owned)
         .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
-    sqlx::query("INSERT INTO learning_outcome_definitions(id,program_id,module_id,lesson_id,title,description,ordinal,created_at) VALUES(?,?,NULL,?,?,?,?,?)")
-        .bind(&id)
-        .bind(program_id)
-        .bind(lesson_id)
-        .bind(lesson.get::<String, _>("title"))
-        .bind(lesson.get::<String, _>("objective"))
-        .bind(100 + lesson.get::<i64, _>("ordinal"))
-        .bind(now())
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
+    repository::insert_lesson_outcome_in(
+        connection,
+        &repository::NewLessonOutcome {
+            id: &id,
+            program_id,
+            lesson_id,
+            title: &title,
+            description: &objective,
+            ordinal: 100 + ordinal,
+            created_at: now(),
+        },
+    )
+    .await?;
     Ok(id)
 }
 
@@ -452,71 +432,35 @@ pub async fn course_facts_in(
     connection: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<CourseFacts> {
-    let program_title: String =
-        sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
-            .bind(program_id)
-            .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?
-            .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
-    let owned: HashSet<String> = sqlx::query_scalar::<_, String>(
-        "SELECT id FROM learning_source_versions WHERE program_id=?",
-    )
-    .bind(program_id)
-    .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?
-    .into_iter()
-    .collect();
+    let program_title = repository::program_title_in(connection, program_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
+    let owned: HashSet<String> = repository::source_version_ids_in(connection, program_id)
+        .await?
+        .into_iter()
+        .collect();
     let mut modules = Vec::new();
-    for row in
-        sqlx::query("SELECT id,title FROM learning_modules WHERE program_id=? ORDER BY ordinal")
-            .bind(program_id)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?
-    {
-        let id: String = row.get("id");
-        let outcome_ids = sqlx::query_scalar::<_, String>("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND module_id=? AND lesson_id IS NULL ORDER BY ordinal,id")
-            .bind(program_id)
-            .bind(&id)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?;
+    for (id, title) in repository::modules_in(connection, program_id).await? {
+        let outcome_ids = repository::module_outcome_ids_in(connection, program_id, &id).await?;
         modules.push(ModuleFacts {
             id,
-            title: row.get("title"),
+            title,
             outcome_ids,
         });
     }
     let mut lessons = Vec::new();
-    for row in sqlx::query("SELECT l.id,l.module_id,l.title,l.objective,l.preparation FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? AND l.curriculum_state NOT IN ('replaced','skipped') ORDER BY m.ordinal,l.ordinal")
-        .bind(program_id)
-        .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
-    {
-        let id: String = row.get("id");
-        let outcome_id = sqlx::query_scalar::<_, String>("SELECT id FROM learning_outcome_definitions WHERE program_id=? AND lesson_id=? ORDER BY created_at,id LIMIT 1")
-            .bind(program_id)
-            .bind(&id)
-            .fetch_optional(&mut *connection)
-            .await
-            .map_err(db)?;
+    for row in repository::lessons_in(connection, program_id).await? {
+        let id = row.id;
+        let outcome_id = repository::lesson_outcome_in(connection, program_id, &id).await?;
         let mut sources = BTreeSet::new();
-        for json in sqlx::query_scalar::<_, String>("SELECT source_ids_json FROM learning_blocks WHERE lesson_id=?")
-            .bind(&id)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?
-        {
+        for json in repository::block_source_ids_json_in(connection, &id).await? {
             for source in decode::<Vec<String>>(&json).unwrap_or_default() {
                 if owned.contains(&source) {
                     sources.insert(source);
                 }
             }
         }
-        let prepared = row.get::<String, _>("preparation") == "ready";
+        let prepared = row.preparation == "ready";
         let quiz_formats = if prepared {
             lesson_quiz_formats_in(connection, program_id, &id).await?
         } else {
@@ -524,9 +468,9 @@ pub async fn course_facts_in(
         };
         lessons.push(LessonFacts {
             id,
-            module_id: row.get("module_id"),
-            title: row.get("title"),
-            objective: row.get("objective"),
+            module_id: row.module_id,
+            title: row.title,
+            objective: row.objective,
             prepared,
             outcome_id,
             source_version_ids: sources.into_iter().collect(),
@@ -573,17 +517,14 @@ pub async fn latest_blueprint_in(
     program_id: &str,
     scope: &LearningQuizScopeDto,
 ) -> Result<Option<BlueprintRef>> {
-    let row = sqlx::query("SELECT id,revision FROM learning_assessment_blueprints WHERE program_id=? AND scope_kind=? AND scope_id IS ? AND status='accepted' ORDER BY revision DESC LIMIT 1")
-        .bind(program_id)
-        .bind(scope_kind_name(scope.kind))
-        .bind(&scope.id)
-        .fetch_optional(&mut *connection)
-        .await
-        .map_err(db)?;
-    Ok(row.map(|r| BlueprintRef {
-        id: r.get("id"),
-        revision: r.get("revision"),
-    }))
+    Ok(repository::latest_accepted_in(
+        connection,
+        program_id,
+        scope_kind_name(scope.kind),
+        &scope.id,
+    )
+    .await?
+    .map(|(id, revision)| BlueprintRef { id, revision }))
 }
 
 /// The scope's blueprint as stored, with a new revision written when the
@@ -614,33 +555,12 @@ pub async fn ensure_blueprint_with(
     };
     let latest = latest_blueprint_in(connection, program_id, scope).await?;
     if let Some(latest) = &latest {
-        let row = sqlx::query("SELECT title,passing_score,expected_minutes FROM learning_assessment_blueprints WHERE id=? AND revision=?")
-            .bind(&latest.id)
-            .bind(latest.revision)
-            .fetch_one(&mut *connection)
-            .await
-            .map_err(db)?;
-        let slots = sqlx::query("SELECT outcome_id,format,difficulty,difficulty_max,points FROM learning_assessment_blueprint_slots WHERE blueprint_id=? AND blueprint_revision=? ORDER BY ordinal")
-            .bind(&latest.id)
-            .bind(latest.revision)
-            .fetch_all(&mut *connection)
-            .await
-            .map_err(db)?
-            .into_iter()
-            .map(|r| {
-                (
-                    r.get::<String, _>("outcome_id"),
-                    r.get::<String, _>("format"),
-                    r.get::<i64, _>("difficulty"),
-                    r.get::<i64, _>("difficulty_max"),
-                    (r.get::<f64, _>("points") * 1000.0).round() as i64,
-                )
-            })
-            .collect::<Vec<_>>();
+        let row = repository::stored_blueprint_in(connection, &latest.id, latest.revision).await?;
+        let slots = repository::stored_slots_in(connection, &latest.id, latest.revision).await?;
         let wanted = slot_rows(&desired);
-        if row.get::<String, _>("title") == desired.title
-            && (row.get::<f64, _>("passing_score") - desired.passing_score).abs() < 1e-9
-            && row.get::<i64, _>("expected_minutes") == i64::from(desired.expected_minutes)
+        if row.title == desired.title
+            && (row.passing_score - desired.passing_score).abs() < 1e-9
+            && row.expected_minutes == i64::from(desired.expected_minutes)
             && slots == wanted
         {
             return Ok(Some((latest.clone(), desired)));
@@ -654,43 +574,47 @@ pub async fn ensure_blueprint_with(
         ),
         None => (uuid::Uuid::new_v4().to_string(), 1, None),
     };
-    sqlx::query("INSERT INTO learning_assessment_blueprints(id,program_id,revision,predecessor_revision,purpose,title,instructions,expected_minutes,allowed_aids_json,passing_score,rubric_json,feedback_timing,source_version_ids_json,status,change_reason,created_at,scope_kind,scope_id) VALUES(?,?,?,?,?,?,?,?,'[]',?,'[]','after_submission',?,'accepted',?,?,?,?)")
-        .bind(&id)
-        .bind(program_id)
-        .bind(revision)
-        .bind(predecessor)
-        .bind(purpose_name(desired.purpose))
-        .bind(&desired.title)
-        .bind(&desired.instructions)
-        .bind(i64::from(desired.expected_minutes))
-        .bind(desired.passing_score)
-        .bind(encode(&desired.source_version_ids)?)
-        .bind(if latest.is_some() {
-            "The course or its quiz settings changed what this quiz covers."
-        } else {
-            "Derived from the course."
-        })
-        .bind(now())
-        .bind(scope_kind_name(scope.kind))
-        .bind(&scope.id)
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
+    repository::insert_blueprint_in(
+        connection,
+        &repository::NewBlueprint {
+            id: &id,
+            program_id,
+            revision,
+            predecessor,
+            purpose: purpose_name(desired.purpose),
+            title: &desired.title,
+            instructions: &desired.instructions,
+            expected_minutes: i64::from(desired.expected_minutes),
+            passing_score: desired.passing_score,
+            source_version_ids_json: encode(&desired.source_version_ids)?,
+            change_reason: if latest.is_some() {
+                "The course or its quiz settings changed what this quiz covers."
+            } else {
+                "Derived from the course."
+            },
+            created_at: now(),
+            scope_kind: scope_kind_name(scope.kind),
+            scope_id: &scope.id,
+        },
+    )
+    .await?;
     for (ordinal, (outcome, format, difficulty, difficulty_max, points)) in
         slot_rows(&desired).into_iter().enumerate()
     {
-        sqlx::query("INSERT INTO learning_assessment_blueprint_slots(blueprint_id,blueprint_revision,ordinal,outcome_id,format,difficulty,difficulty_max,points) VALUES(?,?,?,?,?,?,?,?)")
-            .bind(&id)
-            .bind(revision)
-            .bind(ordinal as i64)
-            .bind(outcome)
-            .bind(format)
-            .bind(difficulty)
-            .bind(difficulty_max)
-            .bind(points as f64 / 1000.0)
-            .execute(&mut *connection)
-            .await
-            .map_err(db)?;
+        repository::insert_slot_in(
+            connection,
+            &repository::NewSlot {
+                blueprint_id: &id,
+                revision,
+                ordinal: ordinal as i64,
+                outcome_id: &outcome,
+                format: &format,
+                difficulty,
+                difficulty_max,
+                points: points as f64 / 1000.0,
+            },
+        )
+        .await?;
     }
     Ok(Some((BlueprintRef { id, revision }, desired)))
 }
@@ -721,17 +645,12 @@ pub async fn requirements_in(
     blueprint: &BlueprintRef,
 ) -> Result<Vec<LearningBlueprintRequirement>> {
     let mut requirements: Vec<LearningBlueprintRequirement> = Vec::new();
-    for row in sqlx::query("SELECT outcome_id,format,difficulty,difficulty_max FROM learning_assessment_blueprint_slots WHERE blueprint_id=? AND blueprint_revision=? ORDER BY ordinal")
-        .bind(&blueprint.id)
-        .bind(blueprint.revision)
-        .fetch_all(&mut *connection)
-        .await
-        .map_err(db)?
+    for (outcome, format, difficulty, difficulty_max) in
+        repository::slot_requirements_in(connection, &blueprint.id, blueprint.revision).await?
     {
-        let outcome: String = row.get("outcome_id");
-        let format = parse_format(row.get("format"))?;
-        let min = row.get::<i64, _>("difficulty").clamp(1, 5) as u8;
-        let max = row.get::<i64, _>("difficulty_max").clamp(1, 5) as u8;
+        let format = parse_format(&format)?;
+        let min = difficulty.clamp(1, 5) as u8;
+        let max = difficulty_max.clamp(1, 5) as u8;
         match requirements
             .iter_mut()
             .find(|r| r.outcome_id == outcome && r.format == format)
