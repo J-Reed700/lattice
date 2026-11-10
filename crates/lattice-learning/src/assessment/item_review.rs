@@ -209,7 +209,9 @@ impl Judge<'_> {
                 .filter(|(n, _)| *n < start || *n >= start + chunk.len())
                 .map(|(_, other)| other)
                 .collect();
-            prompt["otherItems"] = json!(outside);
+            if let Some(fields) = prompt.as_object_mut() {
+                fields.insert("otherItems".into(), json!(outside));
+            }
         }
         model_call::structured(
             ITEM_REVIEW_SYSTEM,
