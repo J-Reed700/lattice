@@ -25,7 +25,8 @@ pub(crate) use lesson::MAX_CITATIONS;
 pub use lesson::{lesson_schema, prepare_lesson, prepare_lesson_with_references};
 pub use lesson_rules::lesson_rule_notes;
 pub(crate) use lesson_rules::{
-    lesson_rules, prose_sentences, split_check, teaching_sentences, CHECK_REVEAL,
+    lesson_rules, lesson_rules_holding, prose_sentences, split_check, teaching_sentences, Counts,
+    CHECK_REVEAL,
 };
 pub(crate) use outline::{decode_outline, draft_outline, outline_schema};
 pub use outline::{generate_outline, generate_outline_with_progress};

@@ -543,7 +543,11 @@ pub async fn prepare_lesson_with_references<'a>(
     // The lesson's own rules do not stop it here: what the teaching review could
     // not repair, and any citation that does not match its source, waits for the
     // user while the lesson publishes.
-    let mut findings = crate::teaching::structural_findings(&lesson_schema(sources.len()), &raw)?;
+    let mut findings = crate::teaching::structural_findings(
+        &lesson_schema(sources.len()),
+        &raw,
+        crate::generation::Counts::Spent,
+    )?;
     let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;
     findings.extend(citations);

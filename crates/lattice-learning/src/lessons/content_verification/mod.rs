@@ -38,7 +38,7 @@ pub(crate) use claim_ledger::{
 mod class_checks;
 mod classify;
 pub(crate) use classify::{
-    figures, needs_citation, quoted_wording, Givens, CITED_KINDS, QUOTE_MARKS,
+    figures, needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS, QUOTE_MARKS,
 };
 mod coverage;
 #[cfg(any(test, feature = "test-support"))]

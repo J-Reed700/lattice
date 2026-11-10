@@ -274,7 +274,7 @@ fn findings(
         let label = if item.kind == "term" {
             ""
         } else {
-            "The quoted name is the course plan's label for it, not wording for the lesson: teach what it names in the lesson's own sentences, worked into what the part already says, without copying the label. "
+            "The quoted name is a short label for it, not wording for the lesson: teach what it names in the lesson's own sentences, worked into what the part already says, without copying the label. "
         };
         found.push(
             ReviewFinding::new(
@@ -479,3 +479,7 @@ pub(super) async fn check(
     };
     Ok(findings(&answer, &items, &parts, candidate, protected))
 }
+
+#[cfg(test)]
+#[path = "contract_identity_tests.rs"]
+mod identity_tests;
