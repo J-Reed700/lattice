@@ -211,7 +211,7 @@ async fn cloud(provider: LLMProvider, route: &str, reply: Value) -> (MockServer,
         model: "vision-model".into(),
         ..Default::default()
     };
-    let client = CloudLlm::new(&settings, "test-key".into())
+    let client = CloudLlm::new(&settings, "test-key".into(), Some(settings.max_tokens))
         .unwrap()
         .with_endpoint(format!("{}{route}", server.uri()))
         .with_vision(Some(VisionPreset::OpenAi.geometry()));

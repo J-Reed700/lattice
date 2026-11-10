@@ -50,13 +50,21 @@ impl CloudLlm {
         ))
     }
 
-    pub fn new(settings: &LLMSettingsDto, key: String) -> Result<Self> {
+    /// A client for `settings.model`, sending replies of at most
+    /// `output_ceiling` tokens. A model whose provider requires a ceiling is
+    /// not given one made up.
+    pub fn new(
+        settings: &LLMSettingsDto,
+        key: String,
+        output_ceiling: Option<u32>,
+    ) -> Result<Self> {
         if key.trim().is_empty() || settings.model.trim().is_empty() {
             return Err(AppError::InvalidConfig(
                 "Cloud model and API key are required".into(),
             ));
         }
         let protocol = protocol_for(settings.provider)?;
+        let model_ceiling = limits::ceiling_for(protocol, &settings.model, output_ceiling)?;
         let endpoint = format!("{}{}", protocol.api_base(), protocol.completion_path());
         // No client-wide timeout: a long answer is bounded by the request's time
         // budget, and a streamed one additionally by stall detection.
@@ -72,7 +80,7 @@ impl CloudLlm {
             endpoint,
             client,
             stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
-            model_ceiling: Some(settings.max_tokens),
+            model_ceiling,
             context_window: settings.context_window as usize,
             vision: None,
         })
@@ -81,17 +89,6 @@ impl CloudLlm {
     /// This client with the geometry its model was declared to see with.
     pub fn with_vision(mut self, vision: Option<VisionGeometry>) -> Self {
         self.vision = vision;
-        self
-    }
-
-    /// This client told the model's output ceiling, when it is known. When it
-    /// is not, OpenAI and Google are sent no ceiling unless the request sets
-    /// one; a protocol that requires one is sent the Settings ceiling the
-    /// client was built from.
-    pub fn with_output_ceiling(mut self, known: Option<u32>) -> Self {
-        if known.is_some() || !self.protocol.requires_ceiling() {
-            self.model_ceiling = known;
-        }
         self
     }
 

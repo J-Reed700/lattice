@@ -476,9 +476,10 @@ fn a_cloud_model_keeps_the_default_window_under_its_providers_ceiling() {
         max_tokens: 131_072,
         ..Default::default()
     };
-    let (connection, _) = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
+    let (connection, known) =
+        cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
     assert_eq!(connection.context_window, settings.context_window);
-    assert_eq!(connection.max_tokens, 128_000);
+    assert_eq!(known, Some(128_000));
 }
 
 #[test]
@@ -491,9 +492,10 @@ fn a_cloud_model_runs_at_what_was_chosen_for_it() {
             max_output_tokens: Some(4_096),
         },
     );
-    let (connection, _) = cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
+    let (connection, known) =
+        cloud_connection(&settings, &claude(), Tuning::Standard, &CLAUDE_REPORTS);
     assert_eq!(connection.context_window, 64_000);
-    assert_eq!(connection.max_tokens, 4_096);
+    assert_eq!(known, Some(4_096));
 }
 
 #[test]
@@ -507,7 +509,6 @@ fn a_model_nobody_reports_on_runs_at_the_settings_numbers() {
     let (connection, known) = cloud_connection(&settings, &claude(), Tuning::Standard, &unreported);
     assert_eq!(known, None);
     assert_eq!(connection.context_window, 90_000);
-    assert_eq!(connection.max_tokens, 8_192);
 }
 
 /// A role's ceiling is its own, and is not raised by the model's.
@@ -521,8 +522,8 @@ fn the_utility_role_keeps_its_own_output_ceiling() {
             max_output_tokens: Some(64_000),
         },
     );
-    let (connection, _) = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
-    assert_eq!(connection.max_tokens, 8_192);
+    let (_, known) = cloud_connection(&settings, &claude(), Tuning::Utility, &CLAUDE_REPORTS);
+    assert_eq!(known, Some(8_192));
 }
 
 /// The Messages API refuses a request without a ceiling, and Settings' default
@@ -720,6 +721,13 @@ mod output_ceiling_on_the_wire {
                 max_output_tokens: Some(max_output_tokens),
             },
         );
+        settings.model_windows.insert(
+            model(CloudProvider::Anthropic).to_string(),
+            ModelWindowDto {
+                context_window: None,
+                max_output_tokens: Some(max_output_tokens),
+            },
+        );
         settings
     }
 
@@ -874,7 +882,7 @@ mod output_ceiling_on_the_wire {
         let body = sent_body(
             CloudProvider::Anthropic,
             &small_window(),
-            &ModelWindowDto::default(),
+            &reports(64_000),
             ask(),
         )
         .await;
@@ -883,15 +891,15 @@ mod output_ceiling_on_the_wire {
     }
 
     #[tokio::test]
-    async fn an_anthropic_request_still_sends_its_ceiling() {
+    async fn an_anthropic_request_sends_the_ceiling_chosen_for_it_when_none_is_reported() {
         let body = sent_body(
             CloudProvider::Anthropic,
-            &LLMSettingsDto::default(),
+            &chosen(4_096),
             &ModelWindowDto::default(),
             ask(),
         )
         .await;
-        assert_eq!(body["max_tokens"], json!(128_000));
+        assert_eq!(body["max_tokens"], json!(4_096));
     }
 
     fn reports(max_output_tokens: u32) -> ModelWindowDto {

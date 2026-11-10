@@ -13,7 +13,8 @@ async fn client(server: &MockServer) -> CloudLlm {
         model: "test-model".into(),
         ..Default::default()
     };
-    let mut client = CloudLlm::new(&settings, "test-secret".into()).unwrap();
+    let mut client =
+        CloudLlm::new(&settings, "test-secret".into(), Some(settings.max_tokens)).unwrap();
     client.endpoint = format!("{}/responses", server.uri());
     client
 }
@@ -325,7 +326,8 @@ async fn anthropic_client(server: &MockServer) -> CloudLlm {
         model: "claude-test".into(),
         ..Default::default()
     };
-    let mut client = CloudLlm::new(&settings, "test-secret".into()).unwrap();
+    let mut client =
+        CloudLlm::new(&settings, "test-secret".into(), Some(settings.max_tokens)).unwrap();
     client.endpoint = format!("{}/messages", server.uri());
     client
 }

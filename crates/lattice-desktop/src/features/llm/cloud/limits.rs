@@ -15,7 +15,7 @@ use lattice_core::{
 };
 use reqwest::Url;
 
-use super::protocol::protocol_for_cloud;
+use super::protocol::{protocol_for_cloud, ProviderProtocol};
 
 /// A model with no report still runs, so a chat waits only this long for one.
 const REPORT_TIMEOUT: Duration = Duration::from_secs(8);
@@ -83,10 +83,46 @@ async fn report_from(
         .sign_management(client.get(url), key)
         .send()
         .await
-        .and_then(reqwest::Response::error_for_status)
         .map_err(|_| failed())?;
+    let status = response.status();
+    if !status.is_success() {
+        // Only a 429's body is read: it alone tells an account with nothing
+        // left from a busy one.
+        let body = if status == reqwest::StatusCode::TOO_MANY_REQUESTS {
+            response.text().await.unwrap_or_default()
+        } else {
+            String::new()
+        };
+        return Err(super::status_error(protocol, status, &body));
+    }
     let reply: serde_json::Value = response.json().await.map_err(|_| failed())?;
     (api.parse)(reply).ok_or_else(failed)
+}
+
+/// The reply ceiling a client of `model` is built with: a known one, or none
+/// where the provider's API takes a request without one.
+pub(crate) fn ceiling_to_send(
+    provider: CloudProvider,
+    model: &str,
+    known: Option<u32>,
+) -> Result<Option<u32>> {
+    ceiling_for(protocol_for_cloud(provider), model, known)
+}
+
+/// [`ceiling_to_send`] for a provider whose protocol is already resolved.
+pub(super) fn ceiling_for(
+    protocol: &dyn ProviderProtocol,
+    model: &str,
+    known: Option<u32>,
+) -> Result<Option<u32>> {
+    if known.is_some() || !protocol.requires_ceiling() {
+        return Ok(known);
+    }
+    Err(AppError::InvalidConfig(format!(
+        "{} needs a reply limit for {model} and reports none: set Max output for the model \
+         under Configure in Settings → Downloaded, or choose another model in Settings → AI",
+        protocol.shown_name()
+    )))
 }
 
 /// `model` is typed into Settings, so it is a path segment, never a path.
