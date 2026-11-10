@@ -1389,3 +1389,154 @@ async fn a_protected_repair_that_edits_one_section_holds_another_section_whose_e
     assert_eq!(model.prompts.lock().unwrap().len(), 5);
     Ok(())
 }
+
+const PROTECTED_SENTENCE: &str = "Body of First idea.";
+
+fn shaped_block(kind: &str, title: &str) -> Value {
+    let body = if kind == "check" {
+        format!(
+            "Case for {title}: what happens to the lid?\n\n{}\n\nAnswer for {title}: it bulges.",
+            crate::generation::CHECK_REVEAL
+        )
+    } else {
+        format!("Body of {title}.")
+    };
+    let rubric = if kind.ends_with("practice") {
+        json!([
+            {"title":"One","description":"Observable.","dimension":"recall"},
+            {"title":"Two","description":"Observable.","dimension":"application"}
+        ])
+    } else {
+        json!([])
+    };
+    json!({"kind":kind,"title":title,"body":body,"rubric":rubric,"sourceIndex":0,"quote":EXCERPT,"citations":[]})
+}
+
+fn shaped_question(kind: &str, prompt: &str) -> Value {
+    json!({"kind":kind,"prompt":prompt,"options":["One","Two","Three","Four"],"correctIndex":0,
+        "rationales":["","Two reverses the order.","Three mistakes the cause for the effect.","Four states it backwards."],
+        "explanation":"Because.","sourceIndex":0,"quote":EXCERPT,"citations":[]})
+}
+
+/// A lesson in the writer's full shape, whose questions are practice,
+/// practice, quiz, quiz, test, test.
+fn shaped_lesson() -> Value {
+    json!({"blocks":[
+        shaped_block("explanation","First idea"), shaped_block("worked_example","First example"),
+        shaped_block("contrast","Not to be confused with"), shaped_block("check","Your turn"),
+        shaped_block("explanation","Second idea"), shaped_block("worked_example","Second example"),
+        shaped_block("check","Your turn again"), shaped_block("guided_practice","Guided"),
+        shaped_block("independent_practice","On your own"), shaped_block("reflection","From memory"),
+        shaped_block("recap","Recap"),
+    ],"questions":[
+        shaped_question("practice","P1?"), shaped_question("practice","P2?"),
+        shaped_question("quiz","Q1?"), shaped_question("quiz","Q2?"),
+        shaped_question("test","T1?"), shaped_question("test","T2?"),
+    ]})
+}
+
+/// What a verification cut leaves: the first test question is gone.
+fn shaped_lesson_after_a_cut() -> Value {
+    let mut lesson = shaped_lesson();
+    lesson["questions"].as_array_mut().unwrap().pop();
+    lesson
+}
+
+fn shaped_answers(candidate: &Value) -> String {
+    let count = candidate["questions"].as_array().unwrap().len();
+    json!({"answers":(0..count).map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."})).collect::<Vec<_>>()}).to_string()
+}
+
+fn shaped_review(candidate: &Value) -> String {
+    let count = candidate["blocks"].as_array().unwrap().len();
+    let checks = (0..count)
+        .map(|index| json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"Reviewed; no teaching defect was found.","hasDefect":false}))
+        .collect();
+    json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(checks)}).to_string()
+}
+
+async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<String>> {
+    let model = model(vec![shaped_answers(candidate), shaped_review(candidate)]);
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let sentences = [crate::lessons::content_verification::Protected {
+        unit: 0,
+        field: "body".into(),
+        quote: PROTECTED_SENTENCE.into(),
+        released: false,
+    }];
+    let reviewed = review_material(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        &crate::generation::lesson_schema(1),
+        candidate.to_string(),
+        4000,
+        ReviewContext {
+            outline: None,
+            protected: if protected { &sentences } else { &[] },
+            lesson_references: Some(&references),
+            held: BTreeSet::new(),
+        },
+    )
+    .await?;
+    Ok(reviewed
+        .set_aside
+        .iter()
+        .map(|waiting| waiting.finding.key().id())
+        .collect())
+}
+
+#[tokio::test]
+async fn a_lesson_whose_cuts_spent_a_question_waits_for_no_count_after_a_protected_review(
+) -> Result<()> {
+    let candidate = shaped_lesson_after_a_cut();
+    assert_eq!(candidate["questions"].as_array().unwrap().len(), 5);
+    let waiting = waiting_after_review(&candidate, true).await?;
+    assert!(
+        !waiting.iter().any(|id| id == "structure:lesson"),
+        "{waiting:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_protected_review_still_holds_a_question_with_three_choices() -> Result<()> {
+    let mut candidate = shaped_lesson_after_a_cut();
+    candidate["questions"][0]["options"] = json!(["One", "Two", "Three"]);
+    let waiting = waiting_after_review(&candidate, true).await?;
+    assert!(
+        waiting.iter().any(|id| id == "structure:question-0"),
+        "{waiting:?}"
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_protected_review_still_holds_a_section_without_a_title() -> Result<()> {
+    let mut candidate = shaped_lesson_after_a_cut();
+    candidate["blocks"][1]["title"] = json!("");
+    let waiting = waiting_after_review(&candidate, true).await?;
+    assert!(
+        waiting.iter().any(|id| id == "structure:section-1"),
+        "{waiting:?}"
+    );
+    Ok(())
+}
+
+#[test]
+fn the_draft_review_still_reports_a_question_shortfall_and_a_section_shortfall() {
+    let schema = crate::generation::lesson_schema(1);
+    let at_lesson = |lesson: &Value| -> usize {
+        structural_findings(&schema, &lesson.to_string())
+            .unwrap()
+            .iter()
+            .filter(|finding| finding.key().id() == "structure:lesson")
+            .count()
+    };
+    assert_eq!(at_lesson(&shaped_lesson()), 0);
+    assert_eq!(at_lesson(&shaped_lesson_after_a_cut()), 2);
+    let mut fewer_sections = shaped_lesson();
+    fewer_sections["blocks"].as_array_mut().unwrap().remove(5);
+    assert_eq!(at_lesson(&fewer_sections), 1);
+}
