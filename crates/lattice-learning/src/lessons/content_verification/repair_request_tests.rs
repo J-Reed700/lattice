@@ -180,6 +180,11 @@ impl LLMPort for Corrections {
 /// The repair requests a lesson with two sentences its sources contradict is
 /// sent: one for both, and one for the sentence the first correction left.
 async fn requests_for_two_contradicted_sentences() -> Result<Vec<Value>> {
+    requests_after_the_writer_asked("{}").await
+}
+
+/// The same requests, the writer's request being `writer_request`.
+async fn requests_after_the_writer_asked(writer_request: &str) -> Result<Vec<Value>> {
     let model = Corrections::new();
     let body = format!("{}{BAD} {SECOND}", format!("{GOOD} ").repeat(12));
     let lesson = json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":body,"rubric":[]}],"questions":[]});
@@ -187,7 +192,7 @@ async fn requests_for_two_contradicted_sentences() -> Result<Vec<Value>> {
     // The second request ends the run.
     let _ = verify_and_repair(
         &model,
-        "{}",
+        writer_request,
         &json!({}),
         lesson.to_string(),
         &[source()],
@@ -273,6 +278,32 @@ async fn the_repair_history_does_not_carry_a_statement_that_waits_at_a_node_that
     };
     let history = request["repairHistory"].to_string();
     assert!(!history.contains(WAITING_SENTENCE), "{history}");
+    Ok(())
+}
+
+const DRAFT_QUESTIONS: &str =
+    "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.";
+
+#[tokio::test]
+async fn a_verification_repair_is_told_the_shape_the_lesson_is_kept_with() -> Result<()> {
+    let writer_request = json!({"lessonShape":[DRAFT_QUESTIONS]}).to_string();
+    let requests = requests_after_the_writer_asked(&writer_request).await?;
+
+    let lines = requests[0]["requirements"]["lessonShape"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !lines.contains(&json!(DRAFT_QUESTIONS)),
+        "the repair was told the draft's questions: {lines:?}"
+    );
+    let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
+    assert!(
+        words
+            .join("\n")
+            .contains("at least one question of each kind"),
+        "{words:?}"
+    );
     Ok(())
 }
 

@@ -2059,3 +2059,67 @@ async fn a_row_stored_by_place_holds_every_finding_of_its_kind_there() -> Result
     assert!(passes.repairable(&plan_at("aaaa000000000003", FindingSite::Section(1))));
     Ok(())
 }
+
+const DRAFT_QUESTIONS: &str =
+    "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.";
+
+#[tokio::test]
+async fn a_review_after_a_cut_and_its_repair_are_told_the_shape_the_lesson_is_kept_with(
+) -> Result<()> {
+    use crate::lessons::shape::{FixedSchema, Phase, ShapePolicy};
+    let model = model(vec![
+        review(Some(
+            "The example shows \"result\": \"4\" although the code returns the number 4.",
+        )),
+        actionable(),
+        retitle("Corrected example"),
+        review(None),
+    ]);
+    let policy = FixedSchema(json!({"type":"object"}));
+    let schema = policy.schema(Phase::Kept, 1);
+    let request = json!({
+        "sources":[{"sourceIndex":0,"excerpt":EXCERPT}],
+        "lessonShape":[DRAFT_QUESTIONS]
+    })
+    .to_string();
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let reviewed = review_material(
+        &model,
+        LESSON_REPAIR_SYSTEM,
+        &request,
+        ReviewSchema::Lesson(LessonShape::new(&schema, &policy)),
+        lesson(EXCERPT).to_string(),
+        4000,
+        &mut LessonSubject::new(&references, &[], Held::default()),
+    )
+    .await?;
+    assert!(reviewed.set_aside.is_empty());
+    {
+        let prompts = model.prompts.lock().unwrap();
+        assert!(
+            prompts
+                .iter()
+                .all(|prompt| !prompt.contains(DRAFT_QUESTIONS)),
+            "a model was told the draft's questions for a lesson held to the floor"
+        );
+        assert!(prompts
+            .iter()
+            .any(|prompt| prompt.contains("authoringContext")));
+    }
+    let requests = repair_requests(&model);
+    assert_eq!(requests.len(), 1);
+    let lines = requests[0]["originalRequirements"]["lessonShape"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!lines.is_empty(), "the repair was not told the shape");
+    let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
+    assert!(
+        words
+            .join("\n")
+            .contains("at least one question of each kind"),
+        "{words:?}"
+    );
+    Ok(())
+}
