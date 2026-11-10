@@ -61,7 +61,7 @@ fn a_teaching_sentence_in_two_sections_is_a_finding_at_the_later_one() {
     candidate["blocks"][4]["body"] = json!(format!("Closing.  {SHARED}"));
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].place().site, FindingSite::Section(4));
     assert_eq!(findings[0].kind, FindingKind::Teaching);
     assert_eq!(findings[0].passage.as_deref(), Some(SHARED));
 }
@@ -74,7 +74,7 @@ fn each_broken_rule_is_a_finding_at_its_place() {
     candidate["questions"][3]["prompt"] = json!("q1?");
     candidate["questions"][4]["options"] = json!(["Yes", "yes", "Maybe", "No way"]);
     let findings = lesson_rules(&candidate);
-    let sites: Vec<_> = findings.iter().map(|f| f.key().site).collect();
+    let sites: Vec<_> = findings.iter().map(|f| f.place().site).collect();
     assert_eq!(
         sites,
         [
@@ -109,7 +109,7 @@ fn a_check_holds_its_answer_back_under_one_reveal_line() {
         candidate["blocks"][3]["body"] = json!(body);
         let findings = lesson_rules(&candidate);
         assert_eq!(findings.len(), 1, "{body}");
-        assert_eq!(findings[0].key().site, FindingSite::Section(3));
+        assert_eq!(findings[0].place().site, FindingSite::Section(3));
         assert!(findings[0].note.contains(CHECK_REVEAL));
     }
 }
@@ -123,7 +123,7 @@ fn checks_follow_an_example_and_recall_comes_before_the_recap() {
     blocks.swap(1, 3);
     blocks.swap(9, 10);
     let findings = lesson_rules(&candidate);
-    let sites: Vec<_> = findings.iter().map(|f| f.key().site).collect();
+    let sites: Vec<_> = findings.iter().map(|f| f.place().site).collect();
     assert_eq!(sites, [FindingSite::Section(1), FindingSite::Section(9)]);
     assert!(findings[0].note.contains("no worked example has shown"));
     assert!(findings[1].note.contains("from memory"));
@@ -136,27 +136,28 @@ fn a_check_needs_its_own_ideas_example_since_the_last_check() {
     let mut candidate = lesson();
     candidate["blocks"].as_array_mut().unwrap().swap(5, 6);
     let findings = lesson_rules(&candidate);
-    let sites: Vec<_> = findings.iter().map(|f| f.key().site).collect();
+    let sites: Vec<_> = findings.iter().map(|f| f.place().site).collect();
     assert_eq!(sites, [FindingSite::Section(5)]);
 }
 
-const TIMEOUT: &str = "The default timeout is 30 seconds.";
+const WAITS: &str = "every request waits thirty seconds";
+const TIMEOUT: &str = "The guide says \"every request waits thirty seconds\" before it fails.";
 
 fn cited(candidate: &mut Value, quote: &str) {
     candidate["blocks"][0]["citations"] =
         json!([{"sentence":TIMEOUT,"sourceIndex":0,"quote":quote}]);
 }
 
-/// A specific stands only in a sentence the writer cited.
+/// Quoted wording stands only in a sentence the writer cited.
 #[test]
-fn a_specific_without_a_citation_is_a_finding_at_its_section() {
+fn quoted_wording_without_a_citation_is_a_finding_at_its_section() {
     let mut candidate = lesson();
     candidate["blocks"][0]["body"] = json!(format!("{TIMEOUT} It is set for each request."));
 
     let findings = lesson_rules(&candidate);
 
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Section(0));
+    assert_eq!(findings[0].place().site, FindingSite::Section(0));
     assert_eq!(findings[0].kind, FindingKind::Quotation);
     assert!(findings[0].note.contains("without citing it"));
     assert!(findings[0].note.contains(TIMEOUT));
@@ -164,12 +165,13 @@ fn a_specific_without_a_citation_is_a_finding_at_its_section() {
 
     cited(
         &mut candidate,
-        "A timeout of 30 seconds applies to each request.",
+        "The guide: every request waits thirty seconds before failing.",
     );
     assert!(lesson_rules(&candidate).is_empty());
 }
 
-const LONG_SENTENCE: &str = "The default timeout for every outgoing request in the client library is 30 seconds unless the caller sets another value.";
+const LONG_WAIT: &str = "thirty seconds of waiting each time";
+const LONG_SENTENCE: &str = "The default timeout for every outgoing request in the client library is \"thirty seconds of waiting each time\" unless the caller sets another value.";
 
 /// The user and the repair both read the whole sentence.
 #[test]
@@ -189,7 +191,7 @@ fn an_uncited_specific_is_summarised_with_its_whole_sentence() {
 }
 
 #[test]
-fn a_quote_that_lacks_the_figure_is_summarised_with_what_it_lacks_and_the_whole_sentence() {
+fn a_quote_that_lacks_the_wording_is_summarised_with_what_it_lacks_and_the_whole_sentence() {
     let mut candidate = lesson();
     candidate["blocks"][0]["body"] = json!(LONG_SENTENCE);
     candidate["blocks"][0]["citations"] = json!([{
@@ -201,7 +203,7 @@ fn a_quote_that_lacks_the_figure_is_summarised_with_what_it_lacks_and_the_whole_
     assert_eq!(findings.len(), 1);
     assert_eq!(
         findings[0].summary,
-        format!("The quotation cited for this sentence does not contain 30: \u{201c}{LONG_SENTENCE}\u{201d}")
+        format!("The quotation cited for this sentence does not contain {LONG_WAIT}: \u{201c}{LONG_SENTENCE}\u{201d}")
     );
     assert_eq!(
         findings[0].passage.as_deref(),
@@ -306,7 +308,7 @@ fn too_few_questions_of_a_kind_are_named_in_plain_words() {
 }
 
 #[test]
-fn a_quote_that_lacks_the_figure_does_not_cite_it() {
+fn a_quote_that_lacks_the_wording_does_not_cite_it() {
     let mut candidate = lesson();
     candidate["blocks"][0]["body"] = json!(TIMEOUT);
     cited(
@@ -317,11 +319,12 @@ fn a_quote_that_lacks_the_figure_does_not_cite_it() {
     let findings = lesson_rules(&candidate);
 
     assert_eq!(findings.len(), 1);
-    assert!(findings[0].note.contains("does not contain 30"));
+    assert!(findings[0]
+        .note
+        .contains(&format!("does not contain {WAITS}")));
 }
 
-/// A worked example's case, code and a list's markers are not specifics a
-/// source has to hold.
+/// A worked example's case, code and a list's markers need no citation.
 #[test]
 fn hypothetical_cases_code_and_list_markers_need_no_citation() {
     let mut candidate = lesson();
@@ -332,11 +335,10 @@ fn hypothetical_cases_code_and_list_markers_need_no_citation() {
     assert!(lesson_rules(&candidate).is_empty());
 }
 
-/// An answer explanation reasons from its question's givens: the figures
-/// its prompt and options state need no citation there, and a figure of
-/// its own still does.
+/// A figure is the classifier's question, never a citation finding: not the
+/// question's givens an answer restates, nor one of its own.
 #[test]
-fn an_answer_that_restates_its_questions_figures_needs_no_citation_for_them() {
+fn an_answer_s_figures_are_no_citation_finding() {
     let mut candidate = lesson();
     candidate["questions"][0]["prompt"] = json!(
         "A classifier outputs a confidence score of 0.75. Your threshold for automatic routing is 0.80. What should the system do?"
@@ -355,10 +357,10 @@ fn an_answer_that_restates_its_questions_figures_needs_no_citation_for_them() {
     candidate["questions"][0]["explanation"] = json!(
         "Since 0.75 is below the 0.80 threshold, the document goes to review, as 30% of documents do."
     );
-    assert_eq!(lesson_rules(&candidate).len(), 1);
+    assert!(lesson_rules(&candidate).is_empty());
 }
 
-const SOURCE_SAYS: &str = "A timeout of 30 seconds applies to each request.";
+const SOURCE_SAYS: &str = "The guide: every request waits thirty seconds before failing.";
 
 fn uncited_lesson() -> Value {
     let mut candidate = lesson();
@@ -371,10 +373,10 @@ fn patch(patch: Value) -> Value {
     crate::lessons::text_edits::apply(&uncited_lesson(), &patch.to_string()).unwrap()
 }
 
-/// An uncited figure the supplied excerpt states ends cited, its sentence
+/// Uncited wording the supplied excerpt holds ends cited, its sentence
 /// as it was.
 #[test]
-fn an_uncited_figure_a_source_contains_is_settled_by_citing_it() {
+fn uncited_wording_a_source_contains_is_settled_by_citing_it() {
     let before = uncited_lesson();
     assert_eq!(lesson_rules(&before).len(), 1);
 
@@ -389,9 +391,9 @@ fn an_uncited_figure_a_source_contains_is_settled_by_citing_it() {
     assert!(lesson_rules(&revised).is_empty());
 }
 
-/// One no excerpt states ends in the general form, with nothing cited.
+/// Wording no excerpt holds ends as the lesson's own sentence, with nothing cited.
 #[test]
-fn an_uncited_figure_no_source_contains_is_settled_by_the_general_form() {
+fn uncited_wording_no_source_contains_is_settled_by_removing_the_quotation_marks() {
     let revised = patch(json!({"edits":[
         {"path":"/blocks/0/body","before":TIMEOUT,"after":"The default timeout is set by the caller."}],
         "citations":[]}));
@@ -403,7 +405,7 @@ fn an_uncited_figure_no_source_contains_is_settled_by_the_general_form() {
 /// A citation whose quote lacks the figure settles nothing: the quote
 /// has to contain what the sentence states, whoever appended it.
 #[test]
-fn a_citation_appended_with_a_quote_that_lacks_the_figure_settles_nothing() {
+fn a_citation_appended_with_a_quote_that_lacks_the_wording_settles_nothing() {
     let revised = patch(json!({"edits":[],"citations":[
         {"path":"/blocks/0","sentence":TIMEOUT,"sourceIndex":0,
          "quote":"A timeout applies to each request, in seconds."}]}));
@@ -411,7 +413,9 @@ fn a_citation_appended_with_a_quote_that_lacks_the_figure_settles_nothing() {
     let findings = lesson_rules(&revised);
 
     assert_eq!(findings.len(), 1);
-    assert!(findings[0].note.contains("does not contain 30"));
+    assert!(findings[0]
+        .note
+        .contains(&format!("does not contain {WAITS}")));
     // A second citation whose quote holds the figure settles it.
     let mut again = revised;
     again["blocks"][0]["citations"]
@@ -438,7 +442,7 @@ fn a_question_needs_one_reason_per_choice() {
         candidate["questions"][1]["rationales"] = reasons.clone();
         let findings = lesson_rules(&candidate);
         assert_eq!(findings.len(), 1, "{reasons}");
-        assert_eq!(findings[0].key().site, FindingSite::Question(1));
+        assert_eq!(findings[0].place().site, FindingSite::Question(1));
         assert_eq!(findings[0].kind, FindingKind::Structure);
     }
     let mut missing = lesson();
@@ -455,7 +459,7 @@ fn a_wrong_choice_without_a_reason_is_a_finding_and_the_right_choices_empty_entr
     candidate["questions"][2]["rationales"] = json!(["", "", "Three fails.", "  "]);
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(2));
+    assert_eq!(findings[0].place().site, FindingSite::Question(2));
     assert_eq!(findings[0].kind, FindingKind::Structure);
     assert!(
         findings[0].summary.contains("choice 2"),
@@ -488,7 +492,7 @@ fn a_reason_is_held_to_the_citation_rule_like_the_explanation() {
     ]);
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(3));
+    assert_eq!(findings[0].place().site, FindingSite::Question(3));
     assert_eq!(findings[0].kind, FindingKind::Quotation);
 
     candidate["questions"][3]["citations"] = json!([
@@ -505,7 +509,7 @@ fn a_question_explanation_is_held_to_the_same_rule() {
     let findings = lesson_rules(&candidate);
 
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(2));
+    assert_eq!(findings[0].place().site, FindingSite::Question(2));
 }
 
 /// What a section is left to teach with: prose, not headings, markers or
@@ -538,7 +542,7 @@ fn a_question_prompt_longer_than_1200_characters_is_no_finding() {
     candidate["questions"][1]["prompt"] = json!("  ");
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(1));
+    assert_eq!(findings[0].place().site, FindingSite::Question(1));
 }
 
 #[test]
@@ -590,7 +594,7 @@ fn a_check_with_a_few_words_on_each_side_of_its_reveal_is_held_back() {
         candidate["blocks"][3]["body"] = json!(body);
         let findings = lesson_rules(&candidate);
         assert_eq!(findings.len(), 1, "{body}");
-        assert_eq!(findings[0].key().site, FindingSite::Section(3));
+        assert_eq!(findings[0].place().site, FindingSite::Section(3));
     }
 }
 
@@ -638,7 +642,7 @@ fn a_sentence_naming_a_source_by_number_is_a_finding_with_its_whole_sentence() {
 
     assert_eq!(findings.len(), 1);
     assert_eq!(findings[0].kind, FindingKind::Quotation);
-    assert_eq!(findings[0].key().site, FindingSite::Section(0));
+    assert_eq!(findings[0].place().site, FindingSite::Section(0));
     assert_eq!(
         findings[0].summary,
         format!("This sentence names a source by its number, which learners never see: \u{201c}{sentence}\u{201d}")
@@ -653,7 +657,7 @@ fn a_source_named_in_a_question_is_a_finding_at_the_question() {
     candidate["questions"][0]["prompt"] = json!("What does source 1 say the shell does?");
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().site, FindingSite::Question(0));
+    assert_eq!(findings[0].place().site, FindingSite::Question(0));
     assert!(findings[0]
         .summary
         .starts_with("This sentence names a source by its number"));
@@ -725,7 +729,7 @@ fn a_prose_sentence_after_a_label_is_still_compared() {
     candidate["blocks"][4]["body"] = json!(format!("**Case.** Fresh start here. {SHARED}"));
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].place().site, FindingSite::Section(4));
     assert_eq!(findings[0].passage.as_deref(), Some(SHARED));
 }
 
@@ -769,7 +773,7 @@ fn prose_after_a_list_has_ended_is_compared_again() {
     candidate["blocks"][4]["body"] = json!(format!("{STEP}\n\n{SAID}"));
     let findings = lesson_rules(&candidate);
     assert_eq!(findings.len(), 1, "{findings:?}");
-    assert_eq!(findings[0].key().site, FindingSite::Section(4));
+    assert_eq!(findings[0].place().site, FindingSite::Section(4));
     assert_eq!(findings[0].passage.as_deref(), Some(SAID));
 }
 
@@ -802,7 +806,7 @@ fn a_plural_possessive_is_no_quoted_wording_to_cite() {
 #[test]
 fn a_real_quotation_is_still_quoted_wording_to_cite() {
     for sentence in [
-        "The manual says \"rm deletes files permanently\".",
+        "The manual says \"rm deletes files permanently, with no undo\".",
         "Remember \"the shell keeps a working directory\" always.",
     ] {
         let mut candidate = lesson();
@@ -850,18 +854,6 @@ fn a_misconception_without_quotation_marks_is_no_finding() {
     assert!(lesson_rules(&candidate).is_empty());
 }
 
-#[test]
-fn an_uncited_figure_keeps_the_note_without_the_quotation_mark_direction() {
-    let mut candidate = lesson();
-    candidate["blocks"][0]["body"] = json!(format!("{TIMEOUT} It is set for each request."));
-
-    let findings = lesson_rules(&candidate);
-
-    assert_eq!(findings.len(), 1);
-    assert!(findings[0].note.contains("without citing it"));
-    assert!(!findings[0].note.contains("quotation marks"));
-}
-
 fn question_case(prompt: &str, options: [&str; 4], key: usize) -> Value {
     let rationales: Vec<&str> = (0..4)
         .map(|at| {
@@ -882,7 +874,7 @@ fn question_case(prompt: &str, options: [&str; 4], key: usize) -> Value {
 fn first_question_notes(candidate: &Value) -> Vec<String> {
     lesson_rules(candidate)
         .into_iter()
-        .filter(|finding| finding.key().site == FindingSite::Question(0))
+        .filter(|finding| finding.place().site == FindingSite::Question(0))
         .map(|finding| finding.note)
         .collect()
 }
@@ -959,4 +951,74 @@ fn path_like_choices_break_no_question_rule() {
         3,
     );
     assert!(first_question_notes(&candidate).is_empty());
+}
+
+#[test]
+fn a_span_between_double_quotes_under_the_quotation_floor_needs_no_citation() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] = json!("The tool shows \"Changes saved\" when it is done.");
+    assert!(lesson_rules(&candidate).is_empty());
+}
+
+#[test]
+fn the_prose_between_two_short_quotations_needs_no_citation() {
+    let mut candidate = lesson();
+    candidate["blocks"][10]["body"] = json!(
+        "Choose \"Open\" from the menu and then pick \"Save as copy\" from the list that opens."
+    );
+    assert!(lesson_rules(&candidate).is_empty());
+}
+
+const OWN_CASE: &str = "Dividing 12 by 48 gives 0.25.";
+
+fn citation_findings(candidate: &Value) -> Vec<ReviewFinding> {
+    lesson_rules(candidate)
+        .into_iter()
+        .filter(|finding| finding.kind == FindingKind::Quotation)
+        .collect()
+}
+
+#[test]
+fn a_figure_without_a_citation_is_not_a_citation_finding() {
+    let mut section = lesson();
+    section["blocks"][0]["body"] = json!(OWN_CASE);
+    let found = citation_findings(&section);
+    assert!(found.is_empty(), "section: {found:?}");
+
+    let mut explanation = lesson();
+    explanation["questions"][0]["explanation"] = json!(OWN_CASE);
+    let found = citation_findings(&explanation);
+    assert!(found.is_empty(), "answer explanation: {found:?}");
+
+    let mut reason = lesson();
+    reason["questions"][0]["rationales"][1] = json!("This divides 12 by 48 and gets 0.25.");
+    let found = citation_findings(&reason);
+    assert!(found.is_empty(), "choice reason: {found:?}");
+}
+
+#[test]
+fn a_cited_sentence_s_quote_need_not_hold_its_figures() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] = json!(OWN_CASE);
+    candidate["blocks"][0]["citations"] = json!([{
+        "sentence":OWN_CASE,"sourceIndex":0,
+        "quote":"A ratio compares a part with a whole."}]);
+    let found = citation_findings(&candidate);
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn quoted_wording_without_a_citation_is_still_a_finding_and_names_no_general_form() {
+    let mut candidate = lesson();
+    candidate["blocks"][0]["body"] =
+        json!("The page reads \"Total due on receipt of goods\" at the foot.");
+    let found = citation_findings(&candidate);
+    assert_eq!(found.len(), 1, "{found:?}");
+    let note = &found[0].note;
+    assert!(
+        note.starts_with("Section 1 (candidate blocks-0) states a specific in \""),
+        "{note}"
+    );
+    assert!(note.contains("\" without citing it."), "{note}");
+    assert!(!note.contains("general form"), "{note}");
 }

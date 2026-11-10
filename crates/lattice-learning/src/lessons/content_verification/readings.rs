@@ -7,7 +7,7 @@
 //! policy's graphs, and the pass reads the statements that wait for a reading
 //! through it.
 use super::class_checks::finding_of;
-use super::classify::{states_a_specific_in, Case};
+use super::classify::{markers, Case};
 use super::evidence_checks::{
     alone, applies, bridge_checker, compare, group, labelled_passages, pack, part_wise, AnswerSize,
     CheckedPart, Comparison, Labels, Pass, PendingClaim, NO_PASSAGES,
@@ -170,7 +170,7 @@ impl ReaderSet for Readers {
 /// hypothetical case's own figures are not (design §2.6).
 fn specifics(at: &ReadContext<'_>, unit: usize) -> impl Fn(&str) -> bool {
     let case = Case::of(at.candidate, unit);
-    move |part| states_a_specific_in(part, &case)
+    move |part| markers(part, &case).next().is_some()
 }
 
 /// Whether the part-wise judge holds a check of `claim` against `passages`

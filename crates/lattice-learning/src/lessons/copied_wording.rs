@@ -6,7 +6,7 @@ use super::same_text::fold;
 use super::text_edits::citable_texts;
 use crate::generation::{long_enough_quote, teaching_sentences};
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
 
@@ -182,9 +182,11 @@ pub(crate) fn findings(candidate: &Value, wording: &Wording) -> Vec<ReviewFindin
             for text in citable_texts(part, question) {
                 for sentence in copies(text, &quotes, wording) {
                     found.push(
-                        ReviewFinding::new(
+                        ReviewFinding::rule_about(
+                            Rule::CopiedWording,
                             FindingKind::Teaching,
-                            Some(site),
+                            site,
+                            &sentence,
                             format!("{label} copies the source's wording in \"{sentence}\" outside quotation marks. {SAY_IT_YOURSELF}"),
                         )
                         .with_summary(format!("{plain} copies a source's wording without quotation marks: \u{201c}{sentence}\u{201d}"))

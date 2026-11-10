@@ -5,7 +5,7 @@
 //! `readings` ask these judges along its graphs. Every judgment is saved as a
 //! receipt, so a resumed pass asks nothing twice.
 use super::claim_ledger::{sentences, Place, Rewrites};
-use super::classify::{classify, rule_class, Case, ToSort};
+use super::classify::{classify, ruling, Case, ToSort};
 use super::*;
 use crate::lessons::call_plan::{Planned, PlannedAt, SAMPLES};
 use lattice_core::application::services::claim_verification::{
@@ -54,18 +54,21 @@ pub(super) async fn sort(
                 class: Class::Sourced,
                 by: ClassifiedBy::Writer,
             }),
-            None => match rule_class(&claim.statement, field, case) {
-                Some(class) => Some(Classed {
-                    class,
-                    by: ClassifiedBy::Rule,
-                }),
-                None => saved_class(llm, &claim.statement)
-                    .await?
-                    .map(|class| Classed {
+            None => {
+                let ruling = ruling(&claim.statement, field, case);
+                match ruling.decided() {
+                    Some(class) => Some(Classed {
                         class,
-                        by: ClassifiedBy::Model,
+                        by: ClassifiedBy::Rule,
                     }),
-            },
+                    None => saved_class(llm, &claim.statement)
+                        .await?
+                        .map(|class| Classed {
+                            class: ruling.settle(class),
+                            by: ClassifiedBy::Model,
+                        }),
+                }
+            }
         });
     }
     {
@@ -361,7 +364,7 @@ pub(super) async fn knowledge_of(
 
 fn class_key(llm: &dyn LLMPort, statement: &str) -> String {
     format!(
-        "classes-v1:{}",
+        "classes-v2:{}",
         digest(&json!({"model": llm.model_name(), "statement": statement}).to_string())
     )
 }

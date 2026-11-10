@@ -1,12 +1,10 @@
 //! A lesson job's side of the teaching findings that wait for the user
 //! (`claim_reviews::teaching_findings`). Outside a job (tests, the live
 //! checks) nothing is stored.
-use std::collections::BTreeSet;
-
 use serde_json::Value;
 
 use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
-use crate::review_findings::{FindingKey, ReviewFinding, SetAside};
+use crate::review_findings::{Held, ReviewFinding, SetAside};
 use lattice_core::shared::error::Result;
 
 fn repository() -> Option<(TeachingFindingsRepository, String, String)> {
@@ -21,10 +19,10 @@ fn repository() -> Option<(TeachingFindingsRepository, String, String)> {
 
 /// The findings the user already has for this text: waiting, or kept as
 /// written, for parts that have not changed since.
-pub(crate) async fn held(candidate: &Value) -> Result<BTreeSet<FindingKey>> {
+pub(crate) async fn held(candidate: &Value) -> Result<Held> {
     match repository() {
         Some((store, lesson_id, _)) => store.held(&lesson_id, candidate).await,
-        None => Ok(BTreeSet::new()),
+        None => Ok(Held::default()),
     }
 }
 

@@ -4,27 +4,27 @@ use crate::lessons::course_generation_tests::ScriptedModel;
 use std::sync::Mutex;
 
 /// The replay's planted statements (evals/grounding/claim-classes/
-/// replay_classes.py) and what the rules alone make of each: a figure, a
-/// quotation or an attribution cue is caught, and a statement with no cue,
-/// a named product's behaviour among them, is the model's to sort.
-const PLANTED: [(&str, Option<Class>); 17] = [
-    ("The study found that OCR-based RAG improved retrieval recall by 23% over the vision-based pipeline on degraded documents.", Some(Class::Sourced)),
-    ("The survey reports that modular document parsing pipelines were introduced by Google in 2019.", Some(Class::Sourced)),
-    ("Microsoft's grounding feature returns bounding box coordinates in millimetres.", None),
-    ("Donut is an OCR-free model that goes from image to output with a single Transformer.", None),
-    ("The survey states that \"the deployment and inference costs associated with VLMs cannot be ignored.\"", Some(Class::Sourced)),
-    ("In a modular pipeline, an early OCR error cannot reach later stages because each later stage re-reads the page image.", None),
-    ("Because Tesseract 5.3 switched to an LSTM recogniser, a text-only parser can recover misread digits.", Some(Class::Sourced)),
-    ("In a modular pipeline, each stage hands an intermediate representation to the next, so an early error travels forward.", None),
-    ("OCR engines convert spoken audio into text.", None),
-    ("A confidence score tells a reviewer where on the page an extracted value came from.", None),
-    ("Two plus two equals five.", None),
-    ("A bounding box is measured in seconds.", None),
-    ("OCR reads the pixels of a page image into text.", None),
-    ("Two plus two equals four.", None),
-    ("Tesseract is an OCR engine that reads pixels into text.", None),
-    ("A page number identifies which page of a document a value appears on.", None),
-    ("Vision-language models were first proposed in 2017 and reached human parity on document parsing in 2021.", Some(Class::Sourced)),
+/// replay_classes.py) and what the rules alone make of each: a figure or a
+/// quotation is caught, and a statement with neither, a named product's
+/// behaviour among them, is the model's to sort.
+const PLANTED: [(&str, Ruling); 17] = [
+    ("The study found that OCR-based RAG improved retrieval recall by 23% over the vision-based pipeline on degraded documents.", Ruling::Checked),
+    ("The survey reports that modular document parsing pipelines were introduced by Google in 2019.", Ruling::Checked),
+    ("Microsoft's grounding feature returns bounding box coordinates in millimetres.", Ruling::Open),
+    ("Donut is an OCR-free model that goes from image to output with a single Transformer.", Ruling::Open),
+    ("The survey states that \"the deployment and inference costs associated with VLMs cannot be ignored.\"", Ruling::Decided(Class::Sourced)),
+    ("In a modular pipeline, an early OCR error cannot reach later stages because each later stage re-reads the page image.", Ruling::Open),
+    ("Because Tesseract 5.3 switched to an LSTM recogniser, a text-only parser can recover misread digits.", Ruling::Checked),
+    ("In a modular pipeline, each stage hands an intermediate representation to the next, so an early error travels forward.", Ruling::Open),
+    ("OCR engines convert spoken audio into text.", Ruling::Open),
+    ("A confidence score tells a reviewer where on the page an extracted value came from.", Ruling::Open),
+    ("Two plus two equals five.", Ruling::Open),
+    ("A bounding box is measured in seconds.", Ruling::Open),
+    ("OCR reads the pixels of a page image into text.", Ruling::Open),
+    ("Two plus two equals four.", Ruling::Open),
+    ("Tesseract is an OCR engine that reads pixels into text.", Ruling::Open),
+    ("A page number identifies which page of a document a value appears on.", Ruling::Open),
+    ("Vision-language models were first proposed in 2017 and reached human parity on document parsing in 2021.", Ruling::Checked),
 ];
 
 fn body(statement: &str) -> ToSort<'_> {
@@ -35,6 +35,11 @@ fn body(statement: &str) -> ToSort<'_> {
     }
 }
 
+/// What the rules decide alone.
+fn rule_class(statement: &str, field: &str, case: &Case) -> Option<Class> {
+    ruling(statement, field, case).decided()
+}
+
 fn scripted(replies: Vec<Value>) -> ScriptedModel {
     ScriptedModel {
         outputs: Mutex::new(replies.into_iter().map(|reply| reply.to_string()).collect()),
@@ -43,10 +48,10 @@ fn scripted(replies: Vec<Value>) -> ScriptedModel {
 }
 
 #[test]
-fn the_rules_catch_a_figure_a_quotation_or_a_cue_and_leave_the_rest_to_the_model() {
+fn the_rules_decide_a_quotation_floor_a_figure_and_leave_the_rest_to_the_model() {
     for (statement, expected) in PLANTED {
         assert_eq!(
-            rule_class(statement, "body", &Case::Stated(Givens::NONE)),
+            ruling(statement, "body", &Case::Stated(Givens::NONE)),
             expected,
             "{statement}"
         );
@@ -70,41 +75,6 @@ fn a_vendors_name_alone_is_no_cue_and_the_model_sorts_what_a_named_product_does(
 }
 
 #[test]
-fn a_remark_about_the_lessons_own_sources_or_options_is_internal_whatever_else_it_says() {
-    for statement in [
-        "The sources state that the choice depends on document quality.",
-        "  The sources do not support the claim that all 3 designs differ.",
-        "The other options each remove the evidence needed to check a table.",
-    ] {
-        assert_eq!(
-            rule_class(statement, "body", &Case::Stated(Givens::NONE)),
-            Some(Class::Internal),
-            "{statement}"
-        );
-    }
-}
-
-#[test]
-fn a_statement_about_the_sources_of_something_is_not_a_remark_about_the_lessons_sources() {
-    assert_eq!(
-        rule_class(
-            "The sources of latency in a network are queuing and propagation.",
-            "body",
-            &Case::Stated(Givens::NONE)
-        ),
-        None
-    );
-    assert_eq!(
-        rule_class(
-            "The sources offered no figure for the choice.",
-            "body",
-            &Case::Stated(Givens::NONE)
-        ),
-        Some(Class::Internal)
-    );
-}
-
-#[test]
 fn what_a_rubric_or_an_option_says_is_internal_even_with_a_figure_in_it() {
     assert_eq!(
         rule_class(
@@ -123,12 +93,12 @@ fn what_a_rubric_or_an_option_says_is_internal_even_with_a_figure_in_it() {
         Some(Class::Internal)
     );
     assert_eq!(
-        rule_class(
+        ruling(
             "Retries use exponential backoff up to 30 seconds.",
             "body",
             &Case::Stated(Givens::NONE)
         ),
-        Some(Class::Sourced)
+        Ruling::Checked
     );
 }
 
@@ -163,37 +133,33 @@ fn an_explanation_a_contrast_a_recap_and_an_answer_state_what_is_so_and_the_rest
         Case::Stated(Givens::of(&lesson["questions"][0])),
         "an answer states what is so from its question's givens"
     );
-    // In a case, a figure is the case's own; a quotation or an attribution
-    // still needs a source.
+    // In a case, a figure is the case's own; a quotation still needs a source.
     let figure = "Suppose 5 documents score below 0.70.";
     assert_eq!(rule_class(figure, "body", &hypothetical()), None);
-    assert_eq!(rule_class(figure, "body", &stated()), Some(Class::Sourced));
-    for attributed in [
-        "According to the survey, most teams retrain monthly.",
-        "The vendor reports that 5 documents in 100 need review.",
-        "The page reads \"Total due on receipt of goods\" at the foot.",
-    ] {
-        assert_eq!(
-            rule_class(attributed, "body", &hypothetical()),
-            Some(Class::Sourced),
-            "{attributed}"
-        );
-    }
+    assert_eq!(ruling(figure, "body", &stated()), Ruling::Checked);
+    assert_eq!(
+        rule_class(
+            "The page reads \"Total due on receipt of goods\" at the foot.",
+            "body",
+            &hypothetical()
+        ),
+        Some(Class::Sourced)
+    );
     // An answer restates its question's figures as givens; one of its own
     // still needs a source.
     let restated = "Since 0.75 is below 0.80, review it; lowering it to 0.70 would route it.";
-    assert_eq!(rule_class(restated, "explanation", &answer), None);
+    assert_eq!(ruling(restated, "explanation", &answer), Ruling::Open);
     assert_eq!(
-        rule_class(
+        ruling(
             "About 30% of documents need review.",
             "explanation",
             &answer
         ),
-        Some(Class::Sourced)
+        Ruling::Checked
     );
     assert_eq!(
-        rule_class("0.8 is below 0.80.", "explanation", &answer),
-        Some(Class::Sourced),
+        ruling("0.8 is below 0.80.", "explanation", &answer),
+        Ruling::Checked,
         "a figure is a given only as its question writes it"
     );
 }
@@ -237,14 +203,35 @@ fn the_answer_schema_names_every_id_once_and_only_the_four_classes() {
     );
 }
 
+#[test]
+fn only_a_checked_statement_called_internal_is_moved_and_only_to_reasoning() {
+    let classes = [
+        Class::Sourced,
+        Class::Reasoning,
+        Class::Common,
+        Class::Internal,
+    ];
+    for ruling in [Ruling::Open, Ruling::Checked] {
+        for class in classes {
+            let moved = ruling == Ruling::Checked && class == Class::Internal;
+            let expected = if moved { Class::Reasoning } else { class };
+            assert_eq!(ruling.settle(class), expected, "{ruling:?} {class:?}");
+        }
+    }
+}
+
 #[tokio::test]
 async fn statements_the_rules_decide_make_no_model_call() -> Result<()> {
     let model = scripted(vec![]);
     let sorted = classify(
         &model,
         &[
-            body("The study found a gain of 23%."),
-            body("The other options each fail."),
+            body("The page reads \"Total due on receipt of goods\" at the foot."),
+            ToSort {
+                statement: "Each option removes the evidence.",
+                field: "options/1",
+                case: Case::Stated(Givens::NONE),
+            },
         ],
     )
     .await?;
@@ -262,13 +249,14 @@ async fn statements_the_rules_decide_make_no_model_call() -> Result<()> {
 #[tokio::test]
 async fn the_model_sorts_only_what_the_rules_leave_twenty_to_a_call() -> Result<()> {
     let mut texts: Vec<String> = vec![
-        "The study found a gain of 23%.".into(),
+        "The page reads \"Total due on receipt of goods\" at the foot.".into(),
         "The sources state that cost matters.".into(),
     ];
     texts.extend(
         ('a'..='v').map(|letter| format!("A stage hands its output to the next stage {letter}.")),
     );
-    let to_sort: Vec<ToSort<'_>> = texts.iter().map(|text| body(text)).collect();
+    let mut to_sort: Vec<ToSort<'_>> = texts.iter().map(|text| body(text)).collect();
+    to_sort[1].field = "options/0";
     let first: Map<String, Value> = (2..=21)
         .map(|index| {
             let class = if index == 5 { "common" } else { "reasoning" };
@@ -295,7 +283,8 @@ async fn the_model_sorts_only_what_the_rules_leave_twenty_to_a_call() -> Result<
     assert!(
         prompts
             .iter()
-            .all(|prompt| !prompt.contains("The study found") && !prompt.contains("The sources")),
+            .all(|prompt| !prompt.contains("Total due on receipt")
+                && !prompt.contains("The sources")),
         "a statement the rules decided never reaches the model"
     );
     assert!(prompts[0].contains("stage a.") && !prompts[0].contains("stage u."));
@@ -359,11 +348,8 @@ fn a_label_word_before_a_number_is_no_figure() {
 
 #[test]
 fn a_source_label_alone_needs_no_citation() {
-    assert!(!needs_citation(
-        "Source 0 describes the usual pattern.",
-        &Givens::NONE
-    ));
-    assert!(needs_citation("The default port is 22.", &Givens::NONE));
+    assert!(!states_a_specific("Source 0 describes the usual pattern."));
+    assert!(states_a_specific("The default port is 22."));
 }
 
 #[test]
@@ -372,17 +358,7 @@ fn a_sentence_that_only_names_a_source_needs_no_citation() {
         "The documentation is available without leaving the program.",
         "According to the survey, most readers skim.",
     ] {
-        assert!(!needs_citation(sentence, &Givens::NONE), "{sentence}");
-    }
-}
-
-#[test]
-fn an_attribution_or_a_verb_of_saying_is_still_a_specific_to_check() {
-    for sentence in [
-        "According to the survey, most readers skim.",
-        "The documentation states that the option is off by default.",
-    ] {
-        assert!(states_a_specific(sentence), "{sentence}");
+        assert!(!states_a_specific(sentence), "{sentence}");
     }
 }
 
@@ -394,18 +370,18 @@ fn an_apostrophe_is_not_a_quotation_mark() {
         "Run pwd before ls so you see the shell\u{2019}s folder rather than the window\u{2019}s.",
         "Don\u{2019}t run rm until you\u{2019}ve checked the folder\u{2019}s contents with ls.",
     ] {
-        assert!(!needs_citation(sentence, &Givens::NONE), "{sentence}");
+        assert!(!states_a_specific(sentence), "{sentence}");
     }
 }
 
 #[test]
 fn a_real_quotation_still_needs_a_citation() {
     for sentence in [
-        "The manual says \"rm deletes files permanently\".",
+        "The manual says \"rm deletes files permanently, with no undo\".",
         "Remember \"the shell keeps a working directory\" always.",
         "Remember \u{201c}the shell keeps a working directory\u{201d} always.",
     ] {
-        assert!(needs_citation(sentence, &Givens::NONE), "{sentence}");
+        assert!(states_a_specific(sentence), "{sentence}");
     }
 }
 
@@ -420,7 +396,7 @@ const SINGLE_QUOTED: [&str; 4] = [
 fn a_single_quotation_mark_never_marks_quoted_wording() {
     for sentence in SINGLE_QUOTED {
         assert_eq!(quoted_wording(sentence).next(), None, "{sentence}");
-        assert!(!needs_citation(sentence, &Givens::NONE), "{sentence}");
+        assert!(!states_a_specific(sentence), "{sentence}");
     }
 }
 
@@ -460,5 +436,212 @@ fn a_statement_whose_only_cue_is_single_quoted_wording_is_left_to_the_model() {
             &stated
         ),
         Some(Class::Sourced)
+    );
+}
+
+fn in_a_section() -> Case {
+    Case::Stated(Givens::NONE)
+}
+
+#[test]
+fn a_sentence_that_names_the_documentation_without_a_mark_is_the_models_to_sort() {
+    assert_eq!(
+        rule_class(
+            "The documentation is available from the tool's own help screen.",
+            "body",
+            &in_a_section()
+        ),
+        None
+    );
+}
+
+#[test]
+fn an_imperative_to_state_something_is_the_models_to_sort() {
+    assert_eq!(
+        rule_class(
+            "State your assumptions before you begin.",
+            "body",
+            &in_a_section()
+        ),
+        None
+    );
+}
+
+#[test]
+fn a_file_that_is_not_found_is_the_models_to_sort() {
+    assert_eq!(
+        rule_class(
+            "If the file is not found, the tool prints nothing.",
+            "body",
+            &in_a_section()
+        ),
+        None
+    );
+}
+
+#[test]
+fn a_remark_that_opens_the_sources_is_the_models_to_sort() {
+    for statement in [
+        "The sources do not cover this case.",
+        "  The sources state that the choice depends on document quality.",
+        "The other options each remove the evidence needed to check a table.",
+    ] {
+        assert_eq!(
+            rule_class(statement, "body", &in_a_section()),
+            None,
+            "{statement}"
+        );
+    }
+}
+
+#[test]
+fn a_span_between_double_quotes_under_the_quotation_floor_is_no_quotation() {
+    for statement in [
+        "The tool shows \"Changes saved\" when it is done.",
+        "The manual says \"rm deletes files permanently\".",
+    ] {
+        assert_eq!(
+            rule_class(statement, "body", &in_a_section()),
+            None,
+            "{statement}"
+        );
+        assert_eq!(
+            rule_class(statement, "body", &Case::Hypothetical),
+            None,
+            "{statement}"
+        );
+    }
+}
+
+#[test]
+fn a_figure_beyond_the_givens_is_a_mark_and_a_given_is_not() {
+    let givens = Givens::of(&json!({"prompt": "A score of 0.75 meets a threshold of 0.80."}));
+    let case = Case::Stated(givens);
+    assert_eq!(
+        ruling("About 30 documents need review.", "explanation", &case),
+        Ruling::Checked
+    );
+    assert_eq!(
+        ruling("Since 0.75 is below 0.80, review it.", "explanation", &case),
+        Ruling::Open
+    );
+}
+
+#[test]
+fn in_a_hypothetical_case_a_figure_alone_is_no_mark_and_a_quotation_at_the_floor_is() {
+    assert_eq!(
+        rule_class(
+            "Suppose 5 documents score below 0.70.",
+            "body",
+            &Case::Hypothetical
+        ),
+        None
+    );
+    assert_eq!(
+        rule_class(
+            "The page reads \"alpha beta gamma delta eps\" at the top.",
+            "body",
+            &Case::Hypothetical
+        ),
+        Some(Class::Sourced)
+    );
+}
+
+#[test]
+fn the_prose_between_two_short_quotations_is_no_quotation() {
+    for row in [
+        "Choose \"Open\" from the menu and then pick \"Save as copy\" from the list that opens.",
+        "Choose \u{201c}Open\u{201d} from the menu and then pick \u{201c}Save as copy\u{201d} from the list that opens.",
+    ] {
+        assert_eq!(quoted_wording(row).next(), None, "{row}");
+        assert_eq!(rule_class(row, "body", &in_a_section()), None, "{row}");
+    }
+}
+
+#[test]
+fn a_mark_after_a_figure_closes_nothing() {
+    const S2: &str = "The screen is 27\" across, so the whole menu fits and shows \"Open\" first.";
+    assert_eq!(quoted_wording(S2).next(), None);
+    assert_eq!(rule_class(S2, "body", &Case::Hypothetical), None);
+}
+
+#[test]
+fn a_quotation_after_a_short_one_is_found_whole() {
+    const S3: &str =
+        "Choose \"Open\", then read \"the page that reads text from images\" at the top.";
+    assert_eq!(
+        quoted_wording(S3).collect::<Vec<_>>(),
+        ["the page that reads text from images"]
+    );
+}
+
+#[test]
+fn a_mark_at_the_start_of_the_text_or_after_an_opening_bracket_opens() {
+    assert_eq!(
+        quoted_wording("\"The shell keeps a working directory,\" the guide begins.")
+            .collect::<Vec<_>>(),
+        ["The shell keeps a working directory,"]
+    );
+    assert_eq!(
+        quoted_wording("(see \"the page that reads text from images\")").collect::<Vec<_>>(),
+        ["the page that reads text from images"]
+    );
+}
+
+const OWN_FIGURES_SENTENCE: &str = "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.";
+
+#[tokio::test]
+async fn a_figure_in_a_part_that_states_what_is_so_is_the_model_s_to_sort() -> Result<()> {
+    let model = scripted(vec![json!({"s0": "reasoning"})]);
+    let sorted = classify(&model, &[body("Dividing 12 by 48 gives 0.25.")]).await?;
+    assert_eq!(sorted, vec![(Class::Reasoning, ClassifiedBy::Model)]);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_figure_statement_the_model_calls_internal_is_read_as_reasoning() -> Result<()> {
+    let model = scripted(vec![json!({"s0": "internal"})]);
+    let sorted = classify(
+        &model,
+        &[body("The sample batch holds 12 of the 48 units.")],
+    )
+    .await?;
+    assert_eq!(sorted, vec![(Class::Reasoning, ClassifiedBy::Model)]);
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_statement_without_a_figure_the_model_calls_internal_stays_internal() -> Result<()> {
+    let model = scripted(vec![json!({"s0": "internal"})]);
+    let sorted = classify(&model, &[body("The sample batch is set by the exercise.")]).await?;
+    assert_eq!(sorted, vec![(Class::Internal, ClassifiedBy::Model)]);
+    assert_eq!(model.prompts.lock().unwrap().len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn quoted_wording_is_still_sourced_by_the_rule() -> Result<()> {
+    let model = scripted(vec![]);
+    let sorted = classify(
+        &model,
+        &[body(
+            "The page reads \"Total due on receipt of goods\" at the foot.",
+        )],
+    )
+    .await?;
+    assert_eq!(sorted, vec![(Class::Sourced, ClassifiedBy::Rule)]);
+    assert!(model.prompts.lock().unwrap().is_empty());
+    Ok(())
+}
+
+#[test]
+fn the_classifier_is_told_what_the_lesson_s_own_figures_are() {
+    assert!(SYSTEM.contains(OWN_FIGURES_SENTENCE), "{SYSTEM}");
+    assert!(
+        SYSTEM.contains(
+            "They are not specifics, and no source states them: a statement that calculates with them is reasoning, and one that only sets them is internal."
+        ),
+        "{SYSTEM}"
     );
 }

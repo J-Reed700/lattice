@@ -3,12 +3,15 @@
 use std::collections::{BTreeSet, HashSet};
 
 use lattice_core::shared::error::{AppError, Result};
+use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqliteConnection, SqlitePool};
 
 use crate::persistence::db;
 
 /// A finding's columns that tell whether it still holds.
 pub(in crate::lessons::claim_reviews) struct HeldRow {
+    pub finding_key: String,
+    pub identity: String,
     pub kind: String,
     pub site: String,
     pub unit_index: Option<i64>,
@@ -50,26 +53,44 @@ pub(in crate::lessons::claim_reviews) struct FindingWrite<'a> {
     pub found_at: i64,
 }
 
+fn held_row(row: &SqliteRow) -> HeldRow {
+    HeldRow {
+        finding_key: row.get("finding_key"),
+        identity: row.get("identity"),
+        kind: row.get("kind"),
+        site: row.get("site"),
+        unit_index: row.get("unit_index"),
+        unit_sha256: row.get("unit_sha256"),
+    }
+}
+
 pub(in crate::lessons::claim_reviews) async fn held_rows(
     pool: &SqlitePool,
     lesson_id: &str,
 ) -> Result<Vec<HeldRow>> {
     let rows = sqlx::query(
-        "SELECT kind, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=?",
+        "SELECT finding_key, identity, kind, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=?",
     )
     .bind(lesson_id)
     .fetch_all(pool)
     .await
     .map_err(db)?;
-    Ok(rows
-        .iter()
-        .map(|row| HeldRow {
-            kind: row.get("kind"),
-            site: row.get("site"),
-            unit_index: row.get("unit_index"),
-            unit_sha256: row.get("unit_sha256"),
-        })
-        .collect())
+    Ok(rows.iter().map(held_row).collect())
+}
+
+/// The lesson's rows recorded before finding ids, read on `connection`.
+pub(in crate::lessons::claim_reviews) async fn place_rows(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+) -> Result<Vec<HeldRow>> {
+    let rows = sqlx::query(
+        "SELECT finding_key, identity, kind, site, unit_index, unit_sha256 FROM learning_lesson_teaching_findings WHERE lesson_id=? AND identity='place'",
+    )
+    .bind(lesson_id)
+    .fetch_all(&mut *connection)
+    .await
+    .map_err(db)?;
+    Ok(rows.iter().map(held_row).collect())
 }
 
 /// Deletes the lesson's findings whose keys are not in `keys_json`.
@@ -89,6 +110,23 @@ pub(in crate::lessons::claim_reviews) async fn delete_not_raised(
     Ok(())
 }
 
+/// Deletes the lesson's findings whose keys are in `keys_json`.
+pub(in crate::lessons::claim_reviews) async fn delete_keys(
+    connection: &mut SqliteConnection,
+    lesson_id: &str,
+    keys_json: &str,
+) -> Result<()> {
+    sqlx::query(
+        "DELETE FROM learning_lesson_teaching_findings WHERE lesson_id=? AND finding_key IN (SELECT value FROM json_each(?))",
+    )
+    .bind(lesson_id)
+    .bind(keys_json)
+    .execute(&mut *connection)
+    .await
+    .map_err(db)?;
+    Ok(())
+}
+
 pub(in crate::lessons::claim_reviews) async fn upsert(
     connection: &mut SqliteConnection,
     lesson_id: &str,
@@ -96,8 +134,8 @@ pub(in crate::lessons::claim_reviews) async fn upsert(
 ) -> Result<()> {
     sqlx::query(
         "INSERT INTO learning_lesson_teaching_findings \
-         (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, summary, passage, sentence, repairs, state, job_id, found_at, kept_at) \
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, NULL) \
+         (lesson_id, finding_key, kind, site, unit_index, unit_title, unit_sha256, note, summary, passage, sentence, repairs, state, job_id, found_at, kept_at, identity) \
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'waiting', ?, ?, NULL, 'finding') \
          ON CONFLICT(lesson_id, finding_key) DO UPDATE SET \
          unit_title=excluded.unit_title, note=excluded.note, summary=excluded.summary, passage=excluded.passage, \
          sentence=excluded.sentence, \
@@ -128,7 +166,7 @@ pub(in crate::lessons::claim_reviews) async fn upsert(
     Ok(())
 }
 
-/// The lesson's findings: by place, then kind.
+/// The lesson's findings: by place, then kind, then in the order found, then by key.
 pub(in crate::lessons::claim_reviews) async fn stored_findings(
     pool: &SqlitePool,
     lesson_id: &str,
@@ -137,7 +175,7 @@ pub(in crate::lessons::claim_reviews) async fn stored_findings(
         "SELECT finding_key, kind, site, unit_index, unit_title, note, summary, passage, sentence, repairs, state, resolution, resolved_at, \
          part_changed_at IS NOT NULL AND part_changed_at >= found_at AS part_changed \
          FROM learning_lesson_teaching_findings WHERE lesson_id=? \
-         ORDER BY CASE site WHEN 'lesson' THEN 0 WHEN 'section' THEN 1 ELSE 2 END, unit_index, kind",
+         ORDER BY CASE site WHEN 'lesson' THEN 0 WHEN 'section' THEN 1 ELSE 2 END, unit_index, kind, found_at, finding_key",
     )
     .bind(lesson_id)
     .fetch_all(pool)

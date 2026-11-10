@@ -81,6 +81,7 @@ fn part_kind(kind: PartKind) -> LearningClaimPartKindDto {
     match kind {
         PartKind::Stated => LearningClaimPartKindDto::Stated,
         PartKind::Common => LearningClaimPartKindDto::Common,
+        PartKind::Own => LearningClaimPartKindDto::Own,
         PartKind::SpecificMissing => LearningClaimPartKindDto::SpecificMissing,
         PartKind::Contradicted => LearningClaimPartKindDto::Contradicted,
     }

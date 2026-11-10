@@ -22,7 +22,7 @@ fn check_lesson() -> Value {
 }
 
 fn finding(site: FindingSite, passage: &str) -> ReviewFinding {
-    ReviewFinding::new(FindingKind::Teaching, Some(site), "the key is wrong").with_passage(passage)
+    ReviewFinding::reviewer(Some(site), "the key is wrong").with_passage(passage)
 }
 
 fn kept(
@@ -31,10 +31,11 @@ fn kept(
     finding: ReviewFinding,
     protected: &[Protected],
 ) -> Value {
-    let (text, _) =
-        protected::confine_review(previous, &repaired.to_string(), &[finding], protected).unwrap();
-    assert!(text.is_some(), "the confined repair kept nothing");
-    serde_json::from_str(&text.unwrap()).unwrap()
+    let part = finding.site.and_then(FindingSite::pointer).unwrap();
+    let touched = std::collections::BTreeMap::from([(part, vec![&finding])]);
+    let out = protected::confine_review(previous, repaired, &touched, protected).unwrap();
+    assert_ne!(&out, previous, "the confined repair kept nothing");
+    out
 }
 
 fn whole_question_repair(previous: &Value) -> Value {
@@ -93,14 +94,10 @@ fn a_question_repair_that_rewrites_a_protected_sentence_keeps_it_as_it_was() {
         quote: PROTECTED.into(),
         released: false,
     }];
-    let result = protected::confine_review(
-        &previous,
-        &repaired.to_string(),
-        &[finding(FindingSite::Question(0), PROMPT)],
-        &protected,
-    );
-    if let Ok((Some(text), _)) = result {
-        let out: Value = serde_json::from_str(&text).unwrap();
+    let named = finding(FindingSite::Question(0), PROMPT);
+    let touched = std::collections::BTreeMap::from([("/questions/0".to_owned(), vec![&named])]);
+    let result = protected::confine_review(&previous, &repaired, &touched, &protected);
+    if let Ok(out) = result {
         assert!(out["questions"][0]["explanation"]
             .as_str()
             .unwrap()
@@ -218,9 +215,10 @@ fn cited_lesson() -> Value {
 }
 
 fn uncited(site: FindingSite) -> ReviewFinding {
-    ReviewFinding::new(
+    ReviewFinding::rule(
+        Rule::Uncited,
         FindingKind::Quotation,
-        Some(site),
+        site,
         "states a detail without citing it",
     )
 }
