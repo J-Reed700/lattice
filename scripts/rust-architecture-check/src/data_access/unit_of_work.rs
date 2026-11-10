@@ -16,8 +16,9 @@ use syn::{
     Expr, ImplItem, Item, TraitItem,
 };
 
-/// A function with a body: its name, the `&mut WriteTx` parameters, and the body.
-type Function<'ast> = (String, Vec<String>, &'ast syn::Block);
+/// A function with a body: its name, its `&mut WriteTx` parameters, its `WriteTx`
+/// parameters, and the body.
+type Function<'ast> = (String, Vec<String>, Vec<String>, &'ast syn::Block);
 
 #[derive(Default)]
 struct Functions<'ast> {
@@ -26,13 +27,16 @@ struct Functions<'ast> {
 
 impl<'ast> Functions<'ast> {
     fn add(&mut self, signature: &syn::Signature, block: &'ast syn::Block) {
-        let writes = unit_params(signature)
-            .into_iter()
-            .filter(|(_, kind)| *kind == Kind::Write)
-            .map(|(name, _)| name)
-            .collect();
+        let (mut held, mut owned) = (Vec::new(), Vec::new());
+        for (name, kind, is_owned) in unit_params(signature) {
+            match (kind, is_owned) {
+                (Kind::Write, true) => owned.push(name),
+                (Kind::Write, false) => held.push(name),
+                (Kind::Read, _) => {}
+            }
+        }
         self.found
-            .push((signature.ident.to_string(), writes, block));
+            .push((signature.ident.to_string(), held, owned, block));
     }
 }
 
@@ -112,7 +116,8 @@ struct Under<'a> {
     name: &'a str,
     /// Parameters typed `&mut WriteTx`: open for the whole body.
     held: Vec<String>,
-    /// Bindings of `begin_write()` results not yet committed or rolled back.
+    /// `WriteTx` parameters and bindings of `begin_write()` results, until committed,
+    /// rolled back or moved into a call.
     open: Vec<String>,
     found: Vec<Violation>,
 }
@@ -139,6 +144,19 @@ impl Under<'_> {
             Expr::Unary(unary) => self.passes(&unary.expr),
             Expr::Path(_) | Expr::Macro(_) => self.mentions(expr),
             _ => false,
+        }
+    }
+
+    /// An open unit passed by value as a bare name is owned by the callee from then on.
+    fn moved<'e>(&mut self, args: impl Iterator<Item = &'e Expr>) {
+        for arg in args {
+            if let Expr::Path(path) = arg {
+                if path.qself.is_none() {
+                    if let Some(name) = path.path.get_ident() {
+                        self.open.retain(|open| name != open);
+                    }
+                }
+            }
         }
     }
 
@@ -197,8 +215,13 @@ impl<'ast> Visit<'ast> for Under<'_> {
         }
         visit::visit_expr_await(self, expr);
     }
+    fn visit_expr_call(&mut self, call: &'ast syn::ExprCall) {
+        visit::visit_expr_call(self, call);
+        self.moved(call.args.iter());
+    }
     fn visit_expr_method_call(&mut self, call: &'ast syn::ExprMethodCall) {
         visit::visit_expr_method_call(self, call);
+        self.moved(call.args.iter());
         if call.method == "commit" || call.method == "rollback" {
             let receiver = call.receiver.to_token_stream().to_string();
             let words: Vec<&str> = receiver
@@ -213,7 +236,7 @@ pub fn violations(path: &str, ast: &syn::File, exceptions: &[Exception]) -> Vec<
     let mut functions = Functions::default();
     functions.visit_file(ast);
     let mut found = Vec::new();
-    for (name, held, block) in functions.found {
+    for (name, held, owned, block) in functions.found {
         if exceptions.iter().any(|(file, function, exempt, _)| {
             *file == path && *function == name && *exempt == Exempt::Awaits
         }) {
@@ -223,7 +246,7 @@ pub fn violations(path: &str, ast: &syn::File, exceptions: &[Exception]) -> Vec<
             path,
             name: &name,
             held,
-            open: Vec::new(),
+            open: owned,
             found: Vec::new(),
         };
         under.visit_block(block);

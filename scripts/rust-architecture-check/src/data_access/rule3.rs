@@ -1,6 +1,6 @@
 //! Rule 3: a function whose statements, its own plus those of same-file helpers
 //! it calls, number two or more, or that is a unit of work in any module (it
-//! begins a transaction or takes `&mut WriteTx` / `&mut ReadTx`), runs none on
+//! begins a transaction or takes a `WriteTx` / `ReadTx`), runs none on
 //! the pool, begins at most one write and one read transaction, reads before it
 //! begins the write transaction, and runs nothing after the write transaction
 //! commits.
@@ -128,8 +128,9 @@ pub(super) fn binding(pat: &Pat) -> Option<String> {
     }
 }
 
-/// Parameters typed `&mut WriteTx` or `&mut ReadTx`, matched on the last path segment.
-pub(super) fn unit_params(signature: &syn::Signature) -> Vec<(String, Kind)> {
+/// Parameters typed `WriteTx` or `ReadTx`, by value or `&mut`, matched on the last path
+/// segment. The flag says the function owns the unit.
+pub(super) fn unit_params(signature: &syn::Signature) -> Vec<(String, Kind, bool)> {
     signature
         .inputs
         .iter()
@@ -137,11 +138,14 @@ pub(super) fn unit_params(signature: &syn::Signature) -> Vec<(String, Kind)> {
             let FnArg::Typed(typed) = input else {
                 return None;
             };
-            let Type::Reference(reference) = &*typed.ty else {
-                return None;
+            let (ty, owned) = match &*typed.ty {
+                Type::Reference(reference) => {
+                    reference.mutability?;
+                    (&*reference.elem, false)
+                }
+                ty => (ty, true),
             };
-            reference.mutability?;
-            let Type::Path(path) = &*reference.elem else {
+            let Type::Path(path) = ty else {
                 return None;
             };
             let kind = match path.path.segments.last()?.ident.to_string().as_str() {
@@ -149,7 +153,7 @@ pub(super) fn unit_params(signature: &syn::Signature) -> Vec<(String, Kind)> {
                 "ReadTx" => Kind::Read,
                 _ => return None,
             };
-            Some((binding(&typed.pat)?, kind))
+            Some((binding(&typed.pat)?, kind, owned))
         })
         .collect()
 }
@@ -456,7 +460,7 @@ struct Def {
     /// Parameter names, without the receiver.
     params: Vec<String>,
     receiver: bool,
-    /// Begins a transaction or takes `&mut WriteTx` / `&mut ReadTx`.
+    /// Begins a transaction or takes a `WriteTx` / `ReadTx`.
     unit: bool,
     body: Body,
 }
@@ -478,7 +482,7 @@ impl Collect {
         body.visit_block(block);
         body.events.sort_by_key(Event::at);
         let units = unit_params(signature);
-        for (name, kind) in &units {
+        for (name, kind, _) in &units {
             if *kind == Kind::Write {
                 body.writes.insert(name.clone());
             } else {
@@ -654,7 +658,12 @@ impl<'a> Resolver<'a> {
                         });
                     }
                 }
-                Event::Begin { kind, .. } => out.push(Step::Begin(*kind)),
+                Event::Begin { kind, at } => {
+                    if !resolved.contains(at) {
+                        out.push(Step::Begin(*kind));
+                    }
+                }
+                Event::Commit { at, .. } if resolved.contains(at) => {}
                 Event::Commit {
                     kind,
                     block,

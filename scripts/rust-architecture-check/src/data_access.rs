@@ -117,6 +117,7 @@ pub fn file_violations_with(
         path,
         begins: path != TRANSACTIONS && !postgres,
         sql: !data,
+        own: own_methods(ast),
         found: Vec::new(),
     };
     scan.visit_file(ast);
@@ -254,7 +255,30 @@ struct Scan<'a> {
     path: &'a str,
     begins: bool,
     sql: bool,
+    /// Names of the methods the file's own impls define.
+    own: HashSet<String>,
     found: Vec<Violation>,
+}
+
+#[derive(Default)]
+struct OwnMethods(HashSet<String>);
+
+impl<'ast> Visit<'ast> for OwnMethods {
+    fn visit_impl_item(&mut self, item: &'ast ImplItem) {
+        if !impl_item_attrs(item).is_some_and(test_only) {
+            visit::visit_impl_item(self, item);
+        }
+    }
+    fn visit_impl_item_fn(&mut self, item: &'ast syn::ImplItemFn) {
+        self.0.insert(item.sig.ident.to_string());
+        visit::visit_impl_item_fn(self, item);
+    }
+}
+
+fn own_methods(ast: &syn::File) -> HashSet<String> {
+    let mut methods = OwnMethods::default();
+    methods.visit_file(ast);
+    methods.0
 }
 
 impl Scan<'_> {
@@ -309,7 +333,11 @@ impl Scan<'_> {
             let dotted = index
                 .checked_sub(1)
                 .is_some_and(|before| is_punct(tokens.get(before), '.'));
-            if name == "begin" && empty_call && dotted && awaited {
+            let own = dotted
+                && matches!(index.checked_sub(2).and_then(|i| tokens.get(i)),
+                    Some(TokenTree::Ident(receiver)) if receiver == "self")
+                && self.own.contains(&name);
+            if name == "begin" && empty_call && dotted && awaited && !own {
                 self.deferred(line);
             }
             if follows_sqlx(tokens, index) {
@@ -354,7 +382,9 @@ impl<'ast> Visit<'ast> for Scan<'_> {
     }
     fn visit_expr_await(&mut self, expr: &'ast syn::ExprAwait) {
         if let Expr::MethodCall(call) = &*expr.base {
-            if call.method == "begin" && call.args.is_empty() {
+            let own = matches!(&*call.receiver, Expr::Path(path) if path.path.is_ident("self"))
+                && self.own.contains(&call.method.to_string());
+            if call.method == "begin" && call.args.is_empty() && !own {
                 self.deferred(call.method.span().start().line);
             }
         }
