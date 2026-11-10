@@ -154,8 +154,10 @@ fn two_files() -> Vec<ModelFileMetadata> {
     ]
 }
 
-async fn count(pool: &SqlitePool, table: &str) -> i64 {
-    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+/// Rows of this model only: the init migration seeds a bundled model of its own.
+async fn models_with_id(pool: &SqlitePool, model_id: &str) -> i64 {
+    sqlx::query_scalar("SELECT COUNT(*) FROM models WHERE model_id = ?")
+        .bind(model_id)
         .fetch_one(pool)
         .await
         .unwrap()
@@ -182,8 +184,9 @@ async fn refuse_failed_files(pool: &SqlitePool) {
     .unwrap();
 }
 
-async fn model_status(pool: &SqlitePool) -> String {
-    sqlx::query_scalar("SELECT status FROM models")
+async fn model_status(pool: &SqlitePool, model_id: &str) -> String {
+    sqlx::query_scalar("SELECT status FROM models WHERE model_id = ?")
+        .bind(model_id)
         .fetch_one(pool)
         .await
         .unwrap()
@@ -201,7 +204,7 @@ async fn a_single_file_model_row_does_not_land_without_its_file_row() {
         .await;
 
     assert!(result.is_err());
-    assert_eq!(count(&pool, "models").await, 0);
+    assert_eq!(models_with_id(&pool, id).await, 0);
 }
 
 #[tokio::test]
@@ -216,7 +219,7 @@ async fn a_single_file_model_that_cannot_start_is_failed_with_its_file_or_not_at
         .await;
 
     assert!(result.is_err());
-    assert_eq!(model_status(&pool).await, "pending");
+    assert_eq!(model_status(&pool, id).await, "pending");
 }
 
 #[tokio::test]
@@ -231,7 +234,7 @@ async fn a_multi_file_model_row_does_not_land_without_its_file_rows() {
         .await;
 
     assert!(result.is_err());
-    assert_eq!(count(&pool, "models").await, 0);
+    assert_eq!(models_with_id(&pool, id).await, 0);
 }
 
 #[tokio::test]
@@ -246,5 +249,5 @@ async fn a_multi_file_model_that_cannot_start_is_failed_with_its_files_or_not_at
         .await;
 
     assert!(result.is_err());
-    assert_eq!(model_status(&pool).await, "pending");
+    assert_eq!(model_status(&pool, id).await, "pending");
 }
