@@ -19,6 +19,8 @@ pub mod solution_check;
 pub mod source;
 
 #[cfg(test)]
+pub(crate) mod golden_support;
+#[cfg(test)]
 mod migration_tests;
 #[cfg(test)]
 mod session_tests;

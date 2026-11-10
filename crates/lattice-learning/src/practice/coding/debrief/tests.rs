@@ -814,3 +814,5 @@ fn a_bug_fix_lists_its_own_stages() {
         ]
     );
 }
+
+mod golden;

@@ -318,3 +318,15 @@ fn a_kind_supports_the_forms_its_roles_allow() {
     let order = fake_kind(&REFERENCE).with_order().build();
     assert!(order.supports(Form::Arrange) && !order.supports(Form::Complete));
 }
+
+#[tokio::test]
+async fn a_draft_made_for_another_kind_is_refused() {
+    let kind = fake_kind(&REFERENCE).build();
+    let mut other = draft(Form::Build);
+    other.kind = KindId::new("shapes");
+    other.starter = Some(piece(&["", "", "", ""]));
+    assert_eq!(
+        invalid_state(run(&kind, other).await),
+        "The draft is for the kind shapes, not letters."
+    );
+}

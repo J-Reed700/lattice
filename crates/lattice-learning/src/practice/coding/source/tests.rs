@@ -488,3 +488,5 @@ fn the_schema_keeps_every_item_to_six_properties_and_offers_the_catalogue_as_an_
     let catalogue: Vec<&str> = PROBLEM_PATTERNS.iter().map(|pattern| pattern.id).collect();
     assert_eq!(offered, catalogue);
 }
+
+mod golden;

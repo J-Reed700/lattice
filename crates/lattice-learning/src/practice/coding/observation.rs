@@ -829,3 +829,6 @@ mod tests {
         assert_eq!(observation.line_count("other.py"), None);
     }
 }
+
+#[cfg(test)]
+mod golden;

@@ -18,9 +18,9 @@ use crate::practice::coding::records::{
     Applied, CodingOp, CodingRow, NewCodingSession, NewHint, RunFinished, StageMove,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::persistence::{Transactions, WriteTx};
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{sqlite::SqliteRow, Row, Sqlite, SqliteConnection, Transaction};
+use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
 
 mod finish;
 mod reads;
@@ -209,7 +209,7 @@ fn problem_of(activity: &InternalActivitySnapshot) -> Result<Problem> {
 }
 
 impl LearningPracticalRepository {
-    async fn begin_coding_write(&self, program_id: &str) -> Result<Transaction<'static, Sqlite>> {
+    async fn begin_coding_write(&self, program_id: &str) -> Result<WriteTx> {
         uuid(program_id, "program")?;
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, program_id).await?;
