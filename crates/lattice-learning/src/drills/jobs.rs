@@ -130,7 +130,7 @@ impl JobHandler for DrillGradingWorker {
                 .acquire()
                 .await
                 .map_err(|e| AppError::Database(e.to_string()))?;
-            attempts::record_ungraded_in(&mut connection, &id, None, message).await
+            attempts::repository::record_ungraded_in(&mut connection, &id, None, message).await
         };
         if let Err(error) = recorded.await {
             tracing::warn!(attempt = id, %error, "Could not mark a review not graded");

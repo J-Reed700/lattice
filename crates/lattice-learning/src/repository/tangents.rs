@@ -396,70 +396,38 @@ impl LearningRepository {
 
     pub async fn list_tangents(&self, program_id: Option<&str>) -> Result<Vec<LearningTangentDto>> {
         let pid = program_id.map(str::trim).filter(|s| !s.is_empty());
-        if let Some(pid) = pid {
-            sqlx::query_as::<_, LearningTangentDto>(
-                r#"
-                SELECT
-                    lt.conversation_id,
-                    lt.program_id,
-                    p.title AS program_title,
-                    COALESCE(c.space_id, 'space_learning_' || lt.program_id) AS space_id,
-                    lt.module_id,
-                    m.title AS module_title,
-                    lt.lesson_id,
-                    l.title AS lesson_title,
-                    lt.section_index,
-                    lt.section_title,
-                    lt.selected_text,
-                    c.title,
-                    lt.created_at,
-                    c.updated_at,
-                    c.message_count,
-                    lt.context_message_count
-                FROM learning_tangents lt
-                INNER JOIN conversations c ON c.id = lt.conversation_id
-                INNER JOIN learning_programs p ON p.id = lt.program_id
-                INNER JOIN learning_modules m ON m.id = lt.module_id AND m.program_id = lt.program_id
-                INNER JOIN learning_lessons l ON l.id = lt.lesson_id AND l.program_id = lt.program_id
-                WHERE lt.program_id = ?
-                ORDER BY c.updated_at DESC, lt.created_at DESC
-                "#,
-            )
-            .bind(pid)
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)
-        } else {
-            sqlx::query_as::<_, LearningTangentDto>(
-                r#"
-                SELECT
-                    lt.conversation_id,
-                    lt.program_id,
-                    p.title AS program_title,
-                    COALESCE(c.space_id, 'space_learning_' || lt.program_id) AS space_id,
-                    lt.module_id,
-                    m.title AS module_title,
-                    lt.lesson_id,
-                    l.title AS lesson_title,
-                    lt.section_index,
-                    lt.section_title,
-                    lt.selected_text,
-                    c.title,
-                    lt.created_at,
-                    c.updated_at,
-                    c.message_count,
-                    lt.context_message_count
-                FROM learning_tangents lt
-                INNER JOIN conversations c ON c.id = lt.conversation_id
-                INNER JOIN learning_programs p ON p.id = lt.program_id
-                INNER JOIN learning_modules m ON m.id = lt.module_id AND m.program_id = lt.program_id
-                INNER JOIN learning_lessons l ON l.id = lt.lesson_id AND l.program_id = lt.program_id
-                ORDER BY c.updated_at DESC, lt.created_at DESC
-                "#,
-            )
-            .fetch_all(&self.pool)
-            .await
-            .map_err(db)
-        }
+        sqlx::query_as::<_, LearningTangentDto>(
+            r#"
+            SELECT
+                lt.conversation_id,
+                lt.program_id,
+                p.title AS program_title,
+                COALESCE(c.space_id, 'space_learning_' || lt.program_id) AS space_id,
+                lt.module_id,
+                m.title AS module_title,
+                lt.lesson_id,
+                l.title AS lesson_title,
+                lt.section_index,
+                lt.section_title,
+                lt.selected_text,
+                c.title,
+                lt.created_at,
+                c.updated_at,
+                c.message_count,
+                lt.context_message_count
+            FROM learning_tangents lt
+            INNER JOIN conversations c ON c.id = lt.conversation_id
+            INNER JOIN learning_programs p ON p.id = lt.program_id
+            INNER JOIN learning_modules m ON m.id = lt.module_id AND m.program_id = lt.program_id
+            INNER JOIN learning_lessons l ON l.id = lt.lesson_id AND l.program_id = lt.program_id
+            WHERE (? IS NULL OR lt.program_id = ?)
+            ORDER BY c.updated_at DESC, lt.created_at DESC
+            "#,
+        )
+        .bind(pid)
+        .bind(pid)
+        .fetch_all(&self.pool)
+        .await
+        .map_err(db)
     }
 }

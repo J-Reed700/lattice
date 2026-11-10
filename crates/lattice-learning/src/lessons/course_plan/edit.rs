@@ -3,10 +3,11 @@
 //! runs in one write transaction, so a change that no longer applies saves
 //! nothing.
 
+use super::repository::{self, content_revision};
 use super::view::{
-    content_revision, locked_lessons, outline_lessons, saved_entries, view,
-    ChangeCoursePlanEntriesRequestDto, CoursePlanEntryRefDto, CoursePlanViewDto,
-    EditCoursePlanEntryRequestDto, UndoCoursePlanEntryRequestDto,
+    locked_lessons, outline_lessons, saved_entries, view, ChangeCoursePlanEntriesRequestDto,
+    CoursePlanEntryRefDto, CoursePlanViewDto, EditCoursePlanEntryRequestDto,
+    UndoCoursePlanEntryRequestDto,
 };
 use super::{
     entries_schema, parse_entries, PlannedLesson, PLAN_BASE_TOKENS, PLAN_TOKENS_PER_LESSON,
@@ -94,34 +95,15 @@ async fn replace_in(
     outline_revision: i64,
     topics: &PlannedLesson,
 ) -> Result<()> {
-    let (old, revision): (String, i64) = sqlx::query_as(
-        "SELECT entry_json,entry_revision FROM learning_course_plan_lessons WHERE program_id=? AND outline_revision=? AND lesson_id=?",
+    repository::replace_entry(
+        connection,
+        program_id,
+        outline_revision,
+        &topics.lesson_id,
+        &serde_json::to_string(topics)?,
+        now(),
     )
-    .bind(program_id)
-    .bind(outline_revision)
-    .bind(&topics.lesson_id)
-    .fetch_one(&mut *connection)
     .await
-    .map_err(db)?;
-    sqlx::query("INSERT INTO learning_course_plan_entry_history(program_id,outline_revision,lesson_id,entry_revision,entry_json,replaced_at) VALUES(?,?,?,?,?,?)")
-        .bind(program_id)
-        .bind(outline_revision)
-        .bind(&topics.lesson_id)
-        .bind(revision)
-        .bind(old)
-        .bind(now())
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
-    sqlx::query("UPDATE learning_course_plan_lessons SET entry_json=?,entry_revision=entry_revision+1 WHERE program_id=? AND outline_revision=? AND lesson_id=?")
-        .bind(serde_json::to_string(topics)?)
-        .bind(program_id)
-        .bind(outline_revision)
-        .bind(&topics.lesson_id)
-        .execute(&mut *connection)
-        .await
-        .map_err(db)?;
-    Ok(())
 }
 
 /// Save the topics the learner wrote.
@@ -165,33 +147,18 @@ pub async fn undo_entry(
         &[(request.lesson_id.as_str(), request.expected_entry_revision)],
     )
     .await?;
-    let newest: Option<(i64, String)> = sqlx::query_as(
-        "SELECT entry_revision,entry_json FROM learning_course_plan_entry_history WHERE program_id=? AND outline_revision=? AND lesson_id=? ORDER BY entry_revision DESC LIMIT 1",
+    let restored = repository::restore_entry(
+        &mut tx,
+        &request.program_id,
+        request.outline_revision,
+        &request.lesson_id,
     )
-    .bind(&request.program_id)
-    .bind(request.outline_revision)
-    .bind(&request.lesson_id)
-    .fetch_optional(&mut *tx)
-    .await
-    .map_err(db)?;
-    let (replaced, entry) =
-        newest.ok_or_else(|| AppError::InvalidState("There is nothing to undo here.".into()))?;
-    sqlx::query("UPDATE learning_course_plan_lessons SET entry_json=?,entry_revision=entry_revision+1 WHERE program_id=? AND outline_revision=? AND lesson_id=?")
-        .bind(entry)
-        .bind(&request.program_id)
-        .bind(request.outline_revision)
-        .bind(&request.lesson_id)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
-    sqlx::query("DELETE FROM learning_course_plan_entry_history WHERE program_id=? AND outline_revision=? AND lesson_id=? AND entry_revision=?")
-        .bind(&request.program_id)
-        .bind(request.outline_revision)
-        .bind(&request.lesson_id)
-        .bind(replaced)
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+    .await?;
+    if !restored {
+        return Err(AppError::InvalidState(
+            "There is nothing to undo here.".into(),
+        ));
+    }
     tx.commit().await.map_err(db)?;
     view(pool, &request.program_id).await
 }

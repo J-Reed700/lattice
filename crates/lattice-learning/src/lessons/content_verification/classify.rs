@@ -141,18 +141,27 @@ pub(super) fn rule_class(statement: &str, field: &str, case: &Case) -> Option<Cl
 /// hypothetical case, whose figures are its own, only the last two.
 pub(super) fn states_a_specific_in(text: &str, case: &Case) -> bool {
     match case {
-        Case::Stated(givens) => needs_citation(text, givens) || says(text),
-        Case::Hypothetical => quotes_or_attributes(text) || says(text),
+        Case::Stated(givens) => needs_citation(text, givens) || attributes(text) || says(text),
+        Case::Hypothetical => {
+            quoted_wording(text).next().is_some() || attributes(text) || says(text)
+        }
     }
 }
 
-/// Whether a text names what a source must hold: a figure its part's
-/// `givens` do not state, quoted wording or an attribution to a source. The
-/// writer's rule asks this of a sentence before it must be cited, and the
-/// rule layer's answer contains it, so a sentence the writer has to cite is
-/// one the rule layer sorts Sourced (claim classes design §3.5).
+/// The specifics a quote cited for `text` must hold: its figures beyond its
+/// part's `givens` and its quoted wording.
+pub(crate) fn specifics_in<'a>(text: &'a str, givens: &'a Givens) -> impl Iterator<Item = &'a str> {
+    figures(text)
+        .filter(|figure| !givens.holds(figure))
+        .chain(quoted_wording(text))
+}
+
+/// Whether a text has a specific a cited quote must hold. The writer's rule
+/// asks this of a sentence before it must be cited; an attribution or a verb
+/// of saying is left to the check, though the rule layer still sorts it
+/// Sourced (claim classes design §3.5).
 pub(crate) fn needs_citation(text: &str, givens: &Givens) -> bool {
-    figures(text).any(|figure| !givens.holds(figure)) || quotes_or_attributes(text)
+    specifics_in(text, givens).next().is_some()
 }
 
 /// Marks that open or close a quotation: double quotation marks only.
@@ -184,13 +193,12 @@ pub(crate) fn quoted_wording(text: &str) -> impl Iterator<Item = &str> {
     spans.into_iter()
 }
 
-/// Whether a text quotes wording or attributes something to a source.
-fn quotes_or_attributes(text: &str) -> bool {
-    quoted_wording(text).next().is_some()
-        || lazy_regex::regex!(
-            r"(?i)\b(the (study|survey|source|paper|documentation|docs|standard|vendor)|according to)\b"
-        )
-        .is_match(text)
+/// Whether a text attributes something to a source.
+fn attributes(text: &str) -> bool {
+    lazy_regex::regex!(
+        r"(?i)\b(the (study|survey|source|paper|documentation|docs|standard|vendor)|according to)\b"
+    )
+    .is_match(text)
 }
 
 /// Whether a text uses a verb of saying, which the rule layer reads as an
@@ -202,7 +210,7 @@ fn says(text: &str) -> bool {
 }
 
 /// Whether a text states a specific, whatever its part gives: what needs a
-/// citation, or a verb of saying.
+/// citation, an attribution or a verb of saying.
 pub(super) fn states_a_specific(text: &str) -> bool {
     states_a_specific_in(text, &Case::Stated(Givens::NONE))
 }

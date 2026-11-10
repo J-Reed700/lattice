@@ -126,7 +126,7 @@ impl LearningPracticalRepository {
             "Operation ID was reused with different practical draft data.",
         );
         if let Some(result) = operation
-            .replay::<PracticalDraftOperationResult, _>(&mut *tx)
+            .replay::<PracticalDraftOperationResult>(&mut tx)
             .await?
         {
             let replay = LearningPracticalDraftDto {
@@ -185,7 +185,7 @@ impl LearningPracticalRepository {
             .bind(result_revision).bind(json(&request.files)?).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         operation
             .record(
-                &mut *tx,
+                &mut tx,
                 &PracticalDraftOperationResult {
                     draft_revision: result_revision,
                     updated_at: timestamp,

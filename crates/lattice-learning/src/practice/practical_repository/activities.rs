@@ -40,7 +40,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different runtime setup data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&request.program_id).await.map(Some);
         }
@@ -98,7 +98,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different runtime profile data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&request.program_id).await;
         }
@@ -119,7 +119,7 @@ impl LearningPracticalRepository {
                 .bind(timestamp).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
             0
         };
-        operation.record(&mut *tx, &result_revision).await?;
+        operation.record(&mut tx, &result_revision).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&request.program_id).await
     }
@@ -227,7 +227,7 @@ impl LearningPracticalRepository {
             payload_hash,
             "Operation ID was reused with different practical activity data.",
         );
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return self.workspace(&request.program_id).await;
         }
@@ -324,7 +324,7 @@ impl LearningPracticalRepository {
                 .bind(&file.content).bind(hash_text(&file.content))
                 .bind(file.editable as i64).execute(&mut *tx).await.map_err(db)?;
         }
-        operation.record(&mut *tx, &0_i64).await?;
+        operation.record(&mut tx, &0_i64).await?;
         tx.commit().await.map_err(db)?;
         self.workspace(&request.program_id).await
     }

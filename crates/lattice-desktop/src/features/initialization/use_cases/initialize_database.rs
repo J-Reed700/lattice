@@ -64,28 +64,13 @@ impl InitializeDatabaseUseCase {
     }
 
     async fn has_schema_version_table(&self) -> Result<bool> {
-        // repository-barrier-allow: database bootstrap must inspect migration state before repositories exist.
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'",
-        )
-        .fetch_one(self.database_pool.as_ref())
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to inspect database schema: {e}")))?;
-        Ok(count > 0)
+        crate::features::initialization::repository::has_schema_version_table(&self.database_pool)
+            .await
     }
 
     /// Get current schema version from database.
     async fn get_schema_version(&self) -> Result<i64> {
-        // repository-barrier-allow: database bootstrap inspects migration state before repositories exist.
-        let result =
-            sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(version), 0) FROM schema_version")
-                .fetch_one(self.database_pool.as_ref())
-                .await
-                .map_err(|e| {
-                    AppError::Database(format!("Failed to query schema version: {}", e))
-                })?;
-
-        Ok(result)
+        crate::features::initialization::repository::schema_version(&self.database_pool).await
     }
 
     /// Get database file path.

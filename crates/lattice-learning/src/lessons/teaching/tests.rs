@@ -99,7 +99,12 @@ fn the_rubric_schema_bounds_no_text_but_a_blank() {
 
 fn structure(blocks: Value) -> Vec<ReviewFinding> {
     let candidate = json!({"blocks":blocks,"questions":[]});
-    structural_findings(&json!({"type":"object"}), &candidate.to_string()).unwrap()
+    structural_findings(
+        &json!({"type":"object"}),
+        &candidate.to_string(),
+        crate::generation::Counts::Asked,
+    )
+    .unwrap()
 }
 
 #[test]
@@ -175,7 +180,12 @@ fn a_block_without_a_body_or_a_rubric_is_named_in_plain_words() {
 
 #[test]
 fn material_that_cannot_be_read_is_named_in_plain_words() {
-    let found = structural_findings(&json!({"type":"object"}), "not json").unwrap();
+    let found = structural_findings(
+        &json!({"type":"object"}),
+        "not json",
+        crate::generation::Counts::Asked,
+    )
+    .unwrap();
     assert_eq!(found.len(), 1);
     assert_eq!(found[0].summary, "The lesson could not be read as a whole.");
 }

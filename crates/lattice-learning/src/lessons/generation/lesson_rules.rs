@@ -8,7 +8,7 @@
 use super::{normalize, validate_text};
 use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
 use crate::content_verification::{
-    figures, names_a_source, needs_citation, quoted_wording, Givens, CITED_KINDS,
+    names_a_source, needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS,
 };
 use crate::lessons::repeats;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
@@ -61,8 +61,8 @@ pub(crate) fn split_check(body: &str) -> Option<(&str, &str)> {
     Some((body.get(..start)?, body.get(end..)?))
 }
 
-/// Questions the writer is asked for of each kind; a lesson is saved with
-/// one of each (`LessonQuestionKind::ALL`).
+/// Questions the writer is asked for of each kind, so that a cut can spend
+/// one; a lesson is saved with one of each (`LessonQuestionKind::ALL`).
 const QUESTIONS_PER_KIND: usize = 2;
 
 fn text<'a>(item: &'a Value, field: &str) -> &'a str {
@@ -161,16 +161,6 @@ pub(crate) fn prose_sentences(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// The figures beyond its part's `givens` and the quoted wording of
-/// `sentence`, which the quote cited for it must hold.
-fn specifics(sentence: &str, givens: &Givens) -> Vec<String> {
-    let own = figures(sentence)
-        .filter(|figure| !givens.holds(figure))
-        .map(str::to_owned);
-    let quoted = quoted_wording(sentence).map(str::to_owned);
-    own.chain(quoted).collect()
-}
-
 fn same_sentence(a: &str, b: &str) -> bool {
     let (a, b) = (normalize(a), normalize(b));
     !a.is_empty() && !b.is_empty() && (a == b || a.contains(&b) || b.contains(&a))
@@ -209,7 +199,9 @@ fn uncited_specifics(
             .filter(|(cited, _)| same_sentence(cited, &sentence))
             .map(|(_, quote)| *quote)
             .collect();
-        let wanted = specifics(&sentence, &givens);
+        let wanted: Vec<String> = specifics_in(&sentence, &givens)
+            .map(str::to_owned)
+            .collect();
         let lacking = |quote: &str| -> Vec<String> {
             let held = normalize(quote);
             wanted
@@ -320,7 +312,21 @@ pub fn lesson_rule_notes(candidate: &Value) -> Vec<String> {
         .collect()
 }
 
+/// Which of the writer's quantities a review holds a lesson to: its mix of
+/// sections and its questions of each kind. The draft is held to what the
+/// writer was asked for; a lesson after verification's cuts is not, since
+/// the cuts spent that margin.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Counts {
+    Asked,
+    Spent,
+}
+
 pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
+    lesson_rules_holding(candidate, Counts::Asked)
+}
+
+pub(crate) fn lesson_rules_holding(candidate: &Value, counts: Counts) -> Vec<ReviewFinding> {
     let items = |field| {
         candidate
             .get(field)
@@ -369,36 +375,8 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
             }
         }
     }
-    let kinds = |items: &[Value], kind: &str| {
-        items
-            .iter()
-            .filter(|item| item.get("kind").and_then(Value::as_str) == Some(kind))
-            .count()
-    };
-    let counts: Vec<_> = SECTION_MIX
-        .iter()
-        .map(|(kind, minimum, exact)| (*kind, kinds(blocks, kind), *minimum, *exact))
-        .collect();
-    if counts
-        .iter()
-        .any(|(_, count, minimum, exact)| *count < *minimum || (*exact && *count != *minimum))
-    {
-        let has: Vec<_> = counts
-            .iter()
-            .map(|(kind, count, _, _)| format!("{count} {}", kind.replace('_', " ")))
-            .collect();
-        let plain: Vec<_> = counts
-            .iter()
-            .map(|(kind, count, _, _)| counted(*count, &kind.replace('_', " ")))
-            .collect();
-        findings.push(structure(
-            FindingSite::Lesson,
-            format!(
-                "The lesson should have at least two explanations, two worked examples, one contrast and two checks, and one each of guided practice, independent practice, reflection and recap. It has {}.",
-                plain.join(", ")
-            ),
-            format!("The lesson needs at least two explanations, two worked examples, one contrast and two checks, and exactly one each of guided practice, independent practice, reflection and recap; it has {}.", has.join(", ")),
-        ));
+    if counts == Counts::Asked {
+        findings.extend(section_mix_finding(blocks));
     }
     let kind_at = |index: usize| blocks.get(index).map(|block| text(block, "kind"));
     let first = |kind: &str| (0..blocks.len()).find(|index| kind_at(*index) == Some(kind));
@@ -592,32 +570,75 @@ pub(crate) fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
             );
         }
     }
+    if counts == Counts::Asked {
+        findings.extend(question_count_finding(questions));
+    }
+    findings
+}
+
+fn kind_count(items: &[Value], kind: &str) -> usize {
+    items
+        .iter()
+        .filter(|item| item.get("kind").and_then(Value::as_str) == Some(kind))
+        .count()
+}
+
+fn section_mix_finding(blocks: &[Value]) -> Option<ReviewFinding> {
+    let counts: Vec<_> = SECTION_MIX
+        .iter()
+        .map(|(kind, minimum, exact)| (*kind, kind_count(blocks, kind), *minimum, *exact))
+        .collect();
+    if !counts
+        .iter()
+        .any(|(_, count, minimum, exact)| *count < *minimum || (*exact && *count != *minimum))
+    {
+        return None;
+    }
+    let has: Vec<_> = counts
+        .iter()
+        .map(|(kind, count, _, _)| format!("{count} {}", kind.replace('_', " ")))
+        .collect();
+    let plain: Vec<_> = counts
+        .iter()
+        .map(|(kind, count, _, _)| counted(*count, &kind.replace('_', " ")))
+        .collect();
+    Some(structure(
+        FindingSite::Lesson,
+        format!(
+            "The lesson should have at least two explanations, two worked examples, one contrast and two checks, and one each of guided practice, independent practice, reflection and recap. It has {}.",
+            plain.join(", ")
+        ),
+        format!("The lesson needs at least two explanations, two worked examples, one contrast and two checks, and exactly one each of guided practice, independent practice, reflection and recap; it has {}.", has.join(", ")),
+    ))
+}
+
+fn question_count_finding(questions: &[Value]) -> Option<ReviewFinding> {
     let per_kind: Vec<_> = crate::dto::LessonQuestionKind::ALL
         .iter()
-        .map(|kind| (kind.as_str(), kinds(questions, kind.as_str())))
+        .map(|kind| (kind.as_str(), kind_count(questions, kind.as_str())))
         .collect();
-    if per_kind
+    if !per_kind
         .iter()
         .any(|(_, count)| *count < QUESTIONS_PER_KIND)
     {
-        let has: Vec<_> = per_kind
-            .iter()
-            .map(|(kind, count)| format!("{count} {kind}"))
-            .collect();
-        let plain: Vec<_> = per_kind
-            .iter()
-            .map(|(kind, count)| counted(*count, &format!("{kind} question")))
-            .collect();
-        findings.push(structure(
-            FindingSite::Lesson,
-            format!(
-                "The lesson needs at least two questions each for practice, quiz and test. It has {}.",
-                plain.join(", ")
-            ),
-            format!("The lesson needs at least two distinct questions each for practice, quiz and test; it has {}.", has.join(", ")),
-        ));
+        return None;
     }
-    findings
+    let has: Vec<_> = per_kind
+        .iter()
+        .map(|(kind, count)| format!("{count} {kind}"))
+        .collect();
+    let plain: Vec<_> = per_kind
+        .iter()
+        .map(|(kind, count)| counted(*count, &format!("{kind} question")))
+        .collect();
+    Some(structure(
+        FindingSite::Lesson,
+        format!(
+            "The lesson needs at least two questions each for practice, quiz and test. It has {}.",
+            plain.join(", ")
+        ),
+        format!("The lesson needs at least two distinct questions each for practice, quiz and test; it has {}.", has.join(", ")),
+    ))
 }
 
 #[cfg(test)]

@@ -3,6 +3,8 @@ use super::*;
 use crate::lessons::course_generation_tests::length_bounds;
 use serde_json::{json, Value};
 
+const STEPS_IN_ORDER: &str = "The learner does the lesson's steps in order, with their own tools and materials, so each step starts from what the steps before it left: a later step uses what an earlier one made or set up, and never has the learner make or set it up again.";
+
 const EXCERPT: &str =
     "Water boils at 99.97 degrees Celsius at one standard atmosphere of pressure.";
 
@@ -85,9 +87,12 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
     assert_eq!(prepared.keys.len(), 5);
     assert!(citations.is_empty());
     // The rules come back as findings for the user, not as an error.
-    let findings =
-        crate::teaching::structural_findings(&lesson_schema(1), &off_shape_value(true).to_string())
-            .unwrap();
+    let findings = crate::teaching::structural_findings(
+        &lesson_schema(1),
+        &off_shape_value(true).to_string(),
+        crate::generation::Counts::Asked,
+    )
+    .unwrap();
     let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.key().id()).collect();
     let expected = [
         "structure:lesson",
@@ -429,12 +434,16 @@ fn a_lessons_text_of_any_length_is_no_schema_finding() {
         .collect();
     let mut lesson = json!({"blocks":blocks,"questions":questions});
     let schema_findings = |lesson: &Value| -> Vec<String> {
-        crate::teaching::structural_findings(&schema, &lesson.to_string())
-            .unwrap()
-            .into_iter()
-            .map(|finding| finding.note)
-            .filter(|note| note.starts_with("Fix the schema violation"))
-            .collect()
+        crate::teaching::structural_findings(
+            &schema,
+            &lesson.to_string(),
+            crate::generation::Counts::Asked,
+        )
+        .unwrap()
+        .into_iter()
+        .map(|finding| finding.note)
+        .filter(|note| note.starts_with("Fix the schema violation"))
+        .collect()
     };
     let found = schema_findings(&lesson);
     assert!(found.is_empty(), "the fixture is not a lesson: {found:?}");
@@ -826,4 +835,27 @@ fn the_writer_keeps_the_four_choices_close_in_length_and_in_their_own_words() {
         ),
         "{text}"
     );
+}
+
+#[test]
+fn the_writer_and_both_repairs_are_told_a_step_starts_from_what_the_steps_before_it_left() {
+    for sources in [0, 2] {
+        let schema = lesson_schema(sources);
+        for (who, text) in [
+            ("writer", writer_requirements()),
+            (
+                "teaching repair",
+                crate::lessons::text_edits::instructions(&schema),
+            ),
+            (
+                "claim repair",
+                crate::lessons::text_edits::rewrite_instructions(&schema),
+            ),
+        ] {
+            assert!(
+                text.contains(STEPS_IN_ORDER),
+                "{who} with {sources} sources: {text}"
+            );
+        }
+    }
 }

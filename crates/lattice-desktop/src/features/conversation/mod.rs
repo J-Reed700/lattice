@@ -25,6 +25,7 @@ pub mod space_dto;
 pub mod space_repository;
 pub mod starters;
 pub mod starters_dto;
+pub mod starters_repository;
 mod synthesis;
 pub mod tangent_dto;
 pub mod trait_def;

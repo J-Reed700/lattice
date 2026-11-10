@@ -12,6 +12,7 @@ use lattice_core::application::ports::conversation_memory::{
 };
 use lattice_core::domain::conversation::memory::{MemoryId, SourceRole};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use std::str::FromStr;
 
 /// Cap on terms in one `MATCH` expression (§9.1 rule 1).
@@ -101,6 +102,11 @@ impl ConversationRepository {
         let limit = limit.max(1);
         let mut out = RecallCandidates::default();
         let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin recall read: {}", e)))?;
 
         // --- exact identifiers first ------------------------------------
         // Paths, version numbers, codenames and ids are the cases where lexical
@@ -123,7 +129,7 @@ impl ConversationRepository {
             .bind(conversation_id)
             .bind(term)
             .bind(limit as i64)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to match exact term: {}", e)))?;
 
@@ -163,7 +169,7 @@ impl ConversationRepository {
         .bind(conversation_id)
         .bind(conversation_id)
         .bind(limit as i64)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *tx)
         .await;
 
         let rows = match rows {
@@ -200,6 +206,9 @@ impl ConversationRepository {
             });
         }
 
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to finish recall read: {}", e)))?;
         out.candidates.truncate(limit);
         Ok(out)
     }
@@ -210,11 +219,16 @@ impl ConversationRepository {
         conversation_id: &str,
         terms: &[String],
     ) -> Result<TermHolders> {
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin term read: {}", e)))?;
         let messages: i64 = sqlx::query_scalar(
             "SELECT COUNT(*) FROM conversation_messages WHERE conversation_id = ?",
         )
         .bind(conversation_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to count messages: {}", e)))?;
         let mut holders = Vec::with_capacity(terms.len());
@@ -227,11 +241,14 @@ impl ConversationRepository {
             )
             .bind(quote_fts(term))
             .bind(conversation_id)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *tx)
             .await
             .map_err(|e| AppError::Database(format!("Failed to look up a term: {}", e)))?;
             holders.push(ids);
         }
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to finish term read: {}", e)))?;
         Ok(TermHolders {
             messages: messages as usize,
             holders,

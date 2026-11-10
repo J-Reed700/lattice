@@ -20,6 +20,11 @@ impl ConversationRepository {
         &self,
         request: BookmarkConversationMessageRequestDto,
     ) -> Result<RenameConversationResponseDto, AppError> {
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         let exists: i64 = sqlx::query_scalar(
             r#"
         SELECT COUNT(*)
@@ -29,7 +34,7 @@ impl ConversationRepository {
         )
         .bind(&request.message_id)
         .bind(&request.conversation_id)
-        .fetch_one(&self.pool)
+        .fetch_one(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to verify message bookmark target: {}", e))
@@ -62,11 +67,15 @@ impl ConversationRepository {
         .bind(request.title)
         .bind(request.note)
         .bind(now)
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| {
             AppError::Database(format!("Failed to bookmark conversation message: {}", e))
         })?;
+
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
         Ok(RenameConversationResponseDto {
             status: "success".to_string(),

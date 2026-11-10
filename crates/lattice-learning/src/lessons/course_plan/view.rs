@@ -2,6 +2,7 @@
 //! whether they can still be changed, and the entry the last change replaced.
 
 use super::job::latest_attempt;
+use super::repository::{self, content_revision};
 use super::PlannedLesson;
 use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
@@ -91,13 +92,7 @@ pub(super) async fn outline_lessons(
     connection: &mut SqliteConnection,
     program_id: &str,
 ) -> Result<Vec<OutlineLesson>> {
-    let rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT l.id,l.preparation,l.completed FROM learning_lessons l JOIN learning_modules m ON m.id=l.module_id WHERE l.program_id=? ORDER BY m.ordinal,l.ordinal",
-    )
-    .bind(program_id)
-    .fetch_all(connection)
-    .await
-    .map_err(db)?;
+    let rows = repository::outline_rows(connection, program_id).await?;
     Ok(rows
         .into_iter()
         .map(|(id, preparation, completed)| OutlineLesson {
@@ -142,14 +137,7 @@ pub(super) async fn saved_entries(
     program_id: &str,
     outline_revision: i64,
 ) -> Result<HashMap<String, (PlannedLesson, i64)>> {
-    let rows: Vec<(String, String, i64)> = sqlx::query_as(
-        "SELECT lesson_id,entry_json,entry_revision FROM learning_course_plan_lessons WHERE program_id=? AND outline_revision=?",
-    )
-    .bind(program_id)
-    .bind(outline_revision)
-    .fetch_all(connection)
-    .await
-    .map_err(db)?;
+    let rows = repository::saved_rows(connection, program_id, outline_revision).await?;
     rows.into_iter()
         .map(|(id, entry, revision)| {
             let entry: PlannedLesson = serde_json::from_str(&entry).map_err(|error| {
@@ -168,14 +156,7 @@ async fn newest_replaced(
     program_id: &str,
     outline_revision: i64,
 ) -> Result<HashMap<String, PlannedLesson>> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT h.lesson_id,h.entry_json FROM learning_course_plan_entry_history h WHERE h.program_id=? AND h.outline_revision=? AND h.entry_revision=(SELECT max(entry_revision) FROM learning_course_plan_entry_history WHERE program_id=h.program_id AND outline_revision=h.outline_revision AND lesson_id=h.lesson_id)",
-    )
-    .bind(program_id)
-    .bind(outline_revision)
-    .fetch_all(connection)
-    .await
-    .map_err(db)?;
+    let rows = repository::newest_replaced_rows(connection, program_id, outline_revision).await?;
     rows.into_iter()
         .map(|(id, entry)| {
             let entry: PlannedLesson = serde_json::from_str(&entry).map_err(|error| {
@@ -186,18 +167,6 @@ async fn newest_replaced(
             Ok((id, entry))
         })
         .collect()
-}
-
-pub(super) async fn content_revision(
-    connection: &mut SqliteConnection,
-    program_id: &str,
-) -> Result<i64> {
-    sqlx::query_scalar("SELECT content_revision FROM learning_programs WHERE id=?")
-        .bind(program_id)
-        .fetch_optional(connection)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| AppError::NotFound("Learning program not found".into()))
 }
 
 /// The course plan as the learner sees it, read in one snapshot.

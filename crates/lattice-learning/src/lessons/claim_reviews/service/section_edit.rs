@@ -12,12 +12,15 @@ use lattice_core::domain::learning::claim_review::{
     HumanBinding, Ledger, UnitKind, UnverifiedReason, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 
 use super::{provenance, user_resolution, ClaimReviewService, LabelSource, Planned};
 use crate::content_verification::Rewritten;
 use crate::lessons::claim_reviews::published_edit::{placed, update_report};
 use crate::lessons::claim_reviews::published_rewrite::{plan, FieldPlan, Written};
-use crate::lessons::claim_reviews::repository::{append_in, bump_revision, check_revision};
+use crate::lessons::claim_reviews::repository::{
+    append_in, blocks, bump_revision, check_revision, teaching_findings,
+};
 use crate::persistence::{db, now};
 use lattice_core::domain::learning::claim_review::LessonReviewState;
 
@@ -73,15 +76,9 @@ async fn current_text(
     lesson_id: &str,
     unit: usize,
 ) -> Result<(String, String)> {
-    sqlx::query_as::<_, (String, String)>(
-        "SELECT title, body FROM learning_blocks WHERE lesson_id=? AND ordinal=?",
-    )
-    .bind(lesson_id)
-    .bind(i64::try_from(unit).unwrap_or(i64::MAX))
-    .fetch_optional(&mut *connection)
-    .await
-    .map_err(db)?
-    .ok_or_else(|| AppError::InvalidInput(SECTION_CHANGED.into()))
+    blocks::section_title_body(connection, lesson_id, unit)
+        .await?
+        .ok_or_else(|| AppError::InvalidInput(SECTION_CHANGED.into()))
 }
 
 pub(super) fn endings<'a>(
@@ -193,11 +190,7 @@ impl ClaimReviewService {
 
         let at = now();
         let user = ledger.review.as_ref().map(provenance);
-        let mut tx = self
-            .pool()
-            .begin_with("BEGIN IMMEDIATE")
-            .await
-            .map_err(db)?;
+        let mut tx = self.pool().begin_write().await.map_err(db)?;
         if ledger.review.is_some() {
             check_revision(&mut tx, &lesson_id, ledger.revision).await?;
         }
@@ -215,14 +208,7 @@ impl ClaimReviewService {
             }
             None => Vec::new(),
         };
-        sqlx::query("UPDATE learning_blocks SET title=?, body=? WHERE lesson_id=? AND ordinal=?")
-            .bind(&title)
-            .bind(&body)
-            .bind(&lesson_id)
-            .bind(i64::try_from(unit).unwrap_or(i64::MAX))
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        blocks::write_section(&mut tx, &lesson_id, unit, &title, &body).await?;
         let ended: HashSet<String> = ending
             .iter()
             .map(|item| item.entry.claim_id().0.clone())
@@ -246,16 +232,7 @@ impl ClaimReviewService {
             })
         })
         .await?;
-        sqlx::query(
-            "UPDATE learning_lesson_teaching_findings SET part_changed_at=? \
-             WHERE lesson_id=? AND site='section' AND unit_index=?",
-        )
-        .bind(at)
-        .bind(&lesson_id)
-        .bind(i64::try_from(unit).unwrap_or(i64::MAX))
-        .execute(&mut *tx)
-        .await
-        .map_err(db)?;
+        teaching_findings::mark_part_changed(&mut tx, &lesson_id, "section", unit, at).await?;
         if ledger.review.is_some() {
             bump_revision(&mut tx, &lesson_id).await?;
         }
@@ -286,14 +263,7 @@ impl ClaimReviewService {
     }
 
     pub(super) async fn ensure_in_course(&self, program_id: &str, lesson_id: &str) -> Result<()> {
-        let in_course: Option<i64> =
-            sqlx::query_scalar("SELECT 1 FROM learning_lessons WHERE id=? AND program_id=?")
-                .bind(lesson_id)
-                .bind(program_id)
-                .fetch_optional(self.pool())
-                .await
-                .map_err(db)?;
-        if in_course.is_none() {
+        if !blocks::lesson_in_course(self.pool(), program_id, lesson_id).await? {
             return Err(AppError::NotFound(NOT_IN_COURSE.into()));
         }
         Ok(())

@@ -1,10 +1,12 @@
 //! Instructional review and task-specific teaching contracts.
 use super::writer_excerpts::{self, WriterExcerpts};
 use crate::dto::{LearningPracticeCriterionDto, LearningPracticeEvidenceDimension};
+use crate::generation::Counts;
 use crate::review_findings::{
     plain_part, FindingKey, FindingKind, FindingSite, ReviewFinding, SetAside,
 };
 use crate::teaching_review::LengthRule;
+use jsonschema::error::ValidationErrorKind;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -113,8 +115,13 @@ pub const LESSON_REVIEW_EVIDENCE_SCOPE: &str = "The authoring reference excerpts
 
 /// Deterministic findings: the schema, each section's body and rubric,
 /// and, under a lesson's schema, the lesson's own rules. Nothing is
-/// dropped; a caller that sends six at a time decides what waits.
-pub(crate) fn structural_findings(schema: &Value, candidate: &str) -> Result<Vec<ReviewFinding>> {
+/// dropped; a caller that sends six at a time decides what waits. `counts`
+/// says whether a lesson is held to the quantities its writer was asked for.
+pub(crate) fn structural_findings(
+    schema: &Value,
+    candidate: &str,
+    counts: Counts,
+) -> Result<Vec<ReviewFinding>> {
     let value: Value = match serde_json::from_str(candidate) {
         Ok(value) => value,
         Err(_) => {
@@ -130,6 +137,14 @@ pub(crate) fn structural_findings(schema: &Value, candidate: &str) -> Result<Vec
         .map_err(|_| AppError::InternalError("Invalid teaching schema".into()))?;
     let mut issues = Vec::new();
     if let Err(errors) = validator.validate(&value) {
+        let errors = errors.filter(|error| {
+            let item_count = matches!(
+                error.kind,
+                ValidationErrorKind::MinItems { .. } | ValidationErrorKind::MaxItems { .. }
+            );
+            let path = error.instance_path.to_string();
+            !(counts == Counts::Spent && item_count && (path == "/blocks" || path == "/questions"))
+        });
         issues.extend(errors.map(|error| {
             ReviewFinding::new(
                 FindingKind::Structure,
@@ -168,7 +183,7 @@ pub(crate) fn structural_findings(schema: &Value, candidate: &str) -> Result<Vec
         }
     }
     if is_lesson_schema(schema) {
-        issues.extend(crate::generation::lesson_rules(&value));
+        issues.extend(crate::generation::lesson_rules_holding(&value, counts));
     }
     Ok(issues)
 }
@@ -528,7 +543,12 @@ async fn review_material(
             json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
         }).collect();
         let review_prompt = json!({"task":"Review instructional quality", "authoringContext":authoring_context, "originalIssuesToRecheck":original_issues, "sourceQuoteChecks":quote_checks, "correctnessPriority":correctness_priority, "candidate":candidate_value,"referenceVersions":reference_versions});
-        let structure = structural_findings(schema, &candidate)?;
+        let counts = if context.protected.is_empty() {
+            Counts::Asked
+        } else {
+            Counts::Spent
+        };
+        let structure = structural_findings(schema, &candidate, counts)?;
         // A rewrite of the whole lesson changes the sentences its checked
         // claims stand on, so once there are any, what its shape asks waits
         // for the user (claim classes design §3.10).

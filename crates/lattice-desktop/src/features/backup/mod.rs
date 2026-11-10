@@ -19,6 +19,7 @@
 pub mod adapter;
 pub mod archive;
 pub mod commands;
+pub mod database_repository;
 pub mod di;
 pub mod dto;
 pub mod export_repository;

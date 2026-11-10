@@ -423,16 +423,18 @@ impl StudyRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Vec<VerifiedConversationClaim>> {
+        let mut read = self.pool.begin_read().await.map_err(db)?;
         let exists: i64 = sqlx::query_scalar("SELECT count(*) FROM conversations WHERE id=?")
             .bind(conversation_id)
-            .fetch_one(&self.pool)
+            .fetch_one(&mut *read)
             .await
             .map_err(db)?;
         if exists == 0 {
             return Err(AppError::NotFound("Conversation no longer exists".into()));
         }
         let rows = sqlx::query("SELECT content, metadata FROM conversation_messages WHERE conversation_id=? AND role='assistant' AND status='completed' AND metadata IS NOT NULL ORDER BY created_at, id")
-            .bind(conversation_id).fetch_all(&self.pool).await.map_err(db)?;
+            .bind(conversation_id).fetch_all(&mut *read).await.map_err(db)?;
+        read.commit().await.map_err(db)?;
         let mut claims = Vec::new();
         let mut seen_claims = std::collections::HashSet::new();
         for row in rows {
@@ -536,17 +538,19 @@ impl StudyRepository {
     }
 
     pub async fn get(&self, id: &str) -> Result<StudyDeckDto> {
+        let mut read = self.pool.begin_read().await.map_err(db)?;
         let row = sqlx::query("SELECT d.*,t.target_at FROM study_decks d LEFT JOIN study_deck_targets t ON t.deck_id=d.id WHERE d.id=?")
             .bind(id)
-            .fetch_optional(&self.pool)
+            .fetch_optional(&mut *read)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Study deck no longer exists".into()))?;
         let rows = sqlx::query("SELECT * FROM study_cards WHERE deck_id=? ORDER BY rowid")
             .bind(id)
-            .fetch_all(&self.pool)
+            .fetch_all(&mut *read)
             .await
             .map_err(db)?;
+        read.commit().await.map_err(db)?;
         Ok(StudyDeckDto {
             id: row.get("id"),
             title: row.get("title"),

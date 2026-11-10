@@ -317,19 +317,6 @@ fn a_quote_that_lacks_the_figure_does_not_cite_it() {
     assert!(findings[0].note.contains("does not contain 30"));
 }
 
-#[test]
-fn an_attribution_needs_a_citation_but_no_figure_in_its_quote() {
-    let mut candidate = lesson();
-    let sentence = "The documentation describes a retry for failed requests.";
-    candidate["blocks"][0]["body"] = json!(sentence);
-    assert_eq!(lesson_rules(&candidate).len(), 1);
-
-    candidate["blocks"][0]["citations"] = json!([{
-        "sentence":sentence,"sourceIndex":0,
-        "quote":"Failed requests are retried once, as the reference describes."}]);
-    assert!(lesson_rules(&candidate).is_empty());
-}
-
 /// A worked example's case, code and a list's markers are not specifics a
 /// source has to hold.
 #[test]
@@ -820,6 +807,18 @@ fn a_real_quotation_is_still_quoted_wording_to_cite() {
         let findings = lesson_rules(&candidate);
         assert_eq!(findings.len(), 1, "{sentence}");
         assert!(findings[0].note.contains("without citing it"), "{sentence}");
+    }
+}
+
+#[test]
+fn a_sentence_that_only_names_a_source_is_no_specific_to_cite() {
+    for sentence in [
+        "The documentation is available without leaving the program.",
+        "According to the survey, most readers skim.",
+    ] {
+        let mut candidate = lesson();
+        candidate["blocks"][10]["body"] = json!(sentence);
+        assert!(lesson_rules(&candidate).is_empty(), "{sentence}");
     }
 }
 

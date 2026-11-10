@@ -7,14 +7,12 @@
 //! scores the fields a line has. Lines are deduplicated by signals, since a
 //! site's identical pages carry one label.
 
+use super::repository::eval_export::{all_overrides, site_versions, source_versions, CoveredRow};
 use super::repository::SqliteSourceTrustStore;
-use super::rows::{override_from_row, OVERRIDE_COLUMNS};
-use crate::persistence::db;
 use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::domain::provenance::{ProvenanceRecord, TrustOverride};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
-use sqlx::Row;
 use std::collections::HashSet;
 
 /// The file the save dialog suggests.
@@ -32,43 +30,25 @@ struct Covered {
 }
 
 async fn covered(store: &SqliteSourceTrustStore, entry: &TrustOverride) -> Result<Vec<Covered>> {
-    let rows = match entry {
+    let rows: Vec<CoveredRow> = match entry {
         TrustOverride::Source {
             program_id,
             source_id,
             ..
-        } => sqlx::query(
-            "SELECT v.id AS version_id, l.added_by FROM learning_source_library l \
-             JOIN learning_source_versions v ON v.program_id = l.program_id AND v.id = l.active_version_id \
-             WHERE l.program_id=? AND l.id=? AND l.deleted_at IS NULL",
-        )
-        .bind(program_id)
-        .bind(source_id)
-        .fetch_all(store.pool())
-        .await,
+        } => source_versions(store.pool(), program_id, source_id).await?,
         TrustOverride::Site {
             registrable_domain, ..
         }
         | TrustOverride::SiteSubject {
             registrable_domain, ..
-        } => sqlx::query(
-            "SELECT p.source_version_id AS version_id, l.added_by FROM source_provenance p \
-             JOIN learning_source_versions v ON v.program_id = p.program_id AND v.id = p.source_version_id \
-             JOIN learning_source_library l ON l.program_id = v.program_id AND l.id = v.source_id \
-             WHERE p.site=? ORDER BY p.program_id, p.source_version_id",
-        )
-        .bind(registrable_domain)
-        .fetch_all(store.pool())
-        .await,
-    }
-    .map_err(db)?;
+        } => site_versions(store.pool(), registrable_domain).await?,
+    };
     let mut covered = Vec::new();
     for row in rows {
-        let version: String = row.try_get("version_id").map_err(db)?;
-        if let Some(record) = store.provenance(&version).await? {
+        if let Some(record) = store.provenance(&row.version_id).await? {
             covered.push(Covered {
                 record,
-                added_by: row.try_get("added_by").map_err(db)?,
+                added_by: row.added_by,
             });
         }
     }
@@ -108,15 +88,7 @@ fn labelled(entry: &TrustOverride) -> (&'static str, Value, Value, Option<&str>)
 
 /// The eval lines, in override order.
 pub async fn lines(store: &SqliteSourceTrustStore) -> Result<Vec<String>> {
-    let entries = sqlx::query(&format!(
-        "SELECT {OVERRIDE_COLUMNS} FROM source_trust_overrides ORDER BY scope, registrable_domain, class_key, program_id, source_id"
-    ))
-    .fetch_all(store.pool())
-    .await
-    .map_err(db)?
-    .iter()
-    .map(override_from_row)
-    .collect::<Result<Vec<_>>>()?;
+    let entries = all_overrides(store.pool()).await?;
     let mut lines = Vec::new();
     let mut seen = HashSet::new();
     for entry in &entries {

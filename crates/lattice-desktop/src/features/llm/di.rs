@@ -442,14 +442,9 @@ async fn chat_model_choice(
     pool: &SqlitePool,
     conversation_id: &str,
 ) -> Result<(ChatModelChoice, String)> {
-    let (choice, title): (Option<String>, String) =
-        sqlx::query_as("SELECT model_choice, title FROM conversations WHERE id = ?")
-            .bind(conversation_id)
-            .fetch_optional(pool)
-            .await?
-            .ok_or_else(|| {
-                AppError::NotFound(format!("Conversation {conversation_id} not found"))
-            })?;
+    let (choice, title) = super::repository::chat_model_row(pool, conversation_id)
+        .await?
+        .ok_or_else(|| AppError::NotFound(format!("Conversation {conversation_id} not found")))?;
     Ok((
         ChatModelChoice::from_column(conversation_id, choice.as_deref())?,
         title,

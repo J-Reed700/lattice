@@ -14,9 +14,9 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::domain::provenance::{ClaimKind, EffectiveBars};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Serialize;
-use sqlx::{Row, SqlitePool};
+use sqlx::SqlitePool;
 
-use super::repository::ClaimReviewRepository;
+use super::repository::{reviews, ClaimReviewRepository};
 use crate::content_verification::{gate_reason, relevel};
 use crate::persistence::now;
 use crate::references::trust::outcomes::{self, VerdictScope};
@@ -88,7 +88,7 @@ impl Redecidable {
     pub async fn load(pool: &SqlitePool) -> Result<Self> {
         let store = ClaimReviewRepository::new(pool.clone());
         let mut claims = Vec::new();
-        for lesson_id in weighed_lessons(pool).await? {
+        for lesson_id in reviews::weighed_lessons(pool).await? {
             let ledger = store.load(&lesson_id).await?;
             let Some(review) = &ledger.review else {
                 continue;
@@ -135,7 +135,7 @@ pub async fn affected(pool: &SqlitePool, cause: &TrustCause) -> Result<Vec<Affec
 pub async fn trust_changed(pool: &SqlitePool, cause: &TrustCause) -> Result<Redecided> {
     let bars = calibration::bars(pool).await?;
     let mut report = Redecided::default();
-    for lesson_id in weighed_lessons(pool).await? {
+    for lesson_id in reviews::weighed_lessons(pool).await? {
         report.merge(redecide_lesson(pool, &lesson_id, cause, &bars).await?);
     }
     Ok(report)
@@ -224,25 +224,6 @@ async fn redecide_kinds(pool: &SqlitePool, kinds: Vec<ClaimKind>) -> Result<Rede
         report.merge(trust_changed(pool, &TrustCause::Bar { kind }).await?);
     }
     Ok(report)
-}
-
-/// Lessons with a claim the gate weighed: the only ones a trust change can
-/// touch.
-async fn weighed_lessons(pool: &SqlitePool) -> Result<Vec<String>> {
-    let rows = sqlx::query(
-        "SELECT DISTINCT c.lesson_id FROM learning_lesson_claim_events e \
-         JOIN learning_lesson_claims c ON c.claim_id = e.claim_id \
-         WHERE e.kind = 'standing_assessed' ORDER BY c.lesson_id",
-    )
-    .fetch_all(pool)
-    .await
-    .map_err(|error| AppError::Database(error.to_string()))?;
-    rows.iter()
-        .map(|row| {
-            row.try_get::<String, _>("lesson_id")
-                .map_err(|error| AppError::Database(error.to_string()))
-        })
-        .collect()
 }
 
 /// The claims of a ledger `cause` can re-decide.

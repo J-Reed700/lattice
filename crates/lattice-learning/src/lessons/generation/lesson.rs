@@ -201,6 +201,7 @@ fn lesson_prompt(
             "Teach for the learner's own situation, systems and tools as programGoal and priorKnowledge describe them. When a source describes another system, version or setting, name that system instead of presenting what it says as the learner's.",
             "The learner reads only this lesson, never the sources' excerpts, the course plan (coursePlan) or these requirements. Every sentence must make sense to that reader: say what a source states in the lesson's own words; never point at an excerpt, passage, tutorial, plan or requirement the learner cannot see.",
             "Within this lesson, teach every action a practice or check asks the learner to perform, unless priorKnowledge or an earlier lesson's planned actions in coursePlan already cover it. When an action needs something prepared first, the lesson has the learner prepare it with steps the lesson teaches, and teaches them where they are first used. Count every step a deliverable needs, including how the learner records or saves their work: a deliverable kept anywhere but the learner's own notes needs the way to record it there taught, here or in an earlier lesson's planned actions; otherwise ask for the record in the learner's own notes.",
+            crate::lessons::text_edits::STEPS_IN_ORDER,
             "Teach this lesson's objective. What another lesson's objective in currentModule.lessonSequence names belongs to that lesson: give it at most a one-line pointer.",
             "coursePlan lists what every lesson of the course teaches; the lesson whose position is \"this\" is the one you are writing. Teach exactly that lesson's planned ideas, terms and actions: all of them, and nothing the plan gives to another lesson. Never teach a later lesson's planned ideas; they belong to that lesson, so give them at most a one-line pointer. Put the confusion planned as this lesson's contrast, when it names one, in the lesson's contrast block.",
             "Write a worked_example's steps as a numbered Markdown list, one step per item; where a step has the learner type or enter something, put it in a code span or fence and say what they should see after it.",
@@ -542,7 +543,11 @@ pub async fn prepare_lesson_with_references<'a>(
     // The lesson's own rules do not stop it here: what the teaching review could
     // not repair, and any citation that does not match its source, waits for the
     // user while the lesson publishes.
-    let mut findings = crate::teaching::structural_findings(&lesson_schema(sources.len()), &raw)?;
+    let mut findings = crate::teaching::structural_findings(
+        &lesson_schema(sources.len()),
+        &raw,
+        crate::generation::Counts::Spent,
+    )?;
     let owned_ids: HashSet<&str> = owned.iter().map(String::as_str).collect();
     let (mut prepared, citations) = assemble(generated, &sources, &owned_ids)?;
     findings.extend(citations);
