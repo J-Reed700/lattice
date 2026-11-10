@@ -134,3 +134,30 @@ fn an_excerpt_too_short_to_be_quoted_makes_no_sentence_a_copy() {
     );
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[test]
+fn the_note_names_the_words_of_the_source_the_sentence_copies() {
+    let found = findings(
+        &lesson("The widget keeps every reading in a ledger until the next sweep, and that is why it is slow."),
+        &wording(),
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(
+        found[0].note.contains("the source's words are \"The widget keeps every reading in a ledger until the next sweep\""),
+        "{}",
+        found[0].note
+    );
+}
+
+#[test]
+fn a_command_in_inline_code_is_no_finding_and_the_plain_copy_beside_it_still_is() {
+    let command = "tool sync --all --prune --keep 3 --quiet";
+    let wording = Wording::of_excerpts([EXCERPT, command]);
+    let found = findings(
+        &lesson(&format!("Start the sync by typing `{command}`. {SENTENCE}")),
+        &wording,
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert!(found[0].note.contains(SENTENCE), "{}", found[0].note);
+    assert!(!found[0].note.contains("typing"), "{}", found[0].note);
+}

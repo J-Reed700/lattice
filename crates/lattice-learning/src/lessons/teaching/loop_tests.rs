@@ -3386,3 +3386,284 @@ async fn a_present_finding_its_section_check_reports_again_is_one_finding() -> R
     );
     Ok(())
 }
+
+/// The writer's full lesson whose first section copies the source's sentence.
+fn lesson_that_copies() -> Value {
+    let mut lesson = shaped_lesson();
+    lesson["blocks"][0]["body"] = json!(format!("Body of First idea. {EXCERPT}"));
+    lesson
+}
+
+fn copied_id() -> String {
+    format!(
+        "rule/copied-wording/section-0/{}",
+        crate::review_findings::subject_of(EXCERPT)
+    )
+}
+
+fn say_it_yourself(id: &str) -> String {
+    json!({"edits":[{"finding":id,"path":"/blocks/0/body","before":EXCERPT,"after":"The widget does what its notes say it does."}]}).to_string()
+}
+
+const EDITS_FORM: &str =
+    "You are editing a rejected draft. Correct only the established teaching defects";
+const WHOLE_FORM: &str = "Repair the teaching material";
+
+async fn review_shaped(
+    model: &ScriptedModel,
+    candidate: &Value,
+    protected: &[crate::lessons::content_verification::Protected],
+) -> Result<Reviewed> {
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let policy = crate::lessons::shape::policy();
+    let phase = if protected.is_empty() {
+        crate::lessons::shape::Phase::Draft
+    } else {
+        crate::lessons::shape::Phase::Kept
+    };
+    let schema = policy.schema(phase, 1);
+    review_material(
+        model,
+        LESSON_REPAIR_SYSTEM,
+        &context(),
+        ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
+        candidate.to_string(),
+        4000,
+        &mut LessonSubject::new(&references, protected, Held::default()),
+    )
+    .await
+}
+
+/// The prompts of the repair requests a scripted model was sent, in order.
+fn repair_prompts(model: &ScriptedModel) -> Vec<String> {
+    model
+        .prompts
+        .lock()
+        .unwrap()
+        .iter()
+        .filter(|prompt| prompt.contains("issuesToFix"))
+        .cloned()
+        .collect()
+}
+
+#[tokio::test]
+async fn a_copied_sentence_is_repaired_by_one_patch_after_the_content_was_reviewed() -> Result<()> {
+    let candidate = lesson_that_copies();
+    let model = model(vec![
+        shaped_answers(&candidate),
+        shaped_review(&candidate),
+        say_it_yourself(&copied_id()),
+        shaped_answers(&candidate),
+        crate::lessons::course_generation_tests::clean_review(&[0], &[]),
+    ]);
+
+    let reviewed = review_shaped(&model, &candidate, &[]).await;
+
+    let repairs = repair_prompts(&model);
+    assert!(
+        repairs
+            .first()
+            .is_some_and(|prompt| prompt.contains(EDITS_FORM)),
+        "the first repair was not asked for edits"
+    );
+    assert!(repairs.iter().all(|prompt| !prompt.contains(WHOLE_FORM)));
+    let prompts = model.prompts.lock().unwrap().clone();
+    let reviewed_at = prompts
+        .iter()
+        .position(|prompt| prompt.contains("sectionIndicesToReview"));
+    let repaired_at = prompts
+        .iter()
+        .position(|prompt| prompt.contains("issuesToFix"));
+    assert!(
+        reviewed_at
+            .zip(repaired_at)
+            .is_some_and(|(review, repair)| review < repair),
+        "the content was not reviewed before the first repair"
+    );
+    assert_eq!(repairs.len(), 1);
+    let reviewed = reviewed?;
+    assert!(reviewed.set_aside.is_empty());
+    let after: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert!(!after["blocks"][0]["body"]
+        .as_str()
+        .unwrap()
+        .contains(EXCERPT));
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_whole_repair_is_sent_only_what_needs_the_whole_lesson_and_the_copied_sentence_is_patched_after_it(
+) -> Result<()> {
+    let full = lesson_that_copies();
+    let mut cut = full.clone();
+    cut["questions"].as_array_mut().unwrap().pop();
+    let model = model(vec![
+        full.to_string(),
+        shaped_answers(&full),
+        shaped_review(&full),
+        say_it_yourself(&copied_id()),
+        shaped_answers(&full),
+        crate::lessons::course_generation_tests::clean_review(&[0], &[]),
+    ]);
+
+    let reviewed = review_shaped(&model, &cut, &[]).await;
+
+    let asked = repair_requests(&model);
+    assert!(!asked.is_empty(), "no repair was asked");
+    let first = ids_of(&asked[0]);
+    assert!(
+        first.iter().any(|id| id == "rule/question-count/lesson"),
+        "{first:?}"
+    );
+    assert!(
+        first.iter().all(|id| !id.contains("copied-wording")),
+        "the whole rewrite was sent the copied sentence: {first:?}"
+    );
+    let prompts = repair_prompts(&model);
+    assert!(prompts[0].contains(WHOLE_FORM));
+    assert_eq!(asked.len(), 2, "{prompts:?}");
+    assert!(prompts[1].contains(EDITS_FORM));
+    assert_eq!(ids_of(&asked[1]), [copied_id()]);
+    assert!(asked[1]["issuesToFix"][0]["lastAttempt"].is_null());
+    let reviewed = reviewed?;
+    assert!(reviewed.set_aside.is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_copied_sentence_no_claim_stands_on_is_repaired_by_edits_while_claims_are_protected(
+) -> Result<()> {
+    let candidate = lesson_that_copies();
+    let protected = [crate::lessons::content_verification::Protected {
+        unit: 1,
+        field: "body".into(),
+        quote: "Body of First example.".into(),
+        released: false,
+    }];
+    let model = model(vec![
+        shaped_answers(&candidate),
+        shaped_review(&candidate),
+        say_it_yourself(&copied_id()),
+        shaped_answers(&candidate),
+        crate::lessons::course_generation_tests::clean_review(&[0], &[]),
+    ]);
+
+    let reviewed = review_shaped(&model, &candidate, &protected).await?;
+
+    let waiting: Vec<_> = reviewed
+        .set_aside
+        .iter()
+        .map(|waiting| waiting.finding.id().as_str().to_owned())
+        .collect();
+    assert!(waiting.is_empty(), "{waiting:?}");
+    let after: Value = serde_json::from_str(&reviewed.candidate)?;
+    assert!(!after["blocks"][0]["body"]
+        .as_str()
+        .unwrap()
+        .contains(EXCERPT));
+    assert_eq!(after["blocks"][1]["body"], candidate["blocks"][1]["body"]);
+    Ok(())
+}
+
+#[test]
+fn a_copied_sentence_does_not_hold_up_the_content_review() {
+    let copy = ReviewFinding::rule_about(
+        Rule::CopiedWording,
+        FindingKind::Teaching,
+        FindingSite::Section(0),
+        "A copied sentence.",
+        "Say it in the lesson's own words.",
+    );
+    assert!(!holds_up_review(
+        std::slice::from_ref(&copy),
+        Some(&Passes::default())
+    ));
+    assert!(!holds_up_review(&[copy], None));
+}
+
+#[test]
+fn a_finding_whose_edit_overlapped_another_findings_is_not_charged_and_is_told_to_give_it_again(
+) -> Result<()> {
+    use super::repair::Repaired;
+    use super::subject::{Settled, Subject};
+    let mut previous = shaped_lesson();
+    previous["blocks"][0]["body"] = json!("Body of First idea. Beta is second.");
+    let about = |sentence: &str| {
+        ReviewFinding::rule_about(
+            Rule::SentenceRepeated,
+            FindingKind::Teaching,
+            FindingSite::Section(0),
+            sentence,
+            "Say it once.",
+        )
+        .with_passage(sentence)
+    };
+    let (first, second) = (about("Beta is second."), about("Body of First idea."));
+    let patch = json!({"edits":[
+        {"finding":first.id().as_str(),"path":"/blocks/0/body","before":"Beta is second.","after":"Beta comes second."},
+        {"finding":second.id().as_str(),"path":"/blocks/0/body","before":"is second.","after":"is last."}
+    ]})
+    .to_string();
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut subject = LessonSubject::new(&references, &[], Held::default());
+
+    let settled = subject.settle_repair(
+        &previous,
+        &[first.clone(), second.clone()],
+        true,
+        Ok(Repaired::Patch(patch)),
+    )?;
+
+    assert!(matches!(settled, Settled::Changed(_)));
+    assert!(subject.last_attempt(&first).is_some_and(
+        |told| told.starts_with("The last repair's edits for this finding were applied")
+    ));
+    assert_eq!(
+        subject.last_attempt(&second).as_deref(),
+        Some("The last repair's edit for this finding overlapped an edit for another finding and was left out; give it again.")
+    );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_whole_repair_is_neither_sent_nor_charged_a_failing_quotation() -> Result<()> {
+    const BAD: &str = "An imaginary handbook says this widget behaves in a different way entirely.";
+    let mut full = shaped_lesson();
+    full["blocks"][0]["quote"] = json!(BAD);
+    let mut cut = full.clone();
+    cut["questions"].as_array_mut().unwrap().pop();
+    let quotation_id = format!(
+        "rule/quotation/section-0/{}",
+        crate::review_findings::subject_of(BAD)
+    );
+    let fix = json!({"edits":[{"finding":quotation_id,"path":"/blocks/0/quote","before":BAD,"after":EXCERPT}]}).to_string();
+    let model = model(vec![
+        full.to_string(),
+        shaped_answers(&full),
+        shaped_review(&full),
+        fix,
+        shaped_answers(&full),
+        crate::lessons::course_generation_tests::clean_review(&[0], &[]),
+    ]);
+
+    let reviewed = review_shaped(&model, &cut, &[]).await;
+
+    let asked = repair_requests(&model);
+    assert!(!asked.is_empty(), "no repair was asked");
+    let first = ids_of(&asked[0]);
+    assert!(
+        first.iter().any(|id| id == "rule/question-count/lesson"),
+        "{first:?}"
+    );
+    assert!(
+        first.iter().all(|id| !id.starts_with("rule/quotation")),
+        "the whole rewrite was sent the quotation: {first:?}"
+    );
+    assert_eq!(asked.len(), 2);
+    assert_eq!(ids_of(&asked[1]), [quotation_id]);
+    assert!(asked[1]["issuesToFix"][0]["lastAttempt"].is_null());
+    assert!(reviewed?.set_aside.is_empty());
+    Ok(())
+}

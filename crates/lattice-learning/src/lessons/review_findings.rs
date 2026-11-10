@@ -163,6 +163,57 @@ pub enum Rule {
     PartCitation,
 }
 
+/// How a finding can be corrected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Remedy {
+    /// Edits to existing text of its part, or citations appended or taken back.
+    Edits,
+    /// The material written again whole.
+    Whole,
+}
+
+impl Rule {
+    /// `Edits` when a fix always exists that replaces text in the finding's
+    /// own part, changes an existing number or boolean, or appends or takes
+    /// back a citation; `Whole` when a fix may need a missing or empty field,
+    /// a part added or removed, a reordering, or material that cannot be read.
+    pub fn remedy(self) -> Remedy {
+        match self {
+            Self::Quotation
+            | Self::TitleRepeated
+            | Self::CheckHoldback
+            | Self::FenceUnclosed
+            | Self::PromptRepeated
+            | Self::KeyLongest
+            | Self::KeyGivenAway
+            | Self::Uncited
+            | Self::CitationLabel
+            | Self::SourceNumber
+            | Self::SentenceRepeated
+            | Self::CopiedWording
+            | Self::SentenceCitation
+            | Self::PartCitation => Remedy::Edits,
+            Self::Unreadable
+            | Self::Schema
+            | Self::BlockBody
+            | Self::PracticeRubric
+            | Self::QuoteChecks
+            | Self::TitleMissing
+            | Self::PromptMissing
+            | Self::ExplanationMissing
+            | Self::Choices
+            | Self::RationaleCount
+            | Self::RationaleMissing
+            | Self::UnshownCheck
+            | Self::RecapFirst
+            | Self::SectionMix
+            | Self::QuestionCount
+            | Self::NoExplanation
+            | Self::QuestionKinds => Remedy::Whole,
+        }
+    }
+}
+
 /// What the check of a lesson against its course plan found.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -388,6 +439,15 @@ impl ReviewFinding {
     pub fn with_passage(mut self, passage: &str) -> Self {
         self.passage = (!passage.trim().is_empty()).then(|| passage.to_owned());
         self
+    }
+
+    /// How this finding can be corrected: a rule's own remedy, edits for any
+    /// other origin.
+    pub fn remedy(&self) -> Remedy {
+        match &self.origin {
+            Origin::Rule { rule, .. } => rule.remedy(),
+            Origin::Plan { .. } | Origin::AnswerKey | Origin::Reviewer { .. } => Remedy::Edits,
+        }
     }
 
     /// This finding's identity: the same across passes while the same defect
@@ -882,5 +942,59 @@ mod tests {
             unit(&candidate, &question).passage.as_deref(),
             Some("What is 2+2?")
         );
+    }
+
+    #[test]
+    fn each_rule_has_the_remedy_its_fix_needs() {
+        use Remedy::{Edits, Whole};
+        let table = [
+            (Rule::Unreadable, Whole),
+            (Rule::Schema, Whole),
+            (Rule::BlockBody, Whole),
+            (Rule::PracticeRubric, Whole),
+            (Rule::Quotation, Edits),
+            (Rule::QuoteChecks, Whole),
+            (Rule::TitleMissing, Whole),
+            (Rule::TitleRepeated, Edits),
+            (Rule::CheckHoldback, Edits),
+            (Rule::FenceUnclosed, Edits),
+            (Rule::PromptMissing, Whole),
+            (Rule::PromptRepeated, Edits),
+            (Rule::ExplanationMissing, Whole),
+            (Rule::Choices, Whole),
+            (Rule::KeyLongest, Edits),
+            (Rule::KeyGivenAway, Edits),
+            (Rule::RationaleCount, Whole),
+            (Rule::RationaleMissing, Whole),
+            (Rule::Uncited, Edits),
+            (Rule::CitationLabel, Edits),
+            (Rule::SourceNumber, Edits),
+            (Rule::SentenceRepeated, Edits),
+            (Rule::UnshownCheck, Whole),
+            (Rule::RecapFirst, Whole),
+            (Rule::SectionMix, Whole),
+            (Rule::QuestionCount, Whole),
+            (Rule::NoExplanation, Whole),
+            (Rule::QuestionKinds, Whole),
+            (Rule::CopiedWording, Edits),
+            (Rule::SentenceCitation, Edits),
+            (Rule::PartCitation, Edits),
+        ];
+        for (rule, remedy) in table {
+            assert_eq!(rule.remedy(), remedy, "{rule:?}");
+            let finding =
+                ReviewFinding::rule(rule, FindingKind::Structure, FindingSite::Lesson, "n");
+            assert_eq!(finding.remedy(), remedy, "{rule:?}");
+        }
+    }
+
+    #[test]
+    fn a_finding_that_is_not_a_broken_rule_is_corrected_by_edits() {
+        let reviewer = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "n");
+        let key = ReviewFinding::answer_key(0, "n");
+        let plan = ReviewFinding::plan(PlanCheck::Used, "an idea", FindingSite::Section(0), "n");
+        for finding in [reviewer, key, plan] {
+            assert_eq!(finding.remedy(), Remedy::Edits);
+        }
     }
 }

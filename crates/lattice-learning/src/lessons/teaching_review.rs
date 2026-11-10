@@ -11,7 +11,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashSet};
 
-pub(super) const POLICY: &str = "section-review-v5";
+pub(super) const POLICY: &str = "section-review-v6";
 
 /// The room the review's answer is given.
 const REVIEW_ANSWER_TOKENS: usize = 6000;
@@ -62,11 +62,24 @@ struct BlockCheck {
 #[derive(Deserialize)]
 #[serde(deny_unknown_fields)]
 struct Review {
-    issues: Vec<String>,
+    issues: Vec<Issue>,
     #[serde(default, rename = "blockChecks")]
     block_checks: Vec<Value>,
     #[serde(default, rename = "openFindings")]
     open_findings: Vec<Value>,
+}
+
+/// An issue as the reviewer gave it: plain text, or, when open findings were
+/// asked about, text with the open finding it continues.
+#[derive(Deserialize)]
+#[serde(untagged)]
+enum Issue {
+    Plain(String),
+    Continuing {
+        note: String,
+        #[serde(default)]
+        continues: Option<String>,
+    },
 }
 
 #[derive(Deserialize)]
@@ -122,6 +135,9 @@ pub struct Reported {
     pub passage: Option<String>,
     /// The app-owned id of the passage a section check chose.
     pub passage_id: Option<String>,
+    /// The open finding the reviewer says this defect is.
+    #[serde(default)]
+    pub continues: Option<FindingId>,
 }
 
 impl Reported {
@@ -229,10 +245,21 @@ fn schema(indices: &[usize], passages: &[Vec<String>], verdict_ids: &[&str]) -> 
         properties.insert("openFindings".into(), json!({"type":"array","minItems":count,"maxItems":count,"items":{"type":"object","additionalProperties":false,"required":["id","verdict","note"],"properties":{"id":{"type":"string","enum":verdict_ids},"verdict":{"type":"string","enum":["present","resolved"]},"note":{"type":"string"}}}}));
     }
     required.push("issues");
-    properties.insert(
-        "issues".into(),
-        json!({"type":"array","items":{"type":"string","minLength":1}}),
-    );
+    let continues = (!verdict_ids.is_empty()).then(|| {
+        let choices: Vec<&str> = verdict_ids
+            .iter()
+            .copied()
+            .chain(std::iter::once("none"))
+            .collect();
+        json!({"type":"string","enum":choices})
+    });
+    let issue = match &continues {
+        Some(continues) => {
+            json!({"type":"object","additionalProperties":false,"required":["note","continues"],"properties":{"note":{"type":"string","minLength":1},"continues":continues}})
+        }
+        None => json!({"type":"string","minLength":1}),
+    };
+    properties.insert("issues".into(), json!({"type":"array","items":issue}));
     if !passages.is_empty() {
         required.push("blockChecks");
         // Each check names an app-owned section ID and one of those
@@ -253,7 +280,13 @@ fn schema(indices: &[usize], passages: &[Vec<String>], verdict_ids: &[&str]) -> 
         let checks = if sections.is_empty() {
             json!({"type":"array","maxItems":0,"items":{"type":"string"}})
         } else {
-            json!({"type":"array","items":{"type":"object","additionalProperties":false,"required":["sectionId","passageId","finding","hasDefect"],"properties":{"sectionId":section_id,"passageId":passage_id,"finding":{"type":"string","minLength":1},"hasDefect":{"type":"boolean"}}}})
+            let mut required = vec!["sectionId", "passageId", "finding", "hasDefect"];
+            let mut fields = json!({"sectionId":section_id,"passageId":passage_id,"finding":{"type":"string","minLength":1},"hasDefect":{"type":"boolean"}});
+            if let (Some(continues), Some(fields)) = (&continues, fields.as_object_mut()) {
+                required.push("continues");
+                fields.insert("continues".into(), continues.clone());
+            }
+            json!({"type":"array","items":{"type":"object","additionalProperties":false,"required":required,"properties":fields}})
         };
         properties.insert("blockChecks".into(), checks);
     }
@@ -410,6 +443,14 @@ async fn review_sections(
     let mut verdicts = BTreeMap::<FindingId, Verdict>::new();
     let mut reported: Vec<Reported> = Vec::new();
     let mut problems = Vec::new();
+    let continuing = |id: &str| {
+        scope
+            .asked
+            .into_iter()
+            .flatten()
+            .find(|asked| asked.id.as_str() == id)
+            .map(|asked| asked.id.clone())
+    };
     // The first correction is always asked for; later ones while each answer
     // validates another section.
     for attempt in 0usize.. {
@@ -497,6 +538,10 @@ async fn review_sections(
             Err(_) => problems.push("The previous review was incomplete. Give the issues and a check for every requested section.".into()),
             Ok(review) => {
                 for issue in review.issues {
+                    let (issue, continued) = match issue {
+                        Issue::Plain(note) => (note, None),
+                        Issue::Continuing { note, continues } => (note, continues),
+                    };
                     let blank = issue.trim().is_empty();
                     if blank && !settle {
                         problems.push("An issue must not be blank.".into());
@@ -508,6 +553,7 @@ async fn review_sections(
                             summary,
                             passage: None,
                             passage_id: None,
+                            continues: continued.as_deref().and_then(continuing),
                         });
                     }
                 }
@@ -541,22 +587,26 @@ async fn review_sections(
                 }
                 let mut named = Vec::new();
                 for mut value in review.block_checks {
+                    let continued = value
+                        .as_object_mut()
+                        .and_then(|fields| fields.remove("continues"))
+                        .and_then(|id| id.as_str().and_then(continuing));
                     let section = value
                         .as_object_mut()
                         .and_then(|fields| fields.remove("sectionId"))
                         .and_then(|id| id.as_str().map(str::to_owned));
                     match section {
-                        Some(section) => named.push((section, value)),
+                        Some(section) => named.push((section, value, continued)),
                         None => problems.push("A block check needs the sectionId of the section it checks.".into()),
                     }
                 }
                 let mut seen = HashSet::new();
                 let repeated: HashSet<String> = named
                     .iter()
-                    .filter(|(section, _)| !seen.insert(section.clone()))
-                    .map(|(section, _)| section.clone())
+                    .filter(|(section, _, _)| !seen.insert(section.clone()))
+                    .map(|(section, _, _)| section.clone())
                     .collect();
-                for (section, mut value) in named {
+                for (section, mut value, continued) in named {
                     let Some(index) = indices.iter().copied().find(|index| section == format!("section-{index}")) else {
                         problems.push(format!("Section ID {section} was not requested."));
                         continue;
@@ -583,6 +633,7 @@ async fn review_sections(
                                     summary: finding.trim().to_owned(),
                                     passage: chosen.and_then(|id| passage_text(&shown, index, id)),
                                     passage_id: chosen.map(str::to_owned),
+                                    continues: continued.clone(),
                                 });
                             }
                         }

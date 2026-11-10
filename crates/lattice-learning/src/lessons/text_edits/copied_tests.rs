@@ -53,3 +53,34 @@ fn a_copy_the_field_already_held_does_not_refuse_an_edit_beside_it() {
         .unwrap()
         .ends_with("The result is shown here."));
 }
+
+#[test]
+fn the_refusal_of_a_copied_sentence_names_the_words_of_the_source() {
+    let message = rewrite(&format!("The command prints that location: {QUOTE}"))
+        .unwrap_err()
+        .to_string();
+    assert!(
+        message.contains(
+            "the source's words are \"All it does is print out the current folder name\""
+        ),
+        "{message}"
+    );
+}
+
+#[test]
+fn an_edit_adding_a_sentence_whose_inline_code_holds_the_sources_command_is_applied() {
+    let command = "tool sync --all --prune --keep 3 --quiet";
+    let patch = json!({"edits":[{"path":"/blocks/0/body","before":"The result is stated here.",
+        "after":format!("Start the sync by typing `{command}`.")}]});
+    let applied = apply_in(
+        &cited(),
+        &patch.to_string(),
+        &Value::Null,
+        &crate::lessons::copied_wording::Wording::of_excerpts([command]),
+    )
+    .unwrap();
+    assert!(applied["blocks"][0]["body"]
+        .as_str()
+        .unwrap()
+        .ends_with(&format!("typing `{command}`.")));
+}
