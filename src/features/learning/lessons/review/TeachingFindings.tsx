@@ -37,6 +37,22 @@ const NOT_REMOVABLE = 'This note isn\'t about one whole sentence of a section, s
 /** The id of a note's card, which takes focus when the user comes back to the notes from Add a source. */
 export const teachingNoteId = (findingKey: string) => `teaching-note-${findingKey}`;
 
+/** Each note's place among the notes on its part, as ", note 2 of 3"; a part with one note has none. The part is a section or question by index, or the whole lesson. */
+function notePositions(findings: TeachingFindingDto[]) {
+  const part = (finding: TeachingFindingDto) => `${finding.site}:${finding.unitIndex ?? ''}`;
+  const totals = new Map<string, number>();
+  for (const finding of findings) totals.set(part(finding), (totals.get(part(finding)) ?? 0) + 1);
+  const seen = new Map<string, number>();
+  const positions = new Map<string, string>();
+  for (const finding of findings) {
+    const total = totals.get(part(finding)) ?? 1;
+    const place = (seen.get(part(finding)) ?? 0) + 1;
+    seen.set(part(finding), place);
+    if (total > 1) positions.set(finding.findingKey, `, note ${place} of ${total}`);
+  }
+  return positions;
+}
+
 const unique = (ids: string[]) => [...new Set(ids)];
 
 /** What the last change said, so it can be taken back. */
@@ -87,6 +103,7 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
   const [last, setLast] = useState<Settled | null>(null);
   if (findings.length === 0) return null;
   const waiting = waitingKeys.length;
+  const positions = notePositions(findings);
   const chosen = [...selection.selected];
   const byKey = new Map(findings.map((finding) => [finding.findingKey, finding]));
   const canAct = published && revision !== undefined;
@@ -167,13 +184,14 @@ export function TeachingFindings({ programId, lessonId, findings, lessonAnchor =
       {errors[BATCH] && <p role="alert" className="mb-2 text-xs leading-5 text-rose-700">{errors[BATCH]}</p>}
       <ul role="list" className="space-y-2">
         {findings.map((finding) => {
+          const position = positions.get(finding.findingKey) ?? '';
           const openEditor = editSection?.(finding) ?? null;
           const openQuestionEditor = editQuestion?.(finding) ?? null;
           return (
           <li key={finding.findingKey}>
-            <article id={teachingNoteId(finding.findingKey)} tabIndex={-1} aria-label={`${finding.unitTitle}: ${KIND_LABELS[finding.kind]}`}
+            <article id={teachingNoteId(finding.findingKey)} tabIndex={-1} aria-label={`${finding.unitTitle}: ${KIND_LABELS[finding.kind]}${position}`}
               className="flex gap-3 rounded-xl border border-border bg-background p-4 focus-visible:outline-2 focus-visible:outline-accent">
-              {isTeachingWaiting(finding) && <ReviewCheckbox checked={selection.isSelected(finding.findingKey)} label={`Select the note on ${finding.unitTitle}`}
+              {isTeachingWaiting(finding) && <ReviewCheckbox checked={selection.isSelected(finding.findingKey)} label={`Select the note on ${finding.unitTitle}${position}`}
                 disabled={acting !== null} onToggle={(shiftKey) => selection.toggle(finding.findingKey, { shiftKey })} />}
               <div className="min-w-0 flex-1">
                 <p className="text-[11px] font-semibold uppercase tracking-[.12em] text-text-muted">{KIND_LABELS[finding.kind]}</p>
