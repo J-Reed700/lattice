@@ -594,7 +594,8 @@ fn unusable(error: AppError) -> AppError {
 /// (`service::validate_generated`) refuses only what cannot be saved. A
 /// citation whose quotation does not match its source keeps the source it
 /// names and comes back as a finding; a fabricated citation in a course
-/// without sources is dropped and comes back as a finding.
+/// without sources, or a part naming no source it was given, is saved with
+/// none and comes back as a finding.
 fn assemble(
     generated: GeneratedLesson,
     sources: &[LearningSourceDto],
@@ -738,8 +739,8 @@ fn cite_sentences(
     Ok(())
 }
 
-/// The sources a part is saved with. Only a part of a sourced course that
-/// names no supplied source cannot be saved.
+/// The sources a part is saved with: none when it names no supplied source,
+/// which is a finding that waits.
 fn citation(
     sources: &[LearningSourceDto],
     index: Option<usize>,
@@ -771,17 +772,10 @@ fn citation(
         ))
         .with_passage(quote),
     );
-    if sources.is_empty() {
-        return Ok(Vec::new());
-    }
-    index
+    Ok(index
         .and_then(|index| sources.get(index))
         .map(|source| vec![source.id.clone()])
-        .ok_or_else(|| {
-            AppError::ModelAnswerUnusable(format!(
-                "The citation at {part} names no source this lesson was given."
-            ))
-        })
+        .unwrap_or_default())
 }
 
 #[cfg(test)]
