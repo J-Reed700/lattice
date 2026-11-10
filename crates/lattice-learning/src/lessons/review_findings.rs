@@ -185,6 +185,11 @@ impl FindingId {
     pub fn as_str(&self) -> &str {
         &self.0
     }
+
+    /// A stored id read back.
+    pub(crate) fn stored(id: String) -> Self {
+        Self(id)
+    }
 }
 
 /// The name `value` has when serialized as a plain string.
@@ -408,6 +413,15 @@ impl FindingKey {
     pub fn id(&self) -> String {
         format!("{}:{}", self.kind.as_str(), site_text(self.site))
     }
+}
+
+/// What an earlier review left with the user, for text that has not changed.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Held {
+    /// Findings stored by their own id.
+    pub ids: BTreeSet<FindingId>,
+    /// Rows stored before finding ids: every finding of the kind at the place.
+    pub places: BTreeSet<FindingKey>,
 }
 
 /// A finding the repairs stopped on: it waits for the user.

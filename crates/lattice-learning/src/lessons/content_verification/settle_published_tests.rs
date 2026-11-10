@@ -1622,7 +1622,7 @@ async fn a_note_shows_removed_while_the_users_removal_of_its_sentence_stands() -
         .settle(
             &course.program_id,
             &course.lesson_id,
-            &["quotation:section-0".to_owned()],
+            &["rule/quotation/section-0".to_owned()],
             TeachingSettleDto::Keep,
         )
         .await?;
@@ -1883,7 +1883,12 @@ async fn a_notes_sentence_no_claim_stands_on_is_removed_in_one_step_and_the_undo
     let before = stored(&course).await?;
     let claims_before = ledger(&course).await?.claims.len();
 
-    let removed = remove_notes(&course, &["quotation:section-0"], before.ledger_revision).await?;
+    let removed = remove_notes(
+        &course,
+        &["rule/quotation/section-0"],
+        before.ledger_revision,
+    )
+    .await?;
 
     let after = stored(&course).await?;
     assert_eq!(after.blocks[0], format!("{ALPHA} {CHARLIE}"));
@@ -1937,7 +1942,12 @@ async fn a_note_with_an_exact_claim_removes_through_that_claim_and_creates_none(
     let before = stored(&course).await?;
     let claims_before = ledger(&course).await?.claims.len();
 
-    let removed = remove_notes(&course, &["quotation:section-0"], before.ledger_revision).await?;
+    let removed = remove_notes(
+        &course,
+        &["rule/quotation/section-0"],
+        before.ledger_revision,
+    )
+    .await?;
 
     assert_eq!(removed.claim_ids, std::slice::from_ref(&target.0));
     assert_eq!(removed.revision, before.ledger_revision + 1);
@@ -1976,7 +1986,7 @@ async fn a_batch_with_one_note_that_is_not_one_whole_sentence_changes_nothing_an
 
     let error = note_removal_refused(
         &course,
-        &["quotation:section-0", "teaching:section-0"],
+        &["rule/quotation/section-0", "reviewer/section-0"],
         revision,
     )
     .await;
@@ -1985,7 +1995,7 @@ async fn a_batch_with_one_note_that_is_not_one_whole_sentence_changes_nothing_an
     assert!(text.contains(NOT_A_SENTENCE), "{text}");
     assert!(text.contains("Nothing was changed."), "{text}");
 
-    let error = note_removal_refused(&course, &["teaching:section-0"], revision).await;
+    let error = note_removal_refused(&course, &["reviewer/section-0"], revision).await;
     let text = error.to_string();
     assert!(text.contains("None of these can be removed"), "{text}");
     assert!(text.contains(NOT_A_SENTENCE), "{text}");
@@ -2000,7 +2010,7 @@ async fn removing_notes_sentences_with_an_old_revision_writes_nothing() -> Resul
     notes_about(&course, &[(0, FindingKind::Quotation, BRAVO)]).await?;
     let revision = ledger(&course).await?.revision.0;
 
-    let error = note_removal_refused(&course, &["quotation:section-0"], revision + 1).await;
+    let error = note_removal_refused(&course, &["rule/quotation/section-0"], revision + 1).await;
 
     assert!(error.to_string().contains("changed"), "{error}");
     Ok(())
@@ -2016,7 +2026,7 @@ async fn a_key_naming_no_note_is_refused_and_writes_nothing() -> Result<()> {
 
     let error = note_removal_refused(
         &course,
-        &["quotation:section-0", "quotation:section-9"],
+        &["rule/quotation/section-0", "rule/quotation/section-9"],
         revision,
     )
     .await;
@@ -2037,7 +2047,7 @@ async fn a_draft_lessons_notes_cannot_have_their_sentences_removed() -> Result<(
         .await?;
     let revision = ledger(&course).await?.revision.0;
 
-    let error = note_removal_refused(&course, &["quotation:section-0"], revision).await;
+    let error = note_removal_refused(&course, &["rule/quotation/section-0"], revision).await;
 
     assert!(matches!(error, AppError::InvalidState(_)), "{error:?}");
     let text = error.to_string();
@@ -2058,7 +2068,7 @@ async fn the_same_key_twice_removes_its_sentence_once() -> Result<()> {
 
     let removed = remove_notes(
         &course,
-        &["quotation:section-0", "quotation:section-0"],
+        &["rule/quotation/section-0", "rule/quotation/section-0"],
         revision,
     )
     .await?;
@@ -2089,7 +2099,7 @@ async fn two_notes_in_one_section_go_in_one_call_with_one_revision_and_one_undo_
 
     let removed = remove_notes(
         &course,
-        &["quotation:section-0", "teaching:section-0"],
+        &["rule/quotation/section-0", "reviewer/section-0"],
         before.ledger_revision,
     )
     .await?;
@@ -2136,7 +2146,12 @@ async fn a_sentence_holding_a_smaller_claim_ends_that_claim_and_the_undo_brings_
     assert!(note.claim_ids.is_empty());
     let before = stored(&course).await?;
 
-    let removed = remove_notes(&course, &["quotation:section-0"], before.ledger_revision).await?;
+    let removed = remove_notes(
+        &course,
+        &["rule/quotation/section-0"],
+        before.ledger_revision,
+    )
+    .await?;
 
     assert_eq!(removed.claim_ids.len(), 2);
     assert!(removed.claim_ids.contains(&small.0));

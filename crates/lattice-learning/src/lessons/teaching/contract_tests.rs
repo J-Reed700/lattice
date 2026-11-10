@@ -7,10 +7,10 @@ use crate::content_verification::tests::{fixture_completion, CONTRACT_NOTHING};
 use crate::lessons::content_verification::Protected;
 use crate::lessons::course_generation_tests::ScriptedModel;
 use crate::reference_collection::ReferenceCollection;
+use crate::review_findings::Held;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
-use std::collections::BTreeSet;
 use std::sync::Mutex;
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
@@ -243,7 +243,7 @@ async fn run_under(
         ReviewSchema::Other(schema),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, protected, BTreeSet::new()),
+        &mut LessonSubject::new(&references, protected, Held::default()),
     )
     .await
 }

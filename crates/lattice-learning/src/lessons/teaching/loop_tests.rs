@@ -5,7 +5,7 @@ use super::*;
 use crate::lesson_drafts;
 use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::FindingKey;
+use crate::review_findings::{FindingKey, Held};
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
@@ -57,7 +57,7 @@ async fn run(model: &dyn LLMPort, candidate: Value) -> Result<Reviewed> {
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], BTreeSet::new()),
+        &mut LessonSubject::new(&references, &[], Held::default()),
     )
     .await
 }
@@ -78,7 +78,7 @@ async fn review_protecting(
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, protected, BTreeSet::new()),
+        &mut LessonSubject::new(&references, protected, Held::default()),
     )
     .await
 }
@@ -325,7 +325,7 @@ async fn a_repair_too_long_for_the_window_leaves_the_lesson_waiting() -> Result<
         ReviewSchema::Other(&json!({"type":"object"})),
         original.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], BTreeSet::new()),
+        &mut LessonSubject::new(&references, &[], Held::default()),
     )
     .await?;
     assert_eq!(
@@ -368,7 +368,7 @@ async fn a_repair_too_big_for_its_window_keeps_the_excerpts_that_fit_the_cited_f
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], BTreeSet::new()),
+        &mut LessonSubject::new(&references, &[], Held::default()),
     )
     .await?;
     assert!(reviewed.set_aside.is_empty());
@@ -413,10 +413,13 @@ async fn a_finding_the_user_already_holds_is_not_repaired_again() -> Result<()> 
         &mut LessonSubject::new(
             &references,
             &[],
-            BTreeSet::from([FindingKey {
-                kind: FindingKind::Teaching,
-                site: FindingSite::Section(0),
-            }]),
+            Held {
+                places: BTreeSet::from([FindingKey {
+                    kind: FindingKind::Teaching,
+                    site: FindingSite::Section(0),
+                }]),
+                ..Held::default()
+            },
         ),
     )
     .await?;
@@ -513,7 +516,7 @@ async fn a_teaching_finding_on_a_protected_sentence_waits_for_the_user_and_the_r
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &protected, BTreeSet::new()),
+        &mut LessonSubject::new(&references, &protected, Held::default()),
     )
     .await?;
     assert_eq!(reviewed.set_aside.len(), 1);
@@ -725,7 +728,10 @@ fn a_missing_citation_does_not_hold_up_the_content_review_but_other_structure_do
     // Without a lesson's passes every structure finding holds the review up.
     assert!(holds_up_review(std::slice::from_ref(&shape), None));
     // Structure the machine stopped repairing does not.
-    let stopped = Passes::new(BTreeSet::from([shape.place()]));
+    let stopped = Passes::new(Held {
+        places: BTreeSet::from([shape.place()]),
+        ..Held::default()
+    });
     assert!(!holds_up_review(&[citation, shape], Some(&stopped)));
 }
 
@@ -1488,7 +1494,7 @@ async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<
         &mut LessonSubject::new(
             &references,
             if protected { &sentences } else { &[] },
-            BTreeSet::new(),
+            Held::default(),
         ),
     )
     .await?;
