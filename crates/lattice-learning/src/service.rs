@@ -531,4 +531,15 @@ mod tests {
             "the gate a written lesson meets at save: {saved:?}"
         );
     }
+
+    #[test]
+    fn a_question_whose_options_differ_only_by_letter_case_is_accepted() {
+        let mut program = fixture();
+        program.sources.clear();
+        let lesson_id = program.modules[0].lessons[0].id.clone();
+        let mut lesson = prepared(&lesson_id);
+        lesson.questions[0].options = vec!["Alpha".into(), "alpha".into()];
+        let checked = validate_prepared(&lesson, &program);
+        assert!(checked.is_ok(), "{checked:?}");
+    }
 }
