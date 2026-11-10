@@ -3,9 +3,7 @@ use super::*;
 use serde_json::json;
 
 fn lesson_rules(candidate: &Value) -> Vec<ReviewFinding> {
-    let policy = crate::lessons::shape::policy();
-    let schema = policy.schema(crate::lessons::shape::Phase::Draft, 0);
-    super::lesson_rules(candidate, LessonShape::new(&schema, policy))
+    crate::lessons::shape::policy().rules(candidate, crate::lessons::shape::Phase::Draft)
 }
 
 fn block(kind: &str, title: &str) -> Value {

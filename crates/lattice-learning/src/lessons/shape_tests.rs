@@ -41,7 +41,7 @@ fn ids(findings: &[ReviewFinding]) -> Vec<String> {
 }
 
 fn found(lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
-    policy().findings(lesson, phase)
+    StandardShape.shape_findings(lesson, phase)
 }
 
 #[test]

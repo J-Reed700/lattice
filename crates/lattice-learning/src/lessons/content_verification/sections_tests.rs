@@ -145,10 +145,11 @@ fn report(units: usize) -> LessonVerificationReport {
 /// A schema of the test's own under the kept promise, for tests of what the
 /// schema is not about.
 fn loose() -> LessonShape<'static> {
-    static SCHEMA: std::sync::LazyLock<shape::LessonSchema> = std::sync::LazyLock::new(|| {
-        shape::FixedSchema(json!({"type":"object"})).schema(shape::Phase::Kept, 0)
-    });
-    LessonShape::new(&SCHEMA, shape::policy())
+    static POLICY: std::sync::LazyLock<shape::FixedSchema> =
+        std::sync::LazyLock::new(|| shape::FixedSchema(json!({"type":"object"})));
+    static SCHEMA: std::sync::LazyLock<shape::LessonSchema> =
+        std::sync::LazyLock::new(|| POLICY.schema(shape::Phase::Kept, 0));
+    LessonShape::new(&SCHEMA, &*POLICY)
 }
 
 /// Why the lesson without the units that go could not be published.

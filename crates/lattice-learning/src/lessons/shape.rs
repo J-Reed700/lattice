@@ -88,9 +88,9 @@ pub(crate) trait ShapePolicy: Send + Sync {
     /// The fewest and most sections the writer is asked for.
     fn sections(&self) -> (usize, usize);
 
-    /// The findings about the count and the order of `lesson`'s sections and
-    /// questions in `phase`.
-    fn findings(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding>;
+    /// Every rule finding of `lesson` in `phase`: the shape's about the count
+    /// and the order of its sections and questions, and the rules of its parts.
+    fn rules(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding>;
 
     /// Whether a section that took a cut, now `body`, is left with too little
     /// to teach; `answer_lost` says the cut took the answer of a check.
@@ -165,6 +165,26 @@ const SECTIONS: (usize, usize) = (least_sections(&SECTION_MIX), most_sections(&S
 /// nothing left to teach with.
 const LEAST_TEACHING_SENTENCES: usize = 2;
 
+impl StandardShape {
+    /// The findings about the count and the order of `lesson`'s sections and
+    /// questions in `phase`.
+    pub(crate) fn shape_findings(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
+        let blocks = items(lesson, "blocks");
+        let questions = items(lesson, "questions");
+        let mut found = Vec::new();
+        found.extend(match phase {
+            Phase::Draft => section_mix_finding(blocks),
+            Phase::Kept => explanation_finding(blocks),
+        });
+        found.extend(order_findings(blocks));
+        found.extend(match phase {
+            Phase::Draft => question_count_finding(questions),
+            Phase::Kept => question_kinds_finding(questions),
+        });
+        found
+    }
+}
+
 impl ShapePolicy for StandardShape {
     fn schema(&self, phase: Phase, source_count: usize) -> LessonSchema {
         let kinds = LessonQuestionKind::ALL.len();
@@ -187,20 +207,8 @@ impl ShapePolicy for StandardShape {
         SECTIONS
     }
 
-    fn findings(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
-        let blocks = items(lesson, "blocks");
-        let questions = items(lesson, "questions");
-        let mut found = Vec::new();
-        found.extend(match phase {
-            Phase::Draft => section_mix_finding(blocks),
-            Phase::Kept => explanation_finding(blocks),
-        });
-        found.extend(order_findings(blocks));
-        found.extend(match phase {
-            Phase::Draft => question_count_finding(questions),
-            Phase::Kept => question_kinds_finding(questions),
-        });
-        found
+    fn rules(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
+        crate::generation::lesson_rules(lesson, self.shape_findings(lesson, phase))
     }
 
     fn too_little(&self, body: &str, answer_lost: bool) -> bool {
@@ -292,8 +300,8 @@ impl ShapePolicy for FixedSchema {
         StandardShape.sections()
     }
 
-    fn findings(&self, lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {
-        StandardShape.findings(lesson, phase)
+    fn rules(&self, _lesson: &Value, _phase: Phase) -> Vec<ReviewFinding> {
+        Vec::new()
     }
 
     fn too_little(&self, body: &str, answer_lost: bool) -> bool {
@@ -373,13 +381,17 @@ fn mix_asked(exactly: &str) -> String {
         })
         .collect();
     let closing: Vec<String> = wanted(true).map(|(kind, _, _)| kind_name(kind)).collect();
-    let each = wanted(true).map(|(_, count, _)| *count).next().unwrap_or(1);
-    format!(
-        "at least {}, and {exactly}{} each of {}",
-        join_plain(&ideas),
-        number(each),
-        join_plain(&closing)
-    )
+    let counts: Vec<usize> = wanted(true).map(|(_, count, _)| *count).collect();
+    let same = counts.iter().all(|count| Some(count) == counts.first());
+    let closing = match counts.first() {
+        Some(each) if same => format!("{} each of {}", number(*each), join_plain(&closing)),
+        _ => join_plain(
+            &wanted(true)
+                .map(|(kind, count, _)| format!("{} {}", number(*count), kind_name(kind)))
+                .collect::<Vec<_>>(),
+        ),
+    };
+    format!("at least {}, and {exactly}{closing}", join_plain(&ideas))
 }
 
 /// What the writer is asked for of the questions, in words: "at least two

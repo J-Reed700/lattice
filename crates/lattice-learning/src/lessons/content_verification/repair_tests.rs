@@ -740,15 +740,11 @@ async fn a_repaired_sentence_cites_the_passage_it_was_given_and_leaves_no_uncite
         json!([{"sentence":sentence,"sourceIndex":0,"quote":quote}])
     );
     let uncited = |lesson: &Value| {
-        let policy = crate::lessons::shape::policy();
-        let schema = policy.schema(crate::lessons::shape::Phase::Draft, 0);
-        crate::generation::lesson_rules(
-            lesson,
-            crate::lessons::shape::LessonShape::new(&schema, policy),
-        )
-        .into_iter()
-        .filter(|finding| finding.kind == crate::review_findings::FindingKind::Quotation)
-        .count()
+        crate::lessons::shape::policy()
+            .rules(lesson, crate::lessons::shape::Phase::Draft)
+            .into_iter()
+            .filter(|finding| finding.kind == crate::review_findings::FindingKind::Quotation)
+            .count()
     };
     assert_eq!(uncited(&repaired), 0);
     // The same rewrite without its citation is what the pass would list.

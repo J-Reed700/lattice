@@ -172,7 +172,7 @@ pub(crate) fn structural_findings(
         }
     }
     if let ReviewSchema::Lesson(shape) = schema {
-        issues.extend(crate::generation::lesson_rules(&value, shape));
+        issues.extend(shape.policy.rules(&value, shape.phase()));
     }
     Ok(issues)
 }
@@ -259,6 +259,7 @@ fn review_step(is_lesson: bool, lesson_words: &str, other_words: &str) {
 /// A lesson (`review_lesson`) instead repairs while each pass fixes something
 /// and publishes with what is left waiting for the user (`passes`).
 /// This is an AI review, not a claim of independent expert verification.
+/// For material that is not a lesson (`review_and_repair_lesson` is the lesson's).
 pub async fn review_and_repair(
     llm: &dyn LLMPort,
     system: &str,
@@ -267,7 +268,49 @@ pub async fn review_and_repair(
     candidate: String,
     output_tokens: usize,
 ) -> Result<String> {
-    let context = json!({"policy":"lesson-teaching","model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema});
+    review_and_repair_under(
+        llm,
+        system,
+        prompt,
+        ReviewSchema::Other(schema),
+        candidate,
+        output_tokens,
+    )
+    .await
+}
+
+/// `review_and_repair` for a lesson written to the writer's schema for
+/// `source_count` sources: the lesson's rules apply to it.
+pub async fn review_and_repair_lesson(
+    llm: &dyn LLMPort,
+    system: &str,
+    prompt: &str,
+    source_count: usize,
+    candidate: String,
+    output_tokens: usize,
+) -> Result<String> {
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Draft, source_count);
+    review_and_repair_under(
+        llm,
+        system,
+        prompt,
+        ReviewSchema::Lesson(LessonShape::new(&schema, policy)),
+        candidate,
+        output_tokens,
+    )
+    .await
+}
+
+async fn review_and_repair_under(
+    llm: &dyn LLMPort,
+    system: &str,
+    prompt: &str,
+    schema: ReviewSchema<'_>,
+    candidate: String,
+    output_tokens: usize,
+) -> Result<String> {
+    let context = json!({"policy":"lesson-teaching","model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema.value()});
     let receipt = crate::content_verification::digest(&context.to_string());
     if crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
         crate::lesson_progress::phase(
@@ -276,16 +319,22 @@ pub async fn review_and_repair(
         );
         return Ok(candidate);
     }
-    let candidate = review_and_repair_with_progress(
+    let candidate = review_material(
         llm,
         system,
         prompt,
         schema,
         candidate,
         output_tokens,
-        None,
+        ReviewContext {
+            outline: None,
+            protected: &[],
+            lesson_references: None,
+            held: BTreeSet::new(),
+        },
     )
-    .await?;
+    .await
+    .map(|reviewed| reviewed.candidate)?;
     crate::lesson_drafts::record_teaching(&candidate, receipt).await?;
     Ok(candidate)
 }

@@ -11,7 +11,7 @@ use crate::content_verification::{
     names_a_source, needs_citation, quoted_wording, specifics_in, Givens, CITED_KINDS,
 };
 use crate::lessons::repeats;
-use crate::lessons::shape::{self, LessonShape};
+use crate::lessons::shape;
 use crate::review_findings::{join_plain, FindingKind, FindingSite, ReviewFinding};
 use lattice_core::shared::text::sentences;
 use serde_json::Value;
@@ -285,17 +285,19 @@ fn scaffolding(
 /// What `lesson_rules` reports, as its notes: for evals outside the crate,
 /// which assert a reviewed lesson keeps the lesson's form.
 pub fn lesson_rule_notes(candidate: &Value) -> Vec<String> {
-    let policy = shape::policy();
-    let schema = policy.schema(shape::Phase::Draft, 0);
-    lesson_rules(candidate, LessonShape::new(&schema, policy))
+    shape::policy()
+        .rules(candidate, shape::Phase::Draft)
         .into_iter()
         .map(|finding| finding.note)
         .collect()
 }
 
-/// The lesson's findings under `shape`'s promise: the shape policy's about its counts and
-/// order, and the rules of its parts.
-pub(crate) fn lesson_rules(candidate: &Value, shape: LessonShape<'_>) -> Vec<ReviewFinding> {
+/// The lesson's findings: the rules of its parts, with `shape_findings`, the shape
+/// policy's about its counts and order, among them.
+pub(crate) fn lesson_rules(
+    candidate: &Value,
+    shape_findings: Vec<ReviewFinding>,
+) -> Vec<ReviewFinding> {
     let items = |field| {
         candidate
             .get(field)
@@ -344,7 +346,7 @@ pub(crate) fn lesson_rules(candidate: &Value, shape: LessonShape<'_>) -> Vec<Rev
             }
         }
     }
-    findings.extend(shape.policy.findings(candidate, shape.phase()));
+    findings.extend(shape_findings);
     for (index, block) in blocks.iter().enumerate() {
         if text(block, "kind") != "check" {
             continue;
