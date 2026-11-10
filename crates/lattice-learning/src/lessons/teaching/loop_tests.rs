@@ -819,13 +819,19 @@ async fn an_outline_review_sends_every_issue_it_reports_to_the_repair() -> Resul
         json!({"modules":[]}).to_string(),
         json!({"issues":[]}).to_string(),
     ]);
-    review_and_repair(
+    let progress = crate::outline_progress::OutlineProgress::default();
+    let sources = references();
+    review_and_repair_with_progress(
         &model,
         LESSON_REPAIR_SYSTEM,
         &context(),
         &json!({"type":"object","properties":{"modules":{"type":"array"}}}),
         json!({"modules":[]}).to_string(),
         4000,
+        OutlineReviewContext {
+            progress: &progress,
+            sources: &sources,
+        },
     )
     .await?;
     let prompts = model.prompts.lock().unwrap();
