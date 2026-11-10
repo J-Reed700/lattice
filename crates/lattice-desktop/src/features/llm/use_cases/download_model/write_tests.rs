@@ -145,9 +145,14 @@ fn curated(files: Vec<ModelFileMetadata>) -> ModelMetadata {
     }
 }
 
+/// No GGUF file: the multi-file path reads an embedding GGUF's header over the network before writing.
 fn two_files() -> Vec<ModelFileMetadata> {
     vec![
-        ModelFileMetadata::new("weights.gguf".into(), "https://example.com/w".into(), 8),
+        ModelFileMetadata::new(
+            "model.safetensors".into(),
+            "https://example.com/w".into(),
+            8,
+        ),
         ModelFileMetadata::new("tokenizer.json".into(), "https://example.com/t".into(), 2),
     ]
 }
@@ -201,7 +206,7 @@ async fn a_single_file_model_row_does_not_land_without_its_file_row() {
         .download_single_file_model(id, &curated(vec![]), paths.unified_path(), &paths)
         .await;
 
-    assert!(result.is_err());
+    assert!(result.is_err_and(|error| error.to_string().contains("injected")));
     assert_eq!(models_with_id(&pool, id).await, 0);
 }
 
@@ -231,7 +236,7 @@ async fn a_multi_file_model_row_does_not_land_without_its_file_rows() {
         .download_multi_file_model(id, &curated(two_files()), paths.unified_path(), &paths)
         .await;
 
-    assert!(result.is_err());
+    assert!(result.is_err_and(|error| error.to_string().contains("injected")));
     assert_eq!(models_with_id(&pool, id).await, 0);
 }
 
