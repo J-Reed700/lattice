@@ -268,7 +268,7 @@ impl LlamaCppLlm {
         let tokenizer =
             is_llama_server.then(|| ServerTokenizer::new(self.client.clone(), self.server_root()));
         let output_limit = u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX);
-        let scheduled = ScheduledLlm::new(Arc::new(self), scheduler, output_limit);
+        let scheduled = ScheduledLlm::new(Arc::new(self), scheduler, Some(output_limit));
         Arc::new(match tokenizer {
             Some(tokenizer) => scheduled.with_tokenizer(tokenizer),
             None => scheduled,

@@ -424,7 +424,11 @@ async fn an_observed_model_sizes_claim_pages_by_its_measured_pace() -> Result<()
         BackendCapacity::concurrent(1),
     ));
     let model = ObservedModel::observing(
-        Arc::new(ScheduledLlm::new(Arc::new(TimedBackend), scheduler, 512)),
+        Arc::new(ScheduledLlm::new(
+            Arc::new(TimedBackend),
+            scheduler,
+            Some(512),
+        )),
         directory.path().to_path_buf(),
         0,
     );

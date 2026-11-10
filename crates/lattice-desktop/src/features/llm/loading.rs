@@ -242,12 +242,8 @@ impl ModelLoader {
             } => {
                 let key = cloud_api_key(*provider)?;
                 let reported = self.runtime.reported_limits.of(*provider, name, &key).await;
-                let mut connection = cloud_connection(settings, model, tuning, &reported);
-                connection.provider = llm_provider(*provider);
-                connection.model = name.clone();
                 Ok(remote(
-                    crate::features::llm::cloud::CloudLlm::new(&connection, key)?
-                        .with_vision(declared_vision(settings, model))
+                    cloud_client(settings, model, tuning, &reported, key)?
                         .schedule(&self.runtime.schedulers),
                 ))
             }
@@ -405,13 +401,14 @@ fn with_generation(settings: &LLMSettingsDto, generation: &GenerationConfig) -> 
 
 /// `settings` for a client of `model`, at the window and output ceiling it
 /// runs with. A role with an output ceiling of its own keeps it, within what
-/// the model allows.
+/// the model allows. Also whether that ceiling is known for the model: chosen,
+/// the role's own, or reported, rather than `settings.max_tokens`.
 fn cloud_connection(
     settings: &LLMSettingsDto,
     model: &ModelRef,
     tuning: Tuning,
     reported: &ModelWindowDto,
-) -> LLMSettingsDto {
+) -> (LLMSettingsDto, bool) {
     let generation = tuning.generation(settings);
     let chosen = settings.model_window(model);
     let chosen = ModelWindowDto {
@@ -421,11 +418,41 @@ fn cloud_connection(
         },
         ..chosen
     };
-    LLMSettingsDto {
+    let ceiling_known = chosen
+        .max_output_tokens
+        .or(reported.max_output_tokens)
+        .is_some();
+    let connection = LLMSettingsDto {
         context_window: chosen.context_window_within(reported, settings.context_window),
         max_tokens: chosen.max_output_within(reported, settings.max_tokens),
         ..with_generation(settings, &generation)
-    }
+    };
+    (connection, ceiling_known)
+}
+
+/// The unscheduled client of a cloud `model`, as the loader builds it.
+fn cloud_client(
+    settings: &LLMSettingsDto,
+    model: &ModelRef,
+    tuning: Tuning,
+    reported: &ModelWindowDto,
+    key: String,
+) -> Result<crate::features::llm::cloud::CloudLlm> {
+    let ModelRef::Cloud {
+        provider,
+        model: name,
+    } = model
+    else {
+        return Err(AppError::InvalidConfig("Not a cloud model".into()));
+    };
+    let (mut connection, ceiling_known) = cloud_connection(settings, model, tuning, reported);
+    connection.provider = llm_provider(*provider);
+    connection.model = name.clone();
+    Ok(
+        crate::features::llm::cloud::CloudLlm::new(&connection, key)?
+            .with_output_ceiling_known(ceiling_known)
+            .with_vision(declared_vision(settings, model)),
+    )
 }
 
 fn llm_provider(provider: CloudProvider) -> LLMProvider {

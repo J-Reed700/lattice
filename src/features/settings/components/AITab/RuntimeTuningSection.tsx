@@ -145,7 +145,7 @@ export function RuntimeTuningSection({
 
       <SettingsRow
         label="Max tokens"
-        hint="For downloaded models, and connected models that report no limit. A connected model's own limit is set under Configure in Settings → Downloaded."
+        hint="For downloaded models. A connected model writes up to its provider's limit unless one is set under Configure in Settings → Downloaded. Anthropic needs a number, so this one stands in when Anthropic can't be asked."
         htmlFor="tuning-max-tokens"
       >
         <input

@@ -606,7 +606,7 @@ async fn a_scheduled_backend_measures_its_pace_from_its_own_answers() {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    let llm = ScheduledLlm::new(Arc::new(TimedModel(logged_run())), scheduler, 512);
+    let llm = ScheduledLlm::new(Arc::new(TimedModel(logged_run())), scheduler, Some(512));
     assert_eq!(llm.pace(), None, "nothing is asked of the server");
     llm.complete(&request("hi", None)).await.unwrap();
     let pace = llm.pace().unwrap();
@@ -742,7 +742,7 @@ async fn a_request_cancelled_in_flight_is_aborted_and_frees_its_slot() {
     let llm = Arc::new(ScheduledLlm::new(
         model.clone(),
         Arc::clone(&scheduler),
-        512,
+        Some(512),
     ));
     let cancel = CancellationToken::new();
     let running = {
@@ -779,7 +779,7 @@ async fn an_admitted_request_reaches_the_backend_pinned_to_its_slot() {
         "test",
         BackendCapacity::llama_server(2, 100_000),
     ));
-    let llm = ScheduledLlm::new(model.clone(), scheduler, 512);
+    let llm = ScheduledLlm::new(model.clone(), scheduler, Some(512));
     llm.complete(&request(&"x".repeat(5_000), None))
         .await
         .unwrap();
@@ -805,7 +805,7 @@ async fn a_call_queues_behind_a_busy_slot() {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    let llm = ScheduledLlm::new(model, Arc::clone(&scheduler), 512);
+    let llm = ScheduledLlm::new(model, Arc::clone(&scheduler), Some(512));
     let held = scheduler
         .admit(ask(InferencePriority::Interactive, 1), None)
         .await
@@ -825,7 +825,7 @@ fn scheduled(model: Arc<GatedModel>) -> ScheduledLlm {
         "test",
         BackendCapacity::concurrent(1),
     ));
-    ScheduledLlm::new(model, scheduler, 512)
+    ScheduledLlm::new(model, scheduler, Some(512))
 }
 
 /// Whatever backend is behind the port, nothing whose prompt alone fills its

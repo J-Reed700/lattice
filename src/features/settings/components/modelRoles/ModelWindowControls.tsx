@@ -22,6 +22,7 @@ const MIN_OUTPUT_TOKENS = 128;
 
 type ConnectedModelRef = Extract<ModelRef, { kind: 'cloud' | 'ollama' }>;
 type Limit = keyof ModelWindowDto;
+type CloudProviderId = Extract<ConnectedModelRef, { kind: 'cloud' }>['provider'];
 
 interface LimitControlProps {
   label: string;
@@ -29,27 +30,38 @@ interface LimitControlProps {
   min: number;
   /** What the provider reports, if it does. */
   reported: number | null;
-  /** The value in force while nothing is chosen. */
-  following: number;
+  /** The value in force while nothing is chosen; null when nothing is sent. */
+  following: number | null;
   chosen: number | null;
   /** Saves a value, or null to follow the provider again. */
   onSave: (value: number | null) => void;
   followLabel: string;
+  placeholder?: string;
 }
 
-function LimitControl({ label, help, min, reported, following, chosen, onSave, followLabel }: LimitControlProps) {
+/** Anthropic requires a ceiling, so it follows the Settings number when its lookup fails. */
+function followedOutput(provider: CloudProviderId | null, reported: number | null, fallback: number): number | null {
+  return reported ?? (provider === 'anthropic' ? fallback : null);
+}
+
+function LimitControl({ label, help, min, reported, following, chosen, onSave, followLabel, placeholder }: LimitControlProps) {
   const inForce = chosen ?? following;
-  const [draft, setDraft] = useState(inForce);
+  const [draft, setDraft] = useState<number | null>(inForce);
   useEffect(() => { setDraft(inForce); }, [inForce]);
 
   const commit = () => {
+    if (draft === null) {
+      if (chosen !== null) onSave(null);
+      else setDraft(inForce);
+      return;
+    }
     const value = Math.round(clamp(draft, min, reported ?? Number.MAX_SAFE_INTEGER));
     setDraft(value);
     if (value !== inForce) onSave(value);
   };
 
   return (
-    <TokenLimitField label={label} help={help} min={min} max={reported} value={draft} onChange={setDraft} onCommit={commit}>
+    <TokenLimitField label={label} help={help} min={min} max={reported} value={draft} placeholder={placeholder} onChange={setDraft} onClear={() => setDraft(null)} onCommit={commit}>
       {chosen !== null ? (
         <button
           type="button"
@@ -114,10 +126,11 @@ export function ModelWindowControls({ modelRef, modelName }: { modelRef: Connect
           help="The most this model may write in one reply, thinking included. It is a ceiling, not a target: a short answer costs the same either way."
           min={MIN_OUTPUT_TOKENS}
           reported={reportedOutput}
-          following={reportedOutput ?? llm.maxTokens}
+          following={followedOutput(isCloud ? modelRef.provider : null, reportedOutput, llm.maxTokens)}
+          placeholder="Model's own limit"
           chosen={chosen.maxOutputTokens}
           onSave={(value) => void save('maxOutputTokens', value)}
-          followLabel={`Use the maximum ${provider} reports`}
+          followLabel={reportedOutput !== null ? `Use the maximum ${provider} reports` : 'Use the model\'s own limit'}
         />
       ) : null}
       {limits.isError || reportedWindow === null ? (

@@ -43,6 +43,9 @@ pub struct CloudLlm {
     /// Longest silence tolerated inside a streamed response.
     stall_timeout: Duration,
     max_tokens: u32,
+    /// Whether `max_tokens` is a ceiling someone knows for this model (chosen,
+    /// the role's own, or the provider's report) rather than the generic fallback.
+    output_ceiling_known: bool,
     context_window: usize,
     /// The geometry the model was declared to see with; `None` refuses
     /// pictures.
@@ -57,7 +60,7 @@ impl CloudLlm {
         schedulers: &crate::features::llm::scheduler::SchedulerRegistry,
     ) -> std::sync::Arc<dyn LLMPort> {
         let scheduler = schedulers.cloud(self.provider_name());
-        let output_limit = self.max_tokens;
+        let output_limit = self.default_ceiling();
         std::sync::Arc::new(crate::features::llm::scheduler::ScheduledLlm::new(
             std::sync::Arc::new(self),
             scheduler,
@@ -109,6 +112,7 @@ impl CloudLlm {
             client,
             stall_timeout: Duration::from_secs(u64::from(settings.timeout_seconds.max(1))),
             max_tokens: settings.max_tokens,
+            output_ceiling_known: true,
             context_window: settings.context_window as usize,
             vision: None,
         })
@@ -117,6 +121,13 @@ impl CloudLlm {
     /// This client with the geometry its model was declared to see with.
     pub fn with_vision(mut self, vision: Option<VisionGeometry>) -> Self {
         self.vision = vision;
+        self
+    }
+
+    /// This client told whether its output ceiling is known. When it is not,
+    /// OpenAI and Google are sent no ceiling unless the request sets one.
+    pub fn with_output_ceiling_known(mut self, known: bool) -> Self {
+        self.output_ceiling_known = known;
         self
     }
 
@@ -135,6 +146,23 @@ impl CloudLlm {
             request.effective_max_output_tokens(self.max_tokens),
             request,
         )
+    }
+
+    /// What is sent when a request sets no ceiling: `None` when no one knows
+    /// this model's and the provider does not require one.
+    fn default_ceiling(&self) -> Option<u32> {
+        (self.output_ceiling_known || self.provider == LLMProvider::Anthropic)
+            .then_some(self.max_tokens)
+    }
+
+    /// The ceiling sent to a provider that does not require one, if any.
+    fn optional_output_room(&self, request: &CompletionRequest) -> Option<u32> {
+        let requested = request.max_output_tokens.filter(|requested| *requested > 0);
+        let ceiling = match (requested, self.default_ceiling()) {
+            (Some(requested), Some(limit)) => Some(requested.min(limit)),
+            (requested, limit) => requested.or(limit),
+        };
+        ceiling.map(|ceiling| self.room_for(ceiling, request))
     }
 
     /// The output ceiling for a request Claude thinks through: the configured one,
@@ -193,8 +221,10 @@ impl CloudLlm {
         }
         if self.provider == LLMProvider::Openai {
             let input = messages::openai_input(&request.input)?;
-            let max_output = self.output_room(request);
-            let mut body = json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"],"max_output_tokens":max_output});
+            let mut body = json!({"model":self.model,"input":input,"stream":stream,"store":false,"include":["reasoning.encrypted_content"]});
+            if let Some(max_output) = self.optional_output_room(request) {
+                set_field(&mut body, "max_output_tokens", json!(max_output))?;
+            }
             if !request.tools.is_empty() {
                 set_field(&mut body, "tools", json!(request.tools.iter().map(|t| json!({"type":"function","name":t.name,"description":t.description,"parameters":t.parameters,"strict":false})).collect::<Vec<_>>()))?;
                 if let Some(choice) = request.tool_choice {
@@ -245,14 +275,15 @@ impl CloudLlm {
             Ok(body)
         } else if self.provider == LLMProvider::Google {
             let messages = messages::chat_messages(&request.input)?;
-            let max_output = self.output_room(request);
             let model = self.model.strip_prefix("models/").unwrap_or(&self.model);
             let mut body = json!({
                 "model": model,
                 "messages": messages,
                 "stream": stream,
-                "max_tokens": max_output,
             });
+            if let Some(max_output) = self.optional_output_room(request) {
+                set_field(&mut body, "max_tokens", json!(max_output))?;
+            }
             if stream {
                 set_field(&mut body, "stream_options", json!({"include_usage": true}))?;
             }
