@@ -14,7 +14,7 @@ use super::*;
 use crate::lesson_drafts;
 use lattice_core::application::services::claim_verification::PartKind;
 use lattice_core::domain::learning::acceptance::{
-    start, AcceptancePolicy, Outcome, Position, Reading, StandardPolicy,
+    start, Outcome, Position, Reading, StandardPolicy,
 };
 use std::collections::VecDeque;
 

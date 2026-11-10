@@ -12,7 +12,7 @@ use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use lattice_core::application::ports::claim_review::ClaimReviewStore;
 use lattice_core::application::services::claim_verification::BRIDGE_SYSTEM;
 use lattice_core::domain::learning::acceptance::{
-    most_calls, start, AcceptancePolicy, End, Outcome, Reading, Step, Then,
+    most_calls, start, End, Outcome, Reading, Step, Then,
 };
 use lattice_core::domain::learning::claim_review::{
     ClaimEvent, ClaimLedgerEntry, ClaimState, VerdictKind,

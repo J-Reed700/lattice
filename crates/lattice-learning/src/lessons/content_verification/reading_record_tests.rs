@@ -11,7 +11,7 @@ use lattice_core::application::services::claim_verification::{
 };
 use lattice_core::domain::learning::acceptance::{
     decide, rewrite_ahead, start, AcceptancePolicy, End, Outcome, Position, Reading, Step, Taken,
-    Walked,
+    Then, Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
