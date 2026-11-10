@@ -59,3 +59,39 @@ fn a_span_written_with_double_backticks_holds_a_single_backtick() {
     );
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[test]
+fn a_quotation_that_holds_inline_code_stays_a_quotation() {
+    let source = Wording::of_excerpts([
+        "Start the nightly sync by typing tool sync and wait for the summary line to appear.",
+    ]);
+    let found = copied(
+        "The guide says \"start the nightly sync by typing `tool sync` and wait for the summary line to appear\".",
+        &source,
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
+
+#[test]
+fn a_quotation_mark_inside_inline_code_opens_no_quotation() {
+    let source = Wording::of_excerpts([
+        "Start the nightly sync by typing the tool name and pressing enter.",
+    ]);
+    let found = copied(
+        "Type `say \"` first, then start the nightly sync by typing the tool name and pressing enter.",
+        &source,
+    );
+    assert_eq!(found.len(), 1, "{found:?}");
+}
+
+#[test]
+fn a_quoted_span_beside_a_code_span_leaves_only_the_own_words() {
+    let source = Wording::of_excerpts([
+        "Start the nightly sync by typing the tool name and pressing enter.",
+    ]);
+    let found = copied(
+        "The guide says \"start the nightly sync by typing the tool name and pressing enter\" then run `tool sync` to see it.",
+        &source,
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
