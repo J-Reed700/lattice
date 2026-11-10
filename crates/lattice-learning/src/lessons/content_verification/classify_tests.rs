@@ -7,24 +7,24 @@ use std::sync::Mutex;
 /// replay_classes.py) and what the rules alone make of each: a figure or a
 /// quotation is caught, and a statement with neither, a named product's
 /// behaviour among them, is the model's to sort.
-const PLANTED: [(&str, Offer); 17] = [
-    ("The study found that OCR-based RAG improved retrieval recall by 23% over the vision-based pipeline on degraded documents.", Offer::Checked),
-    ("The survey reports that modular document parsing pipelines were introduced by Google in 2019.", Offer::Checked),
-    ("Microsoft's grounding feature returns bounding box coordinates in millimetres.", Offer::Any),
-    ("Donut is an OCR-free model that goes from image to output with a single Transformer.", Offer::Any),
-    ("The survey states that \"the deployment and inference costs associated with VLMs cannot be ignored.\"", Offer::Only(Class::Sourced)),
-    ("In a modular pipeline, an early OCR error cannot reach later stages because each later stage re-reads the page image.", Offer::Any),
-    ("Because Tesseract 5.3 switched to an LSTM recogniser, a text-only parser can recover misread digits.", Offer::Checked),
-    ("In a modular pipeline, each stage hands an intermediate representation to the next, so an early error travels forward.", Offer::Any),
-    ("OCR engines convert spoken audio into text.", Offer::Any),
-    ("A confidence score tells a reviewer where on the page an extracted value came from.", Offer::Any),
-    ("Two plus two equals five.", Offer::Any),
-    ("A bounding box is measured in seconds.", Offer::Any),
-    ("OCR reads the pixels of a page image into text.", Offer::Any),
-    ("Two plus two equals four.", Offer::Any),
-    ("Tesseract is an OCR engine that reads pixels into text.", Offer::Any),
-    ("A page number identifies which page of a document a value appears on.", Offer::Any),
-    ("Vision-language models were first proposed in 2017 and reached human parity on document parsing in 2021.", Offer::Checked),
+const PLANTED: [(&str, Ruling); 17] = [
+    ("The study found that OCR-based RAG improved retrieval recall by 23% over the vision-based pipeline on degraded documents.", Ruling::Checked),
+    ("The survey reports that modular document parsing pipelines were introduced by Google in 2019.", Ruling::Checked),
+    ("Microsoft's grounding feature returns bounding box coordinates in millimetres.", Ruling::Open),
+    ("Donut is an OCR-free model that goes from image to output with a single Transformer.", Ruling::Open),
+    ("The survey states that \"the deployment and inference costs associated with VLMs cannot be ignored.\"", Ruling::Decided(Class::Sourced)),
+    ("In a modular pipeline, an early OCR error cannot reach later stages because each later stage re-reads the page image.", Ruling::Open),
+    ("Because Tesseract 5.3 switched to an LSTM recogniser, a text-only parser can recover misread digits.", Ruling::Checked),
+    ("In a modular pipeline, each stage hands an intermediate representation to the next, so an early error travels forward.", Ruling::Open),
+    ("OCR engines convert spoken audio into text.", Ruling::Open),
+    ("A confidence score tells a reviewer where on the page an extracted value came from.", Ruling::Open),
+    ("Two plus two equals five.", Ruling::Open),
+    ("A bounding box is measured in seconds.", Ruling::Open),
+    ("OCR reads the pixels of a page image into text.", Ruling::Open),
+    ("Two plus two equals four.", Ruling::Open),
+    ("Tesseract is an OCR engine that reads pixels into text.", Ruling::Open),
+    ("A page number identifies which page of a document a value appears on.", Ruling::Open),
+    ("Vision-language models were first proposed in 2017 and reached human parity on document parsing in 2021.", Ruling::Checked),
 ];
 
 fn body(statement: &str) -> ToSort<'_> {
@@ -35,9 +35,9 @@ fn body(statement: &str) -> ToSort<'_> {
     }
 }
 
-/// What the rules decide alone: the class of an `Offer::Only`.
+/// What the rules decide alone.
 fn rule_class(statement: &str, field: &str, case: &Case) -> Option<Class> {
-    offer(statement, field, case).rule_class()
+    ruling(statement, field, case).decided()
 }
 
 fn scripted(replies: Vec<Value>) -> ScriptedModel {
@@ -48,10 +48,10 @@ fn scripted(replies: Vec<Value>) -> ScriptedModel {
 }
 
 #[test]
-fn the_rules_decide_a_quotation_bar_internal_for_a_figure_and_leave_the_rest_to_the_model() {
+fn the_rules_decide_a_quotation_floor_a_figure_and_leave_the_rest_to_the_model() {
     for (statement, expected) in PLANTED {
         assert_eq!(
-            offer(statement, "body", &Case::Stated(Givens::NONE)),
+            ruling(statement, "body", &Case::Stated(Givens::NONE)),
             expected,
             "{statement}"
         );
@@ -93,12 +93,12 @@ fn what_a_rubric_or_an_option_says_is_internal_even_with_a_figure_in_it() {
         Some(Class::Internal)
     );
     assert_eq!(
-        offer(
+        ruling(
             "Retries use exponential backoff up to 30 seconds.",
             "body",
             &Case::Stated(Givens::NONE)
         ),
-        Offer::Checked
+        Ruling::Checked
     );
 }
 
@@ -136,7 +136,7 @@ fn an_explanation_a_contrast_a_recap_and_an_answer_state_what_is_so_and_the_rest
     // In a case, a figure is the case's own; a quotation still needs a source.
     let figure = "Suppose 5 documents score below 0.70.";
     assert_eq!(rule_class(figure, "body", &hypothetical()), None);
-    assert_eq!(offer(figure, "body", &stated()), Offer::Checked);
+    assert_eq!(ruling(figure, "body", &stated()), Ruling::Checked);
     assert_eq!(
         rule_class(
             "The page reads \"Total due on receipt of goods\" at the foot.",
@@ -148,18 +148,18 @@ fn an_explanation_a_contrast_a_recap_and_an_answer_state_what_is_so_and_the_rest
     // An answer restates its question's figures as givens; one of its own
     // still needs a source.
     let restated = "Since 0.75 is below 0.80, review it; lowering it to 0.70 would route it.";
-    assert_eq!(offer(restated, "explanation", &answer), Offer::Any);
+    assert_eq!(ruling(restated, "explanation", &answer), Ruling::Open);
     assert_eq!(
-        offer(
+        ruling(
             "About 30% of documents need review.",
             "explanation",
             &answer
         ),
-        Offer::Checked
+        Ruling::Checked
     );
     assert_eq!(
-        offer("0.8 is below 0.80.", "explanation", &answer),
-        Offer::Checked,
+        ruling("0.8 is below 0.80.", "explanation", &answer),
+        Ruling::Checked,
         "a figure is a given only as its question writes it"
     );
 }
@@ -186,8 +186,8 @@ fn quoted_wording_is_sourced_but_a_lone_apostrophe_is_not() {
 
 #[test]
 fn the_answer_schema_names_every_id_once_and_only_the_four_classes() {
-    let asked = vec![("s0".to_owned(), Offer::Any), ("s3".to_owned(), Offer::Any)];
-    let validator = jsonschema::JSONSchema::compile(&schema(&asked)).unwrap();
+    let ids = vec!["s0".to_owned(), "s3".to_owned()];
+    let validator = jsonschema::JSONSchema::compile(&schema(&ids)).unwrap();
     assert!(validator.is_valid(&json!({"s0": "common", "s3": "internal"})));
     assert!(
         !validator.is_valid(&json!({"s0": "common"})),
@@ -204,19 +204,20 @@ fn the_answer_schema_names_every_id_once_and_only_the_four_classes() {
 }
 
 #[test]
-fn the_answer_schema_offers_each_id_only_its_own_classes() {
-    let asked = vec![
-        ("s0".to_owned(), Offer::Checked),
-        ("s1".to_owned(), Offer::Any),
+fn only_a_checked_statement_called_internal_is_moved_and_only_to_reasoning() {
+    let classes = [
+        Class::Sourced,
+        Class::Reasoning,
+        Class::Common,
+        Class::Internal,
     ];
-    let validator = jsonschema::JSONSchema::compile(&schema(&asked)).unwrap();
-    assert!(validator.is_valid(&json!({"s0": "reasoning", "s1": "internal"})));
-    assert!(!validator.is_valid(&json!({"s0": "internal", "s1": "internal"})));
-    let error = classes_of(r#"{"s0": "internal", "s1": "common"}"#, &asked).unwrap_err();
-    assert!(
-        error.to_string().contains("sourced, reasoning or common"),
-        "{error}"
-    );
+    for ruling in [Ruling::Open, Ruling::Checked] {
+        for class in classes {
+            let moved = ruling == Ruling::Checked && class == Class::Internal;
+            let expected = if moved { Class::Reasoning } else { class };
+            assert_eq!(ruling.settle(class), expected, "{ruling:?} {class:?}");
+        }
+    }
 }
 
 #[tokio::test]
@@ -517,12 +518,12 @@ fn a_figure_beyond_the_givens_is_a_mark_and_a_given_is_not() {
     let givens = Givens::of(&json!({"prompt": "A score of 0.75 meets a threshold of 0.80."}));
     let case = Case::Stated(givens);
     assert_eq!(
-        offer("About 30 documents need review.", "explanation", &case),
-        Offer::Checked
+        ruling("About 30 documents need review.", "explanation", &case),
+        Ruling::Checked
     );
     assert_eq!(
-        offer("Since 0.75 is below 0.80, review it.", "explanation", &case),
-        Offer::Any
+        ruling("Since 0.75 is below 0.80, review it.", "explanation", &case),
+        Ruling::Open
     );
 }
 
