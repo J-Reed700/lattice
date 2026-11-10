@@ -341,6 +341,9 @@ async fn hold_if_published(store: &ClaimReviewRepository, lesson_id: &str) -> Re
     Ok(())
 }
 
+#[cfg(test)]
+mod tests;
+
 fn tally(report: &mut Redecided, before: &ClaimState, verdict: &GateVerdict) {
     let verified = matches!(before, ClaimState::ResolvedByEvidence { .. });
     match verdict {

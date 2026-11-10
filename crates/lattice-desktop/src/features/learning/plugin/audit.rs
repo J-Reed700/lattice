@@ -344,3 +344,7 @@ async fn hold_for_review(
         .await?;
     Ok(())
 }
+
+#[cfg(test)]
+#[path = "audit_tests.rs"]
+mod tests;
