@@ -55,7 +55,7 @@ async fn live_claim_pairs_eval() -> Result<()> {
         finished.len()
     );
     let checker = ClaimChecker::new(
-        &model,
+        model.as_ref(),
         SamplingOverride::deterministic(),
         512,
         CheckPolicy::Strict,
