@@ -924,7 +924,7 @@ fn the_writer_is_told_the_lesson_s_shape_under_its_own_key() {
 
 #[test]
 fn the_writer_s_shape_is_the_draft_s_in_the_policy_s_words() {
-    use crate::lessons::shape::{self, Phase, ShapePolicy};
+    use crate::lessons::shape::{self, Phase};
     let program = crate::tests::fixture();
     let lesson = program.modules[0].lessons[0].clone();
     assert_eq!(

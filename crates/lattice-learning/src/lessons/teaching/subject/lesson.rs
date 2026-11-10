@@ -3,13 +3,14 @@ use super::super::contract;
 use super::super::passes::{Next, Outcome, Passes};
 use super::super::quotes::lesson_quote_checks;
 use super::super::repair::{self, Repaired};
+use super::super::standing::Standing;
 use super::super::{
     holds_up_review, quotation_findings, structural_findings, whole_repairs,
     LESSON_REVIEW_EVIDENCE_SCOPE,
 };
 use super::{
     review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, Settled, Step,
-    Subject, LESSON_PRIORITY, REVIEW_SYSTEM, SHARED_CHECKS,
+    Subject, LESSON_PRIORITY, REVIEW_SYSTEM,
 };
 use crate::lessons::content_verification::Protected;
 use crate::lessons::copied_wording::Wording;
@@ -17,7 +18,7 @@ use crate::lessons::text_edits::{self, Named};
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
 use crate::review_findings::{
-    new_sentences, part_at, sentences_of, FindingSite, Held, ReviewFinding,
+    new_sentences, part_at, sentences_of, FindingId, FindingSite, Held, Origin, ReviewFinding,
 };
 use crate::teaching_review::LengthRule;
 use lattice_core::{
@@ -35,7 +36,7 @@ pub(in crate::lessons::teaching) struct LessonSubject<'a> {
     protected: &'a [Protected],
     references: &'a ReferenceCollection<'a>,
     wording: Wording,
-    original_issues: Vec<String>,
+    standing: Standing,
     /// Whether structure held up the latest pass's content review.
     held_up: bool,
 }
@@ -49,15 +50,23 @@ impl<'a> LessonSubject<'a> {
         protected: &'a [Protected],
         held: Held,
     ) -> Self {
+        let standing = Standing::new(&held);
         Self {
             passes: Passes::new(held),
             receipts: contract::Receipts::default(),
             protected,
             references,
             wording: Wording::of(references),
-            original_issues: Vec::new(),
+            standing,
             held_up: false,
         }
+    }
+
+    /// Each reference's id and the digest of its excerpt.
+    fn reference_versions(&self) -> Vec<Value> {
+        self.references.sources.iter().map(|source| {
+            json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
+        }).collect()
     }
 }
 
@@ -93,12 +102,27 @@ impl Subject for LessonSubject<'_> {
         // A review cut short resumes with the repairs it had made to this draft.
         if let Some(saved) = crate::lesson_drafts::teaching_passes(candidate).await? {
             self.passes.resume(&saved);
+            self.standing.resume(&saved);
         }
         Ok(())
     }
 
+    fn given(&mut self, llm: &dyn LLMPort, authoring: &Value) {
+        let inputs = json!({"authoringContext":authoring,"correctnessPriority":LESSON_PRIORITY,"referenceVersions":self.reference_versions()});
+        self.standing.under(&crate::teaching_review::basis(
+            llm,
+            REVIEW_SYSTEM,
+            LESSON_REVIEW_EVIDENCE_SCOPE,
+            &inputs,
+        ));
+    }
+
     async fn save(&self, candidate: &str) -> Result<()> {
-        crate::lesson_drafts::save_with_passes(candidate, self.passes.saved()?).await
+        let mut saved = self.passes.saved()?;
+        if let Some(fields) = saved.as_object_mut() {
+            fields.insert("reviewer".into(), self.standing.saved()?);
+        }
+        crate::lesson_drafts::save_with_passes(candidate, saved.to_string()).await
     }
 
     fn settle_quotes(&self, candidate: &mut Value, authoring: &Value, attempt: usize) -> bool {
@@ -115,15 +139,7 @@ impl Subject for LessonSubject<'_> {
     }
 
     async fn find(&mut self, llm: &dyn LLMPort, pass: &Pass<'_>) -> Result<Found> {
-        let reference_versions: Vec<Value> = self.references.sources.iter().map(|source| {
-            json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
-        }).collect();
-        let review_prompt = review_prompt(
-            pass,
-            &self.original_issues,
-            LESSON_PRIORITY,
-            reference_versions,
-        );
+        let review_prompt = review_prompt(pass, LESSON_PRIORITY, self.reference_versions());
         let structure = structural_findings(pass.schema, pass.candidate, &self.wording)?;
         // A rewrite of the whole lesson changes the sentences its checked
         // claims stand on, so once there are any, what its shape asks waits
@@ -137,25 +153,12 @@ impl Subject for LessonSubject<'_> {
         let issues = if !blocking {
             self.step(Step::CheckingKeys);
             let answer_issues = crate::key_review::check(llm, pass.value).await?;
-            self.step(if pass.attempt == 0 {
+            let round = self.standing.round(pass.value);
+            self.step(if round.as_ref().is_some_and(|round| round.first) {
                 Step::Reviewing
             } else {
                 Step::Rechecking
             });
-            let instructions = review_instructions(
-                pass.attempt,
-                REVIEW_SYSTEM,
-                SHARED_CHECKS,
-                LESSON_REVIEW_EVIDENCE_SCOPE,
-            );
-            let review = crate::teaching_review::review(
-                llm,
-                &instructions,
-                review_prompt,
-                pass.value,
-                None,
-                LengthRule::DropBlank,
-            );
             let against_plan = contract::check(
                 llm,
                 pass.authoring,
@@ -163,17 +166,49 @@ impl Subject for LessonSubject<'_> {
                 self.protected,
                 &mut self.receipts,
             );
-            let (mut issues, plan_findings) = futures::try_join!(review, against_plan)?;
-            issues.splice(0..0, answer_issues);
-            issues = crate::review_evidence::check(
+            let (judged, plan_findings) = match &round {
+                Some(round) => {
+                    let instructions = review_instructions(
+                        REVIEW_SYSTEM,
+                        round,
+                        true,
+                        LESSON_REVIEW_EVIDENCE_SCOPE,
+                    );
+                    let review = crate::teaching_review::review(
+                        llm,
+                        &instructions,
+                        review_prompt,
+                        pass.value,
+                        round.scope(),
+                        None,
+                        LengthRule::DropBlank,
+                    );
+                    let (judged, plan) = futures::try_join!(review, against_plan)?;
+                    (Some(judged), plan)
+                }
+                // The reviewer has seen exactly this lesson: its findings stand.
+                None => (None, against_plan.await?),
+            };
+            let mut raised = answer_issues;
+            if let (Some(round), Some(judged)) = (&round, judged) {
+                raised.extend(self.standing.judged(pass.value, round, judged));
+            }
+            let established = crate::review_evidence::check(
                 llm,
-                &issues,
+                &raised,
                 pass.authoring,
                 pass.value,
                 self.references,
                 None,
             )
             .await?;
+            let (new, mut issues): (Vec<_>, Vec<_>) = established
+                .into_iter()
+                .partition(|finding| matches!(finding.origin, Origin::Reviewer { .. }));
+            if round.is_some() {
+                self.standing.admit(pass.value, new);
+            }
+            issues.extend(self.standing.open().iter().cloned());
             issues.extend(plan_findings);
             // Stopped structure stays among the findings, so it is still
             // set aside when the review ends.
@@ -224,10 +259,7 @@ impl Subject for LessonSubject<'_> {
                 }
                 Ok(Decision::Publish(set_aside))
             }
-            Next::Repair(send) => {
-                self.original_issues = send.iter().map(|finding| finding.note.clone()).collect();
-                Ok(Decision::Repair(send))
-            }
+            Next::Repair(send) => Ok(Decision::Repair(send)),
         }
     }
 
@@ -349,8 +381,8 @@ impl LessonSubject<'_> {
                                 .is_some_and(|text| text.contains(sentence.as_str()))
                     })
                     .map(|(_, _, sentence)| sentence.clone());
-                let words = written.chain(sentences_of(previous, finding));
-                self.passes.worked_on(&id, words);
+                let words: Vec<String> = written.chain(sentences_of(previous, finding)).collect();
+                self.worked_on(&id, words);
             }
         }
         Ok(if value == *previous {
@@ -402,12 +434,48 @@ impl LessonSubject<'_> {
             };
             self.passes.charge(finding, outcome);
         }
-        record_whole_work(&mut self.passes, previous, send, &value);
+        self.record_whole_work(previous, send, &value);
         Ok(if value == *previous {
             Made::Nothing
         } else {
             Made::Changed(kept)
         })
+    }
+
+    /// Tells the budgets and the reviewer's findings what an applied repair
+    /// worked on for `id`.
+    fn worked_on(&mut self, id: &FindingId, sentences: Vec<String>) {
+        self.standing.worked_on(id, sentences.iter().cloned());
+        self.passes.worked_on(id, sentences);
+    }
+
+    /// What a rewrite puts its findings' words through: the sentences it wrote
+    /// count for the findings it was sent for, and each finding whose part it
+    /// changed counts the words it was applied for.
+    fn record_whole_work(&mut self, previous: &Value, send: &[ReviewFinding], repaired: &Value) {
+        for (site, sentences) in new_sentences(previous, repaired) {
+            let owners: Vec<&ReviewFinding> = send
+                .iter()
+                .filter(|finding| {
+                    matches!(finding.site, None | Some(FindingSite::Lesson))
+                        || finding.site == Some(site)
+                })
+                .collect();
+            let owners = if owners.is_empty() {
+                send.iter().collect()
+            } else {
+                owners
+            };
+            for owner in owners {
+                self.worked_on(&owner.id(), sentences.clone());
+            }
+        }
+        for finding in send {
+            let site = finding.site.unwrap_or(FindingSite::Lesson);
+            if part_at(previous, site) != part_at(repaired, site) {
+                self.worked_on(&finding.id(), sentences_of(previous, finding));
+            }
+        }
     }
 }
 
@@ -486,38 +554,4 @@ fn touched_by_sites<'a>(
             (part, here)
         })
         .collect()
-}
-
-/// What a rewrite puts its findings' words through: the sentences it wrote
-/// count for the findings it was sent for, and each finding whose part it
-/// changed counts the words it was applied for.
-fn record_whole_work(
-    passes: &mut Passes,
-    previous: &Value,
-    send: &[ReviewFinding],
-    repaired: &Value,
-) {
-    for (site, sentences) in new_sentences(previous, repaired) {
-        let owners: Vec<&ReviewFinding> = send
-            .iter()
-            .filter(|finding| {
-                matches!(finding.site, None | Some(FindingSite::Lesson))
-                    || finding.site == Some(site)
-            })
-            .collect();
-        let owners = if owners.is_empty() {
-            send.iter().collect()
-        } else {
-            owners
-        };
-        for owner in owners {
-            passes.worked_on(&owner.id(), sentences.clone());
-        }
-    }
-    for finding in send {
-        let site = finding.site.unwrap_or(FindingSite::Lesson);
-        if part_at(previous, site) != part_at(repaired, site) {
-            passes.worked_on(&finding.id(), sentences_of(previous, finding));
-        }
-    }
 }

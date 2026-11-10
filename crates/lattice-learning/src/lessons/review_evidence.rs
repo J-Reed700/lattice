@@ -236,9 +236,20 @@ fn decided(
             "an actionable decision requires partId: a candidate ID (blocks-N or questions-N) or lesson.",
         ));
     };
+    // An issue the check places is about every candidate part its evidence
+    // cites, the first other than partId its second.
+    let second = finding
+        .evidence_ids
+        .iter()
+        .filter(|id| evidence.get(*id) == Some(&EvidenceKind::Candidate))
+        .filter_map(|id| FindingSite::of_part(id))
+        .find(|site| *site != part);
     let mut finding = issue.clone();
     if finding.site.is_none() {
         finding.site = Some(part);
+        if let Some(second) = second {
+            finding = finding.with_also(second);
+        }
     }
     Ok(Some(finding))
 }
@@ -465,7 +476,7 @@ mod tests {
     }
 
     fn proposal(text: &str) -> Vec<ReviewFinding> {
-        vec![ReviewFinding::reviewer(None, text)]
+        vec![ReviewFinding::reviewer(1, None, text)]
     }
 
     /// The check of a first answer, which a broken decision fails.
@@ -737,6 +748,7 @@ mod tests {
         );
         // A finding the section review already placed keeps its section.
         let section = vec![ReviewFinding::reviewer(
+            1,
             Some(FindingSite::Section(4)),
             "Section 5 (candidate blocks-4): a proposed factual correction.",
         )];
@@ -929,6 +941,7 @@ mod tests {
     fn a_finding_that_already_has_a_site_keeps_it_whatever_the_decision_names() -> Result<()> {
         let evidence = parts_evidence();
         let section = vec![ReviewFinding::reviewer(
+            1,
             Some(FindingSite::Section(4)),
             "Section 5 (candidate blocks-4): a proposed factual correction.",
         )];
