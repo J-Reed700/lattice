@@ -50,7 +50,7 @@ impl Checker for ProgramChecker {
         .await?;
         run_end(&outcome)?;
         Ok(CheckReport {
-            results: results.iter().map(result_of).collect(),
+            results: results.iter().map(result_of).collect::<Result<Vec<_>>>()?,
             marks: Vec::new(),
         })
     }

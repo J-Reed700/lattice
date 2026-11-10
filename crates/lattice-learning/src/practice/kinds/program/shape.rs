@@ -38,13 +38,18 @@ struct ExerciseProof {
     reference_ms: BTreeMap<String, u64>,
 }
 
+const TITLE_KEY: &str = "title";
+const DIFFICULTY_KEY: &str = "difficulty";
+
 fn invalid(what: &str, error: impl std::fmt::Display) -> AppError {
     AppError::InvalidState(format!("{what}: {error}."))
 }
 
 /// The piece that holds `files`.
-pub fn piece_of(files: &[LearningLabFile]) -> Piece {
-    Piece::new(serde_json::to_value(files).unwrap_or_default())
+pub fn piece_of(files: &[LearningLabFile]) -> Result<Piece> {
+    serde_json::to_value(files)
+        .map(Piece::new)
+        .map_err(|error| invalid("The files could not be written", error))
 }
 
 pub fn files_of(piece: &Piece) -> Result<Vec<LearningLabFile>> {
@@ -53,7 +58,7 @@ pub fn files_of(piece: &Piece) -> Result<Vec<LearningLabFile>> {
 }
 
 /// The piece that holds `code` as the solution file.
-pub fn solution_piece(code: &str) -> Piece {
+pub fn solution_piece(code: &str) -> Result<Piece> {
     piece_of(&[LearningLabFile {
         path: coding::SOLUTION_PATH.to_owned(),
         content: code.to_owned(),
@@ -79,17 +84,43 @@ fn difficulty_of(difficulty: coding::ProblemDifficulty) -> work::Difficulty {
     }
 }
 
+fn spec_difficulty_of(difficulty: work::Difficulty) -> coding::ProblemDifficulty {
+    match difficulty {
+        work::Difficulty::Easy => coding::ProblemDifficulty::Easy,
+        work::Difficulty::Medium => coding::ProblemDifficulty::Medium,
+        work::Difficulty::Hard => coding::ProblemDifficulty::Hard,
+    }
+}
+
+/// The brief of `spec`; its title and difficulty are kept in the brief and not in the stored spec.
 pub fn brief_of(spec: &ProblemSpec) -> Result<Brief> {
+    let mut value = serde_json::to_value(spec)
+        .map_err(|error| invalid("The problem could not be written", error))?;
+    if let Some(fields) = value.as_object_mut() {
+        fields.remove(TITLE_KEY);
+        fields.remove(DIFFICULTY_KEY);
+    }
     Ok(Brief {
         title: spec.title.clone(),
         difficulty: difficulty_of(spec.difficulty),
-        spec: serde_json::to_value(spec)
-            .map_err(|error| invalid("The problem could not be written", error))?,
+        spec: value,
     })
 }
 
 pub fn spec_of(brief: &Brief) -> Result<ProblemSpec> {
-    serde_json::from_value(brief.spec.clone())
+    let mut value = brief.spec.clone();
+    let Some(fields) = value.as_object_mut() else {
+        return Err(AppError::InvalidState(
+            "The brief is not a program's spec: it is not an object.".into(),
+        ));
+    };
+    fields.insert(TITLE_KEY.to_owned(), brief.title.clone().into());
+    fields.insert(
+        DIFFICULTY_KEY.to_owned(),
+        serde_json::to_value(spec_difficulty_of(brief.difficulty))
+            .map_err(|error| invalid("The difficulty could not be written", error))?,
+    );
+    serde_json::from_value(value)
         .map_err(|error| invalid("The brief is not a program's spec", error))
 }
 
@@ -157,18 +188,19 @@ fn run_status_of(status: work::CaseStatus) -> coding::CaseStatus {
     }
 }
 
-pub fn result_of(result: &coding::CaseResult) -> work::CaseResult {
+pub fn result_of(result: &coding::CaseResult) -> Result<work::CaseResult> {
     let detail = ResultDetail {
         actual: result.actual.clone(),
         printed: result.printed.clone(),
         error: result.error.clone(),
         elapsed_ms: result.elapsed_ms,
     };
-    work::CaseResult {
+    Ok(work::CaseResult {
         case_id: result.case_id.clone(),
         status: status_of(result.status),
-        detail: serde_json::to_value(detail).unwrap_or_default(),
-    }
+        detail: serde_json::to_value(detail)
+            .map_err(|error| invalid("The result could not be written", error))?,
+    })
 }
 
 pub fn run_result_of(result: &work::CaseResult) -> Result<coding::CaseResult> {
@@ -191,13 +223,13 @@ pub fn run_result_of(result: &work::CaseResult) -> Result<coding::CaseResult> {
     })
 }
 
-pub fn misreading_of(misreading: &coding::Misreading) -> Misreading {
-    Misreading {
+pub fn misreading_of(misreading: &coding::Misreading) -> Result<Misreading> {
+    Ok(Misreading {
         id: misreading.id.clone(),
         description: misreading.description.clone(),
-        piece: solution_piece(&misreading.code),
+        piece: solution_piece(&misreading.code)?,
         killed_by: misreading.killed_by.clone(),
-    }
+    })
 }
 
 pub fn problem_misreading_of(misreading: &Misreading) -> Result<coding::Misreading> {
@@ -229,16 +261,20 @@ pub fn exercise_of(problem: &Problem) -> Result<Exercise> {
                         "The bug is the misreading {bug}, which the problem does not have."
                     ))
                 })?;
-            (Form::Repair, solution_piece(&planted.code))
+            (Form::Repair, solution_piece(&planted.code)?)
         }
-        None => (Form::Build, solution_piece(&problem.spec.starter)),
+        None => (Form::Build, solution_piece(&problem.spec.starter)?),
     };
     Ok(Exercise {
         kind: KindId::new(KIND),
         form,
         brief: brief_of(&problem.spec)?,
-        reference: solution_piece(&problem.reference),
-        misreadings: problem.misreadings.iter().map(misreading_of).collect(),
+        reference: solution_piece(&problem.reference)?,
+        misreadings: problem
+            .misreadings
+            .iter()
+            .map(misreading_of)
+            .collect::<Result<Vec<_>>>()?,
         cases: problem
             .cases
             .iter()

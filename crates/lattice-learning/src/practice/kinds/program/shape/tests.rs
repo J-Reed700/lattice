@@ -37,21 +37,21 @@ fn run_result(status: RunStatus) -> RunResult {
 
 #[test]
 fn a_piece_is_the_file_list_as_serde_writes_it() {
-    let piece = piece_of(&files());
+    let piece = piece_of(&files()).unwrap();
     assert_eq!(piece.value(), &serde_json::to_value(files()).unwrap());
     assert_eq!(files_of(&piece).unwrap(), files());
 }
 
 #[test]
 fn a_solution_piece_round_trips() {
-    let piece = solution_piece("code\n");
+    let piece = solution_piece("code\n").unwrap();
     assert_eq!(solution_of(&piece).unwrap(), "code\n");
     assert_eq!(files_of(&piece).unwrap().len(), 1);
 }
 
 #[test]
 fn a_piece_without_the_solution_file_is_invalid() {
-    let piece = piece_of(&files()[1..]);
+    let piece = piece_of(&files()[1..]).unwrap();
     assert!(matches!(
         solution_of(&piece),
         Err(AppError::InvalidState(_))
@@ -74,6 +74,38 @@ fn a_brief_round_trips_to_the_spec() {
     assert_eq!(brief.title, spec().title);
     assert_eq!(brief.difficulty, work::Difficulty::Easy);
     assert_eq!(spec_of(&brief).unwrap(), spec());
+}
+
+#[test]
+fn a_brief_holds_its_title_and_difficulty_once() {
+    let brief = brief_of(&spec()).unwrap();
+    let stored = brief.spec.as_object().unwrap();
+    assert!(!stored.contains_key("title"));
+    assert!(!stored.contains_key("difficulty"));
+    assert!(stored.contains_key("statement"));
+}
+
+#[test]
+fn every_difficulty_survives_a_brief() {
+    for difficulty in [
+        coding::ProblemDifficulty::Easy,
+        coding::ProblemDifficulty::Medium,
+        coding::ProblemDifficulty::Hard,
+    ] {
+        let mut changed = spec();
+        changed.difficulty = difficulty;
+        assert_eq!(spec_of(&brief_of(&changed).unwrap()).unwrap(), changed);
+    }
+}
+
+#[test]
+fn the_spec_takes_the_title_the_brief_holds() {
+    let mut brief = brief_of(&spec()).unwrap();
+    brief.title = "Another title".into();
+    brief.difficulty = work::Difficulty::Hard;
+    let read = spec_of(&brief).unwrap();
+    assert_eq!(read.title, "Another title");
+    assert_eq!(read.difficulty, coding::ProblemDifficulty::Hard);
 }
 
 #[test]
@@ -136,9 +168,9 @@ fn a_result_round_trips_in_every_status() {
         RunStatus::NotRun,
     ] {
         let result = run_result(status);
-        assert_eq!(run_result_of(&result_of(&result)).unwrap(), result);
+        assert_eq!(run_result_of(&result_of(&result).unwrap()).unwrap(), result);
     }
-    let passed = result_of(&run_result(RunStatus::Passed));
+    let passed = result_of(&run_result(RunStatus::Passed)).unwrap();
     assert_eq!(passed.status, CaseStatus::Passed);
     assert_eq!(passed.detail["elapsedMs"], 4);
     assert_eq!(passed.detail["actual"], "'x'");
@@ -146,7 +178,7 @@ fn a_result_round_trips_in_every_status() {
 
 #[test]
 fn a_result_detail_that_is_not_a_programs_is_invalid() {
-    let mut result = result_of(&run_result(RunStatus::Passed));
+    let mut result = result_of(&run_result(RunStatus::Passed)).unwrap();
     result.detail = serde_json::json!("nothing");
     assert!(matches!(
         run_result_of(&result),
@@ -157,7 +189,7 @@ fn a_result_detail_that_is_not_a_programs_is_invalid() {
 #[test]
 fn a_misreading_round_trips_as_a_solution_piece() {
     for misreading in sample_problem().misreadings {
-        let converted = misreading_of(&misreading);
+        let converted = misreading_of(&misreading).unwrap();
         assert_eq!(solution_of(&converted.piece).unwrap(), misreading.code);
         assert_eq!(problem_misreading_of(&converted).unwrap(), misreading);
     }

@@ -19,7 +19,7 @@ async fn check(tools: &Arc<FakeToolchains>, cancel: CancellationToken) -> Result
     }
     .check(
         &brief_of(&spec()).unwrap(),
-        &solution_piece("code"),
+        &solution_piece("code").unwrap(),
         &cases,
         cancel,
     )
@@ -38,7 +38,10 @@ async fn run_directly(tools: &FakeToolchains) -> Vec<WorkResult> {
     )
     .await
     .unwrap();
-    results.iter().map(result_of).collect()
+    results
+        .iter()
+        .map(|result| result_of(result).unwrap())
+        .collect()
 }
 
 #[tokio::test]

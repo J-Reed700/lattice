@@ -22,8 +22,8 @@ fn the_changes_are_the_line_changes_one_to_one() {
     let changes = ProgramDiff
         .changes(
             &brief_of(&spec()).unwrap(),
-            &piece_of(&old),
-            &piece_of(&new),
+            &piece_of(&old).unwrap(),
+            &piece_of(&new).unwrap(),
         )
         .unwrap();
     assert_eq!(changes.len(), expected.len());
@@ -40,7 +40,7 @@ fn the_changes_are_the_line_changes_one_to_one() {
 
 #[test]
 fn identical_drafts_have_no_changes() {
-    let piece = piece_of(&[file("solution.py", "a\n")]);
+    let piece = piece_of(&[file("solution.py", "a\n")]).unwrap();
     let changes = ProgramDiff
         .changes(&brief_of(&spec()).unwrap(), &piece, &piece)
         .unwrap();

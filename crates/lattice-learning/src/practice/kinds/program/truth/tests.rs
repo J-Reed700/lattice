@@ -50,7 +50,7 @@ fn draft(reference: &str) -> Draft {
         kind: KindId::new(crate::practice::kinds::program::KIND),
         form: Form::Build,
         brief: brief_of(&spec()).unwrap(),
-        reference: solution_piece(reference),
+        reference: solution_piece(reference).unwrap(),
         misreadings: Vec::new(),
         cases: cases().iter().map(|case| case_of(case).unwrap()).collect(),
         starter: None,

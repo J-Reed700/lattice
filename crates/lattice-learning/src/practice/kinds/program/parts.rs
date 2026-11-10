@@ -35,7 +35,7 @@ impl Parts for ProgramParts {
             .flat_map(|file| {
                 (1..=file.content.lines().count())
                     .filter_map(|line| u32::try_from(line).ok())
-                    .map(|line| part_of(&file.path, line))
+                    .map(move |line| part_of(&file.path, line))
             })
             .collect())
     }
