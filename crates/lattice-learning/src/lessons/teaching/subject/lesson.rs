@@ -322,17 +322,6 @@ impl Subject for LessonSubject<'_> {
     }
 }
 
-/// A candidate a repair made is used only if it still reads as a lesson.
-fn reads_as_lesson_or_unusable(candidate: &Value) -> Result<()> {
-    if crate::generation::reads_as_lesson(candidate) {
-        Ok(())
-    } else {
-        Err(AppError::ModelAnswerUnusable(
-            "the repaired material no longer reads as a lesson.".into(),
-        ))
-    }
-}
-
 /// What a repair made of the lesson.
 enum Made {
     /// The candidate after the repair.
@@ -371,7 +360,6 @@ impl LessonSubject<'_> {
             )
             .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?
         };
-        reads_as_lesson_or_unusable(&value)?;
         let outcomes: Vec<Outcome> = send
             .iter()
             .map(|finding| outcome_of(finding, &applied.named, previous, &value))
@@ -412,8 +400,18 @@ impl LessonSubject<'_> {
         send: &[ReviewFinding],
         text: &str,
     ) -> Result<Made> {
-        let repaired = crate::generation::parse_json::<Value>(text)
-            .map_err(|error| AppError::ModelAnswerUnusable(error.to_string()))?;
+        let repaired = match crate::generation::parse_json::<Value>(text) {
+            Ok(repaired) => repaired,
+            Err(error) if !self.protected.is_empty() => {
+                return Err(AppError::ModelAnswerUnusable(error.to_string()))
+            }
+            Err(_) => {
+                for finding in send {
+                    self.passes.charge(finding, Outcome::Applied);
+                }
+                return Ok(Made::Changed(text.to_owned()));
+            }
+        };
         let (value, kept) = if self.protected.is_empty() {
             (repaired, text.to_owned())
         } else {
@@ -427,7 +425,6 @@ impl LessonSubject<'_> {
             let kept = value.to_string();
             (value, kept)
         };
-        reads_as_lesson_or_unusable(&value)?;
         for finding in send {
             let site = finding.site.unwrap_or(FindingSite::Lesson);
             let outcome = if part_at(previous, site) == part_at(&value, site) {

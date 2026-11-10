@@ -252,6 +252,24 @@ fn a_section_that_took_a_cut_is_too_little_with_fewer_than_two_teaching_sentence
 }
 
 #[test]
+fn a_lesson_is_saved_with_a_question_of_every_kind() {
+    use LessonQuestionKind::{Practice, Quiz, Test};
+    assert_eq!(
+        policy().missing_question_kind(&[Practice, Quiz, Test]),
+        None
+    );
+    assert_eq!(
+        policy().missing_question_kind(&[Quiz, Test]),
+        Some(Practice)
+    );
+    assert_eq!(policy().missing_question_kind(&[]), Some(Practice));
+    assert_eq!(
+        policy().missing_question_kind(&[Practice, Quiz]),
+        Some(Test)
+    );
+}
+
+#[test]
 fn the_sections_asked_for_are_the_mix_at_its_least_and_the_ideas_at_their_most() {
     assert_eq!(IDEAS, (2, 3));
     assert_eq!(SECTIONS, (11, 16));

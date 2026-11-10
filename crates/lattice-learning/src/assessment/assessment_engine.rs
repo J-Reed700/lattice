@@ -480,7 +480,7 @@ mod tests;
 pub use answers::{normalize_answer, parse_number, show_number, text_matches};
 pub use checks::{
     cloze_blanks, distinct_options, key_fault, key_leaks, length_biased, longest_allowed_key,
-    repeated_option, validate_candidate, KeyFault, SINGLE_CHOICE_OPTIONS, TRUE_FALSE,
+    near_duplicate, validate_candidate, KeyFault, SINGLE_CHOICE_OPTIONS, TRUE_FALSE,
 };
 pub use scoring::{
     answer_hint, grade_keyed, key_reveal, part_results, KeyReveal, KeyedGrade, KeyedOutcome,

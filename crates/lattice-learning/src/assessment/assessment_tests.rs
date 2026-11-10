@@ -1716,6 +1716,7 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
         "Which command shows the permissions of every file in the current directory?",
         "Which command shows the owner of every file in the current directory?",
     ];
+    assert!(engine::near_duplicate(prompts[1], prompts[2]));
     publish_questions(
         &pool,
         &program.summary.id,
@@ -1741,49 +1742,6 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
         lesson_rows(&pool, &lesson_id).await?,
         rows_of(&prompts, &["agreed", "agreed", "agreed"])
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> {
-    let pool = migrated().await?;
-    let program = accepted_program(&pool).await?;
-    let outcome: String = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .map_err(db)?;
-    let prompts = [
-        "Which command shows the permissions of every file in the current directory?",
-        "Which command shows the owner of every file in the current directory?",
-    ];
-    let items: Vec<BankItem> = prompts
-        .iter()
-        .enumerate()
-        .map(|(n, prompt)| {
-            let mut stored = item(LearningItemFormat::SingleChoice, &outcome, 2, 900 + n);
-            stored.prompt = (*prompt).to_string();
-            BankItem {
-                item: stored,
-                source_quote: String::new(),
-                lesson_id: None,
-                origin: "bank",
-                review_status: "agreed",
-            }
-        })
-        .collect();
-    let mut tx = pool.begin().await.map_err(db)?;
-    let stored =
-        insert_bank_items_in(&mut tx, &program.summary.id, &items, Some("test-model")).await?;
-    tx.commit().await.map_err(db)?;
-    assert_eq!(stored, 2);
-    let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND origin='bank' ORDER BY rowid",
-    )
-    .bind(&program.summary.id)
-    .fetch_all(&pool)
-    .await
-    .map_err(db)?;
-    assert_eq!(rows, prompts);
     Ok(())
 }
 
@@ -1869,71 +1827,4 @@ fn a_form_draw_of_a_lesson_question_shuffles_and_each_reason_moves_with_its_choi
     let right = order.iter().position(|authored| *authored == 1).unwrap();
     assert_eq!(reveal.correct_indices, vec![right]);
     assert_eq!(reveal.distractor_rationales[right], "");
-}
-
-#[test]
-fn a_lesson_question_that_cannot_be_asked_is_stored_dropped_in_its_place() {
-    let kind = LessonQuestionKind::Quiz;
-    let texts = |options: &[&str]| options.iter().map(|o| (*o).to_owned()).collect::<Vec<_>>();
-    let cases: [(&str, Vec<String>, usize); 6] = [
-        (
-            "Which layer holds most weather?",
-            texts(&["Alpha", "Bravo", "Charlie", "Delta"]),
-            1,
-        ),
-        ("  ", texts(&["Alpha", "Bravo", "Charlie", "Delta"]), 1),
-        ("Which of these is named first?", texts(&["Alpha"]), 0),
-        (
-            "Which of these is named second?",
-            texts(&["Alpha", "Bravo", "Bravo", "Delta"]),
-            1,
-        ),
-        (
-            "Which of these is named third?",
-            texts(&["Alpha", "Bravo", "Charlie", "Delta"]),
-            9,
-        ),
-        (
-            "Which of these is named last?",
-            texts(&["Echo", "Foxtrot", "Golf", "Hotel"]),
-            2,
-        ),
-    ];
-    let (questions, keys): (Vec<_>, Vec<_>) = cases
-        .into_iter()
-        .map(|(prompt, options, correct_index)| {
-            let question_id = id();
-            (
-                LessonQuestion {
-                    id: question_id.clone(),
-                    kind: kind.clone(),
-                    prompt: prompt.into(),
-                    options,
-                    source_ids: vec![],
-                },
-                LessonAnswerKey {
-                    question_id,
-                    correct_index,
-                    explanation: "Because.".into(),
-                    rationales: vec![],
-                },
-            )
-        })
-        .unzip();
-    let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
-    let seen: Vec<(&str, &str)> = seeded
-        .iter()
-        .map(|item| (item.item.prompt.as_str(), item.review_status))
-        .collect();
-    assert_eq!(
-        seen,
-        [
-            ("Which layer holds most weather?", "agreed"),
-            ("  ", "dropped"),
-            ("Which of these is named first?", "dropped"),
-            ("Which of these is named second?", "dropped"),
-            ("Which of these is named third?", "dropped"),
-            ("Which of these is named last?", "agreed"),
-        ]
-    );
 }

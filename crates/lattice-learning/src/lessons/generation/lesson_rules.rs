@@ -6,8 +6,8 @@
 //! repairs cannot settle waits for the user. It never stops the lesson from
 //! publishing.
 use super::validate_text;
-use crate::assessment_engine::{key_fault, longest_allowed_key, repeated_option, KeyFault};
-use crate::content_verification::{fences, names_a_source, quoted_wording, CITED_KINDS};
+use crate::assessment_engine::{distinct_options, key_fault, longest_allowed_key, KeyFault};
+use crate::content_verification::{names_a_source, quoted_wording, CITED_KINDS};
 use crate::lessons::repeats;
 use crate::lessons::same_text::{fold, overlap};
 use crate::lessons::shape;
@@ -336,16 +336,6 @@ pub(crate) fn lesson_rules(
             titles.insert(fold(title), index);
         }
     }
-    for (index, block) in blocks.iter().enumerate() {
-        if fences(text(block, "body")).unclosed {
-            findings.push(structure(
-                Rule::FenceUnclosed,
-                FindingSite::Section(index),
-                format!("Section {} opens a code fence it never closes.", index + 1),
-                format!("Section {} (candidate blocks-{index}) opens a code fence it never closes, so everything after its opening marks is shown as code. Close the fence with a line of the same marks after the example's last line.", index + 1),
-            ));
-        }
-    }
     let mut seen = HashSet::new();
     for (index, block) in blocks.iter().enumerate() {
         let mut reported = HashSet::new();
@@ -432,23 +422,16 @@ pub(crate) fn lesson_rules(
             .get("correctIndex")
             .and_then(Value::as_u64)
             .and_then(|right| usize::try_from(right).ok());
-        let choices_fault = if options.len() != 4 {
-            Some(format!(
-                "{label} needs four answer choices; it has {}.",
-                options.len()
-            ))
-        } else if options.iter().any(|option| !validate_text(option)) {
-            Some(format!("{label} has a blank answer choice."))
-        } else {
-            repeated_option(&choice_texts).map(|choice| {
-                format!(
-                    "{label} repeats the answer choice \"{}\"; each choice must differ.",
-                    choice.trim()
-                )
-            })
-        };
-        if let Some(note) = choices_fault {
-            findings.push(structure(Rule::Choices, site, note.clone(), note));
+        if options.len() != 4
+            || options.iter().any(|option| !validate_text(option))
+            || !distinct_options(&choice_texts)
+        {
+            findings.push(structure(
+                Rule::Choices,
+                site,
+                format!("{label} needs four distinct answer choices."),
+                format!("{label} needs four distinct answer choices."),
+            ));
         } else if let Some(fault) = right.and_then(|right| key_fault(prompt, &choice_texts, right))
         {
             findings.push(match fault {

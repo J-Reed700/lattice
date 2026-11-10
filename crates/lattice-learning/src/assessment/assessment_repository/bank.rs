@@ -45,7 +45,7 @@ pub(crate) fn content_hash(item: &StoredItem) -> String {
 }
 
 /// Store items, skipping any generated item the bank already holds (same
-/// content). A lesson's own
+/// content, or a near-duplicate stem for the same outcome). A lesson's own
 /// question is always stored in its place: one whose content the program
 /// already holds is stored `dropped`, its token salted by its ID. Returns how
 /// many were stored.
@@ -88,6 +88,20 @@ pub(crate) async fn insert_bank_items_in(
             }
             hash = format!("{:x}", Sha256::digest(format!("{hash}\0{}", item.id)));
             review_status = "dropped";
+        }
+        let near = entry.origin == "bank"
+            && sqlx::query_scalar::<_, String>(
+            "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND outcome_id=? AND review_status<>'dropped'",
+        )
+        .bind(program_id)
+        .bind(outcome)
+        .fetch_all(&mut *connection)
+        .await
+        .map_err(db)?
+        .iter()
+        .any(|prompt| engine::near_duplicate(prompt, &item.prompt));
+        if near {
+            continue;
         }
         sqlx::query("INSERT INTO learning_assessment_candidates(id,program_id,outcome_id,format,difficulty,prompt,options_json,artifact_kind,rubric_json,source_version_ids_json,authored_by,author_model,content_sha256,created_at,review_status,origin,lesson_id,source_quote,left_items_json) VALUES(?,?,?,?,?,?,?,NULL,?,?,'model',?,?,?,?,?,?,?,?)")
             .bind(&item.id)

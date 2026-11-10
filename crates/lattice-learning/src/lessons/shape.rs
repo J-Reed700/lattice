@@ -120,6 +120,9 @@ pub(crate) trait ShapePolicy: Send + Sync {
     /// it could not. `lesson` is the draft with every unit still in it, so
     /// "the drafted sections" are its own.
     fn floor(&self, lesson: &Value, going: &BTreeSet<usize>) -> Option<String>;
+
+    /// The first question kind a lesson is saved with that `asked` lacks.
+    fn missing_question_kind(&self, asked: &[LessonQuestionKind]) -> Option<LessonQuestionKind>;
 }
 
 /// The policy every lesson is held to.
@@ -291,6 +294,12 @@ impl ShapePolicy for StandardShape {
             kind_lost.map(|kind| format!("it would be left without a {} question", kind.as_str()))
         }
     }
+
+    fn missing_question_kind(&self, asked: &[LessonQuestionKind]) -> Option<LessonQuestionKind> {
+        LessonQuestionKind::ALL
+            .into_iter()
+            .find(|kind| !asked.contains(kind))
+    }
 }
 
 /// The standard policy with a schema of the test's own, for tests of what the
@@ -325,6 +334,10 @@ impl ShapePolicy for FixedSchema {
 
     fn floor(&self, lesson: &Value, going: &BTreeSet<usize>) -> Option<String> {
         StandardShape.floor(lesson, going)
+    }
+
+    fn missing_question_kind(&self, asked: &[LessonQuestionKind]) -> Option<LessonQuestionKind> {
+        StandardShape.missing_question_kind(asked)
     }
 }
 

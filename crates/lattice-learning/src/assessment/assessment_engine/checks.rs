@@ -1,7 +1,6 @@
 //! What a bank item must satisfy before any form may use it (section 5.2).
-use super::answers::whole_words;
+use super::answers::{folded, whole_words};
 use super::*;
-use unicode_normalization::UnicodeNormalization;
 
 /// The leak check (section 5.2): the key's own text in the stem. Comparison
 /// stems name several options, so a short key counts only when it is the one
@@ -60,6 +59,21 @@ pub fn length_biased(options: &[String], key: usize) -> bool {
     key_length > allowed
 }
 
+/// Normalised stem similarity at or above which two items of one outcome are
+/// the same question (word-set Jaccard).
+pub fn near_duplicate(a: &str, b: &str) -> bool {
+    let a: HashSet<String> = normalize_answer(a)
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    let b: HashSet<String> = normalize_answer(b)
+        .split_whitespace()
+        .map(str::to_owned)
+        .collect();
+    let union = a.union(&b).count();
+    union > 0 && a.intersection(&b).count() as f64 / union as f64 >= 0.8
+}
+
 /// The `{{n}}` blanks a cloze prompt holds, in order of appearance.
 pub fn cloze_blanks(prompt: &str) -> Vec<usize> {
     let mut found = Vec::new();
@@ -76,8 +90,8 @@ pub fn cloze_blanks(prompt: &str) -> Vec<usize> {
 }
 
 fn comparable(option: &str) -> String {
-    let composed: String = option
-        .nfc()
+    let folded: String = folded(option)
+        .chars()
         .map(|c| match c {
             '\u{2018}' | '\u{2019}' => '\'',
             '\u{201C}' | '\u{201D}' => '"',
@@ -85,7 +99,7 @@ fn comparable(option: &str) -> String {
             other => other,
         })
         .collect();
-    let words = composed.split_whitespace().collect::<Vec<_>>().join(" ");
+    let words = folded.split_whitespace().collect::<Vec<_>>().join(" ");
     words
         .strip_suffix('.')
         .unwrap_or(&words)
@@ -94,19 +108,11 @@ fn comparable(option: &str) -> String {
 }
 
 /// Two choices are the same only when a reader could not tell them apart:
-/// typography, spacing and a closing full stop do not count; letter case,
-/// accents and path punctuation do.
+/// case, typography, spacing and a closing full stop do not count; path
+/// punctuation does.
 pub fn distinct_options(options: &[String]) -> bool {
-    repeated_option(options).is_none() && options.iter().all(|o| !o.trim().is_empty())
-}
-
-/// The first choice that repeats an earlier one, as `distinct_options` reads them.
-pub fn repeated_option(options: &[String]) -> Option<&str> {
-    let mut seen = HashSet::new();
-    options
-        .iter()
-        .find(|option| !seen.insert(comparable(option)))
-        .map(String::as_str)
+    let compared: HashSet<String> = options.iter().map(|o| comparable(o)).collect();
+    compared.len() == options.len() && options.iter().all(|o| !o.trim().is_empty())
 }
 
 /// What is wrong with a single-choice item's key beyond its choices.
