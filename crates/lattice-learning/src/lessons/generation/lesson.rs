@@ -17,7 +17,7 @@ use crate::lessons::shape::{self, number, LessonShape, ShapePolicy};
 use crate::lessons::structured_call::{complete_checked, CallKind, ReasonFirst};
 use crate::model_call;
 use crate::reference_collection::ReferenceCollection;
-use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding};
+use crate::review_findings::{plain_part, FindingKind, FindingSite, ReviewFinding, Rule};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::error::{AppError, Result};
@@ -717,9 +717,11 @@ fn cite_sentences(
                     )
                 };
                 findings.push(
-                    ReviewFinding::new(
+                    ReviewFinding::rule_about(
+                        Rule::SentenceCitation,
                         FindingKind::Quotation,
-                        Some(site),
+                        site,
+                        &cited.sentence,
                         format!(
                             "The source citation of the sentence \"{shown}\" could not be confirmed: {message}"
                         ),
@@ -755,9 +757,11 @@ fn citation(
         FindingSite::Lesson => "the lesson".to_owned(),
     };
     findings.push(
-        ReviewFinding::new(
+        ReviewFinding::rule_about(
+            Rule::PartCitation,
             FindingKind::Quotation,
-            Some(site),
+            site,
+            quote,
             format!("The source citation at {part} could not be confirmed: {error}"),
         )
         .with_summary(format!(

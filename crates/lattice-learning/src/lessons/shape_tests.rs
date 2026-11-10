@@ -37,7 +37,10 @@ fn units(units: impl IntoIterator<Item = usize>) -> BTreeSet<usize> {
 }
 
 fn ids(findings: &[ReviewFinding]) -> Vec<String> {
-    findings.iter().map(|finding| finding.key().id()).collect()
+    findings
+        .iter()
+        .map(|finding| finding.place().id())
+        .collect()
 }
 
 fn found(lesson: &Value, phase: Phase) -> Vec<ReviewFinding> {

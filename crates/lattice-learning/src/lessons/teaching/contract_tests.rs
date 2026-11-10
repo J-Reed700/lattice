@@ -252,7 +252,12 @@ fn waiting(reviewed: &Reviewed) -> Vec<(String, Option<String>)> {
     let mut found: Vec<_> = reviewed
         .set_aside
         .iter()
-        .map(|waiting| (waiting.finding.key().id(), waiting.finding.passage.clone()))
+        .map(|waiting| {
+            (
+                waiting.finding.place().id(),
+                waiting.finding.passage.clone(),
+            )
+        })
         .collect();
     found.sort();
     found

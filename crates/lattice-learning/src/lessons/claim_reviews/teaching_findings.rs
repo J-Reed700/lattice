@@ -198,13 +198,13 @@ impl TeachingFindingsRepository {
     ) -> Result<()> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         let at = now();
-        let keys: Vec<String> = findings.iter().map(|f| f.finding.key().id()).collect();
+        let keys: Vec<String> = findings.iter().map(|f| f.finding.place().id()).collect();
         if replace {
             table::delete_not_raised(&mut tx, lesson_id, &serde_json::to_string(&keys)?).await?;
         }
         for (SetAside { finding, repairs }, key) in findings.iter().zip(&keys) {
             let shown = unit(candidate, finding);
-            let (site, index) = site_columns(finding.key().site);
+            let (site, index) = site_columns(finding.place().site);
             let write = FindingWrite {
                 key: key.as_str(),
                 kind: finding.kind.as_str(),

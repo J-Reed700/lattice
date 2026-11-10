@@ -27,7 +27,7 @@ fn lesson() -> Value {
 
 fn set_aside(kind: FindingKind, site: FindingSite, note: &str, repairs: u8) -> SetAside {
     SetAside {
-        finding: ReviewFinding::new(kind, Some(site), note),
+        finding: ReviewFinding::of_kind(kind, site, note),
         repairs,
     }
 }

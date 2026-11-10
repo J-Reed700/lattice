@@ -63,7 +63,7 @@ pub(super) async fn review_material(
         let found = subject.find(llm, &pass).await?;
         let edits = found.edits;
         // decide
-        let send = match subject.decide(attempt, found.findings)? {
+        let send = match subject.decide(attempt, &value, found.findings)? {
             Decision::Publish(set_aside) => {
                 return Ok(Reviewed {
                     candidate,
