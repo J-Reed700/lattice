@@ -60,21 +60,6 @@ pub fn length_biased(options: &[String], key: usize) -> bool {
     key_length > allowed
 }
 
-/// Normalised stem similarity at or above which two items of one outcome are
-/// the same question (word-set Jaccard).
-pub fn near_duplicate(a: &str, b: &str) -> bool {
-    let a: HashSet<String> = normalize_answer(a)
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect();
-    let b: HashSet<String> = normalize_answer(b)
-        .split_whitespace()
-        .map(str::to_owned)
-        .collect();
-    let union = a.union(&b).count();
-    union > 0 && a.intersection(&b).count() as f64 / union as f64 >= 0.8
-}
-
 /// The `{{n}}` blanks a cloze prompt holds, in order of appearance.
 pub fn cloze_blanks(prompt: &str) -> Vec<usize> {
     let mut found = Vec::new();
