@@ -9,6 +9,7 @@ use lattice_core::application::contracts::notes::{
 };
 use lattice_core::application::ports::WorkspaceNotesPort;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Transactions;
 use sqlx::sqlite::SqliteRow;
 use sqlx::{Row, SqlitePool};
 
@@ -303,7 +304,7 @@ impl DailyNotesRepository {
     }
 
     pub async fn update(&self, note: &WorkspaceNoteRecord) -> Result<WorkspaceNoteRecord> {
-        let mut tx = self.pool.begin_with("BEGIN IMMEDIATE").await?;
+        let mut tx = self.pool.begin_write().await?;
         Self::update_in_transaction(&mut tx, note).await?;
         let query = format!("SELECT {NOTE_COLUMNS} FROM daily_notes_workspace WHERE id = ?");
         let saved = sqlx::query(&query)

@@ -8,6 +8,7 @@
 
 pub mod manifest;
 pub mod persistence;
+mod repository;
 pub mod runtime_index;
 
 pub use manifest::{

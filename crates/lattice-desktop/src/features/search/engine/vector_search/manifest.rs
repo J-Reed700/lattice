@@ -66,20 +66,8 @@ pub async fn read_source_stamp(
     // a prepared vector whose source text has since changed, which this count
     // cannot see; that direction is safe, because the extra row makes the
     // stamp differ and buys a rebuild.
-    // Read both values in one SQLite snapshot. Separate SELECTs can combine
-    // an old count with a new counter when a writer commits between them.
-    let (row_count, write_counter): (i64, i64) = sqlx::query_as(
-        "SELECT COUNT(*), COALESCE((SELECT write_counter FROM vector_index_state WHERE id = 1), 0) FROM text_chunks tc \
-         LEFT JOIN text_embeddings te ON te.chunk_id = tc.id AND te.model_name = ? AND te.dimension = ? \
-         LEFT JOIN embedding_generation_vectors eg ON eg.chunk_id = tc.id AND eg.model_identity = ? AND eg.dimension = ? \
-         WHERE te.chunk_id IS NOT NULL OR eg.chunk_id IS NOT NULL",
-    )
-    .bind(identity)
-    .bind(dimension)
-    .bind(identity)
-    .bind(dimension)
-    .fetch_one(pool)
-    .await?;
+    let (row_count, write_counter) =
+        super::repository::source_stamp_counts(pool, identity, dimension).await?;
 
     Ok(SourceStamp {
         row_count: row_count.max(0) as u64,

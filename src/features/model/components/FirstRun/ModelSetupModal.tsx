@@ -2,6 +2,8 @@
  * First-run install. The backend ranks chat models for this computer; the
  * modal lists them, the user picks one, and Install adds the embedding model.
  * Click dismisses immediately — downloads continue in the header drawer.
+ * "Use an API key instead" swaps the cards for a cloud key form that sets the
+ * chat and Learning model in one write, with no download.
  */
 import { useState } from 'react';
 
@@ -18,6 +20,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { useApi } from '@/contexts/ApiContext';
+import { ApiKeyForm } from '@/features/model/components/FirstRun/ApiKeyForm';
 import { RecommendationCardBody } from '@/features/model/components/RecommendationCardBody';
 import { firstRunStatusQueryOptions, useFirstRunDownloads } from '@/features/model/hooks/useFirstRunSetup';
 import { useModelCatalog } from '@/features/model/hooks/useModelCatalog';
@@ -65,6 +68,7 @@ export function ModelSetupModal({
     : recommendationsQuery.isError ? getErrorMessage(recommendationsQuery.error) : null;
   // A chat model is offered only while the machine still needs one.
   const recommendations = status?.chat_model ? recommendationsQuery.data ?? [] : [];
+  const [useKey, setUseKey] = useState(false);
   const [chosenId, setChosenId] = useState<string | null>(null);
   const selected = recommendations.find((entry) => entry.modelId === chosenId) ?? recommendations[0] ?? null;
   const chatModelId = selected?.modelId ?? status?.chat_model?.model_id ?? null;
@@ -83,6 +87,12 @@ export function ModelSetupModal({
     : status?.total_estimated_size_bytes ?? 0;
 
   const handleSkip = () => {
+    onDismiss();
+    onOpenChange(false);
+    onComplete();
+  };
+
+  const handleKeyDone = () => {
     onDismiss();
     onOpenChange(false);
     onComplete();
@@ -157,11 +167,13 @@ export function ModelSetupModal({
           </div>
           <DialogTitle>Set up AI</DialogTitle>
           <DialogDescription>
-            Pick a chat model that fits this computer. Lattice adds an embedding model.
-            Both download once and run on this machine.
+            {useKey
+              ? 'Use your own API key for chats and courses. Nothing is downloaded.'
+              : 'Pick a chat model that fits this computer. Lattice adds an embedding model. Both download once and run on this machine.'}
           </DialogDescription>
         </DialogHeader>
 
+        {useKey ? <ApiKeyForm onBack={() => setUseKey(false)} onDone={handleKeyDone} /> : <>
         <div className="space-y-3">
           {loading && <p className="text-sm text-text-muted">Checking your hardware…</p>}
 
@@ -220,6 +232,9 @@ export function ModelSetupModal({
           <Button variant="ghost" onClick={handleSkip} className="sm:mr-auto">
             Not now
           </Button>
+          <Button variant="ghost" onClick={() => setUseKey(true)}>
+            Use an API key instead
+          </Button>
           <Button variant="ghost" onClick={handleSeeAll}>
             See all models
           </Button>
@@ -230,6 +245,7 @@ export function ModelSetupModal({
             Install · {sizeLabel}
           </Button>
         </DialogFooter>
+        </>}
       </DialogContent>
     </Dialog>
   );

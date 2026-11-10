@@ -13,6 +13,7 @@
 //! - Validates backup integrity before restore
 //! - Creates timestamped backup files
 
+use super::database_repository;
 use async_trait::async_trait;
 use chrono::Utc;
 use lattice_core::application::ports::backup_port::{BackupInfoData, BackupPort};
@@ -176,16 +177,17 @@ impl BackupAdapter {
         let _temporary_snapshot = TemporarySnapshot(temp_path.clone());
         let temp_str = temp_path.to_string_lossy().to_string();
         validate_sql_safe_path(&temp_str)?;
-        let escaped = temp_str.replace('\'', "''");
-        if let Err(error) = sqlx::query(&format!("VACUUM INTO '{escaped}'"))
-            .execute(&self.pool)
-            .await
-        {
+        let mut connection = self.pool.acquire().await.map_err(|error| {
+            error!("Failed to create safety backup: {}", error);
+            AppError::Database(format!("Failed to create safety backup: {error}"))
+        })?;
+        if let Err(error) = database_repository::vacuum_into(&mut connection, &temp_str).await {
             error!("Failed to create safety backup: {}", error);
             return Err(AppError::Database(format!(
                 "Failed to create safety backup: {error}"
             )));
         }
+        drop(connection);
 
         self.validate_backup(&temp_path).await?;
 
@@ -256,14 +258,15 @@ impl BackupAdapter {
             .await
             .ok()?;
 
-        let result: (i64,) = sqlx::query_as("SELECT COUNT(*) FROM documents")
-            .fetch_one(&pool)
+        let mut connection = pool.acquire().await.ok()?;
+        let count = database_repository::document_count(&mut connection)
             .await
             .ok()?;
+        drop(connection);
 
         pool.close().await;
 
-        Some(result.0 as usize)
+        Some(count as usize)
     }
 
     /// Get version from backup metadata
@@ -280,13 +283,8 @@ impl BackupAdapter {
             }
         };
 
-        let table_exists: i64 = match sqlx::query_scalar(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='schema_version'",
-        )
-        .fetch_one(&pool)
-        .await
-        {
-            Ok(count) => count,
+        let mut connection = match pool.acquire().await {
+            Ok(connection) => connection,
             Err(error) => {
                 warn!(
                     "Failed to check schema_version table in backup ({}): {}",
@@ -298,28 +296,42 @@ impl BackupAdapter {
             }
         };
 
-        if table_exists == 0 {
-            pool.close().await;
-            return None;
-        }
-
-        let version: Option<i64> = match sqlx::query_scalar(
-            "SELECT version FROM schema_version ORDER BY version DESC LIMIT 1",
-        )
-        .fetch_optional(&pool)
-        .await
-        {
-            Ok(value) => value,
+        let has_table = match database_repository::has_schema_version_table(&mut connection).await {
+            Ok(has_table) => has_table,
             Err(error) => {
                 warn!(
-                    "Failed to read backup schema version ({}): {}",
+                    "Failed to check schema_version table in backup ({}): {}",
                     path.display(),
                     error
                 );
+                drop(connection);
                 pool.close().await;
                 return None;
             }
         };
+
+        if !has_table {
+            drop(connection);
+            pool.close().await;
+            return None;
+        }
+
+        let version: Option<i64> =
+            match database_repository::latest_schema_version(&mut connection).await {
+                Ok(value) => value,
+                Err(error) => {
+                    warn!(
+                        "Failed to read backup schema version ({}): {}",
+                        path.display(),
+                        error
+                    );
+                    drop(connection);
+                    pool.close().await;
+                    return None;
+                }
+            };
+
+        drop(connection);
 
         if version.is_none() {
             warn!(
@@ -347,17 +359,21 @@ impl BackupAdapter {
             .await
             .map_err(|e| AppError::Database(format!("Invalid backup file: {}", e)))?;
 
-        let result: (String,) = sqlx::query_as("PRAGMA integrity_check")
-            .fetch_one(&pool)
+        let mut connection = pool
+            .acquire()
             .await
             .map_err(|e| AppError::Database(format!("Backup integrity check failed: {}", e)))?;
+        let result = database_repository::integrity_check(&mut connection)
+            .await
+            .map_err(|e| AppError::Database(format!("Backup integrity check failed: {}", e)))?;
+        drop(connection);
 
         pool.close().await;
 
-        if result.0 != "ok" {
+        if result != "ok" {
             return Err(AppError::Database(format!(
                 "Backup integrity check failed: {}",
-                result.0
+                result
             )));
         }
 
@@ -461,13 +477,12 @@ impl BackupPort for BackupAdapter {
         // SECURITY: Validate path for SQL safety (CWE-89 mitigation)
         validate_sql_safe_path(&backup_path_str)?;
 
-        // SECURITY: Escape single quotes to prevent SQL injection
-        // Note: VACUUM INTO doesn't support parameterized queries
-        // Defense in depth: Path is validated above AND escaped here
-        let escaped_path = backup_path_str.replace("'", "''");
-
-        sqlx::query(&format!("VACUUM INTO '{}'", escaped_path))
-            .execute(&self.pool)
+        // Defense in depth: the repository escapes single quotes as well.
+        let mut connection = self.pool.acquire().await.map_err(|e| {
+            error!("Backup failed: {}", e);
+            AppError::Database(format!("Failed to create backup: {}", e))
+        })?;
+        database_repository::vacuum_into(&mut connection, &backup_path_str)
             .await
             .map_err(|e| {
                 error!("Backup failed: {}", e);

@@ -4,7 +4,7 @@ use crate::{
     dto::{AcceptLearningProgramRequestDto, LearningProgramDto},
     operations::Operation,
     pack::decode_learning_pack,
-    persistence::hash,
+    persistence::{db, hash},
     portability_dto::{
         ExportAllLearningPacksRequestDto, ExportAllLearningPacksResultDto, ExportedLearningPackDto,
         FailedLearningPackExportDto, LearningPackExportOptionsDto,
@@ -190,6 +190,7 @@ async fn a_retried_batch_replays_instead_of_writing_duplicates() -> Result<()> {
 /// operation ID opens the folder dialog again.
 async fn forget_batch(pool: &SqlitePool, batch: &ExportAllLearningPacksRequestDto) -> Result<()> {
     let payload_hash = hash(batch)?;
+    let mut connection = pool.acquire().await.map_err(db)?;
     Operation {
         id: &batch.operation_id,
         scope: "portability",
@@ -199,7 +200,7 @@ async fn forget_batch(pool: &SqlitePool, batch: &ExportAllLearningPacksRequestDt
         payload_hash: &payload_hash,
         conflict: "",
     }
-    .forget(pool)
+    .forget(&mut connection)
     .await
 }
 

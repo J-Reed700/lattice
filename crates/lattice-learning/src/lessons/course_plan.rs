@@ -23,6 +23,7 @@ use std::collections::{HashMap, HashSet};
 
 mod edit;
 mod job;
+mod repository;
 mod view;
 pub use edit::{change_entries, check_change, edit_entry, undo_entry};
 pub use job::{course_plan_job_config, queue, CoursePlanWorker, COURSE_PLAN};
@@ -95,12 +96,8 @@ fn lesson_ids(program: &LearningProgramDto) -> Vec<&str> {
 
 /// The outline revision a course's plan is keyed on.
 pub(crate) async fn outline_revision(pool: &SqlitePool, program_id: &str) -> Result<i64> {
-    sqlx::query_scalar("SELECT content_revision FROM learning_programs WHERE id=?")
-        .bind(program_id)
-        .fetch_optional(pool)
-        .await
-        .map_err(db)?
-        .ok_or_else(|| AppError::NotFound("Learning program not found".into()))
+    let mut connection = pool.acquire().await.map_err(db)?;
+    repository::content_revision(&mut connection, program_id).await
 }
 
 /// The plan for `program` at `outline_revision`: read when it is saved, made
@@ -141,14 +138,10 @@ pub(crate) async fn stored(
     program: &LearningProgramDto,
     outline_revision: i64,
 ) -> Result<Option<CoursePlan>> {
-    let rows: Vec<(String, String)> = sqlx::query_as(
-        "SELECT lesson_id,entry_json FROM learning_course_plan_lessons WHERE program_id=? AND outline_revision=?",
-    )
-    .bind(&program.summary.id)
-    .bind(outline_revision)
-    .fetch_all(pool)
-    .await
-    .map_err(db)?;
+    let rows = {
+        let mut connection = pool.acquire().await.map_err(db)?;
+        repository::entry_rows(&mut connection, &program.summary.id, outline_revision).await?
+    };
     let order = lesson_ids(program);
     let mut entries: HashMap<String, PlannedLesson> = HashMap::new();
     for (id, entry) in rows {
@@ -181,15 +174,15 @@ async fn save(
     let mut tx = pool.begin_write().await.map_err(db)?;
     let created = now();
     for entry in &plan.lessons {
-        sqlx::query("INSERT INTO learning_course_plan_lessons(program_id,outline_revision,lesson_id,entry_json,created_at) VALUES(?,?,?,?,?) ON CONFLICT(program_id,outline_revision,lesson_id) DO NOTHING")
-            .bind(program_id)
-            .bind(outline_revision)
-            .bind(&entry.lesson_id)
-            .bind(serde_json::to_string(entry)?)
-            .bind(created)
-            .execute(&mut *tx)
-            .await
-            .map_err(db)?;
+        repository::insert_entry(
+            &mut tx,
+            program_id,
+            outline_revision,
+            &entry.lesson_id,
+            &serde_json::to_string(entry)?,
+            created,
+        )
+        .await?;
     }
     tx.commit().await.map_err(db)
 }

@@ -1,7 +1,7 @@
 //! `RepositoryPort<TagEntity>` and `TagRepositoryTrait` over the SQLite repository.
 
 use async_trait::async_trait;
-use sqlx::Row;
+use sqlx::{Row, SqliteConnection};
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::application::ports::{Filter, RepositoryPort};
@@ -10,6 +10,24 @@ use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 
 use super::{TagFilter, TagRepository};
+
+impl TagRepository {
+    async fn all_in(connection: &mut SqliteConnection) -> Result<Vec<TagEntity>> {
+        let db_models = sqlx::query_as!(
+            TagModel,
+            r#"
+            SELECT id as "id!", name as "name!", color as "color!", created_at as "created_at!", updated_at as "updated_at!"
+            FROM tags
+            ORDER BY name ASC
+            "#
+        )
+        .fetch_all(connection)
+        .await
+        .map_err(|e| AppError::Database(format!("Failed to get all tags: {}", e)))?;
+
+        Ok(TagMapper::to_entities(&db_models))
+    }
+}
 
 #[async_trait]
 impl RepositoryPort<TagEntity> for TagRepository {
@@ -36,6 +54,12 @@ impl RepositoryPort<TagEntity> for TagRepository {
     async fn find_by_filter(&self, filter: &dyn Filter) -> Result<Vec<TagEntity>> {
         filter.validate()?;
 
+        let mut tx = self
+            .pool
+            .begin_read()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
+
         // Downcast to TagFilter if possible
         let filter_any = filter.as_any();
         if let Some(tag_filter) = filter_any.downcast_ref::<TagFilter>() {
@@ -57,7 +81,7 @@ impl RepositoryPort<TagEntity> for TagRepository {
                 )
                 .bind(search_pattern)
                 .bind(limit_i64)
-                .fetch_all(&self.pool)
+                .fetch_all(&mut *tx)
                 .await
                 .and_then(|rows| {
                     rows.into_iter()
@@ -84,32 +108,32 @@ impl RepositoryPort<TagEntity> for TagRepository {
                     "#,
                     limit_i64
                 )
-                .fetch_all(&self.pool)
+                .fetch_all(&mut *tx)
                 .await
             }
             .map_err(|e| AppError::Database(format!("Failed to find tags by filter: {}", e)))?;
 
+            tx.commit()
+                .await
+                .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
             Ok(TagMapper::to_entities(&db_models))
         } else {
             // If not a TagFilter, return all tags
-            self.find_all().await
+            let tags = Self::all_in(&mut tx).await?;
+            tx.commit()
+                .await
+                .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
+            Ok(tags)
         }
     }
 
     async fn find_all(&self) -> Result<Vec<TagEntity>> {
-        let db_models = sqlx::query_as!(
-            TagModel,
-            r#"
-            SELECT id as "id!", name as "name!", color as "color!", created_at as "created_at!", updated_at as "updated_at!"
-            FROM tags
-            ORDER BY name ASC
-            "#
-        )
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to get all tags: {}", e)))?;
-
-        Ok(TagMapper::to_entities(&db_models))
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to get all tags: {}", e)))?;
+        Self::all_in(&mut connection).await
     }
 
     async fn save(&self, entity: &TagEntity) -> Result<()> {

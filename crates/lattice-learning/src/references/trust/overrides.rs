@@ -5,13 +5,14 @@
 //! and the gate re-decides them without a model call. The override menu
 //! counts the same versions to say what will change.
 
+use super::repository::overrides::{site_versions, source_versions};
+use super::repository::rows::{delete_override, write_override};
 use super::repository::SqliteSourceTrustStore;
-use super::rows::{delete_override, write_override};
 use crate::persistence::db;
 use lattice_core::domain::provenance::{OverrideScope, TrustOverride};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 
 /// One source version an override covers.
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,29 +104,17 @@ async fn covered(
         OverrideScope::Source {
             program_id,
             source_id,
-        } => sqlx::query(
-            "SELECT program_id, id AS source_version_id FROM learning_source_versions WHERE program_id=? AND source_id=? ORDER BY version_number",
-        )
-        .bind(program_id)
-        .bind(source_id)
-        .fetch_all(&mut *conn)
-        .await,
+        } => source_versions(conn, program_id, source_id).await?,
         OverrideScope::Site { registrable_domain }
         | OverrideScope::SiteSubject {
             registrable_domain, ..
-        } => sqlx::query(
-            "SELECT program_id, source_version_id FROM source_provenance WHERE site=? ORDER BY program_id, source_version_id",
-        )
-        .bind(registrable_domain)
-        .fetch_all(&mut *conn)
-        .await,
-    }
-    .map_err(db)?;
+        } => site_versions(conn, registrable_domain).await?,
+    };
     Ok(rows
-        .iter()
-        .map(|row| CoveredVersion {
-            program_id: row.get("program_id"),
-            source_version_id: row.get("source_version_id"),
+        .into_iter()
+        .map(|(program_id, source_version_id)| CoveredVersion {
+            program_id,
+            source_version_id,
         })
         .collect())
 }

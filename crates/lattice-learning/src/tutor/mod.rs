@@ -16,8 +16,11 @@ mod facts;
 mod notes;
 mod passages;
 pub(crate) mod prompt;
+mod repository;
 mod tools;
 
+#[cfg(test)]
+mod binding_tests;
 #[cfg(test)]
 mod tests;
 

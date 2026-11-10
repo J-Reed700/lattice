@@ -11,7 +11,7 @@ import { ModelSetupModal } from './ModelSetupModal';
 
 const mocks = vi.hoisted(() => ({
   catalog: { systemCapabilities: null as null | { available_disk_gb: number }, compatibleModels: [] as unknown[] },
-  api: { checkFirstRunStatus: vi.fn(), recommendChatModels: vi.fn(), downloadDefaultEmbeddingModel: vi.fn(), downloadModel: vi.fn() },
+  api: { checkFirstRunStatus: vi.fn(), recommendChatModels: vi.fn(), downloadDefaultEmbeddingModel: vi.fn(), downloadModel: vi.fn(), setCloudApiKey: vi.fn(), listCloudModels: vi.fn(), updateSettings: vi.fn() },
 }));
 vi.mock('@/routes', () => ({ router: { navigate: vi.fn() } }));
 vi.mock('@/features/model/hooks/useModelCatalog', () => ({ useModelCatalog: () => mocks.catalog }));
@@ -34,6 +34,7 @@ function renderModal() {
   return { ...props, ...view };
 }
 
+let keySaved = false;
 const install = () => screen.findByRole('button', { name: /^Install/ });
 
 beforeEach(() => {
@@ -50,6 +51,13 @@ beforeEach(() => {
   mocks.api.downloadDefaultEmbeddingModel.mockReset().mockResolvedValue({ ok: true, data: 'embed-job' });
   mocks.api.downloadModel.mockReset().mockResolvedValue({ ok: true, data: { id: 'chat-job' } });
   vi.mocked(router.navigate).mockReset();
+  keySaved = false;
+  mocks.api.setCloudApiKey.mockReset().mockImplementation(async () => { keySaved = true; return { ok: true, data: null }; });
+  mocks.api.listCloudModels.mockReset().mockImplementation(async () => ({
+    ok: true,
+    data: { hasApiKey: keySaved, models: keySaved ? [{ id: 'claude-haiku-5-5', name: 'Claude Haiku 5.5' }, { id: 'claude-opus-5-5', name: 'Claude Opus 5.5' }] : [] },
+  }));
+  mocks.api.updateSettings.mockReset().mockResolvedValue({ ok: true, data: { llm: {} } });
   vi.spyOn(toast, 'success');
   vi.spyOn(toast, 'error');
   vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -148,5 +156,67 @@ describe('ModelSetupModal', () => {
     expect(props.onDismiss).toHaveBeenCalled();
     expect(router.navigate).toHaveBeenCalledWith('/settings?tab=models');
     expect(props.onComplete).toHaveBeenCalled();
+  });
+});
+
+describe('ModelSetupModal with an API key', () => {
+  const openKeyForm = async () => {
+    const props = renderModal();
+    await install();
+    fireEvent.click(screen.getByRole('button', { name: 'Use an API key instead' }));
+    return props;
+  };
+  const saveKey = async (key = '  test-key-123  ') => {
+    fireEvent.change(await screen.findByLabelText('API key'), { target: { value: key } });
+    fireEvent.click(screen.getByRole('button', { name: 'Save key' }));
+  };
+
+  it('saves the trimmed key for the chosen provider', async () => {
+    await openKeyForm();
+    expect(screen.getByLabelText('Provider')).toHaveValue('anthropic');
+    await saveKey();
+    await waitFor(() => expect(mocks.api.setCloudApiKey).toHaveBeenCalledWith('anthropic', 'test-key-123'));
+  });
+
+  it('sets the model for chats and courses in one settings write', async () => {
+    const props = await openKeyForm();
+    await saveKey();
+    const model = screen.getByLabelText('Model');
+    await waitFor(() => expect(model).toBeEnabled());
+    await screen.findByRole('option', { name: 'Claude Haiku 5.5' });
+    fireEvent.change(model, { target: { value: 'claude-haiku-5-5' } });
+    fireEvent.click(screen.getByRole('button', { name: 'Use this model' }));
+    await waitFor(() => expect(mocks.api.updateSettings).toHaveBeenCalledTimes(1));
+    expect(mocks.api.updateSettings).toHaveBeenCalledWith({
+      category: 'llm',
+      updates: {
+        provider: 'anthropic',
+        model: 'claude-haiku-5-5',
+        maxTokens: 8192,
+        learningModel: { kind: 'cloud', provider: 'anthropic', model: 'claude-haiku-5-5' },
+      },
+    });
+    await waitFor(() => expect(props.onComplete).toHaveBeenCalled());
+    expect(props.onDismiss).toHaveBeenCalled();
+    expect(props.onOpenChange).toHaveBeenCalledWith(false);
+    expect(mocks.api.downloadDefaultEmbeddingModel).not.toHaveBeenCalled();
+    expect(mocks.api.downloadModel).not.toHaveBeenCalled();
+  });
+
+  it('shows a key that fails to save and writes no settings', async () => {
+    mocks.api.setCloudApiKey.mockResolvedValue({ ok: false, error: 'keychain locked' });
+    const props = await openKeyForm();
+    await saveKey();
+    expect(await screen.findByRole('alert')).toHaveTextContent('keychain locked');
+    expect(screen.getByRole('button', { name: 'Use this model' })).toBeDisabled();
+    expect(mocks.api.updateSettings).not.toHaveBeenCalled();
+    expect(props.onComplete).not.toHaveBeenCalled();
+  });
+
+  it('goes back to the downloads', async () => {
+    await openKeyForm();
+    fireEvent.click(await screen.findByRole('button', { name: 'Download a model instead' }));
+    expect(await install()).toBeInTheDocument();
+    expect(screen.getByText('Herb 4B')).toBeInTheDocument();
   });
 });

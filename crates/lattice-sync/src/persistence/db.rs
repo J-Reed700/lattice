@@ -10,3 +10,10 @@ pub async fn create_pool(database_url: &str, max_connections: u32) -> Result<PgP
         .connect(database_url)
         .await
 }
+
+pub async fn ping(pool: &PgPool) -> Result<(), sqlx::Error> {
+    let _: i64 = sqlx::query_scalar("SELECT 1::bigint")
+        .fetch_one(pool)
+        .await?;
+    Ok(())
+}

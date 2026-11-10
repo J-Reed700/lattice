@@ -14,6 +14,7 @@
 
 mod job;
 mod manager;
+mod repository;
 mod search;
 pub mod sync;
 

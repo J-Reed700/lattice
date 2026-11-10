@@ -11,7 +11,8 @@
 use async_trait::async_trait;
 use sqlx::SqlitePool;
 
-use lattice_core::shared::error::{AppError, Result};
+use crate::features::summaries::repository;
+use lattice_core::shared::error::Result;
 
 /// One top-level section's text.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -101,31 +102,13 @@ impl SqliteSummarySource {
 #[async_trait]
 impl SummarySourcePort for SqliteSummarySource {
     async fn load(&self, document_id: &str) -> Result<Option<SummarySource>> {
-        let Some(title): Option<String> =
-            sqlx::query_scalar("SELECT file_name FROM documents WHERE id = ?")
-                .bind(document_id)
-                .fetch_optional(&self.pool)
-                .await
-                .map_err(|e| AppError::Database(format!("summary source title: {e}")))?
-        else {
+        let Some(title) = repository::document_title(&self.pool, document_id).await? else {
             return Ok(None);
         };
         // The newest cluster run wins; older runs describe a corpus shape that
         // no longer exists. Absent clustering simply contributes no label.
-        let cluster_label: Option<String> = sqlx::query_scalar(
-            "SELECT c.label FROM cluster_members cm JOIN clusters c ON c.id = cm.cluster_id JOIN cluster_runs r ON r.id = c.run_id WHERE cm.document_id = ? ORDER BY r.ran_at DESC LIMIT 1",
-        )
-        .bind(document_id)
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("summary source cluster label: {e}")))?;
-        let chunks: Vec<(Option<String>, String)> = sqlx::query_as(
-            "SELECT section, content FROM text_chunks WHERE document_id = ? ORDER BY chunk_index",
-        )
-        .bind(document_id)
-        .fetch_all(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("summary source chunks: {e}")))?;
+        let cluster_label = repository::latest_cluster_label(&self.pool, document_id).await?;
+        let chunks = repository::document_chunks(&self.pool, document_id).await?;
         Ok(Some(assemble(document_id, &title, cluster_label, chunks)))
     }
 }

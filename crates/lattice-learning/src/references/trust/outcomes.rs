@@ -13,10 +13,11 @@ use lattice_core::domain::learning::claim_review::{
 use lattice_core::domain::provenance::{
     ClaimKind, LabelSource, OriginKey, OutcomeRecord, TRUST_POLICY_VERSION,
 };
-use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::error::Result;
 use sqlx::SqlitePool;
 
 use super::calibration::{bars_of, moved_kinds};
+use super::repository::outcomes::delete_for_labels;
 use super::SqliteSourceTrustStore;
 
 /// Where a claim's verdict is recorded.
@@ -60,9 +61,7 @@ pub async fn record(
             policy: TRUST_POLICY_VERSION.to_owned(),
         });
     }
-    for record in &records {
-        store.record_outcome(record).await?;
-    }
+    store.record_outcomes(&records).await?;
     let after: Vec<OutcomeRecord> = before.iter().cloned().chain(records).collect();
     Ok(moved_kinds(&bars_of(&before), &bars_of(&after)))
 }
@@ -84,14 +83,7 @@ pub async fn forget(
     if !before.iter().any(forgotten) {
         return Ok(Vec::new());
     }
-    for label in labels {
-        sqlx::query("DELETE FROM source_trust_outcomes WHERE claim_id=? AND label_source=?")
-            .bind(claim_id)
-            .bind(label.as_str())
-            .execute(pool)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-    }
+    delete_for_labels(pool, claim_id, labels).await?;
     let after: Vec<OutcomeRecord> = before
         .iter()
         .filter(|record| !forgotten(record))

@@ -4,6 +4,7 @@ use chrono::{DateTime, Utc};
 use lattice_core::domain::download::{
     Checksum, ChecksumAlgorithm, DownloadError, DownloadProgress, DownloadSession, DownloadState,
 };
+use lattice_core::shared::persistence::Transactions;
 use sqlx::FromRow;
 use std::sync::Arc;
 
@@ -238,7 +239,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         );
 
         let mut tx =
-            self.db_conn.begin_immediate().await.map_err(|e| {
+            self.db_conn.pool().begin_write().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
             })?;
 
@@ -341,7 +342,7 @@ impl DownloadRepository for SqliteDownloadRepository {
 
     async fn update(&self, session: &DownloadSession) -> Result<(), DownloadError> {
         let mut tx =
-            self.db_conn.begin_immediate().await.map_err(|e| {
+            self.db_conn.pool().begin_write().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
             })?;
 
@@ -407,7 +408,7 @@ impl DownloadRepository for SqliteDownloadRepository {
         bytes_per_second: f64,
     ) -> Result<(), DownloadError> {
         let mut tx =
-            self.db_conn.begin_immediate().await.map_err(|e| {
+            self.db_conn.pool().begin_write().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
             })?;
 
@@ -438,7 +439,7 @@ impl DownloadRepository for SqliteDownloadRepository {
 
     async fn delete(&self, id: &str) -> Result<(), DownloadError> {
         let mut tx =
-            self.db_conn.begin_immediate().await.map_err(|e| {
+            self.db_conn.pool().begin_write().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
             })?;
 
@@ -526,7 +527,7 @@ impl DownloadRepository for SqliteDownloadRepository {
 
     async fn delete_pending_by_model(&self, model_id: &str) -> Result<u64, DownloadError> {
         let mut tx =
-            self.db_conn.begin_immediate().await.map_err(|e| {
+            self.db_conn.pool().begin_write().await.map_err(|e| {
                 DownloadError::IoError(format!("Failed to begin transaction: {}", e))
             })?;
 
