@@ -1307,6 +1307,14 @@ async fn a_rewrite_without_a_required_field_is_an_unusable_repair() -> Result<()
 }
 
 #[tokio::test]
+async fn a_rewrite_with_no_sections_is_an_unusable_repair() -> Result<()> {
+    a_rewrite_that_is_no_lesson_is_charged_and_leaves_the_lesson_as_it_was(|_| {
+        Ok(json!({"blocks": [], "questions": []}).to_string())
+    })
+    .await
+}
+
+#[tokio::test]
 async fn the_same_unusable_repair_twice_leaves_the_finding_waiting_and_the_lesson_whole(
 ) -> Result<()> {
     let model = Answering::new(
