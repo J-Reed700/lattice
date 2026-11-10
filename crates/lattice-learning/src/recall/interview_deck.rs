@@ -257,17 +257,13 @@ fn deck_id(material: &InterviewMaterial) -> String {
 
 /// The IDs of the decks the course's ready interviews make, whether or not the drill was made yet. An interview that
 /// cannot become a drill makes none.
-pub(crate) async fn deck_ids(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
-    let activity_ids: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM learning_practical_activities WHERE program_id=? AND kind='interview' AND status='ready' ORDER BY created_at,id",
-    )
-    .bind(program_id)
-    .fetch_all(pool)
-    .await
-    .map_err(db)?;
+pub(crate) async fn deck_ids(database: &Database, program_id: &str) -> Result<Vec<String>> {
+    let mut read = database.begin_read().await.map_err(db)?;
+    let activity_ids = interview::ready_activity_ids(&mut read, program_id).await?;
+    read.commit().await.map_err(db)?;
     let mut ids = Vec::new();
     for activity_id in activity_ids {
-        match load(pool, program_id, &activity_id).await {
+        match load(database, program_id, &activity_id).await {
             Ok(material) => ids.push(deck_id(&material)),
             Err(error @ AppError::Database(_)) => return Err(error),
             Err(_) => {}

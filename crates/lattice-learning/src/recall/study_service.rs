@@ -224,10 +224,10 @@ pub async fn set_target(
 
 /// The IDs of the decks the course's ready interviews make.
 pub(crate) async fn interview_deck_ids(
-    pool: &sqlx::SqlitePool,
+    database: &Database,
     program_id: &str,
 ) -> Result<Vec<String>> {
-    super::interview_deck::deck_ids(pool, program_id).await
+    super::interview_deck::deck_ids(database, program_id).await
 }
 
 /// A deck of the interview's questions, checked against its answer guides,
