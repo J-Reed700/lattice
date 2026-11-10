@@ -15,10 +15,11 @@ use serde_json::{json, Value};
 
 use super::listing;
 use super::{
-    api_base, user_parts, CatalogProtocol, CompletionProtocol, EventDecoder, LimitsApi,
-    LimitsProtocol, ModelPage, ProviderApi,
+    api_base, CatalogProtocol, CompletionProtocol, EventDecoder, LimitsApi, LimitsProtocol,
+    ModelPage, ProviderApi,
 };
 use crate::features::llm::cloud::{field, reply, set_field};
+use crate::features::llm::engine::vision::user_parts;
 use crate::features::llm::fitting::{Fitted, Thinking};
 
 pub(in crate::features::llm::cloud) mod schema;

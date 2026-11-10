@@ -6,7 +6,7 @@
 use lattice_core::{
     application::{
         contracts::settings::{LLMProvider, ModelWindowDto},
-        ports::llm_port::{CompletionRequest, CompletionResponse, ContentPart},
+        ports::llm_port::{CompletionRequest, CompletionResponse},
         services::chat_model_resolution::{cloud_provider_id, cloud_provider_name},
     },
     domain::models::model_ref::CloudProvider,
@@ -17,7 +17,6 @@ use serde_json::Value;
 
 use super::catalog::CloudModelDto;
 use super::streaming::Callback;
-use crate::features::llm::engine::vision::pictures_outside_a_user_message;
 use crate::features::llm::fitting::{Fitted, Thinking};
 
 pub(super) mod anthropic;
@@ -196,17 +195,4 @@ fn api_base(variable: &str, public: &str) -> String {
         .map(|base| base.trim().trim_end_matches('/').to_owned())
         .filter(|base| !base.is_empty())
         .unwrap_or_else(|| public.to_owned())
-}
-
-/// A user message's parts in a provider's own part format, in the order
-/// given. Pictures in any other role are refused.
-fn user_parts(
-    role: &str,
-    parts: &[ContentPart],
-    part: impl Fn(&ContentPart) -> Value,
-) -> Result<Vec<Value>> {
-    if role != "user" {
-        return Err(pictures_outside_a_user_message(role));
-    }
-    Ok(parts.iter().map(part).collect())
 }

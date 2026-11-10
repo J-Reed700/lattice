@@ -10,10 +10,11 @@ use serde_json::{json, Value};
 
 use super::listing::{self, is_text_model};
 use super::{
-    api_base, insufficient_quota, user_parts, CatalogProtocol, CompletionProtocol, EventDecoder,
-    LimitsApi, LimitsProtocol, ModelPage, ProviderApi,
+    api_base, insufficient_quota, CatalogProtocol, CompletionProtocol, EventDecoder, LimitsApi,
+    LimitsProtocol, ModelPage, ProviderApi,
 };
 use crate::features::llm::cloud::{field, reply, set_field};
+use crate::features::llm::engine::vision::user_parts;
 use crate::features::llm::fitting::{Fitted, Thinking};
 
 mod stream;

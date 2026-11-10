@@ -29,7 +29,7 @@ use crate::features::llm::engine::types::{
     OllamaChatMessage, OllamaChatRequest, OllamaChatStreamResponse, OllamaTool, OllamaToolCall,
     OllamaToolCallFunction,
 };
-use crate::features::llm::engine::vision::{not_set_up_to_see, pictures_outside_a_user_message};
+use crate::features::llm::engine::vision::{not_set_up_to_see, user_parts};
 use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
@@ -292,16 +292,13 @@ impl OllamaClient {
                 // Ollama takes a message's pictures as a list of base64
                 // strings beside its text.
                 CompletionInput::Multimodal { role, parts } => {
-                    if role != "user" {
-                        return Err(pictures_outside_a_user_message(role));
-                    }
-                    let text: Vec<&str> = parts
-                        .iter()
-                        .filter_map(|part| match part {
-                            ContentPart::Text { text } => Some(text.as_str()),
-                            ContentPart::Image(_) => None,
-                        })
-                        .collect();
+                    let text: Vec<&str> = user_parts(role, parts, |part| match part {
+                        ContentPart::Text { text } => Some(text.as_str()),
+                        ContentPart::Image(_) => None,
+                    })?
+                    .into_iter()
+                    .flatten()
+                    .collect();
                     OllamaChatMessage {
                         role: role.clone(),
                         content: text.join("\n"),
