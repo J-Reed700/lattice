@@ -110,6 +110,8 @@ pub use loaded_embedding_model::LoadedEmbeddingModelPort;
 pub use mention_repository_port::{MentionData, MentionRepositoryPort, MentionWithContextData};
 pub use metrics_port::{MetricsPort, MetricsSnapshotData};
 #[cfg(any(test, feature = "test-support"))]
+pub use mock_web_service::MockWebService;
+#[cfg(any(test, feature = "test-support"))]
 pub use model_catalog::MockModelCatalogPort;
 pub use model_catalog::{ExternalModelMetadata, ModelCatalogPort};
 pub use model_file_inspector::ModelFileInspector;
