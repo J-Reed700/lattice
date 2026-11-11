@@ -321,7 +321,7 @@ tables, the causes and the follow-up are in
 ## Retrieval modes
 
 `cargo run --example retrieval_eval` takes `--mode embedding` (the default) or
-`--mode production`, then `DATASET_JSON [RERANKER_DIR]`.
+`--mode production`, then `DATASET_JSON [RERANKER_GGUF]`.
 
 The embedding model runs as the app runs it, on a llama-server the example
 starts itself with the app's flags: `LATTICE_EMBED_GGUF` names the model's GGUF
@@ -471,7 +471,8 @@ document indexed, where it used to be inert behind MiniLM.
 
 ### Reranking
 
-Pass a reranker directory as the optional second argument in either mode. In
+Pass a reranker GGUF as the optional second argument in either mode; it is served
+by `llama-server --reranking`, as the app serves it. In
 embedding mode it reranks the top-48 passage pool; in production mode the fused
 pool is widened as chat widens it (three times `--top-k`, at most 64) and passed
 through the orchestrator's rerank stage — the stage chat calls — at chat's default
@@ -483,13 +484,9 @@ match:
 cd crates/lattice-desktop
 LATTICE_EMBED_GGUF=/path/to/embedding/model.gguf \
 SQLX_OFFLINE=true cargo run --example retrieval_eval -- \
-  ../../evals/retrieval/starter.json /path/to/reranker/model > /tmp/reranked-run.jsonl
+  ../../evals/retrieval/starter.json /path/to/reranker.gguf > /tmp/reranked-run.jsonl
 ```
 
-The loader selects the implementation from the checkpoint's `config.json`. It
-supports the BERT sequence-classification checkpoint used by
-`cross-encoder/ms-marco-MiniLM-L-6-v2` and the causal
-`Qwen/Qwen3-Reranker-0.6B` checkpoint. A Qwen3 embedding checkpoint is rejected.
 An embedding-mode reranked run keeps the top-48 passage pool, blends first-stage
 and reranker scores with the production weights, then reports document rankings;
 `first_stage_ranked_ids` makes each promotion and regression auditable.
@@ -498,12 +495,8 @@ Reranking exercises the production prompt or pair encoding and the production sc
 blend. In embedding mode it still omits fusion and chat generation; in production
 mode the blend is applied by the orchestrator's rerank stage, over the widened
 fused pool, exactly as in chat. Every run records the embedding artifact/preprocessing fingerprint.
-Qwen3-Reranker uses a roughly 1.1 GB checkpoint and is expected to be slower than
-the 22M-parameter MiniLM cross-encoder, so compare memory and latency as well as
-ranking metrics.
-Set `LATTICE_FORCE_CPU=1` to run the reranker without Metal or CUDA, including in
-constrained CI workers. The embedding server offloads to whatever accelerator the
-llama-server binary's own `--list-devices` reports, as the app's does.
+The embedding and reranker servers offload to whatever accelerator the
+llama-server binary's own `--list-devices` reports, as the app's do.
 
 Saved starter results cover all six combinations of MiniLM and Qwen3 embeddings
 with reranking off, MiniLM reranking, or Qwen3 reranking under `results/`.
