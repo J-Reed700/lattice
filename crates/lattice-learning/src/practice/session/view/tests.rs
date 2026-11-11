@@ -5,7 +5,7 @@ use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulati
 use crate::practice::session::fake_kind::{fake_kind, letters_exercise};
 use crate::practice::session::policy::Cue;
 use crate::practice::session::record::{
-    CheckedCase, EventKind, SessionEvent, SessionRow, TechniqueRating,
+    CheckedCase, EventKind, SessionEvent, SessionLearnerCase, SessionRow, TechniqueRating,
 };
 use lattice_core::domain::learning::drills::PatternRating;
 use lattice_core::domain::learning::practice::work::{
