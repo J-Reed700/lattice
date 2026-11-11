@@ -1,4 +1,4 @@
-//! The engine's observation of a program renders what today's `WorkspaceObservation` renders, byte for byte.
+//! The engine's observation of a program renders what the observation golden says, byte for byte.
 
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
@@ -6,9 +6,8 @@ use crate::lab_runtime::LearningLabFile;
 use crate::practice::coding::dto::{
     CaseViewDto, CodingRunDto, CodingRunScope, CodingSessionDto, CodingStage,
 };
-use crate::practice::coding::golden_support::{rich_observation, rich_session};
+use crate::practice::coding::golden_support::{assert_golden, rich_session, Golden};
 use crate::practice::coding::observation::test_support::{problem, session};
-use crate::practice::coding::observation::{observe, WorkspaceObservation};
 use crate::practice::coding::problem::{
     CaseCompare, CaseResult as RunResult, CaseStatus as RunStatus, CaseVisibility as RunVisibility,
     CodingSetting, CodingTask, Problem, ProblemCase,
@@ -166,16 +165,15 @@ pub(super) fn engine_observation(
     }
 }
 
-fn assert_equal(
+fn rendered(
     problem: &Problem,
     session: &CodingSessionDto,
     seen: Option<&[LearningLabFile]>,
     disclose: bool,
-    workspace: &WorkspaceObservation,
-) {
-    let engine = engine_observation(problem, session, seen, disclose);
-    assert_eq!(engine.render(&program_kind()).unwrap(), workspace.render());
-    assert_eq!(engine.internal_ids(), workspace.internal_ids());
+) -> String {
+    engine_observation(problem, session, seen, disclose)
+        .render(&program_kind())
+        .unwrap()
 }
 
 fn detail(id: &str, category: &str, status: RunStatus) -> CaseCheckDetailDto {
@@ -214,21 +212,14 @@ fn run_of(
 }
 
 #[test]
-fn the_plain_fixture_renders_the_same() {
-    for setting in [
-        CodingSetting::Coached,
-        CodingSetting::Mock,
-        CodingSetting::Watched,
-    ] {
-        let problem = problem();
-        let session = session(&problem, setting, CodingStage::Code);
-        let workspace = observe(&problem, &session, None);
-        assert_equal(&problem, &session, None, false, &workspace);
-    }
-}
-
-#[test]
-fn the_rich_fixture_renders_the_same_for_both_tasks_in_every_setting() {
+fn the_observations_render_what_the_golden_says() {
+    let mut golden = Golden::default();
+    let problem = problem();
+    let plain = session(&problem, CodingSetting::Mock, CodingStage::Code);
+    golden.add(
+        "plain, Mock, Code, nothing run, no baseline",
+        &rendered(&problem, &plain, None, false),
+    );
     for task in [CodingTask::Problem, CodingTask::BugFix] {
         for setting in [
             CodingSetting::Coached,
@@ -236,14 +227,81 @@ fn the_rich_fixture_renders_the_same_for_both_tasks_in_every_setting() {
             CodingSetting::Watched,
         ] {
             let (problem, session, seen) = rich_session(task, setting);
-            let (_, workspace) = rich_observation(task, setting);
-            assert_equal(&problem, &session, Some(&seen), false, &workspace);
+            golden.add(
+                &format!("{task:?} {setting:?}"),
+                &rendered(&problem, &session, Some(&seen), false),
+            );
+        }
+    }
+    assert_golden(
+        "observation",
+        include_str!("../../coding/golden/observation.txt"),
+        golden.text(),
+    );
+}
+
+#[test]
+fn the_plain_fixture_holds_no_reference_and_no_misreading() {
+    use crate::practice::coding::observation::test_support::{
+        HIDDEN_ARGS, MISREADING_DESCRIPTION, MISREADING_ID,
+    };
+    for setting in [
+        CodingSetting::Coached,
+        CodingSetting::Mock,
+        CodingSetting::Watched,
+    ] {
+        let problem = problem();
+        let session = session(&problem, setting, CodingStage::Code);
+        let text = rendered(&problem, &session, None, false);
+        for secret in [
+            "REFERENCE_SECRET_BODY",
+            MISREADING_ID,
+            MISREADING_DESCRIPTION,
+            "MISREADING_SECRET_BODY",
+            HIDDEN_ARGS,
+        ] {
+            assert!(!text.contains(secret), "the rendering holds {secret}");
         }
     }
 }
 
 #[test]
-fn a_run_with_every_case_disclosed_renders_the_same() {
+fn the_rendering_numbers_every_line_and_lists_the_techniques_without_instructions() {
+    let problem = problem();
+    let session = session(&problem, CodingSetting::Coached, CodingStage::Plan);
+    let text = rendered(&problem, &session, None, false);
+    assert!(text.contains("solution.py"));
+    assert!(text.contains("1 | def total(values):"));
+    assert!(text.contains("2 |     result = 0"));
+    assert!(text.contains("3 |     return result"));
+    assert!(text.contains("Techniques the problem is built around: "));
+    assert!(!text.contains("never name"));
+}
+
+#[test]
+fn the_rendering_carries_the_transcript_and_the_clarifications_without_turn_ids() {
+    use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
+    let problem = problem();
+    let mut session = session(&problem, CodingSetting::Coached, CodingStage::Understand);
+    session.turns.push(LearningSimulationTurnDto {
+        id: "turn-99999999".to_owned(),
+        ordinal: 0,
+        speaker: LearningSimulationSpeaker::Learner,
+        content: "What does it return for no values?".to_owned(),
+        citations: Vec::new(),
+        model_name: None,
+        created_at: 5,
+    });
+    let text = rendered(&problem, &session, None, false);
+    assert!(text.contains("What does it return for no values?"));
+    assert!(!text.contains("turn-99999999"));
+    assert!(text.contains("Can the list be empty?"));
+    assert!(text.contains("O(n) time, O(1) space"));
+    assert!(text.contains("Return the sum of the values."));
+}
+
+#[test]
+fn a_run_with_every_case_disclosed_renders_the_got_value() {
     let problem = problem();
     let mut session = session(&problem, CodingSetting::Coached, CodingStage::Test);
     let mut scale = detail("case-scale-1", "a long list", RunStatus::Ran);
@@ -273,14 +331,12 @@ fn a_run_with_every_case_disclosed_renders_the_same() {
             LearningPracticalRunStatus::Failed,
             cases.clone(),
         )];
-        let workspace = observe(&problem, &session, None);
-        assert!(workspace.render().contains("got 4"));
-        assert_equal(&problem, &session, None, true, &workspace);
+        assert!(rendered(&problem, &session, None, true).contains("got 4"));
     }
 }
 
 #[test]
-fn a_run_that_keeps_hidden_cases_back_but_shows_the_learners_own_renders_the_same() {
+fn a_run_that_keeps_hidden_cases_back_but_shows_the_learners_own_renders_by_title_and_in_full() {
     let problem = problem();
     let mut session = session(&problem, CodingSetting::Mock, CodingStage::Test);
     let mut mine = detail("case-mine-1", "my own input", RunStatus::Passed);
@@ -297,15 +353,13 @@ fn a_run_that_keeps_hidden_cases_back_but_shows_the_learners_own_renders_the_sam
         LearningPracticalRunStatus::Failed,
         cases,
     )];
-    let workspace = observe(&problem, &session, None);
-    let text = workspace.render();
+    let text = rendered(&problem, &session, None, false);
     assert!(text.contains("- Failed: an empty list\n"));
     assert!(text.contains("my own input; input ([1, 2]); expected 3"));
-    assert_equal(&problem, &session, None, false, &workspace);
 }
 
 #[test]
-fn every_run_status_but_one_is_worded_the_same() {
+fn every_run_status_but_one_renders_without_the_run_id() {
     let problem = problem();
     let mut session = session(&problem, CodingSetting::Coached, CodingStage::Test);
     for status in [
@@ -318,7 +372,6 @@ fn every_run_status_but_one_is_worded_the_same() {
         LearningPracticalRunStatus::Interrupted,
     ] {
         session.runs = vec![run_of(CodingRunScope::All, status, Vec::new())];
-        let workspace = observe(&problem, &session, None);
-        assert_equal(&problem, &session, None, false, &workspace);
+        assert!(!rendered(&problem, &session, None, false).contains("run-3333"));
     }
 }

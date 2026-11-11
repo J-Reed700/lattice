@@ -17,7 +17,6 @@ use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
 };
 use lattice_core::application::ports::LLMPort;
-use lattice_core::application::services::grounded_generation::GroundedRequest;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 
@@ -27,7 +26,6 @@ use crate::practice::coding::dto::{
     ExampleCoverageDto, ExampleVerdict,
 };
 use crate::practice::coding::observation::test_support::{failing_run, problem, session};
-use crate::practice::coding::observation::{observe, WorkspaceObservation};
 use crate::practice::coding::problem::{CodingSetting, CodingTask, Problem};
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
 
@@ -73,43 +71,6 @@ impl Golden {
 
 fn pretty(value: &Value) -> String {
     serde_json::to_string_pretty(value).expect("a value writes out as JSON")
-}
-
-/// A request as the generator built it: every field that reaches the model. Left out: the evidence selection,
-/// the cancellation token and the time limits, which shape the call and not what the model reads.
-pub(crate) fn render_grounded(request: &GroundedRequest) -> String {
-    let mut out = String::new();
-    let _ = writeln!(out, "--- system ---\n{}", request.instructions);
-    let _ = writeln!(out, "--- user ---\n{}", request.task);
-    let _ = writeln!(out, "--- history ---");
-    for item in &request.history {
-        let _ = writeln!(out, "[{}]\n{}", item.role, item.content);
-    }
-    let _ = writeln!(out, "--- closing ---\n{}", request.closing);
-    let _ = writeln!(
-        out,
-        "--- evidence ---\nheading: {}\npassages: {}",
-        request.evidence_heading,
-        request.evidence.len()
-    );
-    let schema = request
-        .call
-        .json_schema
-        .as_ref()
-        .map_or_else(|| "none".to_owned(), pretty);
-    let _ = writeln!(out, "--- schema ---\n{schema}");
-    let _ = writeln!(
-        out,
-        "--- options ---\noutput_tokens: {}\noutput_fills_window: {}\nevidence_limit: {:?}\nreasoning_effort: {:?}\npriority: {:?}\ncache_key: {:?}\nsampling: {:?}",
-        request.output_tokens,
-        request.output_fills_window,
-        request.evidence_limit,
-        request.call.reasoning_effort,
-        request.call.priority,
-        request.call.cache_key,
-        request.call.sampling
-    );
-    out
 }
 
 /// A request as the model server receives it: each message under its role, the schema, and every other field.
@@ -209,18 +170,8 @@ fn turn(
     }
 }
 
-/// The fixture problem and an observation of a session of `task` in `setting` that holds a failing run, changes
-/// since the draft was last seen, learner examples, a hint and a transcript. The stage is the third of the task's.
-pub(crate) fn rich_observation(
-    task: CodingTask,
-    setting: CodingSetting,
-) -> (Problem, WorkspaceObservation) {
-    let (problem, session, seen) = rich_session(task, setting);
-    let observation = observe(&problem, &session, Some(&seen));
-    (problem, observation)
-}
-
-/// The fixture problem, the session `rich_observation` observes and the draft last seen.
+/// The fixture problem, a session of `task` in `setting` that holds a failing run, changes since the draft was last
+/// seen, learner examples, a hint and a transcript, and the draft last seen. The stage is the third of the task's.
 pub(crate) fn rich_session(
     task: CodingTask,
     setting: CodingSetting,

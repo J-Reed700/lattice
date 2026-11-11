@@ -29,15 +29,17 @@ use lattice_learning::coding::dto::{
     ObserveCodingDraftRequestDto, RunCodingSessionRequestDto, SendCodingTurnRequestDto,
     StartCodingSessionRequestDto,
 };
-use lattice_learning::coding::observation::observe;
-use lattice_learning::coding::policy::{policy_for, CodingCue};
+use lattice_learning::coding::policy::CodingCue;
 use lattice_learning::coding::problem::{CaseStatus, CodingSetting, Problem, SOLUTION_PATH};
 use lattice_learning::coding::records::StoredRun;
-use lattice_learning::coding::session::last_draft_seen;
 use lattice_learning::coding::session::{session_view, CodingSessions};
 use lattice_learning::coding::solution_check::passes_every_case;
+use lattice_learning::coding::store::session_of;
 use lattice_learning::lab_runtime::LearningLabFile;
 use lattice_learning::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
+use lattice_learning::practice::kinds::program::shape::cue_of;
+use lattice_learning::practice::session::observe::observe;
+use lattice_learning::practice::session::policy::policy_for;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
@@ -326,8 +328,9 @@ impl<'a> Player<'a> {
             .await?;
         let cue = bundle.row.pending_cue.clone();
         let view = session_view(&bundle)?;
-        let seen = last_draft_seen(&bundle)?;
-        let observation = observe(&bundle.problem, &view, seen.as_deref());
+        let engine = session_of(&bundle)?;
+        let kind = self.lab.kinds.get(&engine.exercise.kind)?;
+        let observation = observe(kind, &engine, &engine.row.draft, engine.draft_seen.as_ref())?;
         let known = view.turns.len();
         let started = Instant::now();
         let result = self.sessions.respond(&request).await;
@@ -340,7 +343,7 @@ impl<'a> Player<'a> {
             text: None,
             error: None,
             rule_failure: None,
-            observation: observation.render(),
+            observation: observation.render(kind)?,
         };
         match result {
             Ok(next) => {
@@ -352,8 +355,8 @@ impl<'a> Player<'a> {
                     .map(|turn| turn.content.clone());
                 self.session = next;
                 if let (Some(text), Some(cue)) = (&reply.text, &cue) {
-                    reply.rule_failure = policy_for(bundle.row.setting, bundle.row.task)
-                        .check(text, cue, &observation)
+                    reply.rule_failure = policy_for(engine.row.setting, kind, engine.row.form)
+                        .check(text, &cue_of(cue), &observation)
                         .err()
                         .map(|error| error.to_string());
                 }

@@ -3,17 +3,6 @@
 use serde::Serialize;
 
 use crate::lab_runtime::LearningLabFile;
-use crate::practice::coding::dto::{
-    stages_of, CaseViewDto, ClockDto, CodeHintDto, CodingExampleDto, CodingRunDto,
-    CodingSessionDto, CodingStage, ExampleCoverageDto,
-};
-use crate::practice::coding::problem::{
-    CodingSetting, CodingTask, Problem, ProblemClarification, ProblemSignature,
-};
-use crate::practice::kinds::program::showing::{
-    brief_text, case_text, draft_text, pattern_names, run_notes, BriefFacts,
-};
-use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
 
 /// Whether a line was added to a file or removed from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -31,38 +20,6 @@ pub struct LineChange {
     pub kind: LineChangeKind,
     pub line: u32,
     pub text: String,
-}
-
-/// What the counterpart reads: what the learner sees in the session, plus the problem's clarifications, target
-/// complexity and pattern names. It never holds the reference, the misreadings, or a hidden case the setting keeps
-/// back.
-#[derive(Debug, Clone, Serialize)]
-#[serde(rename_all = "camelCase")]
-pub struct WorkspaceObservation {
-    pub session_id: String,
-    pub task: CodingTask,
-    pub setting: CodingSetting,
-    pub stage: CodingStage,
-    /// The task's stages in order, up to and including the current one.
-    pub stages_reached: Vec<CodingStage>,
-    pub title: String,
-    pub statement: String,
-    pub signature: ProblemSignature,
-    pub constraints: Vec<String>,
-    pub problem_examples: Vec<CaseViewDto>,
-    pub clarifications: Vec<ProblemClarification>,
-    pub target_complexity: String,
-    pub pattern_names: Vec<String>,
-    pub clock: ClockDto,
-    pub files: Vec<LearningLabFile>,
-    /// Whether the draft the counterpart last saw is known; `changes` is empty otherwise.
-    pub has_baseline: bool,
-    pub changes: Vec<LineChange>,
-    pub last_run: Option<CodingRunDto>,
-    pub learner_examples: Vec<CodingExampleDto>,
-    pub coverage: ExampleCoverageDto,
-    pub hints: Vec<CodeHintDto>,
-    pub turns: Vec<LearningSimulationTurnDto>,
 }
 
 /// The lines added to and removed from `new` against `old`, by longest common subsequence of lines.
@@ -170,205 +127,19 @@ pub(crate) fn changes_since(
     changes
 }
 
-/// What the counterpart may read: what the learner sees in `session` (already cut by the setting), plus the
-/// problem's clarifications, target complexity and pattern names, and the draft's change since `seen`.
-pub fn observe(
-    problem: &Problem,
-    session: &CodingSessionDto,
-    seen: Option<&[LearningLabFile]>,
-) -> WorkspaceObservation {
-    let mut stages_reached = Vec::new();
-    for stage in stages_of(session.task) {
-        stages_reached.push(*stage);
-        if *stage == session.stage {
-            break;
-        }
-    }
-    WorkspaceObservation {
-        session_id: session.session_id.clone(),
-        task: session.task,
-        setting: session.setting,
-        stage: session.stage,
-        stages_reached,
-        title: session.problem.title.clone(),
-        statement: session.problem.statement.clone(),
-        signature: session.problem.signature.clone(),
-        constraints: session.problem.constraints.clone(),
-        problem_examples: session.problem.examples.clone(),
-        clarifications: problem.spec.clarifications.clone(),
-        target_complexity: problem.spec.target_complexity.clone(),
-        pattern_names: pattern_names(&problem.spec.patterns),
-        clock: session.clock.clone(),
-        files: session.draft.clone(),
-        has_baseline: seen.is_some(),
-        changes: seen
-            .map(|seen| changes_since(&session.draft, seen))
-            .unwrap_or_default(),
-        last_run: session.runs.last().cloned(),
-        learner_examples: session.examples.clone(),
-        coverage: session.coverage.clone(),
-        hints: session.hints.clone(),
-        turns: session.turns.clone(),
-    }
-}
-
-impl WorkspaceObservation {
-    /// The number of lines of the draft file at `path`, or None when the draft has no such file.
-    pub fn line_count(&self, path: &str) -> Option<usize> {
-        self.files
-            .iter()
-            .find(|file| file.path == path)
-            .map(|file| file.content.lines().count())
-    }
-
-    /// The ids of this session the counterpart must never repeat: the session, its turns, its runs and the cases
-    /// the learner has seen results for.
-    pub fn internal_ids(&self) -> Vec<String> {
-        let mut ids = vec![self.session_id.clone()];
-        ids.extend(self.turns.iter().map(|turn| turn.id.clone()));
-        ids.extend(self.hints.iter().filter_map(|hint| hint.run_id.clone()));
-        if let Some(run) = &self.last_run {
-            ids.push(run.run_id.clone());
-            ids.extend(run.cases.iter().map(|case| case.case_id.clone()));
-        }
-        ids.extend(
-            self.problem_examples
-                .iter()
-                .map(|case| case.case_id.clone()),
-        );
-        ids
-    }
-
-    /// The observation as the model reads it: text, with the draft numbered by line.
-    pub fn render(&self) -> String {
-        let mut out = brief_text(&BriefFacts {
-            title: &self.title,
-            statement: &self.statement,
-            signature: &self.signature,
-            constraints: &self.constraints,
-            examples: &self.problem_examples,
-            clarifications: &self.clarifications,
-            target_complexity: &self.target_complexity,
-            pattern_names: &self.pattern_names,
-        });
-        let reached = self
-            .stages_reached
-            .iter()
-            .map(|stage| format!("{stage:?}"))
-            .collect::<Vec<_>>()
-            .join(", ");
-        push_line(
-            &mut out,
-            &format!(
-                "Task: {:?}. Setting: {:?}. Stage: {:?}. Stages reached: {reached}.",
-                self.task, self.setting, self.stage
-            ),
-        );
-        let spent = format!("{} s active", self.clock.active_ms / 1000);
-        match self.clock.budget_seconds {
-            Some(budget) => push_line(&mut out, &format!("Clock: {spent} of a {budget} s budget.")),
-            None => push_line(&mut out, &format!("Clock: {spent}, no budget.")),
-        }
-        push_line(&mut out, "Draft:");
-        out.push_str(&draft_text(&self.files));
-        if !self.has_baseline {
-            push_line(
-                &mut out,
-                "Changes since you last looked: you have not looked at the draft before.",
-            );
-        } else if self.changes.is_empty() {
-            push_line(&mut out, "Changes since you last looked: none.");
-        } else {
-            push_line(&mut out, "Changes since you last looked:");
-            for change in &self.changes {
-                let mark = match change.kind {
-                    LineChangeKind::Added => "added",
-                    LineChangeKind::Removed => "removed",
-                };
-                push_line(
-                    &mut out,
-                    &format!(
-                        "{mark} {} line {}: {}",
-                        change.path, change.line, change.text
-                    ),
-                );
-            }
-        }
-        match &self.last_run {
-            None => push_line(&mut out, "Last run: none yet."),
-            Some(run) => {
-                push_line(
-                    &mut out,
-                    &format!("Last run: {:?}, {:?}.", run.scope, run.status),
-                );
-                for case in &run.cases {
-                    push_line(
-                        &mut out,
-                        &format!("- {:?}: {}", case.status, case_text(case)),
-                    );
-                }
-                for note in run_notes(&run.stdout, &run.stderr) {
-                    push_line(&mut out, &note);
-                }
-            }
-        }
-        for example in &self.learner_examples {
-            push_line(
-                &mut out,
-                &format!(
-                    "Learner's example {}: ({}) expects {} - {:?}",
-                    example.ordinal,
-                    example.args.join(", "),
-                    example.expected,
-                    example.verdict
-                ),
-            );
-        }
-        push_line(
-            &mut out,
-            &format!(
-                "Examples catch {} of {} common mistakes.",
-                self.coverage.caught, self.coverage.total
-            ),
-        );
-        if let Some(uncaught) = &self.coverage.uncaught {
-            push_line(
-                &mut out,
-                &format!("One mistake they do not catch yet: {uncaught}"),
-            );
-        }
-        for hint in &self.hints {
-            push_line(
-                &mut out,
-                &format!("Hint given ({:?}): {}", hint.rung, hint.text),
-            );
-        }
-        push_line(&mut out, "Transcript:");
-        for turn in &self.turns {
-            let speaker = match turn.speaker {
-                LearningSimulationSpeaker::Learner => "Learner",
-                LearningSimulationSpeaker::Counterpart | LearningSimulationSpeaker::Coach => "You",
-            };
-            push_line(&mut out, &format!("{speaker}: {}", turn.content));
-        }
-        out
-    }
-}
-
-fn push_line(out: &mut String, text: &str) {
-    out.push_str(text);
-    out.push('\n');
-}
-
 #[cfg(test)]
 pub(crate) mod test_support {
     use std::collections::BTreeMap;
 
-    use super::*;
-    use crate::practice::coding::dto::{CodeHintRung, PublicProblemDto};
+    use crate::lab_runtime::LearningLabFile;
+    use crate::practice::coding::dto::{
+        stages_of, CaseViewDto, ClockDto, CodeHintRung, CodingRunDto, CodingSessionDto,
+        CodingStage, ExampleCoverageDto, PublicProblemDto,
+    };
     use crate::practice::coding::problem::{
-        CaseCompare, CaseStatus, CaseVisibility, Misreading, ProblemCase, ProblemDifficulty,
-        ProblemSpec, SignatureParam,
+        CaseCompare, CaseStatus, CaseVisibility, CodingSetting, CodingTask, Misreading, Problem,
+        ProblemCase, ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec,
+        SignatureParam,
     };
 
     pub const REFERENCE: &str = "def total(values):\n    return REFERENCE_SECRET_BODY\n";
@@ -510,16 +281,6 @@ pub(crate) mod test_support {
         }
     }
 
-    pub fn observation(
-        setting: CodingSetting,
-        stage: CodingStage,
-    ) -> (Problem, WorkspaceObservation) {
-        let problem = problem();
-        let session = session(&problem, setting, stage);
-        let observation = observe(&problem, &session, None);
-        (problem, observation)
-    }
-
     pub fn failing_run() -> CodingRunDto {
         use crate::practice::coding::dto::CodingRunScope;
         use crate::practice::practical_dto::LearningPracticalRunStatus;
@@ -554,6 +315,8 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::*;
     use super::*;
+    use crate::practice::coding::dto::CodingStage;
+    use crate::practice::coding::problem::CodingSetting;
 
     fn file(content: &str) -> LearningLabFile {
         LearningLabFile {
@@ -569,61 +332,6 @@ mod tests {
             line,
             text: text.to_owned(),
         }
-    }
-
-    #[test]
-    fn the_observation_never_holds_the_reference_or_a_misreading() {
-        let (_, observation) = observation(CodingSetting::Mock, CodingStage::Code);
-        let json = serde_json::to_string(&observation).unwrap_or_default();
-        assert!(!json.is_empty());
-        for secret in [
-            "REFERENCE_SECRET_BODY",
-            MISREADING_ID,
-            MISREADING_DESCRIPTION,
-            "MISREADING_SECRET_BODY",
-            HIDDEN_ARGS,
-        ] {
-            assert!(!json.contains(secret), "the observation holds {secret}");
-        }
-        assert!(!observation.render().contains("REFERENCE_SECRET_BODY"));
-    }
-
-    #[test]
-    fn the_observation_holds_clarifications_complexity_and_pattern_names() {
-        let (problem, observation) = observation(CodingSetting::Coached, CodingStage::Understand);
-        assert_eq!(observation.clarifications, problem.spec.clarifications);
-        assert_eq!(observation.target_complexity, "O(n) time, O(1) space");
-        let first = lattice_core::domain::learning::practice::problem_patterns::PROBLEM_PATTERNS
-            .first()
-            .map(|pattern| pattern.name.to_owned());
-        assert_eq!(
-            observation.pattern_names,
-            first.into_iter().collect::<Vec<_>>()
-        );
-    }
-
-    #[test]
-    fn the_stages_reached_end_at_the_current_stage() {
-        let (_, observation) = observation(CodingSetting::Coached, CodingStage::Plan);
-        assert_eq!(
-            observation.stages_reached,
-            vec![
-                CodingStage::Understand,
-                CodingStage::Examples,
-                CodingStage::Plan
-            ]
-        );
-    }
-
-    #[test]
-    fn the_last_run_is_the_newest_run_as_the_learner_sees_it() {
-        let problem = problem();
-        let mut session = session(&problem, CodingSetting::Mock, CodingStage::Test);
-        session.runs.push(failing_run());
-        let observation = observe(&problem, &session, None);
-        let json = serde_json::to_string(&observation).unwrap_or_default();
-        assert!(json.contains("an empty list"));
-        assert!(!json.contains(HIDDEN_ARGS));
     }
 
     #[test]
@@ -678,23 +386,13 @@ mod tests {
     }
 
     #[test]
-    fn a_draft_with_no_baseline_has_no_changes() {
-        let problem = problem();
-        let session = session(&problem, CodingSetting::Watched, CodingStage::Code);
-        let observation = observe(&problem, &session, None);
-        assert!(!observation.has_baseline);
-        assert!(observation.changes.is_empty());
-    }
-
-    #[test]
     fn the_diff_runs_against_the_draft_last_seen() {
         let problem = problem();
         let session = session(&problem, CodingSetting::Watched, CodingStage::Code);
         let seen = [file("def total(values):\n    pass\n")];
-        let observation = observe(&problem, &session, Some(&seen));
-        assert!(observation.has_baseline);
+        let changes = changes_since(&session.draft, &seen);
         assert_eq!(
-            observation.changes,
+            changes,
             vec![
                 change(LineChangeKind::Removed, 2, "    pass"),
                 change(LineChangeKind::Added, 2, "    result = 0"),
@@ -722,9 +420,7 @@ mod tests {
                 content: "o1\n".to_owned(),
             },
         ];
-        let observation = observe(&problem, &session, Some(&seen));
-        let found: Vec<(&str, LineChangeKind, u32)> = observation
-            .changes
+        let found: Vec<(&str, LineChangeKind, u32)> = changes_since(&session.draft, &seen)
             .iter()
             .map(|change| (change.path.as_str(), change.kind, change.line))
             .collect();
@@ -737,70 +433,4 @@ mod tests {
             ]
         );
     }
-
-    #[test]
-    fn the_rendering_numbers_every_line_of_every_file() {
-        let (_, observation) = observation(CodingSetting::Mock, CodingStage::Code);
-        let text = observation.render();
-        assert!(text.contains("solution.py"));
-        assert!(text.contains("1 | def total(values):"));
-        assert!(text.contains("2 |     result = 0"));
-        assert!(text.contains("3 |     return result"));
-    }
-
-    #[test]
-    fn the_rendering_holds_no_internal_id() {
-        let problem = problem();
-        let mut session = session(&problem, CodingSetting::Mock, CodingStage::Test);
-        session.runs.push(failing_run());
-        let observation = observe(&problem, &session, None);
-        let text = observation.render();
-        assert!(text.contains("an empty list"));
-        for id in observation.internal_ids() {
-            assert!(!text.contains(&id), "the rendering holds the id {id}");
-        }
-    }
-
-    #[test]
-    fn the_rendering_lists_the_techniques_without_instructions() {
-        let (_, observation) = observation(CodingSetting::Coached, CodingStage::Plan);
-        let text = observation.render();
-        let names = observation.pattern_names.join(", ");
-        assert!(text.contains(&format!(
-            "Techniques the problem is built around: {names}\n"
-        )));
-        assert!(!text.contains("never name"));
-    }
-
-    #[test]
-    fn the_rendering_carries_the_transcript_and_the_clarifications() {
-        let problem = problem();
-        let mut session = session(&problem, CodingSetting::Coached, CodingStage::Understand);
-        session.turns.push(LearningSimulationTurnDto {
-            id: "turn-99999999".to_owned(),
-            ordinal: 0,
-            speaker: LearningSimulationSpeaker::Learner,
-            content: "What does it return for no values?".to_owned(),
-            citations: Vec::new(),
-            model_name: None,
-            created_at: 5,
-        });
-        let observation = observe(&problem, &session, None);
-        let text = observation.render();
-        assert!(text.contains("What does it return for no values?"));
-        assert!(!text.contains("turn-99999999"));
-        assert!(text.contains("Can the list be empty?"));
-        assert!(text.contains("O(n) time, O(1) space"));
-        assert!(text.contains("Return the sum of the values."));
-    }
-
-    #[test]
-    fn the_line_count_is_by_file() {
-        let (_, observation) = observation(CodingSetting::Mock, CodingStage::Code);
-        assert_eq!(observation.line_count("solution.py"), Some(3));
-        assert_eq!(observation.line_count("other.py"), None);
-    }
 }
-
-#[cfg(test)]
-mod golden;

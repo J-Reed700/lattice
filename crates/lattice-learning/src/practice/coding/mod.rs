@@ -2,7 +2,6 @@
 //! (docs/design/2026-11-08-coding-sessions-and-one-practice-area.md).
 
 pub mod checks;
-pub mod counterpart;
 pub mod debrief;
 pub mod dto;
 pub mod examples;

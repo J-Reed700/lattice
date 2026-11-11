@@ -15,9 +15,8 @@ use crate::generation::parse_json;
 use crate::lab_runtime::LearningLabFile;
 use crate::lessons::structured_call::{complete_checked_request, reask};
 use crate::model_call;
-use crate::practice::coding::dto::{CodeHintDto, CodeHintRung};
+use crate::practice::coding::dto::CodeHintRung;
 use crate::practice::coding::harness::CaseHarness;
-use crate::practice::coding::observation::WorkspaceObservation;
 use crate::practice::coding::problem::{CodingSetting, Problem};
 use crate::practice::coding::solution_check::{code_blocks, parses_as_python, passes_every_case};
 
@@ -33,7 +32,7 @@ const PYTHON_KEYWORDS: &[&str] = &[
     "with", "yield",
 ];
 
-/// A hint that passed its checks, ready to be stored as a `CodeHintDto`.
+/// A hint that passed its checks.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CodeHint {
     pub rung: CodeHintRung,
@@ -51,45 +50,9 @@ struct Written {
     path: Option<String>,
 }
 
-/// The rung after the highest one given: Nudge first, and Line stays Line.
-pub fn next_rung(given: &[CodeHintDto]) -> CodeHintRung {
-    match given.iter().map(|hint| hint.rung).max() {
-        None => CodeHintRung::Nudge,
-        Some(CodeHintRung::Nudge) => CodeHintRung::Idea,
-        Some(CodeHintRung::Idea) => CodeHintRung::Plan,
-        Some(CodeHintRung::Plan | CodeHintRung::Line) => CodeHintRung::Line,
-    }
-}
-
-/// Writes the hint for `rung`, checks it, and asks once more with the reason when a check refuses it. A second
-/// refusal fails with `AppError::ModelAnswerUnusable`.
-#[allow(clippy::too_many_arguments)]
-pub async fn write_hint(
-    llm: &dyn LLMPort,
-    runner: &dyn CodeRunner,
-    harness: &dyn CaseHarness,
-    problem: &Problem,
-    observation: &WorkspaceObservation,
-    rung: CodeHintRung,
-    in_role: bool,
-    cancel: CancellationToken,
-) -> Result<CodeHint> {
-    write_hint_from(
-        llm,
-        runner,
-        harness,
-        problem,
-        &observation.render(),
-        observation.setting,
-        &observation.files,
-        rung,
-        in_role,
-        cancel,
-    )
-    .await
-}
-
-/// [`write_hint`] for what it reads of the observation: its text, the setting and the draft's files.
+/// Writes the hint for `rung` on what the observation says, checks it, and asks once more with the reason when a
+/// check refuses it. A second refusal fails with `AppError::ModelAnswerUnusable`. `observed` is the observation's
+/// text; `setting` and `draft` are what the checks read of the session.
 #[allow(clippy::too_many_arguments)]
 pub(crate) async fn write_hint_from(
     llm: &dyn LLMPort,
@@ -118,23 +81,6 @@ pub(crate) async fn write_hint_from(
     };
     let request = ask(&problem.reference, observed, rung, in_role, setting);
     write_checked(llm, &hinting, &proof, request, rung).await
-}
-
-/// The request for a hint of `rung` on what `observation` shows.
-#[cfg(test)]
-fn request_for(
-    problem: &Problem,
-    observation: &WorkspaceObservation,
-    rung: CodeHintRung,
-    in_role: bool,
-) -> GroundedRequest {
-    ask(
-        &problem.reference,
-        &observation.render(),
-        rung,
-        in_role,
-        observation.setting,
-    )
 }
 
 /// What the checks read of the problem and the session.
@@ -675,44 +621,6 @@ mod tests {
         }
     }
 
-    fn given(rungs: &[CodeHintRung]) -> Vec<CodeHintDto> {
-        rungs
-            .iter()
-            .enumerate()
-            .map(|(ordinal, rung)| CodeHintDto {
-                ordinal: ordinal as u32,
-                rung: *rung,
-                text: String::new(),
-                reason: String::new(),
-                lines: Vec::new(),
-                path: None,
-                stage: CodingStage::Code,
-                run_id: None,
-                in_role: false,
-                at: 0,
-            })
-            .collect()
-    }
-
-    #[test]
-    fn the_rungs_come_in_order_and_the_top_one_stays() {
-        assert_eq!(next_rung(&[]), CodeHintRung::Nudge);
-        assert_eq!(
-            next_rung(&given(&[CodeHintRung::Nudge])),
-            CodeHintRung::Idea
-        );
-        assert_eq!(
-            next_rung(&given(&[CodeHintRung::Nudge, CodeHintRung::Idea])),
-            CodeHintRung::Plan
-        );
-        assert_eq!(next_rung(&given(&[CodeHintRung::Plan])), CodeHintRung::Line);
-        assert_eq!(next_rung(&given(&[CodeHintRung::Line])), CodeHintRung::Line);
-        assert_eq!(
-            next_rung(&given(&[CodeHintRung::Idea, CodeHintRung::Nudge])),
-            CodeHintRung::Plan
-        );
-    }
-
     struct Scripted {
         answers: Mutex<VecDeque<String>>,
         requests: Mutex<Vec<CompletionRequest>>,
@@ -860,18 +768,4 @@ mod tests {
             }
         }
     }
-
-    #[test]
-    fn the_request_shows_the_draft_with_its_lines_numbered() {
-        use crate::practice::coding::observation::{observe, test_support};
-        let problem = test_support::problem();
-        let session = test_support::session(&problem, CodingSetting::Mock, CodingStage::Code);
-        let observation = observe(&problem, &session, None);
-        let request = request_for(&problem, &observation, CodeHintRung::Line, false);
-        assert!(request.task.contains("1 | "), "{}", request.task);
-        assert!(!request.task.contains("sessionId"));
-    }
 }
-
-#[cfg(test)]
-mod golden;
