@@ -6,11 +6,11 @@
 //!
 //! - `ops.rs` - SQL operations that accept any SQLite connection, so a caller
 //!   can run them inside its own unit of work
-//! - `implementation.rs` - Pool-based repository for standalone operations
+//! - `repository.rs` - Pool-based repository for standalone operations
 
-pub mod implementation;
 pub mod ops;
+pub mod repository;
 #[cfg(test)]
 mod repository_tests;
 
-pub use implementation::{ChunkFilter, SqliteChunkRepository};
+pub use repository::ChunkRepository;

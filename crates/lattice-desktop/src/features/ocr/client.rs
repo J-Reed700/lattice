@@ -23,9 +23,7 @@ pub struct OcrClient {
 
 impl OcrClient {
     pub fn new() -> Result<Self, OcrError> {
-        let http = reqwest::Client::builder()
-            // Loopback never goes through a proxy.
-            .no_proxy()
+        let http = lattice_core::shared::http::loopback_client_builder()
             .build()
             .map_err(|error| OcrError::Unavailable {
                 reason: format!("no HTTP client: {error}"),

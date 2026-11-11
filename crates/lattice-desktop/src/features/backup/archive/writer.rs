@@ -205,11 +205,10 @@ impl ArchiveWriter {
         destination: &Path,
         started: std::time::Instant,
     ) -> Result<ArchiveRun, ArchiveError> {
-        let master = self
-            .key_store
-            .load()?
-            .filter(|key| crypto::kcv_matches(&config.envelope, key))
-            .ok_or_else(|| ArchiveError::Other(MISSING_KEY_MESSAGE.to_string()))?;
+        let master = match self.key_store.load()? {
+            Some(key) if crypto::kcv_matches(&config.envelope, &key)? => key,
+            _ => return Err(ArchiveError::Other(MISSING_KEY_MESSAGE.to_string())),
+        };
 
         let scratch = ArchiveConfig::scratch_dir(&self.app_data_dir);
         tokio::fs::create_dir_all(&scratch).await?;
@@ -264,7 +263,7 @@ impl ArchiveWriter {
             .ok()
             .and_then(|bytes| bytes.try_into().ok())
             .ok_or_else(|| ArchiveError::Other("bad stream nonce".to_string()))?;
-        let file_key = crypto::derive_file_key(master, &file_salt);
+        let file_key = crypto::derive_file_key(master, &file_salt)?;
 
         let write_target = part_path.clone();
         let written = tokio::task::spawn_blocking(move || -> Result<u64, ArchiveError> {

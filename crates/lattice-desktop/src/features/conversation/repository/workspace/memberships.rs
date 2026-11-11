@@ -1,5 +1,6 @@
 use super::*;
 use crate::features::conversation::repository::space_rows::ConversationSpaceMemberRow;
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
 use lattice_core::shared::persistence::Transactions;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
@@ -369,7 +370,7 @@ impl ConversationRepository {
         space_id: String,
         assigned: bool,
     ) -> Result<RenameConversationResponseDto, AppError> {
-        const DOCUMENT_BATCH_SIZE: usize = 250;
+        const DOCUMENT_BATCH_SIZE: usize = rows_per_statement(3, 0);
 
         let mut unique_document_ids = document_ids
             .into_iter()

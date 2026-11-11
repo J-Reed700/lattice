@@ -314,5 +314,6 @@ jobs:
           gh release create "$RELEASE" release/* \
             --repo "$GITHUB_REPOSITORY" \
             --verify-tag \
+            --latest=false \
             --title "llama-server $LLAMA_CPP_TAG (${RELEASE##*-})" \
             --notes-file notes.md

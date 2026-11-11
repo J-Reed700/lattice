@@ -5,25 +5,7 @@
 use std::sync::Arc;
 
 use lattice_core::application::ports::LLMPort;
-use lattice_core::domain::entities::document::Document;
 use lattice_core::shared::text::safe_truncate;
-
-/// The document's text in chunk order, falling back to the stored content for
-/// a document that has not been chunked yet.
-pub(super) fn assemble_document_text(document: &Document) -> String {
-    let chunks = document.chunks();
-    if chunks.is_empty() {
-        return document.content().to_string();
-    }
-
-    let mut sorted_chunks: Vec<_> = chunks.iter().collect();
-    sorted_chunks.sort_by_key(|c| c.index());
-    sorted_chunks
-        .iter()
-        .map(|c| c.content())
-        .collect::<Vec<_>>()
-        .join("\n\n")
-}
 
 /// Cut `content` down to at most `token_budget` tokens.
 ///

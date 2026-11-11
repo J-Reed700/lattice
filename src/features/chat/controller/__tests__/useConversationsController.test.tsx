@@ -54,7 +54,7 @@ describe('useConversationsController optimistic cleanup', () => {
     api.listConversationSpaces = vi.fn().mockResolvedValue({ ok: true, data: [] });
     api.listConversationsExplorer = vi.fn().mockResolvedValue({
       ok: true,
-      data: { conversations: [conversation], total: 1 },
+      data: { conversations: [conversation] },
     });
     api.getConversationMessages = vi.fn().mockResolvedValue({
       ok: true,
@@ -647,7 +647,7 @@ describe('useConversationsController optimistic cleanup', () => {
     let deleted = false;
     api.listConversationsExplorer = vi.fn().mockImplementation(async () => ({
       ok: true,
-      data: { conversations: deleted ? [] : [conversation], total: deleted ? 0 : 1 },
+      data: { conversations: deleted ? [] : [conversation] },
     }));
     let resolveChat: ((value: unknown) => void) | undefined;
     const unlisten = vi.fn();
@@ -693,7 +693,7 @@ describe('useConversationsController optimistic cleanup', () => {
       }
       return Promise.resolve({
         ok: true,
-        data: { conversations: deleted ? [] : [conversation], total: deleted ? 0 : 1 },
+        data: { conversations: deleted ? [] : [conversation] },
       });
     });
     api.deleteConversation = vi.fn().mockImplementation(async () => {
@@ -706,7 +706,7 @@ describe('useConversationsController optimistic cleanup', () => {
     const oldRead = queryClient.refetchQueries({ queryKey: conversationKeys.lists, type: 'active' });
     await waitFor(() => expect(listCalls).toBe(2));
     await act(async () => { await result.current.deleteConversation(conversation.id); });
-    resolveOldList?.({ ok: true, data: { conversations: [conversation], total: 1 } });
+    resolveOldList?.({ ok: true, data: { conversations: [conversation] } });
     await oldRead;
 
     await waitFor(() => expect(result.current.conversations).toEqual([]));
@@ -721,7 +721,7 @@ describe('useConversationsController optimistic cleanup', () => {
     let resolveFirstDelete: ((value: unknown) => void) | undefined;
     api.listConversationsExplorer = vi.fn().mockImplementation(async () => {
       const conversations = [conversation, other].filter(item => !deleted.has(item.id));
-      return { ok: true, data: { conversations, total: conversations.length } };
+      return { ok: true, data: { conversations } };
     });
     api.deleteConversation = vi.fn().mockImplementation((id: string) => {
       if (id === conversation.id) return new Promise(resolve => { resolveFirstDelete = resolve; });
@@ -838,7 +838,7 @@ describe('useConversationsController optimistic cleanup', () => {
       .mockImplementationOnce(() => new Promise(resolve => { rejectOlderRead = resolve; }))
       .mockResolvedValue({ ok: true, data: { messages: [], total: 0 } });
     api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation } });
-    api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [], total: 0 } });
+    api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [] } });
     api.listConversationLinkedDocuments = vi.fn().mockResolvedValue({ ok: true, data: [] });
     api.listConversationWebSources = vi.fn().mockResolvedValue({ ok: true, data: [] });
     const { result } = renderHook(() => useConversationsStore(), { wrapper: createWrapper() });
@@ -937,7 +937,7 @@ describe('useConversationsController optimistic cleanup', () => {
 
   it('refreshes the sidebar bookmark query when a message is bookmarked', async () => {
     let bookmarks: Array<{ id: string; spaceId: string }> = [];
-    api.listMessageBookmarks = vi.fn().mockImplementation(async () => ({ ok: true, data: { bookmarks, total: bookmarks.length } }));
+    api.listMessageBookmarks = vi.fn().mockImplementation(async () => ({ ok: true, data: { bookmarks } }));
     api.bookmarkConversationMessage = vi.fn().mockImplementation(async () => {
       bookmarks = [{ id: 'bookmark-1', spaceId: 'space_general' }];
       return { ok: true, data: { status: 'success' } };
@@ -952,7 +952,7 @@ describe('useConversationsController optimistic cleanup', () => {
   describe('opening a conversation', () => {
     beforeEach(() => {
       api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: { ...conversation, spaceId: 'food-research' } } });
-      api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [], total: 0 } });
+      api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [] } });
       api.listConversationLinkedDocuments = vi.fn().mockResolvedValue({ ok: true, data: [] });
       api.listConversationWebSources = vi.fn().mockResolvedValue({ ok: true, data: [] });
     });

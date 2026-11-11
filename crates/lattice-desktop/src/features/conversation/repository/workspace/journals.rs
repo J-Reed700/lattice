@@ -442,99 +442,16 @@ impl ConversationRepository {
             ));
         }
 
-        let limit = query.limit.unwrap_or(120).clamp(1, 200);
-        let offset = query.offset.unwrap_or(0).max(0);
-        let include_archived = query.include_archived.unwrap_or(false);
-        let search_query = query
-            .query
-            .as_ref()
-            .map(|q| q.trim())
-            .filter(|q| !q.is_empty());
-        let fts_query = search_query.and_then(build_fts_query);
-
-        let mut qb = QueryBuilder::<Sqlite>::new(
-            r#"
-        SELECT
-            c.id,
-            c.title,
-            c.model_choice,
-            c.system_prompt,
-            c.created_at,
-            c.updated_at,
-            c.message_count,
-            c.total_tokens,
-            c.space_id,
-            c.is_saved,
-            c.is_bookmarked,
-            c.is_pinned,
-            c.is_archived,
-            c.saved_at,
-            c.bookmarked_at,
-            c.pinned_at,
-            c.archived_at,
-            c.forked_from_conversation_id,
-            c.forked_from_message_id,
-            c.explorer_root,
-            c.program_id,
-            c.lesson_id,
-            (
-                SELECT m.content
-                FROM conversation_messages m
-                WHERE m.conversation_id = c.id
-                ORDER BY m.created_at DESC
-                LIMIT 1
-            ) AS last_message_preview
-        FROM conversations c
-        WHERE c.tangent_parent_id IS NULL AND EXISTS (
-                SELECT 1
-                FROM journal_conversation_entries jce
-                WHERE jce.journal_space_id =
-        "#,
-        );
-        qb.push_bind(journal_space_id)
-            .push(" AND jce.conversation_id = c.id")
-            .push(")");
-
-        if !include_archived {
-            qb.push(" AND c.is_archived = 0");
+        let (limit, offset) = ConversationListing::page(query.limit, query.offset, 120);
+        let mut qb = ConversationListing {
+            journal_space_id: Some(journal_space_id),
+            include_archived: query.include_archived.unwrap_or(false),
+            search: query.query.as_deref(),
+            limit,
+            offset,
+            ..Default::default()
         }
-
-        if let Some(fts) = &fts_query {
-            qb.push(
-                " AND EXISTS (
-                SELECT 1
-                FROM conversation_search_fts fts
-                WHERE fts.conversation_id = c.id
-                  AND fts.content MATCH ",
-            )
-            .push_bind(fts.clone())
-            .push(")");
-        }
-
-        if let Some(fts) = &fts_query {
-            qb.push(
-                " ORDER BY
-                c.is_pinned DESC,
-                COALESCE((
-                    SELECT MIN(bm25(conversation_search_fts))
-                    FROM conversation_search_fts
-                    WHERE conversation_id = c.id
-                      AND content MATCH ",
-            )
-            .push_bind(fts.clone())
-            .push(
-                "
-                ), 999999.0),
-                c.updated_at DESC",
-            );
-        } else {
-            qb.push(" ORDER BY c.is_pinned DESC, c.updated_at DESC");
-        }
-
-        qb.push(" LIMIT ")
-            .push_bind(limit)
-            .push(" OFFSET ")
-            .push_bind(offset);
+        .query();
 
         let mut tx = self
             .pool
@@ -543,7 +460,7 @@ impl ConversationRepository {
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         ensure_journal_space(&mut tx, journal_space_id).await?;
         let rows = qb
-            .build_query_as::<ConversationExplorerRow>()
+            .build_query_as::<ConversationListRow>()
             .fetch_all(&mut *tx)
             .await
             .map_err(|e| {
@@ -553,14 +470,6 @@ impl ConversationRepository {
             .await
             .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
 
-        let conversations = rows
-            .into_iter()
-            .map(ConversationExplorerRow::into_dto)
-            .collect::<Result<Vec<_>, AppError>>()?;
-
-        Ok(ListConversationsResponseDto {
-            total: conversations.len(),
-            conversations,
-        })
+        listing_response(rows)
     }
 }

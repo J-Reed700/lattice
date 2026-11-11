@@ -18,7 +18,7 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::entities::document::Document;
 use lattice_core::shared::text::{build_excerpt, safe_truncate};
 
-use super::document_text::{assemble_document_text, truncate_to_token_budget};
+use super::document_text::truncate_to_token_budget;
 use super::retrieval::infer_category;
 
 /// Appended to an attachment the window could not hold, so the model reports a
@@ -219,7 +219,7 @@ pub(super) async fn build_turn_attachments(
 
     let mut readable: Vec<(Document, String)> = Vec::new();
     for document in loaded {
-        let text = assemble_document_text(&document);
+        let text = document.reading_text();
         if text.trim().is_empty() {
             unreadable.push(document.file_name().to_string());
             continue;

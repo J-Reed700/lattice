@@ -396,7 +396,7 @@ pub(super) async fn await_ready(
     let mut ready_rx = ready_rx;
     // Without a client we still have the log line and the exit signal; a
     // failure to build one must not become a panic on a model load.
-    let http = match reqwest::Client::builder().build() {
+    let http = match lattice_core::shared::http::loopback_client_builder().build() {
         Ok(client) => Some(client),
         Err(err) => {
             tracing::warn!(
