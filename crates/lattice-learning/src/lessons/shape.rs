@@ -170,6 +170,9 @@ const fn most_sections(mix: &[(&str, usize, bool)]) -> usize {
     }
 }
 
+/// The kinds of section that teach. The others set the learner a task or look back.
+pub(crate) const TEACHING_KINDS: [&str; 3] = ["explanation", "worked_example", "contrast"];
+
 const SECTIONS: (usize, usize) = (least_sections(&SECTION_MIX), most_sections(&SECTION_MIX));
 
 /// A section that took a cut and has fewer teaching sentences than this has

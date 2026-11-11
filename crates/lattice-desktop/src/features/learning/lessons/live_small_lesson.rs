@@ -173,7 +173,7 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
         let accepted = crate::features::learning::review_evidence::check(
             &model,
             &issues,
-            &[],
+            crate::features::learning::review_evidence::Beside::NONE,
             &case["requirements"],
             &case["candidate"],
             &references,
