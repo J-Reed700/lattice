@@ -17,7 +17,6 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use futures::StreamExt;
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use reqwest::{Client, StatusCode};
 use tracing::{debug, warn};
 
@@ -40,7 +39,7 @@ use lattice_core::application::ports::llm_port::{
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::http::reqwest_client_builder;
+use lattice_core::shared::http::{auth_header_map, reqwest_client_builder};
 
 const DEFAULT_OLLAMA_MAX_CONCURRENCY: usize = 3;
 
@@ -136,16 +135,7 @@ impl OllamaClient {
     ) -> Result<Self> {
         let mut builder = reqwest_client_builder();
         if let Some(RemoteHeader { name, value }) = auth_header {
-            let header_name = HeaderName::from_bytes(name.trim().as_bytes()).map_err(|e| {
-                AppError::InvalidInput(format!("Invalid Ollama header name: {}", e))
-            })?;
-            let mut header_value = HeaderValue::from_str(value.trim()).map_err(|e| {
-                AppError::InvalidInput(format!("Invalid Ollama header value: {}", e))
-            })?;
-            header_value.set_sensitive(true);
-            let mut headers = HeaderMap::new();
-            headers.insert(header_name, header_value);
-            builder = builder.default_headers(headers);
+            builder = builder.default_headers(auth_header_map(&name, &value)?);
         }
 
         let client = builder

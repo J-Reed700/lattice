@@ -22,7 +22,8 @@ use lattice_core::application::{
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
+use lattice_core::shared::http::auth_header_map;
+use reqwest::header::{HeaderMap, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
 use std::sync::Arc;
 use std::time::Duration;
@@ -468,16 +469,10 @@ impl ModelBackend for LlamaCppLlm {
 
 /// The authentication header of a remote server.
 fn remote_headers(header: Option<RemoteHeader>) -> Result<HeaderMap> {
-    let mut headers = HeaderMap::new();
-    if let Some(header) = header {
-        let name = HeaderName::from_bytes(header.name.trim().as_bytes())
-            .map_err(|_| AppError::InvalidConfig("Invalid authentication header name".into()))?;
-        let mut value = HeaderValue::from_str(header.value.trim())
-            .map_err(|_| AppError::InvalidConfig("Invalid authentication header value".into()))?;
-        value.set_sensitive(true);
-        headers.insert(name, value);
-    }
-    Ok(headers)
+    header.map_or_else(
+        || Ok(HeaderMap::new()),
+        |header| auth_header_map(&header.name, &header.value),
+    )
 }
 
 /// No client-wide read or total timeout: generations are bounded by their time

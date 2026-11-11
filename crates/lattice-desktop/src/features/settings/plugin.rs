@@ -10,15 +10,12 @@ use crate::features::settings::dto::{
 };
 use crate::features::settings::text_files::{self, FileFilterDto, NativeDialogs};
 use crate::interfaces::di::Container;
-use lattice_core::application::ports::llm_port::{InvalidationCause, RemoteServer};
+use lattice_core::application::ports::llm_port::{InvalidationCause, RemoteHeader, RemoteServer};
 use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::http::reqwest_client_builder;
+use lattice_core::shared::http::{auth_header_map, reqwest_client_builder};
 use lattice_core::shared::ipc::ApiError;
-use reqwest::{
-    header::{HeaderMap, HeaderName, HeaderValue},
-    Client,
-};
+use reqwest::Client;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::str::FromStr;
@@ -122,24 +119,10 @@ fn validate_and_normalize_ollama_url(raw_url: &str) -> Result<String, AppError> 
     Ok(trimmed.trim_end_matches('/').to_string())
 }
 
-fn build_http_client(request: &TestOllamaConnectionRequest) -> Result<Client, AppError> {
-    let auth_name = request.auth_header_name.trim();
-    let auth_value = request.auth_header_value.trim();
-    if auth_name.is_empty() ^ auth_value.is_empty() {
-        return Err(AppError::InvalidInput(
-            "authHeaderName and authHeaderValue must both be set".to_string(),
-        ));
-    }
-
+fn build_http_client(header: Option<&RemoteHeader>) -> Result<Client, AppError> {
     let mut builder = reqwest_client_builder().timeout(std::time::Duration::from_secs(15));
-    if !auth_name.is_empty() {
-        let header_name = HeaderName::from_bytes(auth_name.as_bytes())
-            .map_err(|e| AppError::InvalidInput(format!("Invalid auth header name: {}", e)))?;
-        let header_value = HeaderValue::from_str(auth_value)
-            .map_err(|e| AppError::InvalidInput(format!("Invalid auth header value: {}", e)))?;
-        let mut headers = HeaderMap::new();
-        headers.insert(header_name, header_value);
-        builder = builder.default_headers(headers);
+    if let Some(header) = header {
+        builder = builder.default_headers(auth_header_map(&header.name, &header.value)?);
     }
 
     builder
@@ -196,7 +179,7 @@ async fn fetch_models_from_tags(client: &Client, base_url: &str) -> Result<Vec<S
 #[specta::specta]
 pub async fn test_ollama_connection(
     container: State<'_, Container>,
-    mut request: TestOllamaConnectionRequest,
+    request: TestOllamaConnectionRequest,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
     let saved = container.get_settings_use_case().execute().await?;
     let header = remote_auth::header_for_test(
@@ -207,16 +190,15 @@ pub async fn test_ollama_connection(
         &saved.llm.ollama_auth_header_name,
     )
     .await?;
-    request.auth_header_value = header.map(|header| header.value).unwrap_or_default();
-    probe_ollama_connection(request).await
+    probe_ollama_connection(&request.ollama_url, header).await
 }
 
 pub(crate) async fn probe_ollama_connection(
-    request: TestOllamaConnectionRequest,
+    ollama_url: &str,
+    header: Option<RemoteHeader>,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
-    let base_url =
-        validate_and_normalize_ollama_url(&request.ollama_url).map_err(ApiError::from)?;
-    let client = build_http_client(&request).map_err(ApiError::from)?;
+    let base_url = validate_and_normalize_ollama_url(ollama_url).map_err(ApiError::from)?;
+    let client = build_http_client(header.as_ref()).map_err(ApiError::from)?;
 
     let models = fetch_models_from_tags(&client, &base_url).await.map_err(|_| {
         ApiError::from(AppError::Network(

@@ -483,15 +483,10 @@ async fn probe(
 ) -> Result<Value> {
     let connection = &settings.llama_cpp;
     let base = connection.validated_base_url()?;
-    let mut headers = reqwest::header::HeaderMap::new();
-    if let Some(header) = header {
-        headers.insert(
-            reqwest::header::HeaderName::from_bytes(header.name.as_bytes())
-                .map_err(|e| refuse(e.to_string()))?,
-            reqwest::header::HeaderValue::from_str(&header.value)
-                .map_err(|e| refuse(e.to_string()))?,
-        );
-    }
+    let headers = match header {
+        Some(header) => lattice_core::shared::http::auth_header_map(&header.name, &header.value)?,
+        None => reqwest::header::HeaderMap::new(),
+    };
     let network = |e: reqwest::Error| AppError::Network(e.to_string());
     let client = reqwest::Client::builder()
         .default_headers(headers)

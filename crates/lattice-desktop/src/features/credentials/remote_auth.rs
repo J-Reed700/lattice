@@ -73,3 +73,37 @@ pub async fn header_for_test(
     }
     header(credentials, server, name).await
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::features::credentials::memory::InMemoryCredentials;
+
+    #[tokio::test]
+    async fn a_name_with_no_value_typed_or_stored_is_refused() {
+        let credentials = InMemoryCredentials::default();
+        let result =
+            header_for_test(&credentials, RemoteServer::Ollama, "X-Api-Key", "  ", "").await;
+        assert!(
+            matches!(result, Err(AppError::InvalidConfig(_))),
+            "{result:?}"
+        );
+    }
+
+    #[tokio::test]
+    async fn a_typed_value_with_no_name_is_refused() {
+        let credentials = InMemoryCredentials::default();
+        let result = header_for_test(
+            &credentials,
+            RemoteServer::Ollama,
+            " ",
+            "secret",
+            "X-Api-Key",
+        )
+        .await;
+        assert!(
+            matches!(result, Err(AppError::InvalidConfig(_))),
+            "{result:?}"
+        );
+    }
+}

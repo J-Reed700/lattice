@@ -494,15 +494,9 @@ async fn ollama_test_does_not_accept_a_llama_cpp_model_list() {
         .expect(0)
         .mount(&server)
         .await;
-    let error = crate::features::settings::plugin::probe_ollama_connection(
-        crate::features::settings::plugin::TestOllamaConnectionRequest {
-            ollama_url: server.uri(),
-            auth_header_name: String::new(),
-            auth_header_value: String::new(),
-        },
-    )
-    .await
-    .unwrap_err();
+    let error = crate::features::settings::plugin::probe_ollama_connection(&server.uri(), None)
+        .await
+        .unwrap_err();
     assert!(error
         .details
         .as_deref()
@@ -521,11 +515,11 @@ async fn ollama_test_keeps_native_model_discovery() {
         .mount(&server)
         .await;
     let response = crate::features::settings::plugin::probe_ollama_connection(
-        crate::features::settings::plugin::TestOllamaConnectionRequest {
-            ollama_url: server.uri(),
-            auth_header_name: "Authorization".into(),
-            auth_header_value: "Basic test-credential".into(),
-        },
+        &server.uri(),
+        Some(RemoteHeader {
+            name: "Authorization".into(),
+            value: "Basic test-credential".into(),
+        }),
     )
     .await
     .unwrap();
