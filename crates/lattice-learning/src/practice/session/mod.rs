@@ -1,6 +1,8 @@
 //! The practice-session engine: it knows kinds of work only through the roles in `kind`.
 
+pub mod author;
 pub mod budget;
+pub mod builder;
 pub mod counterpart;
 pub mod debrief;
 pub mod hints;

@@ -12,28 +12,28 @@ use crate::practice::coding::problem::{
     ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
 };
 use crate::practice::coding::proof::{prove, Proof};
+use crate::practice::kinds::program::shape::{built_problem_of, form_of};
+use crate::practice::kinds::program::toolchain::Toolchains;
+use crate::practice::session::author::{Author, Authored, Commission, Lesson};
+use crate::practice::session::builder::{build, Built, Making, NothingStore, Target};
+pub use crate::practice::session::builder::{
+    BuildSteps, MAX_PROOF_REASKS, STEP_PROVING, STEP_SAVING, STEP_WRITING,
+};
+use crate::practice::session::kind::Kind;
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::problem_patterns::{
     named_in, problem_pattern, PROBLEM_PATTERNS,
 };
 use lattice_core::shared::error::{AppError, Result};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
 mod tests;
-
-/// The three steps of a build, in the order the job reports them.
-pub const STEP_WRITING: &str = "Writing the problem";
-pub const STEP_PROVING: &str = "Proving it";
-pub const STEP_SAVING: &str = "Saving";
-
-/// How many times a draft that fails its proof is asked for again with what failed. Each attempt is a whole problem,
-/// so this is a model-call budget: the design asks that 27 of 30 builds prove within it.
-pub const MAX_PROOF_REASKS: usize = 2;
 
 /// The fewest misreadings a draft offers. The proof drops those that pass every case and needs two that fail one.
 pub const MIN_MISREADINGS: usize = 3;
@@ -71,12 +71,6 @@ pub struct ProblemRequest {
     pub focus: Option<String>,
     /// What the learner has said about what they prepare for.
     pub details: Option<String>,
-}
-
-/// Reports a build's progress; false once the build is no longer wanted.
-#[async_trait]
-pub trait BuildSteps: Send + Sync {
-    async fn step(&self, current: u32, message: &str) -> Result<bool>;
 }
 
 /// Where a problem comes from. The model writes one today; a pasted problem is the next source.
@@ -149,6 +143,105 @@ impl ProblemSource for GeneratedProblems<'_> {
                 }
             }
         }
+    }
+}
+
+/// What a program's build request carries beyond the lesson and the form.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgramOptions {
+    pub language: String,
+    pub difficulty: ProblemDifficulty,
+    pub focus: Option<String>,
+}
+
+/// What a program's store tells its author: the language the problem is written in, the patterns it must call for
+/// and what the learner prepares for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgramFacts {
+    pub language: String,
+    pub patterns: Vec<String>,
+    pub details: Option<String>,
+}
+
+/// The Program kind's author: the model writes a problem for the lesson, and `read` refuses what the app can see is
+/// wrong without running anything.
+pub struct ProgramAuthor {
+    pub tools: Arc<dyn Toolchains>,
+}
+
+#[async_trait]
+impl Author for ProgramAuthor {
+    async fn draft(&self, _commission: &Commission<'_>) -> Result<Authored> {
+        Ok(Authored::NothingToMake(String::new()))
+    }
+}
+
+/// A problem request written as the build template takes it.
+struct RequestParts {
+    options: Value,
+    facts: Value,
+    lesson: Option<Lesson>,
+}
+
+fn written(value: &impl Serialize) -> Result<Value> {
+    serde_json::to_value(value).map_err(|error| AppError::Serialization(error.to_string()))
+}
+
+fn parts_of(request: &ProblemRequest) -> Result<RequestParts> {
+    Ok(RequestParts {
+        options: written(&ProgramOptions {
+            language: request.language.clone(),
+            difficulty: request.difficulty,
+            focus: request.focus.clone(),
+        })?,
+        facts: written(&ProgramFacts {
+            language: request.language.clone(),
+            patterns: request.patterns.clone(),
+            details: request.details.clone(),
+        })?,
+        lesson: request.lesson.as_ref().map(|lesson| Lesson {
+            id: String::new(),
+            title: lesson.title.clone(),
+            objective: lesson.objective.clone(),
+        }),
+    })
+}
+
+/// A store that remembers nothing, for a build whose lesson is not one of the program's.
+struct Unremembered;
+
+#[async_trait]
+impl NothingStore for Unremembered {
+    async fn nothing_known(&self, _target: &Target<'_>) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    async fn record_nothing(&self, _target: &Target<'_>, _reason: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Builds one problem of `request` with the Program kind, without saving it: what the build evals run.
+pub async fn build_problem(
+    kind: &Kind,
+    request: &ProblemRequest,
+    llm: &dyn LLMPort,
+    steps: &dyn BuildSteps,
+    cancel: CancellationToken,
+) -> Result<Problem> {
+    let parts = parts_of(request)?;
+    let making = Making {
+        program_id: &request.program_id,
+        lesson: parts.lesson.as_ref(),
+        form: form_of(request.task),
+        options: &parts.options,
+        facts: &parts.facts,
+    };
+    match build(kind, &making, llm, &Unremembered, steps, cancel).await? {
+        Built::Exercise(exercise) => built_problem_of(&exercise),
+        Built::NothingToMake(reason) => Err(AppError::ModelAnswerUnusable(reason)),
     }
 }
 

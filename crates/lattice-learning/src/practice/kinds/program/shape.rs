@@ -410,6 +410,23 @@ pub fn form_of(task: CodingTask) -> Form {
     }
 }
 
+/// The task of a form; a program has no other forms.
+pub fn task_of(form: Form) -> Result<CodingTask> {
+    match form {
+        Form::Build => Ok(CodingTask::Problem),
+        Form::Repair => Ok(CodingTask::BugFix),
+        Form::Complete | Form::Arrange => Err(AppError::InvalidState(format!(
+            "A program has no {} exercises.",
+            form.label()
+        ))),
+    }
+}
+
+/// The problem a proven exercise is saved as: its starter is the piece the learner starts from.
+pub fn built_problem_of(exercise: &Exercise) -> Result<Problem> {
+    problem_of(exercise)
+}
+
 pub fn stage_of(stage: CodingStage) -> Stage {
     match stage {
         CodingStage::Understand => Stage::Understand,

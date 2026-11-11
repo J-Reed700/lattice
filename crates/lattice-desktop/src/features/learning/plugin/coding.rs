@@ -17,7 +17,7 @@ use lattice_learning::practical_dto::LearningPracticalRunDto;
 use lattice_learning::practical_runs::CodingRunStart;
 use lattice_learning::practice::coding::dto::*;
 use lattice_learning::practice::coding::examples::ExampleCheck;
-use lattice_learning::practice::coding::jobs::{CODING_BUILD, CODING_BUILD_STEPS};
+use lattice_learning::practice::coding::jobs::{PRACTICE_BUILD, PRACTICE_BUILD_STEPS};
 use lattice_learning::practice::coding::problem::{CaseResult, Problem};
 use lattice_learning::practice::coding::session::{
     CodingAids, CodingRuns, CodingSessions, LiveCodingAids, SystemClock,
@@ -212,12 +212,12 @@ pub async fn start_coding_build(
         sha2::Sha256::digest(requested.to_string().as_bytes())
     );
     let new_job = lattice_core::shared::runtime::jobs::NewJob {
-        kind: CODING_BUILD.into(),
+        kind: PRACTICE_BUILD.into(),
         subject_id: Some(format!("{}:coding", request.program_id)),
         operation_id: request.operation_id.clone(),
         payload_hash,
         requested,
-        progress_total: CODING_BUILD_STEPS,
+        progress_total: PRACTICE_BUILD_STEPS,
         message: "Waiting to build coding problem".into(),
     };
     let job = container

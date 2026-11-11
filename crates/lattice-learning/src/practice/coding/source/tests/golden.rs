@@ -6,14 +6,14 @@ use crate::practice::coding::golden_support::{add_requests, assert_golden, Golde
 async fn drafted(asked: &ProblemRequest, answers: Vec<Value>) -> Recorder {
     let model = Recorder::new(answers.iter().map(Value::to_string));
     let judge = runner(killers());
-    let source = GeneratedProblems {
-        llm: &model,
-        runner: &judge,
-        harness: &FakeHarness,
-    };
-    let built = source
-        .problem(asked, &RecordingSteps::new(), CancellationToken::new())
-        .await;
+    let built = build_problem(
+        &program(&judge),
+        asked,
+        &model,
+        &RecordingSteps::new(),
+        CancellationToken::new(),
+    )
+    .await;
     assert!(built.is_ok(), "{built:?}");
     model
 }

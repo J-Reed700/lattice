@@ -275,6 +275,39 @@ fn an_exercise_of_another_kind_is_invalid() {
 }
 
 #[test]
+fn a_built_repair_is_saved_with_the_planted_code_as_its_starter() {
+    let exercise = exercise_of(&repair_problem()).unwrap();
+    assert_eq!(
+        spec_of(&exercise.brief).unwrap().starter,
+        sample_problem().spec.starter
+    );
+    let mut expected = repair_problem();
+    expected.spec.starter = expected.misreadings[1].code.clone();
+    assert_ne!(expected.spec.starter, sample_problem().spec.starter);
+    assert_eq!(built_problem_of(&exercise).unwrap(), expected);
+}
+
+#[test]
+fn a_built_build_is_saved_as_the_problem_it_came_from() {
+    let exercise = exercise_of(&sample_problem()).unwrap();
+    assert_eq!(built_problem_of(&exercise).unwrap(), sample_problem());
+}
+
+#[test]
+fn a_task_is_the_one_of_its_form_and_a_program_has_no_others() {
+    assert_eq!(task_of(Form::Build).unwrap(), CodingTask::Problem);
+    assert_eq!(task_of(Form::Repair).unwrap(), CodingTask::BugFix);
+    assert!(matches!(
+        task_of(Form::Complete),
+        Err(AppError::InvalidState(_))
+    ));
+    assert!(matches!(
+        task_of(Form::Arrange),
+        Err(AppError::InvalidState(_))
+    ));
+}
+
+#[test]
 fn every_cue_survives_the_coding_cue_and_back() {
     let cues = [
         Cue::Opening,

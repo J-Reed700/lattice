@@ -330,3 +330,40 @@ async fn a_draft_made_for_another_kind_is_refused() {
         "The draft is for the kind shapes, not letters."
     );
 }
+
+#[tokio::test]
+async fn a_kinds_need_gives_its_reason() {
+    let kind = fake_kind(&REFERENCE).needing(2).build();
+    let mut build = draft(Form::Build);
+    build.starter = Some(piece(&["", "", "", ""]));
+    build.misreadings = vec![first_wrong()];
+    let reason = unproven(run(&kind, build).await);
+    assert!(
+        reason.ends_with("They are needed because the fake kind counts them."),
+        "{reason}"
+    );
+}
+
+#[tokio::test]
+async fn a_repairs_need_gives_the_start_as_its_reason() {
+    let kind = fake_kind(&REFERENCE).needing(0).build();
+    let mut repair = draft(Form::Repair);
+    repair.misreadings = vec![misreading("twin", &REFERENCE)];
+    let reason = unproven(run(&kind, repair).await);
+    assert!(
+        reason.ends_with("They are needed because a repair starts from one of them."),
+        "{reason}"
+    );
+}
+
+#[tokio::test]
+async fn the_reason_is_the_one_of_the_larger_need() {
+    let kind = fake_kind(&REFERENCE).needing(2).build();
+    let mut repair = draft(Form::Repair);
+    repair.misreadings = vec![first_wrong()];
+    let reason = unproven(run(&kind, repair).await);
+    assert!(
+        reason.ends_with("They are needed because the fake kind counts them."),
+        "{reason}"
+    );
+}

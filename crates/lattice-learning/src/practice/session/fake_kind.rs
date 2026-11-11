@@ -3,9 +3,11 @@
 //! A case's body is `{"index": i, "expected": "x"}`; it passes when the piece holds that string at that index.
 
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
+use crate::practice::session::author::{Author, Authored, Commission, Failed};
 use crate::practice::session::kind::{
     Account, Budget, Checker, Citation, Criterion, Diff, Established, Gaps, Hint, HintAsk, Hinting,
-    Kind, LearnerCases, Order, Parts, ReplyGuard, Rubric, Showing, Statement, Truth, Wording,
+    Kind, LearnerCases, MisreadingNeed, Order, Parts, ReplyGuard, Rubric, Showing, Statement,
+    Truth, Wording,
 };
 use crate::practice::session::observation::{ClockView, Coverage, Observation};
 use crate::practice::session::record::{SessionCheck, SessionLearnerCase};
@@ -95,6 +97,34 @@ pub(crate) struct Letters {
     off: Vec<Rung>,
     /// The `observed` text of every hint asked for.
     observed: Arc<Mutex<Vec<String>>>,
+    answers: Mutex<VecDeque<Authored>>,
+    commissioned: Arc<Mutex<Vec<Commissioned>>>,
+}
+
+/// What the fake author was asked for.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct Commissioned {
+    pub form: Form,
+    pub lesson_id: Option<String>,
+    pub failed: Vec<Failed>,
+}
+
+#[async_trait]
+impl Author for Letters {
+    async fn draft(&self, commission: &Commission<'_>) -> Result<Authored> {
+        if let Ok(mut asked) = self.commissioned.lock() {
+            asked.push(Commissioned {
+                form: commission.form,
+                lesson_id: commission.lesson.map(|lesson| lesson.id.clone()),
+                failed: commission.failed.to_vec(),
+            });
+        }
+        self.answers
+            .lock()
+            .ok()
+            .and_then(|mut answers| answers.pop_front())
+            .ok_or_else(|| AppError::InternalError("Unexpected extra draft".into()))
+    }
 }
 
 #[async_trait]
@@ -611,6 +641,7 @@ pub(crate) struct FakeKindBuilder {
     spacing: Spacing,
     reply: ReplyConfig,
     off: Vec<Rung>,
+    script: Vec<Authored>,
 }
 
 /// A fake kind whose reference piece is `reference`. It supports Build and Repair only, needs no misreadings and
@@ -627,6 +658,7 @@ pub(crate) fn fake_kind(reference: &[&str]) -> FakeKindBuilder {
         spacing: Spacing::Item,
         reply: ReplyConfig::default(),
         off: Vec::new(),
+        script: Vec::new(),
     }
 }
 
@@ -690,6 +722,12 @@ impl FakeKindBuilder {
         self
     }
 
+    /// The author answers each commission with the next of `script`.
+    pub(crate) fn authoring(mut self, script: Vec<Authored>) -> Self {
+        self.script = script;
+        self
+    }
+
     /// The kind has no hint of `rung`.
     pub(crate) fn without_rung(mut self, rung: Rung) -> Self {
         self.off.push(rung);
@@ -697,12 +735,24 @@ impl FakeKindBuilder {
     }
 
     pub(crate) fn build(self) -> Kind {
-        self.build_recording().0
+        self.assemble().kind
     }
 
     /// The kind, and the `observed` text of every hint it is asked for.
     pub(crate) fn build_recording(self) -> (Kind, Arc<Mutex<Vec<String>>>) {
+        let assembled = self.assemble();
+        (assembled.kind, assembled.observed)
+    }
+
+    /// The kind, and what its author is commissioned with.
+    pub(crate) fn build_authoring(self) -> (Kind, Arc<Mutex<Vec<Commissioned>>>) {
+        let assembled = self.assemble();
+        (assembled.kind, assembled.commissioned)
+    }
+
+    fn assemble(self) -> Assembled {
         let observed = Arc::new(Mutex::new(Vec::new()));
+        let commissioned = Arc::new(Mutex::new(Vec::new()));
         let roles = Arc::new(Letters {
             reference: self.reference,
             rubric: self.rubric,
@@ -710,17 +760,23 @@ impl FakeKindBuilder {
             reply: self.reply,
             off: self.off,
             observed: observed.clone(),
+            answers: Mutex::new(self.script.into()),
+            commissioned: commissioned.clone(),
         });
         let kind = Kind {
             id: KindId::new("letters"),
             spacing: self.spacing,
-            misreadings_needed: self.needed,
+            misreadings_needed: MisreadingNeed {
+                count: self.needed,
+                reason: "the fake kind counts them",
+            },
             wording: roles.clone(),
             reply_guard: roles.clone(),
             hinting: roles.clone(),
             rubric: roles.clone(),
             account: roles.clone(),
             budget: roles.clone(),
+            author: roles.clone(),
             checker: roles.clone(),
             parts: roles.clone(),
             diff: roles.clone(),
@@ -730,8 +786,19 @@ impl FakeKindBuilder {
             order: self.order.then(|| roles.clone() as Arc<dyn Order>),
             learner_cases: self.learner_cases.then_some(roles as Arc<dyn LearnerCases>),
         };
-        (kind, observed)
+        Assembled {
+            kind,
+            observed,
+            commissioned,
+        }
     }
+}
+
+/// The kind with the records its fake roles keep.
+struct Assembled {
+    kind: Kind,
+    observed: Arc<Mutex<Vec<String>>>,
+    commissioned: Arc<Mutex<Vec<Commissioned>>>,
 }
 
 /// An exercise of the fake kind: the reference is a, b, c; the id of its case is `case-1` and of its misreading

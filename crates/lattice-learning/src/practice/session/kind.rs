@@ -1,5 +1,6 @@
 //! A kind of work, as a record of small roles. The engine calls these and nothing else.
 
+use crate::practice::session::author::Author;
 use crate::practice::session::observation::Observation;
 use crate::practice::session::record::{SessionCheck, SessionLearnerCase};
 use async_trait::async_trait;
@@ -333,18 +334,35 @@ pub trait Truth: Send + Sync {
     ) -> Result<Option<String>>;
 }
 
+/// How many misreadings a proven exercise of a kind must kill, and why that many.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MisreadingNeed {
+    pub count: usize,
+    /// What the number is for, as a phrase that finishes "They are needed because ...".
+    pub reason: &'static str,
+}
+
+impl MisreadingNeed {
+    /// A kind that needs none of its own.
+    pub const NONE: Self = Self {
+        count: 0,
+        reason: "",
+    };
+}
+
 /// One kind of work.
+#[derive(Clone)]
 pub struct Kind {
     pub id: KindId,
     pub spacing: Spacing,
-    /// The misreadings a proven exercise must kill. Each kind states its reason where it sets it.
-    pub misreadings_needed: usize,
+    pub misreadings_needed: MisreadingNeed,
     pub wording: Arc<dyn Wording>,
     pub reply_guard: Arc<dyn ReplyGuard>,
     pub hinting: Arc<dyn Hinting>,
     pub rubric: Arc<dyn Rubric>,
     pub account: Arc<dyn Account>,
     pub budget: Arc<dyn Budget>,
+    pub author: Arc<dyn Author>,
     pub checker: Arc<dyn Checker>,
     pub parts: Arc<dyn Parts>,
     pub diff: Arc<dyn Diff>,
@@ -367,6 +385,7 @@ impl Kind {
 }
 
 /// Every kind the app offers, built once in the composition root.
+#[derive(Clone)]
 pub struct Kinds(BTreeMap<KindId, Kind>);
 
 impl Kinds {

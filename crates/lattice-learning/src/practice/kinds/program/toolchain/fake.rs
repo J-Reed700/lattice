@@ -19,8 +19,13 @@ pub(crate) struct FakeToolchains {
 
 impl FakeToolchains {
     pub(crate) fn new(runner: FakeRunner) -> Self {
+        Self::sharing(Arc::new(runner))
+    }
+
+    /// Toolchains over a runner the test also holds.
+    pub(crate) fn sharing(runner: Arc<FakeRunner>) -> Self {
         Self {
-            runner: Arc::new(runner),
+            runner,
             timed_out: false,
         }
     }

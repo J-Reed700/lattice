@@ -2,7 +2,12 @@
 
 use super::*;
 use crate::persistence::hash_text;
-use crate::practice::coding::proof::fakes::{Behaviour, FakeHarness, FakeRunner, ScriptedModel};
+use crate::practice::coding::proof::fakes::{Behaviour, FakeRunner, ScriptedModel};
+use crate::practice::kinds::program::shape::solution_piece;
+use crate::practice::kinds::program::toolchain::FakeToolchains;
+use crate::practice::kinds::program::{kind, KIND};
+use crate::practice::session::author::Failed;
+use lattice_core::domain::learning::practice::work::{Draft as ExerciseDraft, Form};
 use std::sync::Mutex;
 
 struct RecordingSteps {
@@ -40,8 +45,8 @@ impl BuildSteps for RecordingSteps {
 }
 
 /// A runner whose code fails the listed cases when it contains the text, and passes the rest.
-fn runner(fails: Vec<(&'static str, Vec<&'static str>)>) -> FakeRunner {
-    FakeRunner::new(move |code, case| {
+fn runner(fails: Vec<(&'static str, Vec<&'static str>)>) -> Arc<FakeRunner> {
+    Arc::new(FakeRunner::new(move |code, case| {
         let failing = fails
             .iter()
             .any(|(text, ids)| code.contains(text) && ids.contains(&case.id.as_str()));
@@ -50,7 +55,12 @@ fn runner(fails: Vec<(&'static str, Vec<&'static str>)>) -> FakeRunner {
         } else {
             Behaviour::Passes { ms: 5 }
         }
-    })
+    }))
+}
+
+/// The Program kind running its code on `runner`.
+fn program(runner: &Arc<FakeRunner>) -> Kind {
+    kind(Arc::new(FakeToolchains::sharing(runner.clone())))
 }
 
 fn killers() -> Vec<(&'static str, Vec<&'static str>)> {
@@ -121,18 +131,18 @@ fn request(task: CodingTask) -> ProblemRequest {
 
 async fn build(
     answers: Vec<Value>,
-    runner: &FakeRunner,
+    runner: &Arc<FakeRunner>,
     request: &ProblemRequest,
 ) -> (Result<Problem>, ScriptedModel) {
     let model = ScriptedModel::new(answers.iter().map(Value::to_string));
-    let source = GeneratedProblems {
-        llm: &model,
-        runner,
-        harness: &FakeHarness,
-    };
-    let problem = source
-        .problem(request, &RecordingSteps::new(), CancellationToken::new())
-        .await;
+    let problem = build_problem(
+        &program(runner),
+        request,
+        &model,
+        &RecordingSteps::new(),
+        CancellationToken::new(),
+    )
+    .await;
     (problem, model)
 }
 
@@ -340,39 +350,31 @@ async fn cases_are_examples_then_hidden_then_scale_with_the_scale_digest_and_tim
 async fn the_build_reports_writing_then_proving_and_stops_when_told_to() {
     let runner = runner(killers());
     let model = ScriptedModel::new([answer().to_string()]);
-    let source = GeneratedProblems {
-        llm: &model,
-        runner: &runner,
-        harness: &FakeHarness,
-    };
     let steps = RecordingSteps::new();
-    source
-        .problem(
-            &request(CodingTask::Problem),
-            &steps,
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
+    build_problem(
+        &program(&runner),
+        &request(CodingTask::Problem),
+        &model,
+        &steps,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         steps.recorded(),
         [(0, STEP_WRITING.to_owned()), (1, STEP_PROVING.to_owned())]
     );
 
     let model = ScriptedModel::new([answer().to_string()]);
-    let source = GeneratedProblems {
-        llm: &model,
-        runner: &runner,
-        harness: &FakeHarness,
-    };
     let stopped = RecordingSteps::stopping_after(0);
-    let result = source
-        .problem(
-            &request(CodingTask::Problem),
-            &stopped,
-            CancellationToken::new(),
-        )
-        .await;
+    let result = build_problem(
+        &program(&runner),
+        &request(CodingTask::Problem),
+        &model,
+        &stopped,
+        CancellationToken::new(),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::InvalidState(_))),
         "{result:?}"
@@ -385,20 +387,16 @@ async fn a_draft_asked_for_again_is_reported_at_the_proving_step() {
     let failing = with(answer(), "reference", json!("REF BAD"));
     let runner = runner(killers());
     let model = ScriptedModel::new([failing.to_string(), answer().to_string()]);
-    let source = GeneratedProblems {
-        llm: &model,
-        runner: &runner,
-        harness: &FakeHarness,
-    };
     let steps = RecordingSteps::new();
-    source
-        .problem(
-            &request(CodingTask::Problem),
-            &steps,
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
+    build_problem(
+        &program(&runner),
+        &request(CodingTask::Problem),
+        &model,
+        &steps,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     let indexes: Vec<u32> = steps.recorded().iter().map(|(index, _)| *index).collect();
     assert!(
         indexes.windows(2).all(|pair| pair[0] <= pair[1]),
@@ -487,6 +485,118 @@ fn the_schema_keeps_every_item_to_six_properties_and_offers_the_catalogue_as_an_
         .collect();
     let catalogue: Vec<&str> = PROBLEM_PATTERNS.iter().map(|pattern| pattern.id).collect();
     assert_eq!(offered, catalogue);
+}
+
+async fn authored(
+    form: Form,
+    failed: &[Failed],
+    request: &ProblemRequest,
+    answers: Vec<Value>,
+) -> (Result<Authored>, ScriptedModel) {
+    let model = ScriptedModel::new(answers.iter().map(Value::to_string));
+    let author = ProgramAuthor {
+        tools: Arc::new(FakeToolchains::sharing(runner(killers()))),
+    };
+    let parts = parts_of(request).unwrap();
+    let drafted = author
+        .draft(&Commission {
+            program_id: &request.program_id,
+            lesson: parts.lesson.as_ref(),
+            form,
+            options: &parts.options,
+            facts: &parts.facts,
+            llm: &model,
+            failed,
+        })
+        .await;
+    (drafted, model)
+}
+
+fn draft_of(authored: Result<Authored>) -> (ExerciseDraft, String) {
+    match authored {
+        Ok(Authored::Draft { draft, raw }) => (*draft, raw),
+        other => panic!("expected a draft, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_build_draft_is_the_answer_in_the_core_vocabulary_with_the_signature_as_its_starter() {
+    let (drafted, model) = authored(
+        Form::Build,
+        &[],
+        &request(CodingTask::Problem),
+        vec![answer()],
+    )
+    .await;
+    let (draft, raw) = draft_of(drafted);
+    assert_eq!(model.calls(), 1);
+    assert_eq!(raw, answer().to_string());
+    assert_eq!(draft.kind.as_str(), KIND);
+    assert_eq!(draft.form, Form::Build);
+    assert_eq!(draft.reference, solution_piece("REF").unwrap());
+    assert_eq!(
+        draft.starter,
+        Some(
+            solution_piece(
+                "def pair_positions(numbers: list[int], target: int) -> list[int]:
+    pass
+"
+            )
+            .unwrap()
+        )
+    );
+    assert_eq!(draft.cases.len(), 6);
+    assert_eq!(draft.misreadings.len(), 3);
+    assert!(draft.asks.is_empty());
+}
+
+#[tokio::test]
+async fn a_repair_draft_has_no_starter_of_its_own() {
+    let (drafted, _) = authored(
+        Form::Repair,
+        &[],
+        &request(CodingTask::BugFix),
+        vec![answer()],
+    )
+    .await;
+    let (draft, _) = draft_of(drafted);
+    assert_eq!(draft.form, Form::Repair);
+    assert_eq!(draft.starter, None);
+}
+
+#[tokio::test]
+async fn a_form_a_program_does_not_have_is_refused_before_asking() {
+    let (drafted, model) = authored(
+        Form::Complete,
+        &[],
+        &request(CodingTask::Problem),
+        vec![answer()],
+    )
+    .await;
+    assert!(
+        matches!(drafted, Err(AppError::InvalidState(_))),
+        "{drafted:?}"
+    );
+    assert_eq!(model.calls(), 0);
+}
+
+#[tokio::test]
+async fn the_drafts_refused_before_are_answered_in_the_conversation() {
+    let failed = [Failed {
+        raw: "the first answer".to_owned(),
+        reason: "The reference is wrong.".to_owned(),
+    }];
+    let (drafted, model) = authored(
+        Form::Build,
+        &failed,
+        &request(CodingTask::Problem),
+        vec![answer()],
+    )
+    .await;
+    draft_of(drafted);
+    let sent = &model.texts()[0];
+    assert!(sent.contains("the first answer"), "{sent}");
+    assert!(sent.contains("The reference is wrong."), "{sent}");
 }
 
 mod golden;

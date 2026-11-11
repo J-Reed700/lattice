@@ -268,3 +268,14 @@ async fn a_build_starts_from_the_starter() {
     assert_eq!(exercise.planted, None);
     assert_eq!(exercise.start, solution_piece(&spec().starter).unwrap());
 }
+
+#[test]
+fn a_programs_misreadings_are_needed_for_the_examples_coverage_line() {
+    let program = kind(Arc::new(FakeToolchains::new(runner(5))));
+    assert_eq!(program.misreadings_needed.count, 2);
+    assert!(
+        program.misreadings_needed.reason.contains("coverage line"),
+        "{}",
+        program.misreadings_needed.reason
+    );
+}

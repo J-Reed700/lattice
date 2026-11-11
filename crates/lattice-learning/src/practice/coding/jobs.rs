@@ -23,21 +23,25 @@ use crate::practice::practical_repository::LearningPracticalRepository;
 use crate::practice_repository::profile_in;
 use crate::quiz_bank_jobs::ModelLoader;
 use async_trait::async_trait;
+use lattice_core::domain::learning::practice::work::{Form, KindId};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::{Database, Transactions};
 use lattice_core::shared::runtime::jobs::{
     Backoff, JobContext, JobHandler, JobKindConfig, JobOutcome, JobStore, NewJob, RecoveryPolicy,
 };
+use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use uuid::Uuid;
 
 #[cfg(test)]
 mod tests;
 
-/// The job identifier for coding problem builds.
-pub const CODING_BUILD: &str = "learning.coding_build";
+/// The job identifier for practice builds. The stored name stays `learning.coding_build` until the renames of the
+/// design note's step 5 migrate the jobs already queued under it.
+pub const PRACTICE_BUILD: &str = "learning.coding_build";
 
 /// The steps of a coding problem build, for its progress: writing, proving and saving.
-pub const CODING_BUILD_STEPS: u32 = 3;
+pub const PRACTICE_BUILD_STEPS: u32 = 3;
 
 /// How many patterns an easy problem calls for. An easy problem is one idea; a harder one combines two.
 pub const EASY_PATTERNS: usize = 1;
@@ -47,10 +51,36 @@ const HARDER_PATTERNS: usize = 2;
 
 /// One build per program at a time; a running build starts again after a restart, and a disconnected model defers it
 /// rather than failing it.
-pub fn coding_job_config() -> JobKindConfig {
+pub fn practice_job_config() -> JobKindConfig {
     JobKindConfig::new(RecoveryPolicy::Requeue)
         .exclusive_per_subject()
         .backoff(Backoff::default())
+}
+
+/// What a practice build job carries: the lesson, the kind and form to build, and the kind's own options.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PracticeBuildRequest {
+    pub operation_id: String,
+    pub program_id: String,
+    pub lesson_id: Option<String>,
+    pub kind: KindId,
+    pub form: Form,
+    pub options: Value,
+}
+
+/// The job payload of a program's build request.
+pub fn practice_build_request(
+    request: &StartCodingBuildRequestDto,
+) -> Result<PracticeBuildRequest> {
+    Ok(PracticeBuildRequest {
+        operation_id: request.operation_id.clone(),
+        program_id: request.program_id.clone(),
+        lesson_id: request.lesson_id.clone(),
+        kind: KindId::new(""),
+        form: Form::Complete,
+        options: Value::Null,
+    })
 }
 
 /// Queues a build of a problem for a program and returns its job id. The same operation id is the same job.
@@ -68,16 +98,16 @@ pub async fn queue_coding_build(
     let admitted = JobStore::submit_in(
         &mut transaction,
         &NewJob {
-            kind: CODING_BUILD.into(),
+            kind: PRACTICE_BUILD.into(),
             subject_id: Some(request.program_id.clone()),
             operation_id: Uuid::new_v5(
                 &Uuid::NAMESPACE_OID,
-                format!("{CODING_BUILD}:{}", request.operation_id).as_bytes(),
+                format!("{PRACTICE_BUILD}:{}", request.operation_id).as_bytes(),
             )
             .to_string(),
             payload_hash,
             requested,
-            progress_total: CODING_BUILD_STEPS,
+            progress_total: PRACTICE_BUILD_STEPS,
             message: "Waiting to build a problem".into(),
         },
     )
@@ -109,13 +139,13 @@ impl BuildSteps for JobSteps<'_> {
 
 /// Builds coding problems, on the Learning model, pinned for the whole build.
 #[derive(Clone)]
-pub struct CodingBuildWorker {
+pub struct PracticeBuildWorker {
     pub database: Database,
     pub load_llm: ModelLoader,
     pub runtimes: BuiltinRuntimes,
 }
 
-impl CodingBuildWorker {
+impl PracticeBuildWorker {
     pub fn new(database: Database, load_llm: ModelLoader, runtimes: BuiltinRuntimes) -> Self {
         Self {
             database,
@@ -146,7 +176,7 @@ pub async fn save_problem(
     let derived = |what: &str| {
         Uuid::new_v5(
             &Uuid::NAMESPACE_OID,
-            format!("{CODING_BUILD}:{what}:{}", save.job_id).as_bytes(),
+            format!("{PRACTICE_BUILD}:{what}:{}", save.job_id).as_bytes(),
         )
         .to_string()
     };
@@ -205,7 +235,7 @@ pub async fn save_problem(
 }
 
 #[async_trait]
-impl JobHandler for CodingBuildWorker {
+impl JobHandler for PracticeBuildWorker {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
         let request: StartCodingBuildRequestDto =
             serde_json::from_value(context.job().requested.clone()).map_err(|error| {

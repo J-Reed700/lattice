@@ -86,7 +86,10 @@ pub async fn prove(kind: &Kind, draft: Draft, cancel: CancellationToken) -> Resu
         }
     }
 
-    let needed = kind.misreadings_needed.max(draft.form.misreadings_needed());
+    let needed = kind
+        .misreadings_needed
+        .count
+        .max(draft.form.misreadings_needed());
     if kept.len() < needed {
         return Ok(Proof::Unproven(format!(
             "Only {} of the {} misreadings fail a case and run; {needed} are needed. {} Write misreadings that are plausible wrong readings of the statement, and add cases that tell each one from the reference.",

@@ -5,6 +5,7 @@ use crate::practical_dto::LearningPracticalPublicFileRole;
 use crate::practice::coding::problem::CodingTask;
 use crate::practice::coding::proof::fakes::{sample_problem, FakeHarness};
 use crate::practice::test_support::fixture;
+use serde_json::json;
 
 fn build_request(operation_id: &str, program_id: &str) -> StartCodingBuildRequestDto {
     StartCodingBuildRequestDto {
@@ -84,9 +85,9 @@ async fn generate(
 
 #[test]
 fn a_build_that_is_stopped_midway_is_requeued() {
-    let config = coding_job_config();
-    assert_eq!(CODING_BUILD, "learning.coding_build");
-    assert_eq!(CODING_BUILD_STEPS, 3);
+    let config = practice_job_config();
+    assert_eq!(PRACTICE_BUILD, "learning.coding_build");
+    assert_eq!(PRACTICE_BUILD_STEPS, 3);
     assert!(matches!(config.recovery, RecoveryPolicy::Requeue));
 }
 
@@ -109,9 +110,9 @@ async fn queueing_a_build_twice_with_one_operation_id_is_one_job() {
     assert_eq!(first, again);
 
     let job = JobStore::new(pool.clone()).get(&first).await.unwrap();
-    assert_eq!(job.kind, CODING_BUILD);
+    assert_eq!(job.kind, PRACTICE_BUILD);
     assert_eq!(job.subject_id.as_deref(), Some(program_id.as_str()));
-    assert_eq!(job.progress_total, CODING_BUILD_STEPS);
+    assert_eq!(job.progress_total, PRACTICE_BUILD_STEPS);
 
     let other = queue_coding_build(
         &Database::from(pool.clone()),
@@ -120,6 +121,48 @@ async fn queueing_a_build_twice_with_one_operation_id_is_one_job() {
     .await
     .unwrap();
     assert_ne!(first, other);
+}
+
+#[test]
+fn a_programs_build_request_names_its_kind_form_and_options() {
+    let request = practice_build_request(&build_request("operation", "program-1")).unwrap();
+    assert_eq!(request.operation_id, "operation");
+    assert_eq!(request.program_id, "program-1");
+    assert_eq!(request.lesson_id, None);
+    assert_eq!(request.kind, KindId::new("program"));
+    assert_eq!(request.form, Form::Build);
+    assert_eq!(
+        request.options,
+        json!({"language": "python", "difficulty": "easy", "focus": null})
+    );
+}
+
+#[test]
+fn a_bug_fix_is_a_repair_and_keeps_its_focus() {
+    let mut asked = build_request("operation", "program-1");
+    asked.task = CodingTask::BugFix;
+    asked.focus = Some("arrays".into());
+    asked.lesson_id = Some("lesson-1".into());
+    let request = practice_build_request(&asked).unwrap();
+    assert_eq!(request.form, Form::Repair);
+    assert_eq!(request.lesson_id.as_deref(), Some("lesson-1"));
+    assert_eq!(request.options["focus"], json!("arrays"));
+}
+
+#[tokio::test]
+async fn the_queued_job_carries_the_kind_in_its_payload() {
+    let (pool, program_id, _, _) = fixture().await.unwrap();
+    let id = queue_coding_build(
+        &Database::from(pool.clone()),
+        &build_request(&Uuid::new_v4().to_string(), &program_id),
+    )
+    .await
+    .unwrap();
+    let job = JobStore::new(pool.clone()).get(&id).await.unwrap();
+    assert_eq!(job.requested["kind"], json!("program"));
+    assert_eq!(job.requested["form"], json!("build"));
+    assert_eq!(job.requested["programId"], json!(program_id));
+    assert_eq!(job.requested["options"]["language"], json!("python"));
 }
 
 #[tokio::test]

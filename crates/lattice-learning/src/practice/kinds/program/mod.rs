@@ -1,6 +1,7 @@
 //! The Program kind: the learner writes code, and running it is the truth.
 
 use crate::practice::coding::proof::MIN_KILLED_MISREADINGS;
+use crate::practice::coding::source::ProgramAuthor;
 use crate::practice::kinds::program::account::ProgramAccount;
 use crate::practice::kinds::program::budget::ProgramBudget;
 use crate::practice::kinds::program::checker::ProgramChecker;
@@ -14,7 +15,7 @@ use crate::practice::kinds::program::showing::ProgramShowing;
 use crate::practice::kinds::program::toolchain::Toolchains;
 use crate::practice::kinds::program::truth::ProgramTruth;
 use crate::practice::kinds::program::wording::ProgramWording;
-use crate::practice::session::kind::Kind;
+use crate::practice::session::kind::{Kind, MisreadingNeed};
 use lattice_core::domain::learning::practice::work::{KindId, Spacing};
 use std::sync::Arc;
 
@@ -49,12 +50,19 @@ mod proof_tests;
 /// The id of the Program kind.
 pub const KIND: &str = "program";
 
+/// Why a program needs the misreadings it does: the examples' coverage line counts them.
+pub const MISREADINGS_REASON: &str =
+    "the examples' coverage line counts the misreadings the examples catch";
+
 /// The Program kind, running programs with `tools`.
 pub fn kind(tools: Arc<dyn Toolchains>) -> Kind {
     Kind {
         id: KindId::new(KIND),
         spacing: Spacing::Technique,
-        misreadings_needed: MIN_KILLED_MISREADINGS,
+        misreadings_needed: MisreadingNeed {
+            count: MIN_KILLED_MISREADINGS,
+            reason: MISREADINGS_REASON,
+        },
         wording: Arc::new(ProgramWording),
         reply_guard: Arc::new(ProgramReply {
             tools: tools.clone(),
@@ -65,6 +73,9 @@ pub fn kind(tools: Arc<dyn Toolchains>) -> Kind {
         rubric: Arc::new(ProgramRubric),
         account: Arc::new(ProgramAccount),
         budget: Arc::new(ProgramBudget),
+        author: Arc::new(ProgramAuthor {
+            tools: tools.clone(),
+        }),
         checker: Arc::new(ProgramChecker {
             tools: tools.clone(),
         }),
