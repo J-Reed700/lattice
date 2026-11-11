@@ -1,27 +1,27 @@
 //! A keyring held in memory, for tests that must never reach the real one.
 
+use crate::application::ports::credentials_port::CredentialsPort;
+use crate::shared::error::AppError;
 use async_trait::async_trait;
-use lattice_core::application::ports::credentials_port::CredentialsPort;
-use lattice_core::shared::error::AppError;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 
 #[derive(Default)]
-pub(crate) struct InMemoryCredentials {
+pub struct InMemoryCredentials {
     keys: parking_lot::Mutex<HashMap<String, String>>,
     refuse_writes: AtomicBool,
 }
 
 impl InMemoryCredentials {
     /// A keyring that fails every write, as a locked or missing one does.
-    pub(crate) fn refusing_writes() -> Self {
+    pub fn refusing_writes() -> Self {
         Self {
             refuse_writes: AtomicBool::new(true),
             ..Self::default()
         }
     }
 
-    pub(crate) fn stored(&self, service: &str) -> Option<String> {
+    pub fn stored(&self, service: &str) -> Option<String> {
         self.keys.lock().get(service).cloned()
     }
 }

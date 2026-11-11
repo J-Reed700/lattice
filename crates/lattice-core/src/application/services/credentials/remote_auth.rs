@@ -2,10 +2,10 @@
 //! settings; its value lives in the keyring and is read here, at the moment a
 //! connection is made. Nothing else holds the value.
 
-use super::keys::CredentialKey;
-use lattice_core::application::ports::credentials_port::CredentialsPort;
-use lattice_core::application::ports::llm_port::{RemoteHeader, RemoteServer};
-use lattice_core::shared::error::{AppError, Result};
+use super::CredentialKey;
+use crate::application::ports::credentials_port::CredentialsPort;
+use crate::application::ports::llm_port::{RemoteHeader, RemoteServer};
+use crate::shared::error::{AppError, Result};
 
 fn pairing_error() -> AppError {
     AppError::InvalidConfig("Set both authentication header fields, or clear both".into())
@@ -77,7 +77,7 @@ pub async fn header_for_test(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::credentials::memory::InMemoryCredentials;
+    use crate::application::services::credentials::memory::InMemoryCredentials;
 
     #[tokio::test]
     async fn a_name_with_no_value_typed_or_stored_is_refused() {

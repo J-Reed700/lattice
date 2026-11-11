@@ -2,8 +2,6 @@
 //!
 //! Thin plugin wrapper for settings CRUD operations via use cases.
 
-use crate::features::credentials::keys::CredentialKey;
-use crate::features::credentials::remote_auth;
 use crate::features::settings::dto::{
     ExportSettingsRequestDto, ImportSettingsRequestDto, SettingsCategory, SettingsDto,
     UpdateSettingsRequestDto,
@@ -11,6 +9,8 @@ use crate::features::settings::dto::{
 use crate::features::settings::text_files::{self, FileFilterDto, NativeDialogs};
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::llm_port::{InvalidationCause, RemoteHeader, RemoteServer};
+use lattice_core::application::services::credentials::remote_auth;
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::http::{auth_header_map, reqwest_client_builder};

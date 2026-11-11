@@ -5,8 +5,6 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
-use crate::features::credentials::keys::cloud_api_key;
-use crate::features::credentials::remote_auth;
 use crate::features::llm::cloud::limits::{ceiling_to_send, ReportedLimits};
 use crate::features::llm::engine::factory::{CreatedLlm, LLMConfig, LocalServerOptions};
 use crate::features::llm::engine::system::BackendDevices;
@@ -23,6 +21,8 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::chat_model_resolution::{
     cloud_provider_id, cloud_provider_name,
 };
+use lattice_core::application::services::credentials::cloud_api_key;
+use lattice_core::application::services::credentials::remote_auth;
 use lattice_core::domain::models::model_ref::{CloudProvider, ModelRef};
 use lattice_core::domain::repositories::DownloadedModelRepository;
 use lattice_core::shared::error::{AppError, Result};

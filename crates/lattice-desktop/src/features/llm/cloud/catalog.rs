@@ -3,7 +3,10 @@
 use std::{collections::HashSet, time::Duration};
 
 use lattice_core::{
-    application::services::chat_model_resolution::cloud_provider_id,
+    application::{
+        ports::credentials_port::CredentialsPort,
+        services::chat_model_resolution::cloud_provider_id,
+    },
     domain::models::model_ref::CloudProvider,
     shared::{
         error::{AppError, Result},
@@ -33,8 +36,11 @@ pub(crate) async fn saved_key(
     credentials: &dyn CredentialsPort,
     provider: CloudProvider,
 ) -> Result<Option<String>> {
-    crate::features::credentials::keys::cloud_api_key(credentials, cloud_provider_id(provider))
-        .await
+    lattice_core::application::services::credentials::cloud_api_key(
+        credentials,
+        cloud_provider_id(provider),
+    )
+    .await
 }
 
 pub async fn list_models(

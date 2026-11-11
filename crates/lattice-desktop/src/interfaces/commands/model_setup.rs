@@ -189,7 +189,7 @@ pub async fn test_llama_cpp_connection(
     request: TestLlamaCppConnectionRequest,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
     let saved = container.get_settings_use_case().execute().await?;
-    let header = crate::features::credentials::remote_auth::header_for_test(
+    let header = lattice_core::application::services::credentials::remote_auth::header_for_test(
         container.credentials().as_ref(),
         lattice_core::application::ports::llm_port::RemoteServer::LlamaCpp,
         &request.auth_header_name,

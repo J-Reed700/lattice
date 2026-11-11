@@ -290,13 +290,14 @@ pub(in crate::features::learning::tests) async fn model() -> Result<Arc<dyn LLMP
                 let keyring = crate::features::credentials::adapter::CredentialsAdapter::new(
                     std::path::PathBuf::new(),
                 );
-                let key = crate::features::credentials::keys::cloud_api_key(&keyring, name)
-                    .await?
-                    .ok_or_else(|| {
-                        AppError::InvalidConfig(format!(
-                            "No {name} API key saved for the Learning eval"
-                        ))
-                    })?;
+                let key =
+                    lattice_core::application::services::credentials::cloud_api_key(&keyring, name)
+                        .await?
+                        .ok_or_else(|| {
+                            AppError::InvalidConfig(format!(
+                                "No {name} API key saved for the Learning eval"
+                            ))
+                        })?;
                 return load_cloud(
                     &config,
                     &ModelRef::Cloud { provider, model },

@@ -14,7 +14,6 @@
 //! - **Import/Export**: Support for settings backup and transfer
 //! - **Thread Safety**: Read-modify-write operations are serialized by a mutex
 
-use crate::features::credentials::keys::CredentialKey;
 use crate::features::settings::dto::{
     LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
     DEFAULT_LLM_STALL_TIMEOUT_SECONDS, MAX_LLM_STALL_TIMEOUT_SECONDS,
@@ -25,6 +24,7 @@ use lattice_core::application::ports::credentials_port::CredentialsPort;
 use lattice_core::application::ports::llm_port::RemoteServer;
 use lattice_core::application::ports::settings_port::SettingsImportOutcome;
 use lattice_core::application::ports::{merge_json_update, SettingsRepositoryPort};
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::shared::error::{AppError, Result};
 use serde_json;
 use std::collections::HashMap;

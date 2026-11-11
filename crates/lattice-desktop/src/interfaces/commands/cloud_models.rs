@@ -6,11 +6,11 @@ use lattice_core::{
 };
 use tauri::State;
 
-use crate::features::credentials::remote_auth;
 use crate::features::llm::cloud::catalog::{self, CloudModelCatalogDto};
 use crate::features::llm::cloud::limits;
 use crate::features::llm::engine::factory::reported_ollama_window;
 use crate::interfaces::di::Container;
+use lattice_core::application::services::credentials::remote_auth;
 
 /// Models available to a saved cloud credential. Never returns the key.
 #[tauri::command]

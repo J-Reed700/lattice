@@ -1,7 +1,7 @@
 //! Resolving what to download: curated or Hugging Face metadata and embedding file lists.
 
-use crate::features::credentials::keys::CredentialKey;
 use lattice_core::application::ports::model_catalog::ExternalModelMetadata;
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::domain::models::curated::get_all_curated_models;
 use lattice_core::shared::error::AppError;
 

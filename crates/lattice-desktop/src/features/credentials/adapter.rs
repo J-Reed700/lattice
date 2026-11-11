@@ -7,10 +7,10 @@
 //! - Custom endpoints stored in config file (not sensitive)
 //! - Never stores credentials in plaintext
 
-use super::keys::CredentialKey;
 use crate::infrastructure::security::keyring_storage::SecureStorage;
 use async_trait::async_trait;
 use lattice_core::application::ports::credentials_port::CredentialsPort;
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;

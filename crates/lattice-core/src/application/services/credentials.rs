@@ -1,9 +1,13 @@
 //! The names credentials are stored under in the keyring, and the cloud key
 //! lookup every caller shares.
 
-use lattice_core::application::ports::credentials_port::CredentialsPort;
-use lattice_core::application::ports::llm_port::RemoteServer;
-use lattice_core::shared::error::Result;
+use crate::application::ports::credentials_port::CredentialsPort;
+use crate::application::ports::llm_port::RemoteServer;
+use crate::shared::error::Result;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod memory;
+pub mod remote_auth;
 
 /// A credential other than a cloud provider's API key, which is stored under
 /// the provider's id (`openai`, `anthropic`, `google`).

@@ -4,9 +4,9 @@ use chrono::Utc;
 use tracing::{debug, info, warn};
 use uuid::Uuid;
 
-use crate::features::credentials::keys::CredentialKey;
 use crate::features::llm::dto::DownloadModelResponseDto;
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::domain::download::DownloadOperationState;
 use lattice_core::domain::entities::model::Model;
 use lattice_core::domain::entities::model_file::ModelFile;

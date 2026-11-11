@@ -4,8 +4,8 @@
 //! Tokens are stored in the OS keyring through the credentials port and are
 //! never returned to the renderer; downloads read them from the same port.
 
-use crate::features::credentials::keys::CredentialKey;
 use lattice_core::application::ports::credentials_port::CredentialsPort;
+use lattice_core::application::services::credentials::CredentialKey;
 use lattice_core::shared::error::{AppError, Result};
 use serde::{Deserialize, Serialize};
 use tracing::{error, info};
@@ -79,7 +79,7 @@ pub async fn delete_huggingface_token(credentials: &dyn CredentialsPort) -> Resu
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::features::credentials::memory::InMemoryCredentials;
+    use lattice_core::application::services::credentials::memory::InMemoryCredentials;
 
     #[test]
     fn test_token_validation() {

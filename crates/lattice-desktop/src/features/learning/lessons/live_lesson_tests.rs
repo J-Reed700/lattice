@@ -229,13 +229,14 @@ impl ObservedModel {
                 let keyring = crate::features::credentials::adapter::CredentialsAdapter::new(
                     std::path::PathBuf::new(),
                 );
-                let key = crate::features::credentials::keys::cloud_api_key(&keyring, name)
-                    .await?
-                    .ok_or_else(|| {
-                        AppError::InvalidConfig(format!(
-                            "No {name} API key saved for the Learning eval"
-                        ))
-                    })?;
+                let key =
+                    lattice_core::application::services::credentials::cloud_api_key(&keyring, name)
+                        .await?
+                        .ok_or_else(|| {
+                            AppError::InvalidConfig(format!(
+                                "No {name} API key saved for the Learning eval"
+                            ))
+                        })?;
                 let schedulers = crate::features::llm::scheduler::SchedulerRegistry::default();
                 let inner = crate::features::llm::loading::load_cloud(
                     &config,

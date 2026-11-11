@@ -5,9 +5,9 @@
 use crate::features::conversation::dto::ConversationDto;
 use crate::features::conversation::model_availability::check_available;
 use crate::features::conversation::repository::ConversationRepository;
-use crate::features::credentials::keys::cloud_api_key;
 use crate::interfaces::di::Container;
 use lattice_core::application::services::chat_model_resolution::cloud_provider_id;
+use lattice_core::application::services::credentials::cloud_api_key;
 use lattice_core::domain::conversation::ChatModelChoice;
 use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::AppError;

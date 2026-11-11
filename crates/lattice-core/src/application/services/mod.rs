@@ -4,6 +4,7 @@ pub mod completion_input;
 pub mod context_assembler;
 pub mod context_window_builder;
 pub mod conversation_context;
+pub mod credentials;
 pub mod evidence_retrieval;
 pub mod file_type_detector;
 pub mod grounded_generation;

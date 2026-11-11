@@ -14,11 +14,13 @@ async fn create_test_repository() -> (SettingsRepository, TempDir) {
 
 async fn create_keyring_repository() -> (
     SettingsRepository,
-    Arc<crate::features::credentials::memory::InMemoryCredentials>,
+    Arc<lattice_core::application::services::credentials::memory::InMemoryCredentials>,
     TempDir,
 ) {
     let temp_dir = TempDir::new().unwrap();
-    let keyring = Arc::new(crate::features::credentials::memory::InMemoryCredentials::default());
+    let keyring = Arc::new(
+        lattice_core::application::services::credentials::memory::InMemoryCredentials::default(),
+    );
     let repo = SettingsRepository::with_credentials(temp_dir.path().to_path_buf(), keyring.clone())
         .await
         .unwrap();
@@ -133,7 +135,7 @@ async fn concurrent_updates_to_distinct_categories_do_not_lose_writes() {
 
 #[tokio::test]
 async fn import_merges_and_keeps_stored_secrets_after_the_previous_writer_finishes() {
-    use crate::features::credentials::keys::CredentialKey;
+    use lattice_core::application::services::credentials::CredentialKey;
     let (repo, keyring, _dir) = create_keyring_repository().await;
     let mut imported = repo.get_all().await.unwrap();
     imported.llm.ollama_auth_header_name = "Authorization".into();
@@ -367,7 +369,7 @@ async fn test_export_and_import() {
 
 #[tokio::test]
 async fn export_leaves_out_auth_tokens_and_import_keeps_the_stored_ones() {
-    use crate::features::credentials::keys::CredentialKey;
+    use lattice_core::application::services::credentials::CredentialKey;
     let (repo, keyring, temp_dir) = create_keyring_repository().await;
     let mut settings = repo.get_all().await.unwrap();
     settings.llm.ollama_auth_header_name = "Authorization".to_string();
@@ -775,9 +777,11 @@ async fn legacy_settings_dir() -> TempDir {
 
 #[tokio::test]
 async fn a_legacy_auth_header_value_moves_to_the_keyring_and_leaves_the_file() {
-    use crate::features::credentials::keys::CredentialKey;
+    use lattice_core::application::services::credentials::CredentialKey;
     let dir = legacy_settings_dir().await;
-    let keyring = Arc::new(crate::features::credentials::memory::InMemoryCredentials::default());
+    let keyring = Arc::new(
+        lattice_core::application::services::credentials::memory::InMemoryCredentials::default(),
+    );
 
     let repo = SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
         .await
@@ -805,10 +809,10 @@ async fn a_legacy_auth_header_value_moves_to_the_keyring_and_leaves_the_file() {
 
 #[tokio::test]
 async fn a_legacy_value_the_keyring_refuses_stays_for_the_next_start() {
-    use crate::features::credentials::keys::CredentialKey;
+    use lattice_core::application::services::credentials::CredentialKey;
     let dir = legacy_settings_dir().await;
     let locked =
-        Arc::new(crate::features::credentials::memory::InMemoryCredentials::refusing_writes());
+        Arc::new(lattice_core::application::services::credentials::memory::InMemoryCredentials::refusing_writes());
 
     let repo = SettingsRepository::with_credentials(dir.path().to_path_buf(), locked.clone())
         .await
@@ -828,7 +832,9 @@ async fn a_legacy_value_the_keyring_refuses_stays_for_the_next_start() {
     assert!(on_disk.contains("legacy-ollama-secret"), "{on_disk}");
     assert!(on_disk.contains("legacy-llama-secret"), "{on_disk}");
 
-    let keyring = Arc::new(crate::features::credentials::memory::InMemoryCredentials::default());
+    let keyring = Arc::new(
+        lattice_core::application::services::credentials::memory::InMemoryCredentials::default(),
+    );
     SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
         .await
         .unwrap();
@@ -844,9 +850,11 @@ async fn a_legacy_value_the_keyring_refuses_stays_for_the_next_start() {
 
 #[tokio::test]
 async fn the_legacy_value_in_use_replaces_an_older_one_in_the_keyring() {
-    use crate::features::credentials::keys::CredentialKey;
+    use lattice_core::application::services::credentials::CredentialKey;
     let dir = legacy_settings_dir().await;
-    let keyring = Arc::new(crate::features::credentials::memory::InMemoryCredentials::default());
+    let keyring = Arc::new(
+        lattice_core::application::services::credentials::memory::InMemoryCredentials::default(),
+    );
     keyring
         .set_api_key(CredentialKey::OllamaAuthHeader.as_str(), "Bearer older")
         .await
