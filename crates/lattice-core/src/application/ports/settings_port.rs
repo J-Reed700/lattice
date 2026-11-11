@@ -5,9 +5,7 @@
 //! This port abstracts settings persistence, allowing different implementations
 //! (file-based, database, remote, etc.) while keeping the application layer independent.
 
-use crate::application::contracts::settings::{
-    LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
-};
+use crate::application::contracts::settings::{SettingsCategory, SettingsDto};
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -103,12 +101,6 @@ pub trait SettingsRepositoryPort: Send + Sync {
     /// - Invalid JSON format
     /// - Invalid settings structure
     async fn import(&self, path: &str, merge: bool) -> Result<SettingsImportOutcome>;
-
-    /// Validate settings structure and values.
-    fn validate(&self, settings: &SettingsDto) -> ValidationResult;
-
-    /// Check if a file path is valid and accessible.
-    fn validate_folder_path(&self, path: &str) -> bool;
 }
 
 /// The committed import and its vault transition, observed in one serialized mutation.
@@ -118,10 +110,12 @@ pub struct SettingsImportOutcome {
 }
 
 /// Mock implementation for testing.
+#[cfg(any(test, feature = "test-support"))]
 pub struct MockSettingsRepository {
     settings: tokio::sync::RwLock<SettingsDto>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MockSettingsRepository {
     /// Create a new mock repository with default settings.
     pub fn new() -> Self {
@@ -138,12 +132,14 @@ impl MockSettingsRepository {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for MockSettingsRepository {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl SettingsRepositoryPort for MockSettingsRepository {
     async fn get_all(&self) -> Result<SettingsDto> {
@@ -313,299 +309,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             vault_just_enabled: false,
         })
     }
-
-    fn validate(&self, settings: &SettingsDto) -> ValidationResult {
-        let mut result = ValidationResult::success();
-
-        if settings.indexing.chunk_size == 0 {
-            result.add_error("indexing", "chunk_size must be greater than 0".to_string());
-        }
-        if settings.indexing.chunk_size > 10000 {
-            result.add_warning("indexing", "chunk_size is very large".to_string());
-        }
-        if settings.indexing.chunk_overlap >= settings.indexing.chunk_size {
-            result.add_error(
-                "indexing",
-                "chunk_overlap must be less than chunk_size".to_string(),
-            );
-        }
-
-        if settings.search.max_results == 0 {
-            result.add_error("search", "max_results must be greater than 0".to_string());
-        }
-        if settings.search.similarity_threshold < 0.0 || settings.search.similarity_threshold > 1.0
-        {
-            result.add_error(
-                "search",
-                "similarity_threshold must be between 0.0 and 1.0".to_string(),
-            );
-        }
-        if settings.search.hybrid_search_alpha < 0.0 || settings.search.hybrid_search_alpha > 1.0 {
-            result.add_error(
-                "search",
-                "hybrid_search_alpha must be between 0.0 and 1.0".to_string(),
-            );
-        }
-
-        if settings.llm.temperature < 0.0 || settings.llm.temperature > 2.0 {
-            result.add_error("llm", "temperature must be between 0.0 and 2.0".to_string());
-        }
-        if settings.llm.top_p < 0.0 || settings.llm.top_p > 1.0 {
-            result.add_error("llm", "top_p must be between 0.0 and 1.0".to_string());
-        }
-        if settings.llm.top_k < 0 {
-            result.add_error(
-                "llm",
-                "top_k must be greater than or equal to 0".to_string(),
-            );
-        }
-        if settings.llm.repeat_penalty <= 0.0 {
-            result.add_error("llm", "repeat_penalty must be greater than 0.0".to_string());
-        }
-        let generation_problems =
-            crate::application::contracts::settings::presence_penalty_problem(
-                "llm",
-                settings.llm.presence_penalty,
-            )
-            .into_iter()
-            .chain(settings.llm.thinking_sampling.problems("thinking_sampling"))
-            .chain(settings.llm.speculative_decoding.problem())
-            .chain(settings.llm.vision_problems());
-        for problem in generation_problems {
-            result.add_error("llm", problem);
-        }
-        if settings.llm.max_tokens == 0 {
-            result.add_error("llm", "max_tokens must be greater than 0".to_string());
-        }
-        if settings.llm.provider == LLMProvider::Ollama {
-            if settings.llm.ollama_url.is_empty() {
-                result.add_error("llm", "ollama_url cannot be empty".to_string());
-            }
-            if settings.llm.model.is_empty() {
-                result.add_error("llm", "model cannot be empty".to_string());
-            }
-        }
-        if settings.llm.prompts.rag_prompt_template.trim().is_empty() {
-            result.add_error("llm", "rag_prompt_template cannot be empty".to_string());
-        }
-        if settings
-            .llm
-            .prompts
-            .greeting_prompt_template
-            .trim()
-            .is_empty()
-        {
-            result.add_error(
-                "llm",
-                "greeting_prompt_template cannot be empty".to_string(),
-            );
-        }
-        if settings
-            .llm
-            .prompts
-            .no_context_prompt_template
-            .trim()
-            .is_empty()
-        {
-            result.add_error(
-                "llm",
-                "no_context_prompt_template cannot be empty".to_string(),
-            );
-        }
-        if settings.llm.tool_output.excerpt_chars == 0 {
-            result.add_error(
-                "llm",
-                "tool_output.excerpt_chars must be greater than 0".to_string(),
-            );
-        }
-        if settings
-            .llm
-            .tool_output
-            .templates
-            .default_template
-            .trim()
-            .is_empty()
-        {
-            result.add_error(
-                "llm",
-                "tool_output.templates.default_template cannot be empty".to_string(),
-            );
-        }
-        if settings
-            .llm
-            .tool_output
-            .templates
-            .get_document_template
-            .trim()
-            .is_empty()
-        {
-            result.add_error(
-                "llm",
-                "tool_output.templates.get_document_template cannot be empty".to_string(),
-            );
-        }
-        if settings
-            .llm
-            .tool_output
-            .templates
-            .semantic_search_template
-            .trim()
-            .is_empty()
-        {
-            result.add_error(
-                "llm",
-                "tool_output.templates.semantic_search_template cannot be empty".to_string(),
-            );
-        }
-        if settings.llm.tool_output.highlight_terms_max == 0 {
-            result.add_warning(
-                "llm",
-                "tool_output.highlight_terms_max is 0; excerpts will be less relevant".to_string(),
-            );
-        }
-        if !settings.llm.router.enabled {
-            result.add_warning(
-                "llm",
-                "router.enabled is false; follow-up routing will use deterministic fallback behavior"
-                    .to_string(),
-            );
-        }
-        if settings.llm.router.enabled && settings.llm.router.model.trim().is_empty() {
-            result.add_error(
-                "llm",
-                "router.model cannot be empty; configure a small router model (e.g. Qwen 3.5 4B)"
-                    .to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .prompts
-            .rag_prompt_template
-            .contains("{context}")
-        {
-            result.add_warning(
-                "llm",
-                "rag_prompt_template missing {context} placeholder".to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .prompts
-            .rag_prompt_template
-            .contains("{question}")
-        {
-            result.add_warning(
-                "llm",
-                "rag_prompt_template missing {question} placeholder".to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .prompts
-            .greeting_prompt_template
-            .contains("{question}")
-        {
-            result.add_warning(
-                "llm",
-                "greeting_prompt_template missing {question} placeholder".to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .prompts
-            .no_context_prompt_template
-            .contains("{question}")
-        {
-            result.add_warning(
-                "llm",
-                "no_context_prompt_template missing {question} placeholder".to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .tool_output
-            .templates
-            .default_template
-            .contains("{json}")
-        {
-            result.add_warning(
-                "llm",
-                "tool_output.templates.default_template missing {json} placeholder".to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .tool_output
-            .templates
-            .get_document_template
-            .contains("{excerpt}")
-        {
-            result.add_warning(
-                "llm",
-                "tool_output.templates.get_document_template missing {excerpt} placeholder"
-                    .to_string(),
-            );
-        }
-        if !settings
-            .llm
-            .tool_output
-            .templates
-            .semantic_search_template
-            .contains("{results}")
-        {
-            result.add_warning(
-                "llm",
-                "tool_output.templates.semantic_search_template missing {results} placeholder"
-                    .to_string(),
-            );
-        }
-        let auth_name = settings.llm.ollama_auth_header_name.trim();
-        let auth_value = settings.llm.ollama_auth_header_value.trim();
-        if (!auth_name.is_empty() && auth_value.is_empty())
-            || (auth_name.is_empty() && !auth_value.is_empty())
-        {
-            result.add_error(
-                "llm",
-                "ollama_auth_header_name and ollama_auth_header_value must both be set".to_string(),
-            );
-        }
-
-        if settings.ui.font_size < 8 || settings.ui.font_size > 72 {
-            result.add_error("ui", "font_size must be between 8 and 72".to_string());
-        }
-        if settings.ui.results_per_page == 0 {
-            result.add_error("ui", "results_per_page must be greater than 0".to_string());
-        }
-
-        if settings.sync.sync_enabled && settings.sync.sync_url.is_empty() {
-            result.add_error(
-                "sync",
-                "sync_url is required when sync is enabled".to_string(),
-            );
-        }
-
-        for problem in settings.sourcing.problems() {
-            result.add_error("sourcing", problem);
-        }
-
-        // Match the production repository: the field remains in the DTO, but
-        // scheduled backups always use the protected app directory.
-        if !settings.backup.backup_path.is_empty() {
-            result.add_error(
-                "backup",
-                "custom backup locations are not supported; leave backup_path empty".to_string(),
-            );
-        }
-
-        result
-    }
-
-    fn validate_folder_path(&self, path: &str) -> bool {
-        use std::path::Path;
-
-        let path = Path::new(path);
-        path.exists() && path.is_dir()
-    }
 }
 
 #[cfg(test)]
@@ -658,30 +361,5 @@ mod tests {
         let reset = repo.reset(Some(SettingsCategory::Search)).await.unwrap();
 
         assert_eq!(reset.search.max_results, 10); // Back to default
-    }
-
-    #[tokio::test]
-    async fn test_validation_success() {
-        let repo = MockSettingsRepository::new();
-        let settings = SettingsDto::default();
-        let result = repo.validate(&settings);
-
-        assert!(result.valid);
-        assert!(!result.has_errors());
-    }
-
-    #[tokio::test]
-    async fn test_validation_errors() {
-        let repo = MockSettingsRepository::new();
-        let mut settings = SettingsDto::default();
-        settings.indexing.chunk_size = 0; // Invalid
-        settings.search.similarity_threshold = 1.5; // Invalid
-
-        let result = repo.validate(&settings);
-
-        assert!(!result.valid);
-        assert!(result.has_errors());
-        assert!(result.errors.contains_key("indexing"));
-        assert!(result.errors.contains_key("search"));
     }
 }

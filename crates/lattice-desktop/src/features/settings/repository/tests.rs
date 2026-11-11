@@ -429,36 +429,6 @@ async fn test_validation_on_save() {
 }
 
 #[tokio::test]
-async fn test_validation_errors() {
-    let (repo, _temp_dir) = create_test_repository().await;
-
-    let mut settings = SettingsDto::default();
-    settings.indexing.chunk_size = 0;
-    settings.search.similarity_threshold = 1.5;
-
-    let validation = repo.validate(&settings);
-
-    assert!(!validation.valid);
-    assert!(validation.has_errors());
-    assert!(validation.errors.contains_key("indexing"));
-    assert!(validation.errors.contains_key("search"));
-}
-
-#[tokio::test]
-async fn test_validation_warnings() {
-    let (repo, _temp_dir) = create_test_repository().await;
-
-    let mut settings = SettingsDto::default();
-    settings.indexing.chunk_size = 15000; // Very large
-
-    let validation = repo.validate(&settings);
-
-    assert!(validation.valid); // Still valid, just has warnings
-    assert!(validation.has_warnings());
-    assert!(validation.warnings.contains_key("indexing"));
-}
-
-#[tokio::test]
 async fn test_atomic_write_creates_temp_file() {
     let (repo, temp_dir) = create_test_repository().await;
 
@@ -470,22 +440,6 @@ async fn test_atomic_write_creates_temp_file() {
 
     let temp_path = settings_path.with_extension(TEMP_SUFFIX);
     assert!(!temp_path.exists());
-}
-
-#[tokio::test]
-async fn test_validate_folder_path() {
-    let (repo, temp_dir) = create_test_repository().await;
-
-    // Valid directory
-    assert!(repo.validate_folder_path(temp_dir.path().to_str().unwrap()));
-
-    // Invalid path
-    assert!(!repo.validate_folder_path("/nonexistent/path"));
-
-    // File instead of directory
-    let file_path = temp_dir.path().join("test.txt");
-    fs::write(&file_path, "test").await.unwrap();
-    assert!(!repo.validate_folder_path(file_path.to_str().unwrap()));
 }
 
 #[tokio::test]

@@ -121,7 +121,9 @@ pub use reference_snapshots::{ReferenceSnapshot, ReferenceSnapshotPort};
 pub use repository_port::{Filter, NoFilter, RepositoryPort};
 pub use search_engines::{BM25SearchTrait, SearchServiceTrait};
 pub use settings_port::merge_json_update;
-pub use settings_port::{MockSettingsRepository, SettingsRepositoryPort};
+#[cfg(any(test, feature = "test-support"))]
+pub use settings_port::MockSettingsRepository;
+pub use settings_port::SettingsRepositoryPort;
 pub use settings_reader::SettingsReaderPort;
 pub use settings_side_effects_port::{NoopSettingsSideEffects, SettingsSideEffectsPort};
 pub use source_finder::{Budget, SourceFinder};
