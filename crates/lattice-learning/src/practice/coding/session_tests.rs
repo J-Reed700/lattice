@@ -1434,6 +1434,38 @@ async fn finishing_twice_writes_once_and_shows_everything_in_the_debrief() {
     assert_eq!(schedules_after, schedules);
 }
 
+async fn schedules_after_finishing(failing: &[&str]) -> Vec<(String, i64, i64)> {
+    let ctx = Ctx::new().await;
+    ctx.runs
+        .failing
+        .lock()
+        .unwrap()
+        .extend(failing.iter().map(|case| (*case).to_owned()));
+    let session = ctx.start(CodingSetting::Mock).await;
+    let submitted = ctx.run(&session, CodingRunScope::All, None).await.unwrap();
+    ctx.finish(&submitted, &id()).await.unwrap();
+    sqlx::query_as(
+        "SELECT pattern_id,interval_days,due_at FROM learning_drill_pattern_schedules WHERE material='problem:python' ORDER BY pattern_id",
+    )
+    .fetch_all(&ctx.pool)
+    .await
+    .unwrap()
+}
+
+#[tokio::test]
+async fn a_session_that_passes_every_case_schedules_its_patterns_further_out_than_one_that_fails_a_case(
+) {
+    let passed = schedules_after_finishing(&[]).await;
+    let failed = schedules_after_finishing(&["h1"]).await;
+    assert_eq!(passed.len(), problem().spec.patterns.len());
+    assert_eq!(failed.len(), passed.len());
+    for (passing, failing) in passed.iter().zip(&failed) {
+        assert_eq!(passing.0, failing.0);
+        assert!(passing.1 > failing.1, "{passing:?} against {failing:?}");
+        assert!(passing.2 > failing.2, "{passing:?} against {failing:?}");
+    }
+}
+
 #[tokio::test]
 async fn the_same_finish_operation_replays_and_a_finished_session_takes_no_changes() {
     let ctx = Ctx::new().await;

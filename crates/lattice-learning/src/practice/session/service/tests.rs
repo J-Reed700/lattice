@@ -235,7 +235,11 @@ fn held_session(case: CaseStatus, hint: Option<Rung>) -> Session {
             detail: serde_json::Value::Null,
         },
         at: 10,
-        status: CheckStatus::Failed,
+        status: if case == CaseStatus::Passed {
+            CheckStatus::Passed
+        } else {
+            CheckStatus::Failed
+        },
         cases: Vec::new(),
     };
     Session {
