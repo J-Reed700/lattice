@@ -352,7 +352,7 @@ pub(crate) async fn review(
         ) {
             if apart.index == *right {
                 slot.defects.push(format!(
-                    "The right answer can be picked by its form alone, without knowing the material: {} Rewrite the options so that all are alike in form (length, detail, grammatical shape, opening words, and whether they hedge or give a reason) without changing which one is right.",
+                    "The right answer can be picked by its form alone, without knowing the material: {} Rewrite the options, and the question where it lends its words to one of them, so that all options are alike in form (length, detail, grammatical shape, opening words, whether they hedge or give a reason, and how much of the question's wording they repeat) without changing which one is right.",
                     apart.why
                 ));
             }

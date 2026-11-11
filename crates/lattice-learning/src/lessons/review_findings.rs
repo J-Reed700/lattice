@@ -127,9 +127,9 @@ pub enum Rule {
     ExplanationMissing,
     /// A question lacks four distinct answer choices.
     Choices,
-    /// A question's right choice stands out as the longest.
+    /// Carried by rows stored before the form read; no longer raised.
     KeyLongest,
-    /// A question's prompt gives its answer away.
+    /// Carried by rows stored before the form read; no longer raised.
     KeyGivenAway,
     /// A question's rationales do not match its choices.
     RationaleCount,
