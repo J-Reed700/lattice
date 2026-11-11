@@ -163,10 +163,10 @@ pub(super) trait Review: Send {
 /// did, resumes a saved repair the first time, extracts and identifies, and
 /// stops on a fault; then it reads, takes back a flow repair that wrote a
 /// statement, researches and reads what research saved, recites or uncites,
-/// and repairs the statements at rewrite and cut nodes. A round that records no step and leaves the draft as it was
-/// stops the lesson with what was pending. Once nothing is left for the
-/// machine, the sections are settled and the lesson publishes or waits for the
-/// user.
+/// and repairs the statements at rewrite and cut nodes. A round that records
+/// no step and leaves the draft as it was stops the lesson with what was
+/// pending. Once nothing is left for the machine, the sections are settled
+/// and the lesson publishes or waits for the user.
 pub(super) async fn run<F>(
     review: &mut dyn Review<Finished = F>,
     policy: &dyn AcceptancePolicy,

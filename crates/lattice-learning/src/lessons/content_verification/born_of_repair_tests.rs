@@ -390,7 +390,7 @@ async fn assert_begins_after_the_rewrite(
 #[tokio::test]
 async fn a_correction_that_reads_as_two_statements_stands_and_the_second_is_born_of_the_repair(
 ) -> Result<()> {
-    // Â§2.6 of the acceptance policy design: the correction keeps the
+    // §2.6 of the acceptance policy design: the correction keeps the
     // neighbour's words, says the figure's part anew, and writes a statement
     // beside it.
     let model = Script::new(&[
