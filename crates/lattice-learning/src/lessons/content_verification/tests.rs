@@ -195,6 +195,10 @@ fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -
             .pointer("/properties/edits/items/properties/finding")
             .is_some()
     });
+    let entries = request
+        .json_schema
+        .as_ref()
+        .and_then(|schema| schema.pointer("/properties/answers/items"));
     let sent: Vec<Value> = serde_json::from_str::<Value>(user)
         .ok()
         .and_then(|prompt| prompt.get("issuesToFix").and_then(Value::as_array).cloned())
@@ -215,6 +219,9 @@ fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -
             .or_else(|| sent.first());
         entry.map_or(Value::Null, |entry| entry["id"].clone())
     };
+    if let Some(entry) = entries {
+        return answered_by_finding(&answer, &sent, entry, &finding_for);
+    }
     for key in ["edits", "citations"] {
         let Some(Value::Array(changes)) = answer.get_mut(key) else {
             continue;
@@ -245,6 +252,78 @@ fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -
         }
     }
     Value::Object(answer).to_string()
+}
+
+/// What a fixture writes as the plan of an entry it makes.
+pub(crate) const FIXTURE_PLAN: &str = "Make the change the finding asks for.";
+
+/// A flat scripted repair answer as the schema's `answers` ask for it: an
+/// entry for each finding sent, holding the changes that name it or fall in
+/// its part, and no change when none does.
+fn answered_by_finding(
+    answer: &serde_json::Map<String, Value>,
+    sent: &[Value],
+    entry: &Value,
+    finding_for: &dyn Fn(&str) -> Value,
+) -> String {
+    let offered: Vec<&str> = entry
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|key| ["edits", "citations", "uncite"].contains(key))
+        .collect();
+    let blank = |id: &str| {
+        let mut fields = serde_json::Map::new();
+        fields.insert("finding".into(), json!(id));
+        fields.insert("plan".into(), json!(FIXTURE_PLAN));
+        for key in &offered {
+            fields.insert((*key).into(), json!([]));
+        }
+        fields
+    };
+    let mut entries: Vec<serde_json::Map<String, Value>> = Vec::new();
+    for id in sent.iter().filter_map(|sent| sent["id"].as_str()) {
+        if !entries.iter().any(|known| known["finding"] == id) {
+            entries.push(blank(id));
+        }
+    }
+    for key in ["edits", "citations", "uncite"] {
+        let Some(Value::Array(changes)) = answer.get(key) else {
+            continue;
+        };
+        for change in changes {
+            let mut fields = match change {
+                Value::Object(fields) => fields.clone(),
+                Value::String(path) => std::iter::once(("path".to_owned(), json!(path))).collect(),
+                _ => continue,
+            };
+            let path = fields
+                .get("path")
+                .and_then(Value::as_str)
+                .unwrap_or("")
+                .to_owned();
+            let finding = match fields.remove("finding") {
+                Some(Value::String(named)) => named,
+                _ => finding_for(&path).as_str().unwrap_or("").to_owned(),
+            };
+            let at = match entries
+                .iter()
+                .position(|known| known["finding"] == finding.as_str())
+            {
+                Some(at) => at,
+                None => {
+                    entries.push(blank(&finding));
+                    entries.len() - 1
+                }
+            };
+            if let Some(Value::Array(list)) = entries[at].get_mut(key) {
+                list.push(Value::Object(fields));
+            }
+        }
+    }
+    json!({ "answers": entries }).to_string()
 }
 
 /// A fixture's label-first verdict ("supported\nReason: …\nSource passage:
