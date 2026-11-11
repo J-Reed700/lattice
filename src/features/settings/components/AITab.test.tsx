@@ -17,7 +17,6 @@ const mockLlmSettings: LlmSettingsContextValue = {
     ollamaUtilityModel: '',
     model: '',
     ollamaAuthHeaderName: '',
-    ollamaAuthHeaderValueSet: false,
     externalModelDirectories: [],
     temperature: 0.7,
     topP: 0.8,
@@ -63,6 +62,7 @@ const mockLlmSettings: LlmSettingsContextValue = {
   } as never,
   isLoading: false,
   saveLlmUpdates: vi.fn().mockResolvedValue(true),
+  authValueSet: { ollama: false, llamaCpp: false },
   saveAuthHeaderValue: vi.fn().mockResolvedValue(true),
   reload: vi.fn(),
 };
@@ -90,7 +90,7 @@ describe('ChatTab', () => {
     mockLlmSettings.llmSettings!.provider = 'auto';
     mockLlmSettings.llmSettings!.ollamaConfigured = false;
     mockLlmSettings.llmSettings!.model = '';
-    mockLlmSettings.llmSettings!.llamaCpp = { url: 'http://localhost:8080', model: 'qwen.gguf', authHeaderName: '', authHeaderValueSet: false };
+    mockLlmSettings.llmSettings!.llamaCpp = { url: 'http://localhost:8080', model: 'qwen.gguf', authHeaderName: '' };
   });
 
   it('renders one page header, a noun, with no explanatory subtitle', () => {

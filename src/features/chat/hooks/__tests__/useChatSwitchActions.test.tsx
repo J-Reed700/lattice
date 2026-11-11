@@ -53,7 +53,7 @@ describe('useChatSwitchActions', () => {
     useToastStore.setState({ toasts: [] });
     const settings = makeAppSettings();
     settings.llm.provider = 'llamacpp';
-    settings.llm.llamaCpp = { url: 'http://localhost:8080', model: 'served.gguf', authHeaderName: '', authHeaderValueSet: false };
+    settings.llm.llamaCpp = { url: 'http://localhost:8080', model: 'served.gguf', authHeaderName: '' };
     appSettings.current = settings;
     models.current = [row({ id: 'big', is_active_for_chat: true }), row({ id: 'small', model_id: 'ornith-1.5-9b', model_name: 'Ornith-1.5-9B' })];
     state.conversations = [{ id: 'chat-b', modelChoice: { kind: 'default' } }];

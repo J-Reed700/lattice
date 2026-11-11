@@ -137,7 +137,6 @@ async fn import_merges_and_keeps_stored_secrets_after_the_previous_writer_finish
     let (repo, keyring, _dir) = create_keyring_repository().await;
     let mut imported = repo.get_all().await.unwrap();
     imported.llm.ollama_auth_header_name = "Authorization".into();
-    imported.llm.ollama_auth_header_value.clear();
     imported.search.max_results = 42;
 
     let held = repo.write_lock.lock().await;
@@ -146,7 +145,13 @@ async fn import_merges_and_keeps_stored_secrets_after_the_previous_writer_finish
     let mut current = repo.get_all().await.unwrap();
     current.vault.enabled = true;
     current.llm.ollama_auth_header_name = "Authorization".into();
-    current.llm.ollama_auth_header_value = "Bearer newly-rotated-token".into();
+    keyring
+        .set_api_key(
+            CredentialKey::OllamaAuthHeader.as_str(),
+            "Bearer newly-rotated-token",
+        )
+        .await
+        .unwrap();
     repo.persist(&current).await.unwrap();
     drop(held);
 
@@ -366,9 +371,18 @@ async fn export_leaves_out_auth_tokens_and_import_keeps_the_stored_ones() {
     let (repo, keyring, temp_dir) = create_keyring_repository().await;
     let mut settings = repo.get_all().await.unwrap();
     settings.llm.ollama_auth_header_name = "Authorization".to_string();
-    settings.llm.ollama_auth_header_value = "Bearer ollama-secret".to_string();
     settings.llm.llama_cpp.auth_header_name = "X-Api-Key".to_string();
-    settings.llm.llama_cpp.auth_header_value = "llama-secret".to_string();
+    keyring
+        .set_api_key(
+            CredentialKey::OllamaAuthHeader.as_str(),
+            "Bearer ollama-secret",
+        )
+        .await
+        .unwrap();
+    keyring
+        .set_api_key(CredentialKey::LlamaCppAuthHeader.as_str(), "llama-secret")
+        .await
+        .unwrap();
     repo.save_all(&settings).await.unwrap();
 
     let export_path = temp_dir.path().join("export.json");
@@ -404,7 +418,6 @@ fn a_header_whose_token_is_not_here_is_dropped_on_import() {
     drop_unbacked_header_names(&mut imported, &existing, false, false);
 
     assert!(imported.llm.ollama_auth_header_name.is_empty());
-    assert!(imported.llm.ollama_auth_header_value.is_empty());
 }
 
 #[tokio::test]
@@ -784,9 +797,10 @@ async fn a_legacy_auth_header_value_moves_to_the_keyring_and_leaves_the_file() {
     assert!(!on_disk.contains("legacy-ollama-secret"), "{on_disk}");
     assert!(!on_disk.contains("legacy-llama-secret"), "{on_disk}");
     assert!(on_disk.contains("Authorization"), "names stay in the file");
-    let loaded = repo.get_all().await.unwrap();
-    assert!(loaded.llm.ollama_auth_header_value.is_empty());
-    assert!(loaded.llm.llama_cpp.auth_header_value.is_empty());
+    assert_eq!(
+        repo.get_all().await.unwrap().llm.ollama_auth_header_name,
+        "Authorization"
+    );
 }
 
 #[tokio::test]
@@ -813,11 +827,6 @@ async fn a_legacy_value_the_keyring_refuses_stays_for_the_next_start() {
         .unwrap();
     assert!(on_disk.contains("legacy-ollama-secret"), "{on_disk}");
     assert!(on_disk.contains("legacy-llama-secret"), "{on_disk}");
-    assert_eq!(
-        repo.get_all().await.unwrap().llm.ollama_auth_header_value,
-        LEGACY_OLLAMA_VALUE,
-        "the value is still usable for this run"
-    );
 
     let keyring = Arc::new(crate::features::credentials::memory::InMemoryCredentials::default());
     SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())

@@ -3,9 +3,7 @@
 //! Thin plugin wrapper for settings CRUD operations via use cases.
 
 use crate::features::credentials::keys::CredentialKey;
-use crate::features::credentials::remote_auth::{
-    llama_cpp_value_is_set, ollama_value_is_set, saved_ollama_value_for,
-};
+use crate::features::credentials::remote_auth;
 use crate::features::settings::dto::{
     ExportSettingsRequestDto, ImportSettingsRequestDto, SettingsCategory, SettingsDto,
     UpdateSettingsRequestDto,
@@ -200,15 +198,16 @@ pub async fn test_ollama_connection(
     container: State<'_, Container>,
     mut request: TestOllamaConnectionRequest,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
-    if request.auth_header_value.trim().is_empty() {
-        let saved = container.get_settings_use_case().execute().await?;
-        request.auth_header_value = saved_ollama_value_for(
-            container.credentials().as_ref(),
-            &saved.llm,
-            &request.auth_header_name,
-        )
-        .await?;
-    }
+    let saved = container.get_settings_use_case().execute().await?;
+    let header = remote_auth::header_for_test(
+        container.credentials().as_ref(),
+        RemoteServer::Ollama,
+        &request.auth_header_name,
+        &request.auth_header_value,
+        &saved.llm.ollama_auth_header_name,
+    )
+    .await?;
+    request.auth_header_value = header.map(|header| header.value).unwrap_or_default();
     probe_ollama_connection(request).await
 }
 
@@ -332,20 +331,6 @@ pub async fn test_custom_tool(
     })
 }
 
-/// Fill in whether each remote auth header has a value, which the renderer
-/// shows in place of the value itself.
-async fn with_secret_flags(
-    container: &Container,
-    mut settings: SettingsDto,
-) -> Result<SettingsDto, ApiError> {
-    let credentials = container.credentials();
-    settings.llm.ollama_auth_header_value_set =
-        ollama_value_is_set(credentials.as_ref(), &settings.llm).await?;
-    settings.llm.llama_cpp.auth_header_value_set =
-        llama_cpp_value_is_set(credentials.as_ref(), &settings.llm.llama_cpp).await?;
-    Ok(settings)
-}
-
 #[tauri::command]
 #[specta::specta]
 pub async fn get_settings(container: State<'_, Container>) -> Result<SettingsDto, ApiError> {
@@ -355,7 +340,28 @@ pub async fn get_settings(container: State<'_, Container>) -> Result<SettingsDto
         .await
         .map_err(ApiError::from)?;
 
-    with_secret_flags(&container, settings).await
+    Ok(settings)
+}
+
+/// Whether each remote server has an authentication header value stored.
+/// The values themselves never leave the keyring.
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAuthStatusDto {
+    pub ollama: bool,
+    pub llama_cpp: bool,
+}
+
+#[tauri::command]
+#[specta::specta]
+pub async fn get_remote_auth_header_status(
+    container: State<'_, Container>,
+) -> Result<RemoteAuthStatusDto, ApiError> {
+    let credentials = container.credentials();
+    Ok(RemoteAuthStatusDto {
+        ollama: remote_auth::is_set(credentials.as_ref(), RemoteServer::Ollama).await?,
+        llama_cpp: remote_auth::is_set(credentials.as_ref(), RemoteServer::LlamaCpp).await?,
+    })
 }
 
 /// Save (`Some`) or clear (`None`, or blank) the authentication header value
@@ -368,10 +374,7 @@ pub async fn save_remote_auth_header_value(
     server: RemoteServer,
     value: Option<String>,
 ) -> Result<(), ApiError> {
-    let key = match server {
-        RemoteServer::Ollama => CredentialKey::OllamaAuthHeader,
-        RemoteServer::LlamaCpp => CredentialKey::LlamaCppAuthHeader,
-    };
+    let key = CredentialKey::for_server(server);
     let credentials = container.credentials();
     match value
         .as_deref()
@@ -392,27 +395,11 @@ pub async fn get_settings_category(
     container: State<'_, Container>,
 ) -> Result<HashMap<String, serde_json::Value>, ApiError> {
     let category = parse_category(&category).map_err(ApiError::from)?;
-    let mut value = container
+    let value = container
         .get_settings_use_case()
         .get_category(category)
         .await
         .map_err(ApiError::from)?;
-    if category == SettingsCategory::Llm {
-        let settings = container.get_settings_use_case().execute().await?;
-        let flagged = with_secret_flags(&container, settings).await?.llm;
-        if let serde_json::Value::Object(fields) = &mut value {
-            fields.insert(
-                "ollamaAuthHeaderValueSet".into(),
-                flagged.ollama_auth_header_value_set.into(),
-            );
-            if let Some(serde_json::Value::Object(llama)) = fields.get_mut("llamaCpp") {
-                llama.insert(
-                    "authHeaderValueSet".into(),
-                    flagged.llama_cpp.auth_header_value_set.into(),
-                );
-            }
-        }
-    }
     match value {
         serde_json::Value::Object(fields) => Ok(fields.into_iter().collect()),
         _ => Err(ApiError::from(AppError::InvalidData(
@@ -451,7 +438,7 @@ pub async fn update_settings(
         tracing::warn!(error = %e, "failed to refresh file-access allowed roots after settings update");
     }
 
-    with_secret_flags(&container, updated).await
+    Ok(updated)
 }
 
 #[tauri::command]
@@ -463,7 +450,7 @@ pub async fn reset_settings(container: State<'_, Container>) -> Result<SettingsD
         .await
         .map_err(ApiError::from)?;
 
-    with_secret_flags(&container, reset).await
+    Ok(reset)
 }
 
 #[tauri::command]
@@ -521,7 +508,7 @@ pub async fn import_settings(
 
     let _ = tokio::fs::remove_file(&import_path).await;
 
-    with_secret_flags(&container, imported.settings).await
+    Ok(imported.settings)
 }
 
 /// Shows the platform's save dialog, offering `suggested_name`, and writes
@@ -736,6 +723,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             validate_folder_path,
             test_ollama_connection,
             save_remote_auth_header_value,
+            get_remote_auth_header_status,
             crate::interfaces::commands::model_setup::test_llama_cpp_connection,
             test_custom_tool,
             add_watch_folder,

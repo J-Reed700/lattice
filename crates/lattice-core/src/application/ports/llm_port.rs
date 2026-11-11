@@ -784,6 +784,23 @@ pub enum RemoteServer {
     LlamaCpp,
 }
 
+/// The authentication header a remote model server expects on every request.
+/// The value is a credential: it is never printed.
+#[derive(Clone, PartialEq, Eq)]
+pub struct RemoteHeader {
+    pub name: String,
+    pub value: String,
+}
+
+impl std::fmt::Debug for RemoteHeader {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("RemoteHeader")
+            .field("name", &self.name)
+            .field("value", &"<redacted>")
+            .finish()
+    }
+}
+
 /// A loaded model held for one turn or job. The holder keeps `llm` until the
 /// work ends, whatever is chosen in the meantime.
 pub struct PinnedModel {

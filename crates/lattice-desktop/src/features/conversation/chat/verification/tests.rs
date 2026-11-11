@@ -176,7 +176,7 @@ async fn live_grounding_adversarial_regressions() {
     .unwrap();
     let config: LLMSettingsDto =
         serde_json::from_value(settings["settings"]["llm"].clone()).unwrap();
-    let llm = LlamaCppLlm::new(&config).unwrap().into_port().await;
+    let llm = LlamaCppLlm::new(&config, None).unwrap().into_port().await;
     let verifier = GroundingVerifier::new(Some(llm));
     let mut evidence =
         source("The design workspace retains hourly file versions for 14 days before expiration.");

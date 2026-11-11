@@ -1,11 +1,12 @@
 use lattice_core::{
     application::contracts::settings::ModelWindowDto,
+    application::ports::llm_port::RemoteServer,
     domain::models::model_ref::{CloudProvider, ModelRef},
     shared::ipc::ApiError,
 };
 use tauri::State;
 
-use crate::features::credentials::remote_auth::ollama_auth_header;
+use crate::features::credentials::remote_auth;
 use crate::features::llm::cloud::catalog::{self, CloudModelCatalogDto};
 use crate::features::llm::cloud::limits;
 use crate::features::llm::engine::factory::reported_ollama_window;
@@ -43,8 +44,12 @@ pub async fn get_model_limits(
         }
         ModelRef::Ollama { model } => {
             let settings = container.get_settings_use_case().execute().await?;
-            let auth_header =
-                ollama_auth_header(container.credentials().as_ref(), &settings.llm).await?;
+            let auth_header = remote_auth::header(
+                container.credentials().as_ref(),
+                RemoteServer::Ollama,
+                &settings.llm.ollama_auth_header_name,
+            )
+            .await?;
             reported_ollama_window(&settings.llm, auth_header, &model)
                 .await
                 .map_err(ApiError::from)

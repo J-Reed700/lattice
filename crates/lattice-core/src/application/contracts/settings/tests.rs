@@ -291,13 +291,23 @@ fn the_utility_model_reference_loads_with_or_without_the_field() {
     );
 }
 
+fn legacy_llm_json() -> serde_json::Value {
+    serde_json::json!({
+        "ollamaAuthHeaderName": "Authorization",
+        "ollamaAuthHeaderValue": "Bearer ollama-secret",
+        "llamaCpp": {
+            "url": "http://localhost:8080",
+            "model": "",
+            "authHeaderName": "Authorization",
+            "authHeaderValue": "Bearer llama-secret"
+        }
+    })
+}
+
 #[test]
 fn settings_sent_to_the_renderer_carry_no_auth_header_value() {
     let mut settings = SettingsDto::default();
-    settings.llm.ollama_auth_header_name = "Authorization".into();
-    settings.llm.ollama_auth_header_value = "Bearer ollama-secret".into();
-    settings.llm.llama_cpp.auth_header_name = "Authorization".into();
-    settings.llm.llama_cpp.auth_header_value = "Bearer llama-secret".into();
+    settings.llm = serde_json::from_value(legacy_llm_json()).unwrap();
 
     let json = serde_json::to_string(&settings).unwrap();
     assert!(!json.contains("ollama-secret"), "{json}");
@@ -310,18 +320,8 @@ fn settings_sent_to_the_renderer_carry_no_auth_header_value() {
 }
 
 #[test]
-fn a_settings_file_written_before_secrets_moved_still_loads_its_auth_header_values() {
-    let legacy = serde_json::json!({
-        "ollamaAuthHeaderName": "Authorization",
-        "ollamaAuthHeaderValue": "Bearer ollama-secret",
-        "llamaCpp": {
-            "url": "http://localhost:8080",
-            "model": "",
-            "authHeaderName": "Authorization",
-            "authHeaderValue": "Bearer llama-secret"
-        }
-    });
-    let llm: LLMSettingsDto = serde_json::from_value(legacy).unwrap();
-    assert_eq!(llm.ollama_auth_header_value, "Bearer ollama-secret");
-    assert_eq!(llm.llama_cpp.auth_header_value, "Bearer llama-secret");
+fn a_settings_file_written_before_secrets_moved_still_loads() {
+    let llm: LLMSettingsDto = serde_json::from_value(legacy_llm_json()).unwrap();
+    assert_eq!(llm.ollama_auth_header_name, "Authorization");
+    assert_eq!(llm.llama_cpp.auth_header_name, "Authorization");
 }

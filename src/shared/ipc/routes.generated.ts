@@ -215,6 +215,7 @@ export const COMMAND_PLUGINS = {
   get_next_daily_note: 'dailynotes',
   get_previous_daily_note: 'dailynotes',
   get_recent_documents: 'file',
+  get_remote_auth_header_status: 'settings',
   get_settings: 'settings',
   get_settings_category: 'settings',
   get_source_trust_calibration: 'learning',

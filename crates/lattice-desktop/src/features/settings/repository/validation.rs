@@ -217,7 +217,7 @@ impl SettingsRepository {
                 result.add_error("llm", "model cannot be empty".to_string());
             }
         }
-        if let Err(error) = settings.llm.llama_cpp.validated_url() {
+        if let Err(error) = settings.llm.llama_cpp.validated_base_url() {
             result.add_error("llm", error.to_string());
         }
         if !(MIN_LLM_STALL_TIMEOUT_SECONDS..=MAX_LLM_STALL_TIMEOUT_SECONDS)

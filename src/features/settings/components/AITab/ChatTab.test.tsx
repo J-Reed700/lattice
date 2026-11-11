@@ -6,7 +6,7 @@ import { deferred } from '@/tests/deferred';
 import { ChatTab } from './ChatTab';
 
 const h = vi.hoisted(() => ({
-  llm: { llmSettings: null as null | Record<string, any>, isLoading: false, saveLlmUpdates: vi.fn(), saveAuthHeaderValue: vi.fn(), reload: vi.fn() },
+  llm: { llmSettings: null as null | Record<string, any>, isLoading: false, authValueSet: { ollama: false, llamaCpp: false }, saveLlmUpdates: vi.fn(), saveAuthHeaderValue: vi.fn(), reload: vi.fn() },
   models: { activeModel: null as null | Record<string, string>, activeEmbeddingModel: null as null | Record<string, string> },
   probe: vi.fn(),
   setCloudApiKey: vi.fn(),
@@ -26,7 +26,6 @@ const settings = (overrides: Record<string, unknown> = {}) => ({
   model: 'mistral',
   ollamaUtilityModel: '',
   ollamaAuthHeaderName: '',
-  ollamaAuthHeaderValueSet: false,
   boundedConversationMemory: true,
   llamaCpp: { url: '', model: '' },
   router: { model: '  tiny-router  ' },
@@ -43,6 +42,7 @@ describe('ChatTab', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     h.llm.isLoading = false;
+    h.llm.authValueSet = { ollama: false, llamaCpp: false };
     h.llm.llmSettings = settings();
     h.llm.saveLlmUpdates.mockResolvedValue(true);
     h.llm.saveAuthHeaderValue.mockResolvedValue(true);
@@ -56,6 +56,7 @@ describe('ChatTab', () => {
     expect(screen.getByText('Loading…')).toBeInTheDocument();
     first.unmount();
     h.llm.isLoading = false;
+    h.llm.authValueSet = { ollama: false, llamaCpp: false };
     render(<ChatTab />);
     expect(screen.getByText("Couldn't read chat settings.")).toBeInTheDocument();
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
@@ -235,7 +236,8 @@ describe('ChatTab', () => {
 
   describe('auth', () => {
     it('opens by itself when a header is saved, and toggles', () => {
-      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'X-Key', ollamaAuthHeaderValueSet: true });
+      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'X-Key' });
+      h.llm.authValueSet = { ollama: true, llamaCpp: false };
       render(<ChatTab />);
       expect(screen.getByLabelText('Auth header name')).toHaveValue('X-Key');
       fireEvent.click(screen.getByRole('button', { name: 'Hide auth' }));
@@ -256,7 +258,8 @@ describe('ChatTab', () => {
     });
 
     it('does not resave an unchanged header', () => {
-      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'X-Key', ollamaAuthHeaderValueSet: true });
+      h.llm.llmSettings = settings({ ollamaAuthHeaderName: 'X-Key' });
+      h.llm.authValueSet = { ollama: true, llamaCpp: false };
       render(<ChatTab />);
       fireEvent.blur(screen.getByLabelText('Auth header value'));
       expect(h.llm.saveLlmUpdates).not.toHaveBeenCalled();

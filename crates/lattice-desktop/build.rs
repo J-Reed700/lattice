@@ -272,6 +272,7 @@ fn main() {
                     "get_system_theme",
                     "validate_folder_path",
                     "test_ollama_connection",
+                    "get_remote_auth_header_status",
                     "save_remote_auth_header_value",
                     "test_llama_cpp_connection",
                     "test_custom_tool",

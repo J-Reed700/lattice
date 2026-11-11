@@ -23,6 +23,7 @@ use crate::features::llm::scheduler::SchedulerRegistry;
 use lattice_core::application::contracts::settings::{
     LLMSettingsDto, ModelWindowDto, SpeculativeDecodingDto,
 };
+use lattice_core::application::ports::llm_port::RemoteHeader;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::shared::error::AppError;
 
@@ -57,7 +58,7 @@ pub enum LLMConfig {
         /// Model name (e.g., "llama3.1:8b", "mistral")
         model: String,
         /// Optional auth header to include with requests
-        auth_header: Option<(String, String)>,
+        auth_header: Option<RemoteHeader>,
         /// Generation configuration (temperature, top-p, etc.)
         generation_config: GenerationConfig,
     },
@@ -506,11 +507,11 @@ fn with_memory_hint(
 }
 
 /// What the Ollama server in `settings` reports for `model`, reached with
-/// `auth_header` (see `ollama_auth_header`). It reports a window only: an
+/// `auth_header` (see `remote_auth::header`). It reports a window only: an
 /// output ceiling is not something it limits.
 pub(crate) async fn reported_ollama_window(
     settings: &LLMSettingsDto,
-    auth_header: Option<(String, String)>,
+    auth_header: Option<RemoteHeader>,
     model: &str,
 ) -> lattice_core::shared::error::Result<ModelWindowDto> {
     let client = OllamaClient::with_model_and_timeouts_and_header(
@@ -535,7 +536,7 @@ pub(crate) async fn reported_ollama_window(
 pub(crate) async fn create_ollama_llm(
     endpoint: &str,
     model: &str,
-    auth_header: Option<(String, String)>,
+    auth_header: Option<RemoteHeader>,
     generation_config: GenerationConfig,
     vision: Option<lattice_core::domain::models::vision::VisionGeometry>,
     context_window: Option<u32>,

@@ -3,12 +3,41 @@ use super::{
     resolve_out_of_range_values, SettingsFile, SettingsRepository, SETTINGS_FILE_NAME,
     SETTINGS_VERSION, TEMP_SUFFIX,
 };
+use lattice_core::application::ports::llm_port::RemoteServer;
 use lattice_core::shared::error::{AppError, Result};
 use std::path::PathBuf;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
+/// Where a settings file written before auth header values moved to the
+/// keyring kept them. The settings types have no field for them any more, so
+/// they are read and carried only as raw JSON.
+const LEGACY_SECRET_PATHS: [(RemoteServer, &str); 2] = [
+    (RemoteServer::Ollama, "/settings/llm/ollamaAuthHeaderValue"),
+    (
+        RemoteServer::LlamaCpp,
+        "/settings/llm/llamaCpp/authHeaderValue",
+    ),
+];
+
+/// The non-blank legacy values in a raw settings file.
+pub(super) fn legacy_secrets(raw: &serde_json::Value) -> Vec<(RemoteServer, &'static str, String)> {
+    LEGACY_SECRET_PATHS
+        .iter()
+        .filter_map(|(server, path)| {
+            let value = raw.pointer(path)?.as_str()?.trim();
+            (!value.is_empty()).then(|| (*server, *path, value.to_owned()))
+        })
+        .collect()
+}
+
 impl SettingsRepository {
+    /// The settings file as untyped JSON, when it exists and parses.
+    pub(super) async fn read_raw_settings(&self) -> Option<serde_json::Value> {
+        let content = fs::read_to_string(&self.settings_path).await.ok()?;
+        serde_json::from_str(&content).ok()
+    }
+
     /// Read settings file from disk.
     ///
     /// If the file is corrupted or has invalid format, returns default settings
@@ -58,10 +87,39 @@ impl SettingsRepository {
     /// and rewrite the temp file while the first sits between `sync_all` and
     /// `rename`, renaming half-written JSON into place. That torn file then
     /// fails to parse on the next read.
+    ///
+    /// A plaintext header value the file still holds, because the keyring has
+    /// not accepted it yet, is carried over so an unrelated save cannot lose
+    /// it.
     pub(super) async fn write_settings_file(&self, settings_file: &SettingsFile) -> Result<()> {
-        // Serialize to JSON with pretty printing
-        let json = Self::serialize_keeping_unmoved_secrets(settings_file)?;
+        let mut value = serde_json::to_value(settings_file)
+            .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
+        if let Some(raw) = self.read_raw_settings().await {
+            for (_, path, secret) in legacy_secrets(&raw) {
+                let Some((parent, key)) = path.rsplit_once('/') else {
+                    continue;
+                };
+                if let Some(serde_json::Value::Object(target)) = value.pointer_mut(parent) {
+                    target.insert(key.to_owned(), serde_json::Value::String(secret));
+                }
+            }
+        }
+        let json = serde_json::to_string_pretty(&value)
+            .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
+        self.write_json(&json).await
+    }
 
+    /// As [`Self::write_settings_file`], dropping any legacy header value.
+    pub(super) async fn write_settings_file_without_legacy(
+        &self,
+        settings_file: &SettingsFile,
+    ) -> Result<()> {
+        let json = serde_json::to_string_pretty(settings_file)
+            .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
+        self.write_json(&json).await
+    }
+
+    async fn write_json(&self, json: &str) -> Result<()> {
         let temp_path = self.unique_temp_path();
 
         // Scoped so the handle is closed before the rename.
@@ -91,32 +149,6 @@ impl SettingsRepository {
         }
 
         Ok(())
-    }
-
-    /// Serialize `settings_file`, adding back an auth header value that is
-    /// still in memory because the keyring has not taken it yet. Those fields
-    /// are never serialized, so without this the file would lose the value.
-    fn serialize_keeping_unmoved_secrets(settings_file: &SettingsFile) -> Result<String> {
-        let mut value = serde_json::to_value(settings_file)
-            .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
-        let llm = &settings_file.settings.llm;
-        for (pointer, secret) in [
-            ("/settings/llm", &llm.ollama_auth_header_value),
-            ("/settings/llm/llamaCpp", &llm.llama_cpp.auth_header_value),
-        ] {
-            let field = if pointer.ends_with("llamaCpp") {
-                "authHeaderValue"
-            } else {
-                "ollamaAuthHeaderValue"
-            };
-            if let (false, Some(serde_json::Value::Object(target))) =
-                (secret.is_empty(), value.pointer_mut(pointer))
-            {
-                target.insert(field.to_string(), serde_json::Value::String(secret.clone()));
-            }
-        }
-        serde_json::to_string_pretty(&value)
-            .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))
     }
 
     /// A temp path unique to this write, alongside the real settings file so

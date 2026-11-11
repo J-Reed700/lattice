@@ -98,7 +98,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
         }
     }
     let client = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?.into_port().await,
+        inner: LlamaCppLlm::new(&config, None)?.into_port().await,
         call: std::sync::atomic::AtomicUsize::new(0),
         replay_draft: std::env::var("LATTICE_OUTLINE_REPLAY_DRAFT")
             .ok()

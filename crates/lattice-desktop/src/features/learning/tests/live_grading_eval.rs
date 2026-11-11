@@ -315,7 +315,7 @@ pub(in crate::features::learning::tests) async fn model() -> Result<Arc<dyn LLMP
             }
         }
     }
-    Ok(LlamaCppLlm::new(&config)?.schedule(&schedulers).await)
+    Ok(LlamaCppLlm::new(&config, None)?.schedule(&schedulers).await)
 }
 
 #[tokio::test]

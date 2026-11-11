@@ -652,10 +652,11 @@ async fn live_quiz_grading_eval() -> Result<()> {
         .flatten()
         .filter_map(|item| item["id"].as_str().map(|id| (id.to_owned(), item.clone())))
         .collect();
-    let (url, auth) = recipe.connection(&env)?;
-    let settings = recipe.llm_settings(&url, auth.as_ref())?;
-    let identity = probe(&settings, recipe.server.expected_slots).await?;
-    let model = ObservedModel::new(&settings, dir.clone(), next_call(&dir)?).await?;
+    let (url, header) = recipe.connection(&env)?;
+    let settings = recipe.llm_settings(&url, header.as_ref())?;
+    let identity = probe(&settings, header.as_ref(), recipe.server.expected_slots).await?;
+    let model =
+        ObservedModel::with_header(&settings, header, dir.clone(), next_call(&dir)?).await?;
     let recipe_sha = sha256_hex(recipe_text.as_bytes());
     let previous = read_json(&dir.join("run.json"))?;
     if let Some(previous) = &previous {

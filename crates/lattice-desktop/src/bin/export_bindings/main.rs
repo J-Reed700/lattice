@@ -486,6 +486,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::interfaces::commands::cloud_models::get_model_limits,
             lattice::features::settings::plugin::test_ollama_connection,
             lattice::features::settings::plugin::save_remote_auth_header_value,
+            lattice::features::settings::plugin::get_remote_auth_header_status,
             lattice::interfaces::commands::model_setup::test_llama_cpp_connection,
             lattice::features::settings::plugin::test_custom_tool,
             lattice::features::settings::plugin::get_settings,

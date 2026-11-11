@@ -141,7 +141,11 @@ fn a_remote_server_and_its_key_come_from_the_named_variables_and_stay_out_of_rec
     };
     let (url, auth) = recipe.connection(&env).unwrap();
     assert_eq!(url, "https://models.example");
-    assert_eq!(auth, Some(("X-Key".to_owned(), "secret-value".to_owned())));
+    assert_eq!(
+        auth.as_ref()
+            .map(|header| (header.name.as_str(), header.value.as_str())),
+        Some(("X-Key", "secret-value"))
+    );
     let settings = recipe.llm_settings(&url, auth.as_ref()).unwrap();
     assert_eq!(settings.llama_cpp.auth_header_name, "X-Key");
     let recorded = recorded_settings(&settings).unwrap().to_string();

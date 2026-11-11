@@ -2,6 +2,7 @@
 //! lookup every caller shares.
 
 use lattice_core::application::ports::credentials_port::CredentialsPort;
+use lattice_core::application::ports::llm_port::RemoteServer;
 use lattice_core::shared::error::Result;
 
 /// A credential other than a cloud provider's API key, which is stored under
@@ -19,6 +20,14 @@ impl CredentialKey {
         CredentialKey::OllamaAuthHeader,
         CredentialKey::LlamaCppAuthHeader,
     ];
+
+    /// Where the auth header value of `server` is kept.
+    pub const fn for_server(server: RemoteServer) -> Self {
+        match server {
+            RemoteServer::Ollama => CredentialKey::OllamaAuthHeader,
+            RemoteServer::LlamaCpp => CredentialKey::LlamaCppAuthHeader,
+        }
+    }
 
     pub const fn as_str(self) -> &'static str {
         match self {

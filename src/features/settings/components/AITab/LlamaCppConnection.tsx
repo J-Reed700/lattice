@@ -11,15 +11,15 @@ import { useLlmSettings } from './useLlmSettings';
 
 
 const DEFAULT_CONNECTION: LlamaCppSettingsDto = {
-  url: 'http://localhost:8080', model: '', authHeaderName: '', authHeaderValueSet: false,
+  url: 'http://localhost:8080', model: '', authHeaderName: '',
 };
 
 export function LlamaCppConnection() {
   const api = useApi();
-  const { llmSettings, saveLlmUpdates, saveAuthHeaderValue } = useLlmSettings();
+  const { llmSettings, authValueSet, saveLlmUpdates, saveAuthHeaderValue } = useLlmSettings();
   const saved = llmSettings?.llamaCpp;
   const [draft, setDraft] = useState<LlamaCppSettingsDto>(saved ?? DEFAULT_CONNECTION);
-  // The value is write-only: the saved one never comes back, only whether one is set.
+  // The value is write-only: the saved one never comes back, only whether one is set (`authValueSet`).
   const [valueDraft, setValueDraft] = useState('');
   const [models, setModels] = useState<string[]>([]);
   const [testing, setTesting] = useState(false);
@@ -29,7 +29,7 @@ export function LlamaCppConnection() {
     setDraft(current => ({ ...current, [field]: value }));
     setModels([]);
   };
-  const stored = saved?.authHeaderValueSet ?? false;
+  const stored = authValueSet.llamaCpp;
   const typedValue = valueDraft.trim();
   const connection = { url: draft.url.trim(), model: draft.model.trim(),
     authHeaderName: draft.authHeaderName.trim() };

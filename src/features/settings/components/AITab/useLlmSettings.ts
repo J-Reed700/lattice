@@ -9,11 +9,13 @@
  * cache is what makes it a single fetch.
  */
 
+import { QueryClientContext } from '@tanstack/react-query';
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef } from 'react';
 
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { useApi } from '@/contexts/ApiContext';
-import type { JsonValue, RemoteServer } from '@/lib/bindings';
+import { NO_REMOTE_AUTH, REMOTE_AUTH_STATUS_QUERY_KEY, useRemoteAuthStatus } from '@/features/settings/hooks/useRemoteAuthStatus';
+import type { JsonValue, RemoteAuthStatusDto, RemoteServer } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
@@ -21,7 +23,9 @@ export type LlmSettingsContextValue = {
   llmSettings: ApiLLMSettings | null;
   isLoading: boolean;
   saveLlmUpdates: (updates: Partial<ApiLLMSettings>) => Promise<boolean>;
-  /** Store (or with null, delete) a remote server's auth header value. Write-only: settings report whether one is set. */
+  /** Whether the keyring holds an auth header value for each remote server. */
+  authValueSet: RemoteAuthStatusDto;
+  /** Store (or with null, delete) a remote server's auth header value. Write-only: `authValueSet` reports whether one is set. */
   saveAuthHeaderValue: (server: RemoteServer, value: string | null) => Promise<boolean>;
   /** Re-read the settings after a failed load. Backs the "Retry" affordance. */
   reload: () => void;
@@ -33,6 +37,8 @@ export function useLlmSettingsProvider(): LlmSettingsContextValue {
   const api = useApi();
   const { data, isPending, error, refetch } = useSettingsQuery();
   const { mutateAsync } = useUpdateSettingsMutation();
+  const queryClient = useContext(QueryClientContext);
+  const { data: authValueSet = NO_REMOTE_AUTH } = useRemoteAuthStatus();
 
   const llmSettings = data?.llm ?? null;
 
@@ -74,15 +80,18 @@ export function useLlmSettingsProvider(): LlmSettingsContextValue {
         toast.error('Failed to update the authentication header', { message: result.error });
         return false;
       }
-      await refetch();
+      await Promise.all([
+        refetch(),
+        queryClient?.invalidateQueries({ queryKey: REMOTE_AUTH_STATUS_QUERY_KEY }),
+      ]);
       return true;
     },
-    [api, refetch]
+    [api, refetch, queryClient]
   );
 
   return useMemo(
-    () => ({ llmSettings, isLoading: isPending, saveLlmUpdates, saveAuthHeaderValue, reload }),
-    [llmSettings, isPending, saveLlmUpdates, saveAuthHeaderValue, reload]
+    () => ({ llmSettings, isLoading: isPending, authValueSet, saveLlmUpdates, saveAuthHeaderValue, reload }),
+    [llmSettings, isPending, authValueSet, saveLlmUpdates, saveAuthHeaderValue, reload]
   );
 }
 

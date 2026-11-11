@@ -1,129 +1,75 @@
 //! The authentication header of a remote model server. Its name lives in
 //! settings; its value lives in the keyring and is read here, at the moment a
-//! connection is made.
+//! connection is made. Nothing else holds the value.
 
 use super::keys::CredentialKey;
-use lattice_core::application::contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto};
 use lattice_core::application::ports::credentials_port::CredentialsPort;
-use lattice_core::shared::error::Result;
+use lattice_core::application::ports::llm_port::{RemoteHeader, RemoteServer};
+use lattice_core::shared::error::{AppError, Result};
 
-/// The value of the header stored under `key`. A value still carried by the
-/// settings (a legacy file whose move to the keyring has not yet succeeded)
-/// is used until the keyring has it.
-async fn header_value(
-    credentials: &dyn CredentialsPort,
-    key: CredentialKey,
-    in_settings: &str,
-) -> Result<String> {
-    if !in_settings.trim().is_empty() {
-        return Ok(in_settings.trim().to_owned());
-    }
-    Ok(credentials
-        .get_api_key(key.as_str())
-        .await?
-        .unwrap_or_default()
-        .trim()
-        .to_owned())
+fn pairing_error() -> AppError {
+    AppError::InvalidConfig("Set both authentication header fields, or clear both".into())
 }
 
-/// The Ollama header as `(name, value)`, when both are set.
-pub async fn ollama_auth_header(
+async fn stored_value(
     credentials: &dyn CredentialsPort,
-    settings: &LLMSettingsDto,
-) -> Result<Option<(String, String)>> {
-    let name = settings.ollama_auth_header_name.trim();
+    server: RemoteServer,
+) -> Result<Option<String>> {
+    Ok(credentials
+        .get_api_key(CredentialKey::for_server(server).as_str())
+        .await?
+        .map(|value| value.trim().to_owned())
+        .filter(|value| !value.is_empty()))
+}
+
+/// The header to send to `server`, whose configured header name is `name`.
+/// No name means no header; a name with no stored value is a configuration
+/// the user has to finish.
+pub async fn header(
+    credentials: &dyn CredentialsPort,
+    server: RemoteServer,
+    name: &str,
+) -> Result<Option<RemoteHeader>> {
+    let name = name.trim();
     if name.is_empty() {
         return Ok(None);
     }
-    let value = header_value(
-        credentials,
-        CredentialKey::OllamaAuthHeader,
-        &settings.ollama_auth_header_value,
-    )
-    .await?;
-    Ok((!value.is_empty()).then(|| (name.to_owned(), value)))
-}
-
-/// `connection` with its header value filled in from the keyring.
-pub async fn resolved_llama_cpp(
-    credentials: &dyn CredentialsPort,
-    connection: &LlamaCppSettingsDto,
-) -> Result<LlamaCppSettingsDto> {
-    let mut resolved = connection.clone();
-    resolved.auth_header_value = if connection.auth_header_name.trim().is_empty() {
-        String::new()
-    } else {
-        header_value(
-            credentials,
-            CredentialKey::LlamaCppAuthHeader,
-            &connection.auth_header_value,
-        )
-        .await?
-    };
-    Ok(resolved)
-}
-
-/// Whether the Ollama header has a value, wherever it is held.
-pub async fn ollama_value_is_set(
-    credentials: &dyn CredentialsPort,
-    settings: &LLMSettingsDto,
-) -> Result<bool> {
-    Ok(!header_value(
-        credentials,
-        CredentialKey::OllamaAuthHeader,
-        &settings.ollama_auth_header_value,
-    )
-    .await?
-    .is_empty())
-}
-
-/// Whether the llama.cpp header has a value, wherever it is held.
-pub async fn llama_cpp_value_is_set(
-    credentials: &dyn CredentialsPort,
-    connection: &LlamaCppSettingsDto,
-) -> Result<bool> {
-    Ok(!header_value(
-        credentials,
-        CredentialKey::LlamaCppAuthHeader,
-        &connection.auth_header_value,
-    )
-    .await?
-    .is_empty())
-}
-
-/// The stored Ollama value for a connection test that names the saved header
-/// and leaves the value blank, so a test does not need the secret retyped.
-pub async fn saved_ollama_value_for(
-    credentials: &dyn CredentialsPort,
-    saved: &LLMSettingsDto,
-    name: &str,
-) -> Result<String> {
-    let name = name.trim();
-    if name.is_empty() || name != saved.ollama_auth_header_name.trim() {
-        return Ok(String::new());
+    match stored_value(credentials, server).await? {
+        Some(value) => Ok(Some(RemoteHeader {
+            name: name.to_owned(),
+            value,
+        })),
+        None => Err(pairing_error()),
     }
-    header_value(
-        credentials,
-        CredentialKey::OllamaAuthHeader,
-        &saved.ollama_auth_header_value,
-    )
-    .await
 }
 
-/// The llama.cpp counterpart of `saved_ollama_value_for`.
-pub async fn saved_llama_cpp_value_for(
+/// Whether `server` has a header value stored.
+pub async fn is_set(credentials: &dyn CredentialsPort, server: RemoteServer) -> Result<bool> {
+    Ok(stored_value(credentials, server).await?.is_some())
+}
+
+/// The header for a connection test. A typed value is used as given; a blank
+/// one means "the stored value" when `name` is the saved header name.
+pub async fn header_for_test(
     credentials: &dyn CredentialsPort,
-    saved: &LlamaCppSettingsDto,
+    server: RemoteServer,
     name: &str,
-) -> Result<String> {
+    typed_value: &str,
+    saved_name: &str,
+) -> Result<Option<RemoteHeader>> {
     let name = name.trim();
-    if name.is_empty() || name != saved.auth_header_name.trim() {
-        return Ok(String::new());
+    let typed = typed_value.trim();
+    if !typed.is_empty() {
+        if name.is_empty() {
+            return Err(pairing_error());
+        }
+        return Ok(Some(RemoteHeader {
+            name: name.to_owned(),
+            value: typed.to_owned(),
+        }));
     }
-    header_value(
-        credentials,
-        CredentialKey::LlamaCppAuthHeader,
-        &saved.auth_header_value,
-    )
-    .await
+    if !name.is_empty() && name != saved_name.trim() {
+        return Err(pairing_error());
+    }
+    header(credentials, server, name).await
 }

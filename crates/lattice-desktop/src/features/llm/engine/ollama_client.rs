@@ -34,7 +34,8 @@ use crate::features::llm::engine::GenerationConfig;
 use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
 use crate::features::llm::scheduler::{ScheduledLlm, SchedulerRegistry};
 use lattice_core::application::ports::llm_port::{
-    CompletionInput, CompletionRequest, CompletionResponse, ContentPart, ServedTiming, ThinkingMode,
+    CompletionInput, CompletionRequest, CompletionResponse, ContentPart, RemoteHeader,
+    ServedTiming, ThinkingMode,
 };
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::models::vision::VisionGeometry;
@@ -124,17 +125,17 @@ impl OllamaClient {
         )
     }
 
-    /// As [`Self::with_model_and_timeouts`], with an optional `(name, value)`
-    /// header sent on every request.
+    /// As [`Self::with_model_and_timeouts`], with an optional header sent on
+    /// every request.
     pub fn with_model_and_timeouts_and_header(
         base_url: impl Into<String>,
         model_name: impl Into<String>,
         timeout: Duration,
         stream_timeout: Duration,
-        auth_header: Option<(String, String)>,
+        auth_header: Option<RemoteHeader>,
     ) -> Result<Self> {
         let mut builder = reqwest_client_builder();
-        if let Some((name, value)) = auth_header {
+        if let Some(RemoteHeader { name, value }) = auth_header {
             let header_name = HeaderName::from_bytes(name.trim().as_bytes()).map_err(|e| {
                 AppError::InvalidInput(format!("Invalid Ollama header name: {}", e))
             })?;

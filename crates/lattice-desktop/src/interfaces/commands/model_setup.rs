@@ -188,24 +188,21 @@ pub async fn test_llama_cpp_connection(
     container: tauri::State<'_, Container>,
     request: TestLlamaCppConnectionRequest,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
-    let mut connection = lattice_core::application::contracts::settings::LlamaCppSettingsDto {
+    let saved = container.get_settings_use_case().execute().await?;
+    let header = crate::features::credentials::remote_auth::header_for_test(
+        container.credentials().as_ref(),
+        lattice_core::application::ports::llm_port::RemoteServer::LlamaCpp,
+        &request.auth_header_name,
+        &request.auth_header_value,
+        &saved.llm.llama_cpp.auth_header_name,
+    )
+    .await?;
+    let connection = lattice_core::application::contracts::settings::LlamaCppSettingsDto {
         url: request.url,
         model: request.model,
         auth_header_name: request.auth_header_name,
-        auth_header_value: request.auth_header_value,
-        ..Default::default()
     };
-    if connection.auth_header_value.trim().is_empty() {
-        let saved = container.get_settings_use_case().execute().await?;
-        connection.auth_header_value =
-            crate::features::credentials::remote_auth::saved_llama_cpp_value_for(
-                container.credentials().as_ref(),
-                &saved.llm.llama_cpp,
-                &connection.auth_header_name,
-            )
-            .await?;
-    }
-    let models = LlamaCppLlm::test_connection(&connection)
+    let models = LlamaCppLlm::test_connection(&connection, header)
         .await
         .map_err(ApiError::from)?;
     Ok(TestOllamaConnectionResponse {

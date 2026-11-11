@@ -34,6 +34,7 @@ const cases: Case[] = [
   ['validateFolderPath', () => settingsApi.validateFolderPath('/archives'), 'validate_folder_path', { path: '/archives' }],
   ['testLlamaCppConnection', () => settingsApi.testLlamaCppConnection({ baseUrl: 'http://h' } as never), 'test_llama_cpp_connection', { request: { baseUrl: 'http://h' } }],
   ['testOllamaConnection', () => settingsApi.testOllamaConnection({ baseUrl: 'http://h' } as never), 'test_ollama_connection', { request: { baseUrl: 'http://h' } }],
+  ['getRemoteAuthHeaderStatus', () => settingsApi.getRemoteAuthHeaderStatus(), 'get_remote_auth_header_status', {}],
   ['saveRemoteAuthHeaderValue', () => settingsApi.saveRemoteAuthHeaderValue('llamaCpp', 'Basic x'), 'save_remote_auth_header_value', { server: 'llamaCpp', value: 'Basic x' }],
   ['testCustomTool', () => settingsApi.testCustomTool({ name: 'tide' } as never), 'test_custom_tool', { request: { name: 'tide' } }],
   ['setCloudApiKey', () => settingsApi.setCloudApiKey('openai', 'sk'), 'set_cloud_api_key', { provider: 'openai', key: 'sk' }],

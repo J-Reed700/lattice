@@ -3774,6 +3774,14 @@ async saveRemoteAuthHeaderValue(server: RemoteServer, value: string | null) : Pr
     else return { status: "error", error: e  as any };
 }
 },
+async getRemoteAuthHeaderStatus() : Promise<Result<RemoteAuthStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_remote_auth_header_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async testLlamaCppConnection(request: TestLlamaCppConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_llama_cpp_connection", { request }) };
@@ -7367,11 +7375,6 @@ ollamaUtilityModel: string;
  */
 ollamaAuthHeaderName: string;
 /**
- * Whether an Ollama auth header value is held. The value itself is a
- * credential in the keyring and never reaches the renderer.
- */
-ollamaAuthHeaderValueSet: boolean;
-/**
  * Independent remote llama.cpp connection; switching providers retains both.
  */
 llamaCpp: LlamaCppSettingsDto;
@@ -8927,15 +8930,7 @@ export type ListWorkspaceNotesRequestDto = {
  */
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
-export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; 
-/**
- * Whether a header value is held. Filled in when settings are read for
- * the renderer; not a stored fact.
- */
-authHeaderValueSet: boolean }
-/**
- * A model loaded right now, for diagnostics.
- */
+export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string }
 export type LoadedModelDto = { model: ModelRef; provider: string; context_tokens: number;
 /**
  * Turns and jobs holding it now.
@@ -9523,6 +9518,11 @@ total_functions: number;
  */
 call_counts: { [key in string]: number } }
 export type ReimportLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number; replacementText: string | null }
+/**
+ * Whether each remote server has an authentication header value stored.
+ * The values themselves never leave the keyring.
+ */
+export type RemoteAuthStatusDto = { ollama: boolean; llamaCpp: boolean }
 /**
  * A model server the user runs and connects to over the network.
  */

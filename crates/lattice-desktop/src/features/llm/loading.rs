@@ -6,7 +6,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::features::credentials::keys::cloud_api_key;
-use crate::features::credentials::remote_auth::{ollama_auth_header, resolved_llama_cpp};
+use crate::features::credentials::remote_auth;
 use crate::features::llm::cloud::limits::{ceiling_to_send, ReportedLimits};
 use crate::features::llm::engine::factory::{CreatedLlm, LLMConfig, LocalServerOptions};
 use crate::features::llm::engine::system::BackendDevices;
@@ -18,6 +18,7 @@ use crate::features::llm::scheduler::SchedulerRegistry;
 use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto, ModelWindowDto};
 use lattice_core::application::ports::active_models::ActiveModels;
 use lattice_core::application::ports::credentials_port::CredentialsPort;
+use lattice_core::application::ports::llm_port::RemoteServer;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::chat_model_resolution::{
     cloud_provider_id, cloud_provider_name,
@@ -259,10 +260,14 @@ impl ModelLoader {
             ModelRef::LlamaCpp { model: name } => {
                 let mut connection = with_generation(settings, &generation);
                 connection.llama_cpp.model = name.clone();
-                connection.llama_cpp =
-                    resolved_llama_cpp(self.credentials.as_ref(), &connection.llama_cpp).await?;
+                let header = remote_auth::header(
+                    self.credentials.as_ref(),
+                    RemoteServer::LlamaCpp,
+                    &connection.llama_cpp.auth_header_name,
+                )
+                .await?;
                 Ok(remote(
-                    crate::features::llm::llama_cpp::LlamaCppLlm::new(&connection)?
+                    crate::features::llm::llama_cpp::LlamaCppLlm::new(&connection, header)?
                         .with_vision(declared_vision(settings, model))
                         .schedule(&self.runtime.schedulers)
                         .await,
@@ -381,7 +386,12 @@ impl ModelLoader {
                 "The Ollama model is not configured. Choose one in Settings → Chat.".into(),
             ));
         }
-        let auth_header = ollama_auth_header(self.credentials.as_ref(), settings).await?;
+        let auth_header = remote_auth::header(
+            self.credentials.as_ref(),
+            RemoteServer::Ollama,
+            &settings.ollama_auth_header_name,
+        )
+        .await?;
 
         tracing::info!(endpoint, model, "Connecting to Ollama");
         let model_ref = ModelRef::Ollama {

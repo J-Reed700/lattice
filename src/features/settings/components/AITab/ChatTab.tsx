@@ -37,7 +37,7 @@ const PROVIDERS: Array<{ value: ApiLLMSettings["provider"]; label: string }> = [
 
 export function ChatTab() {
   const api = useApi();
-  const { llmSettings, isLoading, saveLlmUpdates, saveAuthHeaderValue, reload } = useLlmSettings();
+  const { llmSettings, isLoading, authValueSet, saveLlmUpdates, saveAuthHeaderValue, reload } = useLlmSettings();
   const [ollamaUrlDraft, setOllamaUrlDraft] = useState("");
   const [ollamaModelDraft, setOllamaModelDraft] = useState("");
   const [ollamaUtilityModelDraft, setOllamaUtilityModelDraft] = useState("");
@@ -65,10 +65,10 @@ export function ChatTab() {
     setOllamaUtilityModelDraft(llmSettings.ollamaUtilityModel || "");
     setOllamaHeaderNameDraft(llmSettings.ollamaAuthHeaderName || "");
     setOllamaHeaderValueDraft("");
-    if (llmSettings.ollamaAuthHeaderName || llmSettings.ollamaAuthHeaderValueSet) {
+    if (llmSettings.ollamaAuthHeaderName || authValueSet.ollama) {
       setShowOllamaAuth(true);
     }
-  }, [llmSettings]);
+  }, [llmSettings, authValueSet.ollama]);
 
   const provider = llmSettings?.provider ?? "auto";
   const showOllamaSettings = provider === "ollama" || provider === "auto";
@@ -98,8 +98,8 @@ export function ChatTab() {
   const trimmedHeaderName = ollamaHeaderNameDraft.trim();
   const trimmedHeaderValue = ollamaHeaderValueDraft.trim();
   // The value is write-only: the saved one never comes back, only whether
-  // one is set, so a blank value field means "keep the stored one".
-  const headerValueStored = llmSettings?.ollamaAuthHeaderValueSet ?? false;
+  // one is set (`authValueSet`), so a blank value field means "keep the stored one".
+  const headerValueStored = authValueSet.ollama;
   const isHeaderPartialPair =
     (trimmedHeaderName !== "" && trimmedHeaderValue === "" && !headerValueStored) ||
     (trimmedHeaderName === "" && trimmedHeaderValue !== "");

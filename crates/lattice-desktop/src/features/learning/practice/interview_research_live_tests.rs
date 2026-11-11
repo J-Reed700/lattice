@@ -12,7 +12,7 @@ use lattice_core::application::{
         settings::{LLMSettingsDto, LlamaCppSettingsDto},
         web::{FetchUrlContentOutput, WebSearchInput, WebSearchOutput, WebSearchResult},
     },
-    ports::{LLMPort, WebServiceTrait},
+    ports::{llm_port::RemoteHeader, LLMPort, WebServiceTrait},
 };
 use lattice_core::domain::learning::claim_review::SourceAddedBy;
 use lattice_core::shared::error::{AppError, Result};
@@ -47,22 +47,27 @@ async fn live_client() -> Result<Arc<dyn LLMPort>> {
         .filter(|value| *value > 0)
         .unwrap_or(300);
     match provider.as_str() {
-        "llama_cpp" => Ok(LlamaCppLlm::new(&LLMSettingsDto {
-            context_window: std::env::var("LATTICE_LEARNING_EVAL_CONTEXT_TOKENS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .filter(|value: &u32| *value > 0)
-                .unwrap_or(32_768),
-            timeout_seconds: timeout,
-            llama_cpp: LlamaCppSettingsDto {
-                url: endpoint,
-                model,
-                auth_header_name: name,
-                auth_header_value: value,
+        "llama_cpp" => Ok(LlamaCppLlm::new(
+            &LLMSettingsDto {
+                context_window: std::env::var("LATTICE_LEARNING_EVAL_CONTEXT_TOKENS")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .filter(|value: &u32| *value > 0)
+                    .unwrap_or(32_768),
+                timeout_seconds: timeout,
+                llama_cpp: LlamaCppSettingsDto {
+                    url: endpoint,
+                    model,
+                    auth_header_name: name.clone(),
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        })?
+            (!name.is_empty()).then(|| RemoteHeader {
+                name: name.clone(),
+                value: value.clone(),
+            }),
+        )?
         .into_port()
         .await),
         "ollama" => Ok(OllamaClient::with_model_and_timeouts_and_header(
@@ -70,7 +75,7 @@ async fn live_client() -> Result<Arc<dyn LLMPort>> {
             model,
             Duration::from_secs(30),
             Duration::from_secs(u64::from(timeout)),
-            (!name.is_empty()).then_some((name, value)),
+            (!name.is_empty()).then_some(RemoteHeader { name, value }),
         )?
         .into_port()),
         _ => Err(invalid("Unsupported live research evaluation provider.")),

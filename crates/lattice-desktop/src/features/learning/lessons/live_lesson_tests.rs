@@ -270,8 +270,25 @@ impl ObservedModel {
         directory: std::path::PathBuf,
         first_call: usize,
     ) -> Result<Self> {
+        let header = (!settings.llama_cpp.auth_header_name.trim().is_empty()).then(|| {
+            lattice_core::application::ports::llm_port::RemoteHeader {
+                name: settings.llama_cpp.auth_header_name.clone(),
+                value: std::env::var("LATTICE_LLAMACPP_AUTH_HEADER_VALUE").unwrap_or_default(),
+            }
+        });
+        Self::with_header(settings, header, directory, first_call).await
+    }
+
+    async fn with_header(
+        settings: &lattice_core::application::contracts::settings::LLMSettingsDto,
+        header: Option<lattice_core::application::ports::llm_port::RemoteHeader>,
+        directory: std::path::PathBuf,
+        first_call: usize,
+    ) -> Result<Self> {
         let schedulers = crate::features::llm::scheduler::SchedulerRegistry::default();
-        let inner = LlamaCppLlm::new(settings)?.schedule(&schedulers).await;
+        let inner = LlamaCppLlm::new(settings, header)?
+            .schedule(&schedulers)
+            .await;
         Ok(Self::observing(inner, directory, first_call))
     }
 

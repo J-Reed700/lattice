@@ -29,6 +29,7 @@ export async function installShell(page: Page): Promise<ShellBackend> {
   const settings = makeAppSettings();
   const served = await serveCommands(page, () => ({
     get_settings: () => settings,
+    get_remote_auth_header_status: () => ({ ollama: false, llamaCpp: false }),
     initialize_database: () => 'ready',
     list_downloads: () => [],
     // Iris, in the rail, lists what is running and counts the flashcards due.

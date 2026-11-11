@@ -328,7 +328,6 @@ async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_
                 url: server.uri(),
                 model: "stale-llama-cpp-model".into(),
                 auth_header_name: "Authorization".into(),
-                auth_header_value: "Basic test-credential".into(),
                 ..Default::default()
             },
             ..Default::default()
@@ -1169,7 +1168,7 @@ mod local_reply_ceiling_on_the_wire {
             },
             ..settings.clone()
         };
-        let client = crate::features::llm::llama_cpp::LlamaCppLlm::new(&settings)
+        let client = crate::features::llm::llama_cpp::LlamaCppLlm::new(&settings, None)
             .unwrap()
             .schedule(&SchedulerRegistry::default())
             .await;
