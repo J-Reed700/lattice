@@ -170,11 +170,34 @@ async fn a_thing_taught_after_its_use_in_the_same_part_has_no_second_part() {
     assert_eq!(findings.len(), 1, "{findings:?}");
     assert_eq!(findings[0].site, Some(FindingSite::Section(1)));
     assert!(findings[0].also.is_none());
+    let expected = format!(
+        "This step teaches it only after it is used (\"{DEFINED}\"). Move that teaching before the words that use it ({EACH_SHOWN}), so that the lesson teaches it once."
+    );
     assert!(
-        findings[0].note.contains("in section 2 (\""),
+        findings[0].note.ends_with(&expected),
         "{}",
         findings[0].note
     );
+}
+
+#[tokio::test]
+async fn a_guarded_use_taught_later_keeps_its_words_and_takes_the_teaching_beside_them() {
+    let inner = scripted(vec![]);
+    let model = model_answering(&inner, vec![entry("the fold", &[FLAT], DEFINED)]);
+    let candidate = lesson([
+        "Press the fold flat to begin.",
+        "Hold the sheet.",
+        "A fold is a crease made by bending the sheet back on itself.",
+    ]);
+    let guarded = [protected_sentence(0, "Press the fold flat to begin")];
+    let findings = found(&model, &candidate, &guarded).await;
+    assert_eq!(findings.len(), 1, "{findings:?}");
+    let finding = &findings[0];
+    assert_eq!(finding.also, Some(FindingSite::Section(2)));
+    let expected = format!(
+        "The lesson teaches it only afterwards, in section 3 (\"{DEFINED}\"). Move that teaching to this step, where it is first used ({EACH_SHOWN}), so that the lesson teaches it once. The words that use it stay exactly as they are."
+    );
+    assert!(finding.note.ends_with(&expected), "{}", finding.note);
 }
 
 #[tokio::test]
