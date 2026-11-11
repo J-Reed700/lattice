@@ -30,7 +30,7 @@ use std::sync::Arc;
 pub(crate) async fn require_embedding_ready(
     loaded: AppResult<Arc<dyn EmbeddingPort>>,
 ) -> AppResult<()> {
-    crate::features::embedding::readiness::require_loaded_ready(loaded).await
+    lattice_core::application::ports::require_loaded_ready(loaded).await
 }
 
 async fn ensure_embedding_ready(container: &Container) -> AppResult<()> {

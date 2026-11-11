@@ -29,7 +29,6 @@ pub mod llama_cpp;
 pub(crate) mod loading;
 pub mod plugin;
 pub mod prefixes;
-pub(crate) mod readiness;
 pub mod repository;
 pub(crate) mod runtime;
 pub mod service;

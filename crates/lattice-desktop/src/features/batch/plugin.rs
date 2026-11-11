@@ -31,10 +31,8 @@ fn imports(container: &Container) -> BatchImports {
 /// An import waits for the embedding model, so starting one without a model
 /// that can load is refused up front.
 async fn require_embedding(container: &Container) -> Result<(), AppError> {
-    crate::features::embedding::readiness::require_loaded_ready(
-        container.get_or_load_embedding().await,
-    )
-    .await
+    lattice_core::application::ports::require_loaded_ready(container.get_or_load_embedding().await)
+        .await
 }
 
 #[tauri::command]

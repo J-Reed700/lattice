@@ -16,8 +16,7 @@ pub(crate) struct UrlImporter {
 #[async_trait]
 impl ItemImporter for UrlImporter {
     async fn prepare(&self, _context: &JobContext) -> Result<()> {
-        crate::features::embedding::readiness::require_loaded_ready((self.load_embedding)().await)
-            .await
+        lattice_core::application::ports::require_loaded_ready((self.load_embedding)().await).await
     }
 
     async fn import(&self, context: &JobContext, item: &BatchItem) -> Result<ItemResult> {

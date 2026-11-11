@@ -116,10 +116,8 @@ pub async fn ingest_web_url(
 
     // Ensure embedding model is available before starting ingestion.
     // This pre-loads the active embedding model into cache if configured.
-    crate::features::embedding::readiness::require_loaded_ready(
-        container.get_or_load_embedding().await,
-    )
-    .await?;
+    lattice_core::application::ports::require_loaded_ready(container.get_or_load_embedding().await)
+        .await?;
 
     // 1. Get use case
     let ingest_use_case = container.ingest_web_url_use_case();

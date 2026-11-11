@@ -1,12 +1,12 @@
 //! The one readiness gate every path that embeds applies first.
 
-use lattice_core::application::ports::EmbeddingPort;
-use lattice_core::shared::error::{AppError, Result};
+use super::EmbeddingPort;
+use crate::shared::error::{AppError, Result};
 use std::sync::Arc;
 
 /// Refuses a port that cannot embed: with the error its model failed to load
 /// with when it has one, otherwise as not ready yet.
-pub(crate) async fn require_ready(port: &dyn EmbeddingPort) -> Result<()> {
+pub async fn require_ready(port: &dyn EmbeddingPort) -> Result<()> {
     if let Some(error) = port.load_failure() {
         return Err(error);
     }
@@ -24,7 +24,7 @@ pub(crate) async fn require_ready(port: &dyn EmbeddingPort) -> Result<()> {
 
 /// [`require_ready`] over the result of loading the active model; a failed
 /// load call is `ServiceNotAvailable` for every caller.
-pub(crate) async fn require_loaded_ready(loaded: Result<Arc<dyn EmbeddingPort>>) -> Result<()> {
+pub async fn require_loaded_ready(loaded: Result<Arc<dyn EmbeddingPort>>) -> Result<()> {
     let port = loaded.map_err(|e| {
         AppError::ServiceNotAvailable(format!("Could not load the active embedding model: {}", e))
     })?;
@@ -34,7 +34,7 @@ pub(crate) async fn require_loaded_ready(loaded: Result<Arc<dyn EmbeddingPort>>)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use lattice_core::application::ports::UnavailableEmbedding;
+    use crate::application::ports::UnavailableEmbedding;
 
     fn failed() -> UnavailableEmbedding {
         UnavailableEmbedding::failed_to_load(AppError::ModelLoadFailed(
