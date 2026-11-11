@@ -545,3 +545,35 @@ mod factory_tests {
         );
     }
 }
+
+mod reading_text_tests {
+    use super::*;
+
+    #[test]
+    fn chunks_read_in_index_order_whatever_order_they_are_held_in() {
+        let document = create_test_document()
+            .from_parts(
+                vec![
+                    create_test_chunk("second", 1),
+                    create_test_chunk("first", 0),
+                ],
+                vec![],
+            )
+            .expect("a document with chunks");
+
+        assert_eq!(
+            document.reading_text(),
+            "first
+
+second"
+        );
+    }
+
+    #[test]
+    fn a_document_without_chunks_reads_as_its_content() {
+        let mut document = create_test_document();
+        document.set_content("stored text".to_string());
+
+        assert_eq!(document.reading_text(), "stored text");
+    }
+}

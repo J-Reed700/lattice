@@ -1,6 +1,6 @@
 //! Tag generation prompt and parsing helpers.
 //!
-//! Tag generation executes in `TagServiceImpl` using local LLMs. This module
+//! Tag generation executes in `TagGenerationService` using local LLMs. This module
 //! keeps prompt construction and response parsing logic in one place.
 
 use serde::{Deserialize, Serialize};

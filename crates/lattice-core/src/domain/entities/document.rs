@@ -283,6 +283,24 @@ impl Document {
         &self.content
     }
 
+    /// The document's text in reading order: chunks by index, or the stored content when unchunked.
+    pub fn reading_text(&self) -> String {
+        if self.chunks.is_empty() {
+            return self.content.clone();
+        }
+        let mut chunks: Vec<_> = self.chunks.iter().collect();
+        chunks.sort_by_key(|chunk| chunk.index());
+        chunks
+            .iter()
+            .map(|chunk| chunk.content())
+            .collect::<Vec<_>>()
+            .join(
+                "
+
+",
+            )
+    }
+
     /// Set document content.
     ///
     /// This updates the content and also resets the status to Pending for reindexing.

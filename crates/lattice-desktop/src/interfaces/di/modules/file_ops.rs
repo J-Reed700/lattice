@@ -50,10 +50,10 @@ impl FileOpsModule {
         database: Database,
         core: Arc<CoreModule>,
         extraction_workers: crate::features::indexing::engine::extraction::ExtractionWorkers,
+        tag_service: Arc<dyn TagServiceTrait>,
     ) -> lattice_core::shared::error::Result<Self> {
         use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
         use crate::features::indexing::engine::extraction::ContentExtractor;
-        use crate::features::tags::service::TagService;
         use crate::infrastructure::file_system::file_storage::SecureFileStorage;
         use crate::infrastructure::file_system::FileSystemAdapter;
         use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
@@ -69,7 +69,6 @@ impl FileOpsModule {
 
         let document_repo =
             Arc::new(DocumentRepositoryImpl::new(database.clone())) as Arc<dyn DocumentRepository>;
-        let tag_service = Arc::new(TagService::new(database.clone())) as Arc<dyn TagServiceTrait>;
 
         let library = Arc::new(SqliteFileLibrary::new(database.clone()));
         // Previews of PDFs and office files parse under the same worker bound

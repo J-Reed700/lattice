@@ -12,7 +12,7 @@ use std::sync::Arc;
 use lattice_core::shared::persistence::Database;
 
 use crate::features::tags::service::TagService;
-use crate::features::tags::service_impl::TagServiceImpl;
+use crate::features::tags::tag_generation::TagGenerationService;
 use crate::features::tags::use_cases::{
     ApplyTagsUseCase, AutoTagAllDocumentsUseCase, CreateTagUseCase, DeleteTagUseCase,
     GenerateTagsUseCase, GetTagsUseCase, RemoveTagFromDocumentUseCase, SearchByTagUseCase,
@@ -34,9 +34,13 @@ pub struct TagsDi {
     pub search_by_tag_use_case: Arc<SearchByTagUseCase>,
 }
 
-pub fn build(database: Database) -> TagsDi {
-    let tag_service = Arc::new(TagService::new(database)) as Arc<dyn TagServiceTrait>;
+/// The one tag service. Every feature that writes a document's tags is handed this
+/// instance, so they all share its per-document lock.
+pub fn build_service(database: Database) -> Arc<dyn TagServiceTrait> {
+    Arc::new(TagService::new(database))
+}
 
+pub fn build(tag_service: Arc<dyn TagServiceTrait>) -> TagsDi {
     TagsDi {
         create_tag_use_case: Arc::new(CreateTagUseCase::new(tag_service.clone())),
         update_tag_use_case: Arc::new(UpdateTagUseCase::new(tag_service.clone())),
@@ -51,23 +55,28 @@ pub fn build(database: Database) -> TagsDi {
     }
 }
 
-/// AI-powered tag wiring: uses [`TagServiceImpl`] which takes a read-only provider
-/// so generated tags come from the currently-loaded model.
+/// AI-powered tag wiring: generation reads the currently-loaded model and writes
+/// through the shared tag service.
 #[derive(Clone)]
 pub struct AiTagsDi {
     pub generate_tags_use_case: Arc<GenerateTagsUseCase>,
     pub auto_tag_all_documents_use_case: Arc<AutoTagAllDocumentsUseCase>,
 }
 
-pub fn build_ai(database: Database, model_provider: Arc<dyn LoadedChatModelPort>) -> AiTagsDi {
-    let tag_service =
-        Arc::new(TagServiceImpl::new(database, model_provider)) as Arc<dyn TagServiceTrait>;
+pub fn build_ai(
+    database: Database,
+    tag_service: Arc<dyn TagServiceTrait>,
+    model_provider: Arc<dyn LoadedChatModelPort>,
+) -> AiTagsDi {
+    let generation = Arc::new(TagGenerationService::new(
+        database,
+        tag_service,
+        model_provider,
+    ));
 
     AiTagsDi {
-        generate_tags_use_case: Arc::new(GenerateTagsUseCase::new(tag_service.clone())),
-        auto_tag_all_documents_use_case: Arc::new(AutoTagAllDocumentsUseCase::new(
-            tag_service.clone(),
-        )),
+        generate_tags_use_case: Arc::new(GenerateTagsUseCase::new(generation.clone())),
+        auto_tag_all_documents_use_case: Arc::new(AutoTagAllDocumentsUseCase::new(generation)),
     }
 }
 
@@ -176,8 +185,9 @@ mod tests {
             .await
             .unwrap();
         let database = Database::from(pool);
-        let tags = build(database.clone());
-        let ai = build_ai(database, Arc::new(Loaded));
+        let tag_service = build_service(database.clone());
+        let tags = build(tag_service.clone());
+        let ai = build_ai(database, tag_service, Arc::new(Loaded));
 
         let held = tags
             .tag_service

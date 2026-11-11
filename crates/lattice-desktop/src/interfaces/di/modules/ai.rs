@@ -33,7 +33,7 @@ use crate::infrastructure::persistence::repositories::downloaded_models::Downloa
 
 // Service Traits
 use crate::features::conversation::ConversationServiceTrait;
-use lattice_core::application::ports::LoadedChatModelPort;
+use lattice_core::application::ports::{LoadedChatModelPort, TagServiceTrait};
 
 /// AI module for LLM operations, Q&A, and conversations
 ///
@@ -73,6 +73,7 @@ impl AIModule {
         _llm_endpoint: &str,
         _llm_model: &str,
         backend_devices: Arc<crate::features::llm::engine::system::BackendDevices>,
+        tag_service: Arc<dyn TagServiceTrait>,
     ) -> lattice_core::shared::error::Result<Self> {
         let conversation = crate::features::conversation::di::build(database.clone());
 
@@ -105,7 +106,7 @@ impl AIModule {
                 model_catalog: model_catalog.clone(),
             },
         );
-        let ai_tags = crate::features::tags::di::build_ai(database, model_provider);
+        let ai_tags = crate::features::tags::di::build_ai(database, tag_service, model_provider);
         let speech = crate::features::speech::di::build(
             downloaded_models.clone()
                 as Arc<dyn lattice_core::domain::repositories::DownloadedModelRepository>,
