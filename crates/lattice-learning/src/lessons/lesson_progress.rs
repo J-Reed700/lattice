@@ -147,6 +147,20 @@ pub(crate) fn cache_key() -> Option<String> {
         .flatten()
 }
 
+/// The line last passed to [`stage`], for logs; `None` outside a lesson job.
+pub(crate) fn current_stage() -> Option<String> {
+    CURRENT
+        .try_with(|progress| {
+            progress
+                .0
+                .lock()
+                .unwrap_or_else(|e| e.into_inner())
+                .message
+                .clone()
+        })
+        .ok()
+}
+
 pub(crate) fn stage(message: impl Into<String>) {
     let message = message.into();
     let _ = CURRENT.try_with(|progress| {
