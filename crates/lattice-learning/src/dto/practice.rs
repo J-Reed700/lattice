@@ -87,7 +87,7 @@ pub struct LearningPracticeCriterionDto {
     pub max_points: i64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LearningPracticeCitationDto {
     pub source_id: String,
@@ -314,57 +314,4 @@ pub struct DecideLearningPracticeProposalRequestDto {
     pub session_id: String,
     pub expected_revision: i64,
     pub proposal_id: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct LearningPracticeProfileDto {
-    pub program_id: String,
-    pub details: String,
-    pub language: Option<String>,
-    pub interview_at: Option<i64>,
-    pub company: Option<String>,
-    pub role: Option<String>,
-    pub revision: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct SaveLearningPracticeProfileRequestDto {
-    pub program_id: String,
-    pub details: String,
-    pub language: Option<String>,
-    pub interview_at: Option<i64>,
-    pub company: Option<String>,
-    pub role: Option<String>,
-    /// The revision the learner last read; 0 for a profile never saved.
-    pub expected_revision: i64,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct GetLearningPracticeProfileRequestDto {
-    pub program_id: String,
-}
-
-/// Whether the course teaches writing, reading or debugging program code.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "snake_case")]
-pub enum CodeFit {
-    Fits,
-    DoesNotFit,
-    Checking,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PracticeFitDto {
-    pub code: CodeFit,
-    pub reason: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
-#[serde(rename_all = "camelCase")]
-pub struct PracticeFitRequestDto {
-    pub program_id: String,
 }

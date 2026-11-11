@@ -10,6 +10,9 @@ import { useLearningOutlineEvidence } from '@/features/learning/api/evidenceQuer
 import { learningQuizOverviewKey } from '@/features/learning/api/learningQueryKeys';
 import { CourseCoach } from '@/features/learning/curriculum/CourseCoach';
 import { CourseNavigator } from '@/features/learning/curriculum/CourseNavigator';
+import { CoursePlanStatus, LessonTopics } from '@/features/learning/curriculum/coursePlan/PlannedTopics';
+import { TopicsReviewScreen } from '@/features/learning/curriculum/coursePlan/TopicsReviewScreen';
+import { useCoursePlan } from '@/features/learning/curriculum/coursePlan/useCoursePlan';
 import { type CourseStep } from '@/features/learning/curriculum/courseProgress';
 import { CourseSyllabus } from '@/features/learning/curriculum/CourseSyllabus';
 import { OutlineCitation, OutlineEvidenceStatus } from '@/features/learning/curriculum/OutlineEvidence';
@@ -17,18 +20,20 @@ import { OutlineReviewPanel, type OutlineOperation } from '@/features/learning/c
 import { PlanPanel } from '@/features/learning/curriculum/PlanPanel';
 import { StartingPointPanel } from '@/features/learning/curriculum/StartingPointPanel';
 import { useLearningPlan } from '@/features/learning/curriculum/useLearningPlan';
+import { CourseDrillsPanel } from '@/features/learning/drills/CourseDrillsPanel';
 import { StudyHabitsBar, type FrameworkAction } from '@/features/learning/habits';
 import { LessonCard } from '@/features/learning/lessons/LessonCard';
 import { LessonPreparationLine } from '@/features/learning/lessons/LessonPreparationLine';
 import { LessonPreparationStatus } from '@/features/learning/lessons/LessonPreparationProgress';
-import { preparationQueue, queuedLesson } from '@/features/learning/lessons/preparationQueue';
+import { coursePreparation, coursePreparationLine, paceLine, preparationPaceMinutes, preparationQueue, queuedLesson, unqueuedLessons } from '@/features/learning/lessons/preparationQueue';
 import { currentPreparationJobs, heldLessonIds } from '@/features/learning/lessons/review/claimReviewPresentation';
 import { NotebookPanel, RecallPanel } from '@/features/learning/memory/MemoryPanels';
 import { useLearningMemory, useSaveLearningCardDraft } from '@/features/learning/memory/useLearningMemory';
 import { findOutlineCitation } from '@/features/learning/model/evidencePresentation';
 import { PortabilityPanel } from '@/features/learning/portability/PortabilityPanel';
-import { PracticeArea } from '@/features/learning/practice/home/PracticeArea';
-import { usePracticeView } from '@/features/learning/practice/home/usePracticeView';
+import { FeynmanTechniquePanel } from '@/features/learning/practice/FeynmanTechniquePanel';
+import { PracticalWorkbenchPanel } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
+import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { LessonQuizCallout } from '@/features/learning/quizzes/LessonQuizCallout';
 import { ModuleTestCallout } from '@/features/learning/quizzes/ModuleTestCallout';
 import { QuizzesOverview } from '@/features/learning/quizzes/QuizzesOverview';
@@ -56,7 +61,7 @@ const LazyCanvasPanel = lazy(() => import('@/features/learning/canvas/CanvasPane
 type Tab = StudyTab;
 type NotebookDraft = { title: string; content: string };
 
-export function ProgramWorkspace({ program, destination, outlineGeneration, initialTangentId, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, onPrepareModule, preparePending, prepareError, onComplete, completePending, completeError, onReview }: {
+export function ProgramWorkspace({ program, destination, outlineGeneration, initialTangentId, onBack, onOpenProgram, onAccept, acceptPending, acceptError, onPrepare, onPrepareModule, onLessonOpened, preparePending, prepareError, onComplete, completePending, completeError, onReview }: {
   destination?: StudyDestination;
   outlineGeneration?: OutlineOperation;
   initialTangentId?: string | null;
@@ -65,6 +70,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   onOpenProgram: (programId: string) => void;
   onPrepare: (lesson: LearningLessonDto) => void; preparePending: boolean; prepareError?: Error;
   onPrepareModule?: (module: LearningModuleDto) => void;
+  /** Called when the learner opens a prepared lesson, so the course can prepare ahead of it. */
+  onLessonOpened?: (lessonId: string) => void;
   onComplete: (lesson: LearningLessonDto) => void; completePending: boolean; completeError?: Error;
   /** Opens a lesson's claim review screen (UI design §2.3). */
   onReview?: (programId: string, lessonId: string, claimId?: string) => void;
@@ -72,17 +79,23 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const [moduleId, setModuleId] = useState(() => program.modules.find((m) => m.lessons.some((l) => l.id === program.summary.currentLessonId))?.id ?? program.modules[0]?.id ?? '');
   const [lessonId, setLessonId] = useState(program.summary.currentLessonId ?? program.modules[0]?.lessons[0]?.id ?? '');
   const [tab, setTab] = useState<Tab>('lessons');
+  const [lastPracticeTab, setLastPracticeTab] = useState<Tab>('workbench');
   const [preparationExpanded, setPreparationExpanded] = useState(false);
   const [moreOpen, setMoreOpen] = useState(false);
+  const [reviewingTopics, setReviewingTopics] = useState(false);
   const [contextVisible, setContextVisible] = useState(true);
   const moreButtonRef = useRef<HTMLButtonElement>(null);
   const moreMenuRef = useRef<HTMLDivElement>(null);
   const [canvasOpened, setCanvasOpened] = useState(false);
-  const practiceView = usePracticeView({ kind: 'home' });
+  const [practicalOpened, setPracticalOpened] = useState(false);
+  const [drillsOpened, setDrillsOpened] = useState(false);
   // The quiz open in the Quizzes tab (runner or result), and a module test row to bring into view.
   const [quizFormId, setQuizFormId] = useState<string | null>(null);
   const [quizModuleFocus, setQuizModuleFocus] = useState<string | null>(null);
+  const [projectRequest, setProjectRequest] = useState<{ id: string; brief: string } | null>(null);
+  const [writtenOpened, setWrittenOpened] = useState(false);
   const [recallView, setRecallView] = useState<'lesson' | 'evolution' | 'brain-dump'>('lesson');
+  const [workbenchMode, setWorkbenchMode] = useState<'practice' | 'feynman'>('practice');
   const saveRecallDraft = useSaveLearningCardDraft();
   const handleImported = (importedProgramId: string) => {
     // A copy or another course: land on it, which resumes at its current lesson.
@@ -90,9 +103,12 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     // Import flushes pending saves first. Retained workbenches must now discard
     // local session selections and saved lab snapshots, even when IDs/revisions
     // match the replaced course. The import panel itself stays open.
-    practiceView.reset();
+    setWrittenOpened(false);
+    setPracticalOpened(false);
+    setDrillsOpened(false);
     setCanvasOpened(false);
     setQuizFormId(null);
+    setProjectRequest(null);
     setNotebookDrafts({});
   };
   const openedDestination = useRef<StudyDestination | undefined>(undefined);
@@ -107,13 +123,15 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     }
     if (destination.formId) setQuizFormId(destination.formId);
     if (next === 'quizzes' && !destination.formId) setQuizModuleFocus(destination.lessonId ? null : destination.moduleId ?? null);
-    const resolvedTab = next === 'study' ? 'lessons' : next === 'practical' || next === 'drills' ? 'workbench' : next;
+    const resolvedTab = next === 'study' ? 'lessons' : next;
     setTab(resolvedTab);
     setMoreOpen(false);
     if (resolvedTab === 'canvas') setCanvasOpened(true);
-    if (next === 'practical') practiceView.openActivity();
-    if (next === 'drills') practiceView.openDrill();
-  }, [destination, program.modules, practiceView]);
+    if (resolvedTab === 'practical') setPracticalOpened(true);
+    if (resolvedTab === 'drills') setDrillsOpened(true);
+    if (resolvedTab === 'workbench') setWrittenOpened(true);
+    if (resolvedTab === 'workbench' || resolvedTab === 'practical' || resolvedTab === 'drills') setLastPracticeTab(resolvedTab);
+  }, [destination, program.modules]);
   const [title, setTitle] = useState(program.summary.title);
   const [notebookDrafts, setNotebookDrafts] = useState<Record<string, NotebookDraft>>({});
   // A tutor turn may add to a lesson's note; a draft kept from before would save over it.
@@ -122,6 +140,10 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const repair = useRepairLearningOutline(program.summary.id);
   const outlineBlocked = repair.isPending || outlineGeneration?.isPending || Boolean(program.outlineReview && program.outlineReview.status !== 'passed');
   const activeProgram = program.summary.status === 'active';
+  const coursePlan = useCoursePlan(program.summary.id).data;
+  const topicsPlanned = coursePlan?.state === 'planned';
+  const topicsOf = (lessonId: string) => (coursePlan?.state === 'planned' ? coursePlan.entries.find((candidate) => candidate.topics.lessonId === lessonId) : undefined);
+  const hasUnpreparedLessons = program.modules.some((module) => module.lessons.some((lesson) => lesson.preparation === 'outline' && !lesson.completed));
   const showCitations = useCitationDisplayStore((state) => state.visible);
   const outlineEvidence = useLearningOutlineEvidence(
     program.summary.id,
@@ -141,10 +163,19 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const memoryQuery = useLearningMemory(program.summary.id, activeProgram);
   const theme = useEffectiveTheme();
   const currentModule = program.modules.find((m) => m.id === moduleId) ?? program.modules[0];
-  const heldLessons = new Set(currentPreparationJobs(preparationPlan.data?.jobs ?? []).flatMap((job) => heldLessonIds(job)));
-  const unqueuedLessons = (currentModule?.lessons ?? []).filter((lesson) => lesson.preparation === 'outline' && !lesson.completed && !queuedLesson(queue, lesson.id) && !heldLessons.has(lesson.id));
-  const currentLesson = lessonId ? (currentModule?.lessons.find((l) => l.id === lessonId) ?? currentModule?.lessons[0]) : undefined;
+  const planJobs = preparationPlan.data?.jobs ?? [];
+  const unqueuedInModule = unqueuedLessons(currentModule?.lessons ?? [], planJobs);
   const allLessons = program.modules.flatMap((m) => m.lessons.map((lesson) => ({ module: m, lesson })));
+  const courseLine = coursePreparationLine(coursePreparation(allLessons.map(({ lesson }) => lesson), planJobs));
+  const paceMinutes = preparationPaceMinutes(planJobs);
+  const currentLesson = lessonId ? (currentModule?.lessons.find((l) => l.id === lessonId) ?? currentModule?.lessons[0]) : undefined;
+  const lessonOpened = useRef(onLessonOpened);
+  lessonOpened.current = onLessonOpened;
+  const openedLessonId = currentLesson?.id;
+  const openedPreparation = currentLesson?.preparation;
+  useEffect(() => {
+    if (activeProgram && openedLessonId && openedPreparation === 'ready') lessonOpened.current?.(openedLessonId);
+  }, [activeProgram, program.summary.id, openedLessonId, openedPreparation]);
   const completedCount = allLessons.filter(({ lesson }) => lesson.completed).length;
   const readyCount = allLessons.filter(({ lesson }) => lesson.preparation === 'ready').length;
   const quizzes = useQuizOverview(program.summary.id, activeProgram);
@@ -156,14 +187,17 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
   const primary = [{ id: 'lessons' as const, label: 'Lessons' }, { id: 'workbench' as const, label: 'Practice' }, { id: 'quizzes' as const, label: 'Quizzes' }, { id: 'recall' as const, label: 'Recall' }, { id: 'notebook' as const, label: 'Notebook' }, { id: 'tutor' as const, label: 'Tutor' }, { id: 'sources' as const, label: 'Sources' }];
   const activateTab = (next: Tab) => {
     if (next === 'canvas') setCanvasOpened(true);
-    if (next === 'practical') practiceView.openActivity();
-    if (next === 'drills') practiceView.openDrill();
+    if (next === 'practical') setPracticalOpened(true);
+    if (next === 'drills') setDrillsOpened(true);
+    if (next === 'workbench') setWrittenOpened(true);
+    if (next === 'workbench' || next === 'practical' || next === 'drills') setLastPracticeTab(next);
     setMoreOpen(false);
-    setTab(next === 'practical' || next === 'drills' ? 'workbench' : next);
+    setTab(next);
   };
   const selectTab = (next: Tab) => {
     void afterNotebookSave(() => activateTab(next));
   };
+  const selectPracticeGroup = () => selectTab(lastPracticeTab);
   const selectMoreTab = (next: Tab) => {
     void afterNotebookSave(() => {
       activateTab(next);
@@ -181,7 +215,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         selectTab('recall');
         break;
       case 'feynman':
-        practiceView.openAttempt('feynman');
+        setWorkbenchMode('feynman');
+        setWrittenOpened(true);
         selectTab('workbench');
         break;
       case 'interleaving':
@@ -196,7 +231,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         break;
     }
   };
-  const practiceTab = tab === 'workbench';
+  const practiceTab = tab === 'workbench' || tab === 'practical' || tab === 'drills';
   useEffect(() => {
     if (!moreOpen) return;
     const first = moreMenuRef.current?.querySelector<HTMLElement>('[role="menuitem"]');
@@ -269,6 +304,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
     if (held.length === 1 && openReview) openReview(program.summary.id, held[0]); else selectTab('lessons');
   };
 
+  if (reviewingTopics) return <TopicsReviewScreen program={program} onBack={() => setReviewingTopics(false)} />;
+
   return (
     <ProgramTangents
       program={program}
@@ -301,15 +338,21 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
             <div className="studio-course-progress">
               <div className="studio-course-progress-row"><span>Lessons complete</span><strong>{completedCount} <span className="font-normal text-text-muted">/ {allLessons.length}</span></strong></div>
               <div className="studio-progress-track" aria-hidden="true"><span style={{ width: `${allLessons.length ? completedCount / allLessons.length * 100 : 0}%` }} /></div>
+              {topicsPlanned && <Button type="button" variant="outline" size="sm" disabled={savingBeforeMove} onClick={() => void afterNotebookSave(() => setReviewingTopics(true))} className="mt-2">Review topics</Button>}
               {quizzes.data && quizzes.data.quizzesTotal > 0 && <div className="studio-course-progress-row mt-2"><span>Quizzes passed</span><strong>{quizzes.data.quizzesPassed} <span className="font-normal text-text-muted">/ {quizzes.data.quizzesTotal}</span></strong></div>}
             </div>
           </div>
-          {program.summary.status === 'draft' && <div className="studio-course-draft-actions"><p>{outlineBlocked ? 'Resolve the outline findings before accepting this course.' : 'Accept to prepare lessons individually and track progress.'}</p><div className="flex items-center gap-3">{acceptError && <span role="alert" className="max-w-xs text-sm text-danger-fg">{acceptError}</span>}<Button variant="outline" type="button" disabled={acceptPending || outlineBlocked || !title.trim()} onClick={() => onAccept(title.trim())} className="studio-button studio-button-primary disabled:opacity-50">{acceptPending ? 'Saving…' : 'Accept program'}</Button></div></div>}
+          {activeProgram && courseLine && <div className="mt-3 flex flex-wrap items-center gap-x-3 gap-y-2 text-sm text-text-secondary">
+            <span>{courseLine}</span>
+            {paceMinutes != null && <span>{paceLine(paceMinutes)}</span>}
+          </div>}
+          {program.summary.status === 'draft' && <div className="studio-course-draft-actions"><p>{outlineBlocked ? 'Resolve the outline findings before starting this course.' : 'Starting prepares module 1 now, and each next module while you study.'}</p><div className="flex items-center gap-3">{acceptError && <span role="alert" className="max-w-xs text-sm text-danger-fg">{acceptError}</span>}<Button variant="outline" type="button" disabled={acceptPending || outlineBlocked || !title.trim()} onClick={() => onAccept(title.trim())} className="studio-button studio-button-primary disabled:opacity-50">{acceptPending ? 'Starting…' : 'Start this course'}</Button></div></div>}
         </header>
     <OutlineReviewPanel program={program} generation={outlineGeneration} repair={repair} />
 
     {!program.sources.length && <p className="mt-3 text-xs leading-5 text-text-muted">Topic-based course · AI-authored from general knowledge. Add references in Sources to ground future lessons.</p>}
-    {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} />}
+    {!activeProgram && <CoursePlanStatus programId={program.summary.id} className="mt-3" />}
+    {!activeProgram && <CourseSyllabus program={program} moduleId={moduleId} evidence={visibleOutlineEvidence} onSelect={openLesson} onSelectModule={openModule} renderTopics={(id) => <LessonTopics entry={topicsOf(id)} />} />}
     {activeProgram && <StudyHabitsBar className="studio-habits" onSelectFramework={handleSelectFramework} />}
     <div className="grid min-w-0 grid-cols-1 gap-2">
       <CourseNavigator modules={program.modules} moduleId={currentModule?.id ?? ''} lessonId={currentLesson?.id ?? ''} disabled={savingBeforeMove} onModuleChange={openModule} onLessonChange={(id) => void afterNotebookSave(() => setLessonId(id))}>
@@ -322,7 +365,7 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
             <p className="line-clamp-1">{currentModule?.summary}</p>
             {showCitations && currentModule && <OutlineCitation citation={findOutlineCitation(visibleOutlineEvidence, 'module_summary', currentModule.id, currentModule.summary)} evidence={visibleOutlineEvidence} />}
           </div>
-          {activeProgram && onPrepareModule && currentModule && unqueuedLessons.length > 0 && <Button type="button" variant="outline" disabled={preparePending || Boolean(waitsForIndex)} onClick={() => onPrepareModule(currentModule)} className="studio-button shrink-0 disabled:opacity-50">Prepare all lessons</Button>}
+          {activeProgram && onPrepareModule && currentModule && unqueuedInModule.length > 0 && <Button type="button" variant="outline" disabled={preparePending || Boolean(waitsForIndex)} onClick={() => onPrepareModule(currentModule)} className="studio-button shrink-0 disabled:opacity-50">Prepare all lessons</Button>}
           <details className="group relative shrink-0 text-sm">
             <summary className="min-h-10 cursor-pointer list-none rounded-full border border-border px-3 py-2 text-text-secondary hover:border-accent/40 focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">Module details <span className="text-accent">⌄</span></summary>
             <div className="absolute right-0 z-20 mt-2 w-[min(24rem,calc(100vw-2rem))] rounded-xl border border-border bg-surface p-4 shadow-xl">
@@ -331,7 +374,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
             </div>
           </details>
         </div>
-        <nav aria-label="Module workspace" className="studio-workspace-tabs"><NavigationTabs label="Program workspace" value={practiceTab ? 'workbench' : tab} disabled={savingBeforeMove} options={primary.filter((item) => activeProgram || item.id === 'lessons' || item.id === 'sources').map((item) => ({ ...item, badge: item.id === 'recall' && memoryQuery.data?.dueCount ? memoryQuery.data.dueCount : undefined }))} onValueChange={selectTab} onReselect={(id) => { if (id === 'workbench') practiceView.openHome(); }} idPrefix="workspace-tab" panelId="workspace-panel" actions={<div className="relative ml-auto"><button ref={moreButtonRef} type="button" aria-haspopup="menu" aria-expanded={moreOpen} aria-current={['plan', 'canvas', 'portability'].includes(tab) ? 'page' : undefined} aria-controls="workspace-more-menu" onClick={() => setMoreOpen((value) => !value)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">More <span aria-hidden="true">⌄</span></button>{moreOpen && <div id="workspace-more-menu" ref={moreMenuRef} role="menu" aria-label="More workspace tools" onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; items[next]?.focus(); }} className="absolute right-0 top-full z-30 mt-1 w-52 rounded-xl border border-border bg-surface p-1.5 shadow-xl">{(activeProgram ? [{ id: 'plan' as const, label: 'Plan' }, { id: 'canvas' as const, label: 'Canvas' }, { id: 'portability' as const, label: 'Import & export' }] : [{ id: 'portability' as const, label: 'Import & export' }]).map((item) => <button key={item.id} type="button" role="menuitem" aria-current={tab === item.id ? 'page' : undefined} onClick={() => selectMoreTab(item.id)} className="flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background focus-visible:bg-background focus-visible:outline-hidden">{item.label}</button>)}</div>}</div>} /></nav>
+        <nav aria-label="Module workspace" className="studio-workspace-tabs"><NavigationTabs label="Program workspace" value={practiceTab ? 'workbench' : tab} disabled={savingBeforeMove} options={primary.filter((item) => activeProgram || item.id === 'lessons' || item.id === 'sources').map((item) => ({ ...item, badge: item.id === 'recall' && memoryQuery.data?.dueCount ? memoryQuery.data.dueCount : undefined }))} onValueChange={(id) => id === 'workbench' ? selectPracticeGroup() : selectTab(id)} idPrefix="workspace-tab" panelId="workspace-panel" actions={<div className="relative ml-auto"><button ref={moreButtonRef} type="button" aria-haspopup="menu" aria-expanded={moreOpen} aria-current={['plan', 'canvas', 'portability'].includes(tab) ? 'page' : undefined} aria-controls="workspace-more-menu" onClick={() => setMoreOpen((value) => !value)} className="min-h-11 rounded-lg px-3 text-sm font-medium text-text-secondary hover:bg-background focus-visible:outline-hidden focus-visible:ring-2 focus-visible:ring-accent">More <span aria-hidden="true">⌄</span></button>{moreOpen && <div id="workspace-more-menu" ref={moreMenuRef} role="menu" aria-label="More workspace tools" onKeyDown={(event) => { if (!['ArrowDown', 'ArrowUp', 'Home', 'End'].includes(event.key)) return; event.preventDefault(); const items = Array.from(event.currentTarget.querySelectorAll<HTMLButtonElement>('[role="menuitem"]')); const index = items.indexOf(document.activeElement as HTMLButtonElement); const next = event.key === 'Home' ? 0 : event.key === 'End' ? items.length - 1 : (index + (event.key === 'ArrowDown' ? 1 : items.length - 1)) % items.length; items[next]?.focus(); }} className="absolute right-0 top-full z-30 mt-1 w-52 rounded-xl border border-border bg-surface p-1.5 shadow-xl">{(activeProgram ? [{ id: 'plan' as const, label: 'Plan' }, { id: 'canvas' as const, label: 'Canvas' }, { id: 'portability' as const, label: 'Import & export' }] : [{ id: 'portability' as const, label: 'Import & export' }]).map((item) => <button key={item.id} type="button" role="menuitem" aria-current={tab === item.id ? 'page' : undefined} onClick={() => selectMoreTab(item.id)} className="flex min-h-11 w-full items-center rounded-lg px-3 text-left text-sm text-text-primary hover:bg-background focus-visible:bg-background focus-visible:outline-hidden">{item.label}</button>)}</div>}</div>} /></nav>
+        {practiceTab && <><div className="mt-3 flex flex-wrap items-center justify-between gap-2">{tab === 'drills' ? <div /> : <div className="text-sm text-text-secondary"><span className="font-medium text-text-primary">{currentModule?.title}</span>{currentLesson && <> <span aria-hidden="true">›</span> {currentLesson.title}</>}</div>}<NavigationTabs label="Practice activities" appearance="segmented" value={tab} disabled={savingBeforeMove} options={[{ id: 'workbench', label: 'Written practice' }, { id: 'practical', label: 'Code & simulations' }, { id: 'drills', label: 'Review drills' }]} onValueChange={selectTab} idPrefix="practice-tab" panelId="practice-content" /></div></>}
 
         {activeProgram && tab === 'starting_point' && <div className="mt-4"><StartingPointPanel programId={program.summary.id} onStudy={(lessonId) => goToStep({ kind: 'lesson', title: '', reason: '', lessonId })} onChallenge={(lessonId) => goToStep({ kind: 'assessment', title: '', reason: '', lessonId })} /></div>}
         <CourseIndexNotice programId={program.summary.id} />
@@ -339,8 +383,8 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
         {activeProgram && (tab === 'lessons'
           ? <LessonPreparationStatus job={preparationJob} queuedMore={queuedMore} pending={preparePending} programId={program.summary.id} revision={program.summary.revision} error={prepareError?.message} expanded={preparationExpanded} onExpandedChange={setPreparationExpanded} lessonTitles={lessonTitles} onReview={openReview} />
           : <LessonPreparationLine job={preparationJob} queuedMore={queuedMore} pending={preparePending} programId={program.summary.id} error={prepareError?.message} onView={() => selectTab('lessons')} />)}
-        {activeProgram && preparationPlan.isError && preparePending && <p role="alert" className="my-3 text-sm text-danger-fg">Progress could not be loaded. <button type="button" className="underline" onClick={() => void preparationPlan.refetch()}>Retry progress</button></p>}
-        {tab === 'lessons' && <div className="studio-lessons">{!currentModule?.lessons.length ? <p className="rounded-lg bg-surface p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson, index) => <LessonCard key={lesson.id} lesson={lesson} number={`${program.modules.indexOf(currentModule) + 1}.${index + 1}`} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparePending)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); practiceView.openHome(); })} onReview={openReview} contextVisible={contextVisible} onSources={() => selectTab('sources')}
+        {activeProgram && preparationPlan.isError && preparePending && <p role="alert" className="my-3 text-sm text-rose-700">Progress could not be loaded. <button type="button" className="underline" onClick={() => void preparationPlan.refetch()}>Retry progress</button></p>}
+        {tab === 'lessons' && <div className="studio-lessons">{activeProgram && hasUnpreparedLessons && <CoursePlanStatus programId={program.summary.id} />}{!currentModule?.lessons.length ? <p className="rounded-lg bg-surface p-6 text-sm text-text-muted">This module has no lessons in its outline.</p> : currentModule.lessons.map((lesson, index) => <LessonCard key={lesson.id} lesson={lesson} number={`${program.modules.indexOf(currentModule) + 1}.${index + 1}`} moduleId={currentModule.id} outlineEvidence={visibleOutlineEvidence} program={program} selected={lesson.id === lessonId} isCurrent={lesson.id === program.summary.currentLessonId || (lesson.id === resume?.lesson.id && !program.summary.currentLessonId)} pending={completePending || (lesson.preparation === 'outline' && preparePending)} onPrepare={() => onPrepare(lesson)} onComplete={() => onComplete(lesson)} onSelect={() => afterNotebookSave(() => setLessonId(lesson.id))} onPractice={() => void afterNotebookSave(() => { setLessonId(lesson.id); setTab('workbench'); setWrittenOpened(true); setLastPracticeTab('workbench'); })} onReview={openReview} contextVisible={contextVisible} onSources={() => selectTab('sources')} topics={activeProgram ? <LessonTopics entry={topicsOf(lesson.id)} /> : undefined}
           notebook={activeProgram && lesson.id === lessonId ? <NotebookPanel compact enabled program={program} lessonId={lesson.id} memory={memoryQuery.data} memoryLoading={memoryQuery.isLoading} memoryError={memoryQuery.error?.message} onRetryMemory={() => void memoryQuery.refetch()} drafts={notebookDrafts} setDraft={(key, draft) => setNotebookDrafts((current) => ({ ...current, [key]: draft }))} onOpenNotebook={() => selectTab('notebook')} /> : undefined}
           quizCallout={activeProgram && lesson.preparation === 'ready' ? <LessonQuizCallout program={program} lesson={lesson} onOpenForm={openQuiz} onViewResult={openQuiz} /> : null} />)}</div>}
         {activeProgram && tab === 'lessons' && <nav aria-label="Module milestones" className="studio-milestones flex flex-wrap items-center gap-1 text-sm"><span className="px-3 text-text-secondary"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">01</span>Learn · {currentModule?.lessons.filter((item) => item.completed).length ?? 0} of {currentModule?.lessons.length ?? 0} complete</span><button type="button" onClick={() => selectTab('workbench')} className="min-h-10 rounded-full px-3 text-left text-text-secondary hover:bg-background hover:text-text-primary disabled:opacity-50"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">02</span>Apply →</button>{currentModule && <ModuleTestCallout program={program} module={currentModule} onOpenForm={openQuiz} onShowTest={() => showModuleTest(currentModule.id)} />}<button type="button" disabled={!currentModule?.lessons.some((item) => item.preparation === 'ready')} onClick={() => void afterNotebookSave(() => {
@@ -350,16 +394,65 @@ export function ProgramWorkspace({ program, destination, outlineGeneration, init
           setLessonId(anchor.id);
           const finalModule = currentModule.id === program.modules.at(-1)?.id;
           const scope = finalModule ? program.modules : [currentModule];
-          practiceView.openActivity(null, { id: crypto.randomUUID(), kind: 'code_lab', brief: `Create a ${finalModule ? 'final capstone integrating the complete course' : 'module project'} for ${program.summary.goal}. Project progression: ${scope.map((item) => item.project ? `${item.project.title}: ${item.project.brief} Deliverables: ${item.project.deliverables.join('; ')}. Success criteria: ${item.project.successCriteria.join('; ')}` : item.summary).join(' | ')}. Each milestone must extend the same project artifact and include a revision after feedback. Outcomes: ${scope.flatMap((item) => item.outcomes).join('; ')}. Require a concrete artifact, milestones, constraints, an explicit grading rubric, and a reflection on tradeoffs. Build on these lessons: ${scope.flatMap((item) => item.lessons.map((lesson) => lesson.title)).join('; ')}.`.slice(0, 4000) });
-          activateTab('workbench');
+          setProjectRequest({ id: crypto.randomUUID(), brief: `Create a ${finalModule ? 'final capstone integrating the complete course' : 'module project'} for ${program.summary.goal}. Project progression: ${scope.map((item) => item.project ? `${item.project.title}: ${item.project.brief} Deliverables: ${item.project.deliverables.join('; ')}. Success criteria: ${item.project.successCriteria.join('; ')}` : item.summary).join(' | ')}. Each milestone must extend the same project artifact and include a revision after feedback. Outcomes: ${scope.flatMap((item) => item.outcomes).join('; ')}. Require a concrete artifact, milestones, constraints, an explicit grading rubric, and a reflection on tradeoffs. Build on these lessons: ${scope.flatMap((item) => item.lessons.map((lesson) => lesson.title)).join('; ')}.`.slice(0, 4000) });
+          activateTab('practical');
         })} title="A project brief shaped by these outcomes, with deliverables and a rubric." className="min-h-10 rounded-full px-3 text-left text-text-secondary hover:bg-background hover:text-text-primary disabled:opacity-50"><span className="mr-1.5 text-xs font-semibold tabular-nums text-accent">04</span>{currentModule?.id === program.modules.at(-1)?.id ? 'Build your capstone →' : 'Build a module project →'}</button></nav>}
         {activeProgram && tab === 'plan' && <div className="mt-5"><PlanPanel programId={program.summary.id} onStartingPoint={() => selectTab('starting_point')} /></div>}
         {tab === 'portability' && <div className="mt-5"><PortabilityPanel programId={program.summary.id} onImported={handleImported} /></div>}
-        {activeProgram && (practiceTab || practiceView.visited.size > 0) && (
-          <div id="practice-content" role="tabpanel" tabIndex={0} aria-labelledby="workspace-tab-workbench" hidden={!practiceTab} className="mt-5">
-            <PracticeArea program={program} currentLesson={currentLesson} currentModule={currentModule} view={practiceView} />
+        {activeProgram && (practiceTab || writtenOpened || practicalOpened || drillsOpened) && <div id="practice-content" role="tabpanel" tabIndex={0} aria-labelledby={`practice-tab-${practiceTab ? tab : lastPracticeTab}`} hidden={!practiceTab} className="mt-3">
+        {activeProgram && writtenOpened && (
+          <div hidden={tab !== 'workbench'} className="mt-5 space-y-4">
+            <div role="group" aria-label="Written practice mode" className="flex flex-wrap gap-1 rounded-lg border border-border bg-background p-1 text-xs">
+              <button
+                type="button"
+                aria-pressed={workbenchMode === 'practice'}
+                onClick={() => setWorkbenchMode('practice')}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  workbenchMode === 'practice' ? 'bg-surface text-text-primary shadow-xs font-medium' : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                Grounded practice
+              </button>
+              <button
+                type="button"
+                aria-pressed={workbenchMode === 'feynman'}
+                onClick={() => setWorkbenchMode('feynman')}
+                className={`rounded-md px-3 py-1.5 text-xs font-medium transition-colors ${
+                  workbenchMode === 'feynman' ? 'bg-surface text-text-primary shadow-xs font-medium' : 'text-text-secondary hover:text-text-primary'
+                }`}
+              >
+                Feynman technique (Teach a beginner)
+              </button>
+            </div>
+
+            <div hidden={workbenchMode !== 'practice'}>
+              <PracticeWorkbenchPanel key={currentLesson?.id} program={program} lesson={currentLesson} />
+            </div>
+
+            {workbenchMode === 'feynman' && (
+              <FeynmanTechniquePanel
+                program={program}
+                lesson={currentLesson}
+                module={currentModule}
+                onDraftMissedConcept={(question, answer) => {
+                  if (!currentLesson?.id) return;
+                  saveRecallDraft.mutate({
+                    draftId: null,
+                    programId: program.summary.id,
+                    lessonId: currentLesson.id,
+                    question,
+                    answer,
+                    explanation: 'Drafted from a gap in a Feynman explanation',
+                    sourceIds: [],
+                  });
+                }}
+              />
+            )}
           </div>
         )}
+        {activeProgram && practicalOpened && <div hidden={tab !== 'practical'} className="mt-5"><PracticalWorkbenchPanel program={program} lesson={currentLesson ?? null} projectRequest={projectRequest} /></div>}
+        {activeProgram && drillsOpened && <div hidden={tab !== 'drills'} className="mt-5"><CourseDrillsPanel programId={program.summary.id} /></div>}
+        </div>}
         {activeProgram && tab === 'quizzes' && <div className="mt-4" role="tabpanel" aria-labelledby="workspace-tab-quizzes"><QuizzesOverview program={program} formId={quizFormId} onFormIdChange={setQuizFormId} focusModuleId={quizModuleFocus}
           onOpenLesson={(lessonId) => { const target = allLessons.find(({ lesson }) => lesson.id === lessonId); if (target) void afterNotebookSave(() => { setModuleId(target.module.id); setLessonId(lessonId); activateTab('lessons'); }); }}
           completionFor={(lessonId) => { const target = allLessons.find(({ lesson }) => lesson.id === lessonId)?.lesson; return target ? { completed: target.completed, pending: completePending, onComplete: () => onComplete(target) } : undefined; }} /></div>}

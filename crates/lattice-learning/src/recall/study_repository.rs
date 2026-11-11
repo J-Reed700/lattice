@@ -433,21 +433,20 @@ async fn deck_in(conn: &mut SqliteConnection, id: &str) -> Result<StudyDeckDto> 
 
 /// Set or clear a deck's target in the caller's unit of work. Setting one
 /// makes every card that would next come up after it due now, so each is
-/// recalled at least once before the target. False, and nothing changed,
-/// when the deck does not exist.
-pub(crate) async fn set_target_in(
+/// recalled at least once before the target.
+async fn set_target_in(
     tx: &mut SqliteConnection,
     deck_id: &str,
     target_at: Option<i64>,
     now: i64,
-) -> Result<bool> {
+) -> Result<()> {
     let exists = sqlx::query("SELECT 1 FROM study_decks WHERE id=?")
         .bind(deck_id)
         .fetch_optional(&mut *tx)
         .await
         .map_err(db)?;
     if exists.is_none() {
-        return Ok(false);
+        return Err(AppError::NotFound("Study deck no longer exists".into()));
     }
     match target_at {
         Some(target) => {
@@ -473,7 +472,7 @@ pub(crate) async fn set_target_in(
                 .map_err(db)?;
         }
     }
-    Ok(true)
+    Ok(())
 }
 
 impl StudyRepository {
@@ -613,11 +612,8 @@ impl StudyRepository {
         // Setting a date makes every card scheduled into its final window due now.
         // The same date again must not undo the rest a review scheduled before
         // the interview, and no date keeps the one the deck has.
-        if target_at.is_some()
-            && target_at != saved_target
-            && !set_target_in(&mut tx, &deck.id, target_at, now).await?
-        {
-            return Err(AppError::NotFound("Study deck no longer exists".into()));
+        if target_at.is_some() && target_at != saved_target {
+            set_target_in(&mut tx, &deck.id, target_at, now).await?;
         }
         let result = deck_in(&mut tx, &deck.id).await?;
         tx.commit().await.map_err(db)?;
@@ -656,9 +652,7 @@ impl StudyRepository {
     /// recalled at least once before the target.
     pub async fn set_target(&self, deck_id: &str, target_at: Option<i64>, now: i64) -> Result<()> {
         let mut tx = self.pool.begin_write().await.map_err(db)?;
-        if !set_target_in(&mut tx, deck_id, target_at, now).await? {
-            return Err(AppError::NotFound("Study deck no longer exists".into()));
-        }
+        set_target_in(&mut tx, deck_id, target_at, now).await?;
         tx.commit().await.map_err(db)
     }
 

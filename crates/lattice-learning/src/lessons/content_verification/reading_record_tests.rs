@@ -10,8 +10,8 @@ use lattice_core::application::services::claim_verification::{
     CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
 use lattice_core::domain::learning::acceptance::{
-    decide, rewrite_ahead, AcceptancePolicy, End, Outcome, Position, Reading, Step, Taken, Then,
-    Walked,
+    decide, rewrite_ahead, start, AcceptancePolicy, End, Outcome, Position, Reading, Step, Taken,
+    Then, Walked,
 };
 use lattice_core::domain::learning::claim_review::{
     text_sha256, Actor, Check, CheckResult, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimLocation,
@@ -89,12 +89,7 @@ fn finding(
 
 /// Where a statement of `class` begins.
 fn entry(policy: &dyn AcceptancePolicy, class: Class) -> Position {
-    Position {
-        class,
-        changed_class: false,
-        reasked: false,
-        node: policy.graph(class).entry(),
-    }
+    start(policy, class)
 }
 
 /// Where a statement of `class` stands at `node`.
@@ -169,7 +164,7 @@ fn stepped(
     rewrite_ahead: bool,
 ) -> ClaimEvent {
     ClaimEvent::Stepped {
-        policy: "acceptance-v1".into(),
+        policy: "acceptance-v2".into(),
         step,
         outcome,
         then,

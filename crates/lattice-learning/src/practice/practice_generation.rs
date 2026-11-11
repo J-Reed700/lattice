@@ -7,19 +7,6 @@ use lattice_core::{
 };
 use serde::Deserialize;
 
-/// The task of a lesson with no written exercise of its own: its objective, and what the learner said they are
-/// preparing for when they said anything.
-pub fn fallback_task_prompt(objective: &str, details: Option<&str>) -> String {
-    let task = format!(
-        "{}\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.",
-        objective.trim()
-    );
-    match details.map(str::trim).filter(|details| !details.is_empty()) {
-        Some(details) => format!("{task}\n\nYou are preparing for: {details}"),
-        None => task,
-    }
-}
-
 fn invalid(message: &str) -> AppError {
     AppError::InvalidInput(message.into())
 }

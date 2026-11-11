@@ -64,9 +64,7 @@ impl LearningRecallRepository {
         let revision = if let Some(row) = &prior {
             let old_revision: i64 = row.get("content_revision");
             if req.expected_content_revision != Some(old_revision) {
-                return Err(AppError::Conflict(
-                    "Recall card changed; reload and retry.".into(),
-                ));
+                return Err(invalid("Recall card changed; reload and retry."));
             }
             old_revision + 1
         } else {
@@ -314,9 +312,7 @@ impl LearningRecallRepository {
         )
         .await?;
         if outcome == ReviewOutcome::Stale {
-            return Err(AppError::Conflict(
-                "Recall card changed; reload and retry.".into(),
-            ));
+            return Err(invalid("Recall card changed; reload and retry."));
         }
         if outcome == ReviewOutcome::Recorded {
             sqlx::query("UPDATE learning_recall_card_profiles SET updated_at=? WHERE card_id=? AND program_id=?")

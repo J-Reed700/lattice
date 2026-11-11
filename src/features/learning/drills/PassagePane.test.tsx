@@ -16,7 +16,6 @@ const DRILL: CodeReviewDrillDto = {
   material: { kind: 'passage', sourceTitle: 'Spacing and memory' },
   files: [{ path: 'explanation.md', text: TEXT }],
   lesson: null,
-  issues: 3,
 };
 
 /** The pane with its selection held, as the review holds it. */

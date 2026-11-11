@@ -2,7 +2,6 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
 import { learningPracticeWorkspaceKey } from '@/features/learning/api/learningQueryKeys';
-import { unwrap } from '@/lib/api';
 import type VaultAPI from '@/lib/api';
 import type {
   ChangeLearningPracticeModeRequestDto,
@@ -20,6 +19,10 @@ import type {
 export { learningPracticeWorkspaceKey } from '@/features/learning/api/learningQueryKeys';
 export const learningPracticeSessionKey = (sessionId: string | null) => ['learning-practice-session', sessionId] as const;
 
+function unwrap<T>(result: { ok: true; data: T } | { ok: false; error: string }): T {
+  if (!result.ok) throw new Error(result.error);
+  return result.data;
+}
 
 export function useLearningPracticeWorkspace(programId: string) {
   const api = useApi();

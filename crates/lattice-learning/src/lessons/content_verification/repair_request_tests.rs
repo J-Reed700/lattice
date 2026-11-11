@@ -3,7 +3,8 @@
 //! applied, and only the sentences an earlier correction replaced or removed.
 use super::super::repair::goal_words;
 use super::acceptance_switch_tests::{
-    claim, identified, lesson_of, local_check, open, walk, CUTTING, RESEARCHING, SOURCED,
+    claim, identified, lesson_of, local_check, open, walk, walk_because, CUTTING, REASONED,
+    RESEARCHING, SOURCED,
 };
 use super::claim_ledger_tests::{pass_report, prepare, section};
 use super::class_checks_tests::Classes;
@@ -30,7 +31,7 @@ const LEFT_AS_IT_WAS: &str = "The repair left the sentence as it was.";
 const AT_REWRITE: [(Step, Outcome); 3] = [
     (Step::Read(Reading::Parts), Outcome::Unproven),
     (Step::Research, Outcome::FoundNothing),
-    (Step::Read(Reading::Page), Outcome::Unproven),
+    (Step::Read(Reading::Page), Outcome::Refuted),
 ];
 
 /// A model that extracts the statements it is given, as `Classes` does, and
@@ -180,6 +181,11 @@ impl LLMPort for Corrections {
 /// The repair requests a lesson with two sentences its sources contradict is
 /// sent: one for both, and one for the sentence the first correction left.
 async fn requests_for_two_contradicted_sentences() -> Result<Vec<Value>> {
+    requests_after_the_writer_asked("{}").await
+}
+
+/// The same requests, the writer's request being `writer_request`.
+async fn requests_after_the_writer_asked(writer_request: &str) -> Result<Vec<Value>> {
     let model = Corrections::new();
     let body = format!("{}{BAD} {SECOND}", format!("{GOOD} ").repeat(12));
     let lesson = json!({"blocks":[{"kind":"explanation","title":"CSV header names","body":body,"rubric":[]}],"questions":[]});
@@ -187,7 +193,7 @@ async fn requests_for_two_contradicted_sentences() -> Result<Vec<Value>> {
     // The second request ends the run.
     let _ = verify_and_repair(
         &model,
-        "{}",
+        writer_request,
         &json!({}),
         lesson.to_string(),
         &[source()],
@@ -290,6 +296,32 @@ async fn the_repair_history_does_not_carry_a_statement_that_waits_at_a_node_that
     Ok(())
 }
 
+const DRAFT_QUESTIONS: &str =
+    "Create exactly two distinct multiple-choice items of each kind: practice, quiz, and test.";
+
+#[tokio::test]
+async fn a_verification_repair_is_told_the_shape_the_lesson_is_kept_with() -> Result<()> {
+    let writer_request = json!({"lessonShape":[DRAFT_QUESTIONS]}).to_string();
+    let requests = requests_after_the_writer_asked(&writer_request).await?;
+
+    let lines = requests[0]["requirements"]["lessonShape"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(
+        !lines.contains(&json!(DRAFT_QUESTIONS)),
+        "the repair was told the draft's questions: {lines:?}"
+    );
+    let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
+    assert!(
+        words
+            .join("\n")
+            .contains("at least one question of each kind"),
+        "{words:?}"
+    );
+    Ok(())
+}
+
 /// A finding that no passage supports `statement` of section 0.
 fn unsupported(statement: &str) -> Finding {
     Finding {
@@ -324,6 +356,72 @@ async fn the_request_after_a_correction_lists_the_sentence_it_removed_and_why() 
     assert_eq!(removed["sentence"], BAD);
     let reason = removed["reason"].as_str().unwrap_or_default();
     assert!(!reason.is_empty(), "{removed}");
+    Ok(())
+}
+
+/// What a reasoning statement is asked once a veto refuted it and its passages said nothing.
+const CORRECT_WHAT_WAS_FOUND: &str = "Correct what the reason found wrong in the sentence, and keep the rest of the sentence as it is.";
+
+#[tokio::test]
+async fn the_rewrite_of_a_vetoed_statement_its_passages_do_not_address_carries_the_veto_reason(
+) -> Result<()> {
+    const VETO: &str = "The sentence says the reader keeps every space, which the sources deny.";
+    const SILENT: &str = "The passages do not address this.";
+    let policy = StandardPolicy::new();
+    let sentence = "The reader keeps every space of a field, so headers match by position.";
+    let mut ledger = open().await?;
+    let id = claim(
+        &mut ledger,
+        "vetoed",
+        (sentence, sentence),
+        sentence,
+        REASONED,
+    )
+    .await?;
+    walk_because(
+        &mut ledger,
+        &id,
+        Class::Reasoning,
+        &[
+            (
+                Step::Read(Reading::Consistency),
+                Outcome::Stands,
+                "It follows.",
+            ),
+            (Step::Read(Reading::Veto), Outcome::Refuted, VETO),
+            (Step::Read(Reading::Ground), Outcome::Refuted, SILENT),
+        ],
+    )
+    .await?;
+    let lesson = lesson_of(sentence);
+    identified(
+        &mut ledger,
+        &Model::new(),
+        &lesson,
+        &[(sentence, sentence)],
+        &[],
+    )
+    .await?;
+    let mut finding = unsupported(sentence);
+    finding.reason = SILENT.into();
+    let report = pass_report(vec![finding]);
+
+    let context = repair_context(
+        "{}",
+        &lesson,
+        &report,
+        (&ledger, &policy),
+        &[id],
+        &ReferenceCollection::lexical(&[])?,
+    )?;
+
+    let failed = context["failedClaims"].as_array().unwrap();
+    let [sent] = failed.as_slice() else {
+        panic!("one failed claim: {failed:?}");
+    };
+    assert_eq!(sent["goal"], CORRECT_WHAT_WAS_FOUND);
+    assert_eq!(sent["reason"], VETO);
+    assert_eq!(sent["groundReason"], SILENT);
     Ok(())
 }
 

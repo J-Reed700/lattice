@@ -1,9 +1,13 @@
 //! A review finding and where it is. Across review passes a finding is
-//! identified by its kind and the part of the lesson it is about, never by
-//! its wording, which the reviewer rewrites every pass.
+//! identified by what raised it and what it is about (`FindingId`), never by
+//! its wording, which the reviewer rewrites every pass. Rows stored before
+//! finding ids are identified by kind and place (`FindingKey`).
+use crate::lessons::same_text;
 use lattice_core::domain::learning::claim_review::text_sha256;
+use lattice_core::shared::text::segmentation::sentences;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 /// What raised a finding.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
@@ -64,6 +68,16 @@ impl FindingSite {
         }
     }
 
+    /// The pointer of the block or question this site is, or none for the
+    /// whole lesson.
+    pub fn pointer(self) -> Option<String> {
+        match self {
+            Self::Lesson => None,
+            Self::Section(index) => Some(format!("/blocks/{index}")),
+            Self::Question(index) => Some(format!("/questions/{index}")),
+        }
+    }
+
     /// The site a candidate part names: an evidence ID (`blocks-3`,
     /// `questions-1`) or a quotation check's path (`blocks[3]`).
     pub fn of_part(id: &str) -> Option<Self> {
@@ -80,9 +94,204 @@ impl FindingSite {
     }
 }
 
+/// A deterministic rule a lesson can break; one variant for each place that
+/// checks one.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Rule {
+    /// The material could not be read as a whole.
+    Unreadable,
+    /// A schema violation.
+    Schema,
+    /// A teaching block has no body.
+    BlockBody,
+    /// A practice block lacks its rubric criteria.
+    PracticeRubric,
+    /// A quotation matches no saved reference.
+    Quotation,
+    /// The count of invalid citations a closed material's first pass found.
+    QuoteChecks,
+    /// A section has no title.
+    TitleMissing,
+    /// Two sections share a title.
+    TitleRepeated,
+    /// A check does not hold its answer back.
+    CheckHoldback,
+    /// A section opens a code fence it never closes.
+    FenceUnclosed,
+    /// A question has no prompt.
+    PromptMissing,
+    /// Two questions ask the same thing.
+    PromptRepeated,
+    /// A question has no answer explanation.
+    ExplanationMissing,
+    /// A question lacks four distinct answer choices.
+    Choices,
+    /// A question's right choice stands out as the longest.
+    KeyLongest,
+    /// A question's prompt gives its answer away.
+    KeyGivenAway,
+    /// A question's rationales do not match its choices.
+    RationaleCount,
+    /// A wrong choice has no reason.
+    RationaleMissing,
+    /// A specific sentence cites no source.
+    Uncited,
+    /// A citation is written into the lesson's text.
+    CitationLabel,
+    /// A sentence names a source by its number.
+    SourceNumber,
+    /// A sentence the lesson already said.
+    SentenceRepeated,
+    /// A check on an idea no example has shown.
+    UnshownCheck,
+    /// A recap before the reflection.
+    RecapFirst,
+    /// The mix of section kinds.
+    SectionMix,
+    /// The count of questions of each kind.
+    QuestionCount,
+    /// The lesson has no explanation section.
+    NoExplanation,
+    /// A kind of question is missing.
+    QuestionKinds,
+    /// A sentence copies the source's wording.
+    CopiedWording,
+    /// A sentence's citation could not be confirmed.
+    SentenceCitation,
+    /// A part's citation could not be confirmed.
+    PartCitation,
+}
+
+/// How a finding can be corrected.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Remedy {
+    /// Edits to existing text of its part, or citations appended or taken back.
+    Edits,
+    /// The material written again whole.
+    Whole,
+}
+
+impl Rule {
+    /// `Edits` when a fix always exists that replaces text in the finding's
+    /// own part, changes an existing number or boolean, or appends or takes
+    /// back a citation; `Whole` when a fix may need a missing or empty field,
+    /// a part added or removed, a reordering, or material that cannot be read.
+    pub fn remedy(self) -> Remedy {
+        match self {
+            Self::Quotation
+            | Self::TitleRepeated
+            | Self::CheckHoldback
+            | Self::FenceUnclosed
+            | Self::PromptRepeated
+            | Self::KeyLongest
+            | Self::KeyGivenAway
+            | Self::Uncited
+            | Self::CitationLabel
+            | Self::SourceNumber
+            | Self::SentenceRepeated
+            | Self::CopiedWording
+            | Self::SentenceCitation
+            | Self::PartCitation => Remedy::Edits,
+            Self::Unreadable
+            | Self::Schema
+            | Self::BlockBody
+            | Self::PracticeRubric
+            | Self::QuoteChecks
+            | Self::TitleMissing
+            | Self::PromptMissing
+            | Self::ExplanationMissing
+            | Self::Choices
+            | Self::RationaleCount
+            | Self::RationaleMissing
+            | Self::UnshownCheck
+            | Self::RecapFirst
+            | Self::SectionMix
+            | Self::QuestionCount
+            | Self::NoExplanation
+            | Self::QuestionKinds => Remedy::Whole,
+        }
+    }
+}
+
+/// What the check of a lesson against its course plan found.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PlanCheck {
+    Planned,
+    Used,
+    Contradiction,
+    Unseen,
+}
+
+/// What raised a finding, and what it is about.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case", tag = "by")]
+pub enum Origin {
+    /// `subject` is the digest of the one sentence or citation the rule is
+    /// about; none for a rule about the whole part.
+    Rule { rule: Rule, subject: Option<String> },
+    /// The check against the course plan.
+    Plan { check: PlanCheck, subject: String },
+    /// An independent solution disagreed with the question's key.
+    AnswerKey,
+    /// The teaching reviewer; `number` is the finding's own among the
+    /// reviewer's findings on one lesson.
+    Reviewer { number: u32 },
+}
+
+/// A finding's identity across passes and reviews.
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(transparent)]
+pub struct FindingId(String);
+
+impl FindingId {
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+
+    /// A stored id read back.
+    pub(crate) fn stored(id: String) -> Self {
+        Self(id)
+    }
+
+    /// The number of a reviewer's finding's id.
+    pub(crate) fn reviewer_number(&self) -> Option<u32> {
+        self.0.strip_prefix("reviewer/")?.parse().ok()
+    }
+}
+
+/// The name `value` has when serialized as a plain string.
+fn serde_name<T: Serialize>(value: &T) -> String {
+    serde_json::to_value(value)
+        .ok()
+        .and_then(|name| name.as_str().map(str::to_owned))
+        .unwrap_or_default()
+}
+
+/// The digest a sentence-level subject is named by: unique among one
+/// lesson's sentences, and short enough for a model to copy.
+pub(crate) fn subject_of(text: &str) -> String {
+    text_sha256(&same_text::fold(text))
+        .chars()
+        .take(16)
+        .collect()
+}
+
+/// `lesson`, `section-3` or `question-1`: how a site is written in an id.
+fn site_text(site: FindingSite) -> String {
+    match site {
+        FindingSite::Lesson => "lesson".to_owned(),
+        FindingSite::Section(index) => format!("section-{index}"),
+        FindingSite::Question(index) => format!("question-{index}"),
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ReviewFinding {
+    /// What raised the finding and what it is about.
+    pub origin: Origin,
     pub kind: FindingKind,
     /// `None` for a reviewer's issue until the evidence check places it;
     /// an issue it cannot place is about the whole lesson.
@@ -98,23 +307,124 @@ pub struct ReviewFinding {
     /// The whole sentence a sentence-level quotation finding is about.
     #[serde(default)]
     pub sentence: Option<String>,
+    /// The second part a finding about two parts is about.
+    #[serde(default)]
+    pub also: Option<FindingSite>,
 }
 
 impl ReviewFinding {
-    pub fn new(kind: FindingKind, site: Option<FindingSite>, note: impl Into<String>) -> Self {
+    fn raised(
+        origin: Origin,
+        kind: FindingKind,
+        site: Option<FindingSite>,
+        note: impl Into<String>,
+    ) -> Self {
         Self {
+            origin,
             kind,
             site,
             note: note.into(),
             summary: String::new(),
             passage: None,
             sentence: None,
+            also: None,
+        }
+    }
+
+    /// A broken rule about the whole of the part at `site`.
+    pub fn rule(rule: Rule, kind: FindingKind, site: FindingSite, note: impl Into<String>) -> Self {
+        Self::raised(
+            Origin::Rule {
+                rule,
+                subject: None,
+            },
+            kind,
+            Some(site),
+            note,
+        )
+    }
+
+    /// `rule`, about one sentence or citation: `text` is that text. A blank
+    /// `text` gives no subject.
+    pub fn rule_about(
+        rule: Rule,
+        kind: FindingKind,
+        site: FindingSite,
+        text: &str,
+        note: impl Into<String>,
+    ) -> Self {
+        let subject = (!same_text::fold(text).is_empty()).then(|| subject_of(text));
+        Self::raised(Origin::Rule { rule, subject }, kind, Some(site), note)
+    }
+
+    /// A finding of the check against the course plan.
+    pub fn plan(
+        check: PlanCheck,
+        subject: impl Into<String>,
+        site: FindingSite,
+        note: impl Into<String>,
+    ) -> Self {
+        Self::raised(
+            Origin::Plan {
+                check,
+                subject: subject.into(),
+            },
+            FindingKind::Teaching,
+            Some(site),
+            note,
+        )
+    }
+
+    /// An independent solution of `question` disagreed with its key.
+    pub fn answer_key(question: usize, note: impl Into<String>) -> Self {
+        Self::raised(
+            Origin::AnswerKey,
+            FindingKind::AnswerKey,
+            Some(FindingSite::Question(question)),
+            note,
+        )
+    }
+
+    /// The reviewer's finding `number`. `site` is none until the evidence
+    /// check places it.
+    pub fn reviewer(number: u32, site: Option<FindingSite>, note: impl Into<String>) -> Self {
+        Self::raised(
+            Origin::Reviewer { number },
+            FindingKind::Teaching,
+            site,
+            note,
+        )
+    }
+
+    /// A finding of `kind` at `site`, raised as that kind is; a reviewer's is
+    /// numbered by its site, so one site is one finding.
+    #[cfg(test)]
+    pub(crate) fn of_kind(kind: FindingKind, site: FindingSite, note: impl Into<String>) -> Self {
+        match kind {
+            FindingKind::Teaching => {
+                let number = match site {
+                    FindingSite::Lesson => 0,
+                    FindingSite::Section(index) => 2 * index + 1,
+                    FindingSite::Question(index) => 2 * index + 2,
+                };
+                Self::reviewer(u32::try_from(number).unwrap_or_default(), Some(site), note)
+            }
+            FindingKind::Quotation => Self::rule(Rule::Quotation, kind, site, note),
+            FindingKind::Structure => Self::rule(Rule::Schema, kind, site, note),
+            FindingKind::AnswerKey => Self::raised(Origin::AnswerKey, kind, Some(site), note),
         }
     }
 
     /// This finding with the whole `sentence` it is about; none when blank.
     pub fn with_sentence(mut self, sentence: &str) -> Self {
         self.sentence = (!sentence.trim().is_empty()).then(|| sentence.trim().to_owned());
+        self
+    }
+
+    /// This finding also about the part at `site`; no change when that is the
+    /// part it is already at.
+    pub fn with_also(mut self, site: FindingSite) -> Self {
+        self.also = (Some(site) != self.site).then_some(site);
         self
     }
 
@@ -131,7 +441,42 @@ impl ReviewFinding {
         self
     }
 
-    pub fn key(&self) -> FindingKey {
+    /// How this finding can be corrected: a rule's own remedy, edits for any
+    /// other origin.
+    pub fn remedy(&self) -> Remedy {
+        match &self.origin {
+            Origin::Rule { rule, .. } => rule.remedy(),
+            Origin::Plan { .. } | Origin::AnswerKey | Origin::Reviewer { .. } => Remedy::Edits,
+        }
+    }
+
+    /// This finding's identity: the same across passes while the same defect
+    /// is raised, whatever its note says.
+    pub fn id(&self) -> FindingId {
+        let site = site_text(self.site.unwrap_or(FindingSite::Lesson));
+        FindingId(match &self.origin {
+            Origin::Rule {
+                rule,
+                subject: None,
+            } => format!("rule/{}/{site}", serde_name(rule)),
+            Origin::Rule {
+                rule,
+                subject: Some(subject),
+            } => format!("rule/{}/{site}/{subject}", serde_name(rule)),
+            Origin::Plan {
+                check: PlanCheck::Planned,
+                subject,
+            } => format!("plan/planned/{subject}"),
+            Origin::Plan { check, subject } => {
+                format!("plan/{}/{site}/{subject}", serde_name(check))
+            }
+            Origin::AnswerKey => format!("key/{site}"),
+            Origin::Reviewer { number } => format!("reviewer/{number}"),
+        })
+    }
+
+    /// The identity of rows stored before finding ids.
+    pub(crate) fn place(&self) -> FindingKey {
         FindingKey {
             kind: self.kind,
             site: self.site.unwrap_or(FindingSite::Lesson),
@@ -169,13 +514,23 @@ impl FindingKey {
     /// The stored identity: `teaching:section-3`, `answer_key:question-1`,
     /// `structure:lesson`.
     pub fn id(&self) -> String {
-        let site = match self.site {
-            FindingSite::Lesson => "lesson".to_owned(),
-            FindingSite::Section(index) => format!("section-{index}"),
-            FindingSite::Question(index) => format!("question-{index}"),
-        };
-        format!("{}:{site}", self.kind.as_str())
+        format!("{}:{}", self.kind.as_str(), site_text(self.site))
     }
+}
+
+/// What an earlier review left with the user, for text that has not changed.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct Held {
+    /// Findings stored by their own id.
+    pub ids: BTreeSet<FindingId>,
+    /// Rows stored before finding ids: every finding of the kind at the place.
+    pub places: BTreeSet<FindingKey>,
+    /// The reviewer's findings among those, each with the digest of its
+    /// part's text.
+    pub reviewer: Vec<(ReviewFinding, String)>,
+    /// One more than the highest number of any reviewer finding stored for
+    /// the lesson, changed text or not; none is zero.
+    pub next_number: u32,
 }
 
 /// A finding the repairs stopped on: it waits for the user.
@@ -196,14 +551,127 @@ pub(crate) struct Unit {
     pub passage: Option<String>,
 }
 
-/// The digest of the text at `site`, which a "keep as written" is bound to.
-pub(crate) fn site_sha256(candidate: &Value, site: FindingSite) -> String {
-    let part = match site {
+/// The part of the candidate a site names.
+pub(crate) fn part_at(candidate: &Value, site: FindingSite) -> Option<&Value> {
+    match site {
         FindingSite::Lesson => Some(candidate),
         FindingSite::Section(index) => candidate.pointer(&format!("/blocks/{index}")),
         FindingSite::Question(index) => candidate.pointer(&format!("/questions/{index}")),
+    }
+}
+
+/// The digest of the text at `site`, which a "keep as written" is bound to.
+pub(crate) fn site_sha256(candidate: &Value, site: FindingSite) -> String {
+    text_sha256(
+        &part_at(candidate, site)
+            .map(Value::to_string)
+            .unwrap_or_default(),
+    )
+}
+
+/// Every string of `value`, at any depth.
+fn string_leaves<'a>(value: &'a Value, out: &mut Vec<&'a str>) {
+    match value {
+        Value::String(text) => out.push(text),
+        Value::Array(items) => items.iter().for_each(|item| string_leaves(item, out)),
+        Value::Object(fields) => fields.values().for_each(|field| string_leaves(field, out)),
+        _ => {}
+    }
+}
+
+/// The whole sentences of the finding's part that its passage or sentence
+/// lies in, wherever they occur there.
+pub(crate) fn sentences_of(candidate: &Value, finding: &ReviewFinding) -> Vec<String> {
+    let Some(part) = part_at(candidate, finding.site.unwrap_or(FindingSite::Lesson)) else {
+        return Vec::new();
     };
-    text_sha256(&part.map(Value::to_string).unwrap_or_default())
+    let mut leaves = Vec::new();
+    string_leaves(part, &mut leaves);
+    let needles = [finding.passage.as_deref(), finding.sentence.as_deref()];
+    let mut found: Vec<String> = Vec::new();
+    for leaf in leaves {
+        for needle in needles.into_iter().flatten() {
+            for span in same_text::find_all(leaf, needle) {
+                for (from, to) in same_text::sentences_over(leaf, span) {
+                    if let Some(sentence) = leaf.get(from..to) {
+                        if !found.iter().any(|known| known == sentence) {
+                            found.push(sentence.to_owned());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    found
+}
+
+/// The sentences of every string of `value` that are not blank once folded.
+pub(crate) fn sentences_in(value: &Value) -> Vec<String> {
+    let mut leaves = Vec::new();
+    string_leaves(value, &mut leaves);
+    leaves
+        .into_iter()
+        .flat_map(|leaf| {
+            sentences(leaf)
+                .into_iter()
+                .filter_map(move |(from, to)| leaf.get(from..to))
+        })
+        .filter(|sentence| !same_text::fold(sentence).is_empty())
+        .map(str::to_owned)
+        .collect()
+}
+
+/// What a lesson holds outside its sections and questions.
+fn lesson_rest(lesson: &Value) -> Value {
+    let mut rest = lesson.clone();
+    if let Some(fields) = rest.as_object_mut() {
+        fields.remove("blocks");
+        fields.remove("questions");
+    }
+    rest
+}
+
+/// For each part a repair changed, the sentences it holds that the lesson did
+/// not have before, anywhere: a sentence that only moved is not new.
+pub(crate) fn new_sentences(previous: &Value, repaired: &Value) -> Vec<(FindingSite, Vec<String>)> {
+    let known: BTreeSet<String> = sentences_in(previous)
+        .iter()
+        .map(|sentence| subject_of(sentence))
+        .collect();
+    let mut changed = Vec::new();
+    let mut visit = |site: FindingSite, before: Option<&Value>, after: &Value| {
+        if before == Some(after) {
+            return;
+        }
+        let fresh: Vec<String> = sentences_in(after)
+            .into_iter()
+            .filter(|sentence| !known.contains(&subject_of(sentence)))
+            .collect();
+        if !fresh.is_empty() {
+            changed.push((site, fresh));
+        }
+    };
+    let items = |field: &str| {
+        repaired
+            .get(field)
+            .and_then(Value::as_array)
+            .map(Vec::as_slice)
+            .unwrap_or_default()
+    };
+    for (index, block) in items("blocks").iter().enumerate() {
+        let before = previous.pointer(&format!("/blocks/{index}"));
+        visit(FindingSite::Section(index), before, block);
+    }
+    for (index, question) in items("questions").iter().enumerate() {
+        let before = previous.pointer(&format!("/questions/{index}"));
+        visit(FindingSite::Question(index), before, question);
+    }
+    visit(
+        FindingSite::Lesson,
+        Some(&lesson_rest(previous)),
+        &lesson_rest(repaired),
+    );
+    changed
 }
 
 pub(crate) fn unit(candidate: &Value, finding: &ReviewFinding) -> Unit {
@@ -214,7 +682,7 @@ pub(crate) fn unit(candidate: &Value, finding: &ReviewFinding) -> Unit {
             .filter(|text| !text.trim().is_empty())
             .map(str::to_owned)
     };
-    let site = finding.key().site;
+    let site = finding.site.unwrap_or(FindingSite::Lesson);
     let sha256 = site_sha256(candidate, site);
     match site {
         FindingSite::Lesson => Unit {
@@ -278,27 +746,144 @@ mod tests {
     }
 
     #[test]
-    fn a_finding_is_keyed_by_kind_and_place_not_wording() {
-        let first = ReviewFinding::new(
-            FindingKind::Teaching,
-            Some(FindingSite::Section(2)),
-            "The example returns the string \"4\".",
+    fn a_site_is_a_pointer_to_its_block_or_question() {
+        assert_eq!(
+            FindingSite::Section(3).pointer().as_deref(),
+            Some("/blocks/3")
         );
-        let reworded = ReviewFinding::new(
-            FindingKind::Teaching,
-            Some(FindingSite::Section(2)),
+        assert_eq!(
+            FindingSite::Question(1).pointer().as_deref(),
+            Some("/questions/1")
+        );
+        assert_eq!(FindingSite::Lesson.pointer(), None);
+    }
+
+    #[test]
+    fn a_finding_is_also_about_a_second_part_only_when_it_is_another_one() {
+        let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(1)), "x");
+        assert_eq!(finding.also, None);
+        assert_eq!(
+            finding.clone().with_also(FindingSite::Section(1)).also,
+            None
+        );
+        assert_eq!(
+            finding.with_also(FindingSite::Section(2)).also,
+            Some(FindingSite::Section(2))
+        );
+    }
+
+    #[test]
+    fn a_finding_stored_without_a_second_part_is_read_back() {
+        let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(1)), "x");
+        let mut stored = serde_json::to_value(&finding).unwrap();
+        stored.as_object_mut().unwrap().remove("also");
+        let read: ReviewFinding = serde_json::from_value(stored).unwrap();
+        assert_eq!(read, finding);
+    }
+
+    #[test]
+    fn a_finding_has_its_own_id_and_keeps_it_whatever_its_note_says() {
+        let part = FindingSite::Section(2);
+        let first = ReviewFinding::reviewer(1, Some(part), "The example returns the string \"4\".");
+        let reworded = ReviewFinding::reviewer(
+            1,
+            Some(part),
             "Section 3 shows a string result where the code returns a number.",
         );
-        assert_eq!(first.key(), reworded.key());
-        assert_eq!(first.key().id(), "teaching:section-2");
-        let answer =
-            ReviewFinding::new(FindingKind::AnswerKey, Some(FindingSite::Question(2)), "x");
-        assert_ne!(first.key(), answer.key());
+        assert_eq!(first.id(), reworded.id());
+        assert_eq!(first.id().as_str(), "reviewer/1");
+        assert_eq!(first.id().reviewer_number(), Some(1));
+        assert_ne!(first.id(), ReviewFinding::reviewer(2, Some(part), "x").id());
+        assert_eq!(first.place().id(), "teaching:section-2");
+        assert_ne!(
+            ReviewFinding::of_kind(FindingKind::Teaching, part, "x").id(),
+            ReviewFinding::of_kind(FindingKind::Quotation, part, "x").id()
+        );
         assert_eq!(
-            ReviewFinding::new(FindingKind::Teaching, None, "lesson-wide")
-                .key()
-                .id(),
-            "teaching:lesson"
+            ReviewFinding::reviewer(7, None, "lesson-wide")
+                .id()
+                .as_str(),
+            "reviewer/7"
+        );
+        assert_eq!(
+            ReviewFinding::answer_key(2, "x").id().as_str(),
+            "key/question-2"
+        );
+
+        let broken = |rule: Rule| ReviewFinding::rule(rule, FindingKind::Structure, part, "x");
+        assert_eq!(
+            broken(Rule::TitleMissing).id().as_str(),
+            "rule/title-missing/section-2"
+        );
+        assert_ne!(
+            broken(Rule::TitleMissing).id(),
+            broken(Rule::TitleRepeated).id()
+        );
+
+        let about = |text: &str, note: &str| {
+            ReviewFinding::rule_about(Rule::Uncited, FindingKind::Quotation, part, text, note)
+        };
+        assert_ne!(
+            about("A first sentence.", "x").id(),
+            about("A second sentence.", "x").id()
+        );
+        assert_eq!(
+            about("A first sentence.", "x").id(),
+            about("A first sentence.", "said differently").id()
+        );
+        assert_eq!(
+            about("A first sentence.", "x").id().as_str(),
+            format!("rule/uncited/section-2/{}", subject_of("A first sentence."))
+        );
+        assert_eq!(about("  ", "x").id().as_str(), "rule/uncited/section-2");
+
+        let planned = ReviewFinding::plan(PlanCheck::Planned, "idea-1", part, "x");
+        assert_eq!(planned.id().as_str(), "plan/planned/idea-1");
+        let used = ReviewFinding::plan(PlanCheck::Used, "0123456789abcdef", part, "x");
+        assert_eq!(used.id().as_str(), "plan/used/section-2/0123456789abcdef");
+    }
+
+    #[test]
+    fn a_sentence_is_named_by_sixteen_hex_characters_of_its_folded_text() {
+        let name = subject_of("A first sentence.");
+        assert_eq!(name.len(), 16);
+        assert!(name.chars().all(|c| c.is_ascii_hexdigit()));
+        assert_eq!(name, subject_of("a   FIRST sentence."));
+        assert_ne!(name, subject_of("A second sentence."));
+    }
+
+    #[test]
+    fn a_finding_s_words_are_the_whole_sentences_its_passage_lies_in() {
+        let candidate = json!({"blocks":[
+            {"title":"Sums","body":"Add two numbers. Then check the second tool carefully. Done."},
+            {"title":"Other","body":"Then check the second tool carefully."}
+        ],"questions":[]});
+        let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x")
+            .with_passage("the second tool");
+        assert_eq!(
+            sentences_of(&candidate, &finding),
+            ["Then check the second tool carefully."]
+        );
+        let absent = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x")
+            .with_passage("words that are not there");
+        assert!(sentences_of(&candidate, &absent).is_empty());
+        let wide = ReviewFinding::reviewer(1, None, "x").with_passage("the second tool");
+        assert_eq!(sentences_of(&candidate, &wide).len(), 1);
+    }
+
+    #[test]
+    fn a_sentence_the_lesson_already_had_elsewhere_is_not_new() {
+        let lesson = |first: &str| json!({"title":"A lesson","blocks":[{"body":first},{"body":"Check the sum."}],"questions":[]});
+        let previous = lesson("Add two numbers.");
+        let moved = lesson("Add two numbers. Check the sum.");
+        assert!(new_sentences(&previous, &moved).is_empty());
+        let written = lesson("Add two numbers. Say what a sum is.");
+        assert_eq!(
+            new_sentences(&previous, &written),
+            vec![(
+                FindingSite::Section(0),
+                vec!["Say what a sum is.".to_owned()]
+            )]
         );
     }
 
@@ -324,21 +909,18 @@ mod tests {
 
     #[test]
     fn a_summary_is_set_apart_from_the_note_written_for_the_model() {
-        let finding = ReviewFinding::new(FindingKind::Teaching, None, "Fix blocks[2].")
+        let finding = ReviewFinding::reviewer(1, None, "Fix blocks[2].")
             .with_summary("The example is wrong.");
         assert_eq!(finding.note, "Fix blocks[2].");
         assert_eq!(finding.summary, "The example is wrong.");
-        assert_eq!(
-            ReviewFinding::new(FindingKind::Teaching, None, "x").summary,
-            ""
-        );
+        assert_eq!(ReviewFinding::reviewer(1, None, "x").summary, "");
     }
 
     #[test]
     fn a_quotation_finding_is_not_handed_the_part_s_quote_as_its_passage() {
         let candidate = json!({"blocks":[{"title":"Sums","body":"Add.","quote":"The excerpt this whole section cites."}],"questions":[{"prompt":"What is 2+2?","quote":"The excerpt this question cites."}]});
         for site in [FindingSite::Section(0), FindingSite::Question(0)] {
-            let finding = ReviewFinding::new(FindingKind::Quotation, Some(site), "x");
+            let finding = ReviewFinding::rule(Rule::Quotation, FindingKind::Quotation, site, "x");
             assert_eq!(unit(&candidate, &finding).passage, None, "{site:?}");
         }
     }
@@ -346,7 +928,7 @@ mod tests {
     #[test]
     fn a_unit_s_hash_changes_with_its_text_only() {
         let candidate = json!({"blocks":[{"title":"Sums","body":"Add."},{"title":"Other","body":"B"}],"questions":[{"prompt":"What is 2+2?"}]});
-        let finding = ReviewFinding::new(FindingKind::Teaching, Some(FindingSite::Section(0)), "x");
+        let finding = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "x");
         let before = unit(&candidate, &finding);
         assert_eq!(before.title, "Section 1: Sums");
         let mut other_changed = candidate.clone();
@@ -355,11 +937,64 @@ mod tests {
         let mut changed = candidate.clone();
         changed["blocks"][0]["body"] = json!("Add twice.");
         assert_ne!(unit(&changed, &finding).sha256, before.sha256);
-        let question =
-            ReviewFinding::new(FindingKind::AnswerKey, Some(FindingSite::Question(0)), "x");
+        let question = ReviewFinding::answer_key(0, "x");
         assert_eq!(
             unit(&candidate, &question).passage.as_deref(),
             Some("What is 2+2?")
         );
+    }
+
+    #[test]
+    fn each_rule_has_the_remedy_its_fix_needs() {
+        use Remedy::{Edits, Whole};
+        let table = [
+            (Rule::Unreadable, Whole),
+            (Rule::Schema, Whole),
+            (Rule::BlockBody, Whole),
+            (Rule::PracticeRubric, Whole),
+            (Rule::Quotation, Edits),
+            (Rule::QuoteChecks, Whole),
+            (Rule::TitleMissing, Whole),
+            (Rule::TitleRepeated, Edits),
+            (Rule::CheckHoldback, Edits),
+            (Rule::FenceUnclosed, Edits),
+            (Rule::PromptMissing, Whole),
+            (Rule::PromptRepeated, Edits),
+            (Rule::ExplanationMissing, Whole),
+            (Rule::Choices, Whole),
+            (Rule::KeyLongest, Edits),
+            (Rule::KeyGivenAway, Edits),
+            (Rule::RationaleCount, Whole),
+            (Rule::RationaleMissing, Whole),
+            (Rule::Uncited, Edits),
+            (Rule::CitationLabel, Edits),
+            (Rule::SourceNumber, Edits),
+            (Rule::SentenceRepeated, Edits),
+            (Rule::UnshownCheck, Whole),
+            (Rule::RecapFirst, Whole),
+            (Rule::SectionMix, Whole),
+            (Rule::QuestionCount, Whole),
+            (Rule::NoExplanation, Whole),
+            (Rule::QuestionKinds, Whole),
+            (Rule::CopiedWording, Edits),
+            (Rule::SentenceCitation, Edits),
+            (Rule::PartCitation, Edits),
+        ];
+        for (rule, remedy) in table {
+            assert_eq!(rule.remedy(), remedy, "{rule:?}");
+            let finding =
+                ReviewFinding::rule(rule, FindingKind::Structure, FindingSite::Lesson, "n");
+            assert_eq!(finding.remedy(), remedy, "{rule:?}");
+        }
+    }
+
+    #[test]
+    fn a_finding_that_is_not_a_broken_rule_is_corrected_by_edits() {
+        let reviewer = ReviewFinding::reviewer(1, Some(FindingSite::Section(0)), "n");
+        let key = ReviewFinding::answer_key(0, "n");
+        let plan = ReviewFinding::plan(PlanCheck::Used, "an idea", FindingSite::Section(0), "n");
+        for finding in [reviewer, key, plan] {
+            assert_eq!(finding.remedy(), Remedy::Edits);
+        }
     }
 }

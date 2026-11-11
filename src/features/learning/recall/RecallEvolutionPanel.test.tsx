@@ -8,7 +8,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { RecallEvolutionPanel } from '@/features/learning/recall/RecallEvolutionPanel';
 
 const mocks = vi.hoisted(() => ({ recall: vi.fn(), sources: vi.fn(), save: vi.fn(), duplicate: vi.fn(), review: vi.fn() }));
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
+vi.mock('@/lib/api', () => ({ default: {
   getLearningRecallWorkspace: mocks.recall,
   getLearningSourceWorkspace: mocks.sources,
   saveLearningRecallCard: mocks.save,
@@ -16,7 +16,7 @@ vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeo
   reviewLearningRecallCard: mocks.review,
 } }));
 const ok = <T,>(data: T) => ({ ok: true as const, data });
-const fail = (error: string, code?: string) => ({ ok: false as const, error, ...(code ? { details: { code } } : {}) });
+const fail = (error: string) => ({ ok: false as const, error });
 const content = { prompt: 'Which boundary makes retries safe?', answer: 'A stable operation identifier and a payload fingerprint.', explanation: 'The same operation can be replayed without creating a second write.', options: [], correctOptionIndex: null, language: null, clozeDeletions: [] };
 const card = (overrides: Record<string, unknown> = {}) => ({ id: 'card-1', format: 'question_answer', content, sourceVersionIds: ['version-1'], contentRevision: 2, scheduler: { stability: null, difficulty: null, lastReviewedAt: null, dueAt: 1, intervalDays: 2, reviewCount: 1 }, versions: [{ revision: 1, format: 'question_answer', content, sourceVersionIds: ['version-1'], changeReason: 'Created', createdAt: 1_790_000_000_000 }, { revision: 2, format: 'question_answer', content: { ...content, prompt: 'Which boundary makes retries safe?' }, sourceVersionIds: ['version-1'], changeReason: 'Tightened prompt', createdAt: 1_790_100_000_000 }], createdAt: 1_790_000_000_000, updatedAt: 1_790_100_000_000, ...overrides });
 const workspace = (overrides: Record<string, unknown> = {}) => ({ programId: 'program-1', cards: [card()], duplicates: [], dueCount: 1, schedulerDisclosure: 'Cards are scheduled with FSRS 6.', ...overrides });
@@ -57,35 +57,9 @@ describe('Learning Studio versioned recall', () => {
     expect((await screen.findAllByRole('alert')).some((alert) => alert.textContent?.includes('Connection interrupted'))).toBe(true);
     const request = mocks.save.mock.calls[0][0];
     expect(request).toMatchObject({ programId: 'program-1', format: 'cloze', sourceVersionIds: ['version-1'], content: { prompt: expect.stringContaining('stable operation ID'), clozeDeletions: ['stable operation ID'] } });
-    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await user.click(screen.getByRole('button', { name: 'Retry card save' }));
     await waitFor(() => expect(mocks.save).toHaveBeenCalledTimes(2));
     expect(mocks.save.mock.calls[1][0]).toEqual(request);
-  });
-
-  it('offers a reload of the cards, not Try again, when a save is refused as a conflict', async () => {
-    const user = userEvent.setup();
-    mocks.review.mockResolvedValueOnce(fail('This card changed elsewhere.', 'CONFLICT'));
-    renderPanel();
-    await user.type(await screen.findByLabelText(/Your answer/), 'An idempotency key');
-    await user.click(screen.getByRole('button', { name: 'Check my answer' }));
-    await user.click(screen.getByRole('button', { name: 'good' }));
-    expect(await screen.findByText('This card changed elsewhere.')).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Try again' })).not.toBeInTheDocument();
-    const loads = mocks.recall.mock.calls.length;
-    await user.click(screen.getByRole('button', { name: 'Reload cards' }));
-    await waitFor(() => expect(mocks.recall.mock.calls.length).toBeGreaterThan(loads));
-  });
-
-  it('treats a message that merely says "changed elsewhere" as a plain error with Try again', async () => {
-    const user = userEvent.setup();
-    mocks.review.mockResolvedValueOnce(fail('This card changed elsewhere.'));
-    renderPanel();
-    await user.type(await screen.findByLabelText(/Your answer/), 'An idempotency key');
-    await user.click(screen.getByRole('button', { name: 'Check my answer' }));
-    await user.click(screen.getByRole('button', { name: 'good' }));
-    expect(await screen.findByText('This card changed elsewhere.')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Try again' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Reload cards' })).not.toBeInTheDocument();
   });
 
   it('does not cap the prompt, answer or explanation of a card', async () => {
@@ -112,7 +86,7 @@ describe('Learning Studio versioned recall', () => {
     expect(await screen.findByText(/Temporary review error/)).toBeVisible();
     const request = mocks.review.mock.calls[0][0];
     expect(request).toMatchObject({ programId: 'program-1', cardId: 'card-1', expectedReviewCount: 1, rating: 'good', reviewId: expect.any(String) });
-    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await user.click(screen.getByRole('button', { name: 'Retry review' }));
     await waitFor(() => expect(mocks.review).toHaveBeenCalledTimes(2));
     expect(mocks.review.mock.calls[1][0]).toEqual(request);
     expect(await screen.findByRole('status')).toHaveTextContent(/Review saved/);
@@ -150,7 +124,7 @@ describe('Learning Studio versioned recall', () => {
     await user.click(await screen.findByRole('button', { name: 'Mark as duplicate' }));
     expect(await screen.findByText('Duplicate decision failed')).toBeVisible();
     const duplicateRequest = mocks.duplicate.mock.calls[0][0];
-    await user.click(screen.getByRole('button', { name: 'Try again' }));
+    await user.click(screen.getByRole('button', { name: 'Retry duplicate decision' }));
     await waitFor(() => expect(mocks.duplicate).toHaveBeenCalledTimes(2));
     expect(mocks.duplicate.mock.calls[1][0]).toEqual(duplicateRequest);
   });

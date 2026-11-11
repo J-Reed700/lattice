@@ -81,7 +81,7 @@ function mockApi() {
   } as unknown as ApiClient;
 }
 
-function setup(api: ApiClient = mockApi(), reply?: () => string) {
+function setup(api: ApiClient = mockApi()) {
   const queryClient = new QueryClient();
   const send = vi.fn(async (): Promise<'answered' | undefined> => 'answered');
   const fill = vi.fn();
@@ -91,7 +91,7 @@ function setup(api: ApiClient = mockApi(), reply?: () => string) {
     </QueryClientProvider>
   );
   const view = renderHook(
-    ({ conversationId }) => useVoiceConversation({ conversationId, send, fill, reply }),
+    ({ conversationId }) => useVoiceConversation({ conversationId, send, fill }),
     { wrapper, initialProps: { conversationId: 'conversation-1' as string | null } },
   );
   return { ...view, api, queryClient, send, fill };
@@ -239,21 +239,6 @@ describe('useVoiceConversation', () => {
     for await (const piece of pieces) said.push(piece);
     expect(said).toEqual(['One here.', 'Two here.']);
     await waitFor(() => expect(view.result.current.phase).toBe('listening'));
-  });
-
-  it('speaks the reply it is given when the chat has no stored conversation', async () => {
-    const view = setup(readyApi(), () => 'Said by the thread.');
-    view.rerender({ conversationId: null });
-    await start(view);
-    hear(QUIET, 5);
-    hear(LOUD, 20);
-    hear(QUIET, 40);
-    await waitFor(() => expect(view.send).toHaveBeenCalled());
-
-    await waitFor(() => expect(h.speak).toHaveBeenCalled());
-    const said: string[] = [];
-    for await (const piece of h.speak.mock.calls[0][1]) said.push(piece);
-    expect(said).toEqual(['Said by the thread.']);
   });
 
   it('ignores a reply being written in another chat', async () => {

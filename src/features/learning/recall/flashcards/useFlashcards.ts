@@ -103,15 +103,17 @@ export function useSetFlashcardDeckTarget() {
     onSuccess: (deck) => { client.setQueryData([...key, 'deck', deck.id], deck); return invalidateDecks(client); },
   });
 }
-/** Makes a recall deck from an interview activity; the caller decides where it opens. */
+/** Makes a recall deck from an interview activity and opens it in Studio. */
 export function useCreateInterviewDeck() {
   const api = useApi();
   const client = useQueryClient();
+  const navigate = useAppNavigate();
   return useMutation({
     mutationFn: (request: CreateInterviewStudyDeckRequestDto) => data(api.createInterviewStudyDeck(request)),
     onSuccess: (deck) => {
       client.setQueryData([...key, 'deck', deck.id], deck);
       void invalidateDecks(client);
+      void navigate(`/studio?deck=${encodeURIComponent(deck.id)}`);
     },
   });
 }

@@ -32,35 +32,33 @@ interface VoiceConversationOptions {
   send: (_text: string) => Promise<GenerationOutcome | undefined>;
   /** Puts text in the composer. */
   fill: (_text: string) => void;
-  /** The reply to speak when the chat is not a stored conversation. */
-  reply?: () => string;
 }
 
 /**
  * The mic in a chat: pressing it starts a voice conversation in that chat, and
  * pressing it again, leaving the chat or closing it ends one.
  */
-export function useVoiceConversation({ conversationId, send, fill, reply: replyText }: VoiceConversationOptions) {
+export function useVoiceConversation({ conversationId, send, fill }: VoiceConversationOptions) {
   const api = useApi();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
   const speak = useSpeaker();
   const cancelGeneration = useConversationsStore((state) => state.cancelGeneration);
-  const replyStreaming = useConversationsStore((state) => replyBeingWritten(state, conversationId));
+  const reply = useConversationsStore((state) => replyBeingWritten(state, conversationId));
   const replying = useConversationsStore((state) =>
     conversationId !== null && state.inFlightGenerations.has(conversationId));
 
   const [phase, setPhase] = useState<VoicePhase>('off');
   const session = useRef<VoiceSession | null>(null);
   const waitingForChat = useRef<Array<() => void>>([]);
-  const latest = useRef({ conversationId, send, fill, speak, replying, replyText });
+  const latest = useRef({ conversationId, send, fill, speak, replying });
   useEffect(() => {
-    latest.current = { conversationId, send, fill, speak, replying, replyText };
+    latest.current = { conversationId, send, fill, speak, replying };
   });
 
   useEffect(() => {
-    session.current?.replyGrew(replyStreaming);
-  }, [replyStreaming]);
+    session.current?.replyGrew(reply);
+  }, [reply]);
 
   useEffect(() => {
     if (replying) return;
@@ -114,7 +112,6 @@ export function useVoiceConversation({ conversationId, send, fill, reply: replyT
       },
       finalReply: () => {
         const id = latest.current.conversationId;
-        if (id === null) return latest.current.replyText?.() ?? '';
         const messages = id ? queryClient.getQueryData<ConversationMessage[]>(conversationKeys.messages(id)) : undefined;
         return [...(messages ?? [])].reverse().find((message) => message.role === 'assistant')?.content ?? '';
       },

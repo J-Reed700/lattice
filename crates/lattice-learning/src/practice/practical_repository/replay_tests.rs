@@ -79,17 +79,6 @@ async fn activity_and_simulation_operations_replay_only_the_identical_request() 
         .revision;
     let repository = LearningPracticalRepository::new(pool.clone());
     let generate = request(&program_id, &lesson_id, revision);
-    tests::assert_conflict(
-        repository
-            .save_generated_activity(
-                &request(&program_id, &lesson_id, revision + 1),
-                &generated(),
-                "fixture-model",
-                "stale-generate",
-            )
-            .await
-            .map(|_| ()),
-    );
 
     assert!(repository
         .replay_activity_operation(

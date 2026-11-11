@@ -662,7 +662,7 @@ pub async fn repair_saved(
     if program.summary.status != LearningProgramStatus::Draft
         || program.summary.revision != request.expected_revision
     {
-        return Err(AppError::Conflict(
+        return Err(AppError::InvalidInput(
             "The draft changed. Reload it before repairing.".into(),
         ));
     }

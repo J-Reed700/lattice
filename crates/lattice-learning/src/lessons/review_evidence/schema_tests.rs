@@ -1,10 +1,9 @@
 use super::*;
 use crate::lessons::course_generation_tests::property_count;
-use crate::review_findings::FindingKind;
 
 fn issues(count: usize) -> Vec<ReviewFinding> {
     (0..count)
-        .map(|i| ReviewFinding::new(FindingKind::Teaching, None, format!("Proposal {i}.")))
+        .map(|i| ReviewFinding::reviewer(u32::try_from(i).unwrap(), None, format!("Proposal {i}.")))
         .collect()
 }
 

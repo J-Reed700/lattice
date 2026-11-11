@@ -11,7 +11,7 @@ import { useCompleteLearningLesson, useLearningProgram, usePrepareLearningLesson
 import VaultAPI from '@/lib/api';
 import type { LearningPlanDto, LearningProgramDto } from '@/lib/bindings';
 
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
+vi.mock('@/lib/api', () => ({ default: {
   getLearningPlan: vi.fn(), getLearningProgram: vi.fn(), acceptLearningCurriculumRevision: vi.fn(),
   completeLearningLesson: vi.fn(), prepareLearningLesson: vi.fn(),
 } }));

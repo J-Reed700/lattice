@@ -5,7 +5,6 @@ import { Check, CircleDot, FileCode, Minus, X, type LucideIcon } from 'lucide-re
 import { Badge } from '@/components/ui/badge';
 import type { ReviewKind } from '@/features/learning/drills/drillOptions';
 import { FixDiff } from '@/features/learning/drills/reveal/FixDiff';
-import { IssueOutcomes } from '@/features/learning/drills/reveal/IssueOutcomes';
 import { fencedCode } from '@/features/learning/drills/reveal/lessonText';
 import { plainText } from '@/features/learning/drills/reveal/plainText';
 import { ALSO_VALID_NOT_RAISED, ISSUE_OUTCOME, lineLabel } from '@/features/learning/drills/reveal/revealCopy';
@@ -48,12 +47,10 @@ export function IssueCard({ entry, credited, onShow, material = 'code' }: {
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <Badge variant="outline" className={severityTone(issue.severity)}>{severityLabel(issue.severity)}</Badge>
-          {issue.alsoValid && (
-            <Badge variant="outline" className={`gap-1 ${outcome.tone}`}>
-              <OutcomeIcon size={12} strokeWidth={2.5} aria-hidden="true" />
-              {outcome.label}
-            </Badge>
-          )}
+          <Badge variant="outline" className={`gap-1 ${outcome.tone}`}>
+            <OutcomeIcon size={12} strokeWidth={2.5} aria-hidden="true" />
+            {outcome.label}
+          </Badge>
         </div>
       </header>
       <button
@@ -161,7 +158,6 @@ export function IssueList({ ranked, findings, onShow, material = 'code' }: {
   const alsoValid = ranked.filter((entry) => entry.issue.alsoValid);
   return (
     <>
-      <IssueOutcomes planted={planted} />
       <section aria-labelledby={headingId} className="space-y-3">
         <h2 id={headingId} className={sectionHeading}>Issues, most severe first</h2>
         <IssueCards ranked={planted} findings={findings} onShow={onShow} material={material} />

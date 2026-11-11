@@ -199,7 +199,7 @@ async fn an_assertion_the_sources_contradict_is_adopted_and_checked() -> Result<
 
 /// A figure the extractor missed in an exercise is a statement the lesson
 /// makes, and a source must back it: the audit's gap joins the inventory,
-/// located at the judged passage, and the rule layer sorts it Sourced.
+/// located at the judged passage, and the model sorts it Sourced.
 #[tokio::test]
 async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_check() -> Result<()>
 {
@@ -225,7 +225,7 @@ async fn a_body_gap_with_a_figure_becomes_a_sourced_claim_and_gets_its_strict_ch
         finding.class,
         Some(Classed {
             class: Class::Sourced,
-            by: ClassifiedBy::Rule
+            by: ClassifiedBy::Model
         })
     );
     assert_eq!(finding.verdict, ClaimVerdict::Unsupported);
@@ -420,16 +420,6 @@ fn a_gap_the_rule_layer_leaves_unsorted_is_adopted() {
     );
 }
 
-/// A remark about the lesson's own sources is Internal by rule: it is no claim.
-#[test]
-fn a_gap_the_rule_layer_makes_internal_is_not_adopted() {
-    let remark = "The sources above do not say how many rows it buffers.";
-    assert_eq!(
-        adopt_one(remark, &claim_ledger::Rewrites::default()),
-        (0, 0, false)
-    );
-}
-
 /// The guard holds for an unsorted gap as for a Sourced one: text no pass
 /// has rewritten is not adopted after the first pass.
 #[test]
@@ -532,5 +522,15 @@ fn a_report_whose_audit_names_a_gap_is_still_a_complete_report() {
     assert!(
         report.validate("lesson", &lesson).is_ok(),
         "a gap is not a defect of the report"
+    );
+}
+
+/// A gap that opens "The sources" is no longer Internal by rule: the model sorts it.
+#[test]
+fn a_gap_that_opens_the_sources_is_adopted_for_the_model_to_sort() {
+    let remark = "The sources above do not say how many rows it buffers.";
+    assert_eq!(
+        adopt_one(remark, &claim_ledger::Rewrites::default()),
+        (1, 1, true)
     );
 }

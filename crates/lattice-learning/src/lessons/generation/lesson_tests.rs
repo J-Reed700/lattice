@@ -3,6 +3,8 @@ use super::*;
 use crate::lessons::course_generation_tests::length_bounds;
 use serde_json::{json, Value};
 
+const STEPS_IN_ORDER: &str = "The learner does the lesson's steps in order, with their own tools and materials, so each step starts from what the steps before it left: a later step uses what an earlier one made or set up, and never has the learner make or set it up again.";
+
 const EXCERPT: &str =
     "Water boils at 99.97 degrees Celsius at one standard atmosphere of pressure.";
 
@@ -31,7 +33,18 @@ fn question(kind: &str, prompt: &str, cited: bool) -> Value {
 /// Seven sections, two sharing a title, one with no body, no reflection; five
 /// questions, one of them practice.
 fn off_shape_value(cited: bool) -> Value {
-    let long = "A substantive explanation. ".repeat(30);
+    let long = |part: u8| -> String {
+        (0..30u8)
+            .map(|n| {
+                format!(
+                    "A substantive explanation {}{} of part {}. ",
+                    char::from(b'a' + n / 26),
+                    char::from(b'a' + n % 26),
+                    char::from(b'a' + part)
+                )
+            })
+            .collect()
+    };
     let mut blocks: Vec<_> = [
         "explanation",
         "explanation",
@@ -42,7 +55,14 @@ fn off_shape_value(cited: bool) -> Value {
     ]
     .iter()
     .enumerate()
-    .map(|(i, kind)| block(kind, &format!("Part {i}"), &long, cited))
+    .map(|(i, kind)| {
+        block(
+            kind,
+            &format!("Part {i}"),
+            &long(u8::try_from(i).unwrap()),
+            cited,
+        )
+    })
     .collect();
     blocks[1]["title"] = json!("Part 0");
     blocks.push(block("recap", "Recap", "", cited));
@@ -67,10 +87,17 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
     assert_eq!(prepared.keys.len(), 5);
     assert!(citations.is_empty());
     // The rules come back as findings for the user, not as an error.
-    let findings =
-        crate::teaching::structural_findings(&lesson_schema(1), &off_shape_value(true).to_string())
-            .unwrap();
-    let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.key().id()).collect();
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Draft, 1);
+    let findings = crate::teaching::structural_findings(
+        crate::teaching::ReviewSchema::Lesson(crate::lessons::shape::LessonShape::new(
+            &schema, policy,
+        )),
+        &off_shape_value(true).to_string(),
+        &Default::default(),
+    )
+    .unwrap();
+    let keys: std::collections::BTreeSet<_> = findings.iter().map(|f| f.place().id()).collect();
     let expected = [
         "structure:lesson",
         "structure:section-1",
@@ -83,6 +110,32 @@ fn a_lesson_off_its_shape_is_saved_and_its_rules_are_findings_not_refusals() {
 }
 
 #[test]
+fn the_publication_check_reports_a_question_kind_the_lesson_lacks() {
+    let mut lesson = off_shape_value(true);
+    lesson["questions"]
+        .as_array_mut()
+        .unwrap()
+        .retain(|question| question["kind"] != "test");
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Kept, 1);
+    let findings = crate::teaching::structural_findings(
+        crate::teaching::ReviewSchema::Lesson(crate::lessons::shape::LessonShape::new(
+            &schema, policy,
+        )),
+        &lesson.to_string(),
+        &Default::default(),
+    )
+    .unwrap();
+    assert!(
+        findings
+            .iter()
+            .any(|finding| finding.place().id() == "structure:lesson"
+                && finding.note.contains("test")),
+        "{findings:?}"
+    );
+}
+
+#[test]
 fn a_quotation_that_does_not_match_keeps_its_source_and_waits_for_the_user() {
     let mut lesson = off_shape(true);
     lesson.blocks[2].quote = "Water boils at exactly one hundred degrees in every kitchen.".into();
@@ -90,7 +143,7 @@ fn a_quotation_that_does_not_match_keeps_its_source_and_waits_for_the_user() {
     let (prepared, citations) = assemble(lesson, &sources, &HashSet::from(["source-a"])).unwrap();
     assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
     assert_eq!(citations.len(), 1);
-    assert_eq!(citations[0].key().id(), "quotation:section-2");
+    assert_eq!(citations[0].place().id(), "quotation:section-2");
     assert!(citations[0].note.contains("blocks[2]"));
     assert_eq!(
         citations[0].summary,
@@ -133,7 +186,7 @@ fn a_cited_sentence_adds_its_source_and_one_that_cannot_be_confirmed_is_a_findin
     assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
     assert_eq!(prepared.blocks[3].source_ids, ["source-a"]);
     assert_eq!(findings.len(), 1);
-    assert_eq!(findings[0].key().id(), "quotation:section-2");
+    assert_eq!(findings[0].place().id(), "quotation:section-2");
     assert!(findings[0].note.contains("Water boils at 50 degrees"));
     assert_eq!(
         findings[0].summary,
@@ -147,6 +200,148 @@ fn a_cited_sentence_adds_its_source_and_one_that_cannot_be_confirmed_is_a_findin
         findings[0].sentence.as_deref(),
         Some("Water boils at 50 degrees Celsius.")
     );
+}
+
+const CURLY: &str =
+    "If you\u{2019}re ever unsure, the file reader will show you exactly which file is open.";
+const STRAIGHT: &str =
+    "If you're ever unsure, the file reader will show you exactly which file is open.";
+
+fn curly_source() -> LearningSourceDto {
+    LearningSourceDto {
+        id: "source-b".into(),
+        title: "Reader notes".into(),
+        url: None,
+        excerpt: CURLY.into(),
+        acquired_at: 2,
+    }
+}
+
+#[test]
+fn a_sentence_citation_differing_from_its_source_only_in_typography_is_confirmed() {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].citations = vec![GeneratedCitation {
+        sentence: "The file reader shows which file is open.".into(),
+        source_index: Some(1),
+        quote: STRAIGHT.into(),
+    }];
+    let owned = HashSet::from(["source-a", "source-b"]);
+
+    let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
+
+    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
+}
+
+#[test]
+fn a_part_quotation_differing_from_its_source_only_in_typography_is_confirmed() {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].source_index = Some(1);
+    lesson.blocks[2].quote = STRAIGHT.into();
+    lesson.questions[1].source_index = Some(1);
+    lesson.questions[1].quote = STRAIGHT.into();
+    let owned = HashSet::from(["source-a", "source-b"]);
+
+    let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
+
+    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(prepared.blocks[2].source_ids, ["source-b"]);
+    assert_eq!(prepared.questions[1].source_ids, ["source-b"]);
+}
+
+#[test]
+fn a_quotation_with_different_words_is_still_a_finding_beside_a_curly_source() {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].citations = vec![GeneratedCitation {
+        sentence: "The file reader closes files.".into(),
+        source_index: Some(1),
+        quote: "If you're ever unsure, the file reader will close exactly which file is open."
+            .into(),
+    }];
+    let owned = HashSet::from(["source-a", "source-b"]);
+
+    let (prepared, findings) = assemble(lesson, &[source(), curly_source()], &owned).unwrap();
+
+    assert_eq!(findings.len(), 1);
+    assert_eq!(findings[0].place().id(), "quotation:section-2");
+    assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
+}
+
+const MARKED: &str =
+    "Start by using the **F**ile **R**eader (FR) tool, then open the `config` file to check it.";
+const PLAIN: &str = "using the File Reader (FR) tool, then open the config file to check it.";
+const DASHED: &str = "The reader \u{2013} unlike the writer \u{2014} never changes a file on disk.";
+
+fn source_b(excerpt: &str) -> LearningSourceDto {
+    LearningSourceDto {
+        id: "source-b".into(),
+        title: "Reader notes".into(),
+        url: None,
+        excerpt: excerpt.into(),
+        acquired_at: 2,
+    }
+}
+
+fn confirmed_as_part_quote(excerpt: &str, quote: &str) {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].source_index = Some(1);
+    lesson.blocks[2].quote = quote.into();
+    let owned = HashSet::from(["source-a", "source-b"]);
+    let (_, findings) = assemble(lesson, &[source(), source_b(excerpt)], &owned).unwrap();
+    assert!(findings.is_empty(), "{findings:?}");
+}
+
+fn confirmed_as_sentence_citation(excerpt: &str, quote: &str) {
+    let mut lesson = off_shape(true);
+    lesson.blocks[2].citations = vec![GeneratedCitation {
+        sentence: "The file reader behaves as described.".into(),
+        source_index: Some(1),
+        quote: quote.into(),
+    }];
+    let owned = HashSet::from(["source-a", "source-b"]);
+    let (prepared, findings) = assemble(lesson, &[source(), source_b(excerpt)], &owned).unwrap();
+    assert!(findings.is_empty(), "{findings:?}");
+    assert_eq!(prepared.blocks[2].source_ids, ["source-a", "source-b"]);
+}
+
+#[test]
+fn a_part_quotation_omitting_markdown_markers_of_its_source_is_confirmed() {
+    confirmed_as_part_quote(MARKED, PLAIN);
+}
+
+#[test]
+fn a_sentence_citation_omitting_markdown_markers_of_its_source_is_confirmed() {
+    confirmed_as_sentence_citation(MARKED, PLAIN);
+}
+
+#[test]
+fn a_quotation_writing_a_hyphen_for_a_source_dash_is_confirmed() {
+    let hyphens = "The reader - unlike the writer - never changes a file on disk.";
+    confirmed_as_part_quote(DASHED, hyphens);
+    confirmed_as_sentence_citation(DASHED, hyphens);
+}
+
+#[test]
+fn a_quotation_with_a_different_word_is_still_a_finding_beside_a_marked_source() {
+    for (excerpt, quote) in [
+        (MARKED, PLAIN.replace("open", "close")),
+        (
+            DASHED,
+            "The reader - unlike the writer - always changes a file on disk.".to_owned(),
+        ),
+    ] {
+        let mut lesson = off_shape(true);
+        lesson.blocks[2].citations = vec![GeneratedCitation {
+            sentence: "The file reader behaves as described.".into(),
+            source_index: Some(1),
+            quote,
+        }];
+        let owned = HashSet::from(["source-a", "source-b"]);
+        let (prepared, findings) =
+            assemble(lesson, &[source(), source_b(excerpt)], &owned).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(prepared.blocks[2].source_ids, ["source-a"]);
+    }
 }
 
 #[test]
@@ -215,19 +410,7 @@ fn an_invented_citation_in_a_course_without_sources_is_dropped_and_reported() {
     lesson.questions[0].quote = "An imaginary textbook says this is true.".into();
     let (prepared, citations) = assemble(lesson, &[], &HashSet::new()).unwrap();
     assert!(prepared.questions[0].source_ids.is_empty());
-    assert_eq!(citations[0].key().id(), "quotation:question-0");
-}
-
-#[test]
-fn a_sourced_part_that_names_no_source_cannot_be_saved_and_is_not_called_invalid_input() {
-    let mut lesson = off_shape(true);
-    lesson.blocks[0].source_index = Some(3);
-    let error = assemble(lesson, &[source()], &HashSet::from(["source-a"])).unwrap_err();
-    assert!(
-        matches!(error, AppError::ModelAnswerUnusable(_)),
-        "{error:?}"
-    );
-    assert!(!error.to_string().contains("check your input"));
+    assert_eq!(citations[0].place().id(), "quotation:question-0");
 }
 
 #[test]
@@ -240,7 +423,8 @@ fn the_lesson_schema_bounds_no_text_but_a_blank() {
 
 #[test]
 fn a_lessons_text_of_any_length_is_no_schema_finding() {
-    let schema = lesson_schema(1);
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Draft, 1);
     let kinds = [
         "explanation",
         "worked_example",
@@ -269,12 +453,18 @@ fn a_lessons_text_of_any_length_is_no_schema_finding() {
         .collect();
     let mut lesson = json!({"blocks":blocks,"questions":questions});
     let schema_findings = |lesson: &Value| -> Vec<String> {
-        crate::teaching::structural_findings(&schema, &lesson.to_string())
-            .unwrap()
-            .into_iter()
-            .map(|finding| finding.note)
-            .filter(|note| note.starts_with("Fix the schema violation"))
-            .collect()
+        crate::teaching::structural_findings(
+            crate::teaching::ReviewSchema::Lesson(crate::lessons::shape::LessonShape::new(
+                &schema, policy,
+            )),
+            &lesson.to_string(),
+            &Default::default(),
+        )
+        .unwrap()
+        .into_iter()
+        .map(|finding| finding.note)
+        .filter(|note| note.starts_with("Fix the schema violation"))
+        .collect()
     };
     let found = schema_findings(&lesson);
     assert!(found.is_empty(), "the fixture is not a lesson: {found:?}");
@@ -306,6 +496,7 @@ async fn a_lesson_with_no_reference_material_asks_for_it_in_plain_words() {
         &BuiltinRuntimes::for_tests(),
         &program,
         lesson,
+        &CoursePlan::blank(&program),
         &references,
     )
     .await
@@ -327,13 +518,109 @@ fn writer_prompt(program: &LearningProgramDto, lesson: &LearningLessonDto) -> Va
         &outline(1, 1),
         program,
         lesson,
+        &CoursePlan::blank(program),
         &references,
         Vec::new(),
         Vec::new(),
         true,
+        crate::lessons::shape::policy(),
     )
     .unwrap();
     serde_json::from_str(&prompt).unwrap()
+}
+
+#[test]
+fn the_writer_is_given_the_course_plan_and_no_recaps() {
+    let program = crate::tests::fixture();
+    let lesson = program.modules[0].lessons[0].clone();
+    let prompt = writer_prompt(&program, &lesson);
+
+    assert!(prompt["courseSequence"]["coursePlan"].is_array());
+    assert!(prompt["courseSequence"].get("recentTeaching").is_none());
+    let whole = prompt.to_string();
+    assert!(!whole.contains("recentTeaching"), "{whole}");
+    assert!(!whole.contains("earlier recaps"), "{whole}");
+}
+
+#[test]
+fn the_writer_teaches_exactly_its_lessons_planned_ideas_and_never_a_later_lessons() {
+    let requirements = writer_requirements();
+
+    assert!(
+        requirements.contains("Teach exactly that lesson's planned ideas, terms and actions"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("Never teach a later lesson's planned ideas"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("an earlier lesson's planned ideas in coursePlan"),
+        "the last check mixes in an earlier lesson's planned ideas"
+    );
+    assert!(
+        requirements.contains("an earlier lesson's planned actions in coursePlan"),
+        "actions an earlier lesson plans are not taught again"
+    );
+    assert!(
+        requirements.contains("the ideas coursePlan lists for earlier lessons"),
+        "recall questions draw on earlier lessons' planned ideas"
+    );
+    assert!(
+        requirements.contains("the next lesson's planned ideas in coursePlan"),
+        "the recap bridges to the next lesson's plan"
+    );
+}
+
+#[test]
+fn the_writer_has_the_learner_prepare_what_an_action_needs_with_steps_it_teaches() {
+    let requirements = writer_requirements();
+
+    assert!(
+        requirements.contains("When an action needs something prepared first"),
+        "{requirements}"
+    );
+    assert!(
+        requirements.contains("teaches them where they are first used"),
+        "{requirements}"
+    );
+}
+
+#[test]
+fn the_writer_asks_for_what_an_action_needs_in_no_subjects_terms() {
+    let text = writer_requirements();
+    let rule = text
+        .lines()
+        .find(|line| line.contains("teach every action a practice or check asks"))
+        .unwrap();
+    for word in ["command", "option", "folder", "file", "path"] {
+        assert!(
+            !rule.contains(word),
+            "the action rule mentions \"{word}\": {rule}"
+        );
+    }
+    assert!(
+        rule.contains("the lesson has the learner prepare it with steps the lesson teaches"),
+        "{rule}"
+    );
+    let question = text
+        .lines()
+        .find(|line| line.contains("Every rationale and the explanation say what is true"))
+        .unwrap();
+    assert!(!question.contains("paths"), "{question}");
+    assert!(
+        question.contains("using the names and values its prompt gives"),
+        "{question}"
+    );
+}
+
+#[test]
+fn the_writer_is_told_a_section_never_says_the_same_thing_twice() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("a section never says the same thing twice"),
+        "{text}"
+    );
 }
 
 fn writer_requirements() -> String {
@@ -392,7 +679,7 @@ fn the_writer_teaches_the_learners_setup_and_every_step_it_asks_for() {
         "{text}"
     );
     assert!(
-        text.contains("say which one it describes instead of presenting it as the learner's"),
+        text.contains("name that system instead of presenting what it says as the learner's"),
         "{text}"
     );
     assert!(
@@ -514,4 +801,446 @@ fn a_questions_reasons_are_trimmed_and_kept_with_its_key_in_the_writers_order() 
         ]
     );
     assert!(prepared.keys[1].rationales.is_empty());
+}
+
+#[test]
+fn the_writer_writes_only_what_the_learner_sees() {
+    let text = writer_requirements();
+    for expected in [
+        "The learner reads only this lesson, never the sources' excerpts, the course plan (coursePlan) or these requirements.",
+        "say what a source states in the lesson's own words",
+        "never point at an excerpt, passage, tutorial, plan or requirement the learner cannot see",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in {text}");
+    }
+    assert!(!text.contains("When an excerpt describes"), "{text}");
+}
+
+#[test]
+fn the_writer_asks_questions_only_about_what_the_learner_was_taught() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("Every question, its choices, its rationales and its explanation rest only on what this lesson teaches or on an earlier lesson's planned ideas, terms and actions in coursePlan; a learner who studied only those can answer it."),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_writer_is_told_question_reasons_say_what_is_true() {
+    let text = writer_requirements();
+    let sentence = "Every rationale and the explanation say what is true about this question's own case, using the names and values its prompt gives; never give what a source, an excerpt, a passage or a tutorial says or does not say as the reason.";
+    assert!(text.contains(sentence), "missing {sentence:?} in {text}");
+}
+
+#[test]
+fn the_writer_teaches_how_a_deliverable_is_recorded() {
+    let text = writer_requirements();
+    for expected in [
+        "every step a deliverable needs, including how the learner records or saves their work",
+        "a deliverable kept anywhere but the learner's own notes needs the way to record it there taught, here or in an earlier lesson's planned actions",
+        "otherwise ask for the record in the learner's own notes",
+    ] {
+        assert!(text.contains(expected), "missing {expected:?} in {text}");
+    }
+}
+
+#[test]
+fn the_writer_keeps_the_four_choices_close_in_length_and_in_their_own_words() {
+    let text = writer_requirements();
+    assert!(
+        text.contains("The four choices are close in length, so the right one never stands out as the longest"),
+        "{text}"
+    );
+    assert!(
+        text.contains(
+            "the right choice is worded in its own words rather than repeating the prompt's"
+        ),
+        "{text}"
+    );
+}
+
+#[test]
+fn the_writer_and_both_repairs_are_told_a_step_starts_from_what_the_steps_before_it_left() {
+    for sources in [0, 2] {
+        let schema = lesson_schema(sources);
+        for (who, text) in [
+            ("writer", writer_requirements()),
+            (
+                "teaching repair",
+                crate::lessons::text_edits::instructions(&schema),
+            ),
+            (
+                "claim repair",
+                crate::lessons::text_edits::rewrite_instructions(&schema),
+            ),
+        ] {
+            assert!(
+                text.contains(STEPS_IN_ORDER),
+                "{who} with {sources} sources: {text}"
+            );
+        }
+    }
+}
+
+#[test]
+fn the_writer_is_told_the_lesson_s_shape_under_its_own_key() {
+    let program = crate::tests::fixture();
+    let lesson = program.modules[0].lessons[0].clone();
+    let prompt = writer_prompt(&program, &lesson);
+
+    let lines = prompt["lessonShape"]
+        .as_array()
+        .cloned()
+        .unwrap_or_default();
+    assert!(!lines.is_empty(), "the request has no lessonShape");
+    let words: Vec<&str> = lines.iter().filter_map(Value::as_str).collect();
+    let words = words.join("\n");
+    assert!(
+        words.contains("core ideas the objective depends on"),
+        "{words}"
+    );
+    assert!(
+        words.contains("multiple-choice items of each kind"),
+        "{words}"
+    );
+    for requirement in prompt["requirements"].as_array().unwrap() {
+        let requirement = requirement.as_str().unwrap_or_default();
+        assert!(!requirement.contains("core ideas the objective depends on"));
+        assert!(!requirement.contains("multiple-choice items of each kind"));
+    }
+}
+
+#[test]
+fn the_writer_s_shape_is_the_draft_s_in_the_policy_s_words() {
+    use crate::lessons::shape::{self, Phase};
+    let program = crate::tests::fixture();
+    let lesson = program.modules[0].lessons[0].clone();
+    assert_eq!(
+        writer_prompt(&program, &lesson)[shape::WORDS],
+        json!(shape::policy().asked(Phase::Draft))
+    );
+}
+
+fn sweep_baseline(cited: bool) -> Value {
+    let kinds = [
+        "explanation",
+        "worked_example",
+        "contrast",
+        "check",
+        "explanation",
+        "worked_example",
+        "check",
+        "guided_practice",
+        "independent_practice",
+        "reflection",
+        "recap",
+    ];
+    let blocks: Vec<_> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| {
+            let title = format!("Part {i}");
+            let mut section = block(kind, &title, &format!("Body of part {i}."), cited);
+            if kind.ends_with("practice") {
+                section["rubric"] = json!([
+                    {"title":"One","description":"Observable.","dimension":"recall"},
+                    {"title":"Two","description":"Observable.","dimension":"application"}
+                ]);
+            }
+            section
+        })
+        .collect();
+    let questions: Vec<_> = ["practice", "practice", "quiz", "quiz", "test", "test"]
+        .iter()
+        .enumerate()
+        .map(|(i, kind)| question(kind, &format!("Question {i}?"), cited))
+        .collect();
+    json!({"blocks":blocks,"questions":questions})
+}
+
+fn kept_rules(lesson: &Value) -> Vec<Rule> {
+    let policy = crate::lessons::shape::policy();
+    let schema = policy.schema(crate::lessons::shape::Phase::Kept, 0);
+    crate::teaching::structural_findings(
+        crate::teaching::ReviewSchema::Lesson(crate::lessons::shape::LessonShape::new(
+            &schema, policy,
+        )),
+        &lesson.to_string(),
+        &Default::default(),
+    )
+    .unwrap()
+    .into_iter()
+    .filter_map(|finding| match finding.origin {
+        crate::review_findings::Origin::Rule { rule, .. } => Some(rule),
+        _ => None,
+    })
+    .collect()
+}
+
+/// One row for each rule a lesson can break: the defect and the rule that reports it.
+#[test]
+fn a_lesson_whose_findings_wait_is_still_saved_and_passes_the_save_gate() {
+    type Mutation = fn(&mut Value);
+    let rows: [(&str, Mutation, Rule); 18] = [
+        (
+            "blank block title",
+            |l| l["blocks"][0]["title"] = json!("  "),
+            Rule::TitleMissing,
+        ),
+        (
+            "repeated block title",
+            |l| l["blocks"][1]["title"] = json!("Part 0"),
+            Rule::TitleRepeated,
+        ),
+        (
+            "blank block body",
+            |l| l["blocks"][0]["body"] = json!("  "),
+            Rule::BlockBody,
+        ),
+        (
+            "blank question prompt",
+            |l| l["questions"][0]["prompt"] = json!("  "),
+            Rule::PromptMissing,
+        ),
+        (
+            "repeated question prompt",
+            |l| l["questions"][1]["prompt"] = json!("Question 0?"),
+            Rule::PromptRepeated,
+        ),
+        (
+            "three choices",
+            |l| l["questions"][0]["options"] = json!(["One", "Two", "Three"]),
+            Rule::Choices,
+        ),
+        (
+            "an identical choice twice",
+            |l| l["questions"][0]["options"] = json!(["One", "Two", "Two", "Four"]),
+            Rule::Choices,
+        ),
+        (
+            "a blank choice",
+            |l| l["questions"][0]["options"] = json!(["One", "Two", "  ", "Four"]),
+            Rule::Choices,
+        ),
+        (
+            "correctIndex out of range",
+            |l| l["questions"][0]["correctIndex"] = json!(7),
+            Rule::Schema,
+        ),
+        (
+            "blank explanation",
+            |l| l["questions"][0]["explanation"] = json!("  "),
+            Rule::ExplanationMissing,
+        ),
+        (
+            "reasons count differs from the choices",
+            |l| {
+                l["questions"][0]["rationales"] =
+                    json!(["One fails here.", "", "Three fails here."])
+            },
+            Rule::RationaleCount,
+        ),
+        (
+            "a wrong choice with no reason",
+            |l| {
+                l["questions"][0]["rationales"] =
+                    json!(["", "", "Three fails here.", "Four fails here."])
+            },
+            Rule::RationaleMissing,
+        ),
+        (
+            "a question kind missing",
+            |l| {
+                l["questions"]
+                    .as_array_mut()
+                    .unwrap()
+                    .retain(|q| q["kind"] != "test")
+            },
+            Rule::QuestionKinds,
+        ),
+        (
+            "no questions at all",
+            |l| l["questions"] = json!([]),
+            Rule::QuestionKinds,
+        ),
+        (
+            "no explanation",
+            |l| {
+                l["blocks"][0]["kind"] = json!("contrast");
+                l["blocks"][4]["kind"] = json!("contrast");
+            },
+            Rule::NoExplanation,
+        ),
+        (
+            "a code fence the body never closes",
+            |l| l["blocks"][1]["body"] = json!("Run it:\n```python\nprint(1)\n"),
+            Rule::FenceUnclosed,
+        ),
+        (
+            "a rubric with a repeated criterion",
+            |l| {
+                let criterion = json!({"title":"Names the step","description":"Says which step comes next.","dimension":"recall"});
+                l["blocks"][7]["rubric"] = json!([criterion.clone(), criterion]);
+            },
+            Rule::PracticeRubric,
+        ),
+        (
+            "a rubric with five criteria",
+            |l| {
+                let criteria: Vec<Value> = (0..5).map(|n| json!({"title":format!("Criterion {n}"),"description":"Says which step comes next.","dimension":"recall"})).collect();
+                l["blocks"][7]["rubric"] = json!(criteria);
+            },
+            Rule::PracticeRubric,
+        ),
+    ];
+    let mut program = crate::test_support::fixture();
+    program.sources.clear();
+    for (name, mutate, rule) in rows {
+        assert!(
+            !kept_rules(&sweep_baseline(false)).contains(&rule),
+            "{name}: the baseline already breaks {rule:?}"
+        );
+        let mut lesson = sweep_baseline(false);
+        mutate(&mut lesson);
+        assert!(
+            kept_rules(&lesson).contains(&rule),
+            "{name}: {rule:?} is not reported"
+        );
+        let generated: GeneratedLesson = serde_json::from_value(lesson).unwrap();
+        let (prepared, _) = match assemble(generated, &[], &HashSet::new()) {
+            Ok(assembled) => assembled,
+            Err(error) => panic!("{name}: the lesson is not saved: {error:?}"),
+        };
+        let checked = crate::service::validate_generated(&prepared, &program);
+        assert!(
+            checked.is_ok(),
+            "{name}: the save gate refuses it: {checked:?}"
+        );
+    }
+}
+
+fn open_fences(lesson: &Value) -> Vec<(FindingSite, String, String)> {
+    crate::generation::lesson_rules(lesson, Vec::new())
+        .into_iter()
+        .filter(|finding| {
+            matches!(
+                finding.origin,
+                crate::review_findings::Origin::Rule {
+                    rule: Rule::FenceUnclosed,
+                    ..
+                }
+            )
+        })
+        .map(|finding| (finding.site.unwrap(), finding.summary, finding.note))
+        .collect()
+}
+
+#[test]
+fn a_section_that_opens_a_fence_it_never_closes_is_reported_at_its_section() {
+    for (kind, index) in [("worked_example", 1), ("explanation", 0), ("recap", 10)] {
+        let mut lesson = sweep_baseline(false);
+        lesson["blocks"][index]["kind"] = json!(kind);
+        lesson["blocks"][index]["body"] = json!("Run it:\n```python\nprint(1)\n");
+        let found = open_fences(&lesson);
+        assert_eq!(found.len(), 1, "{kind}");
+        let (site, summary, note) = &found[0];
+        assert_eq!(*site, FindingSite::Section(index));
+        assert_eq!(
+            *summary,
+            format!("Section {} opens a code fence it never closes.", index + 1)
+        );
+        assert!(note.starts_with(&format!(
+            "Section {} (candidate blocks-{index}) opens a code fence it never closes",
+            index + 1
+        )));
+        assert!(note.contains("shown as code"), "{note}");
+        assert!(note.contains("line of the same marks"), "{note}");
+    }
+}
+
+#[test]
+fn closed_fences_are_never_reported() {
+    for body in [
+        "```python\nprint(1)\n```\n",
+        "~~~\nplain\n~~~\n",
+        "```\nplain\n````\n",
+        "````markdown\n```\ninner\n```\n````\n",
+        "No fence at all.",
+    ] {
+        let mut lesson = sweep_baseline(false);
+        lesson["blocks"][1]["body"] = json!(body);
+        assert!(open_fences(&lesson).is_empty(), "{body:?}");
+    }
+}
+
+#[test]
+fn a_part_of_a_sourced_course_naming_no_source_is_saved_with_none_and_waits() {
+    type Mutation = fn(&mut Value);
+    let rows: [(&str, Mutation, FindingSite); 4] = [
+        (
+            "a block whose sourceIndex is out of range",
+            |l| l["blocks"][0]["sourceIndex"] = json!(9),
+            FindingSite::Section(0),
+        ),
+        (
+            "a block with no sourceIndex",
+            |l| l["blocks"][0]["sourceIndex"] = Value::Null,
+            FindingSite::Section(0),
+        ),
+        (
+            "a question whose sourceIndex is out of range",
+            |l| l["questions"][0]["sourceIndex"] = json!(9),
+            FindingSite::Question(0),
+        ),
+        (
+            "a question with no sourceIndex",
+            |l| l["questions"][0]["sourceIndex"] = Value::Null,
+            FindingSite::Question(0),
+        ),
+    ];
+    let sources = [source()];
+    let owned = HashSet::from(["source-a"]);
+    let mut program = crate::test_support::fixture();
+    program.sources = vec![source()];
+    for (name, mutate, site) in rows {
+        let mut lesson = sweep_baseline(true);
+        mutate(&mut lesson);
+        let generated: GeneratedLesson = serde_json::from_value(lesson).unwrap();
+        let (prepared, findings) = match assemble(generated, &sources, &owned) {
+            Ok(assembled) => assembled,
+            Err(error) => panic!("{name}: the lesson is not saved: {error:?}"),
+        };
+        assert!(
+            findings.iter().any(|finding| finding.site == Some(site)
+                && matches!(
+                    finding.origin,
+                    crate::review_findings::Origin::Rule {
+                        rule: Rule::PartCitation,
+                        ..
+                    }
+                )),
+            "{name}: no finding waits for it: {findings:?}"
+        );
+        let saved = match site {
+            FindingSite::Question(at) => &prepared.questions[at].source_ids,
+            _ => &prepared.blocks[0].source_ids,
+        };
+        assert!(saved.is_empty(), "{name}: {saved:?}");
+        let checked = crate::service::validate_generated(&prepared, &program);
+        assert!(
+            checked.is_ok(),
+            "{name}: the save gate refuses it: {checked:?}"
+        );
+    }
+}
+
+#[test]
+fn a_candidate_with_no_sections_does_not_read_as_a_lesson() {
+    assert!(crate::generation::reads_as_lesson(&sweep_baseline(false)));
+    let mut lesson = sweep_baseline(false);
+    lesson["blocks"] = json!([]);
+    assert!(!crate::generation::reads_as_lesson(&lesson));
+    assert!(!crate::generation::reads_as_lesson(
+        &json!({"blocks": [], "questions": []})
+    ));
 }

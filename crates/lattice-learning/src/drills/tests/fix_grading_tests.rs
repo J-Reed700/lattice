@@ -521,16 +521,6 @@ impl CodeRunner for Refusing {
             "Lab files exceed the 2 MiB run limit.".into(),
         ))
     }
-    async fn run_capturing(
-        &self,
-        _files: &[crate::lab_runtime::LearningLabFile],
-        _read_only_paths: &[String],
-        _cancel: CancellationToken,
-    ) -> Result<(RunOutcome, String)> {
-        Err(AppError::InvalidInput(
-            "Lab files exceed the 2 MiB run limit.".into(),
-        ))
-    }
 }
 
 #[tokio::test]

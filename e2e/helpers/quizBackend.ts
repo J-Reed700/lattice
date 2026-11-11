@@ -252,7 +252,7 @@ export function quizBackend() {
         const { expectedRevision, response } = request<{ expectedRevision: number; response: Record<string, unknown> }>(args);
         const form = formOf(args);
         if (form.status === "submitted") throw new Error("This quiz is already submitted.");
-        if (form.revision !== expectedRevision) throw { code: "CONFLICT", message: "This quiz changed; reload and retry." };
+        if (form.revision !== expectedRevision) throw new Error("This quiz changed; reload and retry.");
         const item = form.items.find((entry) => entry.id === response.itemId);
         if (!item) throw new Error("Question not found.");
         Object.assign(item, {

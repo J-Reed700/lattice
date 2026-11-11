@@ -1,5 +1,6 @@
+use super::quotes::{lesson_quote_checks, reanchor_lesson_quotes, restore_lesson_quotes};
 use super::*;
-use crate::lessons::course_generation_tests::ScriptedModel;
+use crate::lessons::course_generation_tests::{clean_review, verdict, ScriptedModel};
 use std::sync::Mutex;
 
 const EXCERPT: &str = "This saved reference describes the exact behavior of the example tool.";
@@ -40,7 +41,7 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
         let decision = json!({"decisions":[{"issueId":"issue-0","verdict":if actionable {"actionable"} else {"not_established"},"basis":"external_fact","evidenceIds":["reference-0"],"partId":"lesson","requirementId":null,"reason":"The source comparison determines whether this proposed correction is justified."}]});
         let mut outputs = vec![review.to_string(), decision.to_string()];
         if actionable {
-            outputs.extend([json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(), approval().to_string()]);
+            outputs.extend([json!({"edits":[{"path":"/blocks/0/title","before":"Example","after":"Corrected example"}]}).to_string(), clean_review(&[0], &[verdict("reviewer/1", "resolved")])]);
         }
         let model = ScriptedModel {
             outputs: Mutex::new(outputs.into()),
@@ -50,7 +51,7 @@ async fn lesson_review_only_rewrites_established_findings() -> Result<()> {
             &model,
             LESSON_REPAIR_SYSTEM,
             &context().to_string(),
-            &json!({"type":"object"}),
+            ReviewSchema::Other(&json!({"type":"object"})),
             original.to_string(),
             4000,
             &references,
@@ -352,7 +353,7 @@ async fn a_repair_that_goes_wrong_in_one_block_still_applies_the_edits_of_the_ot
         {"path":"/blocks/2/citations/0/quote","before":chained,"after":EXCERPT}
     ]});
     let model = ScriptedModel {
-        outputs: Mutex::new(vec![approved(), patch.to_string(), approved()].into()),
+        outputs: Mutex::new(vec![approved(), patch.to_string(), clean_review(&[0, 1], &[])].into()),
         prompts: Mutex::new(Vec::new()),
     };
 

@@ -2,14 +2,14 @@
 
 use super::Outcome::{
     AllCommon, CannotCut, Done, FoundNothing, NeedsSource, NotApplied, Refuted, Rewritten, Saved,
-    Stands, StandsElsewhere,
+    Stands, StandsElsewhere, Unproven,
 };
 use super::{AcceptancePolicy, End, Goal, Graph, Next, Node, Outcome, Reading, Step, Target};
 use crate::domain::learning::claim_review::Class;
 
 /// The standard policy's version: part of every receipt's and checkpoint's
 /// key, so a change to any of its graphs changes it.
-pub const STANDARD_POLICY: &str = "acceptance-v1";
+pub const STANDARD_POLICY: &str = "acceptance-v2";
 
 const PARTS: Step = Step::Read(Reading::Parts);
 const GROUND: Step = Step::Read(Reading::Ground);
@@ -81,7 +81,8 @@ fn ground(name: &'static str, end: End, refuted: &'static str) -> Node {
         .on(&[Refuted], Next::to(refuted))
 }
 
-/// A cut: the sentence, or its section when the sentence cannot be cut.
+/// A cut: the sentence goes, or stays when it cannot be cut, published not
+/// verified.
 fn cut(name: &'static str) -> Node {
     Node::new(name, Step::Cut, 0)
         .on(
@@ -90,7 +91,7 @@ fn cut(name: &'static str) -> Node {
                 section_goes: false,
             }),
         )
-        .on(&[CannotCut], Next::End(End::Removed { section_goes: true }))
+        .on(&[CannotCut], Next::End(End::Unverified))
 }
 
 /// Entered by the writer's citation, the rule layer, the model, or evidence.
@@ -114,17 +115,21 @@ fn sourced() -> Graph {
             Node::new("s.reread", PAGE, 1)
                 .on(&[Stands], Next::End(End::Resolved))
                 .on(&[StandsElsewhere], Next::to("s.recite"))
-                .otherwise(Next::to("s.rewrite")),
+                .on(&[Refuted], Next::to("s.rewrite"))
+                .on(
+                    &[Unproven],
+                    Next::first_change(Target::node("s.uncite"), End::Unverified),
+                ),
         )
         .with(Node::new("s.recite", Step::Recite, 0).on(&[Done], Next::to("s.citeread")))
         .with(
             Node::new("s.citeread", PARTS, 1)
                 .on(&[Stands], Next::End(End::Resolved))
+                .on(&[Refuted], Next::to("s.rewrite"))
                 .on(
-                    &[AllCommon],
-                    Next::first_change(Target::node("s.uncite"), "s.rewrite"),
-                )
-                .otherwise(Next::to("s.rewrite")),
+                    &[Unproven, AllCommon],
+                    Next::first_change(Target::node("s.uncite"), End::Unverified),
+                ),
         )
         .with(rewrite(
             "s.rewrite",
@@ -142,7 +147,8 @@ fn sourced() -> Graph {
             Node::new("s.final", PARTS, 1)
                 .on(&[Stands], Next::End(End::Resolved))
                 .on(&[AllCommon], Next::to("s.final.uncite"))
-                .otherwise(Next::to("s.cut")),
+                .on(&[Refuted], Next::to("s.cut"))
+                .on(&[Unproven], Next::End(End::Unverified)),
         )
         .with(
             Node::new("s.final.uncite", Step::Uncite, 0)
@@ -160,7 +166,7 @@ fn reasoning() -> Graph {
                 .on(&[Refuted], Next::to("r.rewrite"))
                 .on(
                     &[NeedsSource],
-                    Next::first_change(Target::Enter(Class::Sourced), "r.rewrite"),
+                    Next::first_change(Target::Enter(Class::Sourced), End::Unverified),
                 ),
         )
         .with(
@@ -168,7 +174,19 @@ fn reasoning() -> Graph {
                 .on(&[Stands], Next::End(End::Consistent))
                 .on(&[Refuted], Next::to("r.ground")),
         )
-        .with(ground("r.ground", End::Consistent, "r.rewrite"))
+        .with(ground("r.ground", End::Consistent, "r.correct"))
+        .with(rewrite(
+            "r.correct",
+            Goal::CorrectWhatWasFound,
+            "r.final",
+            "r.correct.again",
+        ))
+        .with(rewrite(
+            "r.correct.again",
+            Goal::CorrectWhatWasFound,
+            "r.final",
+            "r.cut",
+        ))
         .with(rewrite(
             "r.rewrite",
             Goal::AgreeWithThePassages,
@@ -184,7 +202,8 @@ fn reasoning() -> Graph {
         .with(
             Node::new("r.final", CONSISTENCY, 1)
                 .on(&[Stands], Next::to("r.reveto"))
-                .otherwise(Next::to("r.cut")),
+                .on(&[Refuted], Next::to("r.cut"))
+                .on(&[NeedsSource], Next::End(End::Unverified)),
         )
         .with(
             Node::new("r.reveto", VETO, 3)
@@ -204,7 +223,7 @@ fn common() -> Graph {
                 .on(&[Stands], Next::End(End::GeneralKnowledge))
                 .on(
                     &[NeedsSource],
-                    Next::first_change(Target::Enter(Class::Sourced), "c.rewrite"),
+                    Next::first_change(Target::Enter(Class::Sourced), End::Unverified),
                 )
                 .on(&[Refuted], Next::to("c.ground")),
         )
@@ -225,7 +244,7 @@ fn common() -> Graph {
             Node::new("c.final", KNOWLEDGE, 3)
                 .on(&[Stands], Next::End(End::GeneralKnowledge))
                 .on(&[Refuted], Next::to("c.reground"))
-                .on(&[NeedsSource], Next::to("c.cut")),
+                .on(&[NeedsSource], Next::End(End::Unverified)),
         )
         .with(ground("c.reground", End::GeneralKnowledge, "c.cut"))
         .with(cut("c.cut"))

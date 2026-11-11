@@ -22,7 +22,7 @@ use std::collections::{HashMap, HashSet};
 mod apparatus;
 #[cfg(test)]
 use apparatus::strip_citation_apparatus;
-pub(crate) use apparatus::strip_draft_apparatus;
+pub(crate) use apparatus::{fences, strip_draft_apparatus};
 mod citations;
 mod claim_ledger;
 pub(crate) use citations::names_a_source;
@@ -37,7 +37,7 @@ pub(crate) use claim_ledger::{
 };
 mod class_checks;
 mod classify;
-pub(crate) use classify::{figures, needs_citation, Givens, CITED_KINDS};
+pub(crate) use classify::{quoted_wording, CITED_KINDS, QUOTE_MARKS};
 mod coverage;
 #[cfg(any(test, feature = "test-support"))]
 pub use coverage::live_mapping_fixture;
@@ -113,6 +113,8 @@ pub mod test_support;
 pub(crate) mod tests;
 use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
 #[cfg(test)]
+pub(crate) use repair_loop::settle_after_cuts;
+#[cfg(test)]
 pub(crate) use repair_loop::verify_and_repair;
 pub(crate) use repair_loop::verify_and_repair_with_references;
 pub(crate) use repair_request::has_pending_repair;
@@ -125,7 +127,8 @@ pub(crate) use report::{not_verified_line, persist_report, sources_changed};
 /// v21: the evidence challenge is gone; a supported verdict is weighed by
 /// the provenance gate (source provenance §11) and passages carry their
 /// source's title, domain and date.
-const POLICY: &str = "lesson-evidence-v21";
+/// v22: the part-wise judge has a kind for the lesson's own figures.
+const POLICY: &str = "lesson-evidence-v22";
 
 /// The evidence policy checks are judged under: what a labelled checker
 /// example records (§15).
@@ -413,8 +416,8 @@ fn units(candidate: &Value) -> Result<Vec<Value>> {
         .get("questions")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid("Verification needs lesson questions."))?;
-    if blocks.is_empty() || blocks.len() > 32 || questions.len() > 24 {
-        return Err(invalid("Invalid verification unit count."));
+    if blocks.is_empty() {
+        return Err(invalid("Verification needs lesson blocks."));
     }
     Ok(blocks.iter().map(|b| json!({"kind":"teaching", "role":b["kind"], "title":b["title"], "body":b["body"], "rubric":b["rubric"]}))
         .chain(questions.iter().map(|q| {

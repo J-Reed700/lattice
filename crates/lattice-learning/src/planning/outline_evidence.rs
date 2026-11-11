@@ -18,19 +18,20 @@ pub(crate) fn lesson_queries(candidate: &Value) -> Vec<String> {
     queries
 }
 
-/// Exact provenance is checked by code, even when the model approves a quote.
-/// Citations are optional; only a present citation can fail. Field-level
-/// diagnostics let typography restoration copy the real punctuation, and the
-/// evidence linking strips whatever still does not match.
-pub fn quote_checks(candidate: &Value, sources: &[crate::dto::LearningSourceDto]) -> Vec<Value> {
-    let mut failures = Vec::new();
+/// Every field of the outline that can carry a citation, by its path
+/// (`modules[0].lessons[1]`).
+pub(crate) fn citable_fields(candidate: &Value) -> Vec<(String, &Value)> {
+    let mut fields = Vec::new();
     for (module_index, module) in candidate["modules"]
         .as_array()
         .into_iter()
         .flatten()
         .enumerate()
     {
-        let mut fields = vec![("summary".to_owned(), &module["summary"])];
+        fields.push((
+            format!("modules[{module_index}].summary"),
+            &module["summary"],
+        ));
         for name in ["outcomes", "lessons"] {
             fields.extend(
                 module[name]
@@ -38,17 +39,28 @@ pub fn quote_checks(candidate: &Value, sources: &[crate::dto::LearningSourceDto]
                     .into_iter()
                     .flatten()
                     .enumerate()
-                    .map(|(index, field)| (format!("{name}[{index}]"), field)),
+                    .map(|(index, field)| {
+                        (format!("modules[{module_index}].{name}[{index}]"), field)
+                    }),
             );
         }
-        for (field_name, field) in fields {
-            let index = field["sourceIndex"]
-                .as_u64()
-                .and_then(|i| usize::try_from(i).ok());
-            let quote = field["quote"].as_str().unwrap_or_default();
-            if let Err(error) = crate::generation::optional_citation(sources, index, quote) {
-                failures.push(json!({"path":format!("modules[{module_index}].{field_name}"),"sourceIndex":index,"quote":quote,"error":error.to_string()}));
-            }
+    }
+    fields
+}
+
+/// Exact provenance is checked by code, even when the model approves a quote.
+/// Citations are optional; only a present citation can fail. The evidence linking strips whatever does not match.
+pub fn quote_checks(candidate: &Value, sources: &[crate::dto::LearningSourceDto]) -> Vec<Value> {
+    let mut failures = Vec::new();
+    for (path, field) in citable_fields(candidate) {
+        let index = field["sourceIndex"]
+            .as_u64()
+            .and_then(|i| usize::try_from(i).ok());
+        let quote = field["quote"].as_str().unwrap_or_default();
+        if let Err(error) = crate::generation::optional_citation(sources, index, quote) {
+            failures.push(
+                json!({"path":path,"sourceIndex":index,"quote":quote,"error":error.to_string()}),
+            );
         }
     }
     failures

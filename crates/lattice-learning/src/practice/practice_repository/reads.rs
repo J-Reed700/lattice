@@ -287,7 +287,7 @@ impl LearningPracticeRepository {
             return Err(invalid("Submitted practice attempts are immutable."));
         }
         if session.summary.revision != expected_revision {
-            return Err(conflict("Practice session changed; reload and retry."));
+            return Err(invalid("Practice session changed; reload and retry."));
         }
         if !allow_demonstrate && session.summary.mode == LearningPracticeMode::Demonstrate {
             return Err(invalid("This aid is unavailable in Demonstrate mode."));

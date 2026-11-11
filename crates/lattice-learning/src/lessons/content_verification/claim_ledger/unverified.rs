@@ -5,6 +5,7 @@
 
 use super::stops::standing_ended;
 use super::*;
+use lattice_core::domain::learning::acceptance::{End, Then};
 use lattice_core::domain::learning::claim_review::{ReopenCause, UnverifiedReason, VerdictKind};
 
 /// What the claim's last reading found: a contradiction, or else that the
@@ -81,6 +82,20 @@ impl ClaimLedger {
             }
         }
         Ok(marked)
+    }
+
+    /// A step ended `id` at `End::Unverified`: it is published not verified,
+    /// for what its last reading found.
+    pub(in crate::lessons::content_verification) async fn publish_if_unverified(
+        &mut self,
+        id: &ClaimId,
+        then: &Then,
+    ) -> Result<()> {
+        if *then == Then::End(End::Unverified) {
+            self.publish_unverified(std::slice::from_ref(id), None)
+                .await?;
+        }
+        Ok(())
     }
 
     /// Drops the repairs waiting for these claims: they are published not

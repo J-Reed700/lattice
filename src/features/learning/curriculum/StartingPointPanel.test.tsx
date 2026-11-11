@@ -9,7 +9,7 @@ import { flushPendingSaves } from '@/lib/pendingSaves';
 
 
 const mocks = vi.hoisted(() => ({ plan: vi.fn(), program: vi.fn(), start: vi.fn(), submit: vi.fn(), skip: vi.fn() }));
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: { getLearningPlan: mocks.plan, getLearningProgram: mocks.program, startLearningDiagnostic: mocks.start, submitLearningDiagnostic: mocks.submit, skipLearningDiagnostic: mocks.skip } }));
+vi.mock('@/lib/api', () => ({ default: { getLearningPlan: mocks.plan, getLearningProgram: mocks.program, startLearningDiagnostic: mocks.start, submitLearningDiagnostic: mocks.submit, skipLearningDiagnostic: mocks.skip } }));
 let attempt: LearningDiagnosticAttemptDto;
 const responses = new Map<string, LearningDiagnosticAttemptDto>();
 const ok = <T,>(data: T) => ({ ok: true as const, data: structuredClone(data) });
@@ -26,7 +26,7 @@ describe('starting-point performance tasks', () => {
     mocks.plan.mockImplementation(async () => ok({ latestDiagnostic: attempt, acceptedRevision: { modules: [{ outcomeIds: ['outcome'], lessons: [{ id: 'lesson' }] }] } }));
     mocks.submit.mockImplementation(async (request: SubmitLearningDiagnosticRequestDto) => {
       if (responses.has(request.operationId)) return ok(responses.get(request.operationId)!);
-      if (request.expectedDiagnosticRevision !== attempt.revision) return { ok: false, error: 'The starting-point answers changed elsewhere. Reload before saving.', details: { code: 'CONFLICT', message: 'The starting-point answers changed elsewhere. Reload before saving.' } };
+      if (request.expectedDiagnosticRevision !== attempt.revision) return { ok: false, error: 'The starting-point answers changed elsewhere. Reload before saving.' };
       attempt.responses = request.responses; attempt.revision = (attempt.revision ?? 0) + 1;
       if (!request.saveOnly) { attempt.status = 'submitted'; attempt.findings = [{ promptId: 'prompt', outcomeId: 'outcome', signal: 'needs_practice', feedback: 'Track the accumulator after each iteration and check the empty list.', evidenceQuote: 'The result' }]; }
       responses.set(request.operationId, structuredClone(attempt));
@@ -67,23 +67,6 @@ describe('starting-point performance tasks', () => {
     await user.click(screen.getByRole('button', { name: 'Get my starting-point feedback' }));
     await waitFor(() => expect(mocks.submit).toHaveBeenLastCalledWith(expect.objectContaining({ saveOnly: false, expectedRevision: 10, expectedDiagnosticRevision: 2 })));
     expect(await screen.findByRole('button', { name: 'Study this topic' })).toBeVisible();
-  });
-
-  it('treats an autosave failure as a conflict by its code', async () => {
-    const user = userEvent.setup();
-    mocks.submit.mockImplementationOnce(async () => ({ ok: false, error: 'Stale.', details: { code: 'CONFLICT', message: 'Stale.' } }));
-    show();
-    await user.type(await screen.findByRole('textbox', { name: 'Your reasoning' }), 'The result depends on the values.');
-    expect(await screen.findByRole('button', { name: 'Keep my answers and retry' })).toBeVisible();
-  });
-
-  it('does not treat a message that merely says the answers changed as a conflict', async () => {
-    const user = userEvent.setup();
-    mocks.submit.mockImplementationOnce(async () => ({ ok: false, error: 'The answers changed elsewhere; reload and check the revision.' }));
-    show();
-    await user.type(await screen.findByRole('textbox', { name: 'Your reasoning' }), 'The result depends on the values.');
-    expect(await screen.findByRole('button', { name: 'Retry with my saved answers' })).toBeVisible();
-    expect(screen.queryByRole('button', { name: 'Keep my answers and retry' })).not.toBeInTheDocument();
   });
 
   it('keeps edits after a save failure and retries the exact operation before navigation', async () => {

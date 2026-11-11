@@ -11,4 +11,3 @@
 pub mod acceptance;
 pub mod claim_review;
 pub mod drills;
-pub mod practice;

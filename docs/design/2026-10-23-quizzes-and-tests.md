@@ -488,7 +488,7 @@ true/false, multi-select, matching, ordering and short answer → question/answe
 cards (prompt → key + one-line explanation); cloze → cloze card; explanation →
 Q/A with the rubric's key points as the answer. Origin: the candidate id, with
 its source version ids. Cards are drafts the learner can edit, per §3.5 of the
-studio design; near-duplicate detection is the existing one.
+studio design.
 
 ### 4.6 Evidence and follow-ups
 
@@ -561,14 +561,33 @@ source-grounded, window-sized. Changes:
   rights; ordering values are distinct and ≥ 3; every item names a lesson
   block or a source quote found verbatim in the cited passage (existing quote
   check); content hash de-dup against the program bank (existing
-  `UNIQUE(program_id, content_sha256)`) plus a near-duplicate check
-  (normalised stem Jaccard ≥ 0.8 against existing items of the same outcome).
-- **Blinded key review** moves from `lessons/answer_review.rs` to
-  `assessment/key_review.rs`, generalised to all keyed formats: the model
-  solves each item without the key and reports its own key; a disagreement
-  marks the candidate `review_status = 'disputed'` and triggers one targeted
-  repair (existing recovery loop); a second disagreement drops the item. Only
-  `agreed` items enter forms.
+  `UNIQUE(program_id, content_sha256)`). Similar wording alone never refuses
+  an item: whether two questions ask for the same decision is a judgement
+  about meaning, made by the item review below.
+- **Item review** (`assessment/item_review.rs`) reads every freshly written
+  item as a question, whatever its format. A blinded solve
+  (`assessment/key_review.rs`) comes first: the model sees the format, prompt,
+  options and reference quote, never the key, explanation, reasons or criteria,
+  and answers as the question is worded; for a keyed format a disagreement with
+  the key is a finding, and every solution, an explanation item's written
+  answer included, goes to the judge. One judge call per window-sized chunk
+  then reads each item with its key in words, explanation, per-option reasons,
+  criteria, reference quote and the blind solution, and reports every defect
+  of the item in one finding (no defensible or more than one answer, an untrue
+  or contradicting explanation, reason or criterion, a missing value, an answer
+  that can be picked without the material, a reason that does not say why its
+  option is wrong, a mention of a passage or an option's position, a question
+  that does not test the outcome), plus the questions it repeats among those
+  the learner already has and among the other new items. A repeat of a question
+  the learner has is a finding on the item; of two new items that name each
+  other, in either direction, the later one.
+- **Repair** in `author_items`: items without findings are kept as written; each
+  item with findings is rewritten once, concurrently, with its findings in the
+  request; the rewrites are reviewed together, and one with findings left is
+  dropped with them as its reason. A dropped item counts toward the shortfall
+  of the next of at most three rounds. A review the model cannot answer after
+  being asked twice drops the items it covered as not reviewed, and does not
+  fail the job. Only `agreed` items enter forms.
 - **Bank target** per requirement is `3 × count`; `top_up(scope)` adds
   `1 × count` for requirements whose unseen count is below `count`.
 

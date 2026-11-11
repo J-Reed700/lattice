@@ -19,14 +19,12 @@ const DRILL = {
   material: { kind: 'code', language: 'python' } as const,
   files: [{ path: 'limiter.py', text: 'allow = True\n' }],
   lesson: null,
-  issues: 4,
 };
 const PASSAGE_DRILL = {
   title: 'Why spacing helps',
   material: { kind: 'passage', sourceTitle: 'Spacing and memory' } as const,
   files: [{ path: 'explanation.md', text: 'Spacing helps recall.\n' }],
   lesson: null,
-  issues: 3,
 };
 
 const started: StartedCodeReviewDto = { status: 'started', attemptId: 'attempt-1', mode: 'practice', startedAt: 1, drill: DRILL };

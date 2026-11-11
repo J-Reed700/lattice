@@ -926,7 +926,7 @@ async fn notes(course: &Course) -> Result<TeachingFindingsRepository> {
         {"prompt":P1,"options":C1,"explanation":E1}
     ]});
     let note = |kind, site, text: &str| SetAside {
-        finding: ReviewFinding::new(kind, Some(site), text),
+        finding: ReviewFinding::of_kind(kind, site, text),
         repairs: 0,
     };
     store

@@ -7,8 +7,7 @@ import { flushPendingSaves } from '@/lib/pendingSaves';
 
 
 const api = vi.hoisted(() => ({ getLearningPracticalDraft: vi.fn(), saveLearningPracticalDraft: vi.fn() }));
-vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: api }));
-const conflict = (message: string) => Object.assign(new Error(message), { details: { code: 'CONFLICT' } });
+vi.mock('@/lib/api', () => ({ default: api }));
 
 const ok = <T,>(data: T) => ({ ok: true as const, data });
 const starter = [
@@ -98,7 +97,7 @@ describe('useLearningLabDraft', () => {
       { path: 'main.py', content: 'remote A' },
       { path: 'helper.py', content: '# starter helper' },
     ], 2)));
-    api.saveLearningPracticalDraft.mockRejectedValueOnce(conflict('Practical draft changed; reload and retry.'));
+    api.saveLearningPracticalDraft.mockRejectedValueOnce(new Error('Practical draft changed; reload and retry.'));
     fireEvent.change(screen.getByLabelText('helper.py'), { target: { value: 'local B' } });
     await waitFor(() => expect(screen.getByText('conflict')).toBeInTheDocument());
     fireEvent.click(screen.getByRole('button', { name: 'Keep local' }));
@@ -107,7 +106,7 @@ describe('useLearningLabDraft', () => {
   });
 
   it('uses the saved version but keeps keystrokes made while that version is loading', async () => {
-    api.saveLearningPracticalDraft.mockRejectedValueOnce(conflict('Practical draft changed; reload and retry.'));
+    api.saveLearningPracticalDraft.mockRejectedValueOnce(new Error('Practical draft changed; reload and retry.'));
     render(<Harness />);
     await waitFor(() => expect(screen.getByText('ready')).toBeInTheDocument());
     fireEvent.change(screen.getByLabelText('main.py'), { target: { value: 'conflicting local edit' } });
