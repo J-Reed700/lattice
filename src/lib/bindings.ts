@@ -6651,10 +6651,6 @@ isWritable: boolean;
  */
 path: string }
 /**
- * Supported file types for internal viewing
- */
-export type FileType = "web_article_html" | "pdf" | "image" | "text" | "unknown"
-/**
  * Why a finder cannot run under the user's settings and keys.
  */
 export type FinderGateDto =
@@ -9341,10 +9337,6 @@ export type OpenFileResponseDto = {
  * Action taken: "render_internal" or "opened_external"
  */
 action: string;
-/**
- * File type detected (enum: WebArticleHtml, Pdf, Image, Text, Unknown)
- */
-fileType: FileType;
 /**
  * Path to content (HTML file for internal rendering, original file for external)
  */
