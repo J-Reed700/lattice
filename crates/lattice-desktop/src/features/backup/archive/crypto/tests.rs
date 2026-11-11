@@ -150,7 +150,7 @@ fn wrong_secrets_all_report_wrong_secret() {
 fn kcv_matches_only_the_wrapped_key() {
     let (master, _recovery, envelope) = envelope_with(None);
     assert!(kcv_matches(&envelope, &master).unwrap());
-    assert!(!kcv_matches(&envelope, &MasterKey::generate()));
+    assert!(!kcv_matches(&envelope, &MasterKey::generate()).unwrap());
 
     let mut broken = envelope.clone();
     broken.kcv = "!!!not base64!!!".to_string();
