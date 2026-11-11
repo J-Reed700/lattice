@@ -6,11 +6,12 @@ use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulati
 use crate::practice::session::author::{Author, Authored, Commission, Failed};
 use crate::practice::session::kind::{
     Account, Budget, Checker, Citation, Criterion, Diff, Established, Gaps, Hint, HintAsk, Hinting,
-    Kind, LearnerCases, MisreadingNeed, Order, Parts, ReplyGuard, Rubric, Showing, Statement,
-    Truth, Wording,
+    Kind, LearnerCases, MisreadingNeed, Order, Parts, ReplyGuard, Rubric, Screen, Showing,
+    Statement, Truth, Wording,
 };
 use crate::practice::session::observation::{ClockView, Coverage, Observation};
-use crate::practice::session::record::{SessionCheck, SessionLearnerCase};
+use crate::practice::session::record::{Session, SessionCheck, SessionDebrief, SessionLearnerCase};
+use crate::practice::session::seen::Seen;
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
@@ -280,6 +281,25 @@ impl Showing for Letters {
                     .collect()
             })
             .unwrap_or_default())
+    }
+}
+
+impl Screen for Letters {
+    fn work(&self, session: &Session, seen: &Seen) -> Result<Value> {
+        Ok(json!({
+            "spec": session.exercise.brief.spec,
+            "draft": session.row.draft.value(),
+            "reference": seen.reference.then(|| session.exercise.reference.value().clone()),
+            "checks": session
+                .checks
+                .iter()
+                .map(|check| json!({"id": check.id, "found": check.report.detail}))
+                .collect::<Vec<_>>(),
+        }))
+    }
+
+    fn debrief(&self, _session: &Session, debrief: &SessionDebrief) -> Result<Value> {
+        Ok(json!({"stated": debrief.stated}))
     }
 }
 
@@ -781,6 +801,7 @@ impl FakeKindBuilder {
             parts: roles.clone(),
             diff: roles.clone(),
             showing: roles.clone(),
+            screen: roles.clone(),
             truth: roles.clone(),
             gaps: self.gaps.then(|| roles.clone() as Arc<dyn Gaps>),
             order: self.order.then(|| roles.clone() as Arc<dyn Order>),

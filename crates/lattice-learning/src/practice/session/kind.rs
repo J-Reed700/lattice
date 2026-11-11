@@ -2,7 +2,8 @@
 
 use crate::practice::session::author::Author;
 use crate::practice::session::observation::Observation;
-use crate::practice::session::record::{SessionCheck, SessionLearnerCase};
+use crate::practice::session::record::{Session, SessionCheck, SessionDebrief, SessionLearnerCase};
+use crate::practice::session::seen::Seen;
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{
@@ -174,6 +175,14 @@ pub trait ReplyGuard: Send + Sync {
         content: &str,
         cancel: CancellationToken,
     ) -> Result<()>;
+}
+
+/// What the learner's screen draws of the work, as values the kind's own screen code reads.
+pub trait Screen: Send + Sync {
+    /// The task, the draft, what each check found and the learner's own cases, without what `seen` withholds.
+    fn work(&self, session: &Session, seen: &Seen) -> Result<Value>;
+    /// The kind's part of a finished session's debrief. Nothing is withheld.
+    fn debrief(&self, session: &Session, debrief: &SessionDebrief) -> Result<Value>;
 }
 
 /// What a hint is asked from.
@@ -367,6 +376,7 @@ pub struct Kind {
     pub parts: Arc<dyn Parts>,
     pub diff: Arc<dyn Diff>,
     pub showing: Arc<dyn Showing>,
+    pub screen: Arc<dyn Screen>,
     pub truth: Arc<dyn Truth>,
     pub gaps: Option<Arc<dyn Gaps>>,
     pub order: Option<Arc<dyn Order>>,

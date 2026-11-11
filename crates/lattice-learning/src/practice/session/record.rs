@@ -8,6 +8,7 @@ use lattice_core::domain::learning::practice::work::{
     Case, CheckReport, CheckScope, CheckStatus, Exercise, Form, LearnerCaseVerdict, PartRef, Piece,
     Rung, Setting, Stage,
 };
+use lattice_core::domain::learning::practice::Scorecard;
 use lattice_core::shared::error::Result;
 use serde_json::Value;
 
@@ -39,6 +40,8 @@ pub struct SessionLearnerCase {
     pub verdict: LearnerCaseVerdict,
     /// The ids of the misreadings it catches.
     pub catches: Vec<String>,
+    /// What the kind's check of the case found beyond its verdict. The kind owns it.
+    pub found: Value,
 }
 
 #[derive(Debug, Clone)]
@@ -49,6 +52,12 @@ pub struct SessionHint {
     pub stage: Stage,
     /// The last check made when the hint was given.
     pub check_id: Option<String>,
+    pub reason: String,
+    /// The parts of the piece the hint points at.
+    pub parts: Vec<PartRef>,
+    /// The counterpart gave it in role.
+    pub in_role: bool,
+    pub at: i64,
 }
 
 /// What a row of the session's event log says happened.
@@ -94,15 +103,31 @@ pub struct Counted<'a> {
     pub events: &'a [SessionEvent],
 }
 
+fn counted<'a>(
+    form: Form,
+    settings: &'a [Setting],
+    checks: &[SessionCheck],
+    hints: &'a [SessionHint],
+    events: &'a [SessionEvent],
+) -> Counted<'a> {
+    Counted {
+        form,
+        settings,
+        scopes: checks.iter().map(|check| check.scope).collect(),
+        hints,
+        events,
+    }
+}
+
 impl DebriefSession {
     pub fn counted(&self) -> Counted<'_> {
-        Counted {
-            form: self.form,
-            settings: &self.settings,
-            scopes: self.checks.iter().map(|check| check.scope).collect(),
-            hints: &self.hints,
-            events: &self.events,
-        }
+        counted(
+            self.form,
+            &self.settings,
+            &self.checks,
+            &self.hints,
+            &self.events,
+        )
     }
 }
 
@@ -220,9 +245,44 @@ pub struct Session {
     pub events: Vec<SessionEvent>,
     /// The draft the counterpart last saw.
     pub draft_seen: Option<Piece>,
+    pub lesson_id: String,
+    /// The debrief, once the session is finished and has one.
+    pub debrief: Option<SessionDebrief>,
+}
+
+/// A technique the session's rating was recorded against, and when it is due again.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TechniqueRating {
+    pub id: String,
+    pub name: String,
+    pub family: String,
+    pub cue: String,
+    pub rating: PatternRating,
+    pub due_at: i64,
+}
+
+/// The stored debrief of a finished session.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionDebrief {
+    pub scorecard: Scorecard,
+    /// What the kind had the model state beside the scores, by key.
+    pub stated: Vec<(String, String)>,
+    pub model: String,
+    pub techniques: Vec<TechniqueRating>,
 }
 
 impl Session {
+    /// What the facts of the session are counted from.
+    pub fn counted(&self) -> Counted<'_> {
+        counted(
+            self.row.form,
+            &self.settings,
+            &self.checks,
+            &self.hints,
+            &self.events,
+        )
+    }
+
     /// The whole session for the debrief: nothing is cut by a setting.
     pub fn debrief(&self, draft: Piece) -> DebriefSession {
         DebriefSession {
