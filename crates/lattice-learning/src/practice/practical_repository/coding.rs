@@ -20,6 +20,7 @@ use crate::practice::session::dto::ClockDto;
 use crate::practice::session::policy::Cue;
 use lattice_core::domain::learning::practice::work::{Form, Hidden, KindId, Setting, Stage};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{Transactions, WriteTx};
 use serde::{de::DeserializeOwned, Serialize};
 use sqlx::{sqlite::SqliteRow, Row, SqliteConnection};
@@ -189,7 +190,7 @@ pub(super) async fn add_turn(
         .bind(program_id)
         .bind(session_id)
         .bind(uuid::Uuid::new_v4().to_string())
-        .bind(crate::persistence::hash_text(content))
+        .bind(sha256_hex(content))
         .bind(ordinal)
         .bind(speaker)
         .bind(content)

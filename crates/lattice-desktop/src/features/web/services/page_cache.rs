@@ -16,9 +16,9 @@ use chrono::{DateTime, NaiveDate, Utc};
 use lattice_core::application::contracts::web::ReadVia;
 use lattice_core::application::services::sourcing::cache_policy;
 use lattice_core::domain::sourcing::{canonical, SourcingPolicy};
+use lattice_core::shared::hash::sha256_hex;
 use reqwest::StatusCode;
 use serde::{Deserialize, Serialize};
-use sha2::{Digest, Sha256};
 use tracing::{debug, warn};
 use url::Url;
 
@@ -298,8 +298,7 @@ impl PageCache {
 
     /// Where the entry for an already-normalised key lives.
     fn path_for_key(&self, key: &str) -> PathBuf {
-        let digest = Sha256::digest(key.as_bytes());
-        self.dir.join(format!("{digest:x}.json"))
+        self.dir.join(format!("{}.json", sha256_hex(key)))
     }
 
     async fn write(&self, url: &str, entry: &Entry) {

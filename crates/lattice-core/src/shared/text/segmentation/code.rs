@@ -58,13 +58,14 @@ fn word_starts(line: &str) -> impl Iterator<Item = usize> + '_ {
     })
 }
 
-fn is_blank(line: &str) -> bool {
+/// Whether `line` holds only whitespace.
+pub fn is_blank(line: &str) -> bool {
     line.trim().is_empty()
 }
 
 /// A line at indentation 0 that opens a top-level item, or leads into one
 /// (an attribute, a doc comment, a decorator).
-fn opens_item(line: &str) -> bool {
+pub fn opens_item(line: &str) -> bool {
     const OPENERS: [&str; 26] = [
         "fn ",
         "pub ",

@@ -11,6 +11,7 @@ use crate::practice::practical_repository::{
 };
 use crate::practice::practical_runs::CodingRunStart;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::hash::sha256_hex;
 use serde_json::json;
 use sqlx::SqlitePool;
 
@@ -237,7 +238,7 @@ async fn setup(pool: &SqlitePool) -> Result<Setup> {
             .bind(path)
             .bind(role)
             .bind(content)
-            .bind(crate::persistence::hash_text(content))
+            .bind(sha256_hex(content))
             .bind(editable)
             .execute(pool)
             .await

@@ -5,7 +5,7 @@ use crate::{
 };
 use crate::{
     operations::Operation,
-    persistence::{db, hash, hash_text, now},
+    persistence::{db, hash, now},
 };
 use futures::TryStreamExt;
 use lattice_core::domain::learning::claim_review::SourceAddedBy;

@@ -5,6 +5,7 @@ use crate::review_findings::{
     plain_part, FindingKey, FindingKind, FindingSite, ReviewFinding, SetAside,
 };
 use crate::teaching_review::LengthRule;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -251,7 +252,7 @@ pub async fn review_and_repair(
     output_tokens: usize,
 ) -> Result<String> {
     let context = json!({"policy":"lesson-teaching","model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema});
-    let receipt = crate::content_verification::digest(&context.to_string());
+    let receipt = sha256_hex(context.to_string());
     if crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
         crate::lesson_progress::phase(
             crate::lesson_progress::Phase::Review,
@@ -309,12 +310,7 @@ pub(crate) async fn review_lesson(
     let mut sources: Vec<_> = references
         .sources
         .iter()
-        .map(|source| {
-            (
-                &source.id,
-                crate::content_verification::digest(&source.excerpt),
-            )
-        })
+        .map(|source| (&source.id, sha256_hex(&source.excerpt)))
         .collect();
     sources.sort();
     // Teaching structure is bound to the candidate and authoring inputs. New
@@ -324,9 +320,7 @@ pub(crate) async fn review_lesson(
     let source_key = |candidate: &str| {
         format!(
             "teaching-sources:{}",
-            crate::content_verification::digest(
-                &json!({"input":review_input,"candidate":candidate}).to_string()
-            )
+            sha256_hex(json!({"input":review_input,"candidate":candidate}).to_string())
         )
     };
     let unchanged_review = crate::lesson_drafts::checkpoint(&source_key(&candidate))
@@ -339,7 +333,7 @@ pub(crate) async fn review_lesson(
                     .any(|(current_id, current_hash)| *current_id == id && current_hash == hash)
             })
         });
-    let receipt = crate::content_verification::digest(&json!({"policy":"lesson-teaching-review","findingPolicy":crate::review_evidence::POLICY,"sectionReviewPolicy":crate::teaching_review::POLICY,"model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema,"reviewReferenceHashes":sources}).to_string());
+    let receipt = sha256_hex(json!({"policy":"lesson-teaching-review","findingPolicy":crate::review_evidence::POLICY,"sectionReviewPolicy":crate::teaching_review::POLICY,"model":llm.model_name(),"system":system,"prompt":prompt,"schema":schema,"reviewReferenceHashes":sources}).to_string());
     if unchanged_review || crate::lesson_drafts::teaching_completed(&candidate, &receipt).await? {
         if !unchanged_review {
             crate::lesson_drafts::record_checkpoint(&source_key(&candidate), json!(sources))
@@ -523,9 +517,12 @@ async fn review_material(
         } else {
             "Before evaluating teaching style, check each worked example against its stated premises and expected result, preserving meaningful details. Use supplied execution evidence when available; do not claim to have executed an example yourself. Check concrete factual errors whether or not they were in the original findings."
         };
-        let reference_versions: Vec<_> = context.lesson_references.into_iter().flat_map(|references| references.sources.iter()).map(|source| {
-            json!({"id":source.id,"contentHash":crate::content_verification::digest(&source.excerpt)})
-        }).collect();
+        let reference_versions: Vec<_> = context
+            .lesson_references
+            .into_iter()
+            .flat_map(|references| references.sources.iter())
+            .map(|source| json!({"id":source.id,"contentHash":sha256_hex(&source.excerpt)}))
+            .collect();
         let review_prompt = json!({"task":"Review instructional quality", "authoringContext":authoring_context, "originalIssuesToRecheck":original_issues, "sourceQuoteChecks":quote_checks, "correctnessPriority":correctness_priority, "candidate":candidate_value,"referenceVersions":reference_versions});
         let structure = structural_findings(schema, &candidate)?;
         // A rewrite of the whole lesson changes the sentences its checked

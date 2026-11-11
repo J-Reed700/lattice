@@ -15,9 +15,9 @@ mod activation;
 mod ports;
 mod rows;
 
+use super::models_table_type::normalize_model_type_for_models_table;
 use rows::{
-    build_model_select_query, fallback_artifact_path, location_is_available,
-    normalize_model_type_for_models_table, DownloadedModelRecord,
+    build_model_select_query, fallback_artifact_path, location_is_available, DownloadedModelRecord,
 };
 
 /// Repository for downloaded model persistence

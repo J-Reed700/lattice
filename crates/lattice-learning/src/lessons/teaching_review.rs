@@ -6,6 +6,7 @@ use crate::{generation, outline_progress::OutlineProgress};
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
+    shared::hash::sha256_hex,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
@@ -174,8 +175,8 @@ pub async fn review(
 ) -> Result<Vec<ReviewFinding>> {
     // Save findings, including defects, before the later grounding/repair step.
     // Reusing a completed review never approves the lesson or skips grounding.
-    let key = format!("teaching-review-findings-v2:{}", crate::content_verification::digest(
-        &json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":prompt,"candidate":candidate}).to_string()
+    let key = format!("teaching-review-findings-v2:{}", sha256_hex(
+        json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":prompt,"candidate":candidate}).to_string()
     ));
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
         .await?

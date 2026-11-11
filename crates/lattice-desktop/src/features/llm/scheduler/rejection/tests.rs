@@ -1,4 +1,5 @@
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 use serde_json::json;
 
 const PROMPT: &str = "Rewrite section two so that every claim cites the passage that supports it.";
@@ -35,9 +36,9 @@ fn the_servers_words_are_ascii_and_bounded() {
 
 #[test]
 fn the_log_compares_failures_by_digest_not_words() {
-    assert_eq!(digest("Compute error."), digest("Compute error."));
-    assert_ne!(digest("Compute error."), digest("Compute error"));
-    assert_eq!(digest("x").len(), 64);
+    assert_eq!(sha256_hex("Compute error."), sha256_hex("Compute error."));
+    assert_ne!(sha256_hex("Compute error."), sha256_hex("Compute error"));
+    assert_eq!(sha256_hex("x").len(), 64);
 }
 
 #[test]

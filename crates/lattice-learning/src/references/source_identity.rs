@@ -1,10 +1,9 @@
 pub fn source_request_hash<T: serde::Serialize>(
     request: &T,
 ) -> lattice_core::shared::error::Result<String> {
-    use sha2::Digest;
     let bytes = serde_json::to_vec(request)
         .map_err(|error| lattice_core::shared::error::AppError::Serialization(error.to_string()))?;
-    Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
+    Ok(lattice_core::shared::hash::sha256_hex(bytes))
 }
 
 pub fn validate_source_ids(
