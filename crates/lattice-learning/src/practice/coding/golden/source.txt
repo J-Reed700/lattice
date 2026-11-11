@@ -1,0 +1,3067 @@
+=== Problem Easy, request 1 of 1 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== Problem Medium, request 1 of 1 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one medium python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== Problem Hard, request 1 of 1 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one hard python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== BugFix Easy, request 1 of 1 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+
+The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== BugFix Medium, request 1 of 1 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one medium python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+
+The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== BugFix Hard, request 1 of 1 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one hard python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+
+The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== Problem Easy, no lesson or pattern, with a focus and details, request 1 of 1 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+The learner asked to focus on: The focus text.
+
+The learner is preparing for: The details text.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== Problem Easy, after an unproven draft, request 1 of 2 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== Problem Easy, after an unproven draft, request 2 of 2 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+--- assistant ---
+{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","function":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":["There is exactly one pair."],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":["hash_map_lookup"],"compare":"exact","tolerance":0,"reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"a pair in the middle","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"negative numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"the pair at the end","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":["list(range(50000))","99997"]}]}
+--- user ---
+That answer could not be used: The reference solution did not pass every case:
+- hidden-1 (duplicate numbers): the reference returned 'wrong' where [1, 2] was expected
+Fix the reference, or the cases that disagree with the statement. Answer the same task again, fixing that.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== BugFix Easy, after an unproven draft, request 1 of 2 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+
+The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}
+
+=== BugFix Easy, after an unproven draft, request 2 of 2 ===
+--- system ---
+You write coding problems for a learner to solve, and the checks that prove them. Everything you write is run: the reference solution against every case, and each misreading against every case.
+--- user ---
+Write one easy python problem. The learner writes a single function in solution.py. Programs run on a fake Python.
+
+It practises the lesson "Lookups", whose objective is: Use a table to avoid repeated scans.
+
+The problem must call for these patterns, and its "patterns" must list them:
+hash_map_lookup (Hash map lookup): Something is asked again and again about values already seen, and remembering them by key answers it at once.
+
+Rules:
+- The title and statement must never name a pattern or technique that solves the problem, or hint at one by name. The learner recognises the pattern.
+- Arguments and expected results are Python literals, one argument for each parameter in the signature's order. Use built-in types and annotations such as list[int]; import nothing.
+- The reference is a complete, correct solution.py that meets the target complexity.
+- A misreading is a complete solution.py that a careful learner could write by reading the statement wrongly, or by missing an edge. Write at least three, and make each fail a case you wrote. It must still run.
+- Write examples the statement shows, hidden cases that each probe an edge or a misreading, and at least one scale case.
+- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals and arithmetic, such as list(range(50000)) or [3] * 100000. It has no expected result: the reference's answer is recorded. It is compared exactly, so the problem's answer for it must be one deterministic value, such as a number, a string or a sorted list.
+- "clarifications" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume.
+
+The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape.
+--- assistant ---
+{"title":"Pair with a given sum","statement":"Return the positions of the two numbers that add up to the target.","function":"pair_positions","params":[{"name":"numbers","annotation":"list[int]"},{"name":"target","annotation":"int"}],"returns":"list[int]","constraints":["There is exactly one pair."],"clarifications":[],"targetComplexity":"O(n) time, O(n) space","patterns":["hash_map_lookup"],"compare":"exact","tolerance":0,"reference":"REF BAD","misreadings":[{"description":"Uses a number twice.","code":"LATE"},{"description":"Stops at the first sum.","code":"EARLY"},{"description":"Same as the reference.","code":"SAME"}],"examples":[{"category":"a pair at the start","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"a pair in the middle","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"hidden":[{"category":"duplicate numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"negative numbers","args":["[1, 2, 3]","5"],"expected":"[1, 2]"},{"category":"the pair at the end","args":["[1, 2, 3]","5"],"expected":"[1, 2]"}],"scale":[{"category":"a long list","args":["list(range(50000))","99997"]}]}
+--- user ---
+That answer could not be used: The reference solution did not pass every case:
+- hidden-1 (duplicate numbers): the reference returned 'wrong' where [1, 2] was expected
+Fix the reference, or the cases that disagree with the statement. Answer the same task again, fixing that.
+--- schema ---
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "title",
+    "statement",
+    "function",
+    "params",
+    "returns",
+    "constraints",
+    "clarifications",
+    "targetComplexity",
+    "patterns",
+    "compare",
+    "tolerance",
+    "reference",
+    "misreadings",
+    "examples",
+    "hidden",
+    "scale"
+  ],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1
+    },
+    "statement": {
+      "type": "string",
+      "minLength": 1
+    },
+    "function": {
+      "type": "string",
+      "minLength": 1
+    },
+    "params": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "name",
+          "annotation"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "annotation": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "returns": {
+      "type": "string",
+      "minLength": 1
+    },
+    "constraints": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "clarifications": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "question",
+          "answer"
+        ],
+        "properties": {
+          "question": {
+            "type": "string",
+            "minLength": 1
+          },
+          "answer": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "targetComplexity": {
+      "type": "string",
+      "minLength": 1
+    },
+    "patterns": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "hash_map_lookup",
+          "frequency_counting",
+          "prefix_sums",
+          "two_pointers",
+          "sliding_window",
+          "fast_slow_pointers",
+          "monotonic_stack",
+          "sort_first",
+          "interval_merging",
+          "heap_selection",
+          "bucket_counting",
+          "trie",
+          "union_find",
+          "tree_traversal",
+          "graph_traversal",
+          "binary_search",
+          "binary_search_on_answer",
+          "backtracking",
+          "greedy_choice",
+          "dynamic_programming",
+          "divide_and_conquer",
+          "bit_manipulation"
+        ]
+      }
+    },
+    "compare": {
+      "type": "string",
+      "enum": [
+        "exact",
+        "unordered",
+        "float_within"
+      ]
+    },
+    "tolerance": {
+      "type": "number"
+    },
+    "reference": {
+      "type": "string",
+      "minLength": 1
+    },
+    "misreadings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "description",
+          "code"
+        ],
+        "properties": {
+          "description": {
+            "type": "string",
+            "minLength": 1
+          },
+          "code": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "examples": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "hidden": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args",
+          "expected"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "expected": {
+            "type": "string",
+            "minLength": 1
+          }
+        }
+      }
+    },
+    "scale": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": [
+          "category",
+          "args"
+        ],
+        "properties": {
+          "category": {
+            "type": "string",
+            "minLength": 1
+          },
+          "args": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            }
+          }
+        }
+      }
+    }
+  }
+}
+--- options ---
+{
+  "cache_key": null,
+  "tools": [],
+  "priority": "background",
+  "reasoning_effort": "low",
+  "tool_choice": null,
+  "include_reasoning": false,
+  "sampling": null,
+  "thinking": "off",
+  "max_output_tokens": 8000,
+  "stop": [],
+  "want_logprobs": false
+}

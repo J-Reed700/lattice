@@ -11,7 +11,7 @@ mod store;
 pub(crate) use store::fit_basis_in;
 pub(crate) use store::{
     fit_basis, lesson_fits_in, lesson_states_in, pattern_states_in, record_fit, record_fit_in,
-    record_in,
+    record_in, review_pattern_in,
 };
 
 /// The name a material's pattern schedules are kept under: `code:<language>`, or `passage`.

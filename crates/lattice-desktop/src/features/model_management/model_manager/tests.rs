@@ -62,7 +62,7 @@ async fn test_get_reranker_paths() {
 }
 
 #[tokio::test]
-async fn test_trait_get_download_progress_not_implemented() {
+async fn no_download_progress_is_reported_before_a_download_starts() {
     let temp_dir = TempDir::new().expect("Failed to create temp dir");
     let manager = create_test_manager(&temp_dir);
 

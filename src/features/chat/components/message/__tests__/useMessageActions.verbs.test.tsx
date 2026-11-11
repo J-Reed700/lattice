@@ -1,7 +1,8 @@
-import { act, renderHook } from '@testing-library/react';
+import { act } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useMessageActions } from '@/features/chat/components/message/useMessageActions';
+import { renderHook } from '@/tests/renderWithQueryClient';
 import type { DisplayMessage } from '@/types/conversation';
 
 const h = vi.hoisted(() => ({

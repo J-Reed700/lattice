@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! A build that stopped the app stays failed, visible, until the learner
 //! retries it: no start-up pass or reader queues the same course again.
 

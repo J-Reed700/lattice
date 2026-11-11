@@ -178,6 +178,9 @@ pub enum AppError {
     /// Prevents TOCTOU race conditions in multi-step operations
     ConcurrentModification { resource: String, details: String },
 
+    /// Conflict error (e.g. revision mismatch)
+    Conflict(String),
+
     /// Domain layer error - business rule violations
     /// BOXED to prevent stack overflow (DomainError is ~160 variants)
     Domain(Box<DomainError>),
@@ -311,6 +314,7 @@ impl AppError {
             AppError::AiModelsNotInstalled(_) => "AI_MODELS_NOT_INSTALLED",
             AppError::ModelLoadFailed(_) => "MODEL_LOAD_FAILED",
             AppError::ConcurrentModification { .. } => "CONCURRENT_MODIFICATION",
+            AppError::Conflict(_) => "CONFLICT",
             AppError::Domain(_) => "DOMAIN_ERROR",
             AppError::Application(_) => "APPLICATION_ERROR",
             AppError::Other(_) => "UNKNOWN_ERROR",
@@ -331,7 +335,7 @@ impl AppError {
             AppError::ServiceNotAvailable(_) | AppError::AiModelsNotInstalled(_) => 503,
             AppError::ModelRejected(_) | AppError::ModelAnswerUnusable(_) => 502,
             AppError::FileTooLarge { .. } => 413,
-            AppError::ConcurrentModification { .. } => 409,
+            AppError::ConcurrentModification { .. } | AppError::Conflict(_) => 409,
             AppError::Domain(err) if err.is_not_found() => 404,
             AppError::Domain(err) if err.is_business_rule_violation() => 400,
             AppError::Application(err) if err.is_config_error() => 400,
@@ -389,7 +393,8 @@ impl AppError {
             | AppError::Network(_)
             | AppError::Io { .. }
             | AppError::RateLimitExceeded(_)
-            | AppError::ConcurrentModification { .. } => true,
+            | AppError::ConcurrentModification { .. }
+            | AppError::Conflict(_) => true,
             AppError::HttpStatus { status, .. } => Self::is_retry_later_status(*status),
             AppError::Domain(err) => err.is_retryable(),
             AppError::Application(err) => err.is_recoverable(),
@@ -669,6 +674,7 @@ impl fmt::Display for AppError {
                 "Concurrent modification detected for {}: {}. Please retry the operation.",
                 resource, details
             ),
+            AppError::Conflict(e) => write!(f, "Conflict: {}", e),
             AppError::Domain(e) => write!(f, "Domain error: {}", e),
             AppError::Application(e) => write!(f, "Application error: {}", e),
             AppError::Other(e) => write!(f, "{}", e),

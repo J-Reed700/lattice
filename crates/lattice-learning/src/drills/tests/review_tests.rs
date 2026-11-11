@@ -227,8 +227,16 @@ async fn starting_a_drill_gives_the_attempt_and_the_drill_as_the_learner_may_see
 
 #[tokio::test]
 async fn the_learners_view_of_a_drill_holds_nothing_of_its_key() -> Result<()> {
-    let (_, _, shown) = started().await?;
+    let (pool, attempt_id, shown) = started().await?;
     assert_nothing_of_the_key(&shown);
+    let (_, stored) = attempts::get(&Database::from(pool.clone()), &attempt_id).await?;
+    let planted = stored
+        .drill
+        .key
+        .iter()
+        .filter(|issue| issue.origin == Origin::Planted)
+        .count();
+    assert!(planted > 0, "the test drill plants issues");
     let object = shown.as_object().expect("an object");
     let mut keys: Vec<&str> = object.keys().map(String::as_str).collect();
     keys.sort_unstable();
@@ -241,7 +249,11 @@ async fn the_learners_view_of_a_drill_holds_nothing_of_its_key() -> Result<()> {
         .map(String::as_str)
         .collect();
     drill_keys.sort_unstable();
-    assert_eq!(drill_keys, ["files", "lesson", "material", "title"]);
+    assert_eq!(
+        drill_keys,
+        ["files", "issues", "lesson", "material", "title"]
+    );
+    assert_eq!(object["drill"]["issues"], planted);
     assert_eq!(
         object["drill"]["material"],
         json!({"kind": "code", "language": "python"})
@@ -1073,6 +1085,24 @@ async fn an_issue_a_blind_review_raised_is_revealed_as_also_valid_and_a_planted_
     let shown = serde_json::to_value(&revealed.issues).expect("a DTO is JSON");
     assert_eq!(shown[0]["alsoValid"], false);
     assert_eq!(shown[1]["alsoValid"], true);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_learner_is_told_how_many_issues_were_planted_and_not_how_many_were_found_in_review(
+) -> Result<()> {
+    let waiting = Waiting::new(vec![operator_finding()], None).await?;
+    let (_, mut stored) =
+        attempts::get(&Database::from(waiting.pool.clone()), &waiting.attempt).await?;
+    let planted = stored.drill.key[0].clone();
+    let mut found = planted.clone();
+    found.origin = Origin::FoundInReview;
+    stored.drill.key = vec![planted.clone(), planted.clone(), planted, found];
+
+    let shown = reveal::learner_drill(&stored);
+    assert_eq!(shown.issues, 3);
+    let json = serde_json::to_value(&shown).expect("a DTO is JSON");
+    assert_eq!(json["issues"], 3);
     Ok(())
 }
 

@@ -192,6 +192,19 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
             item["quote"] = json!("A randomized comparison isolates the intervention.");
         }
     }
+    crate::tests::assert_conflict(
+        service::prepare(
+            &repo,
+            &Model(lesson_candidate.to_string()),
+            &crate::embedded_runtime::BuiltinRuntimes::for_tests(),
+            PrepareLearningLessonRequestDto {
+                program_id: draft.summary.id.clone(),
+                lesson_id: lesson_id.clone(),
+                expected_revision: accepted.summary.revision + 1,
+            },
+        )
+        .await,
+    );
     let prepared = service::prepare(
         &Database::from(pool.clone()),
         &repo,

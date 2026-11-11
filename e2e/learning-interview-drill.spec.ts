@@ -88,13 +88,11 @@ for (const width of [1280, 390]) {
     const created = await page.evaluate(() => window.__LATTICE_IPC__.calls.find((call) => call.command === "create_interview_study_deck")?.args.request);
     expect(created).toMatchObject({ activityId: "interview-activity", targetAt: new Date("2099-01-02T09:30").getTime() });
 
-    await expect(page.getByRole("heading", { name: "Acme · Backend Engineer interview drill" })).toBeVisible();
-    await expect(page.getByRole("heading", { name: /Interview or exam/ })).toBeVisible();
-    await expect(page.getByText("First pass, now")).toBeVisible();
-    await expect(page.getByText("Warm-up")).toBeVisible();
+    const drawer = page.getByRole("dialog", { name: "Acme · Backend Engineer interview drill" });
+    await expect(drawer).toBeVisible();
+    await expect(page).not.toHaveURL(/deck=/);
     await page.screenshot({ path: testInfo.outputPath("interview-drill-deck.png"), fullPage: true });
 
-    await page.getByRole("button", { name: "Review due (2)" }).click();
     await expect(page.getByRole("heading", { level: 2, name: "Tell me about a disagreement with a teammate." })).toBeVisible();
     await expect(page.getByText(/Answer aloud/)).toBeVisible();
     await page.getByLabel(/Your answer/).fill("We argued about a migration and I proposed a test plan.");
@@ -125,6 +123,9 @@ for (const width of [1280, 390]) {
     await expect(page.getByRole("heading", { name: "You were sure, and it was wrong" })).toBeVisible();
     await expect(page.getByText(/before you sleep/)).toBeVisible();
     await page.screenshot({ path: testInfo.outputPath("interview-drill-summary.png"), fullPage: true });
+    await page.keyboard.press("Escape");
+    await expect(drawer).toBeHidden();
+    await expect(drill).toBeVisible();
 
     const reviews = await page.evaluate(() => window.__LATTICE_IPC__.calls.filter((call) => call.command === "review_study_card").map((call) => call.args.request));
     expect(reviews).toMatchObject([

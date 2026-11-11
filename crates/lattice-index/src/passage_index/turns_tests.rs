@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! The turn order: who waits for whom, and an embedding run that holds at
 //! its next batch while an index ranked above it embeds, then carries on.
 

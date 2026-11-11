@@ -16,10 +16,7 @@ async fn live_contract_fidelity_controls() -> Result<()> {
     use lattice_core::application::services::claim_verification::{
         CheckPolicy, ClaimChecker, ClaimJudgment,
     };
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -112,10 +109,7 @@ async fn live_contract_fidelity_controls() -> Result<()> {
 #[tokio::test]
 #[ignore = "replays captured sections through real model extraction; does not approve lesson content"]
 async fn live_inventory_slots_keep_every_section() -> Result<()> {
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -141,10 +135,7 @@ async fn live_inventory_slots_keep_every_section() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires live settings and review controls; makes real model requests"]
 async fn live_review_schema_preserves_grounding() -> Result<()> {
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -203,10 +194,7 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
 #[tokio::test]
 #[ignore = "requires live settings and a recorded inventory basis/draft; never modifies the library"]
 async fn live_saved_inventory_revision_finishes() -> Result<()> {
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let model = ObservedModel::new(&config, directory.clone(), 0).await?;
@@ -235,10 +223,7 @@ async fn live_small_lesson_reaches_ready() -> Result<()> {
     let _ = tracing_subscriber::fmt()
         .with_env_filter("lattice::features::learning=info")
         .try_init();
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let directory = std::path::PathBuf::from(std::env::var("LATTICE_LESSON_CALLS").unwrap());
     std::fs::create_dir_all(&directory)?;
     let database = directory.join("lesson.sqlite");
@@ -534,10 +519,7 @@ async fn live_small_lesson_resumes_to_ready() -> Result<()> {
         job_id = retry.id;
         std::fs::write(directory.join("job-id.txt"), &job_id)?;
     }
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let next_call = std::fs::read_dir(&directory)?
         .filter_map(|e| e.ok())
         .filter_map(|e| {

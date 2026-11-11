@@ -6,6 +6,7 @@
 //! (file-based, database, remote, etc.) while keeping the application layer independent.
 
 use crate::application::contracts::settings::{SettingsCategory, SettingsDto};
+use crate::application::ports::llm_port::RemoteServer;
 use crate::shared::error::Result;
 use async_trait::async_trait;
 use std::collections::HashMap;
@@ -101,6 +102,10 @@ pub trait SettingsRepositoryPort: Send + Sync {
     /// - Invalid JSON format
     /// - Invalid settings structure
     async fn import(&self, path: &str, merge: bool) -> Result<SettingsImportOutcome>;
+
+    /// Store (`Some`) or delete (`None`, or blank) the authentication header
+    /// value of a remote model server.
+    async fn store_header_value(&self, server: RemoteServer, value: Option<&str>) -> Result<()>;
 }
 
 /// The committed import and its vault transition, observed in one serialized mutation.
@@ -109,6 +114,7 @@ pub struct SettingsImportOutcome {
     pub vault_just_enabled: bool,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 /// Mock implementation for testing.
 #[cfg(any(test, feature = "test-support"))]
 pub struct MockSettingsRepository {
@@ -308,6 +314,10 @@ impl SettingsRepositoryPort for MockSettingsRepository {
             settings: self.settings.read().await.clone(),
             vault_just_enabled: false,
         })
+    }
+
+    async fn store_header_value(&self, _server: RemoteServer, _value: Option<&str>) -> Result<()> {
+        Ok(())
     }
 }
 

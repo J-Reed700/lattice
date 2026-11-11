@@ -13,7 +13,7 @@
 //! - `crate::features::file::plugin::init()` — Tauri plugin (directory-shaped)
 //!
 //! Shared file infrastructure (FileStoragePort, SecureFileStorage,
-//! FileMetadata value object, FileWatcher, FileTypeDetector, etc.)
+//! FileMetadata value object, FileWatcher, etc.)
 //! stays outside this slice — consumed by multiple features.
 
 pub mod commands;

@@ -33,15 +33,17 @@ async fn generates_biology_cards_from_markdown_with_an_optional_learning_goal() 
         .expect(2)
         .mount(&server)
         .await;
-    let llm = LlamaCppLlm::new(&LLMSettingsDto {
-        llama_cpp: LlamaCppSettingsDto {
-            url: server.uri(),
-            model: "test".into(),
-            auth_header_name: String::new(),
-            auth_header_value: String::new(),
+    let llm = LlamaCppLlm::new(
+        &LLMSettingsDto {
+            llama_cpp: LlamaCppSettingsDto {
+                url: server.uri(),
+                model: "test".into(),
+                auth_header_name: String::new(),
+            },
+            ..Default::default()
         },
-        ..Default::default()
-    })?
+        None,
+    )?
     .into_port()
     .await;
     for goal in ["", "High school biology exam"] {

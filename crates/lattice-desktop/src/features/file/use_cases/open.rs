@@ -6,7 +6,6 @@ use crate::features::file::dto::{OpenFileRequestDto, OpenFileResponseDto};
 use crate::infrastructure::adapters::fs::web_article::WebArticleDetector;
 use crate::infrastructure::security::FileAccessConfig;
 use lattice_core::application::ports::{FileStoragePort, FileSystemPort};
-use lattice_core::application::services::FileType;
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
@@ -86,11 +85,8 @@ impl OpenFileUseCase {
 
         self.file_system.open_file(&validated_path).await?;
 
-        let file_type = FileType::from_path(&validated_path);
-
         Ok(OpenFileResponseDto::opened_external(
             validated_path.display().to_string(),
-            file_type,
         ))
     }
 }

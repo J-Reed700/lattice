@@ -82,11 +82,7 @@ pub async fn search_with_recency_impl(
         ));
     }
 
-    container.get_or_load_embedding().await.map_err(|e| {
-        AppError::AiModelsNotInstalled(
-            format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
-        )
-    })?;
+    container.get_or_load_embedding().await?;
 
     let response = container
         .hybrid_search_use_case()

@@ -1,7 +1,10 @@
 //! Practice capabilities owned by Learning Studio.
 
+pub mod assistance_policy;
+pub mod coding;
 pub mod interview_answers;
 pub mod interview_research;
+pub mod kinds;
 pub mod practical_dto;
 pub mod practical_generation;
 pub mod practical_repository;
@@ -9,9 +12,12 @@ pub mod practical_runs;
 #[cfg(test)]
 pub(crate) mod practical_tests;
 pub mod practical_workspace;
+pub mod practice_fit;
 pub mod practice_generation;
 pub mod practice_repository;
 #[cfg(test)]
 pub(crate) mod practice_tests;
+pub mod session;
+pub mod simulation_policy;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

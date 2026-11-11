@@ -5,6 +5,7 @@
 //! again, and anything that lands outside (a `..`, an absolute path, a symlink
 //! pointing out) is refused before a byte is read.
 
+use lattice_core::shared::path_safety::reject_parent_components;
 use lattice_core::shared::{AppError, Result};
 use std::path::{Component, Path, PathBuf};
 
@@ -64,16 +65,14 @@ impl Scope {
 
     /// Resolves a relative path to an existing file or directory in the scope.
     pub fn resolve(&self, relative: &str) -> Result<ScopedPath> {
+        reject_parent_components(Path::new(relative.trim())).map_err(|reason| {
+            AppError::PermissionDenied(format!("An Explorer path {reason}: {relative}"))
+        })?;
         let mut parts: Vec<String> = Vec::new();
         for component in Path::new(relative.trim()).components() {
             match component {
                 Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
-                Component::CurDir => {}
-                Component::ParentDir => {
-                    return Err(AppError::PermissionDenied(format!(
-                        "`..` is not allowed in an Explorer path: {relative}"
-                    )))
-                }
+                Component::CurDir | Component::ParentDir => {}
                 Component::RootDir | Component::Prefix(_) => {
                     return Err(AppError::PermissionDenied(format!(
                         "Explorer paths are relative to the folder, not absolute: {relative}"

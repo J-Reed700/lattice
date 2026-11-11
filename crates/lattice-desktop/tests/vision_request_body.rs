@@ -103,7 +103,7 @@ async fn llama_cpp(server: &MockServer, vision: Option<VisionGeometry>) -> Arc<d
         max_tokens: 4_096,
         ..Default::default()
     };
-    LlamaCppLlm::new(&settings)
+    LlamaCppLlm::new(&settings, None)
         .unwrap()
         .with_vision(vision)
         .into_port()

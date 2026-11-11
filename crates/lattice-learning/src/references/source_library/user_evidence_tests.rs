@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! Who added a source, finding a saved source again, and the frozen page.
 
 use super::*;

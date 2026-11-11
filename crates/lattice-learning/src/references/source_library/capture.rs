@@ -343,7 +343,7 @@ impl LearningSourceLibraryRepository {
             .ok_or_else(|| AppError::NotFound("Learning source not found".into()))?;
         let revision = src.revision;
         if revision != req.expected_revision {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         if src.kind != "web" {
             return Err(invalid("Only web sources can be refreshed"));
@@ -480,7 +480,7 @@ impl LearningSourceLibraryRepository {
             )
             .await?
         {
-            return Err(invalid("Source changed; reload and retry."));
+            return Err(conflict("Source changed; reload and retry."));
         }
         let result_version = pending_id.as_deref();
         source_operation(

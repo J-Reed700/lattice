@@ -648,7 +648,6 @@ async fn embed_memory(
 mod memory_embedding_tests;
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod cited_web_source_tests;
 
 /// Explicit user memory notes use the same embedding writer as chat turns.
@@ -670,5 +669,4 @@ pub(crate) fn index_memory_note(
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod turn_commit_tests;

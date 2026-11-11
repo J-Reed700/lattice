@@ -4,6 +4,8 @@ use crate::{
     lab_runtime::{self, LearningLabExecutionResult, LearningLabRunStatus},
     practical_dto::*,
     practical_repository::{LearningPracticalRepository, PreparedExecution, RunCleanup},
+    practice::coding::problem::{ProblemCase, ProblemSpec},
+    practice::kinds::program::dto::CodingRunScope,
 };
 use lattice_core::shared::{
     error::{AppError, Result},
@@ -82,9 +84,56 @@ pub async fn start_run(
     );
     let shutdown = background.token();
     let task = background
-        .spawn(
-            async move { execute_run(&repo, &runs, &runtimes, &request, &hash, &shutdown).await },
-        )
+        .spawn(async move {
+            execute_run(&repo, &runs, &runtimes, &request, None, &hash, &shutdown).await
+        })
+        .ok_or_else(|| AppError::ServiceNotAvailable("Application is shutting down".into()))?;
+    task.await
+        .map_err(|error| AppError::InternalError(format!("Practical runner stopped: {error}")))?
+}
+
+/// A run of a coding problem: the learner's files against `cases`, read case by case.
+#[derive(Clone)]
+pub struct CodingRunStart {
+    pub base: StartLearningPracticalRunRequestDto,
+    pub exercise_session_id: String,
+    pub scope: CodingRunScope,
+    pub cases: Vec<ProblemCase>,
+    /// The ids of `cases` that are the learner's own examples.
+    pub mine_ids: Vec<String>,
+    pub spec: ProblemSpec,
+}
+
+/// Starts a coding run as `start_run` starts a practical one, and reads its output through the language's harness.
+pub async fn start_coding_run(
+    repo: &LearningPracticalRepository,
+    runs: &PracticalRunRegistry,
+    background: &BackgroundTasks,
+    runtimes: &BuiltinRuntimes,
+    request: &CodingRunStart,
+    payload_hash: &str,
+) -> Result<LearningPracticalRunDto> {
+    let (repo, runs, runtimes, request, hash) = (
+        repo.clone(),
+        runs.clone(),
+        runtimes.clone(),
+        request.clone(),
+        payload_hash.to_owned(),
+    );
+    let shutdown = background.token();
+    let task = background
+        .spawn(async move {
+            execute_run(
+                &repo,
+                &runs,
+                &runtimes,
+                &request.base,
+                Some(&request),
+                &hash,
+                &shutdown,
+            )
+            .await
+        })
         .ok_or_else(|| AppError::ServiceNotAvailable("Application is shutting down".into()))?;
     task.await
         .map_err(|error| AppError::InternalError(format!("Practical runner stopped: {error}")))?
@@ -141,10 +190,11 @@ async fn execute_run(
     runs: &PracticalRunRegistry,
     runtimes: &BuiltinRuntimes,
     request: &StartLearningPracticalRunRequestDto,
+    coding: Option<&CodingRunStart>,
     payload_hash: &str,
     shutdown: &CancellationToken,
 ) -> Result<LearningPracticalRunDto> {
-    let Some(prepared) = repo.prepare_run(request, payload_hash).await? else {
+    let Some(prepared) = repo.prepare_run(request, coding, payload_hash).await? else {
         return repo.run(&request.run_id).await;
     };
     let unavailable_reason = match &prepared.execution {

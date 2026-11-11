@@ -25,21 +25,24 @@ async fn client() -> Result<RecordingClient> {
         .unwrap_or_else(|_| std::env::temp_dir());
     std::fs::create_dir_all(&directory)?;
     Ok(RecordingClient {
-        inner: LlamaCppLlm::new(&LLMSettingsDto {
-            context_window: std::env::var("LATTICE_LEARNING_EVAL_CONTEXT_TOKENS")
-                .ok()
-                .and_then(|value| value.parse().ok())
-                .filter(|value: &u32| *value > 0)
-                .unwrap_or(32_768),
-            timeout_seconds: 300,
-            llama_cpp: LlamaCppSettingsDto {
-                url: std::env::var("LATTICE_LEARNING_EVAL_ENDPOINT")
-                    .map_err(|_| invalid("Set LATTICE_LEARNING_EVAL_ENDPOINT."))?,
-                model,
+        inner: LlamaCppLlm::new(
+            &LLMSettingsDto {
+                context_window: std::env::var("LATTICE_LEARNING_EVAL_CONTEXT_TOKENS")
+                    .ok()
+                    .and_then(|value| value.parse().ok())
+                    .filter(|value: &u32| *value > 0)
+                    .unwrap_or(32_768),
+                timeout_seconds: 300,
+                llama_cpp: LlamaCppSettingsDto {
+                    url: std::env::var("LATTICE_LEARNING_EVAL_ENDPOINT")
+                        .map_err(|_| invalid("Set LATTICE_LEARNING_EVAL_ENDPOINT."))?,
+                    model,
+                    ..Default::default()
+                },
                 ..Default::default()
             },
-            ..Default::default()
-        })?
+            None,
+        )?
         .into_port()
         .await,
         log: directory.join(format!(

@@ -115,7 +115,6 @@ impl OcrModelSource for FixedOcrModel {
 }
 
 #[cfg(test)]
-#[allow(clippy::unwrap_used, clippy::expect_used)]
 mod tests {
     use super::*;
     use lattice_core::application::ports::model_storage::{DownloadedModel, MockModelStoragePort};
