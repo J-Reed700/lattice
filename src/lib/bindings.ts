@@ -1587,6 +1587,9 @@ async checkPracticePiece(request: CheckPracticePieceRequestDto) : Promise<Result
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * The learner's code on one input of their choosing, with no verdict.
+ */
 async runCodingInput(request: RunCodingInputRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|run_coding_input", { request }) };
@@ -4776,7 +4779,7 @@ dataDirCloudProvider: string | null;
  * Newest first.
  */
 archives: ArchiveFileDto[] }
-export type AskPracticeHintRequestDto = { operationId: string; programId: string; sessionId: string; piece: JsonValue; expectedRevision: number }
+export type AskPracticeHintRequestDto = { operationId: string; programId: string; sessionId: string; piece: Piece; expectedRevision: number }
 export type AttachEvidenceDto = { kind: "attach_saved_source"; sourceVersionId: string; startByte: number; endByte: number } | { kind: "attach_link"; url: string } | { kind: "attach_document"; documentId: string } | { kind: "attach_text"; title: string; text: string }
 export type AttachFailureDto = { kind: AttachFailureKindDto; message: string; nextSteps: AttachNextStepDto[] }
 export type AttachFailureKindDto =
@@ -5214,7 +5217,7 @@ export type CheckDto = { checker: CheckerDto; result: CheckResultDto; reason: st
 /**
  * The engine's check runs the scopes `shown` and `all`; a kind's own commands run anything else.
  */
-export type CheckPracticePieceRequestDto = { operationId: string; checkId: string; programId: string; sessionId: string; scope: CheckScope; piece: JsonValue }
+export type CheckPracticePieceRequestDto = { operationId: string; checkId: string; programId: string; sessionId: string; scope: CheckScope; piece: Piece }
 export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } |
 /**
  * Supported by a passage of another course source than the ones its
@@ -7060,7 +7063,7 @@ export type FindingResultKind =
  */
 "valid_extra" | "false_positive"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
-export type FinishPracticeSessionRequestDto = { operationId: string; programId: string; sessionId: string; piece: JsonValue }
+export type FinishPracticeSessionRequestDto = { operationId: string; programId: string; sessionId: string; piece: Piece }
 /**
  * The device a verdict was judged against.
  */
@@ -9644,7 +9647,7 @@ export type NextDrillStatus =
  */
 "to_build"
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }
-export type ObservePracticeDraftRequestDto = { programId: string; sessionId: string; piece: JsonValue; reason: DraftObservation }
+export type ObservePracticeDraftRequestDto = { programId: string; sessionId: string; piece: Piece; reason: DraftObservation }
 /**
  * Onboarding state — what the user has already been through.
  *
@@ -9737,6 +9740,10 @@ export type PerformanceTierDto =
  * Accurate models (> 5s/response)
  */
 "Accurate"
+/**
+ * One state of the work: a draft, a reference, a misreading. The engine stores it and never reads inside it.
+ */
+export type Piece = JsonValue
 /**
  * One check as every kind has it. What it found is in the kind's `work`, under the same id.
  */
@@ -10684,7 +10691,7 @@ vectorIndexCompression: VectorIndexCompressionSettingsDto;
  */
 summaryIndexEnabled: boolean }
 export type SendLearningSimulationTurnRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; content: string }
-export type SendPracticeTurnRequestDto = { operationId: string; programId: string; sessionId: string; content: string; spoken: boolean; piece: JsonValue; expectedRevision: number }
+export type SendPracticeTurnRequestDto = { operationId: string; programId: string; sessionId: string; content: string; spoken: boolean; piece: Piece; expectedRevision: number }
 export type SetArchiveKeepCountRequestDto = { keepCount: number }
 export type SetArchivePassphraseRequestDto = {
 /**

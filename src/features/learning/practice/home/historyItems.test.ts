@@ -14,6 +14,7 @@ const activity = (patch: Partial<Wire.LearningPracticalActivityDto>): Wire.Learn
 const session = (patch: Partial<Wire.PracticeSessionSummaryDto>): Wire.PracticeSessionSummaryDto => ({
   sessionId: 's1',
   activityId: 'coding-act',
+  kind: 'program',
   title: 'Two sum',
   form: 'build',
   setting: 'coached',
