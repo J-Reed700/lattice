@@ -1,6 +1,6 @@
 //! What the notes of the check's findings say.
 #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
-use super::confirm::Settled;
+use super::confirm::{Settled, Unmet};
 use super::*;
 
 fn part(index: usize) -> Part {
@@ -59,9 +59,11 @@ fn used_note(protected: &[Protected]) -> String {
     let settled = Settled {
         taught: Vec::new(),
         missing: Vec::new(),
-        uses: vec![Use {
+        uses: vec![Unmet {
             hit,
             what: "the line",
+            elsewhere: Vec::new(),
+            later: None,
         }],
     };
     let candidate = json!({"blocks":[{"body":"Alpha holds the line."}],"questions":[]});
