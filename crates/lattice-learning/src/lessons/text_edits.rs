@@ -165,16 +165,24 @@ pub(super) fn citable_texts(part: &Value, question: bool) -> Vec<&str> {
     first.into_iter().chain(reasons).collect()
 }
 
-/// The citation entry for `sentence` in `part`.
-#[allow(dead_code)]
+/// The entry that cites `sentence` in `part`, a question or a block: it holds
+/// the part's own exact sentence(s) that `sentence` stands for, and there is
+/// none for a blank sentence or one that stands in no citable text.
 pub(super) fn citation_entry(
-    _part: &Value,
-    _question: bool,
+    part: &Value,
+    question: bool,
     sentence: &str,
     source_index: Value,
     quote: &str,
 ) -> Option<Value> {
-    Some(json!({"sentence":sentence,"sourceIndex":source_index,"quote":quote}))
+    if sentence.trim().is_empty() {
+        return None;
+    }
+    let exact = citable_texts(part, question).into_iter().find_map(|held| {
+        let span = same_text::find(held, sentence)?;
+        same_text::exact_sentences(held, span)
+    })?;
+    Some(json!({"sentence":exact,"sourceIndex":source_index,"quote":quote}))
 }
 
 /// Appends `cite` to the citations of the block or question it names. Its
@@ -196,14 +204,14 @@ fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
         .pointer(&cite.path)
         .filter(|part| part.is_object())
         .ok_or_else(|| format!("names {}, which is not in the draft.", cite.path))?;
-    let sentence = citable_texts(target, text == "explanation")
-        .into_iter()
-        .find_map(|held| {
-            let span = same_text::find(held, &cite.sentence)?;
-            same_text::exact_sentences(held, span)
-        })
-        .map(str::to_owned);
-    let Some(sentence) = sentence else {
+    let entry = citation_entry(
+        target,
+        text == "explanation",
+        &cite.sentence,
+        json!(cite.source_index),
+        &cite.quote,
+    );
+    let Some(entry) = entry else {
         let place = if text == "explanation" {
             "explanation or choice reasons"
         } else {
@@ -218,7 +226,6 @@ fn append(lesson: &mut Value, cite: &Cite) -> std::result::Result<(), String> {
         .pointer_mut(&cite.path)
         .and_then(Value::as_object_mut)
         .ok_or_else(|| format!("names {}, which is not in the draft.", cite.path))?;
-    let entry = json!({"sentence":sentence,"sourceIndex":cite.source_index,"quote":cite.quote});
     let listed = part
         .entry("citations")
         .or_insert_with(|| json!([]))
@@ -404,6 +411,12 @@ fn field_change(
         {
             return Err((first, format!("two edits to {path} overlap.")));
         }
+        if blanks_citation_sentence(path, text, &ranges) {
+            return Err((
+                first,
+                format!("edits to {path} would leave the citation's sentence blank; to take the citation back, list its path in uncite."),
+            ));
+        }
         return Ok(Change::Text {
             path: path.to_owned(),
             ranges,
@@ -426,6 +439,22 @@ fn field_change(
         index,
         value: edit.after,
     })
+}
+
+/// Whether `ranges`, replaced in `text` at `path`, leave a citation's sentence blank.
+fn blanks_citation_sentence(path: &str, text: &str, ranges: &[Range]) -> bool {
+    let sentence_path = matches!(
+        path.split('/').collect::<Vec<_>>().as_slice(),
+        ["", "blocks" | "questions", _, "citations", _, "sentence"]
+    );
+    if !sentence_path {
+        return false;
+    }
+    let mut result = text.to_owned();
+    for range in ranges.iter().rev() {
+        result.replace_range(range.start..range.end, &range.after);
+    }
+    result.trim().is_empty()
 }
 
 type Problems = Vec<(usize, String)>;
