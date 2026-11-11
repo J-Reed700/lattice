@@ -106,7 +106,7 @@ pub async fn set_conversation_explorer_root(
         Some(root) => Some(blocking(move || Scope::open(&root).map(|s| s.root_string())).await?),
         None => None,
     };
-    folders::bind_thread(container.db_pool(), &conversation_id, canonical.as_deref())
+    folders::bind_thread(container.database(), &conversation_id, canonical.as_deref())
         .await
         .map_err(ApiError::from)
 }
@@ -134,7 +134,7 @@ pub async fn explorer_index_open(
         .await
         .map_err(ApiError::from)?;
     // The list is a convenience; the index is what was asked for.
-    if let Err(error) = folders::record_open(container.db_pool(), &status.root).await {
+    if let Err(error) = folders::record_open(container.database(), &status.root).await {
         tracing::warn!(%error, "Could not record the Explorer folder");
     }
     Ok(status)
@@ -181,7 +181,7 @@ pub async fn explorer_folders_list(
     container: State<'_, Container>,
 ) -> Result<ExplorerFolderListDto, ApiError> {
     let manager = index_manager(&container)?;
-    folders::list(container.db_pool(), &manager)
+    folders::list(container.database(), &manager)
         .await
         .map_err(ApiError::from)
 }
@@ -194,7 +194,7 @@ pub async fn explorer_folder_rename(
     name: String,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    folders::rename(container.db_pool(), &root, &name)
+    folders::rename(container.database(), &root, &name)
         .await
         .map_err(ApiError::from)
 }
@@ -206,7 +206,7 @@ pub async fn explorer_folder_set_pinned(
     pinned: bool,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    folders::set_pinned(container.db_pool(), &root, pinned)
+    folders::set_pinned(container.database(), &root, pinned)
         .await
         .map_err(ApiError::from)
 }
@@ -220,7 +220,7 @@ pub async fn explorer_folder_set_last_thread(
     conversation_id: String,
     container: State<'_, Container>,
 ) -> Result<(), ApiError> {
-    folders::remember_thread(container.db_pool(), &root, &conversation_id)
+    folders::remember_thread(container.database(), &root, &conversation_id)
         .await
         .map_err(ApiError::from)
 }
@@ -236,7 +236,7 @@ pub async fn explorer_folder_set_settings(
     space_id: String,
     container: State<'_, Container>,
 ) -> Result<u32, ApiError> {
-    let moved = folders::set_settings(container.db_pool(), &root, &instructions, &space_id)
+    let moved = folders::set_settings(container.database(), &root, &instructions, &space_id)
         .await
         .map_err(ApiError::from)?;
     Ok(u32::try_from(moved).unwrap_or(u32::MAX))
@@ -267,7 +267,7 @@ pub async fn explorer_folder_remove(
 ) -> Result<u32, ApiError> {
     let manager = index_manager(&container)?;
     let deleted = folders::remove(
-        container.db_pool(),
+        container.database(),
         container.inner(),
         &manager,
         &root,

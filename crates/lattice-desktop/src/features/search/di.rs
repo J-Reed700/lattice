@@ -5,7 +5,7 @@
 
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 use crate::features::search::engine::bm25::BM25Search;
 use crate::features::search::engine::llama_reranker::{LlamaReranker, RerankServerStarter};
@@ -72,7 +72,7 @@ pub struct VectorSpace {
 /// index is left untouched on disk and a fresh one is rebuilt from the
 /// f32 vectors SQLite already holds.
 pub async fn build_with_compression(
-    db_pool: SqlitePool,
+    database: Database,
     usearch_index_path: std::path::PathBuf,
     models_path: std::path::PathBuf,
     embedding: Arc<dyn EmbeddingPort>,
@@ -144,18 +144,18 @@ pub async fn build_with_compression(
     let mut index_persistence: Option<Arc<IndexPersistence>> = None;
     if let Some(identity) = &identity {
         let restore = |cursor: String| {
-            let pool = db_pool.clone();
+            let database = database.clone();
             let identity = identity.clone();
             async move {
                 crate::infrastructure::persistence::repositories::embedding::generation::restore_page(
-                    &pool, &identity, dimension, &cursor, 128,
+                    &database, &identity, dimension, &cursor, 128,
                 )
                 .await
             }
         };
         open_or_rebuild_streaming(
             &usearch_index,
-            &db_pool,
+            &database,
             &usearch_index_path,
             identity,
             &generation,
@@ -164,23 +164,22 @@ pub async fn build_with_compression(
         )
         .await?;
 
-        let total: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM text_chunks WHERE content != ''")
-            .fetch_one(&db_pool)
+        let total: i64 =
+            crate::infrastructure::persistence::repositories::embedding::generation::count_chunks_with_content(
+                &database,
+            )
             .await?;
         if usearch_index.count() < total as usize {
             // `identity` is only set for a local model with a recorded
             // artifact identity, so the loader is always present here.
             if let Some(open_model) = backfill_model {
                 let model = open_model().await?;
-                crate::infrastructure::persistence::repositories::embedding::generation::prepare(
-                    &db_pool,
-                    model.as_ref(),
-                )
-                .await?;
+                crate::infrastructure::ml::embedding_generation::prepare(&database, model.as_ref())
+                    .await?;
                 // The backfill moved SQLite, so this pass always rebuilds.
                 open_or_rebuild_streaming(
                     &usearch_index,
-                    &db_pool,
+                    &database,
                     &usearch_index_path,
                     identity,
                     &generation,
@@ -194,7 +193,7 @@ pub async fn build_with_compression(
 
         let persistence = Arc::new(IndexPersistence::new(
             Arc::clone(&usearch_index),
-            db_pool.clone(),
+            database.clone(),
             identity.clone(),
             generation.clone(),
             dimension,
@@ -223,28 +222,28 @@ pub async fn build_with_compression(
             usearch_index_path,
             compression,
             index_persistence,
-            db_pool.clone(),
+            database.clone(),
             background,
         ),
     );
     let vector_search = runtime_index.clone() as Arc<dyn VectorSearchPort>;
     let search_service = runtime_index.clone() as Arc<dyn SearchServiceTrait>;
 
-    let text_search = Arc::new(SqliteTextSearch::new(db_pool.clone())) as Arc<dyn TextSearchPort>;
+    let text_search = Arc::new(SqliteTextSearch::new(database.clone())) as Arc<dyn TextSearchPort>;
     let document_repo =
-        Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
+        Arc::new(DocumentRepositoryImpl::new(database.clone())) as Arc<dyn DocumentRepository>;
 
-    let bm25_search = Arc::new(BM25Search::new(db_pool.clone())) as Arc<dyn BM25SearchTrait>;
-    let search_enrichment_service = Arc::new(SearchEnrichmentService::new(db_pool.clone()))
+    let bm25_search = Arc::new(BM25Search::new(database.clone())) as Arc<dyn BM25SearchTrait>;
+    let search_enrichment_service = Arc::new(SearchEnrichmentService::new(database.clone()))
         as Arc<dyn SearchEnrichmentServiceTrait>;
     let reranker = Arc::new(LlamaReranker::new(
         lattice_core::domain::models::curated::CURATED_RERANKER.path_in(&models_path),
         rerank_starter,
-    ));
+    )?);
 
     let dynamic_embedding = embedding;
     let chunk_repository = Arc::new(
-        crate::infrastructure::persistence::repositories::ChunkRepository::new(db_pool.clone()),
+        crate::infrastructure::persistence::repositories::ChunkRepository::new(database.clone()),
     ) as Arc<dyn ChunkRepositoryPort>;
     let semantic_search_use_case = Arc::new(
         SemanticSearchUseCase::new(dynamic_embedding.clone(), vector_search.clone())

@@ -77,8 +77,9 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub thinking_sampling: SamplingProfileDto,
 
-    /// Maximum tokens to generate, for a model nothing more is known about: a
-    /// connected model's own limits come first (`model_windows`).
+    /// Maximum tokens to generate on a local backend (downloaded, llama.cpp,
+    /// Ollama). A cloud model's own limits are `model_windows` and what its
+    /// provider reports.
     pub max_tokens: u32,
 
     /// The window a connected model runs at until one is chosen for it

@@ -9,8 +9,8 @@ use lattice_core::domain::learning::claim_review::{
     EventProvenance, PutPlace, UserAction,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::WriteTx;
 use serde_json::Value;
-use sqlx::SqliteConnection;
 use std::collections::HashSet;
 
 use super::repository::{append_in, load_in};
@@ -294,7 +294,7 @@ pub(super) fn siblings<'a>(
 /// taken out with its sentence, into a draft's ledger: the next pass writes
 /// the text, once. The claims it put back are the ones it returns.
 pub(super) async fn write_draft_in(
-    connection: &mut SqliteConnection,
+    connection: &mut WriteTx,
     lesson_id: &str,
     claim_id: &ClaimId,
     event: &ClaimEvent,

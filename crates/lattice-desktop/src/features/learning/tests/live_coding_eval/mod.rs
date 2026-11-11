@@ -330,6 +330,7 @@ pub(super) struct EvalLab {
     pub runner: Box<dyn CodeRunner>,
     pub harness: Box<dyn CaseHarness>,
     pub runs: EvalRuns,
+    pub kinds: lattice_learning::practice::session::kind::Kinds,
 }
 
 impl EvalLab {
@@ -344,6 +345,13 @@ impl EvalLab {
         })?;
         let harness = harness_for("python")
             .ok_or_else(|| AppError::InvalidInput("No case harness for python.".into()))?;
+        let kinds = lattice_learning::practice::session::kind::Kinds::new([
+            lattice_learning::practice::kinds::program::kind(std::sync::Arc::new(
+                lattice_learning::practice::kinds::program::toolchain::BuiltinToolchains::new(
+                    runtimes.clone(),
+                ),
+            )),
+        ])?;
         let runs = EvalRuns {
             repo: repo.clone(),
             registry: PracticalRunRegistry::new(),
@@ -359,6 +367,7 @@ impl EvalLab {
             runner,
             harness,
             runs,
+            kinds,
         })
     }
 
@@ -366,7 +375,7 @@ impl EvalLab {
     pub(super) async fn activity(&self, problem: &Problem) -> Result<String> {
         let job_id = uuid::Uuid::new_v4().to_string();
         save_problem(
-            &self.pool,
+            &lattice_core::shared::persistence::Database::from(self.pool.clone()),
             &ProblemSave {
                 job_id: &job_id,
                 program_id: &self.program_id,
@@ -387,16 +396,20 @@ impl EvalLab {
 macro_rules! lab_sessions {
     ($sessions:ident, $lab:expr) => {
         let lab = &$lab;
-        let aids = lattice_learning::practice::coding::session::LiveAids {
+        let aids = lattice_learning::practice::session::live::LiveAids {
             llm: &lab.llm,
+            cancel: tokio_util::sync::CancellationToken::new(),
+        };
+        let own = lattice_learning::practice::coding::session::LiveCodingAids {
             runner: lab.runner.as_ref(),
             cancel: tokio_util::sync::CancellationToken::new(),
         };
-        let debriefer =
-            lattice_learning::practice::coding::debrief::CodingDebriefer { llm: &lab.llm };
+        let debriefer = lattice_learning::practice::session::live::LiveDebriefer { llm: &lab.llm };
         let $sessions = lattice_learning::practice::coding::session::CodingSessions {
             repo: &lab.repo,
+            kinds: &lab.kinds,
             aids: &aids,
+            own: &own,
             runs: &lab.runs,
             debriefer: &debriefer,
             clock: &lattice_learning::practice::coding::session::SystemClock,

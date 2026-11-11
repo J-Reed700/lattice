@@ -1,9 +1,11 @@
 //! The course eval's quiz hooks (docs/design/2026-10-23-quizzes-and-tests.md
 //! §7; protocol in evals/courses/README.md):
 //!
-//! - the `quiz` stage: after a lesson is recorded Ready, write its bank with
-//!   the app's own authoring path and record it, keys included, as
-//!   `quiz-<sel>.json` (`course-eval-quiz-bank/1`) with the bank's numbers;
+//! - the `quiz` stage: after a lesson is recorded Ready, run the quiz job its
+//!   publication queued through the app's `QuizBankWorker` on the job runtime,
+//!   top up what that left missing with the app's authoring path, and record
+//!   the bank, keys included, as `quiz-<sel>.json` (`course-eval-quiz-bank/1`)
+//!   with the numbers of both steps;
 //! - the grading set: grade every answer of a committed set with the app's own
 //!   graders and write `quiz-grading-grades/1`, the model's raw output kept
 //!   beside the checked rationale, with three regrades of each contested
@@ -25,7 +27,9 @@ use crate::features::learning::assessment_repository::{
 };
 use crate::features::learning::grade_rationale::{self, Checked, Grader, GraderVerdict, Reference};
 use crate::features::learning::{quiz_bank_jobs, quiz_blueprints};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::persistence::Transactions;
+use lattice_core::shared::runtime::jobs::{JobRuntime, JobStore, RecoveryPolicy};
 
 const BANK_SCHEMA: &str = "course-eval-quiz-bank/1";
 const GRADES_SCHEMA: &str = "quiz-grading-grades/1";
@@ -58,10 +62,36 @@ pub(super) async fn quiz_stage(
     };
     let first_call = run.calls();
     let started = std::time::Instant::now();
-    let written =
-        quiz_bank_jobs::prepare_bank_now(pool, &*run.model, program_id, &scope, false).await;
-    let seconds = started.elapsed().as_secs_f64();
-    let report = match written {
+    let database = Database::from(pool.clone());
+    let job_id: Option<String> = sqlx::query_scalar(
+        "SELECT id FROM jobs WHERE kind=? AND subject_id=? AND json_extract(requested_json,'$.lessonStage')=1 AND json_extract(requested_json,'$.scope.id')=? ORDER BY created_at DESC, id DESC LIMIT 1",
+    )
+    .bind(quiz_bank_jobs::QUIZ_BANK)
+    .bind(program_id)
+    .bind(&lesson_id)
+    .fetch_optional(pool)
+    .await
+    .map_err(db)?;
+    let mut staged = None;
+    if let Some(job_id) = job_id {
+        let id = run_lesson_quiz_job(run, &database, &job_id).await?;
+        let Some(report) = quiz_bank_jobs::lesson_stage_report(&database, &id).await? else {
+            let job = JobStore::new(database.clone()).get(&id).await?;
+            let error = job
+                .error_message
+                .unwrap_or_else(|| job.status.as_str().to_owned());
+            run.metrics["lessons"][selector]["quiz_error"] = json!(error);
+            run.save()?;
+            return Ok(());
+        };
+        staged = Some((id, report, run.calls(), started.elapsed().as_secs_f64()));
+    }
+    let top_up_started = std::time::Instant::now();
+    let top_up_first = run.calls();
+    let topped =
+        quiz_bank_jobs::prepare_bank_now(&database, &*run.model, program_id, &scope, false).await;
+    let top_up_seconds = top_up_started.elapsed().as_secs_f64();
+    let top_up = match topped {
         Ok(report) => report,
         Err(error) => {
             run.metrics["lessons"][selector]["quiz_error"] = json!(error.to_string());
@@ -69,7 +99,28 @@ pub(super) async fn quiz_stage(
             return Ok(());
         }
     };
+    let seconds = started.elapsed().as_secs_f64();
     let cost = super::stages::stage_cost(&run.dir, first_call..run.calls(), seconds)?;
+    let top_up_calls = run.calls() - top_up_first;
+    let (lesson_stage, lesson_written, lesson_dropped) = match staged {
+        Some((id, report, calls_after, lesson_seconds)) => (
+            json!({
+                "job_id": id, "status": "completed", "written": report.written,
+                "dropped": report.dropped, "calls": calls_after - first_call,
+                "seconds": lesson_seconds,
+            }),
+            report.written,
+            report.dropped,
+        ),
+        None => (Value::Null, 0, Vec::new()),
+    };
+    let report = quiz_bank_jobs::BankReport {
+        written: lesson_written + top_up.written,
+        dropped: lesson_dropped
+            .into_iter()
+            .chain(top_up.dropped.clone())
+            .collect(),
+    };
     let lesson_text = recorded["lesson"]["blocks"]
         .as_array()
         .into_iter()
@@ -79,54 +130,22 @@ pub(super) async fn quiz_stage(
         .join("\n\n");
     let mut sources = BTreeMap::new();
     sources.insert(format!("lesson:{lesson_id}"), lesson_text);
-    for source in LearningRepository::new(pool.clone())
-        .verification_sources(program_id)
-        .await?
-    {
-        sources.insert(source.id.clone(), source.excerpt.clone());
-    }
-
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let rows: Vec<(String, String, String)> = sqlx::query_as(
-        "SELECT id,origin,review_status FROM learning_assessment_candidates WHERE program_id=? AND lesson_id=? ORDER BY id",
-    )
-    .bind(program_id)
-    .bind(&lesson_id)
-    .fetch_all(&mut *connection)
-    .await
-    .map_err(db)?;
-    let mut review = BTreeMap::<String, usize>::new();
-    let mut items = Vec::new();
-    for (id, origin, status) in &rows {
-        *review.entry(status.clone()).or_default() += 1;
-        if status == "agreed" {
-            let stored =
-                LearningAssessmentRepository::stored_candidate_in(&mut connection, program_id, id)
-                    .await?;
-            items.push(eval_item(&stored, origin, &lesson_id, &sources));
-        }
-    }
-    drop(connection);
-    let mut tx = pool.begin_write().await.map_err(db)?;
-    let requirements =
-        match quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, &scope).await? {
-            Some((blueprint, _)) => quiz_blueprints::requirements_in(&mut tx, &blueprint).await?,
-            None => vec![],
-        };
-    tx.commit().await.map_err(db)?;
-    let mut mix = BTreeMap::<String, usize>::new();
-    for requirement in &requirements {
-        *mix.entry(format_name(requirement.format)).or_default() += requirement.count;
-    }
+    sources.extend(lesson_sources(pool, program_id).await?);
+    let (review, items) = read_bank(pool, program_id, &lesson_id, &sources).await?;
+    let (target, mix) = blueprint_mix(pool, program_id, &scope).await?;
     let authored = report.written + report.dropped.len();
     let mut metrics = json!({
-        "target": requirements.iter().map(|r| 3 * r.count).sum::<usize>(),
+        "target": target,
         "bank_size": items.len(), "blueprint_mix": mix,
         "written": report.written, "dropped": report.dropped,
         "key_review": review, "calls": cost["calls"], "seconds": seconds, "cost": cost,
+        "lesson_stage": lesson_stage,
+        "top_up": {
+            "written": top_up.written, "dropped": top_up.dropped, "calls": top_up_calls,
+            "seconds": top_up_seconds,
+        },
     });
-    // Written here and dropped by the checks or the blinded key review; the
-    // lesson job's own bank stage reports its numbers in its job result.
+    // Written and dropped by the checks or the blinded key review, both steps.
     if authored > 0 {
         metrics["validated"] = json!({"passed": report.written, "total": authored});
     }
@@ -137,6 +156,117 @@ pub(super) async fn quiz_stage(
             "lesson_id": lesson_id, "sources": sources, "metrics": metrics, "items": items,
         }),
     )
+}
+
+/// Run a lesson's quiz job as the app wires it, on its own runtime, until it
+/// settles; returns the job that ran (a retry is a new job).
+async fn run_lesson_quiz_job(run: &Run, database: &Database, job_id: &str) -> Result<String> {
+    let store = JobStore::new(database.clone());
+    let mut id = job_id.to_owned();
+    match quiz_job_step(store.get(&id).await?.status) {
+        QuizJobStep::Record => return Ok(id),
+        QuizJobStep::Recover => {
+            store
+                .recover(quiz_bank_jobs::QUIZ_BANK, RecoveryPolicy::Requeue)
+                .await?;
+        }
+        QuizJobStep::Retry => {
+            id = store
+                .retry(
+                    &id,
+                    &uuid::Uuid::new_v4().to_string(),
+                    "Waiting to write quiz questions",
+                )
+                .await?
+                .id;
+        }
+        QuizJobStep::Run => {}
+    }
+    let model = run.model.clone();
+    let worker = quiz_bank_jobs::QuizBankWorker {
+        database: database.clone(),
+        load_llm: Arc::new(move || {
+            let llm: Arc<dyn LLMPort> = model.clone();
+            Box::pin(async move { Ok(pinned_for_test(llm)) })
+        }),
+    };
+    let runtime = JobRuntime::new(database.clone());
+    runtime
+        .register(
+            quiz_bank_jobs::QUIZ_BANK,
+            Arc::new(worker),
+            quiz_bank_jobs::quiz_job_config(),
+        )
+        .await?;
+    runtime.dispatch(&id);
+    while !store.get(&id).await?.status.is_finished() {
+        tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+    }
+    runtime.close();
+    runtime.drain().await;
+    Ok(id)
+}
+
+async fn lesson_sources(
+    pool: &sqlx::SqlitePool,
+    program_id: &str,
+) -> Result<BTreeMap<String, String>> {
+    let mut sources = BTreeMap::new();
+    for source in LearningRepository::new(pool.clone())
+        .verification_sources(program_id)
+        .await?
+    {
+        sources.insert(source.id.clone(), source.excerpt.clone());
+    }
+    Ok(sources)
+}
+
+async fn read_bank(
+    pool: &sqlx::SqlitePool,
+    program_id: &str,
+    lesson_id: &str,
+    sources: &BTreeMap<String, String>,
+) -> Result<(BTreeMap<String, usize>, Vec<Value>)> {
+    let mut tx = pool.begin_read().await.map_err(db)?;
+    let rows: Vec<(String, String, String)> = sqlx::query_as(
+        "SELECT id,origin,review_status FROM learning_assessment_candidates WHERE program_id=? AND lesson_id=? ORDER BY id",
+    )
+    .bind(program_id)
+    .bind(lesson_id)
+    .fetch_all(&mut *tx)
+    .await
+    .map_err(db)?;
+    let mut review = BTreeMap::<String, usize>::new();
+    let mut items = Vec::new();
+    for (id, origin, status) in &rows {
+        *review.entry(status.clone()).or_default() += 1;
+        if status == "agreed" {
+            let stored =
+                LearningAssessmentRepository::stored_candidate_in(&mut tx, program_id, id).await?;
+            items.push(eval_item(&stored, origin, lesson_id, sources));
+        }
+    }
+    tx.commit().await.map_err(db)?;
+    Ok((review, items))
+}
+
+async fn blueprint_mix(
+    pool: &sqlx::SqlitePool,
+    program_id: &str,
+    scope: &LearningQuizScopeDto,
+) -> Result<(usize, BTreeMap<String, usize>)> {
+    let mut tx = pool.begin_write().await.map_err(db)?;
+    let requirements =
+        match quiz_blueprints::ensure_blueprint_in(&mut tx, program_id, scope).await? {
+            Some((blueprint, _)) => quiz_blueprints::requirements_in(&mut tx, &blueprint).await?,
+            None => vec![],
+        };
+    tx.commit().await.map_err(db)?;
+    let mut mix = BTreeMap::<String, usize>::new();
+    for requirement in &requirements {
+        *mix.entry(format_name(requirement.format)).or_default() += requirement.count;
+    }
+    Ok((requirements.iter().map(|r| 3 * r.count).sum(), mix))
 }
 
 fn format_name(format: LearningItemFormat) -> String {

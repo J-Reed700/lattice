@@ -10,7 +10,7 @@ use std::future::Future;
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 
 use lattice_core::application::ports::llm_port::PinnedModel;
 use lattice_core::domain::models::model_ref::ModelRef;
@@ -89,10 +89,10 @@ pub enum LessonAudit {
 /// Storage failures, and the audit's own (see [`super::run`]).
 pub async fn audit_lesson(
     verifier: &dyn VerifierAccess,
-    pool: &SqlitePool,
+    database: &Database,
     request: &LessonAuditRequest<'_>,
 ) -> Result<LessonAudit> {
-    let programs = LearningCurriculumRepository::new(pool.clone());
+    let programs = LearningCurriculumRepository::new(database.clone());
     let setting = programs.verifier_audit(request.program_id).await?;
     if !setting.on {
         return Ok(LessonAudit::Off);
@@ -127,8 +127,8 @@ pub async fn audit_lesson(
             "The Verifier cannot call tools, so the audit used the cited passages only.".to_owned()
         }
     });
-    let store = ClaimReviewRepository::new(pool.clone());
-    let runs = SqliteAuditRuns::new(pool.clone());
+    let store = ClaimReviewRepository::new(database.clone());
+    let runs = SqliteAuditRuns::new(database.clone());
     let gate = ProgramGate {
         programs,
         program_id: request.program_id.to_owned(),
@@ -156,7 +156,7 @@ pub async fn audit_lesson(
     // The checks the audit appended stay on the ledger even when it stops
     // with an error, so their agreements are calibrated either way (§13).
     trust_changed::record_verifier_agreements(
-        pool,
+        database,
         VerdictScope {
             program_id: request.program_id,
             lesson_id: request.lesson_id,

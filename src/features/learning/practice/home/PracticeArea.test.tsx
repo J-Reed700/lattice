@@ -28,15 +28,16 @@ vi.mock('@/features/learning/practice/practical/PracticalWorkbenchPanel', () => 
 vi.mock('@/features/learning/drills/CourseDrillsPanel', () => ({
   CourseDrillsPanel: ({ attemptId }: { attemptId?: string | null }) => <p>{`Drills ${attemptId ?? 'new'}`}</p>,
 }));
-vi.mock('@/features/learning/practice/coding/CodingEntry', () => ({
+vi.mock('@/features/learning/practice/kinds', () => ({
+  kinds: {},
   CodingEntry: ({ choice }: { choice: { language: string } }) => <p>{`Coding build ${choice.language}`}</p>,
 }));
-vi.mock('@/features/learning/practice/coding/CodingSession', () => ({
-  CodingSession: ({ onTryInterview }: { onTryInterview: (setting: 'mock') => void }) => (
+vi.mock('@/features/learning/practice/session/PracticeSession', () => ({
+  PracticeSession: ({ onTryInterview }: { onTryInterview: (setting: 'mock') => void }) => (
     <button type="button" onClick={() => onTryInterview('mock')}>try interview</button>
   ),
 }));
-vi.mock('./practiceHomeApi', () => ({ practiceHomeApi: { startCodingSession: vi.fn() } }));
+vi.mock('./practiceHomeApi', () => ({ practiceHomeApi: { startPracticeSession: vi.fn() } }));
 
 const lesson = (id: string) => ({ id, title: id }) as Wire.LearningLessonDto;
 const program = {

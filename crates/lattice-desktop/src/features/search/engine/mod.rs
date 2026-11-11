@@ -74,8 +74,8 @@
 pub mod bm25;
 pub mod fts_query;
 pub mod profiler;
-pub mod qwen3_reranker;
 pub mod recency;
+mod repository;
 pub mod reranker;
 pub mod snippet;
 
@@ -86,9 +86,5 @@ pub mod vector_search;
 
 pub use bm25::BM25Search;
 pub use profiler::{PerformanceMetrics, Profiler};
-pub use qwen3_reranker::Qwen3RerankerService;
 pub use recency::{RecencyConfig, RecencyScorer};
-pub use reranker::{
-    fuse_rerank_order, load_reranker, FusedCandidate, LazyReranker, MiniLmRerankerService,
-    RerankResult, Reranker, RerankerService,
-};
+pub use reranker::{fuse_rerank_order, FusedCandidate, RerankResult, Reranker};

@@ -7,6 +7,7 @@ use crate::{
     practical_repository::{LearningPracticalRepository, SimulationTurnWrite},
     repository::LearningRepository,
 };
+use lattice_core::shared::persistence::Database;
 
 #[test]
 fn workspace_cleanup_requires_a_matching_invocation_marker() -> Result<()> {
@@ -852,7 +853,7 @@ async fn interview_activity_with_plan_roundtrips_and_hides_internal_plan_file() 
     let research_ids = crate::interview_research::research_interview_target(
         &TestResearchLLM(serde_json::json!({"needs":[]})),
         &lattice_core::application::ports::MockWebService::new(),
-        &crate::source_library::LearningSourceLibraryRepository::new(pool.clone()),
+        &crate::source_library::LearningSourceLibraryRepository::new(Database::from(pool.clone())),
         &program_id,
         &id(),
         "Streaming systems",
@@ -1082,7 +1083,7 @@ async fn interview_research_ingests_context_and_web_pages_idempotently() -> Resu
     use lattice_core::application::ports::MockWebService;
 
     let (pool, program_id, _lesson_id, _) = fixture().await?;
-    let library = LearningSourceLibraryRepository::new(pool.clone());
+    let library = LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let existing_count = library.workspace(&program_id).await?.sources.len();
     let llm = TestResearchLLM(
         serde_json::json!({"needs":[{"query":"Stripe distributed systems architecture","kind":"web"}]}),
@@ -1237,7 +1238,7 @@ async fn interview_research_rejects_redirects_outside_structured_site_scope() ->
     use lattice_core::application::contracts::web::{FetchUrlContentOutput, WebSearchResult};
     use lattice_core::application::ports::MockWebService;
     let (pool, program_id, _, _) = fixture().await?;
-    let library = LearningSourceLibraryRepository::new(pool);
+    let library = LearningSourceLibraryRepository::new(Database::from(pool));
     let existing_count = library.workspace(&program_id).await?.sources.len();
     let web = MockWebService::new();
     let address = "https://acme.example/engineering";
@@ -1751,7 +1752,7 @@ async fn a_learners_long_practical_request_is_held_to_the_chat_limit() -> Result
 #[test]
 fn the_boundary_and_the_checks_behind_it_share_one_limit() {
     use crate::practical_generation::validate_request;
-    use crate::practical_repository::validate_learner_turn;
+    use crate::practice::session::turn::validate_learner_turn;
     use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
     let at_the_limit = "x".repeat(MAX_CHAT_MESSAGE_CHARS);
     let over = "x".repeat(MAX_CHAT_MESSAGE_CHARS + 1);

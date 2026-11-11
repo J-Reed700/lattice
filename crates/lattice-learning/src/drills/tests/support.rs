@@ -29,6 +29,7 @@ use lattice_core::domain::learning::drills::{
     LessonBrief, LessonSentence, LineSpan, Material, PatternDue, Proof, Severity,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::{JobContext, JobStore};
 use serde_json::{json, Value};
 use sqlx::SqlitePool;
@@ -792,7 +793,7 @@ impl Harness {
 
     /// A harness over `pool`, with a build job queued for `spec` and claimed.
     pub(super) async fn on(pool: SqlitePool, spec: &DrillSpec) -> Result<Self> {
-        let job = bank::queue_build(&pool, spec, "test").await?;
+        let job = bank::queue_build(&Database::from(pool.clone()), spec, "test").await?;
         let store = JobStore::new(pool.clone());
         store
             .claim(&job)
@@ -818,7 +819,7 @@ impl Harness {
                 runner.map(|runner| runner as &dyn CodeRunner),
             )),
             grader,
-            &self.pool,
+            &Database::from(self.pool.clone()),
             CancellationToken::new(),
         )
     }
@@ -848,7 +849,7 @@ pub(super) fn build<'a>(
             runner.map(|runner| runner as &dyn CodeRunner),
         )),
         grader,
-        pool,
+        &Database::from(pool.clone()),
         CancellationToken::new(),
     )
 }
@@ -1002,7 +1003,7 @@ pub(super) async fn opened(
     let mut connection = pool.acquire().await.map_err(db)?;
     let taken = repository::mark_taken_in(&mut connection, drill_id, now()).await?;
     assert!(taken, "the drill {drill_id} was ready to be taken");
-    attempts::insert_in(&mut connection, drill_id, mode).await
+    attempts::repository::open_in(&mut connection, drill_id, mode).await
 }
 
 /// A pool with every migration, a drill stocked and an attempt opened on it and submitted, and its grading job
@@ -1034,7 +1035,7 @@ impl Waiting {
         stock(&pool, "drill").await?;
         let attempt = opened(&pool, "drill", AttemptMode::Practice).await?;
         let queued = attempts::submit(
-            &pool,
+            &Database::from(pool.clone()),
             &attempt.id,
             Submission {
                 findings,
@@ -1069,7 +1070,7 @@ impl Waiting {
     }
 
     pub(super) async fn attempt(&self) -> Result<Attempt> {
-        attempts::get(&self.pool, &self.attempt)
+        attempts::get(&Database::from(self.pool.clone()), &self.attempt)
             .await
             .map(|(attempt, _)| attempt)
     }
@@ -1087,7 +1088,7 @@ impl Waiting {
                 runner.map(|runner| runner as &dyn CodeRunner),
             )),
             grader,
-            &self.pool,
+            &Database::from(self.pool.clone()),
             CancellationToken::new(),
         )
     }
@@ -1099,9 +1100,10 @@ impl Waiting {
         runner: Option<&FakeRunner>,
         grader: &FakeGrader,
     ) -> Result<lattice_core::shared::runtime::jobs::JobOutcome> {
-        let (attempt, stored) = attempts::waiting(&self.pool, &self.attempt)
-            .await?
-            .ok_or_else(|| AppError::InternalError("The attempt is not waiting.".into()))?;
+        let (attempt, stored) =
+            attempts::waiting(&Database::from(self.pool.clone()), &self.attempt)
+                .await?
+                .ok_or_else(|| AppError::InternalError("The attempt is not waiting.".into()))?;
         let context = self.context().await?;
         let grading = self.grading(model, runner, grader);
         let outcome = grading.run(&context, &attempt, &stored).await;
@@ -1429,7 +1431,7 @@ pub(super) fn passage_build<'a>(
         model,
         Box::new(PassageMaterial::new(check)),
         grader,
-        pool,
+        &Database::from(pool.clone()),
         CancellationToken::new(),
     )
 }

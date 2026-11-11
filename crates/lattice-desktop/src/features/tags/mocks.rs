@@ -40,6 +40,48 @@ impl MockTagService {
             )),
         }
     }
+
+    pub async fn get_or_create(
+        &self,
+        name: &str,
+        color: &str,
+    ) -> Result<lattice_core::domain::entities::Tag> {
+        let normalized = name.to_lowercase();
+        let mut tags = self.tags.write();
+
+        if let Some(tag) = tags.get(&normalized) {
+            Ok(tag.clone())
+        } else {
+            // Use normalized (lowercase) name to ensure consistency
+            let tag_name = TagName::new(normalized.clone()).map_err(|e| {
+                lattice_core::shared::error::AppError::InvalidData(format!(
+                    "Invalid tag name: {}",
+                    e
+                ))
+            })?;
+            let tag = lattice_core::domain::entities::Tag::new(tag_name, color.to_string());
+            tags.insert(normalized, tag.clone());
+            Ok(tag)
+        }
+    }
+
+    pub async fn get_all_with_counts(
+        &self,
+    ) -> Result<Vec<lattice_core::application::contracts::tags::TagWithCountDto>> {
+        let tags = self.tags.read();
+        Ok(tags
+            .values()
+            .map(
+                |tag| lattice_core::application::contracts::tags::TagWithCountDto {
+                    id: tag.id().to_string(),
+                    name: tag.name().to_string(),
+                    color: Some(tag.color().to_string()),
+                    created_at: "2024-01-01T00:00:00Z".to_string(),
+                    document_count: 0,
+                },
+            )
+            .collect())
+    }
 }
 
 #[cfg(test)]
@@ -228,86 +270,8 @@ impl TagServiceTrait for MockTagService {
         Ok(document_ids)
     }
 
-    async fn generate_tags(&self, _document_id: &str, max_tags: usize) -> Result<Vec<String>> {
-        let sample_tags = vec![
-            "rust".to_string(),
-            "programming".to_string(),
-            "tutorial".to_string(),
-            "documentation".to_string(),
-            "guide".to_string(),
-        ];
-        Ok(sample_tags.into_iter().take(max_tags).collect())
-    }
-
-    async fn auto_tag_all_documents(&self, _max_documents: usize) -> Result<usize> {
-        Ok(0)
-    }
-
     async fn acquire_lock_with_timeout(&self, _document_id: &str) -> Result<DocumentLockGuard> {
         Ok(DocumentLockGuard::mock())
-    }
-
-    async fn acquire_lock(&self, _document_id: &str) -> Result<DocumentLockGuard> {
-        Ok(DocumentLockGuard::mock())
-    }
-
-    fn merge_tags(&self, mut existing: Vec<String>, generated: Vec<String>) -> Vec<String> {
-        use std::collections::HashSet;
-
-        let mut seen = HashSet::new();
-        for tag in &existing {
-            seen.insert(tag.to_lowercase());
-        }
-
-        for tag in generated {
-            if seen.insert(tag.to_lowercase()) {
-                existing.push(tag.to_lowercase());
-            }
-        }
-
-        existing
-    }
-
-    async fn get_or_create(
-        &self,
-        name: &str,
-        color: &str,
-    ) -> Result<lattice_core::domain::entities::Tag> {
-        let normalized = name.to_lowercase();
-        let mut tags = self.tags.write();
-
-        if let Some(tag) = tags.get(&normalized) {
-            Ok(tag.clone())
-        } else {
-            // Use normalized (lowercase) name to ensure consistency
-            let tag_name = TagName::new(normalized.clone()).map_err(|e| {
-                lattice_core::shared::error::AppError::InvalidData(format!(
-                    "Invalid tag name: {}",
-                    e
-                ))
-            })?;
-            let tag = lattice_core::domain::entities::Tag::new(tag_name, color.to_string());
-            tags.insert(normalized, tag.clone());
-            Ok(tag)
-        }
-    }
-
-    async fn get_all_with_counts(
-        &self,
-    ) -> Result<Vec<lattice_core::application::contracts::tags::TagWithCountDto>> {
-        let tags = self.tags.read();
-        Ok(tags
-            .values()
-            .map(
-                |tag| lattice_core::application::contracts::tags::TagWithCountDto {
-                    id: tag.id().to_string(),
-                    name: tag.name().to_string(),
-                    color: Some(tag.color().to_string()),
-                    created_at: "2024-01-01T00:00:00Z".to_string(),
-                    document_count: 0,
-                },
-            )
-            .collect())
     }
 }
 
@@ -424,14 +388,6 @@ impl TagRepositoryTrait for MockTagRepository {
 
     async fn find_by_id(&self, id: &str) -> Result<Option<lattice_core::domain::entities::Tag>> {
         Ok(self.tags.read().unwrap().get(id).cloned())
-    }
-
-    async fn find_by_filter(
-        &self,
-        _filter: &dyn lattice_core::application::ports::Filter,
-    ) -> Result<Vec<lattice_core::domain::entities::Tag>> {
-        // For mock, just return all tags
-        self.find_all().await
     }
 
     async fn find_all(&self) -> Result<Vec<lattice_core::domain::entities::Tag>> {

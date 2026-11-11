@@ -101,7 +101,7 @@ impl ChatImageGc {
         let removed_leases = if ids.is_empty() {
             0
         } else {
-            self.repository.delete_ids(&ids).await?
+            self.repository.delete_orphan_ids(&ids).await?
         };
         Ok(ImageSweepReport {
             removed_leases,

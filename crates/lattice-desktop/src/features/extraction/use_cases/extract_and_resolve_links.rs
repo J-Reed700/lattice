@@ -264,13 +264,6 @@ mod tests {
             unimplemented!()
         }
 
-        async fn find_by_filter(
-            &self,
-            _filter: &dyn lattice_core::application::ports::Filter,
-        ) -> Result<Vec<Document>, AppError> {
-            unimplemented!()
-        }
-
         async fn find_all(&self) -> Result<Vec<Document>, AppError> {
             panic!("Link resolution must not load document bodies")
         }

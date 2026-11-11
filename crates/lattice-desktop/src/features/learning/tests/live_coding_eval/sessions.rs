@@ -13,6 +13,8 @@
 //! Reads `LATTICE_CODING_EVAL_PROBLEMS` (the `builds` folder of a run of eval 1), `LATTICE_CODING_EVAL_OUT`, and
 //! `LATTICE_CODING_EVAL_SESSION_PROBLEMS` (the number of problems, 4 without it: 20 sessions per setting).
 
+use lattice_core::domain::learning::practice::work::{Rung, Setting, Stage};
+use lattice_learning::practice::session::policy::Cue;
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::time::Instant;
@@ -22,22 +24,26 @@ use lattice_core::domain::learning::practice::{
     problem_pattern, ScoreStatus, Scorecard, ScorecardEvidence,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_learning::coding::dto::{
-    AskCodingHintRequestDto, CheckCodingExampleRequestDto, CodeHintDto, CodeHintRung, CodingRunDto,
-    CodingRunScope, CodingSessionDto, CodingSessionRequestDto, CodingStage, DebriefFactsDto,
-    DraftObservation, FinishCodingSessionRequestDto, MoveCodingStageRequestDto,
-    ObserveCodingDraftRequestDto, RunCodingSessionRequestDto, SendCodingTurnRequestDto,
-    StartCodingSessionRequestDto,
-};
-use lattice_learning::coding::observation::observe;
-use lattice_learning::coding::policy::{policy_for, CodingCue};
-use lattice_learning::coding::problem::{CaseStatus, CodingSetting, Problem, SOLUTION_PATH};
+use lattice_learning::coding::problem::{CaseStatus, Problem, SOLUTION_PATH};
 use lattice_learning::coding::records::StoredRun;
-use lattice_learning::coding::session::last_draft_seen;
-use lattice_learning::coding::session::{session_view, CodingSessions};
+use lattice_learning::coding::session::CodingSessions;
 use lattice_learning::coding::solution_check::passes_every_case;
+use lattice_learning::coding::store::session_of;
 use lattice_learning::lab_runtime::LearningLabFile;
 use lattice_learning::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
+use lattice_learning::practice::kinds::program::dto::{
+    CheckCodingExampleRequestDto, CodingRunScope, ProgramDebriefWorkDto, ProgramHintMarkDto,
+    ProgramRunDto, ProgramWorkDto,
+};
+use lattice_learning::practice::kinds::program::shape::{piece_of, scope_of};
+use lattice_learning::practice::session::dto::{
+    AskPracticeHintRequestDto, CheckPracticePieceRequestDto, DebriefFactsDto, DraftObservation,
+    FinishPracticeSessionRequestDto, MovePracticeStageRequestDto, ObservePracticeDraftRequestDto,
+    PracticeHintDto, PracticeSessionDto, PracticeSessionRequestDto, SendPracticeTurnRequestDto,
+    StartPracticeSessionRequestDto,
+};
+use lattice_learning::practice::session::observe::observe;
+use lattice_learning::practice::session::policy::policy_for;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
@@ -56,21 +62,21 @@ const LEVELS: [&str; 5] = [
 ];
 
 /// The settings, in the order they are played.
-const SETTINGS: [CodingSetting; 3] = [
-    CodingSetting::Coached,
-    CodingSetting::Mock,
-    CodingSetting::Watched,
-];
+const SETTINGS: [Setting; 3] = [Setting::Coached, Setting::Mock, Setting::Watched];
 
 /// How many hints the ladder holds: Nudge, Idea, Plan and Line.
 const RUNGS: usize = 4;
 
-fn setting_name(setting: CodingSetting) -> &'static str {
+fn setting_name(setting: Setting) -> &'static str {
     match setting {
-        CodingSetting::Coached => "coached",
-        CodingSetting::Mock => "mock",
-        CodingSetting::Watched => "watched",
+        Setting::Coached => "coached",
+        Setting::Mock => "mock",
+        Setting::Watched => "watched",
     }
+}
+
+fn work_of(session: &PracticeSessionDto) -> ProgramWorkDto {
+    serde_json::from_value(session.work.clone()).expect("a program session's work is a program's")
 }
 
 fn id() -> String {
@@ -124,7 +130,7 @@ struct RunResult {
     stderr: String,
 }
 
-fn run_result(problem: &Problem, run: &CodingRunDto) -> RunResult {
+fn run_result(problem: &Problem, run: &ProgramRunDto) -> RunResult {
     let failing = run
         .cases
         .iter()
@@ -164,7 +170,7 @@ fn run_result(problem: &Problem, run: &CodingRunDto) -> RunResult {
 /// question rule held.
 #[derive(Debug, Clone, Serialize)]
 struct Reply {
-    cue: Option<CodingCue>,
+    cue: Option<Cue>,
     ms: u64,
     calls: Vec<ModelCall>,
     text: Option<String>,
@@ -192,8 +198,8 @@ struct Player<'a> {
     lab: &'a EvalLab,
     sessions: &'a CodingSessions<'a>,
     problem: &'a Problem,
-    setting: CodingSetting,
-    session: CodingSessionDto,
+    setting: Setting,
+    session: PracticeSessionDto,
     draft: Vec<LearningLabFile>,
     steps: Vec<Step>,
 }
@@ -204,9 +210,9 @@ impl<'a> Player<'a> {
         sessions: &'a CodingSessions<'a>,
         problem: &'a Problem,
         activity_id: &str,
-        setting: CodingSetting,
+        setting: Setting,
     ) -> Result<Self> {
-        let request = StartCodingSessionRequestDto {
+        let request = StartPracticeSessionRequestDto {
             operation_id: id(),
             program_id: lab.program_id.clone(),
             activity_id: activity_id.to_owned(),
@@ -220,7 +226,7 @@ impl<'a> Player<'a> {
             sessions,
             problem,
             setting,
-            draft: session.draft.clone(),
+            draft: work_of(&session).draft,
             session: session.clone(),
             steps: Vec::new(),
         };
@@ -242,7 +248,7 @@ impl<'a> Player<'a> {
         kind: &'static str,
         detail: Option<String>,
         started: Instant,
-        result: Result<CodingSessionDto>,
+        result: Result<PracticeSessionDto>,
     ) -> Result<()> {
         let ms = elapsed_ms(started);
         let calls = self.lab.llm.take();
@@ -270,15 +276,13 @@ impl<'a> Player<'a> {
         if ok {
             match kind {
                 "run" => {
-                    step.run = self
-                        .session
+                    step.run = work_of(&self.session)
                         .runs
                         .last()
                         .map(|run| run_result(self.problem, run));
                 }
                 "example" => {
-                    step.result = self
-                        .session
+                    step.result = work_of(&self.session)
                         .examples
                         .iter()
                         .max_by_key(|example| example.ordinal)
@@ -315,7 +319,7 @@ impl<'a> Player<'a> {
         if !self.session.cue_pending {
             return Ok(None);
         }
-        let request = CodingSessionRequestDto {
+        let request = PracticeSessionRequestDto {
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
         };
@@ -325,10 +329,10 @@ impl<'a> Player<'a> {
             .coding_session(&request.program_id, &request.session_id)
             .await?;
         let cue = bundle.row.pending_cue.clone();
-        let view = session_view(&bundle)?;
-        let seen = last_draft_seen(&bundle)?;
-        let observation = observe(&bundle.problem, &view, seen.as_deref());
-        let known = view.turns.len();
+        let engine = session_of(&bundle)?;
+        let kind = self.lab.kinds.get(&engine.exercise.kind)?;
+        let observation = observe(kind, &engine, &engine.row.draft, engine.draft_seen.as_ref())?;
+        let known = engine.turns.len();
         let started = Instant::now();
         let result = self.sessions.respond(&request).await;
         let ms = elapsed_ms(started);
@@ -340,7 +344,7 @@ impl<'a> Player<'a> {
             text: None,
             error: None,
             rule_failure: None,
-            observation: observation.render(),
+            observation: observation.render(kind)?,
         };
         match result {
             Ok(next) => {
@@ -352,7 +356,7 @@ impl<'a> Player<'a> {
                     .map(|turn| turn.content.clone());
                 self.session = next;
                 if let (Some(text), Some(cue)) = (&reply.text, &cue) {
-                    reply.rule_failure = policy_for(bundle.row.setting, bundle.row.task)
+                    reply.rule_failure = policy_for(engine.row.setting, kind, engine.row.form)
                         .check(text, cue, &observation)
                         .err()
                         .map(|error| error.to_string());
@@ -366,8 +370,8 @@ impl<'a> Player<'a> {
         Ok(Some(reply))
     }
 
-    async fn move_to(&mut self, stage: CodingStage) -> Result<()> {
-        let request = MoveCodingStageRequestDto {
+    async fn move_to(&mut self, stage: Stage) -> Result<()> {
+        let request = MovePracticeStageRequestDto {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
@@ -381,13 +385,13 @@ impl<'a> Player<'a> {
     }
 
     async fn say(&mut self, content: &str) -> Result<()> {
-        let request = SendCodingTurnRequestDto {
+        let request = SendPracticeTurnRequestDto {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
             content: content.to_owned(),
             spoken: false,
-            files: self.draft.clone(),
+            piece: piece_of(&self.draft)?,
             expected_revision: self.session.revision,
         };
         let started = Instant::now();
@@ -419,10 +423,10 @@ impl<'a> Player<'a> {
 
     async fn pause(&mut self, code: &str, which: &str) -> Result<()> {
         self.draft = files(code);
-        let request = ObserveCodingDraftRequestDto {
+        let request = ObservePracticeDraftRequestDto {
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
-            files: self.draft.clone(),
+            piece: piece_of(&self.draft)?,
             reason: DraftObservation::Pause,
         };
         let started = Instant::now();
@@ -439,7 +443,7 @@ impl<'a> Player<'a> {
 
     /// In Watched, two pauses with a changed draft: the first half of `code`, then all of it.
     async fn pauses(&mut self, code: &str) -> Result<()> {
-        if self.setting != CodingSetting::Watched {
+        if self.setting != Setting::Watched {
             return Ok(());
         }
         self.pause(&first_half(code), "part way").await?;
@@ -448,14 +452,13 @@ impl<'a> Player<'a> {
 
     async fn run(&mut self, scope: CodingRunScope, code: &str, label: &str) -> Result<()> {
         self.draft = files(code);
-        let request = RunCodingSessionRequestDto {
+        let request = CheckPracticePieceRequestDto {
             operation_id: id(),
-            run_id: id(),
+            check_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
-            scope,
-            files: self.draft.clone(),
-            input: None,
+            scope: scope_of(scope),
+            piece: piece_of(&self.draft)?,
         };
         let started = Instant::now();
         let result = self.sessions.run(&request).await;
@@ -471,11 +474,11 @@ impl<'a> Player<'a> {
 
     async fn hint(&mut self) -> Result<()> {
         let rung = self.session.next_rung;
-        let request = AskCodingHintRequestDto {
+        let request = AskPracticeHintRequestDto {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
-            files: self.draft.clone(),
+            piece: piece_of(&self.draft)?,
             expected_revision: self.session.revision,
         };
         let started = Instant::now();
@@ -491,11 +494,11 @@ impl<'a> Player<'a> {
     }
 
     async fn finish(&mut self) -> Result<()> {
-        let request = FinishCodingSessionRequestDto {
+        let request = FinishPracticeSessionRequestDto {
             operation_id: id(),
             program_id: self.lab.program_id.clone(),
             session_id: self.session.session_id.clone(),
-            files: self.draft.clone(),
+            piece: piece_of(&self.draft)?,
         };
         let started = Instant::now();
         let result = self.sessions.finish(&request).await;
@@ -532,7 +535,7 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
             for clarification in &problem.spec.clarifications {
                 player.say(&clarification.question).await?;
             }
-            player.move_to(CodingStage::Examples).await?;
+            player.move_to(Stage::Examples).await?;
             let examples: Vec<(Vec<String>, String)> = problem
                 .examples()
                 .filter_map(|case| case.expected.clone().map(|e| (case.args.clone(), e)))
@@ -541,18 +544,18 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
             for (args, expected) in examples {
                 player.example(args, expected).await?;
             }
-            player.move_to(CodingStage::Plan).await?;
+            player.move_to(Stage::Plan).await?;
             player.say(&plan_text(problem)).await?;
-            player.move_to(CodingStage::Code).await?;
+            player.move_to(Stage::Make).await?;
             player.pauses(&reference).await?;
-            player.move_to(CodingStage::Test).await?;
+            player.move_to(Stage::Check).await?;
             player
-                .run(CodingRunScope::Examples, &reference, "the reference")
+                .run(CodingRunScope::Shown, &reference, "the reference")
                 .await?;
             player
                 .run(CodingRunScope::All, &reference, "the reference")
                 .await?;
-            player.move_to(CodingStage::Review).await?;
+            player.move_to(Stage::Review).await?;
             player
                 .say(&format!(
                     "The complexity is {}.",
@@ -567,7 +570,7 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
             {
                 player.example(args, expected).await?;
             }
-            player.move_to(CodingStage::Code).await?;
+            player.move_to(Stage::Make).await?;
             player.pauses(&wrong).await?;
             player
                 .run(CodingRunScope::All, &wrong, "the first misreading")
@@ -586,7 +589,7 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
                 .await?;
         }
         3 => {
-            player.move_to(CodingStage::Code).await?;
+            player.move_to(Stage::Make).await?;
             player.pauses(&wrong).await?;
             player
                 .run(CodingRunScope::All, &wrong, "the first misreading")
@@ -599,7 +602,7 @@ async fn play(player: &mut Player<'_>, level: usize) -> Result<()> {
                 .await?;
         }
         4 => {
-            player.move_to(CodingStage::Code).await?;
+            player.move_to(Stage::Make).await?;
             player.pauses(&wrong).await?;
             player
                 .run(CodingRunScope::All, &wrong, "the first misreading")
@@ -693,7 +696,7 @@ struct DebriefItem {
 struct SessionItem {
     model: String,
     name: String,
-    setting: CodingSetting,
+    setting: Setting,
     level: usize,
     level_name: &'static str,
     problem: String,
@@ -701,18 +704,22 @@ struct SessionItem {
     finished: bool,
     final_draft: String,
     steps: Vec<Step>,
-    hints: Vec<CodeHintDto>,
+    hints: Vec<PracticeHintDto>,
+    hint_marks: Vec<ProgramHintMarkDto>,
     question_rule_failures: usize,
     debrief: Option<DebriefItem>,
 }
 
 fn debrief_item(
-    session: &CodingSessionDto,
+    session: &PracticeSessionDto,
     turns: &[LearningSimulationTurnDto],
     runs: &[StoredRun],
     examples: &[u32],
 ) -> Option<DebriefItem> {
     let debrief = session.debrief.as_ref()?;
+    let strong_answer = serde_json::from_value::<ProgramDebriefWorkDto>(debrief.work.clone())
+        .expect("a program debrief's work is a program's")
+        .strong_answer;
     let hints: Vec<u32> = session.hints.iter().map(|hint| hint.ordinal).collect();
     let mut evidence_checks = Vec::new();
     let mut row_issues = Vec::new();
@@ -740,8 +747,8 @@ fn debrief_item(
         scorecard: debrief.scorecard.clone(),
         evidence_checks,
         row_issues,
-        approach: debrief.strong_answer.approach.clone(),
-        complexity: debrief.strong_answer.complexity.clone(),
+        approach: strong_answer.approach,
+        complexity: strong_answer.complexity,
         facts: debrief.facts.clone(),
     })
 }
@@ -847,8 +854,16 @@ fn markdown(item: &SessionItem) -> String {
             hint.rung,
             hint.reason,
             hint.text,
-            if hint.rung == CodeHintRung::Line {
-                format!(" [path {:?}, lines {:?}]", hint.path, hint.lines)
+            if hint.rung == Rung::Point {
+                let mark = item
+                    .hint_marks
+                    .iter()
+                    .find(|mark| mark.ordinal == hint.ordinal);
+                format!(
+                    " [path {:?}, lines {:?}]",
+                    mark.and_then(|mark| mark.path.as_ref()),
+                    mark.map(|mark| &mark.lines)
+                )
             } else {
                 String::new()
             }
@@ -1007,7 +1022,7 @@ fn summarize(model: &str, problem_names: Vec<String>, items: &[SessionItem]) -> 
                 } else {
                     summary.silences += 1;
                 }
-                if reply.cue == Some(CodingCue::Checkpoint) {
+                if reply.cue == Some(Cue::Checkpoint) {
                     summary.checkpoint_cues += 1;
                     summary.checkpoint_spoken += usize::from(spoke);
                 }
@@ -1186,6 +1201,7 @@ async fn live_coding_session_eval() -> Result<()> {
                         .join("\n"),
                     steps: player.steps,
                     hints: player.session.hints.clone(),
+                    hint_marks: work_of(&player.session).hint_marks,
                     question_rule_failures,
                     debrief,
                 };

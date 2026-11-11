@@ -2,6 +2,7 @@ import { useCallback, useId, useMemo, useState } from 'react';
 
 import { ArrowRight, Bot, Code2, FileSearch, MessageSquare, Sparkles, Users, type LucideIcon } from 'lucide-react';
 
+import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
 import { StatusLine } from '@/features/learning/practice/shared/StatusLine';
 import type * as Wire from '@/lib/bindings';
 
@@ -79,7 +80,7 @@ function definitions(fit: ReturnType<typeof fitState>): Record<CardId, CardDefin
       slots: [
         { id: 'difficulty', label: 'Difficulty', options: DIFFICULTY_OPTIONS, defaultValue: 'easy' },
         { id: 'language', label: 'Language', options: LANGUAGE_OPTIONS, defaultValue: CODING_LANGUAGE },
-        { id: 'task', label: 'Task', options: TASK_OPTIONS, defaultValue: 'problem' },
+        { id: 'task', label: 'Task', options: TASK_OPTIONS, defaultValue: 'build' },
         { id: 'setting', label: 'Setting', options: [{ value: 'coached', label: 'coached' }], defaultValue: 'coached' },
       ],
       parts: (values) => [article(values.difficulty ?? 'easy'), { slot: 'difficulty' }, ' ', { slot: 'language' }, ' ', { slot: 'task' }, ', ', { slot: 'setting' }, '.'],
@@ -167,7 +168,7 @@ export function PracticeHome({ programId, goal, lessonId, onStart, onOpenTarget,
   const due = usePracticeDue(programId);
   const history = usePracticeHistory(programId);
 
-  const fit = fitState(fitStatus.fit);
+  const fit = fitState(fitStatus.fit, PROGRAM_KIND_ID);
   const profile = profileState.profile ?? null;
   const promiseOf = useMemo(() => promises(fit), [fit]);
   const defs = useMemo(() => definitions(fit), [fit]);

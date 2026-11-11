@@ -61,57 +61,20 @@ pub async fn prove(
     cases: &[ProblemCase],
     cancel: CancellationToken,
 ) -> Result<Proof> {
+    let (cases, reference_ms) =
+        match establish_reference(runner, harness, spec, reference, cases, cancel.clone()).await? {
+            Referenced::Right {
+                cases,
+                reference_ms,
+            } => (cases, reference_ms),
+            Referenced::Wrong(reason) => return Ok(Proof::Unproven(reason)),
+        };
     let proving = Proving {
         runner,
         harness,
         spec,
         cancel,
     };
-
-    let first = proving.run(reference, cases).await?;
-    if let Some(reason) = reference_fault(cases, &first) {
-        return Ok(Proof::Unproven(reason));
-    }
-    let mut cases = cases.to_vec();
-    for case in cases.iter_mut().filter(|case| case.scale) {
-        let actual = first
-            .iter()
-            .find(|result| result.case_id == case.id)
-            .and_then(|result| result.actual.as_deref());
-        let Some(actual) = actual else {
-            return Ok(Proof::Unproven(format!(
-                "The reference returned nothing on the scale case {}.",
-                case.id
-            )));
-        };
-        case.digest = Some(hash_text(actual));
-    }
-
-    let second = proving.run(reference, &cases).await?;
-    if let Some(reason) = reference_fault(&cases, &second) {
-        return Ok(Proof::Unproven(reason));
-    }
-    let mut reference_ms = BTreeMap::new();
-    for case in cases.iter().filter(|case| case.scale) {
-        let elapsed = second
-            .iter()
-            .find(|result| result.case_id == case.id)
-            .and_then(|result| result.elapsed_ms);
-        let Some(elapsed) = elapsed else {
-            return Ok(Proof::Unproven(format!(
-                "The run reported no time for the scale case {}.",
-                case.id
-            )));
-        };
-        reference_ms.insert(case.id.clone(), elapsed);
-    }
-    let total: u64 = reference_ms.values().sum();
-    if total > scale_budget_ms() {
-        return Ok(Proof::Unproven(format!(
-            "The reference took {total} ms on the scale cases together, more than the {} ms they may take. Use smaller scale inputs, or a reference that does less work.",
-            scale_budget_ms()
-        )));
-    }
 
     let mut kept = Vec::new();
     let mut notes = Vec::new();
@@ -163,6 +126,82 @@ pub async fn prove(
     }))
 }
 
+/// What the reference phase of a proof found.
+pub(crate) enum Referenced {
+    /// The cases with the scale cases' digests, and the time the reference took on each scale case.
+    Right {
+        cases: Vec<ProblemCase>,
+        reference_ms: BTreeMap<String, u64>,
+    },
+    Wrong(String),
+}
+
+/// Runs the reference on every case twice, so that the scale cases take their digest from the first run and
+/// their time from the second, and checks the scale budget.
+pub(crate) async fn establish_reference(
+    runner: &dyn CodeRunner,
+    harness: &dyn CaseHarness,
+    spec: &ProblemSpec,
+    reference: &str,
+    cases: &[ProblemCase],
+    cancel: CancellationToken,
+) -> Result<Referenced> {
+    let proving = Proving {
+        runner,
+        harness,
+        spec,
+        cancel,
+    };
+    let first = proving.run(reference, cases).await?;
+    if let Some(reason) = reference_fault(cases, &first) {
+        return Ok(Referenced::Wrong(reason));
+    }
+    let mut cases = cases.to_vec();
+    for case in cases.iter_mut().filter(|case| case.scale) {
+        let actual = first
+            .iter()
+            .find(|result| result.case_id == case.id)
+            .and_then(|result| result.actual.as_deref());
+        let Some(actual) = actual else {
+            return Ok(Referenced::Wrong(format!(
+                "The reference returned nothing on the scale case {}.",
+                case.id
+            )));
+        };
+        case.digest = Some(hash_text(actual));
+    }
+
+    let second = proving.run(reference, &cases).await?;
+    if let Some(reason) = reference_fault(&cases, &second) {
+        return Ok(Referenced::Wrong(reason));
+    }
+    let mut reference_ms = BTreeMap::new();
+    for case in cases.iter().filter(|case| case.scale) {
+        let elapsed = second
+            .iter()
+            .find(|result| result.case_id == case.id)
+            .and_then(|result| result.elapsed_ms);
+        let Some(elapsed) = elapsed else {
+            return Ok(Referenced::Wrong(format!(
+                "The run reported no time for the scale case {}.",
+                case.id
+            )));
+        };
+        reference_ms.insert(case.id.clone(), elapsed);
+    }
+    let total: u64 = reference_ms.values().sum();
+    if total > scale_budget_ms() {
+        return Ok(Referenced::Wrong(format!(
+            "The reference took {total} ms on the scale cases together, more than the {} ms they may take. Use smaller scale inputs, or a reference that does less work.",
+            scale_budget_ms()
+        )));
+    }
+    Ok(Referenced::Right {
+        cases,
+        reference_ms,
+    })
+}
+
 /// What a proof runs code with.
 struct Proving<'a> {
     runner: &'a dyn CodeRunner,
@@ -188,22 +227,25 @@ impl Proving<'_> {
             .runner
             .run_capturing(&files, &read_only, self.cancel.clone())
             .await?;
-        let end = match outcome {
-            RunOutcome::Passed | RunOutcome::Failed { .. } => RunEnd::Finished,
-            RunOutcome::TimedOut { .. } => RunEnd::TimedOut,
-            RunOutcome::Cancelled => return Err(cancelled()),
-            RunOutcome::Unavailable { why } => {
-                return Err(AppError::ServiceNotAvailable(format!(
-                    "The problem could not be proven: {why}"
-                )))
-            }
-        };
+        let end = run_end(&outcome)?;
         Ok(self.harness.results(cases, &stdout, &nonce, end))
     }
 }
 
-fn cancelled() -> AppError {
+pub(crate) fn cancelled() -> AppError {
     AppError::InvalidState("The coding build was cancelled.".into())
+}
+
+/// How a run that happened ended; a run that could not happen is an error.
+pub(crate) fn run_end(outcome: &RunOutcome) -> Result<RunEnd> {
+    match outcome {
+        RunOutcome::Passed | RunOutcome::Failed { .. } => Ok(RunEnd::Finished),
+        RunOutcome::TimedOut { .. } => Ok(RunEnd::TimedOut),
+        RunOutcome::Cancelled => Err(cancelled()),
+        RunOutcome::Unavailable { why } => Err(AppError::ServiceNotAvailable(format!(
+            "The problem could not be proven: {why}"
+        ))),
+    }
 }
 
 /// What is wrong with the reference's results, if anything: every case must have passed, and a scale case without

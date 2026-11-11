@@ -1,8 +1,7 @@
-import type { CodingBuildChoice } from '@/features/learning/practice/coding/CodingEntry';
+import type { CodingBuildChoice } from '@/features/learning/practice/kinds';
 import type { ComposerRequest } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
 import { newId } from '@/lib/api';
 import type * as Wire from '@/lib/bindings';
-
 
 import type { AttemptMode } from './usePracticeView';
 
@@ -20,9 +19,11 @@ export const CARD_ORDER: CardId[] = ['explain', 'spot', 'code', 'mock', 'role'];
 
 export const CODING_ROUNDS = ['live_coding', 'debugging'] as const;
 
-export function fitState(fit: Wire.PracticeFitDto | undefined | null): FitState {
-  if (fit?.code === 'fits') return 'fits';
-  if (fit?.code === 'does_not_fit') return 'does_not_fit';
+/** The course's fit for one kind of work; a kind with no entry is still being checked. */
+export function fitState(fit: Wire.PracticeFitDto | undefined | null, kind: string): FitState {
+  const state = fit?.kinds.find((entry) => entry.kind === kind)?.fit;
+  if (state === 'fits') return 'fits';
+  if (state === 'does_not_fit') return 'does_not_fit';
   return 'unknown';
 }
 
@@ -54,8 +55,8 @@ export const DIFFICULTY_OPTIONS: ChoiceOption[] = [
 ];
 
 export const TASK_OPTIONS: ChoiceOption[] = [
-  { value: 'problem', label: 'problem' },
-  { value: 'bug_fix', label: 'bug to fix' },
+  { value: 'build', label: 'problem' },
+  { value: 'repair', label: 'bug to fix' },
   { value: 'project', label: 'project' },
 ];
 
@@ -116,10 +117,10 @@ const SCENARIO_KINDS: Record<string, Wire.LearningPracticalActivityKind> = {
 };
 
 /** What the Code card's task slot offers: the project opens a code lab, the rest are coding builds. */
-export type CodeCardTask = Wire.CodingTask | 'project';
+export type CodeCardTask = Wire.Form | 'project';
 
 function asTask(value: string | undefined): CodeCardTask {
-  return value === 'bug_fix' || value === 'project' ? value : 'problem';
+  return value === 'repair' || value === 'project' ? value : 'build';
 }
 
 function asDifficulty(value: string | undefined): Wire.ProblemDifficulty {
@@ -140,7 +141,7 @@ export function startAction(card: CardId, values: Record<string, string>, contex
         kind: 'coding-build',
         choice: {
           lessonId: context.lessonId,
-          task,
+          form: task,
           setting: 'coached',
           language: CODING_LANGUAGE,
           difficulty: asDifficulty(values.difficulty),
@@ -157,7 +158,7 @@ export function startAction(card: CardId, values: Record<string, string>, contex
           kind: 'coding-build',
           choice: {
             lessonId: context.lessonId,
-            task: round === 'debugging' ? 'bug_fix' : 'problem',
+            form: round === 'debugging' ? 'repair' : 'build',
             setting: values.setting === 'watched' ? 'watched' : 'mock',
             language: CODING_LANGUAGE,
             difficulty: MOCK_DIFFICULTY,

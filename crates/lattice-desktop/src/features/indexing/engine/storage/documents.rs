@@ -6,8 +6,9 @@ use crate::features::indexing::engine::error::{IndexingError, Result};
 use chrono::Utc;
 use lattice_core::shared::error::ResultExt;
 use lattice_core::shared::fs::path::path_to_string;
+use lattice_core::shared::persistence::driver::DriverPool;
 use serde::Deserialize;
-use sqlx::{Row, SqlitePool};
+use sqlx::Row;
 use std::path::Path;
 use uuid::Uuid;
 
@@ -51,7 +52,8 @@ async fn get_web_article_title(path: &Path) -> Result<String> {
 }
 
 /// Check if a document exists in the database by path.
-pub async fn document_exists(pool: &SqlitePool, path: &Path) -> Result<bool> {
+pub async fn document_exists(pool: &impl DriverPool, path: &Path) -> Result<bool> {
+    let pool = pool.sqlx_pool();
     let file_path = path
         .to_str()
         .with_context(|| format!("Invalid UTF-8 in path: {}", path.display()))?;
@@ -70,9 +72,10 @@ pub async fn document_exists(pool: &SqlitePool, path: &Path) -> Result<bool> {
 
 /// Get document record by file path.
 pub async fn get_document_by_path(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     path: &Path,
 ) -> Result<Option<DocumentRecord>> {
+    let pool = pool.sqlx_pool();
     let file_path = path
         .to_str()
         .with_context(|| format!("Invalid UTF-8 in path: {}", path.display()))?;
@@ -116,7 +119,8 @@ pub async fn get_document_by_path(
 }
 
 /// Check if a document needs reindexing (checksum changed).
-pub async fn needs_reindex(pool: &SqlitePool, path: &Path) -> Result<bool> {
+pub async fn needs_reindex(pool: &impl DriverPool, path: &Path) -> Result<bool> {
+    let pool = pool.sqlx_pool();
     let current_checksum = calculate_checksum(path).await?;
 
     if let Some(doc) = get_document_by_path(pool, path).await? {
@@ -127,7 +131,8 @@ pub async fn needs_reindex(pool: &SqlitePool, path: &Path) -> Result<bool> {
 }
 
 /// Update document status.
-pub async fn mark_document_status(pool: &SqlitePool, path: &Path, status: &str) -> Result<()> {
+pub async fn mark_document_status(pool: &impl DriverPool, path: &Path, status: &str) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let file_path = path
         .to_str()
         .with_context(|| format!("Invalid UTF-8 in path: {}", path.display()))?;
@@ -147,7 +152,8 @@ pub async fn mark_document_status(pool: &SqlitePool, path: &Path, status: &str) 
 }
 
 /// Remove a document from the database.
-pub async fn remove_document(pool: &SqlitePool, path: &Path) -> Result<()> {
+pub async fn remove_document(pool: &impl DriverPool, path: &Path) -> Result<()> {
+    let pool = pool.sqlx_pool();
     let file_path = path
         .to_str()
         .with_context(|| format!("Invalid UTF-8 in path: {}", path.display()))?;
@@ -166,11 +172,12 @@ pub async fn remove_document(pool: &SqlitePool, path: &Path) -> Result<()> {
 
 /// Store only file metadata without indexing content.
 pub async fn store_file_metadata_only(
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     path: &Path,
     _file_id: &str,
     mime_type: &str,
 ) -> Result<String> {
+    let pool = pool.sqlx_pool();
     let path_str = path_to_string(path).map_err(|e| IndexingError::FileRead {
         path: path.display().to_string(),
         reason: format!("Invalid path encoding: {}", e),

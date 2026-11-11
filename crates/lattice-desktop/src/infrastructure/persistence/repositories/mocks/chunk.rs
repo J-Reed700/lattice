@@ -102,10 +102,6 @@ impl ChunkRepositoryPort for MockChunkRepository {
         Ok(self.chunks.read().len() as i64)
     }
 
-    async fn count_indexed_documents(&self) -> Result<i64> {
-        Ok(self.document_index.read().len() as i64)
-    }
-
     async fn count_by_document(&self, document_id: &str) -> Result<i64> {
         let document_index = self.document_index.read();
         Ok(document_index
@@ -175,14 +171,6 @@ impl RepositoryPort<ChunkEntity> for MockChunkRepository {
 
     async fn exists(&self, id: &str) -> Result<bool> {
         Ok(self.chunks.read().contains_key(id))
-    }
-
-    async fn find_by_filter(
-        &self,
-        _filter: &dyn lattice_core::application::ports::Filter,
-    ) -> Result<Vec<ChunkEntity>> {
-        // For mock, just return all chunks
-        self.find_all().await
     }
 }
 // END REMOVED MockChunkRepository

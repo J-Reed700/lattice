@@ -4,6 +4,7 @@
 
 pub mod artifact_identity;
 pub mod compute_device;
+pub mod embedding_generation;
 pub(crate) mod instance_pool;
 pub(crate) mod model_cache;
 pub mod tokenizer;

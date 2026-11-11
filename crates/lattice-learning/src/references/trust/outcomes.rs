@@ -6,18 +6,18 @@
 //! forgetting outcomes may move a bar; both say which kinds' bars moved, so
 //! the caller can re-decide those claims.
 
-use lattice_core::application::ports::SourceTrustStore;
 use lattice_core::domain::learning::claim_review::{
-    trust_outcomes, ClaimLedgerEntry, TrustVerdict,
+    trust_outcomes, CalibrationOutcome, ClaimLedgerEntry, TrustVerdict,
 };
 use lattice_core::domain::provenance::{
     ClaimKind, LabelSource, OriginKey, OutcomeRecord, TRUST_POLICY_VERSION,
 };
-use lattice_core::shared::error::{AppError, Result};
-use sqlx::SqlitePool;
+use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 
 use super::calibration::{bars_of, moved_kinds};
-use super::SqliteSourceTrustStore;
+use super::repository::outcomes as stored;
+use crate::persistence::db;
 
 /// Where a claim's verdict is recorded.
 #[derive(Debug, Clone, Copy)]
@@ -26,11 +26,11 @@ pub struct VerdictScope<'a> {
     pub lesson_id: &'a str,
 }
 
-/// Records the outcomes `verdict` on `entry` gives (`entry` as the claim
-/// stood before the verdict) and returns the kinds whose bar the new
-/// outcomes moved. A claim the gate did not decide gives none.
+/// Records the outcomes `verdict` on `entry` (`entry` as the claim stood
+/// before the verdict) and returns the kinds whose bar the new outcomes
+/// moved. A claim the gate did not decide gives none.
 pub async fn record(
-    pool: &SqlitePool,
+    database: &Database,
     scope: VerdictScope<'_>,
     entry: &ClaimLedgerEntry,
     verdict: TrustVerdict,
@@ -39,12 +39,36 @@ pub async fn record(
     if outcomes.is_empty() {
         return Ok(Vec::new());
     }
-    let store = SqliteSourceTrustStore::new(pool.clone());
-    let before = store.outcomes().await?;
+    let mut tx = database.begin_write().await.map_err(db)?;
+    let moved = write_in(&mut tx, scope, entry, outcomes).await?;
+    tx.commit().await.map_err(db)?;
+    Ok(moved)
+}
+
+/// [`record`] inside the caller's unit of work.
+pub async fn record_in(
+    tx: &mut WriteTx,
+    scope: VerdictScope<'_>,
+    entry: &ClaimLedgerEntry,
+    verdict: TrustVerdict,
+) -> Result<Vec<ClaimKind>> {
+    let outcomes = trust_outcomes(entry, verdict, chrono::Utc::now().timestamp());
+    if outcomes.is_empty() {
+        return Ok(Vec::new());
+    }
+    write_in(tx, scope, entry, outcomes).await
+}
+
+async fn write_in(
+    tx: &mut WriteTx,
+    scope: VerdictScope<'_>,
+    entry: &ClaimLedgerEntry,
+    outcomes: Vec<CalibrationOutcome>,
+) -> Result<Vec<ClaimKind>> {
+    let before = stored::list_in(tx).await?;
     let mut records = Vec::with_capacity(outcomes.len());
     for outcome in outcomes {
-        let origin_key = store
-            .provenance(&outcome.source_version_id)
+        let origin_key = stored::provenance_in(tx, &outcome.source_version_id)
             .await?
             .map(|record| record.origin.key)
             .unwrap_or_else(|| OriginKey(format!("version:{}", outcome.source_version_id)));
@@ -60,9 +84,7 @@ pub async fn record(
             policy: TRUST_POLICY_VERSION.to_owned(),
         });
     }
-    for record in &records {
-        store.record_outcome(record).await?;
-    }
+    stored::insert_all_in(tx, &records).await?;
     let after: Vec<OutcomeRecord> = before.iter().cloned().chain(records).collect();
     Ok(moved_kinds(&bars_of(&before), &bars_of(&after)))
 }
@@ -71,12 +93,23 @@ pub async fn record(
 /// §5.1 Undo, as `CheckerExamples::forget` does) and returns the kinds whose
 /// bar that moved.
 pub async fn forget(
-    pool: &SqlitePool,
+    database: &Database,
     claim_id: &str,
     verdict: TrustVerdict,
 ) -> Result<Vec<ClaimKind>> {
-    let store = SqliteSourceTrustStore::new(pool.clone());
-    let before = store.outcomes().await?;
+    let mut tx = database.begin_write().await.map_err(db)?;
+    let moved = forget_in(&mut tx, claim_id, verdict).await?;
+    tx.commit().await.map_err(db)?;
+    Ok(moved)
+}
+
+/// [`forget`] inside the caller's unit of work.
+pub async fn forget_in(
+    tx: &mut WriteTx,
+    claim_id: &str,
+    verdict: TrustVerdict,
+) -> Result<Vec<ClaimKind>> {
+    let before = stored::list_in(tx).await?;
     let labels = labels_of(verdict);
     let forgotten = |record: &OutcomeRecord| {
         record.claim_id == claim_id && labels.contains(&record.label_source)
@@ -84,14 +117,7 @@ pub async fn forget(
     if !before.iter().any(forgotten) {
         return Ok(Vec::new());
     }
-    for label in labels {
-        sqlx::query("DELETE FROM source_trust_outcomes WHERE claim_id=? AND label_source=?")
-            .bind(claim_id)
-            .bind(label.as_str())
-            .execute(pool)
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-    }
+    stored::delete_for_labels_in(tx, claim_id, labels).await?;
     let after: Vec<OutcomeRecord> = before
         .iter()
         .filter(|record| !forgotten(record))

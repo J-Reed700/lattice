@@ -47,6 +47,7 @@ use lattice::features::learning::tutor::{bind_conversation, SetConversationCours
 use lattice::infrastructure::passage_index::EmbedderSource;
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::driver::DriverPool;
 use learner::Turn;
 use parking_lot::Mutex;
 use serde::Deserialize;
@@ -180,7 +181,9 @@ fn git(args: &[&str]) -> Option<String> {
 /// asked of the server, as `scripts/replay_model.py` asks it.
 async fn served_model(upstream: &str, auth: Option<&(String, String)>) -> Res<String> {
     let url = format!("{}/v1/models", upstream.trim_end_matches('/'));
-    let mut request = reqwest::Client::new().get(url);
+    let mut request = lattice_core::shared::http::reqwest_client_builder()
+        .build()?
+        .get(url);
     if let Some((name, value)) = auth {
         request = request.header(name.as_str(), value.as_str());
     }
@@ -201,7 +204,9 @@ async fn served_model(upstream: &str, auth: Option<&(String, String)>) -> Res<St
 /// The window and slots the recipe expects, as the server reports them.
 async fn probe_server(server: &recipe::Server, auth: Option<&(String, String)>) -> Res<Value> {
     let url = format!("{}/props", server.url.trim_end_matches('/'));
-    let mut probe = reqwest::Client::new().get(url);
+    let mut probe = lattice_core::shared::http::reqwest_client_builder()
+        .build()?
+        .get(url);
     if let Some((name, value)) = auth {
         probe = probe.header(name.as_str(), value.as_str());
     }
@@ -399,7 +404,7 @@ fn with_suffix(path: &Path, suffix: &str) -> PathBuf {
 }
 
 async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option<String>)> {
-    let pool = bench.container.db_pool();
+    let pool = bench.container.database().sqlx_pool();
     let seeded = course::seed(pool, bench.course).await?;
     let mode = bench
         .courses
@@ -418,7 +423,7 @@ async fn run_session(bench: &Bench<'_>, session: &Session) -> Res<(Value, Option
         None => None,
     };
     bind_conversation(
-        pool,
+        bench.container.database(),
         &SetConversationCourseRequestDto {
             conversation_id: conversation.clone(),
             program_id: seeded.program_id.clone(),

@@ -7,14 +7,14 @@ use lattice_core::application::{
     ports::llm_port::{Pace, RequestLoad},
 };
 use lattice_core::domain::models::vision::VisionGeometry;
-use std::{fs::OpenOptions, io::Write, path::PathBuf};
+use std::{fs::OpenOptions, io::Write, path::PathBuf, sync::Arc};
 
 struct RecordingClient {
-    inner: LlamaCppLlm,
+    inner: Arc<dyn LLMPort>,
     log: PathBuf,
 }
 
-fn client() -> Result<RecordingClient> {
+async fn client() -> Result<RecordingClient> {
     let model = std::env::var("LATTICE_LEARNING_EVAL_MODEL")
         .map_err(|_| invalid("Set LATTICE_LEARNING_EVAL_MODEL for live review controls."))?;
     if std::env::var("LATTICE_LEARNING_EVAL_PROVIDER").as_deref() != Ok("llama_cpp") {
@@ -39,7 +39,9 @@ fn client() -> Result<RecordingClient> {
                 ..Default::default()
             },
             ..Default::default()
-        })?,
+        })?
+        .into_port()
+        .await,
         log: directory.join(format!(
             "interview-review-calls-{}.jsonl",
             std::process::id()
@@ -155,7 +157,7 @@ fn python_standard() -> (Value, AnswerStandard, Vec<LearningSourceVersionDto>) {
 #[tokio::test]
 #[ignore = "Requires an explicitly configured local model; records synthetic prompts and answers"]
 async fn live_review_accepts_correct_claims_and_rejects_unfair_scoring() -> Result<()> {
-    let llm = client()?;
+    let llm = client().await?;
     let (audio_question, audio, audio_sources) = audio_standard();
     let (python_question, python, python_sources) = python_standard();
     let mut unfair = standard();

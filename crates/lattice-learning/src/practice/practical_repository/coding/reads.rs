@@ -6,11 +6,11 @@ use super::super::{
 use super::{from_name, parse_row, problem_of, row_on, scope_of, to_u32, verdict_of};
 use crate::persistence::db;
 use crate::practical_dto::{CaseCheckDetailDto, LearningSimulationTurnDto};
-use crate::practice::coding::dto::{CodingSessionSummaryDto, PatternRatingDto, PracticeDueDto};
 use crate::practice::coding::patterns;
 use crate::practice::coding::records::{
-    SessionBundle, StoredDebrief, StoredEvent, StoredExample, StoredRun,
+    SessionBundle, StoredDebrief, StoredEvent, StoredExample, StoredRating, StoredRun,
 };
+use crate::practice::session::dto::{PracticeDueDto, PracticeSessionSummaryDto};
 use lattice_core::domain::learning::practice::{Scorecard, ScorecardRow};
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
@@ -20,7 +20,7 @@ async fn events_on(
     connection: &mut SqliteConnection,
     session_id: &str,
 ) -> Result<Vec<StoredEvent>> {
-    sqlx::query("SELECT ordinal,kind,payload_json,at FROM learning_coding_events WHERE session_id=? ORDER BY ordinal")
+    sqlx::query("SELECT ordinal,kind,payload_json,at FROM learning_exercise_session_events WHERE session_id=? ORDER BY ordinal")
         .bind(session_id)
         .fetch_all(&mut *connection)
         .await
@@ -66,7 +66,7 @@ async fn runs_on(
     session_id: &str,
     only: Option<&str>,
 ) -> Result<Vec<StoredRun>> {
-    let rows = sqlx::query("SELECT * FROM learning_practical_runs WHERE coding_session_id=?1 AND (?2 IS NULL OR id=?2) ORDER BY created_at,id")
+    let rows = sqlx::query("SELECT * FROM learning_practical_runs WHERE exercise_session_id=?1 AND (?2 IS NULL OR id=?2) ORDER BY created_at,rowid")
         .bind(session_id)
         .bind(only)
         .fetch_all(&mut *connection)
@@ -172,7 +172,7 @@ async fn debrief_on(
     connection: &mut SqliteConnection,
     session_id: &str,
 ) -> Result<Option<StoredDebrief>> {
-    sqlx::query("SELECT approach,complexity,ratings_json,model FROM learning_coding_debriefs WHERE session_id=?")
+    sqlx::query("SELECT approach,complexity,ratings_json,model FROM learning_exercise_debriefs WHERE session_id=?")
         .bind(session_id)
         .fetch_optional(&mut *connection)
         .await
@@ -181,7 +181,7 @@ async fn debrief_on(
             Ok(StoredDebrief {
                 approach: row.get("approach"),
                 complexity: row.get("complexity"),
-                ratings: decode::<Vec<PatternRatingDto>>(row.get("ratings_json"))?,
+                ratings: decode::<Vec<StoredRating>>(row.get("ratings_json"))?,
                 model: row.get("model"),
             })
         })
@@ -246,10 +246,10 @@ impl LearningPracticalRepository {
     pub async fn list_coding_sessions(
         &self,
         program_id: &str,
-    ) -> Result<Vec<crate::practice::coding::dto::CodingSessionSummaryDto>> {
+    ) -> Result<Vec<PracticeSessionSummaryDto>> {
         uuid(program_id, "program")?;
         let mut tx = self.pool.begin_read().await.map_err(db)?;
-        let rows = sqlx::query("SELECT s.*,a.title AS title FROM learning_coding_sessions s JOIN learning_practical_activities a ON a.id=s.activity_id WHERE s.program_id=? ORDER BY s.created_at DESC,s.id DESC")
+        let rows = sqlx::query("SELECT s.*,a.title AS title FROM learning_exercise_sessions s JOIN learning_practical_activities a ON a.id=s.activity_id WHERE s.program_id=? ORDER BY s.created_at DESC,s.id DESC")
             .bind(program_id)
             .fetch_all(&mut *tx)
             .await
@@ -258,7 +258,7 @@ impl LearningPracticalRepository {
         for row in rows {
             let session = parse_row(&row)?;
             let last_submit: Option<String> = sqlx::query_scalar(
-                "SELECT payload_json FROM learning_coding_events WHERE session_id=? AND kind='run' AND json_extract(payload_json,'$.scope')='all' ORDER BY ordinal DESC LIMIT 1",
+                "SELECT payload_json FROM learning_exercise_session_events WHERE session_id=? AND kind='check' AND json_extract(payload_json,'$.scope')='all' ORDER BY ordinal DESC LIMIT 1",
             )
             .bind(&session.id)
             .fetch_optional(&mut *tx)
@@ -275,14 +275,15 @@ impl LearningPracticalRepository {
                     .and_then(serde_json::Value::as_u64)
                     .and_then(|number| u32::try_from(number).ok())
             };
-            summaries.push(CodingSessionSummaryDto {
+            summaries.push(PracticeSessionSummaryDto {
                 passed: count("passed"),
                 total: count("total"),
                 title: row.get("title"),
                 finished: session.finished_at.is_some(),
                 session_id: session.id,
                 activity_id: session.activity_id,
-                task: session.task,
+                kind: session.kind.as_str().to_owned(),
+                form: session.form,
                 setting: session.setting,
                 stage: session.stage,
                 created_at: session.created_at,
@@ -298,7 +299,7 @@ impl LearningPracticalRepository {
         uuid(session_id, "coding session")?;
         let mut tx = self.pool.begin_read().await.map_err(db)?;
         let worked: i64 = sqlx::query_scalar(
-            "SELECT EXISTS(SELECT 1 FROM learning_coding_events WHERE session_id=?1 AND kind IN ('run','stage') AND at>?2) OR EXISTS(SELECT 1 FROM learning_simulation_turns WHERE session_id=?1 AND speaker='learner' AND created_at>?2)",
+            "SELECT EXISTS(SELECT 1 FROM learning_exercise_session_events WHERE session_id=?1 AND kind IN ('check','stage') AND at>?2) OR EXISTS(SELECT 1 FROM learning_simulation_turns WHERE session_id=?1 AND speaker='learner' AND created_at>?2)",
         )
         .bind(session_id)
         .bind(since)

@@ -1,23 +1,17 @@
 //! Document Repository Module
 //!
-//! Implements the Ephemeral Tx Wrapper Pattern for document persistence.
+//! Document persistence.
 //!
 //! # Architecture
 //!
-//! - `ops.rs` - Generic SQL operations that accept any SQLite executor
+//! - `ops.rs` - SQL operations that accept any SQLite connection, so a caller
+//!   can run them inside its own unit of work
 //! - `implementation.rs` - Pool-based repository for standalone operations
-//! - `tx.rs` - Transaction-based repository for transactional operations
-//!
-//! Both implementations delegate to the same SQL operations in ops.rs,
-//! ensuring consistency while enabling flexible transaction management.
 
 pub mod implementation;
 pub mod ops;
-pub mod tx;
 
 pub use implementation::SqliteDocumentRepository;
-pub use lattice_core::application::ports::DocumentFilter;
 
 #[cfg(test)]
 mod tests;
-pub use tx::SqliteDocumentRepositoryTx;

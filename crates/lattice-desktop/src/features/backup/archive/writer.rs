@@ -9,10 +9,10 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
-use sqlx::SqlitePool;
 use tracing::{debug, info, warn};
 
 use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::shared::persistence::Database;
 
 use super::config::ArchiveConfig;
 use super::crypto::{self, MasterKey};
@@ -118,7 +118,7 @@ pub fn list_archives(destination: &Path) -> Vec<ArchiveFileInfo> {
 /// Writes archives. Holds no mutable state; every run re-reads the config so
 /// a destination change between the scheduler tick and the run is honoured.
 pub struct ArchiveWriter {
-    pool: SqlitePool,
+    database: Database,
     app_data_dir: PathBuf,
     settings_repo: Arc<dyn SettingsRepositoryPort>,
     key_store: Arc<MasterKeyStore>,
@@ -134,7 +134,7 @@ pub struct ArchiveWriter {
 
 impl ArchiveWriter {
     pub fn new(
-        pool: SqlitePool,
+        database: Database,
         app_data_dir: PathBuf,
         settings_repo: Arc<dyn SettingsRepositoryPort>,
         key_store: Arc<MasterKeyStore>,
@@ -142,7 +142,7 @@ impl ArchiveWriter {
         web_archive_root: Option<PathBuf>,
     ) -> Self {
         Self {
-            pool,
+            database,
             app_data_dir,
             settings_repo,
             key_store,
@@ -205,11 +205,10 @@ impl ArchiveWriter {
         destination: &Path,
         started: std::time::Instant,
     ) -> Result<ArchiveRun, ArchiveError> {
-        let master = self
-            .key_store
-            .load()?
-            .filter(|key| crypto::kcv_matches(&config.envelope, key))
-            .ok_or_else(|| ArchiveError::Other(MISSING_KEY_MESSAGE.to_string()))?;
+        let master = match self.key_store.load()? {
+            Some(key) if crypto::kcv_matches(&config.envelope, &key)? => key,
+            _ => return Err(ArchiveError::Other(MISSING_KEY_MESSAGE.to_string())),
+        };
 
         let scratch = ArchiveConfig::scratch_dir(&self.app_data_dir);
         tokio::fs::create_dir_all(&scratch).await?;
@@ -237,7 +236,7 @@ impl ArchiveWriter {
     ) -> Result<ArchiveRun, ArchiveError> {
         let created_at = chrono::Utc::now();
         let snapshot_path = scratch.join("lattice.db");
-        let report = snapshot::snapshot_database(&self.pool, &snapshot_path).await?;
+        let report = snapshot::snapshot_database(&self.database, &snapshot_path).await?;
         debug!(
             bytes = report.bytes,
             migration_version = ?report.migration_version,
@@ -264,7 +263,7 @@ impl ArchiveWriter {
             .ok()
             .and_then(|bytes| bytes.try_into().ok())
             .ok_or_else(|| ArchiveError::Other("bad stream nonce".to_string()))?;
-        let file_key = crypto::derive_file_key(master, &file_salt);
+        let file_key = crypto::derive_file_key(master, &file_salt)?;
 
         let write_target = part_path.clone();
         let written = tokio::task::spawn_blocking(move || -> Result<u64, ArchiveError> {

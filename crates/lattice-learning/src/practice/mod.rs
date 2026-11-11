@@ -4,6 +4,7 @@ pub mod assistance_policy;
 pub mod coding;
 pub mod interview_answers;
 pub mod interview_research;
+pub mod kinds;
 pub mod practical_dto;
 pub mod practical_generation;
 pub mod practical_repository;
@@ -16,6 +17,7 @@ pub mod practice_generation;
 pub mod practice_repository;
 #[cfg(test)]
 pub(crate) mod practice_tests;
+pub mod session;
 pub mod simulation_policy;
 #[cfg(any(test, feature = "test-support"))]
 pub mod test_support;

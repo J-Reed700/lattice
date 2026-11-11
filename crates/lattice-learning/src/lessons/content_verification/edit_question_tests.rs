@@ -30,6 +30,7 @@ use lattice_core::domain::learning::claim_review::{
     Ledger, UnitKind, UnverifiedReason,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 
 const P0: &str = "What does DictReader do with spaces in a header name?";
@@ -296,7 +297,7 @@ async fn edit(
     after: QuestionText,
     dry_run: bool,
 ) -> Result<QuestionEditOutcome> {
-    ClaimReviewService::new(course.pool.clone())
+    ClaimReviewService::new(Database::from(course.pool.clone()))
         .edit_question(QuestionEdit {
             program_id: course.program_id.clone(),
             lesson_id: course.lesson_id.clone(),
@@ -392,7 +393,7 @@ fn assert_confirmed_at(
 #[tokio::test]
 async fn a_question_is_read_by_its_place_among_the_lessons_questions() -> Result<()> {
     let course = published().await?;
-    let service = ClaimReviewService::new(course.pool.clone());
+    let service = ClaimReviewService::new(Database::from(course.pool.clone()));
 
     for (index, expected) in [q0(), q1(), q2()].into_iter().enumerate() {
         let read = service
@@ -413,7 +414,7 @@ async fn a_question_is_read_by_its_place_among_the_lessons_questions() -> Result
 async fn a_question_of_a_lesson_from_another_course_is_not_read() -> Result<()> {
     let course = published().await?;
 
-    let error = ClaimReviewService::new(course.pool.clone())
+    let error = ClaimReviewService::new(Database::from(course.pool.clone()))
         .question_text("another-course", &course.lesson_id, 0)
         .await
         .unwrap_err();
@@ -864,7 +865,7 @@ async fn a_lesson_from_another_course_is_refused() -> Result<()> {
         ..q0()
     };
 
-    let result = ClaimReviewService::new(course.pool.clone())
+    let result = ClaimReviewService::new(Database::from(course.pool.clone()))
         .edit_question(QuestionEdit {
             program_id: "another-course".into(),
             lesson_id: course.lesson_id.clone(),
@@ -916,7 +917,7 @@ async fn a_lesson_still_being_prepared_is_refused() -> Result<()> {
 }
 
 async fn notes(course: &Course) -> Result<TeachingFindingsRepository> {
-    let store = TeachingFindingsRepository::new(course.pool.clone());
+    let store = TeachingFindingsRepository::new(Database::from(course.pool.clone()));
     let candidate = json!({"blocks":[
         {"title":"Section 0","body":section(GOOD)},
         {"title":"Section 1","body":section(&figure(7))}
@@ -1390,7 +1391,7 @@ async fn the_undo_of_a_statement_a_question_edit_ended_is_refused_with_the_quest
 
     for claim in &ended {
         let revision = ledger(&course).await?.revision.0;
-        let result = ClaimReviewService::new(course.pool.clone())
+        let result = ClaimReviewService::new(Database::from(course.pool.clone()))
             .resolve(
                 &course.lesson_id,
                 &claim.0,
@@ -1444,7 +1445,7 @@ async fn a_questions_reasons_are_read_with_it_and_an_edit_of_one_is_written_in_i
 ) -> Result<()> {
     let course = published().await?;
     give_the_first_question_its_reasons(&course).await?;
-    let service = ClaimReviewService::new(course.pool.clone());
+    let service = ClaimReviewService::new(Database::from(course.pool.clone()));
     let read = service
         .question_text(&course.program_id, &course.lesson_id, 0)
         .await?;
@@ -1552,5 +1553,27 @@ async fn a_statement_on_a_choices_reason_ends_when_the_reason_is_rewritten_and_i
         "rationales/1",
         replacement,
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_save_whose_example_cannot_be_recorded_writes_nothing() -> Result<()> {
+    let course = published().await?;
+    course.flag_locally(P0).await?;
+    let before = snapshot(&course).await?;
+    sqlx::query(
+        "CREATE TRIGGER refuse_for_test BEFORE INSERT ON learning_checker_examples BEGIN SELECT RAISE(ABORT, 'refused for the test'); END",
+    )
+    .execute(&course.pool)
+    .await?;
+    let after = QuestionText {
+        prompt: NEW_PROMPT.into(),
+        ..q0()
+    };
+
+    let result = edit(&course, 0, q0(), after, false).await;
+
+    assert!(result.is_err());
+    assert_eq!(snapshot(&course).await?, before);
     Ok(())
 }

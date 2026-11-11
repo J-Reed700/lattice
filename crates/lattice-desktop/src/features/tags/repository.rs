@@ -2,40 +2,16 @@
 //! the `TagMapper` layer; DB models stay internal.
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
-use lattice_core::application::ports::{Filter, RepositoryPort};
+use lattice_core::application::ports::RepositoryPort;
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
+use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::TagName;
-use sqlx::{Row, SqlitePool};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 
 mod document_tags;
 mod ports;
-
-/// Filter for querying tags by various criteria.
-#[derive(Debug, Clone)]
-pub struct TagFilter {
-    /// Filter by name pattern (case-insensitive partial match)
-    pub name_pattern: Option<String>,
-    /// Limit number of results
-    pub limit: Option<usize>,
-}
-
-impl Filter for TagFilter {
-    fn validate(&self) -> Result<()> {
-        if let Some(limit) = self.limit {
-            if limit == 0 || limit > 10000 {
-                return Err(AppError::InvalidInput(
-                    "Limit must be between 1 and 10000".to_string(),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
 
 /// SQLite implementation of tag repository.
 ///
@@ -50,9 +26,30 @@ pub struct TagRepository {
     pool: SqlitePool,
 }
 
+async fn tag_by_name(connection: &mut SqliteConnection, name: &str) -> Result<Option<TagEntity>> {
+    let db_model = sqlx::query_as!(
+        TagModel,
+        r#"
+            SELECT id as "id!", name as "name!", color as "color!", created_at as "created_at!", updated_at as "updated_at!"
+            FROM tags
+            WHERE LOWER(name) = LOWER(?)
+            "#,
+        name
+    )
+    .fetch_optional(connection)
+    .await
+    .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
+
+    match db_model {
+        Some(model) => Ok(Some(TagMapper::to_entity(&model)?)),
+        None => Ok(None),
+    }
+}
+
 impl TagRepository {
     /// Create a new tag repository.
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -62,23 +59,12 @@ impl TagRepository {
     ///
     /// - `AppError::Database` if query fails
     pub async fn find_by_name(&self, name: &str) -> Result<Option<TagEntity>> {
-        let db_model = sqlx::query_as!(
-            TagModel,
-            r#"
-            SELECT id as "id!", name as "name!", color as "color!", created_at as "created_at!", updated_at as "updated_at!"
-            FROM tags
-            WHERE LOWER(name) = LOWER(?)
-            "#,
-            name
-        )
-        .fetch_optional(&self.pool)
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
-
-        match db_model {
-            Some(model) => Ok(Some(TagMapper::to_entity(&model)?)),
-            None => Ok(None),
-        }
+        let mut connection = self
+            .pool
+            .acquire()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to find tag by name: {}", e)))?;
+        tag_by_name(&mut connection, name).await
     }
 
     /// Get or create a tag by name (case-insensitive).
@@ -219,6 +205,11 @@ impl TagRepository {
         let id_str = id.as_str();
         let name_str = name.as_str();
 
+        let mut tx = self
+            .pool
+            .begin_write()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         sqlx::query!(
             r#"
             INSERT INTO tags (id, name, color, created_at, updated_at)
@@ -232,13 +223,16 @@ impl TagRepository {
             now,
             now
         )
-        .execute(&self.pool)
+        .execute(&mut *tx)
         .await
         .map_err(|e| AppError::Database(format!("Failed to create tag: {}", e)))?;
-
-        self.find_by_name(name.as_ref())
+        let tag = tag_by_name(&mut tx, name.as_ref())
             .await?
-            .ok_or_else(|| AppError::Database("Tag creation failed".into()))
+            .ok_or_else(|| AppError::Database("Tag creation failed".into()))?;
+        tx.commit()
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
+        Ok(tag)
     }
 
     /// Get all tags ordered by name (alias for find_all).

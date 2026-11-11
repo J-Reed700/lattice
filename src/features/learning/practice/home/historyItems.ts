@@ -25,24 +25,24 @@ export interface HistoryItem {
 }
 
 export interface HistorySources {
-  coding: Wire.CodingSessionSummaryDto[];
+  coding: Wire.PracticeSessionSummaryDto[];
   activities: Wire.LearningPracticalActivityDto[];
   simulations: Wire.LearningSimulationSessionDto[];
   attempts: Wire.LearningPracticeSessionSummaryDto[];
   drills: Wire.CourseDrillAttemptDto[];
 }
 
-const SETTING_LABELS: Record<Wire.CodingSetting, string> = { coached: 'Coached', mock: 'Mock', watched: 'Watched' };
-const TASK_LABELS: Record<Wire.CodingTask, string> = { problem: 'Problem', bug_fix: 'Bug to fix' };
+const SETTING_LABELS: Record<Wire.Setting, string> = { coached: 'Coached', mock: 'Mock', watched: 'Watched' };
+const TASK_LABELS: Record<Wire.Form, string> = { build: 'Problem', repair: 'Bug to fix', complete: 'Complete', arrange: 'Arrange' };
 const HELP_LABELS: Record<Wire.LearningPracticeMode, string> = { explore: 'Full help', practice: 'Hints only', demonstrate: 'No help' };
 const DRILL_MODE_LABELS: Record<Wire.AttemptMode, string> = { practice: 'Untimed', interview: 'Timed', rapid: 'Rapid' };
 
-const STAGE_NAMES: Record<Wire.CodingStage, string> = {
+const STAGE_NAMES: Record<Wire.Stage, string> = {
   understand: 'Understand',
   examples: 'Examples',
   plan: 'Plan',
-  code: 'Code',
-  test: 'Test',
+  make: 'Code',
+  check: 'Test',
   review: 'Review',
   reproduce: 'Reproduce',
   locate: 'Locate',
@@ -97,7 +97,7 @@ export function buildHistory(sources: HistorySources): HistoryItem[] {
       card: entry.setting === 'coached' ? 'code' : 'mock',
       title: entry.title,
       when: entry.finishedAt ?? entry.createdAt,
-      detail: `${SETTING_LABELS[entry.setting]} · ${TASK_LABELS[entry.task]}`,
+      detail: `${SETTING_LABELS[entry.setting]} · ${TASK_LABELS[entry.form]}`,
       result: entry.finished
         ? entry.passed !== null && entry.total !== null
           ? `${entry.passed} of ${entry.total} passed`
@@ -110,7 +110,7 @@ export function buildHistory(sources: HistorySources): HistoryItem[] {
   }
 
   for (const activity of sources.activities) {
-    if (activity.kind === 'coding_problem') {
+    if (activity.kind === 'exercise') {
       if (codingActivityIds.has(activity.id)) continue;
       items.push({
         id: `activity:${activity.id}`,

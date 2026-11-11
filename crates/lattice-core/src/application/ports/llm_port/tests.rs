@@ -29,45 +29,6 @@ async fn interactive_completions_can_opt_out_without_changing_default_limits() {
 }
 
 #[test]
-fn a_request_output_cap_can_tighten_the_providers_limit_but_never_raise_it() {
-    let provider_limit = 4096;
-    let uncapped = CompletionRequest::default();
-    assert_eq!(
-        uncapped.effective_max_output_tokens(provider_limit),
-        provider_limit,
-        "no request cap leaves the configured limit alone"
-    );
-
-    let tighter = CompletionRequest {
-        max_output_tokens: Some(512),
-        ..Default::default()
-    };
-    assert_eq!(tighter.effective_max_output_tokens(provider_limit), 512);
-
-    // A budget that reserved more room than the user configured must not
-    // silently grant it: the configured ceiling is the user's decision.
-    let looser = CompletionRequest {
-        max_output_tokens: Some(100_000),
-        ..Default::default()
-    };
-    assert_eq!(
-        looser.effective_max_output_tokens(provider_limit),
-        provider_limit
-    );
-
-    // Zero is meaningless as a generation cap and would produce an empty
-    // response rather than an error, so it is treated as "unset".
-    let zero = CompletionRequest {
-        max_output_tokens: Some(0),
-        ..Default::default()
-    };
-    assert_eq!(
-        zero.effective_max_output_tokens(provider_limit),
-        provider_limit
-    );
-}
-
-#[test]
 fn interactive_work_outranks_verification_maintenance_and_background() {
     use InferencePriority::*;
     assert!(Interactive > Verification);

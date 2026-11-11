@@ -29,6 +29,7 @@ use lattice_core::domain::entities::Document;
 use lattice_core::domain::repositories::mocks::DddMockDocumentRepository as DddMockDocRepo;
 use lattice_core::domain::value_objects::Checksum;
 use lattice_core::shared::constants::WEB_REQUEST_TIMEOUT;
+use lattice_core::shared::persistence::Database;
 use std::path::{Path, PathBuf};
 
 struct MockFavoritesRepository;
@@ -118,12 +119,6 @@ impl SingleDocumentRepository {
 impl RepositoryPort<Document> for SingleDocumentRepository {
     async fn find_by_id(&self, id: &str) -> Result<Option<Document>> {
         Ok((self.document.id().as_str() == id).then(|| self.document.clone()))
-    }
-    async fn find_by_filter(
-        &self,
-        _f: &dyn lattice_core::application::ports::repository_port::Filter,
-    ) -> Result<Vec<Document>> {
-        Ok(vec![self.document.clone()])
     }
     async fn find_all(&self) -> Result<Vec<Document>> {
         Ok(vec![self.document.clone()])
@@ -356,7 +351,9 @@ async fn list_documents_uses_migrated_schema_for_inventory_favorites_and_recent(
     services.document_repository = documents;
     services.favorites_repository = favorites.clone();
     services.recent_documents_repository = recent.clone();
-    services.tag_service = Arc::new(crate::features::tags::service::TagService::new(pool));
+    services.tag_service = Arc::new(crate::features::tags::service::TagService::new(
+        Database::from(pool),
+    ));
     let executor = FunctionExecutor::new(services);
     let list = |args| {
         let executor = &executor;
@@ -526,7 +523,7 @@ async fn hybrid_semantic_search_runs_the_library_orchestrator_and_names_hits_by_
         HybridSearchUseCase::new(
             Arc::new(lattice_core::application::ports::MockEmbeddingPort::new_degraded()),
             Arc::new(USearchVectorIndex::new(4, None).unwrap()),
-            Arc::new(SqliteTextSearch::new(pool.clone())),
+            Arc::new(SqliteTextSearch::new(Database::from(pool.clone()))),
         )
         .with_chunk_repository(Arc::new(ChunkRepository::new(pool.clone()))),
     );

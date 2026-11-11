@@ -2,16 +2,18 @@
 
 use super::*;
 use crate::practical_dto::LearningPracticalPublicFileRole;
-use crate::practice::coding::problem::CodingTask;
+use crate::practice::coding::problem::ProblemDifficulty;
 use crate::practice::coding::proof::fakes::{sample_problem, FakeHarness};
 use crate::practice::test_support::fixture;
+use lattice_core::domain::learning::practice::work::Form;
+use serde_json::json;
 
-fn build_request(operation_id: &str, program_id: &str) -> StartCodingBuildRequestDto {
-    StartCodingBuildRequestDto {
+fn build_request(operation_id: &str, program_id: &str) -> StartPracticeBuildRequestDto {
+    StartPracticeBuildRequestDto {
         operation_id: operation_id.to_owned(),
         program_id: program_id.to_owned(),
         lesson_id: None,
-        task: CodingTask::Problem,
+        form: Form::Build,
         language: "python".into(),
         difficulty: ProblemDifficulty::Easy,
         focus: None,
@@ -84,9 +86,9 @@ async fn generate(
 
 #[test]
 fn a_build_that_is_stopped_midway_is_requeued() {
-    let config = coding_job_config();
-    assert_eq!(CODING_BUILD, "learning.coding_build");
-    assert_eq!(CODING_BUILD_STEPS, 3);
+    let config = practice_job_config();
+    assert_eq!(PRACTICE_BUILD, "learning.practice_build");
+    assert_eq!(PRACTICE_BUILD_STEPS, 3);
     assert!(matches!(config.recovery, RecoveryPolicy::Requeue));
 }
 
@@ -94,21 +96,27 @@ fn a_build_that_is_stopped_midway_is_requeued() {
 async fn queueing_a_build_twice_with_one_operation_id_is_one_job() {
     let (pool, program_id, _, _) = fixture().await.unwrap();
     let operation = Uuid::new_v4().to_string();
-    let first = queue_coding_build(&pool, &build_request(&operation, &program_id))
-        .await
-        .unwrap();
-    let again = queue_coding_build(&pool, &build_request(&operation, &program_id))
-        .await
-        .unwrap();
+    let first = queue_coding_build(
+        &Database::from(pool.clone()),
+        &build_request(&operation, &program_id),
+    )
+    .await
+    .unwrap();
+    let again = queue_coding_build(
+        &Database::from(pool.clone()),
+        &build_request(&operation, &program_id),
+    )
+    .await
+    .unwrap();
     assert_eq!(first, again);
 
     let job = JobStore::new(pool.clone()).get(&first).await.unwrap();
-    assert_eq!(job.kind, CODING_BUILD);
+    assert_eq!(job.kind, PRACTICE_BUILD);
     assert_eq!(job.subject_id.as_deref(), Some(program_id.as_str()));
-    assert_eq!(job.progress_total, CODING_BUILD_STEPS);
+    assert_eq!(job.progress_total, PRACTICE_BUILD_STEPS);
 
     let other = queue_coding_build(
-        &pool,
+        &Database::from(pool.clone()),
         &build_request(&Uuid::new_v4().to_string(), &program_id),
     )
     .await
@@ -116,16 +124,65 @@ async fn queueing_a_build_twice_with_one_operation_id_is_one_job() {
     assert_ne!(first, other);
 }
 
+#[test]
+fn a_programs_build_request_names_its_kind_form_and_options() {
+    let request = practice_build_request(&build_request("operation", "program-1")).unwrap();
+    assert_eq!(request.operation_id, "operation");
+    assert_eq!(request.program_id, "program-1");
+    assert_eq!(request.lesson_id, None);
+    assert_eq!(request.kind, KindId::new("program"));
+    assert_eq!(request.form, Form::Build);
+    assert_eq!(
+        request.options,
+        json!({"language": "python", "difficulty": "easy", "focus": null})
+    );
+}
+
+#[test]
+fn a_bug_fix_is_a_repair_and_keeps_its_focus() {
+    let mut asked = build_request("operation", "program-1");
+    asked.form = Form::Repair;
+    asked.focus = Some("arrays".into());
+    asked.lesson_id = Some("lesson-1".into());
+    let request = practice_build_request(&asked).unwrap();
+    assert_eq!(request.form, Form::Repair);
+    assert_eq!(request.lesson_id.as_deref(), Some("lesson-1"));
+    assert_eq!(request.options["focus"], json!("arrays"));
+}
+
+#[tokio::test]
+async fn the_queued_job_carries_the_kind_in_its_payload() {
+    let (pool, program_id, _, _) = fixture().await.unwrap();
+    let id = queue_coding_build(
+        &Database::from(pool.clone()),
+        &build_request(&Uuid::new_v4().to_string(), &program_id),
+    )
+    .await
+    .unwrap();
+    let job = JobStore::new(pool.clone()).get(&id).await.unwrap();
+    assert_eq!(job.requested["kind"], json!("program"));
+    assert_eq!(job.requested["form"], json!("build"));
+    assert_eq!(job.requested["programId"], json!(program_id));
+    assert_eq!(job.requested["options"]["language"], json!("python"));
+}
+
 #[tokio::test]
 async fn an_operation_id_reused_for_another_request_is_refused() {
     let (pool, program_id, _, _) = fixture().await.unwrap();
     let operation = Uuid::new_v4().to_string();
-    queue_coding_build(&pool, &build_request(&operation, &program_id))
-        .await
-        .unwrap();
+    queue_coding_build(
+        &Database::from(pool.clone()),
+        &build_request(&operation, &program_id),
+    )
+    .await
+    .unwrap();
     let mut different = build_request(&operation, &program_id);
     different.focus = Some("hashing".into());
-    assert!(queue_coding_build(&pool, &different).await.is_err());
+    assert!(
+        queue_coding_build(&Database::from(pool.clone()), &different)
+            .await
+            .is_err()
+    );
 }
 
 #[tokio::test]
@@ -133,7 +190,7 @@ async fn the_build_saves_a_coding_problem_activity_with_a_private_problem_file()
     let (pool, program_id, lesson_id, outcome_id) = fixture().await.unwrap();
     let job_id = Uuid::new_v4().to_string();
     let activity_id = save_problem(
-        &pool,
+        &Database::from(pool.clone()),
         &save_of(&job_id, &program_id, &lesson_id),
         &sample_problem(),
         &FakeHarness,
@@ -161,7 +218,7 @@ async fn the_build_saves_a_coding_problem_activity_with_a_private_problem_file()
         .iter()
         .find(|activity| activity.id == activity_id)
         .unwrap();
-    assert_eq!(activity.kind, LearningPracticalActivityKind::CodingProblem);
+    assert_eq!(activity.kind, LearningPracticalActivityKind::Exercise);
     assert_eq!(activity.title, "Pair with a given sum");
     assert_eq!(activity.generator_model, "scripted-model");
     assert!(activity
@@ -183,12 +240,22 @@ async fn a_build_that_runs_again_after_saving_finds_its_own_activity() {
     let (pool, program_id, lesson_id, _) = fixture().await.unwrap();
     let job_id = Uuid::new_v4().to_string();
     let save = save_of(&job_id, &program_id, &lesson_id);
-    let first = save_problem(&pool, &save, &sample_problem(), &FakeHarness)
-        .await
-        .unwrap();
-    let again = save_problem(&pool, &save, &sample_problem(), &FakeHarness)
-        .await
-        .unwrap();
+    let first = save_problem(
+        &Database::from(pool.clone()),
+        &save,
+        &sample_problem(),
+        &FakeHarness,
+    )
+    .await
+    .unwrap();
+    let again = save_problem(
+        &Database::from(pool.clone()),
+        &save,
+        &sample_problem(),
+        &FakeHarness,
+    )
+    .await
+    .unwrap();
     assert_eq!(first, again);
 
     let workspace = LearningPracticalRepository::new(pool)
@@ -199,7 +266,7 @@ async fn a_build_that_runs_again_after_saving_finds_its_own_activity() {
     let saved = workspace
         .activities
         .iter()
-        .filter(|activity| activity.kind == LearningPracticalActivityKind::CodingProblem)
+        .filter(|activity| activity.kind == LearningPracticalActivityKind::Exercise)
         .count();
     assert_eq!(saved, 1);
 }
@@ -257,7 +324,7 @@ async fn a_problem_file_is_refused_unless_it_is_a_private_read_only_check_of_a_c
             &repository,
             &program_id,
             &lesson_id,
-            LearningPracticalActivityKind::CodingProblem,
+            LearningPracticalActivityKind::Exercise,
             vec![starter.clone(), evaluator.clone(), bad],
         )
         .await;
@@ -284,7 +351,7 @@ async fn a_problem_file_is_refused_unless_it_is_a_private_read_only_check_of_a_c
         &repository,
         &program_id,
         &lesson_id,
-        LearningPracticalActivityKind::CodingProblem,
+        LearningPracticalActivityKind::Exercise,
         vec![starter.clone(), evaluator.clone()],
     )
     .await;
@@ -294,7 +361,7 @@ async fn a_problem_file_is_refused_unless_it_is_a_private_read_only_check_of_a_c
         &repository,
         &program_id,
         &lesson_id,
-        LearningPracticalActivityKind::CodingProblem,
+        LearningPracticalActivityKind::Exercise,
         vec![starter, evaluator, valid],
     )
     .await

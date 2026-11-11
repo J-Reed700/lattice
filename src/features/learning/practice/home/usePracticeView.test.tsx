@@ -58,7 +58,7 @@ describe('usePracticeView', () => {
 
   it('opens a coding build with the choice it was given', () => {
     const { result } = renderHook(() => usePracticeView());
-    const choice = { task: 'problem' as const, setting: 'coached' as const, language: 'python', difficulty: 'easy' as const };
+    const choice = { form: 'build' as const, setting: 'coached' as const, language: 'python', difficulty: 'easy' as const };
     act(() => result.current.openCodingBuild(choice));
     expect(result.current.view).toEqual({ kind: 'coding-build', choice });
   });

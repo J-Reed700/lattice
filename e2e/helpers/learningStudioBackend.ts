@@ -1105,8 +1105,8 @@ export async function installLearningStudioBackend(page: Page) {
       course_index_close: () => null,
       list_journal_syntheses: () => [],
       detect_system_capabilities: () => ({ total_ram_gb: 8, cpu_cores: 8, cpu_architecture: "e2e", gpu_type: "none", gpu_acceleration: "none", vram_gb: null, available_disk_gb: 10 }),
-      list_conversations_explorer: () => ({ conversations: [], total: 0 }),
-      list_conversations: () => ({ conversations: [], total: 0 }),
+      list_conversations_explorer: () => ({ conversations: [] }),
+      list_conversations: () => ({ conversations: [] }),
       get_index_progress: () => ({ is_indexing: false, current_file: null, files_processed: 0, total_files: 0, percent_complete: 0, failed: 0, status: "idle", paused: false, failures: [] }),
       list_downloads: () => [],
       activity_snapshot: () => ({ items: [], running: 0 }),
@@ -2369,10 +2369,10 @@ export async function installLearningStudioBackend(page: Page) {
         profileState = { programId: request.programId, details: request.details, language: request.language, interviewAt: request.interviewAt, company: request.company, role: request.role, revision: profileState.revision + 1 };
         return structuredClone(profileState);
       },
-      get_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
-      check_practice_fit: () => ({ code: "fits", reason: "The lessons teach program code." }),
+      get_practice_fit: () => ({ kinds: [{ kind: "program", fit: "fits", reason: "The lessons teach program code." }] }),
+      check_practice_fit: () => ({ kinds: [{ kind: "program", fit: "fits", reason: "The lessons teach program code." }] }),
       practice_due: () => ({ items: [] }),
-      list_coding_sessions: () => [],
+      list_practice_sessions: () => [],
       course_drills: () => ({ language: "python", nextCode: null, nextPassage: null, hasSources: false, modules: [], recent: [] }),
       get_learning_runtime_catalog: () => {
         return ([

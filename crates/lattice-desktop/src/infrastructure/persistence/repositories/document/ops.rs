@@ -12,8 +12,8 @@ mod write;
 
 pub use access::record_accesses;
 pub use find::{
-    find_aggregate_by_checksum_tx, find_all, find_all_paginated, find_by_checksum, find_by_filter,
-    find_by_id, find_by_path, find_by_path_pattern, find_metadata_by_ids, list_metadata,
+    find_aggregate_by_checksum_tx, find_all, find_all_paginated, find_by_checksum, find_by_id,
+    find_by_path, find_by_path_pattern, find_metadata_by_ids, list_metadata,
 };
 pub use lookup::{
     count, count_by_checksum, count_chunks, count_documents, exists, exists_by_path,

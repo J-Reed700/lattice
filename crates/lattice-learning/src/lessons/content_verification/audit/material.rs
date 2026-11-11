@@ -5,19 +5,20 @@
 use std::collections::HashMap;
 
 use serde_json::{json, Value};
-use sqlx::SqlitePool;
 
 use lattice_core::application::ports::ClaimReviewStore;
 use lattice_core::domain::learning::claim_review::{ClaimId, LessonReviewState};
 use lattice_core::shared::error::{AppError, Result};
 
+use super::repository;
 use super::{AuditPassage, AuditUnit};
 use crate::content_verification::unit_texts;
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::persistence::db;
 use crate::repository::LearningRepository;
-use crate::source_library::LearningSourceLibraryRepository;
+use crate::source_library::workspace_in;
+use lattice_core::shared::persistence::{Database, Transactions};
 
 pub struct AuditMaterial {
     pub draft_sha256: String,
@@ -29,7 +30,7 @@ impl AuditMaterial {
     /// `candidate`, the draft a preparation is about to publish, whose
     /// digest is `draft_sha256`.
     pub(crate) async fn of_draft(
-        pool: &SqlitePool,
+        database: &Database,
         program_id: &str,
         lesson_id: &str,
         candidate: &Value,
@@ -38,14 +39,14 @@ impl AuditMaterial {
         Ok(Self {
             draft_sha256,
             units: units(candidate),
-            passages: passages(pool, program_id, lesson_id).await?,
+            passages: passages(database, program_id, lesson_id).await?,
         })
     }
 
     /// The lesson as its review stands: the draft that waits for review, or
     /// the published lesson once it is ready ("Audit this lesson now").
-    pub async fn of_lesson(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<Self> {
-        let review = ClaimReviewRepository::new(pool.clone())
+    pub async fn of_lesson(database: &Database, program_id: &str, lesson_id: &str) -> Result<Self> {
+        let review = ClaimReviewRepository::new(database.clone())
             .load(lesson_id)
             .await?
             .review
@@ -54,19 +55,19 @@ impl AuditMaterial {
         let waiting = if review.state == LessonReviewState::Ready {
             None
         } else {
-            LearningCurriculumRepository::new(pool.clone())
+            LearningCurriculumRepository::new(database.clone())
                 .lesson_draft(&review.job_id, lesson_id)
                 .await?
         };
         let candidate = match waiting {
             Some(draft) => serde_json::from_str(&draft.candidate)
                 .map_err(|error| AppError::Serialization(error.to_string()))?,
-            None => published(pool, program_id, lesson_id).await?,
+            None => published(database, program_id, lesson_id).await?,
         };
         Ok(Self {
             draft_sha256: review.draft_sha256,
             units: units(&candidate),
-            passages: passages(pool, program_id, lesson_id).await?,
+            passages: passages(database, program_id, lesson_id).await?,
         })
     }
 }
@@ -81,8 +82,8 @@ fn units(candidate: &Value) -> Vec<AuditUnit> {
 
 /// The published lesson in the draft's shape, its reviewed questions and
 /// their explanations included, so its units index as the report's do.
-async fn published(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Result<Value> {
-    let program = LearningRepository::new(pool.clone())
+async fn published(database: &Database, program_id: &str, lesson_id: &str) -> Result<Value> {
+    let program = LearningRepository::new(database.clone())
         .get(program_id)
         .await?;
     let lesson = program
@@ -92,45 +93,28 @@ async fn published(pool: &SqlitePool, program_id: &str, lesson_id: &str) -> Resu
         .find(|lesson| lesson.id == lesson_id)
         .ok_or_else(|| AppError::NotFound("This lesson is not in the course.".into()))?;
     // The lesson's own reviewed questions live in its quiz bank.
-    let questions: Vec<Value> = sqlx::query("SELECT c.prompt,c.options_json,k.explanation,k.distractor_rationales_json FROM learning_assessment_candidates c JOIN learning_assessment_answer_keys k ON k.candidate_id=c.id WHERE c.program_id=? AND c.lesson_id=? AND c.origin IN ('lesson','migrated') ORDER BY c.rowid")
-        .bind(program_id)
-        .bind(lesson_id)
-        .fetch_all(pool)
-        .await
-        .map_err(db)?
-        .into_iter()
-        .map(|row| {
-            use sqlx::Row;
-            json!({
-                "prompt": row.get::<String, _>("prompt"),
-                "options": serde_json::from_str::<Value>(&row.get::<String, _>("options_json")).unwrap_or_default(),
-                "explanation": row.get::<String, _>("explanation"),
-                "rationales": serde_json::from_str::<Value>(&row.get::<String, _>("distractor_rationales_json")).unwrap_or_default(),
-            })
-        })
-        .collect();
+    let questions = repository::lesson_questions(database, program_id, lesson_id).await?;
     Ok(json!({ "blocks": lesson.blocks, "questions": questions }))
 }
 
 /// Each claim's passages as its card shows them, with each source
 /// version's title (deleted sources included: a card still names them).
 async fn passages(
-    pool: &SqlitePool,
+    database: &Database,
     program_id: &str,
     lesson_id: &str,
 ) -> Result<HashMap<ClaimId, Vec<AuditPassage>>> {
-    let shown = ClaimReviewRepository::new(pool.clone())
-        .shown_passages(lesson_id)
-        .await?;
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let titles: HashMap<String, String> =
-        LearningSourceLibraryRepository::workspace_on(&mut connection, program_id, true)
-            .await?
-            .sources
-            .into_iter()
-            .flat_map(|source| source.versions)
-            .map(|version| (version.id, version.title))
-            .collect();
+    let claims = ClaimReviewRepository::new(database.clone());
+    let shown = claims.shown_passages(lesson_id).await?;
+    let mut read = database.begin_read().await.map_err(db)?;
+    let workspace = workspace_in(&mut read, program_id, true).await?;
+    read.commit().await.map_err(db)?;
+    let titles: HashMap<String, String> = workspace
+        .sources
+        .into_iter()
+        .flat_map(|source| source.versions)
+        .map(|version| (version.id, version.title))
+        .collect();
     Ok(shown
         .into_iter()
         .map(|(claim_id, passages)| {

@@ -347,10 +347,10 @@ pub struct GetLearningPracticeProfileRequestDto {
     pub program_id: String,
 }
 
-/// Whether the course teaches writing, reading or debugging program code.
+/// Whether a course has a kind of work.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "snake_case")]
-pub enum CodeFit {
+pub enum KindFit {
     Fits,
     DoesNotFit,
     Checking,
@@ -358,9 +358,16 @@ pub enum CodeFit {
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
-pub struct PracticeFitDto {
-    pub code: CodeFit,
+pub struct PracticeKindFitDto {
+    pub kind: String,
+    pub fit: KindFit,
     pub reason: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct PracticeFitDto {
+    pub kinds: Vec<PracticeKindFitDto>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, specta::Type)]

@@ -1,4 +1,7 @@
 use super::*;
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
+use lattice_core::shared::persistence::Transactions;
+use sqlx::SqliteConnection;
 
 type PassageRow = (
     String,
@@ -263,11 +266,12 @@ impl ConversationRepository {
         chunk_id: &str,
         allowed: &HashSet<String>,
     ) -> Result<Vec<lattice_core::application::contracts::search::CorpusPassage>, AppError> {
+        let mut tx = self.pool.begin_read().await?;
         let anchor: Option<(String, i64, Option<String>)> = sqlx::query_as(
             "SELECT document_id, chunk_index, section FROM text_chunks WHERE id = ?",
         )
         .bind(chunk_id)
-        .fetch_optional(&self.pool)
+        .fetch_optional(&mut *tx)
         .await?;
         let Some((doc, index, Some(section))) = anchor else {
             return Ok(Vec::new());
@@ -276,7 +280,8 @@ impl ConversationRepository {
             return Ok(Vec::new());
         }
         let rows: Vec<SectionNeighbourRow> = sqlx::query_as("SELECT c.id, d.file_name, d.file_path, c.content, c.chunk_index, c.section, c.page_number, c.from_ocr FROM text_chunks c JOIN documents d ON d.id = c.document_id WHERE c.document_id = ? AND (c.section = ? OR INSTR(c.section, ? || ' > ') = 1) AND c.chunk_index BETWEEN ? AND ? ORDER BY c.chunk_index LIMIT 3")
-            .bind(&doc).bind(&section).bind(&section).bind(index.saturating_sub(1)).bind(index+1).fetch_all(&self.pool).await?;
+            .bind(&doc).bind(&section).bind(&section).bind(index.saturating_sub(1)).bind(index+1).fetch_all(&mut *tx).await?;
+        tx.commit().await?;
         Ok(rows
             .into_iter()
             .map(
@@ -305,15 +310,25 @@ impl ConversationRepository {
         &self,
         conversation_id: &str,
     ) -> Result<Option<(String, HashSet<String>)>, AppError> {
+        let mut tx = self.pool.begin_read().await?;
+        let scope = Self::retrieval_document_scope_on(&mut tx, conversation_id).await?;
+        tx.commit().await?;
+        Ok(scope)
+    }
+
+    async fn retrieval_document_scope_on(
+        conn: &mut SqliteConnection,
+        conversation_id: &str,
+    ) -> Result<Option<(String, HashSet<String>)>, AppError> {
         let space_id: Option<String> =
             sqlx::query_scalar("SELECT space_id FROM conversations WHERE id = ?")
                 .bind(conversation_id)
-                .fetch_optional(&self.pool)
+                .fetch_optional(&mut *conn)
                 .await?;
         let Some(space_id) = space_id.filter(|id| !id.trim().is_empty()) else {
             return Ok(None);
         };
-        let mut ids = self.space_document_scope(&space_id).await?;
+        let mut ids = Self::space_document_scope_on(&mut *conn, &space_id).await?;
         // Files attached to *this* chat. They are in no space — that is what
         // keeps them out of the library and out of everyone else's searches —
         // so the space query above cannot return them, and without this the
@@ -325,7 +340,7 @@ impl ConversationRepository {
                AND EXISTS (SELECT 1 FROM text_chunks c WHERE c.document_id = d.id)",
         )
         .bind(conversation_id)
-        .fetch_all(&self.pool)
+        .fetch_all(&mut *conn)
         .await?;
         ids.extend(attachments);
         Ok(Some((space_id, ids)))
@@ -335,6 +350,14 @@ impl ConversationRepository {
     /// attachment belongs to no space and is excluded here;
     /// `retrieval_document_scope` adds back the asking conversation's own.
     pub async fn space_document_scope(&self, space_id: &str) -> Result<HashSet<String>, AppError> {
+        let mut connection = self.pool.acquire().await?;
+        Self::space_document_scope_on(&mut connection, space_id).await
+    }
+
+    async fn space_document_scope_on(
+        connection: &mut SqliteConnection,
+        space_id: &str,
+    ) -> Result<HashSet<String>, AppError> {
         let ids = sqlx::query_scalar::<_, String>(
             "SELECT d.id FROM documents d
              WHERE EXISTS (SELECT 1 FROM text_chunks c WHERE c.document_id = d.id)
@@ -352,7 +375,7 @@ impl ConversationRepository {
         )
         .bind(space_id)
         .bind(space_id)
-        .fetch_all(&self.pool)
+        .fetch_all(connection)
         .await?;
         Ok(ids.into_iter().collect())
     }
@@ -368,9 +391,8 @@ impl ConversationRepository {
         query: &str,
         limit: usize,
     ) -> Result<Vec<SpaceDocumentDto>, AppError> {
-        /// Ids bound per statement. SQLite's oldest variable ceiling is 999 and
-        /// a General space in a real vault is far larger than that.
-        const ID_BIND_BATCH: usize = 900;
+        /// Ids bound per statement, beside the needle and the limit.
+        const ID_BIND_BATCH: usize = rows_per_statement(1, 2);
         const MAX_RESULTS: usize = 50;
 
         let space_id = space_id
@@ -379,14 +401,17 @@ impl ConversationRepository {
             .unwrap_or(DEFAULT_SPACE_ID);
         let limit = limit.clamp(1, MAX_RESULTS);
         let conversation_id = conversation_id.map(str::trim).filter(|id| !id.is_empty());
+        let mut tx = self.pool.begin_read().await?;
         let allowed = match conversation_id {
-            Some(conversation) => match self.retrieval_document_scope(conversation).await? {
-                Some((_, ids)) => ids,
-                // A conversation the caller named but that no longer exists:
-                // answer for the space rather than for nothing.
-                None => self.space_document_scope(space_id).await?,
-            },
-            None => self.space_document_scope(space_id).await?,
+            Some(conversation) => {
+                match Self::retrieval_document_scope_on(&mut tx, conversation).await? {
+                    Some((_, ids)) => ids,
+                    // A conversation the caller named but that no longer exists:
+                    // answer for the space rather than for nothing.
+                    None => Self::space_document_scope_on(&mut tx, space_id).await?,
+                }
+            }
+            None => Self::space_document_scope_on(&mut tx, space_id).await?,
         };
         if allowed.is_empty() {
             return Ok(Vec::new());
@@ -415,8 +440,9 @@ impl ConversationRepository {
             // gives a stable order rather than whatever SQLite happens to emit.
             qb.push(" ORDER BY d.modified_at DESC, d.file_name ASC LIMIT ")
                 .push_bind(limit as i64);
-            rows.extend(qb.build_query_as().fetch_all(&self.pool).await?);
+            rows.extend(qb.build_query_as().fetch_all(&mut *tx).await?);
         }
+        tx.commit().await?;
 
         // Each batch was ordered and capped on its own, so the batches are
         // merged and capped again here.
@@ -445,7 +471,7 @@ impl ConversationRepository {
     ) -> Result<std::collections::HashMap<String, (Option<String>, Option<u32>, bool)>, AppError>
     {
         let mut locations = std::collections::HashMap::new();
-        for batch in chunk_ids.chunks(100) {
+        for batch in chunk_ids.chunks(rows_per_statement(1, 0)) {
             if batch.is_empty() {
                 continue;
             }

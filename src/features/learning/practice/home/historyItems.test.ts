@@ -11,13 +11,14 @@ const empty: HistorySources = { coding: [], activities: [], simulations: [], att
 const activity = (patch: Partial<Wire.LearningPracticalActivityDto>): Wire.LearningPracticalActivityDto =>
   ({ id: 'act', title: 'An activity', kind: 'code_lab', practiceMode: 'practice', updatedAt: 100, ...patch }) as Wire.LearningPracticalActivityDto;
 
-const session = (patch: Partial<Wire.CodingSessionSummaryDto>): Wire.CodingSessionSummaryDto => ({
+const session = (patch: Partial<Wire.PracticeSessionSummaryDto>): Wire.PracticeSessionSummaryDto => ({
   sessionId: 's1',
   activityId: 'coding-act',
+  kind: 'program',
   title: 'Two sum',
-  task: 'problem',
+  form: 'build',
   setting: 'coached',
-  stage: 'code',
+  stage: 'make',
   finished: false,
   passed: null,
   total: null,
@@ -31,14 +32,14 @@ describe('history', () => {
     const items = buildHistory({
       ...empty,
       coding: [session({ finished: true, passed: 3, total: 4, finishedAt: 300 })],
-      activities: [activity({ id: 'coding-act', kind: 'coding_problem', updatedAt: 40 }), activity({ id: 'inc', kind: 'incident', updatedAt: 200 })],
+      activities: [activity({ id: 'coding-act', kind: 'exercise', updatedAt: 40 }), activity({ id: 'inc', kind: 'incident', updatedAt: 200 })],
     });
     expect(items.map((entry) => entry.id)).toEqual(['coding:s1', 'activity:inc']);
     expect(items[0]).toMatchObject({ card: 'code', result: '3 of 4 passed', target: { kind: 'coding', sessionId: 's1' } });
   });
 
   it('opens a coding problem that has no session as a coding activity', () => {
-    const [entry] = buildHistory({ ...empty, activities: [activity({ id: 'old', kind: 'coding_problem' })] });
+    const [entry] = buildHistory({ ...empty, activities: [activity({ id: 'old', kind: 'exercise' })] });
     expect(entry).toMatchObject({ card: 'code', target: { kind: 'coding-activity', activityId: 'old' } });
   });
 

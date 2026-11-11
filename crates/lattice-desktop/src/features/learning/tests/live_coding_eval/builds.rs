@@ -3,6 +3,7 @@
 //! a person to read. The code checks are the design's: no statement or title names its pattern, and at least
 //! `MIN_KILLED_MISREADINGS` misreadings are killed. Statement clarity, Easy, and the pattern tags are read by hand.
 
+use lattice_core::domain::learning::practice::work::Form;
 use std::collections::BTreeMap;
 use std::time::Instant;
 
@@ -11,15 +12,14 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::problem_patterns::{
     named_in, problem_pattern, PROBLEM_PATTERNS,
 };
+use lattice_core::domain::learning::practice::work::KindId;
 use lattice_core::shared::error::Result;
 use lattice_learning::practice::coding::jobs::EASY_PATTERNS;
-use lattice_learning::practice::coding::problem::{
-    CodingTask, Problem, ProblemCase, ProblemDifficulty,
-};
+use lattice_learning::practice::coding::problem::{Problem, ProblemCase, ProblemDifficulty};
 use lattice_learning::practice::coding::proof::MIN_KILLED_MISREADINGS;
-use lattice_learning::practice::coding::source::{
-    BuildSteps, GeneratedProblems, ProblemRequest, ProblemSource,
-};
+use lattice_learning::practice::coding::source::{build_problem, ProblemRequest};
+use lattice_learning::practice::kinds::program::KIND;
+use lattice_learning::practice::session::builder::BuildSteps;
 use serde::Serialize;
 use tokio_util::sync::CancellationToken;
 
@@ -221,11 +221,7 @@ async fn live_coding_build_eval() -> Result<()> {
     let out = out_dir("builds")?;
     let lab = EvalLab::new().await?;
     let model = lab.llm.model_name().to_owned();
-    let source = GeneratedProblems {
-        llm: &lab.llm,
-        runner: lab.runner.as_ref(),
-        harness: lab.harness.as_ref(),
-    };
+    let kind = lab.kinds.get(&KindId::new(KIND))?;
     let mut wall = Vec::new();
     let mut calls = Vec::new();
     let mut proven_count = 0;
@@ -246,7 +242,7 @@ async fn live_coding_build_eval() -> Result<()> {
         let request = ProblemRequest {
             program_id: lab.program_id.clone(),
             lesson: None,
-            task: CodingTask::Problem,
+            form: Form::Build,
             language: "python".into(),
             difficulty: ProblemDifficulty::Easy,
             patterns: requested.clone(),
@@ -254,9 +250,8 @@ async fn live_coding_build_eval() -> Result<()> {
             details: None,
         };
         let started = Instant::now();
-        let built = source
-            .problem(&request, &Silent, CancellationToken::new())
-            .await;
+        let built =
+            build_problem(kind, &request, &lab.llm, &Silent, CancellationToken::new()).await;
         let wall_ms = u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX);
         let model_calls = lab.llm.take();
 

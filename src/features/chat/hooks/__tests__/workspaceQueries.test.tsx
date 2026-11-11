@@ -77,7 +77,7 @@ describe('sidebar repository queries', () => {
     let resolveOld!: (value: Awaited<ReturnType<typeof VaultAPI.listMessageBookmarks>>) => void;
     vi.spyOn(VaultAPI, 'listMessageBookmarks')
       .mockImplementationOnce(() => new Promise(resolve => { resolveOld = resolve; }))
-      .mockResolvedValueOnce({ ok: true, data: { bookmarks: [], total: 0 } });
+      .mockResolvedValueOnce({ ok: true, data: { bookmarks: [] } });
     const { wrapper } = setup();
     const { result, rerender } = renderHook(({ spaceId }) => useSidebarBookmarksQuery('', spaceId), { initialProps: { spaceId: 'old-space' }, wrapper });
     await waitFor(() => expect(VaultAPI.listMessageBookmarks).toHaveBeenCalledTimes(1));

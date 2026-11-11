@@ -29,7 +29,7 @@ async fn learning_model(
 }
 
 fn source_library(container: &Container) -> super::source_library::LearningSourceLibraryRepository {
-    super::source_library::LearningSourceLibraryRepository::new(container.db_pool().clone())
+    super::source_library::LearningSourceLibraryRepository::new(container.database().clone())
 }
 
 /// Source-acquisition dependencies, assembled once at the command layer so
@@ -38,7 +38,7 @@ fn source_deps(container: &Container) -> crate::features::learning::sources::Sou
     crate::features::learning::sources::SourceDeps {
         library: container.library_passages(),
         web: container.web_service(),
-        pool: container.db_pool().clone(),
+        database: container.database().clone(),
     }
 }
 
@@ -112,7 +112,7 @@ fn drill_worker(
     runtimes: BuiltinRuntimes,
 ) -> super::drills::jobs::DrillBuildWorker {
     super::drills::jobs::DrillBuildWorker {
-        pool: container.db_pool().clone(),
+        database: container.database().clone(),
         load_llm: drill_model(container),
         runtimes,
         grader: super::drills::jobs::judge_grader,
@@ -125,21 +125,30 @@ fn drill_grading_worker(
     runtimes: BuiltinRuntimes,
 ) -> super::drills::jobs::DrillGradingWorker {
     super::drills::jobs::DrillGradingWorker {
-        pool: container.db_pool().clone(),
+        database: container.database().clone(),
         load_llm: drill_model(container),
         runtimes,
         grader: super::drills::jobs::judge_grader,
     }
 }
 
-fn coding_worker(
+fn practice_worker(
     container: &Container,
+    kinds: lattice_learning::practice::session::kind::Kinds,
     runtimes: BuiltinRuntimes,
-) -> super::coding::jobs::CodingBuildWorker {
-    super::coding::jobs::CodingBuildWorker {
-        pool: container.db_pool().clone(),
+) -> super::coding::jobs::PracticeBuildWorker {
+    let builds = std::sync::Arc::new(super::coding::builds::CodingBuilds {
+        database: container.database().clone(),
+        tools: std::sync::Arc::new(
+            lattice_learning::practice::kinds::program::toolchain::BuiltinToolchains::new(runtimes),
+        ),
+    });
+    super::coding::jobs::PracticeBuildWorker {
+        database: container.database().clone(),
         load_llm: drill_model(container),
-        runtimes,
+        kinds,
+        nothing: builds.clone(),
+        exercises: builds,
     }
 }
 
@@ -151,6 +160,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // practical commands and lesson verification share its guest slots.
             let runtimes = BuiltinRuntimes::new(bundled_python(app));
             app.manage(runtimes.clone());
+            let practice_kinds = coding::kinds_of(&runtimes)
+                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+            app.manage(practice_kinds.clone());
             // Registration settles the jobs the last process left running,
             // then starts delivering saved work. A kind that fails to register
             // is retried in the background and never fails setup.
@@ -189,9 +201,13 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                     config: super::drills::jobs::grading_job_config(),
                 },
                 JobKindRegistration {
-                    kind: super::coding::jobs::CODING_BUILD.into(),
-                    handler: std::sync::Arc::new(coding_worker(&container, runtimes)),
-                    config: super::coding::jobs::coding_job_config(),
+                    kind: super::coding::jobs::PRACTICE_BUILD.into(),
+                    handler: std::sync::Arc::new(practice_worker(
+                        &container,
+                        practice_kinds,
+                        runtimes,
+                    )),
+                    config: super::coding::jobs::practice_job_config(),
                 },
             ];
             // Course index builds the last process left running resume.
@@ -218,7 +234,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 });
             }
             let practical = super::practical_repository::LearningPracticalRepository::new(
-                container.db_pool().clone(),
+                container.database().clone(),
             );
             tauri::async_runtime::block_on(super::practical_runs::recover_at_startup(&practical))?;
             Ok(())
@@ -371,23 +387,24 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             regrade_code_review,
             code_review_languages,
             course_drills,
-            start_coding_build,
-            start_coding_session,
-            get_coding_session,
-            move_coding_stage,
+            start_practice_build,
+            start_practice_session,
+            get_practice_session,
+            move_practice_stage,
             check_coding_example,
-            run_coding_session,
-            ask_coding_hint,
-            send_coding_turn,
-            observe_coding_draft,
-            set_coding_clock,
-            finish_coding_session,
+            check_practice_piece,
+            run_coding_input,
+            ask_practice_hint,
+            send_practice_turn,
+            observe_practice_draft,
+            set_practice_clock,
+            finish_practice_session,
             practice_due,
-            list_coding_sessions,
+            list_practice_sessions,
             remove_coding_example,
-            respond_coding_session,
-            set_coding_setting,
-            reveal_coding_solution,
+            respond_practice_session,
+            set_practice_setting,
+            reveal_practice_solution,
             get_practice_fit,
             check_practice_fit
         ])

@@ -239,22 +239,23 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::regrade_code_review,
             lattice::features::learning::plugin::code_review_languages,
             lattice::features::learning::plugin::course_drills,
-            lattice::features::learning::plugin::start_coding_build,
-            lattice::features::learning::plugin::start_coding_session,
-            lattice::features::learning::plugin::get_coding_session,
-            lattice::features::learning::plugin::list_coding_sessions,
-            lattice::features::learning::plugin::move_coding_stage,
+            lattice::features::learning::plugin::start_practice_build,
+            lattice::features::learning::plugin::start_practice_session,
+            lattice::features::learning::plugin::get_practice_session,
+            lattice::features::learning::plugin::list_practice_sessions,
+            lattice::features::learning::plugin::move_practice_stage,
             lattice::features::learning::plugin::check_coding_example,
             lattice::features::learning::plugin::remove_coding_example,
-            lattice::features::learning::plugin::run_coding_session,
-            lattice::features::learning::plugin::ask_coding_hint,
-            lattice::features::learning::plugin::send_coding_turn,
-            lattice::features::learning::plugin::respond_coding_session,
-            lattice::features::learning::plugin::observe_coding_draft,
-            lattice::features::learning::plugin::set_coding_clock,
-            lattice::features::learning::plugin::set_coding_setting,
-            lattice::features::learning::plugin::reveal_coding_solution,
-            lattice::features::learning::plugin::finish_coding_session,
+            lattice::features::learning::plugin::check_practice_piece,
+            lattice::features::learning::plugin::run_coding_input,
+            lattice::features::learning::plugin::ask_practice_hint,
+            lattice::features::learning::plugin::send_practice_turn,
+            lattice::features::learning::plugin::respond_practice_session,
+            lattice::features::learning::plugin::observe_practice_draft,
+            lattice::features::learning::plugin::set_practice_clock,
+            lattice::features::learning::plugin::set_practice_setting,
+            lattice::features::learning::plugin::reveal_practice_solution,
+            lattice::features::learning::plugin::finish_practice_session,
             lattice::features::learning::plugin::practice_due,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
@@ -563,7 +564,13 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
         // Persisted in `metadata.turn` rather than returned by a command, so it
         // reaches no signature on its own and has to be named here.
         .typ::<lattice::features::conversation::chat::TurnRecordDto>()
-        .typ::<lattice::features::conversation::chat::ToolPreferences>();
+        .typ::<lattice::features::conversation::chat::ToolPreferences>()
+        // What `PracticeSessionDto.work` and `PracticeDebriefDto.work` hold for the program kind: the session's
+        // wire carries them as JSON, so no command signature reaches them.
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramWorkDto>()
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramRunDto>()
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramHintMarkDto>()
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramDebriefWorkDto>();
 
     let bindings = builder
         .export_str(

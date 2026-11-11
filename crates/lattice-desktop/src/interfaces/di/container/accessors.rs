@@ -4,13 +4,13 @@
 use super::Container;
 use crate::infrastructure::security::{FileAccessConfig, SecurityContext};
 use crate::infrastructure::storage::ContentAddressedStorage;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::path::PathBuf;
 use std::sync::Arc;
 
 impl Container {
-    pub fn db_pool(&self) -> &SqlitePool {
-        self.core.db_pool()
+    pub fn database(&self) -> &Database {
+        self.core.database()
     }
 
     pub fn settings_repository(
@@ -111,15 +111,15 @@ impl Container {
     /// the file itself.
     pub fn gguf_header_source(
         &self,
-    ) -> std::sync::Arc<crate::features::model_management::header_source::HuggingFaceHeaderSource>
-    {
+    ) -> lattice_core::shared::error::Result<
+        std::sync::Arc<crate::features::model_management::header_source::HuggingFaceHeaderSource>,
+    > {
         let cache = dirs::cache_dir()
             .map(|path| path.join("lattice"))
             .unwrap_or_else(|| self.core.data_dir().join("cache"))
             .join("gguf-headers");
-        std::sync::Arc::new(
-            crate::features::model_management::header_source::HuggingFaceHeaderSource::new(cache),
-        )
+        crate::features::model_management::header_source::HuggingFaceHeaderSource::new(cache)
+            .map(std::sync::Arc::new)
     }
 
     /// The manager that fetches and inspects the models kept under
@@ -190,9 +190,10 @@ impl Container {
 
         // Folders being watched are also legitimately readable, and the watch
         // list is authoritative in the database rather than in settings.
-        match sqlx::query_scalar::<_, String>("SELECT path FROM watch_folders")
-            .fetch_all(self.db_pool())
-            .await
+        match crate::infrastructure::persistence::repositories::file_library::watch_folder_paths(
+            self.database(),
+        )
+        .await
         {
             Ok(paths) => roots.extend(paths.into_iter().map(PathBuf::from)),
             Err(e) => tracing::warn!(

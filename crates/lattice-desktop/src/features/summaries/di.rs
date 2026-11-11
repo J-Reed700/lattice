@@ -105,7 +105,7 @@ pub async fn register(app: tauri::AppHandle, enabled: bool) -> Result<()> {
         return Ok(());
     };
     let repository: Arc<dyn SummaryRepositoryPort> =
-        Arc::new(SqliteSummaryRepository::new(container.db_pool().clone()));
+        Arc::new(SqliteSummaryRepository::new(container.database().clone()));
     // Rows under a superseded identity point into a vector index that no longer
     // exists. Dropping them is the same "rebuild rather than mix vector spaces"
     // rule the chunk index follows.
@@ -121,12 +121,12 @@ pub async fn register(app: tauri::AppHandle, enabled: bool) -> Result<()> {
         Arc::new(GenerateDocumentSummariesUseCase::new(
             true,
             identity.clone(),
-            Arc::new(SqliteSummarySource::new(container.db_pool().clone())),
+            Arc::new(SqliteSummarySource::new(container.database().clone())),
             repository,
             index,
             Arc::new(StateRuntime { app: app.clone() }),
         )),
-        container.db_pool().clone(),
+        container.database().clone(),
         container.core.background(),
     );
     tracing::info!(%identity, "Summary tier enabled");
@@ -149,7 +149,7 @@ impl Container {
     pub async fn summary_search(&self) -> Option<Arc<SummarySearch>> {
         let identity = self.search.embedding_identity()?.to_owned();
         let repository: Arc<dyn SummaryRepositoryPort> =
-            Arc::new(SqliteSummaryRepository::new(self.db_pool().clone()));
+            Arc::new(SqliteSummaryRepository::new(self.database().clone()));
         match repository.count_for_identity(&identity).await {
             Ok(0) => return None,
             Ok(_) => {}

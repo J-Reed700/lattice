@@ -3,10 +3,20 @@
 
 mod driver_error;
 
+pub mod bind_limit;
+pub mod database;
+pub mod driver;
 pub mod embedding_encoding;
+pub mod error;
 pub mod sql_like;
 pub mod timestamps;
 pub mod transactions;
-pub use transactions::Transactions;
+pub use database::Database;
+pub use error::{PersistenceError, PersistenceErrorKind};
+pub use transactions::{ReadTx, Transactions, WriteTx};
+#[cfg(test)]
+mod database_tests;
+#[cfg(test)]
+mod error_tests;
 #[cfg(test)]
 mod transactions_tests;

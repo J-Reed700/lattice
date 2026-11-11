@@ -4,7 +4,7 @@ pub(super) fn practical_repo(
     container: &Container,
 ) -> crate::features::learning::practical_repository::LearningPracticalRepository {
     crate::features::learning::practical_repository::LearningPracticalRepository::new(
-        container.db_pool().clone(),
+        container.database().clone(),
     )
 }
 
@@ -218,7 +218,7 @@ pub async fn generate_learning_practical_activity(
         }
         None
     };
-    let program = LearningRepository::new(container.db_pool().clone())
+    let program = LearningRepository::new(container.database().clone())
         .get(&request.program_id)
         .await
         .map_err(ApiError::from)?;
@@ -280,7 +280,7 @@ pub async fn generate_learning_practical_activity(
         .filter_map(|source| source.active_version_id.clone())
         .collect::<Vec<_>>();
     if source_ids.is_empty()
-        && LearningRepository::new(container.db_pool().clone())
+        && LearningRepository::new(container.database().clone())
             .has_source_history(&request.program_id)
             .await
             .map_err(ApiError::from)?
@@ -457,7 +457,7 @@ pub async fn send_learning_simulation_turn(
             ),
         ));
     }
-    crate::features::learning::practical_repository::validate_learner_turn(&request.content)
+    lattice_learning::practice::session::turn::validate_learner_turn(&request.content)
         .map_err(ApiError::from)?;
     let (activity, source_ids) = repo
         .simulation_session_generation_context(&request.program_id, &session.id)

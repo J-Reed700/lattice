@@ -22,13 +22,13 @@ export const practiceHomeApi = {
 
   due: (programId: string): Promise<Wire.PracticeDueDto> => call('practice_due', { request: { programId } }),
 
-  codingSessions: (programId: string): Promise<Wire.CodingSessionSummaryDto[]> =>
-    call('list_coding_sessions', { request: { programId } }),
+  codingSessions: (programId: string): Promise<Wire.PracticeSessionSummaryDto[]> =>
+    call('list_practice_sessions', { request: { programId } }),
 
   /** A Coached session on a coding activity that has none yet; returns its id. */
-  startCodingSession: async (programId: string, activityId: string): Promise<string> => {
-    const request: Wire.StartCodingSessionRequestDto = { operationId: newId(), programId, activityId, setting: 'coached', budgetSeconds: null };
-    const session = await call<Wire.CodingSessionDto>('start_coding_session', { request });
+  startPracticeSession: async (programId: string, activityId: string): Promise<string> => {
+    const request: Wire.StartPracticeSessionRequestDto = { operationId: newId(), programId, activityId, setting: 'coached', budgetSeconds: null };
+    const session = await call<Wire.PracticeSessionDto>('start_practice_session', { request });
     return session.sessionId;
   },
 };

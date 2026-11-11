@@ -10,10 +10,10 @@ use crate::{
     practical_dto::*,
     practice::coding::{harness::CaseHarness, problem::ProblemCase},
 };
-use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use serde::{de::DeserializeOwned, Deserialize, Serialize};
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 use std::collections::HashMap;
 
 mod activities;
@@ -42,17 +42,6 @@ fn decode<T: DeserializeOwned>(value: &str) -> Result<T> {
     serde_json::from_str(value).map_err(|error| AppError::Serialization(error.to_string()))
 }
 
-/// What a learner may send as one turn of a simulation: the bound a chat
-/// message has.
-pub fn validate_learner_turn(content: &str) -> Result<()> {
-    if content.trim().is_empty() || content.chars().count() > MAX_CHAT_MESSAGE_CHARS {
-        return Err(invalid(format!(
-            "Simulation turns must contain 1–{MAX_CHAT_MESSAGE_CHARS} characters."
-        )));
-    }
-    Ok(())
-}
-
 fn engine_name(value: LearningContainerEngine) -> &'static str {
     match value {
         LearningContainerEngine::Docker => "docker",
@@ -71,7 +60,7 @@ fn parse_engine(value: &str) -> Result<LearningContainerEngine> {
 fn kind_name(value: LearningPracticalActivityKind) -> &'static str {
     match value {
         LearningPracticalActivityKind::CodeLab => "code_lab",
-        LearningPracticalActivityKind::CodingProblem => "coding_problem",
+        LearningPracticalActivityKind::Exercise => "exercise",
         LearningPracticalActivityKind::Debugging => "debugging",
         LearningPracticalActivityKind::CodeReview => "code_review",
         LearningPracticalActivityKind::Incident => "incident",
@@ -86,7 +75,7 @@ fn kind_name(value: LearningPracticalActivityKind) -> &'static str {
 fn parse_kind(value: &str) -> Result<LearningPracticalActivityKind> {
     match value {
         "code_lab" => Ok(LearningPracticalActivityKind::CodeLab),
-        "coding_problem" => Ok(LearningPracticalActivityKind::CodingProblem),
+        "exercise" => Ok(LearningPracticalActivityKind::Exercise),
         "debugging" => Ok(LearningPracticalActivityKind::Debugging),
         "code_review" => Ok(LearningPracticalActivityKind::CodeReview),
         "incident" => Ok(LearningPracticalActivityKind::Incident),
@@ -272,14 +261,15 @@ pub struct LearningPracticalRepository {
 }
 
 impl LearningPracticalRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
-    async fn active_program(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<i64> {
+    async fn active_program(tx: &mut SqliteConnection, program_id: &str) -> Result<i64> {
         let row = sqlx::query("SELECT status,revision FROM learning_programs WHERE id=?")
             .bind(program_id)
-            .fetch_optional(&mut **tx)
+            .fetch_optional(&mut *tx)
             .await
             .map_err(db)?
             .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
@@ -291,10 +281,10 @@ impl LearningPracticalRepository {
         Ok(row.get("revision"))
     }
 
-    async fn writer_lock(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+    async fn writer_lock(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
         sqlx::query("UPDATE learning_programs SET revision=revision WHERE id=?")
             .bind(program_id)
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await
             .map_err(db)?;
         Ok(())

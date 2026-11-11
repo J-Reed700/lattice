@@ -2,6 +2,7 @@
 
 use crate::features::conversation::chat::resumable_research_questions;
 use lattice_core::shared::error::AppError;
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStore;
 
 /// Close out grounding checks the last run never finished.
@@ -10,19 +11,8 @@ use lattice_core::shared::runtime::jobs::JobStore;
 /// background task; if the app quits under that task the marker stays, and the
 /// message would show "Checking…" forever. Nothing re-runs the check (its
 /// evidence lived in the turn), so the honest state is "not checked".
-pub async fn reconcile_interrupted_verifications(
-    pool: &sqlx::SqlitePool,
-) -> Result<u64, sqlx::Error> {
-    let result = sqlx::query(
-        "UPDATE conversation_messages \
-         SET metadata = json_set(metadata, '$.verification.pending', json('false'), \
-                                          '$.verification.interrupted', json('true')) \
-         WHERE json_valid(metadata) \
-           AND json_extract(metadata, '$.verification.pending') = 1",
-    )
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
+pub async fn reconcile_interrupted_verifications(database: &Database) -> Result<u64, AppError> {
+    super::repository::mark_interrupted_verifications(database).await
 }
 
 /// Close out turns the last run never finished.
@@ -34,22 +24,11 @@ pub async fn reconcile_interrupted_verifications(
 /// delivered again and answers the question its `assembled` checkpoint names,
 /// so that row stays `pending`. Every other such row has nothing left to
 /// finish it, and is failed so it can be retried.
-pub async fn reconcile_stuck_turns(
-    pool: &sqlx::SqlitePool,
-    jobs: &JobStore,
-) -> Result<u64, AppError> {
+pub async fn reconcile_stuck_turns(database: &Database, jobs: &JobStore) -> Result<u64, AppError> {
     let resuming = resumable_research_questions(jobs).await?;
     let resuming = serde_json::to_string(&resuming)
         .map_err(|error| AppError::Serialization(error.to_string()))?;
-    let result = sqlx::query(
-        "UPDATE conversation_messages SET status = 'failed' \
-         WHERE status IN ('pending', 'streaming') \
-           AND id NOT IN (SELECT value FROM json_each(?))",
-    )
-    .bind(resuming)
-    .execute(pool)
-    .await?;
-    Ok(result.rows_affected())
+    super::repository::fail_unfinished_turns(database, resuming).await
 }
 
 #[cfg(test)]
@@ -99,7 +78,9 @@ mod tests {
             .unwrap();
         }
 
-        let marked = reconcile_interrupted_verifications(&pool).await.unwrap();
+        let marked = reconcile_interrupted_verifications(&Database::from(pool.clone()))
+            .await
+            .unwrap();
         assert_eq!(marked, 1);
 
         let waiting: String =
@@ -152,7 +133,12 @@ mod tests {
         }
 
         let jobs = JobStore::new(pool.clone());
-        assert_eq!(reconcile_stuck_turns(&pool, &jobs).await.unwrap(), 2);
+        assert_eq!(
+            reconcile_stuck_turns(&Database::from(pool.clone()), &jobs)
+                .await
+                .unwrap(),
+            2
+        );
 
         let statuses: Vec<(String, String)> =
             sqlx::query_as("SELECT id, status FROM conversation_messages ORDER BY id")
@@ -186,7 +172,7 @@ mod tests {
 
     /// The pass startup makes over the turns the last run left.
     async fn reconcile(pool: &sqlx::SqlitePool) {
-        reconcile_stuck_turns(pool, &JobStore::new(pool.clone()))
+        reconcile_stuck_turns(&Database::from(pool.clone()), &JobStore::new(pool.clone()))
             .await
             .unwrap();
     }

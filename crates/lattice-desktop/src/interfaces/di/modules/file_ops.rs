@@ -2,7 +2,7 @@
 
 use super::CoreModule;
 use crate::infrastructure::persistence::repositories::file_library::SqliteFileLibrary;
-use sqlx::SqlitePool;
+use lattice_core::shared::persistence::Database;
 use std::sync::Arc;
 
 // Application Use Cases - File Operations
@@ -47,13 +47,13 @@ impl FileOpsModule {
     }
     /// Build FileOpsModule by composing the file + extraction feature builders.
     pub async fn new(
-        db_pool: SqlitePool,
+        database: Database,
         core: Arc<CoreModule>,
         extraction_workers: crate::features::indexing::engine::extraction::ExtractionWorkers,
+        tag_service: Arc<dyn TagServiceTrait>,
     ) -> lattice_core::shared::error::Result<Self> {
         use crate::features::indexing::content_extraction_adapter::ContentExtractionAdapter;
         use crate::features::indexing::engine::extraction::ContentExtractor;
-        use crate::features::tags::service::TagService;
         use crate::infrastructure::file_system::file_storage::SecureFileStorage;
         use crate::infrastructure::file_system::FileSystemAdapter;
         use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
@@ -68,10 +68,9 @@ impl FileOpsModule {
             .unwrap_or_else(|| core.data_dir().clone());
 
         let document_repo =
-            Arc::new(DocumentRepositoryImpl::new(db_pool.clone())) as Arc<dyn DocumentRepository>;
-        let tag_service = Arc::new(TagService::new(db_pool.clone())) as Arc<dyn TagServiceTrait>;
+            Arc::new(DocumentRepositoryImpl::new(database.clone())) as Arc<dyn DocumentRepository>;
 
-        let library = Arc::new(SqliteFileLibrary::new(db_pool.clone()));
+        let library = Arc::new(SqliteFileLibrary::new(database.clone()));
         // Previews of PDFs and office files parse under the same worker bound
         // as indexing, which builds its extractor from the same workers.
         let preview_extractor = Arc::new(
@@ -89,7 +88,7 @@ impl FileOpsModule {
             tag_service,
             file_access_config,
             vault_path,
-            db_pool,
+            database,
             preview_extractor,
         );
         let extraction = crate::features::extraction::di::build(

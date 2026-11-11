@@ -2,7 +2,13 @@
 
 use super::*;
 use crate::persistence::hash_text;
-use crate::practice::coding::proof::fakes::{Behaviour, FakeHarness, FakeRunner, ScriptedModel};
+use crate::practice::coding::proof::fakes::{Behaviour, FakeRunner, ScriptedModel};
+use crate::practice::kinds::program::shape::solution_piece;
+use crate::practice::kinds::program::toolchain::FakeToolchains;
+use crate::practice::kinds::program::{kind, KIND};
+use crate::practice::session::author::Failed;
+use crate::practice::session::builder::{BuildSteps, MAX_PROOF_REASKS, STEP_PROVING, STEP_WRITING};
+use lattice_core::domain::learning::practice::work::{Draft as ExerciseDraft, Form};
 use std::sync::Mutex;
 
 struct RecordingSteps {
@@ -40,8 +46,8 @@ impl BuildSteps for RecordingSteps {
 }
 
 /// A runner whose code fails the listed cases when it contains the text, and passes the rest.
-fn runner(fails: Vec<(&'static str, Vec<&'static str>)>) -> FakeRunner {
-    FakeRunner::new(move |code, case| {
+fn runner(fails: Vec<(&'static str, Vec<&'static str>)>) -> Arc<FakeRunner> {
+    Arc::new(FakeRunner::new(move |code, case| {
         let failing = fails
             .iter()
             .any(|(text, ids)| code.contains(text) && ids.contains(&case.id.as_str()));
@@ -50,7 +56,12 @@ fn runner(fails: Vec<(&'static str, Vec<&'static str>)>) -> FakeRunner {
         } else {
             Behaviour::Passes { ms: 5 }
         }
-    })
+    }))
+}
+
+/// The Program kind running its code on `runner`.
+fn program(runner: &Arc<FakeRunner>) -> Kind {
+    kind(Arc::new(FakeToolchains::sharing(runner.clone())))
 }
 
 fn killers() -> Vec<(&'static str, Vec<&'static str>)> {
@@ -103,14 +114,14 @@ fn with(mut answer: Value, field: &str, value: Value) -> Value {
     answer
 }
 
-fn request(task: CodingTask) -> ProblemRequest {
+fn request(task: Form) -> ProblemRequest {
     ProblemRequest {
         program_id: "program".into(),
         lesson: Some(LessonBrief {
             title: "Lookups".into(),
             objective: "Use a table to avoid repeated scans.".into(),
         }),
-        task,
+        form: task,
         language: "python".into(),
         difficulty: ProblemDifficulty::Easy,
         patterns: vec!["hash_map_lookup".into()],
@@ -121,18 +132,18 @@ fn request(task: CodingTask) -> ProblemRequest {
 
 async fn build(
     answers: Vec<Value>,
-    runner: &FakeRunner,
+    runner: &Arc<FakeRunner>,
     request: &ProblemRequest,
 ) -> (Result<Problem>, ScriptedModel) {
     let model = ScriptedModel::new(answers.iter().map(Value::to_string));
-    let source = GeneratedProblems {
-        llm: &model,
-        runner,
-        harness: &FakeHarness,
-    };
-    let problem = source
-        .problem(request, &RecordingSteps::new(), CancellationToken::new())
-        .await;
+    let problem = build_problem(
+        &program(runner),
+        request,
+        &model,
+        &RecordingSteps::new(),
+        CancellationToken::new(),
+    )
+    .await;
     (problem, model)
 }
 
@@ -147,14 +158,7 @@ fn built(result: (Result<Problem>, ScriptedModel)) -> (Problem, ScriptedModel) {
 async fn a_reference_that_fails_a_case_is_asked_for_again_with_the_failure() {
     let failing = with(answer(), "reference", json!("REF BAD"));
     let runner = runner(killers());
-    let (_, model) = built(
-        build(
-            vec![failing, answer()],
-            &runner,
-            &request(CodingTask::Problem),
-        )
-        .await,
-    );
+    let (_, model) = built(build(vec![failing, answer()], &runner, &request(Form::Build)).await);
     assert_eq!(model.calls(), 2);
     let second = &model.texts()[1];
     assert!(second.contains("did not pass every case"), "{second}");
@@ -164,8 +168,7 @@ async fn a_reference_that_fails_a_case_is_asked_for_again_with_the_failure() {
 #[tokio::test]
 async fn a_misreading_that_passes_everything_is_dropped() {
     let runner = runner(killers());
-    let (problem, model) =
-        built(build(vec![answer()], &runner, &request(CodingTask::Problem)).await);
+    let (problem, model) = built(build(vec![answer()], &runner, &request(Form::Build)).await);
     assert_eq!(model.calls(), 1);
     let ids: Vec<&str> = problem
         .misreadings
@@ -187,14 +190,8 @@ async fn fewer_than_two_killed_misreadings_asks_again() {
         ]),
     );
     let runner = runner(killers());
-    let (problem, model) = built(
-        build(
-            vec![one_killed, answer()],
-            &runner,
-            &request(CodingTask::Problem),
-        )
-        .await,
-    );
+    let (problem, model) =
+        built(build(vec![one_killed, answer()], &runner, &request(Form::Build)).await);
     assert_eq!(model.calls(), 2);
     assert!(model.texts()[1].contains("misreading-2"));
     assert_eq!(problem.misreadings.len(), 2);
@@ -208,14 +205,8 @@ async fn a_statement_that_names_its_pattern_is_refused_and_asked_again() {
         json!("Use a Hash Map Lookup to find the positions of the two numbers that add up to the target."),
     );
     let runner = runner(killers());
-    let (problem, model) = built(
-        build(
-            vec![naming, answer()],
-            &runner,
-            &request(CodingTask::Problem),
-        )
-        .await,
-    );
+    let (problem, model) =
+        built(build(vec![naming, answer()], &runner, &request(Form::Build)).await);
     assert_eq!(model.calls(), 2);
     assert!(model.texts()[1].contains("names the pattern"));
     assert!(!problem.spec.statement.contains("Hash Map"));
@@ -232,14 +223,7 @@ async fn a_title_that_names_an_alias_of_its_pattern_is_refused() {
         .unwrap();
     let naming = with(answer(), "title", json!(format!("A {alias} problem")));
     let runner = runner(killers());
-    let (_, model) = built(
-        build(
-            vec![naming, answer()],
-            &runner,
-            &request(CodingTask::Problem),
-        )
-        .await,
-    );
+    let (_, model) = built(build(vec![naming, answer()], &runner, &request(Form::Build)).await);
     assert_eq!(model.calls(), 2);
 }
 
@@ -250,7 +234,7 @@ async fn a_problem_that_is_never_proven_fails_with_the_last_reason_after_two_mor
     let (result, model) = build(
         vec![failing.clone(), failing.clone(), failing],
         &runner,
-        &request(CodingTask::Problem),
+        &request(Form::Build),
     )
     .await;
     assert_eq!(model.calls(), MAX_PROOF_REASKS + 1);
@@ -265,7 +249,7 @@ async fn a_problem_that_is_never_proven_fails_with_the_last_reason_after_two_mor
 #[tokio::test]
 async fn killed_by_records_the_cases_that_kill_each_misreading() {
     let runner = runner(killers());
-    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::Problem)).await);
+    let (problem, _) = built(build(vec![answer()], &runner, &request(Form::Build)).await);
     let killed = |id: &str| {
         problem
             .misreadings
@@ -283,7 +267,7 @@ async fn killed_by_records_the_cases_that_kill_each_misreading() {
 #[tokio::test]
 async fn a_bug_fix_starts_from_the_misreading_killed_by_the_most_cases() {
     let runner = runner(killers());
-    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::BugFix)).await);
+    let (problem, _) = built(build(vec![answer()], &runner, &request(Form::Repair)).await);
     assert_eq!(problem.bug.as_deref(), Some("misreading-1"));
     assert_eq!(problem.spec.starter, "LATE");
 }
@@ -292,14 +276,14 @@ async fn a_bug_fix_starts_from_the_misreading_killed_by_the_most_cases() {
 async fn a_bug_fix_tie_goes_to_the_first_misreading() {
     let tied = vec![("LATE", vec!["hidden-1"]), ("EARLY", vec!["example-2"])];
     let runner = runner(tied);
-    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::BugFix)).await);
+    let (problem, _) = built(build(vec![answer()], &runner, &request(Form::Repair)).await);
     assert_eq!(problem.bug.as_deref(), Some("misreading-1"));
 }
 
 #[tokio::test]
 async fn a_problem_starts_from_its_signature_and_names_no_bug() {
     let runner = runner(killers());
-    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::Problem)).await);
+    let (problem, _) = built(build(vec![answer()], &runner, &request(Form::Build)).await);
     assert_eq!(
         problem.spec.starter,
         "def pair_positions(numbers: list[int], target: int) -> list[int]:\n    pass\n"
@@ -310,7 +294,7 @@ async fn a_problem_starts_from_its_signature_and_names_no_bug() {
 #[tokio::test]
 async fn cases_are_examples_then_hidden_then_scale_with_the_scale_digest_and_time() {
     let runner = runner(killers());
-    let (problem, _) = built(build(vec![answer()], &runner, &request(CodingTask::Problem)).await);
+    let (problem, _) = built(build(vec![answer()], &runner, &request(Form::Build)).await);
     let ids: Vec<&str> = problem.cases.iter().map(|case| case.id.as_str()).collect();
     assert_eq!(
         ids,
@@ -340,39 +324,31 @@ async fn cases_are_examples_then_hidden_then_scale_with_the_scale_digest_and_tim
 async fn the_build_reports_writing_then_proving_and_stops_when_told_to() {
     let runner = runner(killers());
     let model = ScriptedModel::new([answer().to_string()]);
-    let source = GeneratedProblems {
-        llm: &model,
-        runner: &runner,
-        harness: &FakeHarness,
-    };
     let steps = RecordingSteps::new();
-    source
-        .problem(
-            &request(CodingTask::Problem),
-            &steps,
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
+    build_problem(
+        &program(&runner),
+        &request(Form::Build),
+        &model,
+        &steps,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     assert_eq!(
         steps.recorded(),
         [(0, STEP_WRITING.to_owned()), (1, STEP_PROVING.to_owned())]
     );
 
     let model = ScriptedModel::new([answer().to_string()]);
-    let source = GeneratedProblems {
-        llm: &model,
-        runner: &runner,
-        harness: &FakeHarness,
-    };
     let stopped = RecordingSteps::stopping_after(0);
-    let result = source
-        .problem(
-            &request(CodingTask::Problem),
-            &stopped,
-            CancellationToken::new(),
-        )
-        .await;
+    let result = build_problem(
+        &program(&runner),
+        &request(Form::Build),
+        &model,
+        &stopped,
+        CancellationToken::new(),
+    )
+    .await;
     assert!(
         matches!(result, Err(AppError::InvalidState(_))),
         "{result:?}"
@@ -385,20 +361,16 @@ async fn a_draft_asked_for_again_is_reported_at_the_proving_step() {
     let failing = with(answer(), "reference", json!("REF BAD"));
     let runner = runner(killers());
     let model = ScriptedModel::new([failing.to_string(), answer().to_string()]);
-    let source = GeneratedProblems {
-        llm: &model,
-        runner: &runner,
-        harness: &FakeHarness,
-    };
     let steps = RecordingSteps::new();
-    source
-        .problem(
-            &request(CodingTask::Problem),
-            &steps,
-            CancellationToken::new(),
-        )
-        .await
-        .unwrap();
+    build_problem(
+        &program(&runner),
+        &request(Form::Build),
+        &model,
+        &steps,
+        CancellationToken::new(),
+    )
+    .await
+    .unwrap();
     let indexes: Vec<u32> = steps.recorded().iter().map(|(index, _)| *index).collect();
     assert!(
         indexes.windows(2).all(|pair| pair[0] <= pair[1]),
@@ -417,21 +389,14 @@ async fn a_case_with_the_wrong_number_of_arguments_is_asked_for_again() {
         ]),
     );
     let runner = runner(killers());
-    let (_, model) = built(
-        build(
-            vec![short, answer()],
-            &runner,
-            &request(CodingTask::Problem),
-        )
-        .await,
-    );
+    let (_, model) = built(build(vec![short, answer()], &runner, &request(Form::Build)).await);
     assert_eq!(model.calls(), 2);
     assert!(model.texts()[1].contains("example-1"));
 }
 
 #[tokio::test]
 async fn every_requested_pattern_must_be_listed() {
-    let mut wanted = request(CodingTask::Problem);
+    let mut wanted = request(Form::Build);
     wanted.patterns = vec!["hash_map_lookup".into(), "binary_search".into()];
     let both = with(
         answer(),
@@ -447,7 +412,7 @@ async fn every_requested_pattern_must_be_listed() {
 
 #[tokio::test]
 async fn a_request_for_an_unknown_pattern_is_refused_before_asking() {
-    let mut unknown = request(CodingTask::Problem);
+    let mut unknown = request(Form::Build);
     unknown.patterns = vec!["no_such_pattern".into()];
     let runner = runner(killers());
     let (result, model) = build(vec![answer()], &runner, &unknown).await;
@@ -488,3 +453,95 @@ fn the_schema_keeps_every_item_to_six_properties_and_offers_the_catalogue_as_an_
     let catalogue: Vec<&str> = PROBLEM_PATTERNS.iter().map(|pattern| pattern.id).collect();
     assert_eq!(offered, catalogue);
 }
+
+async fn authored(
+    form: Form,
+    failed: &[Failed],
+    request: &ProblemRequest,
+    answers: Vec<Value>,
+) -> (Result<Authored>, ScriptedModel) {
+    let model = ScriptedModel::new(answers.iter().map(Value::to_string));
+    let author = ProgramAuthor {
+        tools: Arc::new(FakeToolchains::sharing(runner(killers()))),
+    };
+    let parts = parts_of(request).unwrap();
+    let drafted = author
+        .draft(&Commission {
+            program_id: &request.program_id,
+            lesson: parts.lesson.as_ref(),
+            form,
+            options: &parts.options,
+            facts: &parts.facts,
+            llm: &model,
+            failed,
+        })
+        .await;
+    (drafted, model)
+}
+
+fn draft_of(authored: Result<Authored>) -> (ExerciseDraft, String) {
+    match authored {
+        Ok(Authored::Draft { draft, raw }) => (*draft, raw),
+        other => panic!("expected a draft, got {other:?}"),
+    }
+}
+
+#[tokio::test]
+async fn a_build_draft_is_the_answer_in_the_core_vocabulary_with_the_signature_as_its_starter() {
+    let (drafted, model) = authored(Form::Build, &[], &request(Form::Build), vec![answer()]).await;
+    let (draft, raw) = draft_of(drafted);
+    assert_eq!(model.calls(), 1);
+    assert_eq!(raw, answer().to_string());
+    assert_eq!(draft.kind.as_str(), KIND);
+    assert_eq!(draft.form, Form::Build);
+    assert_eq!(draft.reference, solution_piece("REF").unwrap());
+    assert_eq!(
+        draft.starter,
+        Some(
+            solution_piece(
+                "def pair_positions(numbers: list[int], target: int) -> list[int]:
+    pass
+"
+            )
+            .unwrap()
+        )
+    );
+    assert_eq!(draft.cases.len(), 6);
+    assert_eq!(draft.misreadings.len(), 3);
+    assert!(draft.asks.is_empty());
+}
+
+#[tokio::test]
+async fn a_repair_draft_has_no_starter_of_its_own() {
+    let (drafted, _) = authored(Form::Repair, &[], &request(Form::Repair), vec![answer()]).await;
+    let (draft, _) = draft_of(drafted);
+    assert_eq!(draft.form, Form::Repair);
+    assert_eq!(draft.starter, None);
+}
+
+#[tokio::test]
+async fn a_form_a_program_does_not_have_is_refused_before_asking() {
+    let (drafted, model) =
+        authored(Form::Complete, &[], &request(Form::Build), vec![answer()]).await;
+    assert!(
+        matches!(drafted, Err(AppError::InvalidState(_))),
+        "{drafted:?}"
+    );
+    assert_eq!(model.calls(), 0);
+}
+
+#[tokio::test]
+async fn the_drafts_refused_before_are_answered_in_the_conversation() {
+    let failed = [Failed {
+        raw: "the first answer".to_owned(),
+        reason: "The reference is wrong.".to_owned(),
+    }];
+    let (drafted, model) =
+        authored(Form::Build, &failed, &request(Form::Build), vec![answer()]).await;
+    draft_of(drafted);
+    let sent = &model.texts()[0];
+    assert!(sent.contains("the first answer"), "{sent}");
+    assert!(sent.contains("The reference is wrong."), "{sent}");
+}
+
+mod golden;

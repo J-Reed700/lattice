@@ -29,7 +29,7 @@ pub async fn start_course_drill(
         lesson_id,
         material: material.into(),
     };
-    let started = review::start(container.db_pool(), &asked, mode, lines, issues)
+    let started = review::start(container.database(), &asked, mode, lines, issues)
         .await
         .map_err(ApiError::from)?;
     for job in &started.jobs {
@@ -50,7 +50,7 @@ pub async fn submit_code_review(
     container: State<'_, Container>,
 ) -> Result<CodeReviewResultDto, ApiError> {
     let acted = review::submit(
-        container.db_pool(),
+        container.database(),
         &attempt_id,
         findings,
         fix_files,
@@ -71,7 +71,7 @@ pub async fn code_review_result(
     attempt_id: String,
     container: State<'_, Container>,
 ) -> Result<CodeReviewResultDto, ApiError> {
-    review::result(container.db_pool(), &attempt_id)
+    review::result(container.database(), &attempt_id)
         .await
         .map_err(ApiError::from)
 }
@@ -83,7 +83,7 @@ pub async fn regrade_code_review(
     attempt_id: String,
     container: State<'_, Container>,
 ) -> Result<CodeReviewResultDto, ApiError> {
-    let acted = review::regrade(container.db_pool(), &attempt_id)
+    let acted = review::regrade(container.database(), &attempt_id)
         .await
         .map_err(ApiError::from)?;
     if let Some(job) = &acted.job {
@@ -109,7 +109,7 @@ pub async fn course_drills(
     language: Option<String>,
     container: State<'_, Container>,
 ) -> Result<CourseDrillsDto, ApiError> {
-    review::course_drills(container.db_pool(), &program_id, language.as_deref())
+    review::course_drills(container.database(), &program_id, language.as_deref())
         .await
         .map_err(ApiError::from)
 }

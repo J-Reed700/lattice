@@ -7,13 +7,14 @@ use super::support::{
 use crate::drills::lesson::LessonContext;
 use crate::tests::pool;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::Database;
 
 #[tokio::test]
 async fn a_lesson_is_read_with_its_course_its_module_and_its_own_details() -> Result<()> {
     let pool = pool().await?;
     let program = course(&pool).await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
-    let context = LessonContext::load(&pool, &program, &lesson).await?;
+    let context = LessonContext::load(&Database::from(pool.clone()), &program, &lesson).await?;
     assert_eq!(context.program_id, program);
     assert_eq!(context.lesson_id, lesson);
     assert_eq!(context.course, "A generic learning program");
@@ -55,7 +56,7 @@ async fn a_prepared_lessons_teaching_is_its_explanation_example_contrast_and_rec
         ],
     )
     .await?;
-    let context = LessonContext::load(&pool, &program, &lesson).await?;
+    let context = LessonContext::load(&Database::from(pool.clone()), &program, &lesson).await?;
     assert!(context.prepared);
     assert_eq!(
         context.teaching,
@@ -78,7 +79,7 @@ async fn a_lesson_that_is_not_prepared_has_no_teaching_even_with_blocks() -> Res
         ],
     )
     .await?;
-    let context = LessonContext::load(&pool, &program, &lesson).await?;
+    let context = LessonContext::load(&Database::from(pool.clone()), &program, &lesson).await?;
     assert!(!context.prepared);
     assert!(context.teaching.is_empty());
     Ok(())
@@ -101,7 +102,7 @@ async fn the_versions_the_blocks_cite_are_listed_once_each_in_block_order_from_b
         ],
     )
     .await?;
-    let context = LessonContext::load(&pool, &program, &lesson).await?;
+    let context = LessonContext::load(&Database::from(pool.clone()), &program, &lesson).await?;
     assert_eq!(context.cited_versions, ["v2", "v1", "v3"]);
     Ok(())
 }
@@ -112,14 +113,14 @@ async fn a_lesson_asked_for_under_another_course_is_invalid_input() -> Result<()
     let program = course(&pool).await?;
     let other = course(&pool).await?;
     let lesson = lesson_titled(&pool, &program, SPACING_LESSON).await?;
-    let error = LessonContext::load(&pool, &other, &lesson)
+    let error = LessonContext::load(&Database::from(pool.clone()), &other, &lesson)
         .await
         .unwrap_err();
     assert!(
         matches!(&error, AppError::InvalidInput(message) if message.contains("not one of the course's")),
         "{error:?}"
     );
-    let missing = LessonContext::load(&pool, &program, "no-such-lesson")
+    let missing = LessonContext::load(&Database::from(pool.clone()), &program, "no-such-lesson")
         .await
         .unwrap_err();
     assert!(matches!(missing, AppError::InvalidInput(_)), "{missing:?}");
@@ -132,7 +133,7 @@ async fn the_query_is_the_lessons_title_and_objective_then_the_modules_title_and
     let pool = pool().await?;
     let program = course(&pool).await?;
     let lesson = lesson_titled(&pool, &program, SLEEP_LESSON).await?;
-    let context = LessonContext::load(&pool, &program, &lesson).await?;
+    let context = LessonContext::load(&Database::from(pool.clone()), &program, &lesson).await?;
     assert_eq!(
         context.query(),
         "Sleep after learning\nExplain how sleep after learning helps memory\nModule 0\nDescribe a concept"

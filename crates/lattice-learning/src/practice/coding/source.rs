@@ -1,39 +1,37 @@
-//! Where coding problems come from. `GeneratedProblems` has the model write a problem, proves it by running the
-//! reference and the misreadings, and asks again with what failed.
+//! Where a program's problems come from: the author the Program kind drafts with, and the build the evals run.
 
 use crate::drills::build::ask::{ask_request, refuse};
-use crate::drills::runner::CodeRunner;
 use crate::generation::parse_json;
 use crate::lessons::structured_call::reask;
 use crate::model_call;
-use crate::practice::coding::harness::CaseHarness;
 use crate::practice::coding::problem::{
-    CaseCompare, CaseVisibility, CodingTask, Misreading, Problem, ProblemCase,
-    ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
+    CaseCompare, CaseVisibility, Misreading, Problem, ProblemCase, ProblemClarification,
+    ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
 };
-use crate::practice::coding::proof::{prove, Proof};
+use crate::practice::kinds::program::shape::{
+    brief_of, built_problem_of, case_of, misreading_of, program_form, solution_piece,
+};
+use crate::practice::kinds::program::toolchain::Toolchains;
+use crate::practice::kinds::program::KIND;
+use crate::practice::session::author::{Author, Authored, Commission, Lesson};
+use crate::practice::session::builder::{build, BuildSteps, Built, Making, NothingStore, Target};
+use crate::practice::session::kind::Kind;
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::problem_patterns::{
     named_in, problem_pattern, PROBLEM_PATTERNS,
 };
+use lattice_core::domain::learning::practice::work::{Draft as ExerciseDraft, Form, KindId};
 use lattice_core::shared::error::{AppError, Result};
-use serde::Deserialize;
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
+use std::sync::Arc;
 use tokio_util::sync::CancellationToken;
 
 #[cfg(test)]
 mod tests;
-
-/// The three steps of a build, in the order the job reports them.
-pub const STEP_WRITING: &str = "Writing the problem";
-pub const STEP_PROVING: &str = "Proving it";
-pub const STEP_SAVING: &str = "Saving";
-
-/// How many times a draft that fails its proof is asked for again with what failed. Each attempt is a whole problem,
-/// so this is a model-call budget: the design asks that 27 of 30 builds prove within it.
-pub const MAX_PROOF_REASKS: usize = 2;
 
 /// The fewest misreadings a draft offers. The proof drops those that pass every case and needs two that fail one.
 pub const MIN_MISREADINGS: usize = 3;
@@ -63,7 +61,7 @@ pub struct LessonBrief {
 pub struct ProblemRequest {
     pub program_id: String,
     pub lesson: Option<LessonBrief>,
-    pub task: CodingTask,
+    pub form: Form,
     pub language: String,
     pub difficulty: ProblemDifficulty,
     /// Ids from the pattern catalogue that the problem must call for.
@@ -73,38 +71,35 @@ pub struct ProblemRequest {
     pub details: Option<String>,
 }
 
-/// Reports a build's progress; false once the build is no longer wanted.
-#[async_trait]
-pub trait BuildSteps: Send + Sync {
-    async fn step(&self, current: u32, message: &str) -> Result<bool>;
+/// What a program's build request carries beyond the lesson and the form.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgramOptions {
+    pub language: String,
+    pub difficulty: ProblemDifficulty,
+    pub focus: Option<String>,
 }
 
-/// Where a problem comes from. The model writes one today; a pasted problem is the next source.
-#[async_trait]
-pub trait ProblemSource: Send + Sync {
-    async fn problem(
-        &self,
-        request: &ProblemRequest,
-        steps: &dyn BuildSteps,
-        cancel: CancellationToken,
-    ) -> Result<Problem>;
+/// What a program's store tells its author: the language the problem is written in, the patterns it must call for
+/// and what the learner prepares for.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProgramFacts {
+    pub language: String,
+    pub patterns: Vec<String>,
+    pub details: Option<String>,
 }
 
-/// Problems the model writes and the app proves.
-pub struct GeneratedProblems<'a> {
-    pub llm: &'a dyn LLMPort,
-    pub runner: &'a dyn CodeRunner,
-    pub harness: &'a dyn CaseHarness,
+/// The Program kind's author: the model writes a problem for the lesson, and `read` refuses what the app can see is
+/// wrong without running anything.
+pub struct ProgramAuthor {
+    pub tools: Arc<dyn Toolchains>,
 }
 
 #[async_trait]
-impl ProblemSource for GeneratedProblems<'_> {
-    async fn problem(
-        &self,
-        request: &ProblemRequest,
-        steps: &dyn BuildSteps,
-        cancel: CancellationToken,
-    ) -> Result<Problem> {
+impl Author for ProgramAuthor {
+    async fn draft(&self, commission: &Commission<'_>) -> Result<Authored> {
+        let request = request_of(commission)?;
         for id in &request.patterns {
             if problem_pattern(id).is_none() {
                 return Err(AppError::InvalidInput(format!(
@@ -112,54 +107,141 @@ impl ProblemSource for GeneratedProblems<'_> {
                 )));
             }
         }
+        let runner = self.tools.runner(&request.language)?;
         let mut asking = model_call::structured(
             SYSTEM,
-            prompt(request, self.runner.contract()),
+            prompt(&request, runner.contract()),
             schema(),
             PROBLEM_ANSWER_TOKENS,
             "low",
         );
-        let mut reasked = 0;
-        loop {
-            // Progress only moves forward, so a draft asked for again is written during the proving step.
-            report(steps, u32::from(reasked > 0), STEP_WRITING).await?;
-            let asked = ask_request(self.llm, asking.clone(), |raw| read(raw, request)).await?;
-            report(steps, 1, STEP_PROVING).await?;
-            let draft = asked.value;
-            let proof = prove(
-                self.runner,
-                self.harness,
-                &draft.spec,
-                &draft.reference,
-                &draft.misreadings,
-                &draft.cases,
-                cancel.clone(),
-            )
-            .await?;
-            match proof {
-                Proof::Proven(proven) => {
-                    return assemble(request.task, draft.spec, draft.reference, proven)
-                }
-                Proof::Unproven(reason) => {
-                    if reasked >= MAX_PROOF_REASKS {
-                        return Err(AppError::ModelAnswerUnusable(reason));
-                    }
-                    reasked += 1;
-                    asking = reask(asking, &asked.raw, &reason);
-                }
-            }
+        for failed in commission.failed {
+            asking = reask(asking, &failed.raw, &failed.reason);
         }
+        let asked = ask_request(commission.llm, asking, |raw| read(raw, &request)).await?;
+        Ok(Authored::Draft {
+            draft: Box::new(exercise_draft_of(asked.value, commission.form)?),
+            raw: asked.raw,
+        })
     }
 }
 
-/// Tells the build's steps where it is; a build nobody waits for any more stops.
-async fn report(steps: &dyn BuildSteps, current: u32, message: &str) -> Result<()> {
-    if steps.step(current, message).await? {
-        Ok(())
-    } else {
-        Err(AppError::InvalidState(
-            "The coding build was stopped.".into(),
+fn parsed<T: DeserializeOwned>(value: &Value, what: &str) -> Result<T> {
+    serde_json::from_value(value.clone()).map_err(|error| {
+        AppError::InvalidInput(format!(
+            "The program's build {what} are not usable: {error}."
         ))
+    })
+}
+
+/// The problem request a commission stands for.
+fn request_of(commission: &Commission<'_>) -> Result<ProblemRequest> {
+    let options: ProgramOptions = parsed(commission.options, "options")?;
+    let facts: ProgramFacts = parsed(commission.facts, "facts")?;
+    Ok(ProblemRequest {
+        program_id: commission.program_id.to_owned(),
+        lesson: commission.lesson.map(|lesson| LessonBrief {
+            title: lesson.title.clone(),
+            objective: lesson.objective.clone(),
+        }),
+        form: program_form(commission.form)?,
+        language: facts.language,
+        difficulty: options.difficulty,
+        patterns: facts.patterns,
+        focus: options.focus,
+        details: facts.details,
+    })
+}
+
+/// A drafted problem in the core vocabulary. Fix a bug starts from a misreading the proof picks, so it has no starter.
+fn exercise_draft_of(drafted: Draft, form: Form) -> Result<ExerciseDraft> {
+    let starter = (form == Form::Build)
+        .then(|| solution_piece(&drafted.spec.starter))
+        .transpose()?;
+    Ok(ExerciseDraft {
+        kind: KindId::new(KIND),
+        form,
+        brief: brief_of(&drafted.spec)?,
+        reference: solution_piece(&drafted.reference)?,
+        misreadings: drafted
+            .misreadings
+            .iter()
+            .map(misreading_of)
+            .collect::<Result<Vec<_>>>()?,
+        cases: drafted
+            .cases
+            .iter()
+            .map(case_of)
+            .collect::<Result<Vec<_>>>()?,
+        starter,
+        asks: Vec::new(),
+    })
+}
+
+/// A problem request written as the build template takes it.
+struct RequestParts {
+    options: Value,
+    facts: Value,
+    lesson: Option<Lesson>,
+}
+
+fn written(value: &impl Serialize) -> Result<Value> {
+    serde_json::to_value(value).map_err(|error| AppError::Serialization(error.to_string()))
+}
+
+fn parts_of(request: &ProblemRequest) -> Result<RequestParts> {
+    Ok(RequestParts {
+        options: written(&ProgramOptions {
+            language: request.language.clone(),
+            difficulty: request.difficulty,
+            focus: request.focus.clone(),
+        })?,
+        facts: written(&ProgramFacts {
+            language: request.language.clone(),
+            patterns: request.patterns.clone(),
+            details: request.details.clone(),
+        })?,
+        lesson: request.lesson.as_ref().map(|lesson| Lesson {
+            id: String::new(),
+            title: lesson.title.clone(),
+            objective: lesson.objective.clone(),
+        }),
+    })
+}
+
+/// A store that remembers nothing, for a build whose lesson is not one of the program's.
+struct Unremembered;
+
+#[async_trait]
+impl NothingStore for Unremembered {
+    async fn nothing_known(&self, _target: &Target<'_>) -> Result<Option<String>> {
+        Ok(None)
+    }
+
+    async fn record_nothing(&self, _target: &Target<'_>, _reason: &str) -> Result<()> {
+        Ok(())
+    }
+}
+
+/// Builds one problem of `request` with the Program kind, without saving it: what the build evals run.
+pub async fn build_problem(
+    kind: &Kind,
+    request: &ProblemRequest,
+    llm: &dyn LLMPort,
+    steps: &dyn BuildSteps,
+    cancel: CancellationToken,
+) -> Result<Problem> {
+    let parts = parts_of(request)?;
+    let making = Making {
+        program_id: &request.program_id,
+        lesson: parts.lesson.as_ref(),
+        form: request.form,
+        options: &parts.options,
+        facts: &parts.facts,
+    };
+    match build(kind, &making, llm, &Unremembered, steps, cancel).await? {
+        Built::Exercise(exercise) => built_problem_of(&exercise),
+        Built::NothingToMake(reason) => Err(AppError::ModelAnswerUnusable(reason)),
     }
 }
 
@@ -278,7 +360,7 @@ fn prompt(request: &ProblemRequest, runtime: &str) -> String {
 - \"clarifications\" are questions a candidate could ask that the statement leaves open, each with the answer the cases assume."
             .to_owned(),
     );
-    if request.task == CodingTask::BugFix {
+    if request.form == Form::Repair {
         parts.push(
             "The learner will be handed one misreading as buggy code to repair, so write each misreading as a small, realistic change to the reference (an off-by-one, a wrong comparison, a missed case) that keeps the function's shape."
                 .to_owned(),
@@ -562,36 +644,4 @@ fn starter_of(signature: &ProblemSignature) -> String {
         params.join(", "),
         signature.returns
     )
-}
-
-/// The proven problem. For Fix a bug the starter is the code of the misreading killed by the most cases, the first
-/// of those that tie.
-fn assemble(
-    task: CodingTask,
-    mut spec: ProblemSpec,
-    reference: String,
-    proven: crate::practice::coding::proof::Proven,
-) -> Result<Problem> {
-    let mut bug = None;
-    if task == CodingTask::BugFix {
-        let mut chosen: Option<&Misreading> = None;
-        for misreading in &proven.misreadings {
-            if chosen.is_none_or(|best| misreading.killed_by.len() > best.killed_by.len()) {
-                chosen = Some(misreading);
-            }
-        }
-        let chosen = chosen.ok_or_else(|| {
-            AppError::InvalidState("A proven problem keeps at least two misreadings.".into())
-        })?;
-        spec.starter = chosen.code.clone();
-        bug = Some(chosen.id.clone());
-    }
-    Ok(Problem {
-        spec,
-        reference,
-        misreadings: proven.misreadings,
-        cases: proven.cases,
-        reference_ms: proven.reference_ms,
-        bug,
-    })
 }

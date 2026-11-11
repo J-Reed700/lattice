@@ -95,7 +95,7 @@ export const chatApi = {
    *
    * @param limit - Maximum number of conversations to return (default: 100)
    * @param offset - Number of conversations to skip for pagination (default: 0)
-   * @returns Response with conversations and total count
+   * @returns Response with the page of conversations
    */
   listConversations: async (
     limit?: number,

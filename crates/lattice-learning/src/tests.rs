@@ -2,6 +2,7 @@ use super::{dto::*, repository::LearningRepository};
 use crate::test_support::id;
 pub(crate) use crate::test_support::{fixture, pool};
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::Database;
 use sqlx::{sqlite::SqlitePoolOptions, Row};
 pub(super) fn prepared(lesson_id: &str) -> PreparedLearningLesson {
     let mut questions = Vec::new();
@@ -482,7 +483,7 @@ async fn deleted_source_snapshot_keeps_tombstone_versions_and_refresh_checks() -
     let pool = pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let program = ready_program(&repo).await?;
-    let library = super::source_library::LearningSourceLibraryRepository::new(pool);
+    let library = super::source_library::LearningSourceLibraryRepository::new(Database::from(pool));
     let source_id = id();
     let initial_version_id = id();
     library
@@ -563,7 +564,8 @@ async fn source_versions_replay_refresh_adopt_and_unicode_search_are_durable() -
     let pool = pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let program = ready_program(&repo).await?;
-    let library = super::source_library::LearningSourceLibraryRepository::new(pool.clone());
+    let library =
+        super::source_library::LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     assert!(
         super::source_library::LearningSourceLibraryRepository::before_use_allows(
             &LearningSourceCheckStatus::Unchanged
@@ -918,7 +920,8 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
     let repo1 = LearningRepository::new(pool1.clone());
     let program1 = ready_program(&repo1).await?;
     let program2 = ready_program(&repo1).await?;
-    let library1 = super::source_library::LearningSourceLibraryRepository::new(pool1.clone());
+    let library1 =
+        super::source_library::LearningSourceLibraryRepository::new(Database::from(pool1.clone()));
     let source_id = id();
     let version_id = id();
     let operation_id = id();
@@ -952,7 +955,8 @@ async fn source_versions_survive_pool_restart_are_program_isolated_and_cascade_o
         .run(&pool2)
         .await
         .map_err(|e| lattice_core::shared::error::AppError::Database(e.to_string()))?;
-    let library2 = super::source_library::LearningSourceLibraryRepository::new(pool2.clone());
+    let library2 =
+        super::source_library::LearningSourceLibraryRepository::new(Database::from(pool2.clone()));
     let reopened = library2
         .get_version(&GetLearningSourceVersionRequestDto {
             program_id: program1.summary.id.clone(),
@@ -1016,7 +1020,8 @@ async fn legacy_migration_metadata_is_backfilled_from_the_captured_text() -> Res
             .bind(&legacy_source).bind(program_id).bind(&legacy_source)
             .execute(&pool).await.map_err(|e|lattice_core::shared::error::AppError::Database(e.to_string()))?;
     }
-    let library = super::source_library::LearningSourceLibraryRepository::new(pool.clone());
+    let library =
+        super::source_library::LearningSourceLibraryRepository::new(Database::from(pool.clone()));
     let workspace = library.workspace(&program.summary.id).await?;
     let version = workspace
         .sources
@@ -1081,7 +1086,7 @@ async fn source_refresh_and_reimport_continue_past_one_hundred_versions() -> Res
     let pool = pool().await?;
     let repo = LearningRepository::new(pool.clone());
     let program = ready_program(&repo).await?;
-    let library = super::source_library::LearningSourceLibraryRepository::new(pool);
+    let library = super::source_library::LearningSourceLibraryRepository::new(Database::from(pool));
     let source_id = id();
     library
         .add(

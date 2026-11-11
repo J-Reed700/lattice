@@ -13,10 +13,12 @@ use super::repository::StoredDrill;
 use super::schedules;
 use crate::persistence::{db, now};
 use lattice_core::application::ports::LLMPort;
-use lattice_core::domain::learning::drills::{lesson_rating, ratings, score, validate};
+use lattice_core::domain::learning::drills::{
+    lesson_rating, ratings, score, validate, IssueRating, PatternRating,
+};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 use lattice_core::shared::runtime::jobs::{JobContext, JobOutcome, JobStore};
-use sqlx::{Sqlite, SqlitePool, Transaction};
 use tokio_util::sync::CancellationToken;
 
 /// Grades attempts. The model, the material, the grader and the database are the grading's own; the job runtime's
@@ -25,7 +27,7 @@ pub(crate) struct AttemptGrading<'a> {
     llm: &'a dyn LLMPort,
     material: Box<dyn DrillMaterial + 'a>,
     grader: &'a dyn ReviewGrader,
-    pool: &'a SqlitePool,
+    database: Database,
     cancel: CancellationToken,
 }
 
@@ -35,14 +37,14 @@ impl<'a> AttemptGrading<'a> {
         llm: &'a dyn LLMPort,
         material: Box<dyn DrillMaterial + 'a>,
         grader: &'a dyn ReviewGrader,
-        pool: &'a SqlitePool,
+        database: &Database,
         cancel: CancellationToken,
     ) -> Self {
         Self {
             llm,
             material,
             grader,
-            pool,
+            database: database.clone(),
             cancel,
         }
     }
@@ -121,24 +123,15 @@ impl<'a> AttemptGrading<'a> {
             fix: fix.as_deref(),
             model: self.llm.model_name(),
         };
-        let mut transaction = self.pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-        let recorded = attempts::record_graded_in(&mut transaction, &attempt.id, &graded).await?;
-        if recorded {
-            schedules::record_in(
-                &mut transaction,
-                stored,
-                &rated,
-                lesson_rating(&stored.drill.material, key, &assessment),
-                now(),
-            )
-            .await?;
-        }
-        finish(
-            transaction,
+        let lesson = lesson_rating(&stored.drill.material, key, &assessment);
+        save_grade(
+            &self.database,
             context,
-            recorded,
-            &attempt.id,
-            "Your review is graded",
+            attempt,
+            stored,
+            &graded,
+            &rated,
+            lesson,
         )
         .await
     }
@@ -150,7 +143,7 @@ impl<'a> AttemptGrading<'a> {
         error: &AppError,
     ) -> Result<JobOutcome> {
         give_up(
-            self.pool,
+            &self.database,
             context,
             &attempt.id,
             Some(self.llm.model_name()),
@@ -160,11 +153,48 @@ impl<'a> AttemptGrading<'a> {
     }
 }
 
+/// Stores the grade of `attempt`, a submitted attempt at `stored`, and the schedules it moves, and completes the job,
+/// in one transaction.
+async fn save_grade(
+    database: &Database,
+    context: &JobContext,
+    attempt: &Attempt,
+    stored: &StoredDrill,
+    graded: &Graded<'_>,
+    rated: &[IssueRating],
+    lesson: Option<PatternRating>,
+) -> Result<JobOutcome> {
+    let mut transaction = database.begin_write().await.map_err(db)?;
+    let recorded =
+        attempts::repository::record_graded_in(&mut transaction, &attempt.id, graded).await?;
+    if recorded {
+        schedules::record_in(&mut transaction, stored, rated, lesson, now()).await?;
+    }
+    let finished = finish_in(
+        &mut transaction,
+        context,
+        recorded,
+        &attempt.id,
+        "Your review is graded",
+    )
+    .await?;
+    match finished {
+        Finish::Commit => {
+            transaction.commit().await.map_err(db)?;
+            Ok(JobOutcome::Committed)
+        }
+        Finish::Leave(outcome) => {
+            transaction.rollback().await.map_err(db)?;
+            Ok(outcome)
+        }
+    }
+}
+
 /// Stores that the attempt could not be graded, with why and the model that was tried, when one was reached, and
 /// completes the job with it: the learner reads "Couldn't grade yet" and may ask again. `Stopped` when the job was
 /// cancelled, which is no reason to give up on the review.
 pub(crate) async fn give_up(
-    pool: &SqlitePool,
+    database: &Database,
     context: &JobContext,
     attempt_id: &str,
     model: Option<&str>,
@@ -174,45 +204,63 @@ pub(crate) async fn give_up(
         return Ok(JobOutcome::Stopped);
     }
     tracing::warn!(attempt = attempt_id, %error, "A drill attempt could not be graded");
-    let mut transaction = pool.begin_with("BEGIN IMMEDIATE").await.map_err(db)?;
-    let recorded =
-        attempts::record_ungraded_in(&mut transaction, attempt_id, model, &error.to_string())
-            .await?;
-    finish(
-        transaction,
+    let mut transaction = database.begin_write().await.map_err(db)?;
+    let recorded = attempts::repository::record_ungraded_in(
+        &mut transaction,
+        attempt_id,
+        model,
+        &error.to_string(),
+    )
+    .await?;
+    let finished = finish_in(
+        &mut transaction,
         context,
         recorded,
         attempt_id,
         "The review could not be graded",
     )
-    .await
+    .await?;
+    match finished {
+        Finish::Commit => {
+            transaction.commit().await.map_err(db)?;
+            Ok(JobOutcome::Committed)
+        }
+        Finish::Leave(outcome) => {
+            transaction.rollback().await.map_err(db)?;
+            Ok(outcome)
+        }
+    }
+}
+
+/// What the caller does with the transaction that recorded the attempt's state.
+enum Finish {
+    /// The job is completed in it: commit.
+    Commit,
+    /// Roll it back and end the job with this outcome.
+    Leave(JobOutcome),
 }
 
 /// Completes the job in the transaction that recorded the attempt's state. A state that was not recorded because the
 /// attempt was no longer waiting for a grade is left as it is, and the job completes without it.
-async fn finish(
-    mut transaction: Transaction<'static, Sqlite>,
+async fn finish_in(
+    transaction: &mut WriteTx,
     context: &JobContext,
     recorded: bool,
     attempt_id: &str,
     message: &str,
-) -> Result<JobOutcome> {
+) -> Result<Finish> {
     let result_ref = format!("attempt:{attempt_id}");
     if !recorded {
-        transaction.rollback().await.map_err(db)?;
-        return Ok(JobOutcome::Completed {
+        return Ok(Finish::Leave(JobOutcome::Completed {
             result_ref,
             message: "The review was no longer waiting for a grade.".into(),
-        });
+        }));
     }
-    let completed =
-        JobStore::complete_in(&mut transaction, context.id(), &result_ref, message).await?;
+    let completed = JobStore::complete_in(transaction, context.id(), &result_ref, message).await?;
     if !completed {
-        transaction.rollback().await.map_err(db)?;
-        return Ok(JobOutcome::Stopped);
+        return Ok(Finish::Leave(JobOutcome::Stopped));
     }
-    transaction.commit().await.map_err(db)?;
-    Ok(JobOutcome::Committed)
+    Ok(Finish::Commit)
 }
 
 /// Saves the job's progress at step `index` of [`GRADING_STEPS`]. False once the job is no longer running.

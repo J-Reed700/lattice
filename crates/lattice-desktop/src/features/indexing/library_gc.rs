@@ -307,6 +307,10 @@ pub(crate) mod test_support {
 }
 
 #[cfg(test)]
+#[path = "library_gc_crash_tests.rs"]
+mod crash_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use crate::infrastructure::persistence::repositories::mocks::MockDocumentRepository;

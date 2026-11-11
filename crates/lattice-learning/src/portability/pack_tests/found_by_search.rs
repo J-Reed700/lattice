@@ -7,6 +7,7 @@ use crate::{
     dto::LearningSourceDto,
     pack::{decode_learning_pack, sections::SOURCE_LIBRARY_ENTRY},
 };
+use lattice_core::shared::persistence::Database;
 
 /// A saved page or document, short enough for the admission gate to refuse.
 fn source(title: &str, url: Option<&str>) -> LearningSourceDto {
@@ -85,7 +86,7 @@ async fn a_pack_carries_which_outline_pages_research_found() -> Result<()> {
     assert_eq!(marks(&fresh, &course).await?, kept);
     // The sweep of the moved course reads the page research found, and not
     // what the user chose.
-    let refused = LearningSourceLibraryRepository::new(fresh.clone())
+    let refused = LearningSourceLibraryRepository::new(Database::from(fresh.clone()))
         .sweep_admission(&course)
         .await?;
     let titles: Vec<&str> = refused.iter().map(|page| page.title.as_str()).collect();

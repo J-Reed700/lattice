@@ -13,21 +13,20 @@
 use crate::features::initialization::dto::InitializeDatabaseResponseDto;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
-use sqlx::SqlitePool;
-use std::sync::Arc;
+use lattice_core::shared::persistence::Database;
 
 /// Initialize database use case.
 ///
 /// Ensures database schema is created and up to date.
 pub struct InitializeDatabaseUseCase {
     /// SQLite database pool
-    database_pool: Arc<SqlitePool>,
+    database: Database,
 }
 
 impl InitializeDatabaseUseCase {
     /// Create a new instance of the use case.
-    pub fn new(database_pool: Arc<SqlitePool>) -> Self {
-        Self { database_pool }
+    pub fn new(database: Database) -> Self {
+        Self { database }
     }
 
     /// Execute the use case.
@@ -42,11 +41,9 @@ impl InitializeDatabaseUseCase {
         let is_new_database = !self.has_schema_version_table().await?;
 
         // 1. Run database initialization (idempotent)
-        crate::infrastructure::persistence::database::init::initialize_database(
-            &self.database_pool,
-        )
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to initialize database: {}", e)))?;
+        crate::infrastructure::persistence::database::init::initialize_database(&self.database)
+            .await
+            .map_err(|e| AppError::Database(format!("Failed to initialize database: {}", e)))?;
 
         // 2. Get schema version
         let schema_version = self.get_schema_version().await?;
@@ -64,28 +61,12 @@ impl InitializeDatabaseUseCase {
     }
 
     async fn has_schema_version_table(&self) -> Result<bool> {
-        // repository-barrier-allow: database bootstrap must inspect migration state before repositories exist.
-        let count = sqlx::query_scalar::<_, i64>(
-            "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'",
-        )
-        .fetch_one(self.database_pool.as_ref())
-        .await
-        .map_err(|e| AppError::Database(format!("Failed to inspect database schema: {e}")))?;
-        Ok(count > 0)
+        crate::features::initialization::repository::has_schema_version_table(&self.database).await
     }
 
     /// Get current schema version from database.
     async fn get_schema_version(&self) -> Result<i64> {
-        // repository-barrier-allow: database bootstrap inspects migration state before repositories exist.
-        let result =
-            sqlx::query_scalar::<_, i64>("SELECT COALESCE(MAX(version), 0) FROM schema_version")
-                .fetch_one(self.database_pool.as_ref())
-                .await
-                .map_err(|e| {
-                    AppError::Database(format!("Failed to query schema version: {}", e))
-                })?;
-
-        Ok(result)
+        crate::features::initialization::repository::schema_version(&self.database).await
     }
 
     /// Get database file path.
@@ -102,20 +83,23 @@ impl InitializeDatabaseUseCase {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use lattice_core::shared::persistence::driver::DriverPool;
+    use lattice_core::shared::persistence::Database;
     use sqlx::sqlite::SqlitePoolOptions;
 
-    async fn create_test_pool() -> SqlitePool {
+    async fn create_test_pool() -> Database {
         SqlitePoolOptions::new()
             .max_connections(1)
             .connect(":memory:")
             .await
             .expect("Failed to create test database pool")
+            .into()
     }
 
     #[tokio::test]
     async fn test_initialize_database_success() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(Arc::new(pool));
+        let use_case = InitializeDatabaseUseCase::new(pool);
 
         let result = use_case.execute().await;
 
@@ -128,12 +112,12 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_database_creates_schema_version_table() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(Arc::new(pool.clone()));
+        let use_case = InitializeDatabaseUseCase::new(pool.clone());
 
         use_case.execute().await.unwrap();
 
         let count = sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM schema_version")
-            .fetch_one(&pool)
+            .fetch_one(pool.sqlx_pool())
             .await
             .unwrap();
 
@@ -143,7 +127,7 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_database_is_idempotent() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(Arc::new(pool));
+        let use_case = InitializeDatabaseUseCase::new(pool);
 
         let result1 = use_case.execute().await.unwrap();
         let result2 = use_case.execute().await.unwrap();
@@ -156,7 +140,7 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_database_returns_schema_version() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(Arc::new(pool));
+        let use_case = InitializeDatabaseUseCase::new(pool);
 
         let result = use_case.execute().await.unwrap();
 
@@ -168,7 +152,7 @@ mod tests {
     #[tokio::test]
     async fn test_initialize_database_detects_new_database() {
         let pool = create_test_pool().await;
-        let use_case = InitializeDatabaseUseCase::new(Arc::new(pool));
+        let use_case = InitializeDatabaseUseCase::new(pool);
 
         let result = use_case.execute().await.unwrap();
 

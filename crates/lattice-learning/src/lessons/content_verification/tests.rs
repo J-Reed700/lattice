@@ -7,6 +7,7 @@
 use super::*;
 use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
 use lattice_core::domain::learning::acceptance::{Outcome, Reading, StandardPolicy};
+use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::JobStore;
 use readings_tests::{claim, read_all, read_one, world_of};
 use std::sync::Mutex;
@@ -36,6 +37,7 @@ struct Model {
     batch_unavailable: bool,
     extracted_sections: Mutex<Vec<Vec<usize>>>,
     audited_sections: Mutex<Vec<Vec<usize>>>,
+    /// Fail the coverage batch that starts at this section.
     fail_coverage_at: Option<usize>,
     coverage_gap_in: Option<usize>,
 }
@@ -392,18 +394,16 @@ impl Model {
                 )?);
         }
         if prompt.starts_with("Audit claim coverage independently.") {
-            let mut audits = self.audited_sections.lock().unwrap();
-            if self.fail_coverage_at == Some(audits.len()) {
+            let batch: Vec<usize> = context(prompt)["units"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|unit| unit["index"].as_u64().unwrap() as usize)
+                .collect();
+            if self.fail_coverage_at.is_some() && self.fail_coverage_at == batch.first().copied() {
                 return Err(invalid("fixture interrupted during coverage"));
             }
-            audits.push(
-                context(prompt)["units"]
-                    .as_array()
-                    .unwrap()
-                    .iter()
-                    .map(|unit| unit["index"].as_u64().unwrap() as usize)
-                    .collect(),
-            );
+            self.audited_sections.lock().unwrap().push(batch);
         }
         if prompt.starts_with("Audit claim coverage independently.") && self.incomplete_coverage {
             return Ok(json!({"units":[]}).to_string());
@@ -567,6 +567,8 @@ async fn verify(
 #[path = "checkpoint_tests.rs"]
 mod checkpoint_tests;
 
+#[path = "batch_overlap_tests.rs"]
+mod batch_overlap_tests;
 #[path = "coverage_resume_tests.rs"]
 mod coverage_resume_tests;
 
@@ -657,7 +659,7 @@ async fn unchanged_evidence_reuses_judgments_but_new_evidence_and_failed_calls_d
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let mut model = Model::new();
     let mut sources = vec![source()];
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
+    lesson_drafts::run(&Database::from(pool.clone()), &repo, &job, &lesson_id, async {
         let references = ReferenceCollection::lexical(&sources)?;
         let world = world_of(&references, Citations::default());
         let first = read_one(Reading::Page, &model, &world, GOOD).await?;
@@ -745,48 +747,54 @@ async fn repairing_one_section_preserves_only_unchanged_claim_comparisons() -> R
     let sources = vec![source()];
     let references = ReferenceCollection::lexical(&sources)?;
     let world = world_of(&references, Citations::default());
-    lesson_drafts::run(&repo, &job, &lesson_id, async {
-        let first = read_all(
-            Reading::Page,
-            &model,
-            &world,
-            &[(0, claim(GOOD)), (1, claim(BAD))],
-        )
-        .await?;
-        assert_eq!(*model.judge_calls.lock().unwrap(), 2);
-        assert_eq!(first[1].finding.verdict, ClaimVerdict::Contradicted);
-        // The second section is repaired.
-        let repaired = read_all(
-            Reading::Page,
-            &model,
-            &world,
-            &[(0, claim(GOOD)), (1, claim(GOOD))],
-        )
-        .await?;
-        assert!(repaired.iter().all(|read| read.finding.publishable()));
-        assert_eq!(
-            *model.judge_calls.lock().unwrap(),
-            3,
-            "Repairing one section must not repeat the other section's identical comparison"
-        );
-        // Changed neighboring wording still needs coverage review, but an
-        // identical standalone factual statement keeps its completed evidence
-        // comparison.
-        let reworded = Claim {
-            quote: format!("{GOOD} Additional wording."),
-            statement: GOOD.into(),
-        };
-        let again = read_all(
-            Reading::Page,
-            &model,
-            &world,
-            &[(0, reworded), (1, claim(GOOD))],
-        )
-        .await?;
-        assert!(again.iter().all(|read| read.reused));
-        assert_eq!(*model.judge_calls.lock().unwrap(), 3);
-        Ok(())
-    })
+    lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &repo,
+        &job,
+        &lesson_id,
+        async {
+            let first = read_all(
+                Reading::Page,
+                &model,
+                &world,
+                &[(0, claim(GOOD)), (1, claim(BAD))],
+            )
+            .await?;
+            assert_eq!(*model.judge_calls.lock().unwrap(), 2);
+            assert_eq!(first[1].finding.verdict, ClaimVerdict::Contradicted);
+            // The second section is repaired.
+            let repaired = read_all(
+                Reading::Page,
+                &model,
+                &world,
+                &[(0, claim(GOOD)), (1, claim(GOOD))],
+            )
+            .await?;
+            assert!(repaired.iter().all(|read| read.finding.publishable()));
+            assert_eq!(
+                *model.judge_calls.lock().unwrap(),
+                3,
+                "Repairing one section must not repeat the other section's identical comparison"
+            );
+            // Changed neighboring wording still needs coverage review, but an
+            // identical standalone factual statement keeps its completed evidence
+            // comparison.
+            let reworded = Claim {
+                quote: format!("{GOOD} Additional wording."),
+                statement: GOOD.into(),
+            };
+            let again = read_all(
+                Reading::Page,
+                &model,
+                &world,
+                &[(0, reworded), (1, claim(GOOD))],
+            )
+            .await?;
+            assert!(again.iter().all(|read| read.reused));
+            assert_eq!(*model.judge_calls.lock().unwrap(), 3);
+            Ok(())
+        },
+    )
     .await
 }
 
@@ -1030,11 +1038,17 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
     second["title"] = json!("A second section needing repair");
     original["blocks"].as_array_mut().unwrap().push(second);
     let raw = original.to_string();
-    let first = lesson_drafts::run(&jobs, &job.id, target, async {
-        lesson_drafts::resume("same-inputs".into()).await?;
-        lesson_drafts::save(&raw).await?;
-        verify_and_repair(&model, "{}", &json!({}), raw.clone(), &sources, 4000).await
-    })
+    let first = lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &jobs,
+        &job.id,
+        target,
+        async {
+            lesson_drafts::resume("same-inputs".into()).await?;
+            lesson_drafts::save(&raw).await?;
+            verify_and_repair(&model, "{}", &json!({}), raw.clone(), &sources, 4000).await
+        },
+    )
     .await;
     let error = first.unwrap_err();
     JobStore::new(pool.clone())
@@ -1057,20 +1071,26 @@ async fn failed_rewrite_resumes_its_checkpoint_and_checks_the_new_candidate() ->
         })
         .await?;
     JobStore::new(pool.clone()).claim(&retry.id).await?;
-    let (_, report) = lesson_drafts::run(&jobs, &retry.id, target, async {
-        let saved = lesson_drafts::resume("same-inputs".into()).await?.unwrap();
-        assert!(
-            has_pending_repair(
-                &model,
-                "{}",
-                &json!({}),
-                &saved,
-                &ReferenceCollection::lexical(&sources)?
-            )
-            .await?
-        );
-        verify_and_repair(&model, "{}", &json!({}), saved, &sources, 4000).await
-    })
+    let (_, report) = lesson_drafts::run(
+        &Database::from(pool.clone()),
+        &jobs,
+        &retry.id,
+        target,
+        async {
+            let saved = lesson_drafts::resume("same-inputs".into()).await?.unwrap();
+            assert!(
+                has_pending_repair(
+                    &model,
+                    "{}",
+                    &json!({}),
+                    &saved,
+                    &ReferenceCollection::lexical(&sources)?
+                )
+                .await?
+            );
+            verify_and_repair(&model, "{}", &json!({}), saved, &sources, 4000).await
+        },
+    )
     .await?;
     assert_eq!(model.repairs.load(Ordering::Relaxed), 3);
     assert_eq!(
@@ -2143,7 +2163,7 @@ pub(crate) async fn install_source(
         source_library::{CapturedLearningSource, LearningSourceLibraryRepository},
     };
     let id = || uuid::Uuid::new_v4().to_string();
-    LearningSourceLibraryRepository::new(pool.clone())
+    LearningSourceLibraryRepository::new(Database::from(pool.clone()))
         .add(
             crate::source_library::NewLearningSource {
                 operation_id: &id(),
@@ -2197,9 +2217,13 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
     let saved = repo.verification_sources(&program.summary.id).await?;
     let report = json!({"policy":POLICY,"lesson_id":lesson.id,"content_sha256":"fixture","checked_at":1,"checker_model":"fixture","sources":[{"id":source.id,"sha256":digest(&saved[0].excerpt)}],"findings":[{"unit":0,"quote":"PRIVATE QUOTE","statement":"PRIVATE ANSWER KEY","verdict":"supported","reason":"PRIVATE RATIONALE","evidence":[],"supporting_quote":null}],"coverage":[],"coverage_audit":[],"executions":[],"issues":[],"retrieval_mode":"hybrid","embedding_model":null,"unexecuted_languages":[]});
     sqlx::query("INSERT INTO learning_lesson_verifications(lesson_id,program_id,policy,content_sha256,report_json,checked_at) VALUES(?,?,?,?,?,?)").bind(&lesson.id).bind(&program.summary.id).bind(POLICY).bind("fixture").bind(report.to_string()).bind(1_i64).execute(&pool).await.map_err(|e|AppError::Database(e.to_string()))?;
-    let view = crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
-        .await?
-        .unwrap();
+    let view = crate::lesson_evidence::get(
+        &Database::from(pool.clone()),
+        &program.summary.id,
+        &lesson.id,
+    )
+    .await?
+    .unwrap();
     assert!(view.teaching_claims.is_empty());
     assert!(!serde_json::to_string(&view)?.contains("PRIVATE"));
     assert!(view.sources_current);
@@ -2208,9 +2232,13 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
         .execute(&pool)
         .await
         .map_err(|e| AppError::Database(e.to_string()))?;
-    let view = crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
-        .await?
-        .unwrap();
+    let view = crate::lesson_evidence::get(
+        &Database::from(pool.clone()),
+        &program.summary.id,
+        &lesson.id,
+    )
+    .await?
+    .unwrap();
     assert!(!view.sources_current);
 
     // Missing unit identity must not silently become teaching section zero.
@@ -2224,10 +2252,14 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
         .bind(&lesson.id)
         .execute(&pool)
         .await?;
-    let error = crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
-        .await
-        .unwrap_err()
-        .to_string();
+    let error = crate::lesson_evidence::get(
+        &Database::from(pool.clone()),
+        &program.summary.id,
+        &lesson.id,
+    )
+    .await
+    .unwrap_err()
+    .to_string();
     assert!(error.contains("unavailable"));
     assert!(!error.contains("PRIVATE"));
 
@@ -2238,11 +2270,13 @@ async fn evidence_view_hides_assessment_claims_and_marks_source_changes() -> Res
         .bind(&lesson.id)
         .execute(&pool)
         .await?;
-    assert!(
-        crate::lesson_evidence::get(&pool, &program.summary.id, &lesson.id)
-            .await
-            .is_err()
-    );
+    assert!(crate::lesson_evidence::get(
+        &Database::from(pool.clone()),
+        &program.summary.id,
+        &lesson.id
+    )
+    .await
+    .is_err());
     Ok(())
 }
 

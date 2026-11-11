@@ -6,14 +6,15 @@ use crate::{
 };
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::driver::DriverPool;
 use serde::{de::DeserializeOwned, Serialize};
-use sqlx::{Row, Sqlite, SqlitePool, Transaction};
+use sqlx::{Row, SqliteConnection, SqlitePool};
 
 mod assistance;
 mod fits;
-pub(crate) use fits::FitState;
+pub(crate) use fits::{FitState, KindVerdict, StoredFit};
 mod profiles;
-pub(crate) use profiles::profile_in;
+pub(crate) use profiles::{course_profile, profile_in};
 mod reads;
 mod sessions;
 mod submissions;
@@ -161,7 +162,8 @@ pub struct SubmissionWrite {
 }
 
 impl LearningPracticeRepository {
-    pub fn new(pool: SqlitePool) -> Self {
+    pub fn new(pool: impl DriverPool) -> Self {
+        let pool = pool.sqlx_pool().clone();
         Self { pool }
     }
 
@@ -174,19 +176,19 @@ impl LearningPracticeRepository {
         Ok(())
     }
 
-    async fn writer_lock(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+    async fn writer_lock(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
         sqlx::query("UPDATE learning_programs SET revision=revision WHERE id=?")
             .bind(program_id)
-            .execute(&mut **tx)
+            .execute(&mut *tx)
             .await
             .map_err(db)?;
         Ok(())
     }
-    async fn verify_active(tx: &mut Transaction<'_, Sqlite>, program_id: &str) -> Result<()> {
+    async fn verify_active(tx: &mut SqliteConnection, program_id: &str) -> Result<()> {
         let status: Option<String> =
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
         match status.as_deref() {
@@ -198,14 +200,14 @@ impl LearningPracticeRepository {
 
     async fn current_state_in_tx(
         &self,
-        tx: &mut Transaction<'_, Sqlite>,
+        tx: &mut SqliteConnection,
         program_id: &str,
         session_id: &str,
     ) -> Result<(LearningPracticeSessionSummaryDto, i64)> {
         let program_status: Option<String> =
             sqlx::query_scalar("SELECT status FROM learning_programs WHERE id=?")
                 .bind(program_id)
-                .fetch_optional(&mut **tx)
+                .fetch_optional(&mut *tx)
                 .await
                 .map_err(db)?;
         if program_status.as_deref() != Some("active") {
@@ -213,7 +215,7 @@ impl LearningPracticeRepository {
                 "Practice actions require an active learning program.",
             ));
         }
-        let row=sqlx::query("SELECT s.*, (SELECT max(revision) FROM learning_practice_artifact_revisions a WHERE a.session_id=s.id) artifact_revision, sub.grade_status FROM learning_practice_sessions s LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.program_id=? AND s.id=?").bind(program_id).bind(session_id).fetch_optional(&mut **tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
+        let row=sqlx::query("SELECT s.*, (SELECT max(revision) FROM learning_practice_artifact_revisions a WHERE a.session_id=s.id) artifact_revision, sub.grade_status FROM learning_practice_sessions s LEFT JOIN learning_practice_submissions sub ON sub.session_id=s.id WHERE s.program_id=? AND s.id=?").bind(program_id).bind(session_id).fetch_optional(&mut *tx).await.map_err(db)?.ok_or_else(||AppError::NotFound("Practice session not found".into()))?;
         let summary = LearningPracticeSessionSummaryDto {
             task_kind: parse_task_kind(row.get("task_kind"))?,
             revises_session_id: row.get("revises_session_id"),
@@ -242,7 +244,7 @@ impl LearningPracticeRepository {
     }
 
     async fn insert_assistance(
-        tx: &mut Transaction<'_, Sqlite>,
+        tx: &mut SqliteConnection,
         id: &str,
         program_id: &str,
         session_id: &str,
@@ -252,7 +254,7 @@ impl LearningPracticeRepository {
         details: &serde_json::Value,
         timestamp: i64,
     ) -> Result<()> {
-        sqlx::query("INSERT INTO learning_practice_assistance(id,program_id,session_id,operation_id,kind,mode,artifact_revision,details_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(session_id).bind(id).bind(kind).bind(mode).bind(artifact_revision).bind(json(details)?).bind(timestamp).execute(&mut **tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_assistance(id,program_id,session_id,operation_id,kind,mode,artifact_revision,details_json,created_at) VALUES(?,?,?,?,?,?,?,?,?)").bind(uuid::Uuid::new_v4().to_string()).bind(program_id).bind(session_id).bind(id).bind(kind).bind(mode).bind(artifact_revision).bind(json(details)?).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         Ok(())
     }
 }

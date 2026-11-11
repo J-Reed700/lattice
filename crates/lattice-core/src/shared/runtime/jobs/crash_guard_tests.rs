@@ -3,6 +3,7 @@
 //! the runtime fails a job itself.
 use super::*;
 use crate::shared::error::Result;
+use crate::shared::persistence::Database;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
 use tokio::sync::mpsc;
@@ -210,7 +211,7 @@ impl JobHandler for Deaf {
 #[tokio::test]
 async fn an_orderly_shutdown_suspends_a_job_that_was_slow_to_stop_without_counting_it() -> Result<()>
 {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let store = runtime.store();
     let id = submitted(store, "long").await;
     // One earlier launch already found it running.
@@ -276,7 +277,7 @@ impl JobHandler for PanicsWhenCancelled {
 
 #[tokio::test]
 async fn a_panic_while_the_job_is_being_cancelled_is_a_stop_not_a_failure() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let (started, mut running) = mpsc::unbounded_channel();
     runtime
         .register(
@@ -344,7 +345,7 @@ async fn told(handler: &Reports) -> Vec<(String, String, JobStatus)> {
 
 #[tokio::test]
 async fn a_handler_is_told_when_the_runtime_fails_its_job_for_a_panic() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let handler = Arc::new(Reports {
         store: runtime.store().clone(),
         panics: true,
@@ -367,7 +368,7 @@ async fn a_handler_is_told_when_the_runtime_fails_its_job_for_a_panic() -> Resul
 
 #[tokio::test]
 async fn a_handler_is_told_when_recovery_fails_its_job_for_stopping_the_app() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let store = runtime.store();
     let id = submitted(store, "crashes").await;
     left_running(store, &id).await;
@@ -449,7 +450,7 @@ async fn progress_past_the_highest_value_ever_reached_is_saved_work() -> Result<
 
 #[tokio::test]
 async fn an_orderly_shutdown_leaves_a_job_of_an_interrupt_kind_to_be_interrupted() -> Result<()> {
-    let runtime = JobRuntime::new(pool().await);
+    let runtime = JobRuntime::new(Database::from(pool().await));
     let store = runtime.store();
     let (started, mut running) = mpsc::unbounded_channel();
     runtime

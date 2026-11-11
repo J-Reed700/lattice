@@ -1,7 +1,7 @@
 //! Preparing for: course-level practice profiles.
 use super::*;
-use crate::recall::{study_repository::StudyRepository, study_service};
-use lattice_core::shared::persistence::Transactions;
+use crate::recall::{study_repository::set_target_in, study_service};
+use lattice_core::shared::persistence::{Database, Transactions};
 use sqlx::SqliteConnection;
 
 async fn require_program(connection: &mut SqliteConnection, program_id: &str) -> Result<()> {
@@ -22,17 +22,9 @@ impl LearningPracticeRepository {
         uuid(program_id, "program")?;
         let mut tx = self.pool.begin_read().await.map_err(db)?;
         require_program(&mut tx, program_id).await?;
-        let saved = profile_in(&mut tx, program_id).await?;
+        let profile = course_profile(&mut tx, program_id).await?;
         tx.commit().await.map_err(db)?;
-        Ok(saved.unwrap_or_else(|| LearningPracticeProfileDto {
-            program_id: program_id.to_owned(),
-            details: String::new(),
-            language: None,
-            interview_at: None,
-            company: None,
-            role: None,
-            revision: 0,
-        }))
+        Ok(profile)
     }
 
     /// Saves a course's practice profile when `expected_revision` is its current revision. A changed interview date
@@ -43,7 +35,9 @@ impl LearningPracticeRepository {
     ) -> Result<LearningPracticeProfileDto> {
         let program_id = request.program_id.as_str();
         uuid(program_id, "program")?;
-        let decks = study_service::interview_deck_ids(&self.pool, program_id).await?;
+        let decks =
+            study_service::interview_deck_ids(&Database::from(self.pool.clone()), program_id)
+                .await?;
         let now = now();
         let mut tx = self.pool.begin_write().await.map_err(db)?;
         Self::writer_lock(&mut tx, program_id).await?;
@@ -59,7 +53,7 @@ impl LearningPracticeRepository {
         if saved_date != request.interview_at {
             study_service::validate_target(request.interview_at, now)?;
             for deck_id in &decks {
-                StudyRepository::set_target_in(&mut tx, deck_id, request.interview_at, now).await?;
+                set_target_in(&mut tx, deck_id, request.interview_at, now).await?;
             }
         }
         let revision = current_revision + 1;
@@ -88,6 +82,23 @@ impl LearningPracticeRepository {
             revision,
         })
     }
+}
+
+/// A course's practice profile; the empty profile at revision 0 when none was saved.
+pub(crate) async fn course_profile(
+    connection: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<LearningPracticeProfileDto> {
+    let saved = profile_in(connection, program_id).await?;
+    Ok(saved.unwrap_or_else(|| LearningPracticeProfileDto {
+        program_id: program_id.to_owned(),
+        details: String::new(),
+        language: None,
+        interview_at: None,
+        company: None,
+        role: None,
+        revision: 0,
+    }))
 }
 
 /// The saved profile of a course, if any.

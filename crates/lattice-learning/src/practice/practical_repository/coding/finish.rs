@@ -39,7 +39,7 @@ impl LearningPracticalRepository {
         write.scorecard.validate()?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let operation = op.operation(program_id, session_id);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(Applied::Replayed);
         }
@@ -88,7 +88,7 @@ impl LearningPracticalRepository {
             target,
         )
         .await?;
-        sqlx::query("INSERT INTO learning_coding_debriefs(session_id,approach,complexity,ratings_json,model,written_at) VALUES(?,?,?,?,?,?)")
+        sqlx::query("INSERT INTO learning_exercise_debriefs(session_id,approach,complexity,ratings_json,model,written_at) VALUES(?,?,?,?,?,?)")
             .bind(session_id).bind(write.approach).bind(write.complexity)
             .bind(json(&ratings)?).bind(write.model).bind(at)
             .execute(&mut *tx).await.map_err(db)?;
@@ -109,7 +109,7 @@ impl LearningPracticalRepository {
                 .bind(score_of(write)).bind(&observation).bind(json(&assistance)?).bind(at)
                 .execute(&mut *tx).await.map_err(db)?;
         }
-        sqlx::query("UPDATE learning_coding_sessions SET draft_json=?,active_ms=?,opened_at=NULL,pending_cue_json=NULL,finished_at=?,revision=revision+1 WHERE id=?")
+        sqlx::query("UPDATE learning_exercise_sessions SET draft_json=?,active_ms=?,opened_at=NULL,pending_cue_json=NULL,finished_at=?,revision=revision+1 WHERE id=?")
             .bind(json(write.files)?)
             .bind(i64::try_from(active_ms).unwrap_or(i64::MAX))
             .bind(at)
@@ -124,7 +124,7 @@ impl LearningPracticalRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok(Applied::Done(()))
     }

@@ -1,7 +1,8 @@
 //! Runs a batch import as a job: one item at a time, in batch order, each
 //! item's outcome saved before the next starts. The runtime owns delivery,
 //! cancellation and recovery; a stopped import resumes from its pending items.
-use super::items::{BatchItem, BatchItems, ItemState};
+use super::items::{BatchItem, ItemState};
+use super::repository::BatchItems;
 use async_trait::async_trait;
 use lattice_core::shared::{
     error::Result,

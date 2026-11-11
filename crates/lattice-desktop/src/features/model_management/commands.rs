@@ -170,7 +170,7 @@ pub async fn read_model_fits(
     use futures::stream::{self, StreamExt};
 
     let profile = container.machine_profile_probe().profile().await;
-    let source = container.gguf_header_source();
+    let source = container.gguf_header_source()?;
     let (profile, source) = (&profile, source.as_ref());
     Ok(stream::iter(files)
         .map(|file| async move {
@@ -213,7 +213,7 @@ impl FitContext {
         Ok(Self {
             profile: container.machine_profile_probe().profile().await,
             configs: settings.llm.local_model_configs,
-            headers: super::header_source::CachedHeadersOnly(container.gguf_header_source()),
+            headers: super::header_source::CachedHeadersOnly(container.gguf_header_source()?),
         })
     }
 

@@ -1,14 +1,11 @@
-//! Tests for course practice profiles ("Preparing for") and practice fit.
+//! Tests for course practice profiles ("Preparing for").
 
 use super::*;
-use crate::practice::practice_fit::{
-    basis_of, check_practice_fit, practice_fit, CourseOutline, OutlineLesson, OutlineModule,
-};
 use crate::recall::{
     study_dto::CreateInterviewStudyDeckRequestDto, study_repository::StudyRepository,
     study_service::create_interview_deck,
 };
-use std::sync::atomic::{AtomicUsize, Ordering};
+use lattice_core::shared::persistence::Database;
 
 fn save_request(program_id: &str, revision: i64) -> SaveLearningPracticeProfileRequestDto {
     SaveLearningPracticeProfileRequestDto {
@@ -19,63 +16,6 @@ fn save_request(program_id: &str, revision: i64) -> SaveLearningPracticeProfileR
         company: Some("a company".into()),
         role: Some("Backend engineer".into()),
         expected_revision: revision,
-    }
-}
-
-/// A model that answers every fit question with one verdict and counts the questions.
-struct Verdict {
-    teaches_code: bool,
-    calls: AtomicUsize,
-}
-
-impl Verdict {
-    fn new(teaches_code: bool) -> Self {
-        Self {
-            teaches_code,
-            calls: AtomicUsize::new(0),
-        }
-    }
-    fn calls(&self) -> usize {
-        self.calls.load(Ordering::SeqCst)
-    }
-}
-
-#[async_trait::async_trait]
-impl LLMPort for Verdict {
-    async fn complete(&self, _request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.calls.fetch_add(1, Ordering::SeqCst);
-        Ok(CompletionResponse::from_text(
-            json!({
-                "reason": "The lessons are about the stated subject.",
-                "courseTeachesProgramCode": self.teaches_code
-            })
-            .to_string(),
-        ))
-    }
-    fn model_name(&self) -> &str {
-        "verdict"
-    }
-    fn max_context_tokens(&self) -> usize {
-        131_072
-    }
-    fn count_tokens(&self, text: &str) -> usize {
-        text.split_whitespace().count()
-    }
-    async fn is_ready(&self) -> Result<bool> {
-        Ok(true)
-    }
-}
-
-fn outline(lesson_title: &str) -> CourseOutline {
-    CourseOutline {
-        title: "A course".into(),
-        modules: vec![OutlineModule {
-            title: "A module".into(),
-            lessons: vec![OutlineLesson {
-                title: lesson_title.into(),
-                objective: "Explain the idea".into(),
-            }],
-        }],
     }
 }
 
@@ -253,7 +193,7 @@ async fn a_new_interview_date_becomes_the_target_of_the_courses_interview_decks(
     let study = StudyRepository::new(pool.clone());
     let deck = create_interview_deck(
         &study,
-        &pool,
+        &Database::from(pool.clone()),
         CreateInterviewStudyDeckRequestDto {
             program_id: program_id.clone(),
             activity_id,
@@ -287,7 +227,7 @@ async fn a_conflicting_save_leaves_the_decks_target_alone() -> Result<()> {
     let study = StudyRepository::new(pool.clone());
     let deck = create_interview_deck(
         &study,
-        &pool,
+        &Database::from(pool.clone()),
         CreateInterviewStudyDeckRequestDto {
             program_id: program_id.clone(),
             activity_id,
@@ -340,129 +280,6 @@ async fn written_practice_starts_from_the_learners_details() -> Result<()> {
         prompt.contains("Preparing for a backend interview"),
         "{prompt}"
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_profile_language_means_the_course_fits_without_asking_the_model() -> Result<()> {
-    let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
-    let mut request = save_request(&program.summary.id, 0);
-    request.language = Some("python".into());
-    repo.save_profile(&request).await?;
-    let model = Verdict::new(false);
-
-    let known = practice_fit(&repo, &program.summary.id).await?;
-    let checked = check_practice_fit(&repo, &model, &program.summary.id).await?;
-    assert_eq!(known.code, CodeFit::Fits);
-    assert_eq!(checked.code, CodeFit::Fits);
-    assert_eq!(model.calls(), 0);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_course_not_yet_asked_about_is_checking() -> Result<()> {
-    let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
-
-    let fit = practice_fit(&repo, &program.summary.id).await?;
-    assert_eq!(
-        fit,
-        PracticeFitDto {
-            code: CodeFit::Checking,
-            reason: None
-        }
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn checking_stores_the_verdict_with_its_model_and_returns_it() -> Result<()> {
-    let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
-    let model = Verdict::new(true);
-
-    let checked = check_practice_fit(&repo, &model, &program.summary.id).await?;
-    assert_eq!(checked.code, CodeFit::Fits);
-    assert_eq!(
-        checked.reason.as_deref(),
-        Some("The lessons are about the stated subject.")
-    );
-    assert_eq!(model.calls(), 1);
-
-    let stored: (i64, String) =
-        sqlx::query_as("SELECT teaches_code,model FROM learning_practice_fits WHERE program_id=?")
-            .bind(&program.summary.id)
-            .fetch_one(&pool)
-            .await
-            .map_err(db)?;
-    assert_eq!(stored, (1, "verdict".to_string()));
-
-    assert_eq!(practice_fit(&repo, &program.summary.id).await?, checked);
-    let again = check_practice_fit(&repo, &model, &program.summary.id).await?;
-    assert_eq!(again, checked);
-    assert_eq!(
-        model.calls(),
-        1,
-        "a verdict on the current basis is not asked for again"
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_course_that_teaches_no_code_does_not_fit() -> Result<()> {
-    let pool = active_memory_pool().await?;
-    let (program, _lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool);
-    let model = Verdict::new(false);
-
-    let checked = check_practice_fit(&repo, &model, &program.summary.id).await?;
-    assert_eq!(checked.code, CodeFit::DoesNotFit);
-    assert!(checked.reason.is_some());
-    assert_eq!(practice_fit(&repo, &program.summary.id).await?, checked);
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_verdict_on_an_old_outline_is_checking_until_asked_again() -> Result<()> {
-    let pool = active_memory_pool().await?;
-    let (program, lesson) = setup(&pool).await?;
-    let repo = LearningPracticeRepository::new(pool.clone());
-    let model = Verdict::new(true);
-    check_practice_fit(&repo, &model, &program.summary.id).await?;
-
-    sqlx::query("UPDATE learning_lessons SET title='A different lesson' WHERE id=?")
-        .bind(&lesson)
-        .execute(&pool)
-        .await
-        .map_err(db)?;
-    let known = practice_fit(&repo, &program.summary.id).await?;
-    assert_eq!(known.code, CodeFit::Checking);
-    assert_eq!(known.reason, None);
-
-    check_practice_fit(&repo, &model, &program.summary.id).await?;
-    assert_eq!(model.calls(), 2);
-    assert_eq!(
-        practice_fit(&repo, &program.summary.id).await?.code,
-        CodeFit::Fits
-    );
-    Ok(())
-}
-
-#[test]
-fn a_changed_outline_changes_the_basis_and_the_same_outline_does_not() -> Result<()> {
-    let first = basis_of(&outline("Hash maps"))?;
-    assert_eq!(first, basis_of(&outline("Hash maps"))?);
-    assert_ne!(first, basis_of(&outline("Binary search"))?);
-    let mut more = outline("Hash maps");
-    more.modules.push(OutlineModule {
-        title: "Another module".into(),
-        lessons: Vec::new(),
-    });
-    assert_ne!(first, basis_of(&more)?);
     Ok(())
 }
 

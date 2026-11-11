@@ -15,6 +15,7 @@
 //! `LATTICE_DRILL_EVAL_PATTERNS` default to the app's Standard size: 80 lines and 4 patterns for code, 10 sentences and
 //! 3 patterns for a passage. Code takes each course's own language, or `LATTICE_DRILL_EVAL_LANGUAGE` for every course.
 
+use lattice_core::shared::persistence::Database;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -525,7 +526,7 @@ async fn build(
     spec: &DrillSpec,
     seed: &str,
 ) -> Result<std::result::Result<StoredDrill, Failure>> {
-    let job = bank::queue_build(pool, spec, seed).await?;
+    let job = bank::queue_build(&Database::from(pool.clone()), spec, seed).await?;
     let store = JobStore::new(pool.clone());
     if store.claim(&job).await?.is_none() {
         return Err(AppError::InternalError(
@@ -540,9 +541,15 @@ async fn build(
     let check = ClaimSourceCheck::new(llm);
     let material = material_for(&spec.material, runner.as_deref(), &check);
     let grader = JudgeGrader::new(llm);
-    let outcome = DrillBuild::new(llm, material, &grader, pool, CancellationToken::new())
-        .run(&context, spec)
-        .await;
+    let outcome = DrillBuild::new(
+        llm,
+        material,
+        &grader,
+        &Database::from(pool.clone()),
+        CancellationToken::new(),
+    )
+    .run(&context, spec)
+    .await;
     match outcome {
         Ok(JobOutcome::Committed) => {
             let id = store
@@ -634,7 +641,7 @@ async fn eval_courses(
 ) -> Result<Vec<EvalCourse>> {
     let mut courses = Vec::with_capacity(ids.len());
     for id in ids {
-        let offered = course_drills(pool, id, language).await?;
+        let offered = course_drills(&Database::from(pool.clone()), id, language).await?;
         let title: String = sqlx::query_scalar("SELECT title FROM learning_programs WHERE id=?")
             .bind(id)
             .fetch_one(pool)

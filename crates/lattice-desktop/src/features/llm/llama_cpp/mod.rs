@@ -5,21 +5,24 @@
 //! `/tokenize` and slot pinning. The two differ only in where the server is
 //! (the base URL), how it authenticates (default headers) and who owns its
 //! process: a sidecar's client holds the handle that keeps it running.
+use crate::features::llm::backend::{ignore_retry, ignore_text, ModelBackend, Progress};
 use crate::features::llm::engine::sidecar_manager::SidecarHandle;
-use crate::features::llm::engine::vision::pictures_outside_a_user_message;
 use crate::features::llm::engine::GenerationConfig;
+use crate::features::llm::fitting::{Fitted, OutputLimits, Thinking};
+use crate::features::llm::openai_chat::openai_content_parts;
 use crate::features::llm::scheduler::SchedulerRegistry;
 use async_trait::async_trait;
 use futures::StreamExt;
 use lattice_core::application::{
     contracts::settings::{LLMSettingsDto, LlamaCppSettingsDto},
     ports::llm_port::{
-        invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse,
-        ContentPart, LLMPort, ThinkingPolicy,
+        invalid_tool_arguments, CompletionInput, CompletionRequest, CompletionResponse, LLMPort,
+        ThinkingPolicy,
     },
 };
 use lattice_core::domain::models::vision::VisionGeometry;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::http::{loopback_client_builder, reqwest_client_builder};
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue, AUTHORIZATION};
 use serde_json::{json, Value};
 use std::sync::Arc;
@@ -85,7 +88,7 @@ impl LlamaCppLlm {
             ));
         }
         Ok(Self {
-            client: http_client(remote_headers(connection)?)?,
+            client: http_client(reqwest_client_builder(), remote_headers(connection)?)?,
             base_url,
             config: ServerConfig {
                 model: connection.model.clone(),
@@ -145,7 +148,7 @@ impl LlamaCppLlm {
         bearer.set_sensitive(true);
         headers.insert(AUTHORIZATION, bearer);
         Ok(Self {
-            client: http_client(headers)?,
+            client: http_client(loopback_client_builder(), headers)?,
             base_url: format!("{}/v1", endpoint.trim_end_matches('/')),
             config,
             process: None,
@@ -154,7 +157,7 @@ impl LlamaCppLlm {
 
     pub async fn test_connection(connection: &LlamaCppSettingsDto) -> Result<Vec<String>> {
         let base_url = connection.validated_base_url()?;
-        let client = http_client(remote_headers(connection)?)?;
+        let client = http_client(reqwest_client_builder(), remote_headers(connection)?)?;
         let probe_timeout = Duration::from_secs(30);
         let response = client
             .get(format!("{base_url}/models"))
@@ -208,6 +211,12 @@ impl LlamaCppLlm {
         self.process
             .as_ref()
             .is_some_and(|process| !process.is_running())
+    }
+
+    /// This client as a port, behind the scheduler its server would have on a
+    /// registry of its own.
+    pub async fn into_port(self) -> Arc<dyn LLMPort> {
+        self.schedule(&SchedulerRegistry::default()).await
     }
 
     /// Behind this server's shared scheduler, with an exact tokenizer when it
@@ -267,8 +276,7 @@ impl LlamaCppLlm {
         }
         let tokenizer =
             is_llama_server.then(|| ServerTokenizer::new(self.client.clone(), self.server_root()));
-        let output_limit = u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX);
-        let scheduled = ScheduledLlm::new(Arc::new(self), scheduler, output_limit);
+        let scheduled = ScheduledLlm::new(Arc::new(self), scheduler);
         Arc::new(match tokenizer {
             Some(tokenizer) => scheduled.with_tokenizer(tokenizer),
             None => scheduled,
@@ -337,24 +345,6 @@ pub(crate) fn chat_messages(input: &[CompletionInput]) -> Result<Vec<Value>> {
     coalesce_system_messages(messages)
 }
 
-/// A user message's parts as OpenAI Chat Completions content: each picture an
-/// `image_url` data URI, each text a `text` part, in the order given. Shared
-/// with the cloud adapter's OpenAI-compatible chat path.
-pub(crate) fn openai_content_parts(role: &str, parts: &[ContentPart]) -> Result<Vec<Value>> {
-    if role != "user" {
-        return Err(pictures_outside_a_user_message(role));
-    }
-    Ok(parts
-        .iter()
-        .map(|part| match part {
-            ContentPart::Text { text } => json!({"type":"text","text":text}),
-            ContentPart::Image(image) => {
-                json!({"type":"image_url","image_url":{"url":image.data_uri()}})
-            }
-        })
-        .collect())
-}
-
 /// The server's chat template may allow only one system message at index zero.
 /// Normalize typed/native requests too, without changing history or tool payloads.
 fn coalesce_system_messages(messages: Vec<Value>) -> Result<Vec<Value>> {
@@ -386,7 +376,7 @@ fn coalesce_system_messages(messages: Vec<Value>) -> Result<Vec<Value>> {
 }
 
 #[async_trait]
-impl LLMPort for LlamaCppLlm {
+impl ModelBackend for LlamaCppLlm {
     fn supports_tool_calling(&self) -> bool {
         self.config.supports_tools
     }
@@ -406,8 +396,14 @@ impl LLMPort for LlamaCppLlm {
     fn model_name(&self) -> &str {
         &self.config.model
     }
-    fn max_context_tokens(&self) -> usize {
+    fn window(&self) -> usize {
         self.config.context_window
+    }
+    fn output_limits(&self) -> OutputLimits {
+        OutputLimits::known(u32::try_from(self.config.generation.max_tokens).unwrap_or(u32::MAX))
+    }
+    fn thinking(&self, request: &CompletionRequest) -> Thinking {
+        Thinking::from(self.thinking_mode(request))
     }
     /// A crashed bundled server leaves this client cached with a dead port;
     /// saying so lets the role cache drop it and start a fresh server.
@@ -444,38 +440,26 @@ impl LLMPort for LlamaCppLlm {
                     .any(|model| model.get("id").and_then(Value::as_str) == Some(self.model_name()))
             }))
     }
-    async fn complete(&self, request: &CompletionRequest) -> Result<CompletionResponse> {
-        self.complete_reliably(request, &|_| Ok(()), None, Some(&|_| Ok(())))
-            .await
-    }
-    async fn complete_with_progress(
+    async fn send(
         &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
+        fitted: &Fitted<'_>,
+        progress: Progress<'_>,
     ) -> Result<CompletionResponse> {
-        // Text-only consumers cannot retract an already delivered draft.
-        self.complete_reliably(request, on_text, None, None).await
-    }
-
-    async fn complete_with_retry_progress(
-        &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
-    ) -> Result<CompletionResponse> {
-        self.complete_reliably(request, on_text, None, Some(on_retry))
-            .await
-    }
-
-    async fn complete_with_reasoning_progress(
-        &self,
-        request: &CompletionRequest,
-        on_text: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_reasoning: &(dyn Fn(String) -> Result<()> + Send + Sync),
-        on_retry: &(dyn Fn(usize) -> Result<()> + Send + Sync),
-    ) -> Result<CompletionResponse> {
-        self.complete_reliably(request, on_text, Some(on_reasoning), Some(on_retry))
-            .await
+        match progress {
+            Progress::None => {
+                self.complete_reliably(fitted, &ignore_text, None, Some(&ignore_retry))
+                    .await
+            }
+            // Text-only consumers cannot retract an already delivered draft.
+            Progress::Streamed {
+                on_text,
+                on_reasoning,
+                on_retry,
+            } => {
+                self.complete_reliably(fitted, on_text, on_reasoning, on_retry)
+                    .await
+            }
+        }
     }
 }
 
@@ -495,8 +479,8 @@ fn remote_headers(connection: &LlamaCppSettingsDto) -> Result<HeaderMap> {
 
 /// No client-wide read or total timeout: generations are bounded by their time
 /// budget and stall detection, probes by per-request timeouts.
-fn http_client(headers: HeaderMap) -> Result<reqwest::Client> {
-    lattice_core::shared::http::reqwest_client_builder()
+fn http_client(builder: reqwest::ClientBuilder, headers: HeaderMap) -> Result<reqwest::Client> {
+    builder
         .default_headers(headers)
         .redirect(reqwest::redirect::Policy::none())
         .connect_timeout(Duration::from_secs(10))

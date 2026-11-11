@@ -1,15 +1,18 @@
 //! What the coding tables hold, as the session reads and writes it. The repository fills these in; the session turns
 //! them into what the screen sees.
 
-use super::dto::{CodeHintRung, CodingRunScope, CodingStage, ExampleVerdict, PatternRatingDto};
-use super::policy::CodingCue;
-use super::problem::{CodingSetting, CodingTask, Problem, ProblemDifficulty};
+use super::problem::Problem;
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::{
     CaseCheckDetailDto, LearningPracticalRunStatus, LearningSimulationTurnDto,
 };
+use crate::practice::kinds::program::dto::{CodingRunScope, ExampleVerdict};
+use crate::practice::session::policy::Cue;
 use lattice_core::domain::learning::drills::PatternRating;
+use lattice_core::domain::learning::practice::work::{Form, KindId, Rung, Setting, Stage};
 use lattice_core::domain::learning::practice::Scorecard;
+use lattice_core::shared::error::Result;
+use serde::{Deserialize, Serialize};
 
 /// The request a write answers, so the same operation id replays the first answer instead of repeating the work.
 #[derive(Debug, Clone, Copy)]
@@ -28,20 +31,21 @@ pub enum Applied<T> {
     Replayed,
 }
 
-/// One row of `learning_coding_sessions`.
+/// One row of `learning_exercise_sessions`.
 #[derive(Debug, Clone)]
 pub struct CodingRow {
     pub id: String,
     pub program_id: String,
     pub activity_id: String,
-    pub task: CodingTask,
-    pub setting: CodingSetting,
-    pub stage: CodingStage,
+    pub kind: KindId,
+    pub form: Form,
+    pub setting: Setting,
+    pub stage: Stage,
     pub budget_seconds: Option<u32>,
     pub active_ms: u64,
     pub opened_at: Option<i64>,
     pub draft: Vec<LearningLabFile>,
-    pub pending_cue: Option<CodingCue>,
+    pub pending_cue: Option<Cue>,
     pub submitted_at: Option<i64>,
     pub solution_seen_at: Option<i64>,
     pub finished_at: Option<i64>,
@@ -49,7 +53,7 @@ pub struct CodingRow {
     pub created_at: i64,
 }
 
-/// One row of `learning_coding_events`.
+/// One row of `learning_exercise_session_events`.
 #[derive(Debug, Clone)]
 pub struct StoredEvent {
     pub ordinal: u32,
@@ -71,6 +75,35 @@ pub struct StoredExample {
     pub catches: Vec<String>,
 }
 
+/// The payload of a `hint` event, as it is stored.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredHint {
+    pub ordinal: u32,
+    pub rung: Rung,
+    pub text: String,
+    pub reason: String,
+    /// Rung Point: 1-based lines of `path` in the draft the hint was written for.
+    pub lines: Vec<u32>,
+    pub path: Option<String>,
+    pub stage: Stage,
+    pub run_id: Option<String>,
+    pub in_role: bool,
+    pub at: i64,
+}
+
+/// A technique the session was rated on, as `ratings_json` stores it.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct StoredRating {
+    pub pattern_id: String,
+    pub name: String,
+    pub family: String,
+    pub cue: String,
+    pub rating: PatternRating,
+    pub due_at: i64,
+}
+
 /// A run of the session and the full result of each of its cases.
 #[derive(Debug, Clone)]
 pub struct StoredRun {
@@ -90,7 +123,7 @@ pub struct StoredRun {
 pub struct StoredDebrief {
     pub approach: String,
     pub complexity: String,
-    pub ratings: Vec<PatternRatingDto>,
+    pub ratings: Vec<StoredRating>,
     pub model: String,
 }
 
@@ -111,30 +144,30 @@ pub struct SessionBundle {
 }
 
 /// What a new session needs besides the request's operation.
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct NewCodingSession<'a> {
     pub program_id: &'a str,
     pub activity_id: &'a str,
-    pub setting: CodingSetting,
+    pub setting: Setting,
     /// The learner's choice. Ignored in Coached, which has no budget.
     pub budget_seconds: Option<u32>,
-    /// The budget Mock and Watched take when the learner chose none.
-    pub default_budget_seconds: fn(ProblemDifficulty) -> u32,
+    /// The budget Mock and Watched take when the learner chose none, of the problem the activity holds.
+    pub default_budget: &'a (dyn Fn(&Problem) -> Result<Option<u32>> + Send + Sync),
 }
 
 /// A stage move that was written.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StageMove {
-    pub from: CodingStage,
-    pub to: CodingStage,
+    pub from: Stage,
+    pub to: Stage,
     /// The stages strictly between the two, when moving forward.
-    pub skipped: Vec<CodingStage>,
+    pub skipped: Vec<Stage>,
 }
 
 /// A hint the writer produced, to be stored.
 #[derive(Debug, Clone)]
 pub struct NewHint<'a> {
-    pub rung: CodeHintRung,
+    pub rung: Rung,
     pub text: &'a str,
     pub reason: &'a str,
     pub lines: &'a [u32],

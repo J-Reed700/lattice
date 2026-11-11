@@ -14,13 +14,13 @@ use std::time::{Duration, Instant};
 
 use sqlx::SqlitePool;
 
-use super::manifest::{
-    read_manifest, read_source_stamp, write_manifest, IndexManifest, ManifestMismatch,
-};
+use super::manifest::{read_manifest, write_manifest, IndexManifest, ManifestMismatch};
+use super::repository::read_source_stamp;
 use crate::infrastructure::vector_index::USearchVectorIndex;
 use lattice_core::application::ports::VectorSearchPort;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::persistence::driver::DriverPool;
 
 /// How often the flusher looks at the index.
 const FLUSH_TICK: Duration = Duration::from_secs(5);
@@ -60,7 +60,7 @@ impl StartupPath {
 /// avoid. It is only called when the manifest says a rebuild is needed.
 pub async fn open_or_rebuild<F, Fut>(
     index: &Arc<USearchVectorIndex>,
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     index_path: &Path,
     identity: &str,
     generation: &str,
@@ -71,6 +71,7 @@ where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = Result<Vec<(String, Vec<f32>, String, String, String)>>>,
 {
+    let pool = pool.sqlx_pool();
     let started = Instant::now();
     let stamp = read_source_stamp(pool, identity, dimension).await?;
     let config = index.index_config();
@@ -138,7 +139,7 @@ where
 /// then publish it into the runtime index before reading the next page.
 pub async fn open_or_rebuild_streaming<F, Fut>(
     index: &Arc<USearchVectorIndex>,
-    pool: &SqlitePool,
+    pool: &impl DriverPool,
     index_path: &Path,
     identity: &str,
     generation: &str,
@@ -153,6 +154,7 @@ where
         >,
     >,
 {
+    let pool = pool.sqlx_pool();
     let started = Instant::now();
     let stamp = read_source_stamp(pool, identity, dimension).await?;
     let config = index.index_config();
@@ -272,7 +274,7 @@ pub struct IndexPersistence {
 impl IndexPersistence {
     pub fn new(
         index: Arc<USearchVectorIndex>,
-        pool: SqlitePool,
+        pool: impl DriverPool,
         identity: String,
         generation: String,
         dimension: usize,
@@ -280,7 +282,7 @@ impl IndexPersistence {
     ) -> Self {
         Self {
             index,
-            pool,
+            pool: pool.sqlx_pool().clone(),
             identity,
             generation,
             dimension,

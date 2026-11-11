@@ -16,7 +16,6 @@ pub mod override_changes;
 pub mod overrides;
 pub mod pack;
 pub mod repository;
-mod rows;
 pub mod source_view;
 
 pub use repository::SqliteSourceTrustStore;
@@ -32,9 +31,13 @@ mod eval_export_tests;
 #[cfg(test)]
 mod migration_tests;
 #[cfg(test)]
+mod outcomes_tests;
+#[cfg(test)]
 mod overrides_tests;
 #[cfg(test)]
 mod repository_tests;
+#[cfg(test)]
+mod settle_atomic_tests;
 #[cfg(test)]
 mod source_deleted_tests;
 #[cfg(test)]

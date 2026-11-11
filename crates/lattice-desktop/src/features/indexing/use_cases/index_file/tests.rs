@@ -3,10 +3,10 @@
 use super::*;
 use async_trait::async_trait;
 use lattice_core::application::ports::ImportedBlob;
-use lattice_core::application::ports::UnitOfWorkFactory;
 use lattice_core::application::ports::{ContentAddressedStoragePort, EmbeddingRepositoryPort};
 use lattice_core::domain::entities::Document;
 use lattice_core::domain::entities::Embedding;
+use sqlx::SqlitePool;
 use std::path::Path;
 
 /// Library that indexes files where they already are: every source path
@@ -318,13 +318,6 @@ impl lattice_core::application::ports::RepositoryPort<Document> for MockDocument
         Ok(false)
     }
 
-    async fn find_by_filter(
-        &self,
-        _filter: &dyn lattice_core::application::ports::repository_port::Filter,
-    ) -> Result<Vec<Document>> {
-        Ok(vec![])
-    }
-
     async fn save_batch(&self, _entities: &[Document]) -> Result<()> {
         Ok(())
     }
@@ -342,68 +335,21 @@ impl lattice_core::application::ports::RepositoryPort<Document> for MockDocument
     }
 }
 
-struct MockUnitOfWork;
-
-#[async_trait]
-impl lattice_core::application::ports::UnitOfWork for MockUnitOfWork {
-    fn chunk_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::application::ports::ChunkRepositoryPort + Send + '_>> {
-        Err(AppError::InvalidState(
-            "Chunk repository not used in test".to_string(),
-        ))
-    }
-
-    fn document_repository(&self) -> Result<Box<dyn DocumentRepositoryPort + Send + '_>> {
-        Ok(Box::new(MockDocumentRepo))
-    }
-
-    fn embedding_repository(&self) -> Result<Box<dyn EmbeddingRepositoryPort + Send + '_>> {
-        Ok(Box::new(MockEmbeddingRepo))
-    }
-
-    fn system_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::domain::repositories::SystemRepository + Send + '_>> {
-        Err(AppError::InvalidState(
-            "System repository not used in test".to_string(),
-        ))
-    }
-
-    fn model_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::application::ports::unit_of_work::ModelRepositoryPort + '_>>
-    {
-        Err(AppError::InvalidState(
-            "Model repository not used in test".to_string(),
-        ))
-    }
-
-    fn model_file_repository(
-        &self,
-    ) -> Result<Box<dyn lattice_core::application::ports::unit_of_work::ModelFileRepositoryPort + '_>>
-    {
-        Err(AppError::InvalidState(
-            "Model file repository not used in test".to_string(),
-        ))
-    }
-
-    async fn commit(&mut self) -> Result<()> {
-        Ok(())
-    }
-
-    async fn rollback(&mut self) -> Result<()> {
-        Ok(())
-    }
+async fn test_pool() -> SqlitePool {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    sqlx::migrate!("./migrations").run(&pool).await.unwrap();
+    pool
 }
 
-struct MockUnitOfWorkFactory;
-
-#[async_trait]
-impl UnitOfWorkFactory for MockUnitOfWorkFactory {
-    async fn create(&self) -> Result<Box<dyn lattice_core::application::ports::UnitOfWork + Send>> {
-        Ok(Box::new(MockUnitOfWork))
-    }
+async fn count(pool: &SqlitePool, table: &str) -> i64 {
+    sqlx::query_scalar(&format!("SELECT COUNT(*) FROM {table}"))
+        .fetch_one(pool)
+        .await
+        .unwrap()
 }
 
 #[tokio::test]
@@ -415,6 +361,7 @@ async fn test_index_file_execution() {
     let file_path = temp_dir.path().join("test.txt");
     fs::write(&file_path, "Test content").unwrap();
 
+    let pool = test_pool().await;
     let use_case = IndexFileUseCase::new(
         Arc::new(MockContentStorage),
         Arc::new(MockFileStorage),
@@ -422,7 +369,7 @@ async fn test_index_file_execution() {
         Arc::new(MockEmbedder),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(pool.clone()),
     );
 
     let request = IndexFileRequestDto {
@@ -446,6 +393,9 @@ async fn test_index_file_execution() {
     assert_eq!(response.status, "imported");
     assert!(response.error.is_none());
     assert!(!response.file_path.is_empty());
+    assert_eq!(count(&pool, "documents").await, 1);
+    assert_eq!(count(&pool, "text_chunks").await, 1);
+    assert_eq!(count(&pool, "text_embeddings").await, 1);
 }
 
 #[tokio::test]
@@ -457,6 +407,7 @@ async fn test_index_file_with_chunking() {
     let file_path = temp_dir.path().join("long.txt");
     fs::write(&file_path, "A".repeat(1000)).unwrap();
 
+    let pool = test_pool().await;
     let use_case = IndexFileUseCase::new(
         Arc::new(MockContentStorage),
         Arc::new(MockFileStorage),
@@ -464,7 +415,7 @@ async fn test_index_file_with_chunking() {
         Arc::new(MockSplittingEmbedder { window: 100 }),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(pool.clone()),
     );
 
     let request = IndexFileRequestDto {
@@ -482,6 +433,8 @@ async fn test_index_file_with_chunking() {
     // The 1000-byte file has no headings, so it is one structure span that the
     // embedder splits into 1000 / 100 windows.
     assert_eq!(response.chunks_created, 10);
+    assert_eq!(count(&pool, "text_chunks").await, 10);
+    assert_eq!(count(&pool, "text_embeddings").await, 10);
 }
 
 #[tokio::test]
@@ -541,7 +494,7 @@ async fn prepare_for_indexing_records_library_blob_hash_when_source_mutates_duri
         Arc::new(MockEmbedder),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(test_pool().await),
     );
 
     let outcome = use_case
@@ -660,7 +613,7 @@ async fn reimport_of_a_file_edited_during_the_copy(edited_content_indexed: bool)
         Arc::new(MockEmbedder),
         repo.clone(),
         Arc::new(MockEmbeddingRepo),
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(test_pool().await),
     );
     let request = IndexFileRequestDto {
         path: source.to_str().unwrap().to_string(),
@@ -820,7 +773,7 @@ async fn prepare_for_indexing_preserves_tokenizer_counts_code_flags_and_avoids_f
         Arc::new(TokenizerCountEmbedder { token_count: 14 }),
         Arc::new(MockDocumentRepo),
         Arc::new(MockEmbeddingRepo),
-        Arc::new(MockUnitOfWorkFactory),
+        Database::from(test_pool().await),
     );
 
     // 1. C code with #include must not get a fake section label "include <stdio.h>"
