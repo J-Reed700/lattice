@@ -21,8 +21,8 @@ impl EmbeddingLoader {
     /// Try to load the active embedding model
     ///
     /// Returns Ok(Some(embedding)) if active model loaded successfully
-    /// Returns Ok(None) if no active model or file doesn't exist
-    /// Returns Err only on unrecoverable errors
+    /// Returns Ok(None) only when no embedding model is active
+    /// Returns Err when an active model cannot be used
     async fn try_load_active_embedding_model(&self) -> Result<Option<Arc<dyn EmbeddingPort>>> {
         let active_model = match self.active_models.get_active_embedding_model().await {
             Ok(Some(model)) => model,
@@ -35,7 +35,7 @@ impl EmbeddingLoader {
                     "Failed to query active embedding model from database: {}",
                     e
                 );
-                return Ok(None);
+                return Err(e);
             }
         };
 
@@ -47,7 +47,12 @@ impl EmbeddingLoader {
 
         let model_path = match active_model.loadable_path() {
             Some(p) => p.to_path_buf(),
-            None => return Ok(None),
+            None => {
+                return Err(AppError::InvalidState(format!(
+                    "The active embedding model '{}' has no file on this machine",
+                    active_model.model_name()
+                )))
+            }
         };
 
         if !model_path.exists() {
@@ -55,7 +60,11 @@ impl EmbeddingLoader {
                 "Active embedding model artifact not found: {} - user may have deleted it manually",
                 model_path.display()
             );
-            return Ok(None);
+            return Err(AppError::NotFound(format!(
+                "The active embedding model '{}' file is missing: {}",
+                active_model.model_name(),
+                model_path.display()
+            )));
         }
 
         let models_dir = model_path
@@ -78,7 +87,11 @@ impl EmbeddingLoader {
                 tracing::error!(
                     "Rejecting model load due to security violation (CWE-22: Path Traversal)"
                 );
-                return Ok(None);
+                return Err(AppError::Security(format!(
+                    "The active embedding model '{}' failed path validation: {}",
+                    active_model.model_name(),
+                    e
+                )));
             }
         };
 
