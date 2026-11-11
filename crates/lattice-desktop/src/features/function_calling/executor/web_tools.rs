@@ -376,3 +376,16 @@ impl FunctionExecutor {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_snippet_is_decoded_once() {
+        assert_eq!(
+            FunctionExecutor::strip_html_tags("AT&amp;amp;T &amp;lt;b&amp;gt;"),
+            "AT&amp;T &lt;b&gt;"
+        );
+    }
+}
