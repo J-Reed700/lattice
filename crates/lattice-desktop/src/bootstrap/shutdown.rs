@@ -20,6 +20,7 @@ const JOBS_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct SidecarSweep(pub fn(&tauri::AppHandle) -> Option<usize>);
 
 pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
+    let started = std::time::Instant::now();
     tracing::info!("Exit requested, starting graceful shutdown");
 
     // Close background admission and broadcast cancellation before sweeping
@@ -54,7 +55,6 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
     }
 
     tauri::async_runtime::block_on(async {
-        let started = std::time::Instant::now();
         let shutdown_future = async {
             if let Some(tasks) = app_handle
                 .try_state::<std::sync::Arc<lattice_core::shared::runtime::background::BackgroundTasks>>()
