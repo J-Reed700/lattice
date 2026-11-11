@@ -55,14 +55,6 @@ fn refuse(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
 
-fn capitalised(text: &str) -> String {
-    let mut chars = text.chars();
-    match chars.next() {
-        Some(first) => first.to_uppercase().chain(chars).collect(),
-        None => String::new(),
-    }
-}
-
 /// The answer as a whole, or why it cannot be read: every criterion exactly once, only kinds of evidence the kind
 /// names, what the kind has it state written.
 fn read(raw: &str, plan: &Plan<'_>) -> Result<RawAnswer> {
@@ -103,20 +95,24 @@ fn read(raw: &str, plan: &Plan<'_>) -> Result<RawAnswer> {
             }
         }
     }
-    if let Some(statement) = &plan.statement {
-        let written = statement.keys.iter().all(|key| {
-            answer
+    let unwritten: Vec<&str> = plan
+        .statement
+        .iter()
+        .flat_map(|statement| &statement.keys)
+        .filter(|key| {
+            !answer
                 .stated
-                .get(key)
+                .get(*key)
                 .and_then(Value::as_str)
                 .is_some_and(|text| !text.trim().is_empty())
-        });
-        if !written {
-            return Err(refuse(format!(
-                "{} must be written.",
-                capitalised(&statement.names)
-            )));
-        }
+        })
+        .map(String::as_str)
+        .collect();
+    if !unwritten.is_empty() {
+        return Err(refuse(format!(
+            "These must be written: {}.",
+            unwritten.join(", ")
+        )));
     }
     Ok(answer)
 }

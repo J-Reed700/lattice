@@ -587,7 +587,10 @@ async fn a_kind_with_stated_keys_must_have_them_written() {
     let without_pitfall = json!({"rows": good_rows(), "model": "Fill a, b, c."}).to_string();
     let blank_model =
         json!({"rows": good_rows(), "model": "  ", "pitfall": "Do not reverse them."}).to_string();
-    for unwritten in [without_pitfall, blank_model] {
+    for (unwritten, named) in [
+        (without_pitfall, "These must be written: pitfall."),
+        (blank_model, "These must be written: model."),
+    ] {
         let (result, model) = ask(
             &[unwritten, answer_stating(good_rows())],
             &stating,
@@ -596,9 +599,7 @@ async fn a_kind_with_stated_keys_must_have_them_written() {
         .await;
 
         let debrief = result.expect("a debrief");
-        assert!(
-            model.texts()[1].contains("The model answer and the pitfall to avoid must be written.")
-        );
+        assert!(model.texts()[1].contains(named), "{}", model.texts()[1]);
         assert_eq!(
             debrief.stated,
             [

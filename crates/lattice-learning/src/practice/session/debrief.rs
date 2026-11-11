@@ -111,12 +111,8 @@ pub async fn debrief(llm: &dyn LLMPort, kind: &Kind, session: &DebriefSession) -
         return settle(&plan, answer, examined);
     }
     let reason = format!(
-        "The app checked the evidence against the session and found these faults:
-{}",
-        examined.faults.join(
-            "
-"
-        )
+        "The app checked the evidence against the session and found these faults:\n{}",
+        examined.faults.join("\n")
     );
     let (_, answer) = ask(llm, &plan, reask(request, &raw, &reason)).await?;
     let examined = examine(&plan, session, &answer)?;

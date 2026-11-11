@@ -5,7 +5,9 @@ use super::dto::{
     CodeHintDto, CodingExampleDto, CodingRunScope, CodingStage, DebriefFactsDto, RungCountDto,
     StageTimeDto,
 };
+use super::harness::CaseHarness;
 use super::problem::{CaseResult, CodingSetting, CodingTask, Problem};
+use crate::drills::runner::CodeRunner;
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::kinds::program::kind;
 use crate::practice::kinds::program::parts::line_of;
@@ -13,7 +15,7 @@ use crate::practice::kinds::program::shape::{
     coding_rung_of, coding_setting_of, coding_stage_of, exercise_of, form_of, piece_of, result_of,
     rung_of, scope_of, setting_of, stage_of, verdict_of,
 };
-use crate::practice::kinds::program::toolchain::NoToolchains;
+use crate::practice::kinds::program::toolchain::Toolchains;
 use crate::practice::practical_dto::LearningSimulationTurnDto;
 use crate::practice::session::debrief::{self as engine, Evidence};
 use crate::practice::session::kind::Kind;
@@ -78,9 +80,26 @@ pub struct CodingDebriefer<'a> {
     pub llm: &'a dyn LLMPort,
 }
 
-/// The Program kind as a reader of a finished session: nothing runs.
+/// The toolchains of a reader of a finished session: nothing runs.
+struct NothingRuns;
+
+impl Toolchains for NothingRuns {
+    fn runner(&self, language: &str) -> Result<Box<dyn CodeRunner>> {
+        Err(AppError::InvalidState(format!(
+            "A finished session runs no {language}."
+        )))
+    }
+
+    fn harness(&self, language: &str) -> Result<Box<dyn CaseHarness>> {
+        Err(AppError::InvalidState(format!(
+            "A finished session runs no {language}."
+        )))
+    }
+}
+
+/// The Program kind as this adapter uses it, until the session service holds the kind it runs with.
 fn program_kind() -> Kind {
-    kind(Arc::new(NoToolchains))
+    kind(Arc::new(NothingRuns))
 }
 
 fn stage_in(payload: &Value, key: &str) -> Option<CodingStage> {
