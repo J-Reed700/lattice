@@ -115,6 +115,7 @@ pub(crate) const CONFIRM_PLANNED_NOTHING: &str =
     "{\"taught\":false,\"quote\":\"\",\"belongs\":\"\"}";
 pub(crate) const CONFIRM_USE_NOTHING: &str =
     "{\"asked\":true,\"taught\":false,\"where\":\"thisLesson\",\"quote\":\"\"}";
+pub(crate) const CONFIRM_CLASH_NOTHING: &str = "{\"case\":\"\",\"contradict\":false}";
 
 /// The fixture's replies to [`fixture_prompts`], answered in the typed
 /// protocol: one batched reply, a check's verdict as its last line, or the
@@ -131,6 +132,8 @@ pub(crate) fn fixture_completion(
         return CompletionResponse::from_text(
             if user.contains(crate::lessons::teaching::contract::confirm::PLANNED_TASK) {
                 CONFIRM_PLANNED_NOTHING
+            } else if user.contains(crate::lessons::teaching::contract::confirm::CLASH_TASK) {
+                CONFIRM_CLASH_NOTHING
             } else {
                 CONFIRM_USE_NOTHING
             },

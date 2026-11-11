@@ -362,11 +362,18 @@ fn follows(later: &Hit, used: &Hit) -> bool {
         > (used.order, used.found.text, used.found.end)
 }
 
+/// Two statements the check says cannot both be true, each located in the lesson.
+struct Clash<'a> {
+    first: Hit<'a>,
+    second: Hit<'a>,
+}
+
 /// What the check's answer says once its quotes are located in the lesson.
 struct Reading<'a> {
     taught: Vec<(&'a Item, Hit<'a>)>,
     untaught: Vec<&'a Item>,
     uses: Vec<Use<'a>>,
+    clashes: Vec<Clash<'a>>,
 }
 
 fn read<'a>(answer: &'a Answer, items: &'a [Item], parts: &'a [Part]) -> Reading<'a> {
@@ -374,6 +381,7 @@ fn read<'a>(answer: &'a Answer, items: &'a [Item], parts: &'a [Part]) -> Reading
         taught: Vec::new(),
         untaught: Vec::new(),
         uses: Vec::new(),
+        clashes: Vec::new(),
     };
     for item in items {
         let shown = answer
@@ -405,6 +413,14 @@ fn read<'a>(answer: &'a Answer, items: &'a [Item], parts: &'a [Part]) -> Reading
                 .filter(|words| !words.is_empty())
                 .and_then(|words| first_hit(parts, words)),
         });
+    }
+    for clash in &answer.contradictions {
+        if let (Some(first), Some(second)) = (
+            first_hit(parts, &clash.quote),
+            first_hit(parts, &clash.other_quote),
+        ) {
+            reading.clashes.push(Clash { first, second });
+        }
     }
     reading
 }
@@ -531,13 +547,8 @@ fn findings(
             },
         );
     }
-    for clash in &answer.contradictions {
-        let (Some(first), Some(second)) = (
-            first_hit(parts, &clash.quote),
-            first_hit(parts, &clash.other_quote),
-        ) else {
-            continue;
-        };
+    for upheld in &settled.clashes {
+        let Clash { first, second } = &upheld.clash;
         let (one, other) = (&first.found.exact, &second.found.exact);
         let guarded = |part: &Part, passage: &str| {
             protected::guards(candidate, part.site, passage, protected)
@@ -550,22 +561,28 @@ fn findings(
         let mut digests = [subject_of(one), subject_of(other)];
         digests.sort();
         let both_open = !guarded(first.part, one) && !guarded(second.part, other);
+        let described = format!(
+            "The lesson contradicts itself: {} says \"{one}\" and {} says \"{other}\". Correct the one that is wrong so the lesson says one thing.",
+            label(first.part.site),
+            label(second.part.site)
+        );
+        let case = upheld.case.trim();
         let finding = ReviewFinding::plan(
-                PlanCheck::Contradiction,
-                digests.join("-"),
-                at.site,
-                format!(
-                    "The lesson contradicts itself: {} says \"{one}\" and {} says \"{other}\". Correct the one that is wrong so the lesson says one thing.",
-                    label(first.part.site),
-                    label(second.part.site)
-                ),
-            )
-            .with_summary(format!(
-                "{} and {} contradict each other.",
-                label(first.part.site),
-                label(second.part.site)
-            ))
-            .with_passage(passage);
+            PlanCheck::Contradiction,
+            digests.join("-"),
+            at.site,
+            if case.is_empty() {
+                described
+            } else {
+                format!("{described} Where they conflict: {case}")
+            },
+        )
+        .with_summary(format!(
+            "{} and {} contradict each other.",
+            label(first.part.site),
+            label(second.part.site)
+        ))
+        .with_passage(passage);
         found.push(if both_open {
             finding.with_also(second.part.site)
         } else {
@@ -772,3 +789,7 @@ mod own_notes_tests;
 #[cfg(test)]
 #[path = "contract_note_tests.rs"]
 mod note_tests;
+
+#[cfg(test)]
+#[path = "contract_clash_tests.rs"]
+mod clash_tests;
