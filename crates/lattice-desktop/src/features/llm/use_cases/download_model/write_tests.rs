@@ -138,7 +138,7 @@ fn curated(files: Vec<ModelFileMetadata>) -> ModelMetadata {
         license: "unknown".into(),
         requires_auth: false,
         model_id: None,
-        default_filename: Some("weights.gguf".into()),
+        default_filename: Some("weights.bin".into()),
         files,
         total_size_bytes: 10,
         embedding_dimensions: None,
@@ -147,7 +147,7 @@ fn curated(files: Vec<ModelFileMetadata>) -> ModelMetadata {
     }
 }
 
-/// No GGUF file: the multi-file path reads an embedding GGUF's header over the network before writing.
+/// No GGUF file: a GGUF is read over the network before anything is written.
 fn two_files() -> Vec<ModelFileMetadata> {
     vec![
         ModelFileMetadata::new(
@@ -204,8 +204,11 @@ async fn a_single_file_model_row_does_not_land_without_its_file_row() {
     let id = "write-test-single-pending";
     let paths = ModelPaths::new(id).unwrap();
 
+    let meta = curated(vec![]);
+    let plan = planned_files(id, &meta).unwrap();
+
     let result = use_case
-        .download_single_file_model(id, &curated(vec![]), paths.unified_path(), &paths)
+        .download_planned(id, &meta, paths.unified_path(), &paths, &plan)
         .await;
 
     assert!(result.is_err_and(|error| error.to_string().contains("injected")));
@@ -218,9 +221,11 @@ async fn a_single_file_model_that_cannot_start_is_failed_with_its_file_or_not_at
     let id = "write-test-single-failed";
     let paths = ModelPaths::new(id).unwrap();
     refuse_failed_files(&pool).await;
+    let meta = curated(vec![]);
+    let plan = planned_files(id, &meta).unwrap();
 
     let result = use_case
-        .download_single_file_model(id, &curated(vec![]), paths.unified_path(), &paths)
+        .download_planned(id, &meta, paths.unified_path(), &paths, &plan)
         .await;
 
     assert!(result.is_err());
@@ -234,8 +239,11 @@ async fn a_multi_file_model_row_does_not_land_without_its_file_rows() {
     let id = "write-test-multi-pending";
     let paths = ModelPaths::new(id).unwrap();
 
+    let meta = curated(two_files());
+    let plan = planned_files(id, &meta).unwrap();
+
     let result = use_case
-        .download_multi_file_model(id, &curated(two_files()), paths.unified_path(), &paths)
+        .download_planned(id, &meta, paths.unified_path(), &paths, &plan)
         .await;
 
     assert!(result.is_err_and(|error| error.to_string().contains("injected")));
@@ -248,9 +256,11 @@ async fn a_multi_file_model_that_cannot_start_is_failed_with_its_files_or_not_at
     let id = "write-test-multi-failed";
     let paths = ModelPaths::new(id).unwrap();
     refuse_failed_files(&pool).await;
+    let meta = curated(two_files());
+    let plan = planned_files(id, &meta).unwrap();
 
     let result = use_case
-        .download_multi_file_model(id, &curated(two_files()), paths.unified_path(), &paths)
+        .download_planned(id, &meta, paths.unified_path(), &paths, &plan)
         .await;
 
     assert!(result.is_err());

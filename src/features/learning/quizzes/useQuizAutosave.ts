@@ -2,6 +2,7 @@ import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react'
 
 import { draftOf, fingerprintOf, responseOf, type ItemDraft } from '@/features/learning/quizzes/items/itemResponse';
 import { newOperationId, useSaveQuizResponse } from '@/features/learning/quizzes/useQuizzes';
+import { isConflict } from '@/lib/api';
 import type { LearningAssessmentFormDto, SaveLearningAssessmentResponseRequestDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
 
@@ -12,8 +13,6 @@ const DEBOUNCE_MS = 650;
 function message(error: unknown) {
   return error instanceof Error ? error.message : 'Your answer could not be saved.';
 }
-
-const isConflict = (error: unknown) => /changed|revision|conflict|reload and retry/i.test(message(error));
 
 function draftsOf(form: LearningAssessmentFormDto) {
   return Object.fromEntries(form.items.map((item) => [item.id, draftOf(item)]));

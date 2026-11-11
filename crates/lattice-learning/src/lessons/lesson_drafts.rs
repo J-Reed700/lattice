@@ -4,6 +4,7 @@
 use crate::curriculum_repository::LearningCurriculumRepository;
 use crate::dto::LearningSourceDto;
 use lattice_core::shared::error::Result;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 use serde::{Deserialize, Serialize};
 use std::{
@@ -49,10 +50,9 @@ impl AuthoringContext {
     fn matches(&self, scope_hash: &str, references: &[LearningSourceDto]) -> bool {
         self.scope_hash == scope_hash
             && self.reference_hashes.iter().all(|(id, hash)| {
-                references.iter().any(|source| {
-                    &source.id == id
-                        && crate::content_verification::digest(&source.excerpt) == *hash
-                })
+                references
+                    .iter()
+                    .any(|source| &source.id == id && sha256_hex(&source.excerpt) == *hash)
             })
     }
 }

@@ -80,6 +80,8 @@ mod trust;
 pub use trust::*;
 mod code_review;
 pub use code_review::*;
+mod coding;
+pub use coding::*;
 
 /// The Python bundle shipped in the app's resources, verified once at startup.
 /// A missing or damaged bundle leaves Python labs reporting it unavailable.
@@ -130,6 +132,26 @@ fn drill_grading_worker(
     }
 }
 
+fn practice_worker(
+    container: &Container,
+    kinds: lattice_learning::practice::session::kind::Kinds,
+    runtimes: BuiltinRuntimes,
+) -> super::coding::jobs::PracticeBuildWorker {
+    let builds = std::sync::Arc::new(super::coding::builds::CodingBuilds {
+        database: container.database().clone(),
+        tools: std::sync::Arc::new(
+            lattice_learning::practice::kinds::program::toolchain::BuiltinToolchains::new(runtimes),
+        ),
+    });
+    super::coding::jobs::PracticeBuildWorker {
+        database: container.database().clone(),
+        load_llm: drill_model(container),
+        kinds,
+        nothing: builds.clone(),
+        exercises: builds,
+    }
+}
+
 pub fn init<R: Runtime>() -> TauriPlugin<R> {
     Builder::new("learning")
         .setup(|app, _api| {
@@ -138,6 +160,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // practical commands and lesson verification share its guest slots.
             let runtimes = BuiltinRuntimes::new(bundled_python(app));
             app.manage(runtimes.clone());
+            let practice_kinds = coding::kinds_of(&runtimes)
+                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+            app.manage(practice_kinds.clone());
             // Registration settles the jobs the last process left running,
             // then starts delivering saved work. A kind that fails to register
             // is retried in the background and never fails setup.
@@ -169,8 +194,20 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 },
                 JobKindRegistration {
                     kind: super::drills::jobs::DRILL_GRADING.into(),
-                    handler: std::sync::Arc::new(drill_grading_worker(&container, runtimes)),
+                    handler: std::sync::Arc::new(drill_grading_worker(
+                        &container,
+                        runtimes.clone(),
+                    )),
                     config: super::drills::jobs::grading_job_config(),
+                },
+                JobKindRegistration {
+                    kind: super::coding::jobs::PRACTICE_BUILD.into(),
+                    handler: std::sync::Arc::new(practice_worker(
+                        &container,
+                        practice_kinds,
+                        runtimes,
+                    )),
+                    config: super::coding::jobs::practice_job_config(),
                 },
             ];
             // Course index builds the last process left running resume.
@@ -293,6 +330,8 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             decide_learning_recall_duplicate,
             review_learning_recall_card,
             get_learning_practice_workspace,
+            get_learning_practice_profile,
+            save_learning_practice_profile,
             get_learning_practice_session,
             start_learning_practice_session,
             save_learning_practice_artifact,
@@ -347,7 +386,27 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             code_review_result,
             regrade_code_review,
             code_review_languages,
-            course_drills
+            course_drills,
+            start_practice_build,
+            start_practice_session,
+            get_practice_session,
+            move_practice_stage,
+            check_coding_example,
+            check_practice_piece,
+            run_coding_input,
+            ask_practice_hint,
+            send_practice_turn,
+            observe_practice_draft,
+            set_practice_clock,
+            finish_practice_session,
+            practice_due,
+            list_practice_sessions,
+            remove_coding_example,
+            respond_practice_session,
+            set_practice_setting,
+            reveal_practice_solution,
+            get_practice_fit,
+            check_practice_fit
         ])
         .build()
 }

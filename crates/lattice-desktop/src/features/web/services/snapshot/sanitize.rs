@@ -21,6 +21,7 @@ use super::resources::{
 };
 use super::{MAX_EMITTED_BYTES, PLACEHOLDER_DATA_URL_LEN};
 use crate::features::web::traits::page_snapshot::{CaptureRequest, DataUri};
+use crate::infrastructure::extraction::markup::decode_entities;
 
 mod archival;
 mod collect;
@@ -240,56 +241,6 @@ fn non_empty(value: Option<String>) -> Option<String> {
     value
         .map(|v| v.trim().to_string())
         .filter(|v| !v.is_empty())
-}
-
-/// Decode the character references lol_html leaves in attribute values and
-/// RCDATA: the five XML ones, `&nbsp;` and numeric references.
-pub(super) fn decode_entities(text: &str) -> String {
-    if !text.contains('&') {
-        return text.to_string();
-    }
-    let mut out = String::with_capacity(text.len());
-    let mut rest = text;
-    while let Some(pos) = rest.find('&') {
-        out.push_str(&rest[..pos]);
-        rest = &rest[pos..];
-        match decode_reference(rest) {
-            Some((ch, len)) => {
-                out.push(ch);
-                rest = &rest[len..];
-            }
-            None => {
-                out.push('&');
-                rest = &rest[1..];
-            }
-        }
-    }
-    out.push_str(rest);
-    out
-}
-
-/// One reference at the start of `text` (which begins with `&`): the
-/// character and the bytes it used.
-fn decode_reference(text: &str) -> Option<(char, usize)> {
-    let semi = text.bytes().take(12).position(|b| b == b';')?;
-    let name = &text[1..semi];
-    let ch = match name {
-        "amp" => '&',
-        "lt" => '<',
-        "gt" => '>',
-        "quot" => '"',
-        "apos" => '\'',
-        "nbsp" => '\u{a0}',
-        _ => {
-            let number = name.strip_prefix('#')?;
-            let code = match number.strip_prefix(['x', 'X']) {
-                Some(hex) => u32::from_str_radix(hex, 16).ok()?,
-                None => number.parse().ok()?,
-            };
-            char::from_u32(code)?
-        }
-    };
-    Some((ch, semi + 1))
 }
 
 /// Read an attribute of a lol_html element, entity-decoded.

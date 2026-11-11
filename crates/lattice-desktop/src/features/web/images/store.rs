@@ -12,9 +12,9 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 
 use super::is_allowed_extension;
-use crate::features::web::snapshots::store::sha256_hex;
 pub use crate::features::web::snapshots::store::{is_valid_id, new_id, Verified};
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 
 /// Suffix of a file still being written, after its extension.
 pub const PART_SUFFIX: &str = ".part";

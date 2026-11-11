@@ -299,7 +299,7 @@ pub async fn prepare(
     uuid(&request.lesson_id, "lesson")?;
     let mut program = repo.get(&request.program_id).await?;
     if program.summary.revision != request.expected_revision {
-        return Err(AppError::InvalidInput(
+        return Err(AppError::Conflict(
             "Program changed; reload and retry.".into(),
         ));
     }

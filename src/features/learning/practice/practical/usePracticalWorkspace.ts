@@ -2,7 +2,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import { useApi } from '@/contexts/ApiContext';
 import { learningPracticalWorkspaceKey as workspaceKey } from "@/features/learning/api/learningQueryKeys";
-import { unwrap } from "@/features/learning/practice/practical/practicalWorkbenchHelpers";
+import { unwrap } from "@/lib/api";
 import type { LearningPracticalWorkspaceDto } from "@/lib/bindings";
 
 export function usePracticalWorkspace(programId: string) {

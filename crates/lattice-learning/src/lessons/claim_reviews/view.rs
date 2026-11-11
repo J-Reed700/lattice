@@ -19,6 +19,7 @@ use lattice_core::domain::learning::claim_review::{
     LessonReviewState, TrustAssessment,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::http::host_of;
 use lattice_core::shared::text::plain_text;
 use serde_json::Value;
 
@@ -70,8 +71,7 @@ struct SourceFacts {
 impl SourceFacts {
     /// The host of the version's address; `None` for a file or pasted text.
     fn host(&self) -> Option<String> {
-        let url = url::Url::parse(self.url.as_deref()?).ok()?;
-        url.host_str().map(str::to_owned)
+        host_of(self.url.as_deref()?)
     }
 
     fn reference(&self, source_version_id: &str) -> SourceRefDto {

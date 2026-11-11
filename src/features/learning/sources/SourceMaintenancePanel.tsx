@@ -10,21 +10,15 @@ import {
   useReimportLearningSource,
   useSearchLearningSourcesSemantically,
 } from '@/features/learning/portability/useLearningPortability';
+import { useRetry } from '@/features/learning/practice/shared/useRetry';
 import { courseIndexKeys, useCourseIndexStatus } from '@/features/learning/sources/useCourseIndexStatus';
 import { useLearningSourceVersion, useLearningSourceWorkspace } from '@/features/learning/sources/useLearningSources';
+import { newId } from '@/lib/api';
 import type { LearningSourceLibraryItemDto } from '@/lib/bindings';
 
-function uuid() {
-  if (globalThis.crypto?.randomUUID) return globalThis.crypto.randomUUID();
-  return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (char) => {
-    const random = Math.floor(Math.random() * 16);
-    return (char === 'x' ? random : (random & 3) | 8).toString(16);
-  });
-}
 function sourceName(source: LearningSourceLibraryItemDto) {
   return source.activeVersion?.title ?? source.pendingVersion?.title ?? source.requestedUrl ?? source.versions[0]?.title ?? 'Saved source';
 }
-function isCasConflict(message: string) { return /(revision|compare.and.swap|conflict|changed elsewhere|source changed; reload and retry)/i.test(message); }
 
 export function SourceMaintenancePanel({ programId }: { programId: string }) {
   const workspace = useLearningSourceWorkspace(programId);
@@ -35,9 +29,7 @@ export function SourceMaintenancePanel({ programId }: { programId: string }) {
   const [deleteReason, setDeleteReason] = useState('');
   const [confirmDelete, setConfirmDelete] = useState(false);
   const [statusMessage, setStatusMessage] = useState('');
-  const [error, setError] = useState('');
-  const [reloadRequired, setReloadRequired] = useState(false);
-  const [retryAction, setRetryAction] = useState<{ kind: 'delete' | 'reimport' | 'selector'; request: Record<string, unknown>; label: string } | null>(null);
+  const [lastAction, setLastAction] = useState<'delete' | 'reimport' | 'selector' | null>(null);
   const [selection, setSelection] = useState<{ start: number; end: number } | null>(null);
   const retry = useRef<Record<string, { key: string; request: Record<string, unknown> }>>({});
   const selected = workspace.data?.sources.find((source) => source.id === selectedId) ?? null;
@@ -68,7 +60,7 @@ export function SourceMaintenancePanel({ programId }: { programId: string }) {
   const chooseSource = (source: LearningSourceLibraryItemDto) => {
     setSelectedId(source.id);
     setVersionId(source.activeVersionId ?? source.pendingVersionId ?? source.versions[0]?.id ?? '');
-    setSelection(null); setConfirmDelete(false); setDeleteReason(''); setStatusMessage(''); setError(''); setReloadRequired(false);
+    setSelection(null); setConfirmDelete(false); setDeleteReason(''); setStatusMessage(''); setLastAction(null);
   };
   const setRetry = (kind: string, payload: Record<string, unknown>, identity: string) => {
     const key = JSON.stringify(payload);
@@ -79,29 +71,42 @@ export function SourceMaintenancePanel({ programId }: { programId: string }) {
     return request;
   };
 
-  const doDelete = async () => {
+  const removeRun = useRetry(async (request: Record<string, unknown>, name: string) => {
+    await remove.mutateAsync(request as never);
+    setStatusMessage(`“${name}” was removed from active program materials. Its historical source record remains available.`);
+    setConfirmDelete(false); setDeleteReason('');
+  });
+  const restoreRun = useRetry(async (request: Record<string, unknown>, number: number | string) => {
+    await restore.mutateAsync(request as never);
+    setStatusMessage(`Version ${number} was restored as the active source version.`);
+  });
+  const selectorRun = useRetry(async (entry: { request: Record<string, unknown> }) => {
+    const saved = await selectors.mutateAsync(entry.request as never);
+    delete retry.current.selector;
+    setSelection(null);
+    setStatusMessage(`Quote saved · ${saved.matchStatus.replace(/_/g, ' ')} match`);
+  });
+  const failed = lastAction === 'delete' ? removeRun : lastAction === 'reimport' ? restoreRun : lastAction === 'selector' ? selectorRun : null;
+  const error = failed?.error ?? '';
+  const reloadRequired = Boolean(failed?.conflict);
+
+  const doDelete = () => {
     if (!selected || !deleteReason.trim()) return;
     const payload = { programId, sourceId: selected.id, expectedRevision: selected.revision, reason: deleteReason.trim() };
-    const request = setRetry(`delete:${selected.id}`, payload, uuid());
-    setError(''); setStatusMessage(''); setReloadRequired(false);
-    try {
-      await remove.mutateAsync(request as never);
-      setRetryAction(null);
-      setStatusMessage(`“${sourceName(selected)}” was removed from active program materials. Its historical source record remains available.`);
-      setConfirmDelete(false); setDeleteReason('');
-    } catch (cause) { const message = cause instanceof Error ? cause.message : 'The source could not be deleted.'; setError(message); setReloadRequired(isCasConflict(message)); setRetryAction({ kind: 'delete', request, label: 'Retry same removal' }); }
+    const request = setRetry(`delete:${selected.id}`, payload, newId());
+    setStatusMessage(''); setLastAction('delete');
+    void removeRun.run(request, sourceName(selected));
   };
 
-  const doReimport = async () => {
+  const doReimport = () => {
     if (!selected || !versionId) return;
     const payload = { programId, sourceId: selected.id, versionId, expectedRevision: selected.revision, replacementText: null };
-    const request = setRetry(`reimport:${selected.id}`, payload, uuid());
-    setError(''); setStatusMessage(''); setReloadRequired(false);
-    try { await restore.mutateAsync(request as never); setRetryAction(null); setStatusMessage(`Version ${versions.find((item) => item.id === versionId)?.versionNumber ?? ''} was restored as the active source version.`); }
-    catch (cause) { const message = cause instanceof Error ? cause.message : 'The saved version could not be restored.'; setError(message); setReloadRequired(isCasConflict(message)); setRetryAction({ kind: 'reimport', request, label: 'Retry same restore' }); }
+    const request = setRetry(`reimport:${selected.id}`, payload, newId());
+    setStatusMessage(''); setLastAction('reimport');
+    void restoreRun.run(request, versions.find((item) => item.id === versionId)?.versionNumber ?? '');
   };
 
-  const saveSelector = async () => {
+  const saveSelector = () => {
     if (!selected || !version.data?.fullText || !selection || selection.start >= selection.end) return;
     const fullText = version.data.fullText;
     const startByte = new TextEncoder().encode(fullText.slice(0, selection.start)).length;
@@ -109,38 +114,10 @@ export function SourceMaintenancePanel({ programId }: { programId: string }) {
     const payload = { programId, sourceId: selected.id, sourceVersionId: versionId, startByte, endByte };
     const key = JSON.stringify(payload);
     let entry = retry.current.selector;
-    if (entry?.key !== key) entry = { key, request: { ...payload, selectorId: uuid(), operationId: uuid() } };
+    if (entry?.key !== key) entry = { key, request: { ...payload, selectorId: newId(), operationId: newId() } };
     retry.current.selector = entry;
-    setError(''); setStatusMessage(''); setReloadRequired(false);
-    try {
-      const saved = await selectors.mutateAsync(entry.request as never);
-      delete retry.current.selector;
-      setRetryAction(null);
-      setSelection(null);
-      setStatusMessage(`Quote saved · ${saved.matchStatus.replace(/_/g, ' ')} match`);
-    } catch (cause) { const message = cause instanceof Error ? cause.message : 'The source quote could not be saved.'; setError(message); setReloadRequired(isCasConflict(message)); setRetryAction({ kind: 'selector', request: entry.request, label: 'Retry same quote' }); }
-  };
-
-  const retryMutation = async () => {
-    if (!retryAction) return;
-    setError(''); setReloadRequired(false);
-    try {
-      if (retryAction.kind === 'delete') {
-        await remove.mutateAsync(retryAction.request as never);
-        setStatusMessage('The source was removed from active program materials. Its historical source record remains available.');
-      } else if (retryAction.kind === 'reimport') {
-        await restore.mutateAsync(retryAction.request as never);
-        setStatusMessage('The saved version was restored as the active source version.');
-      } else {
-        const saved = await selectors.mutateAsync(retryAction.request as never);
-        setStatusMessage(`Quote saved · ${saved.matchStatus.replace(/_/g, ' ')} match`);
-        setSelection(null);
-      }
-      setRetryAction(null);
-    } catch (cause) {
-      const message = cause instanceof Error ? cause.message : 'The saved action could not be completed.';
-      setError(message); setReloadRequired(isCasConflict(message));
-    }
+    setStatusMessage(''); setLastAction('selector');
+    void selectorRun.run(entry);
   };
 
   if (workspace.isLoading) return <div role="status" className="rounded-xl border border-border bg-background p-4 text-xs text-text-muted">Loading source history…</div>;
@@ -149,7 +126,7 @@ export function SourceMaintenancePanel({ programId }: { programId: string }) {
   const tombstones = sources.filter((source) => Boolean(source.deletedAt));
 
   return <section className="mt-5 min-w-0 rounded-2xl border border-border bg-surface p-4 sm:p-6" data-testid="source-maintenance"><header><p className="text-[10px] font-semibold uppercase tracking-[.14em] text-accent">Source continuity</p><h3 className="mt-1 font-serif text-xl text-text-primary">Reconnect quotes and saved versions</h3><p className="mt-2 max-w-3xl text-xs leading-5 text-text-secondary">Find related passages in this program’s stored source versions, preserve exact quote selectors, and restore a version or remove a source with its history retained.</p></header>
-    {statusMessage && <p role="status" className="mt-4 rounded-lg bg-emerald-500/10 p-3 text-xs leading-5 text-emerald-800">{statusMessage}</p>}{error && <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-rose-500/10 p-3 text-xs text-rose-700"><span>{error}</span>{reloadRequired ? <button type="button" disabled={workspace.isFetching} onClick={() => { void workspace.refetch(); setError(''); setReloadRequired(false); setRetryAction(null); }} className="inline-flex items-center gap-1 underline"><RotateCcw size={12} />Reload source workspace</button> : retryAction && <button type="button" disabled={selectors.isPending || remove.isPending || restore.isPending} onClick={() => void retryMutation()} className="inline-flex items-center gap-1 underline"><RotateCcw size={12} />{retryAction.label}</button>}</div>}
+    {statusMessage && <p role="status" className="mt-4 rounded-lg bg-emerald-500/10 p-3 text-xs leading-5 text-emerald-800">{statusMessage}</p>}{error && <div role="alert" className="mt-4 flex flex-wrap items-center justify-between gap-2 rounded-lg bg-danger-muted p-3 text-xs text-danger-fg"><span>{error}</span>{reloadRequired ? <button type="button" disabled={workspace.isFetching} onClick={() => { void workspace.refetch(); setLastAction(null); }} className="inline-flex items-center gap-1 underline"><RotateCcw size={12} aria-hidden="true" />Reload source workspace</button> : failed && <button type="button" disabled={selectors.isPending || remove.isPending || restore.isPending} onClick={failed.retry} className="inline-flex items-center gap-1 underline"><RotateCcw size={12} aria-hidden="true" />Try again</button>}</div>}
     <div className="mt-4 grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)]">
       <div className="min-w-0 space-y-4">
         <form onSubmit={(event) => { event.preventDefault(); setSearchText(searchDraft); }} className="rounded-xl border border-border bg-background p-3"><label className="text-xs font-medium text-text-primary" htmlFor="semantic-source-search">Search related saved material</label><div className="mt-2 flex min-w-0 gap-2"><input id="semantic-source-search" value={searchDraft} onChange={(event) => setSearchDraft(event.target.value)} placeholder="A concept, process, or question" className="min-w-0 flex-1 rounded-lg border border-border bg-surface px-3 py-2 text-xs" /><button type="submit" disabled={!searchDraft.trim() || semantic.isFetching} aria-label="Search program source versions" className="shrink-0 rounded-lg bg-accent px-3 text-accent-fg disabled:opacity-40"><Search size={14} /></button></div><p className="mt-2 text-[10px] leading-4 text-text-muted">Search reads only text saved in this program; each result identifies whether retrieval used hybrid search or a keyword fallback. It never fetches source URLs.</p>

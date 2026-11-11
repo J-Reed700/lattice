@@ -11,10 +11,11 @@ use serde_json::{json, Value};
 use super::{data_prompt, judge, names, sanitised, CallOutcome};
 use crate::application::ports::LLMPort;
 use crate::domain::provenance::{
-    canonical_json, sha256_hex, ClaimKind, ClaimProfile, ClaimSubject, Judged, JudgementKey,
-    Reason, ReasonCode, SubjectKey, SubjectKind, TemporalScope,
+    canonical_json, ClaimKind, ClaimProfile, ClaimSubject, Judged, JudgementKey, Reason,
+    ReasonCode, SubjectKey, SubjectKind, TemporalScope,
 };
 use crate::shared::error::Result;
+use crate::shared::hash::sha256_hex;
 
 pub const CLAIM_PROFILE_POLICY: &str = "claim-profile-v1";
 
@@ -65,7 +66,7 @@ pub fn claim_profile_key(statement: &str, known_classes: &[String], model: &str)
     JudgementKey {
         policy: CLAIM_PROFILE_POLICY.to_owned(),
         model: model.to_owned(),
-        input_sha256: sha256_hex(&canonical_json(
+        input_sha256: sha256_hex(canonical_json(
             &json!({ "statement": statement, "known_classes": classes }),
         )),
     }

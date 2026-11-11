@@ -21,7 +21,6 @@ chrono = { workspace = true }
 dirs = { workspace = true }
 fsrs = "=6.6.2"
 futures = { workspace = true }
-hex = { workspace = true }
 jsonschema = { version = "0.17", default-features = false }
 lazy-regex = "3"
 parking_lot = { workspace = true }

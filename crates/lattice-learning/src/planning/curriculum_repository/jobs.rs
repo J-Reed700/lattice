@@ -388,7 +388,7 @@ impl LearningCurriculumRepository {
                 .map_err(db)?
                 .ok_or_else(|| AppError::NotFound("Learning program not found".into()))?;
         if program.get::<i64, _>("revision") != request.expected_revision {
-            return Err(AppError::InvalidState(
+            return Err(AppError::Conflict(
                 "Program changed; reload and retry.".into(),
             ));
         }
@@ -517,7 +517,7 @@ async fn check_program_open(
     if program.get::<i64, _>("revision") != expected_revision
         || program.get::<String, _>("status") != "active"
     {
-        return Err(AppError::InvalidState(
+        return Err(AppError::Conflict(
             "Program changed or is not active; reload and retry.".into(),
         ));
     }

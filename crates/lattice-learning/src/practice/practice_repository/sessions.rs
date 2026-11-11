@@ -1,5 +1,6 @@
 //! Starting practice sessions, saving artifact revisions and changing modes.
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningPracticeRepository {
@@ -33,7 +34,7 @@ impl LearningPracticeRepository {
                 .await
                 .map_err(db)?;
         if program_revision != Some(req.expected_program_revision) {
-            return Err(invalid("Program changed; reload and retry."));
+            return Err(conflict("Program changed; reload and retry."));
         }
         let lesson = sqlx::query(
             "SELECT title,objective,preparation FROM learning_lessons WHERE program_id=? AND id=?",
@@ -72,7 +73,11 @@ impl LearningPracticeRepository {
         }
         let title: String = lesson.get("title");
         let objective: String = lesson.get("objective");
-        let fallback_prompt=format!("{}\n\nCreate a short written artifact that demonstrates your reasoning. State what you would do and why; use a new example where useful.",objective.trim());
+        let details = profile_in(&mut tx, &req.program_id)
+            .await?
+            .map(|profile| profile.details);
+        let fallback_prompt =
+            crate::practice_generation::fallback_task_prompt(&objective, details.as_deref());
         let block_kind = match req.task_kind {
             LearningPracticeTaskKind::Guided => "guided_practice",
             LearningPracticeTaskKind::Independent => "independent_practice",
@@ -128,7 +133,7 @@ impl LearningPracticeRepository {
         let timestamp = now();
         sqlx::query("INSERT INTO learning_practice_sessions(id,program_id,lesson_id,lesson_title,lesson_objective,task_prompt,status,mode,revision,source_version_ids_json,rubric_json,created_at,updated_at,task_kind,revises_session_id) VALUES(?,?,?,?,?,?,'active',?,0,?,?,?,?,?,?)")
             .bind(&req.session_id).bind(&req.program_id).bind(&req.lesson_id).bind(&title).bind(&objective).bind(&task_prompt).bind(mode(&req.mode)).bind(json(&source_ids)?).bind(json(&rubric)?).bind(timestamp).bind(timestamp).bind(task_kind(&req.task_kind)).bind(&req.revises_session_id).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(&initial_text).bind(hash_text(&initial_text)).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(&initial_text).bind(sha256_hex(&initial_text)).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         if let Some(details) = inherited_assistance {
             Self::insert_assistance(
                 &mut tx,
@@ -201,15 +206,15 @@ impl LearningPracticeRepository {
             return Err(invalid("Submitted practice attempts are immutable."));
         }
         if summary.revision != req.expected_revision {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         let next = artifact_revision + 1;
         let t = now();
         let update=sqlx::query("UPDATE learning_practice_sessions SET revision=revision+1,updated_at=? WHERE id=? AND program_id=? AND revision=? AND status='active'").bind(t).bind(&req.session_id).bind(&req.program_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if update.rows_affected() != 1 {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
-        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(next).bind(&req.text).bind(hash_text(&req.text)).bind(&req.operation_id).bind(t).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(next).bind(&req.text).bind(sha256_hex(&req.text)).bind(&req.operation_id).bind(t).execute(&mut *tx).await.map_err(db)?;
         practice_operation(
             &req.operation_id,
             &req.program_id,
@@ -263,7 +268,7 @@ impl LearningPracticeRepository {
             return Err(invalid("Submitted practice attempts are immutable."));
         }
         if current.revision != req.expected_revision {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         if current.revises_session_id.is_some() && req.mode == LearningPracticeMode::Demonstrate {
             return Err(invalid(
@@ -274,7 +279,7 @@ impl LearningPracticeRepository {
         let t = now();
         let update=sqlx::query("UPDATE learning_practice_sessions SET mode=?,revision=revision+1,updated_at=? WHERE program_id=? AND id=? AND revision=? AND status='active'").bind(mode(&req.mode)).bind(t).bind(&req.program_id).bind(&req.session_id).bind(req.expected_revision).execute(&mut *tx).await.map_err(db)?;
         if update.rows_affected() != 1 {
-            return Err(invalid("Practice session changed; reload and retry."));
+            return Err(conflict("Practice session changed; reload and retry."));
         }
         Self::insert_assistance(
             &mut tx,

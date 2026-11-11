@@ -287,6 +287,17 @@ export default [
             message: 'Shared modules sit below every feature. Move the shared part here instead.',
           },
           {
+            target: './src/features/learning/practice/session',
+            from: './src/features/learning/practice/kinds',
+            message: 'A practice session names no kind. Take what a kind provides through the KindView in session/kind.ts.',
+          },
+          {
+            target: './src/features/learning/practice/kinds/program',
+            from: './src/features/learning/practice/kinds',
+            except: ['./program'],
+            message: 'A kind imports the session and shared/, never another kind. Only kinds/index.ts names every kind.',
+          },
+          {
             // src/components holds shared UI plus the app shell (Layout,
             // RootLayout), which composes features and so is not listed.
             target: [

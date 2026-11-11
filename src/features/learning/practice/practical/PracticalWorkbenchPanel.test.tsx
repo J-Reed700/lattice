@@ -6,7 +6,7 @@ import userEvent from "@testing-library/user-event";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 import { LEARNER_TEXT_MAX_CHARS } from "@/features/learning/model/learnerTextLimit";
-import { PracticalWorkbenchPanel } from "@/features/learning/practice/practical/PracticalWorkbenchPanel";
+import { type ComposerRequest, PracticalWorkbenchPanel } from "@/features/learning/practice/practical/PracticalWorkbenchPanel";
 import type { LearningLessonDto, LearningProgramDto } from "@/lib/bindings";
 
 
@@ -23,7 +23,8 @@ const mocks = vi.hoisted(() => ({
   getDraft: vi.fn(),
   saveDraft: vi.fn(),
 }));
-vi.mock("@/lib/api", () => ({
+vi.mock("@/lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/api")>()),
   default: {
     getLearningPracticalWorkspace: mocks.workspace,
     getLearningRuntimeCatalog: mocks.runtimeCatalog,
@@ -38,6 +39,11 @@ vi.mock("@/lib/api", () => ({
     saveLearningPracticalDraft: mocks.saveDraft,
   },
 }));
+
+vi.mock("@/features/voice/hooks/useVoiceConversation", () => ({
+  useVoiceConversation: () => ({ phase: "off", toggle: vi.fn() }),
+}));
+vi.mock("@/features/speech/hooks/useSpeech", () => ({ useSpeaker: () => vi.fn() }));
 
 // Test the workspace's persistence and execution contract here. The real
 // CodeMirror view has its own tests and is exercised by browser journeys.
@@ -185,7 +191,7 @@ const session = (overrides: Record<string, unknown> = {}) => ({
   ...overrides,
 });
 
-function renderPractical(chosenLesson = lesson, projectRequest?: { id: string; brief: string }) {
+function renderPractical(chosenLesson = lesson, extra: { activityId?: string | null; composer?: ComposerRequest | null } = {}) {
   const client = new QueryClient({
     defaultOptions: {
       queries: { retry: false, gcTime: Infinity },
@@ -195,10 +201,10 @@ function renderPractical(chosenLesson = lesson, projectRequest?: { id: string; b
   const wrapper = ({ children }: { children: ReactNode }) => (
     <QueryClientProvider client={client}>{children}</QueryClientProvider>
   );
-  return { client, ...render(
-    <PracticalWorkbenchPanel program={program} lesson={chosenLesson} projectRequest={projectRequest} />,
-    { wrapper },
-  ) };
+  const view = render(<PracticalWorkbenchPanel program={program} lesson={chosenLesson} {...extra} />, { wrapper });
+  const update = (next: { activityId?: string | null; composer?: ComposerRequest | null }) =>
+    view.rerender(<PracticalWorkbenchPanel program={program} lesson={chosenLesson} {...next} />);
+  return { client, ...view, update };
 }
 
 describe("Learning Studio Labs & simulations", () => {
@@ -345,7 +351,7 @@ describe("Learning Studio Labs & simulations", () => {
       "Connection interrupted",
     );
     const first = mocks.startRun.mock.calls.at(-1)?.[0];
-    await user.click(screen.getByRole("button", { name: "Retry run" }));
+    await user.click(screen.getByRole("button", { name: "Try again" }));
     await waitFor(() => expect(mocks.startRun).toHaveBeenCalledTimes(2));
     expect(mocks.startRun.mock.calls[1][0]).toEqual(first);
     expect(
@@ -369,14 +375,14 @@ describe("Learning Studio Labs & simulations", () => {
     );
     const startRequest = mocks.startSimulation.mock.calls[0][0];
     await user.click(
-      screen.getByRole("button", { name: "Retry same operation" }),
+      screen.getByRole("button", { name: "Try again" }),
     );
     await waitFor(() => expect(mocks.startSimulation).toHaveBeenCalledTimes(2));
     expect(mocks.startSimulation.mock.calls[1][0]).toEqual(startRequest);
     const response = screen.getByRole("textbox", { name: "Your response" });
     await user.type(response, "I would first confirm the timeline.");
     await user.click(
-      screen.getByRole("button", { name: "Send simulation turn" }),
+      screen.getByRole("button", { name: "Send" }),
     );
     expect(
       await screen.findByText("What observation led you to that conclusion?"),
@@ -426,25 +432,46 @@ describe("Learning Studio Labs & simulations", () => {
     });
   });
 
-  it("opens a course project with its outcome-based brief already filled in", async () => {
+  it("opens a course project as a code lab with its outcome-based brief already filled in", async () => {
     const user = userEvent.setup();
     const brief = "Build a comparison study. Deliver a design and justify its limitations.";
-    renderPractical(lesson, { id: "project-request", brief });
-    expect(await screen.findByLabelText("Activity type")).toHaveValue("project");
+    renderPractical(lesson, { composer: { id: "project-request", kind: "project", brief } });
+    expect(await screen.findByLabelText("Activity type")).toHaveValue("code_lab");
     expect(screen.getByLabelText("Your focus for this activity")).toHaveValue(brief);
+    await user.selectOptions(screen.getByLabelText("Execution environment"), "builtin:python");
     await user.click(screen.getByRole("button", { name: "Generate activity" }));
     await waitFor(() => expect(mocks.generate).toHaveBeenCalledOnce());
-    expect(mocks.generate.mock.calls[0][0]).toMatchObject({ kind: "project", learnerBrief: brief, lessonId: lesson.id, runtimeProfileId: null, builtinRuntime: null });
+    expect(mocks.generate.mock.calls[0][0]).toMatchObject({ kind: "code_lab", learnerBrief: brief, lessonId: lesson.id, runtimeProfileId: null, builtinRuntime: "python" });
   });
 
-  it("keeps container selection available for optional project activities", async () => {
+  it("opens the composer on the kind it is asked for, and again only for a new request", async () => {
+    const user = userEvent.setup();
+    const { update } = renderPractical(lesson, { composer: { id: "first", kind: "system_design" } });
+    expect(await screen.findByLabelText("Activity type")).toHaveValue("system_design");
+    await user.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByLabelText("Activity type")).not.toBeInTheDocument());
+    update({ composer: { id: "first", kind: "system_design" } });
+    expect(screen.queryByLabelText("Activity type")).not.toBeInTheDocument();
+    update({ composer: { id: "second", kind: "incident" } });
+    expect(await screen.findByLabelText("Activity type")).toHaveValue("incident");
+  });
+
+  it("selects the activity it is pointed at, on mount and when that changes", async () => {
+    mocks.workspace.mockResolvedValue(ok(workspace({ activities: [activity(), activity({ id: "activity-2", title: "Another activity" })] })));
+    const { update } = renderPractical(lesson, { activityId: "activity-2" });
+    expect(await screen.findByRole("button", { name: /Another activity/ })).toHaveAttribute("aria-pressed", "true");
+    update({ activityId: "activity-1" });
+    expect(await screen.findByRole("button", { name: /Inspect a data trail/ })).toHaveAttribute("aria-pressed", "true");
+    expect(screen.getByRole("button", { name: /Another activity/ })).toHaveAttribute("aria-pressed", "false");
+  });
+
+  it("keeps container selection available for code labs", async () => {
     const user = userEvent.setup();
     renderPractical();
 
     await user.click(
       await screen.findByRole("button", { name: "New activity" }),
     );
-    await user.selectOptions(screen.getByLabelText("Activity type"), "project");
     await user.selectOptions(
       screen.getByLabelText("Execution environment"),
       "profile-1",
@@ -457,7 +484,7 @@ describe("Learning Studio Labs & simulations", () => {
 
     await waitFor(() => expect(mocks.generate).toHaveBeenCalledTimes(1));
     expect(mocks.generate.mock.calls[0][0]).toMatchObject({
-      kind: "project",
+      kind: "code_lab",
       runtimeProfileId: "profile-1",
       builtinRuntime: null,
     });
@@ -525,7 +552,7 @@ describe("Learning Studio Labs & simulations", () => {
     await waitFor(() => expect(opener).toHaveFocus());
   });
 
-  it("requires a runnable language for code labs while allowing an explicit review project", async () => {
+  it("requires a runnable language for code labs", async () => {
     const user = userEvent.setup();
     renderPractical();
     await user.click(await screen.findByRole("button", { name: "New activity" }));
@@ -533,10 +560,8 @@ describe("Learning Studio Labs & simulations", () => {
     expect(screen.getByRole("button", { name: "Generate activity" })).toBeDisabled();
     await user.selectOptions(screen.getByLabelText("Execution environment"), "builtin:python");
     expect(screen.getByRole("button", { name: "Generate activity" })).toBeEnabled();
-    await user.selectOptions(screen.getByLabelText("Activity type"), "project");
     await user.selectOptions(screen.getByLabelText("Execution environment"), "");
-    await user.click(screen.getByRole("button", { name: "Generate activity" }));
-    await waitFor(() => expect(mocks.generate).toHaveBeenCalledWith(expect.objectContaining({ kind: "project", runtimeProfileId: null, builtinRuntime: null })));
+    expect(screen.getByRole("button", { name: "Generate activity" })).toBeDisabled();
   });
 
   it("restores a draft after leaving the lab without running it", async () => {
@@ -776,7 +801,7 @@ describe("Learning Studio Labs & simulations", () => {
     const user = userEvent.setup();
     renderPractical();
     await user.type(await screen.findByLabelText("Your response"), "I would verify retries.");
-    await user.click(screen.getByRole("button", { name: "Send simulation turn" }));
+    await user.click(screen.getByRole("button", { name: "Send" }));
     await waitFor(() => expect(screen.getByRole("button", { name: "Finish interview" })).toBeEnabled());
     await user.click(screen.getByRole("button", { name: "Finish interview" }));
     expect(await screen.findByText("Feedback from the saved attempt.")).toBeVisible();

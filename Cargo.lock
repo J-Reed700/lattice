@@ -4637,7 +4637,6 @@ dependencies = [
  "dirs 5.0.1",
  "fsrs",
  "futures",
- "hex",
  "jsonschema",
  "lattice-core",
  "lattice-index",
