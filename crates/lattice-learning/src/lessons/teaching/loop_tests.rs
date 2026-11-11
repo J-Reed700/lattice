@@ -124,7 +124,11 @@ async fn a_defect_no_repair_fixes_waits_after_its_second_repair() -> Result<()> 
     assert_eq!(waiting.finding.place().id(), "teaching:section-0");
     assert_eq!(waiting.finding.id().as_str(), "reviewer/1");
     assert_eq!(waiting.repairs, 2);
-    assert!(waiting.finding.note.contains("after two repairs"));
+    assert!(waiting
+        .finding
+        .note
+        .contains("although the code returns the number 4"));
+    assert!(!waiting.finding.note.contains("after two repairs"));
     assert!(waiting.finding.passage.is_some());
     assert_eq!(model.prompts.lock().unwrap().len(), 6);
     let asked = repair_requests(&model);
@@ -1959,7 +1963,7 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
             &[1],
             &[],
             &[
-                present("reviewer/1", KEPT),
+                present("reviewer/1", "Part A then gives a first idea."),
                 verdict("reviewer/2", "resolved"),
             ],
         ),

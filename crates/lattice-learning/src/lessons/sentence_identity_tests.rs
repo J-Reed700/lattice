@@ -60,7 +60,7 @@ fn a_sentence_equal_to_its_citations_quote_copies_the_source() {
     assert_eq!(found.len(), 1, "{found:?}");
     assert_eq!(found[0].place().site, FindingSite::Section(0));
     assert!(
-        found[0].note.contains("double quotation marks"),
+        found[0].note.ends_with("Say it in the lesson's own words."),
         "{}",
         found[0].note
     );
