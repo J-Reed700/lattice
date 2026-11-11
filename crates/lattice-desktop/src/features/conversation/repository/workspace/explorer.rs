@@ -32,7 +32,7 @@ impl ConversationRepository {
         .query();
 
         let rows = qb
-            .build_query_as::<ConversationExplorerRow>()
+            .build_query_as::<ConversationListRow>()
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {

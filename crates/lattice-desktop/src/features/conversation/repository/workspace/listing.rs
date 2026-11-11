@@ -1,7 +1,7 @@
 use super::*;
 
 #[derive(Debug, Clone, sqlx::FromRow)]
-pub(super) struct ConversationExplorerRow {
+pub(super) struct ConversationListRow {
     pub(super) id: String,
     pub(super) title: String,
     pub(super) model_choice: Option<String>,
@@ -27,7 +27,7 @@ pub(super) struct ConversationExplorerRow {
     pub(super) lesson_id: Option<String>,
 }
 
-impl ConversationExplorerRow {
+impl ConversationListRow {
     pub(super) fn into_dto(self) -> Result<ConversationDto, AppError> {
         Ok(ConversationDto {
             model_choice: lattice_core::domain::conversation::ChatModelChoice::from_column(
@@ -210,11 +210,11 @@ impl<'a> ConversationListing<'a> {
 }
 
 pub(super) fn listing_response(
-    rows: Vec<ConversationExplorerRow>,
+    rows: Vec<ConversationListRow>,
 ) -> Result<ListConversationsResponseDto, AppError> {
     let conversations = rows
         .into_iter()
-        .map(ConversationExplorerRow::into_dto)
+        .map(ConversationListRow::into_dto)
         .collect::<Result<Vec<_>, AppError>>()?;
     Ok(ListConversationsResponseDto { conversations })
 }

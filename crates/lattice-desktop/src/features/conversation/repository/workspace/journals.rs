@@ -460,7 +460,7 @@ impl ConversationRepository {
             .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
         ensure_journal_space(&mut tx, journal_space_id).await?;
         let rows = qb
-            .build_query_as::<ConversationExplorerRow>()
+            .build_query_as::<ConversationListRow>()
             .fetch_all(&mut *tx)
             .await
             .map_err(|e| {
