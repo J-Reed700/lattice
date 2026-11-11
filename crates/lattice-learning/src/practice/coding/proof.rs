@@ -3,6 +3,7 @@
 
 use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::lab_runtime::{LearningLabFile, LearningLabLimits};
+use crate::persistence::hash_text;
 use crate::practice::coding::harness::{new_nonce, CaseHarness, RunEnd};
 use crate::practice::coding::problem::{
     CaseResult, CaseStatus, Misreading, ProblemCase, ProblemSpec, SOLUTION_PATH,
@@ -167,7 +168,7 @@ pub(crate) async fn establish_reference(
                 case.id
             )));
         };
-        case.digest = Some(actual.to_owned());
+        case.digest = Some(hash_text(actual));
     }
 
     let second = proving.run(reference, &cases).await?;

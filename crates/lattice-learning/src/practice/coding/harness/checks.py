@@ -45,19 +45,6 @@ SCALE_NODES = (
     ast.Tuple,
     ast.Dict,
     ast.Set,
-    ast.ListComp,
-    ast.SetComp,
-    ast.DictComp,
-    ast.GeneratorExp,
-    ast.comprehension,
-    ast.Store,
-    ast.Compare,
-    ast.cmpop,
-    ast.BoolOp,
-    ast.boolop,
-    ast.IfExp,
-    ast.Subscript,
-    ast.Slice,
 )
 
 
@@ -69,27 +56,14 @@ def describe(error):
 
 def scale_value(source):
     tree = ast.parse(source, mode="eval")
-    bound = {
-        name.id
-        for node in ast.walk(tree)
-        if isinstance(node, ast.comprehension)
-        for name in ast.walk(node.target)
-        if isinstance(name, ast.Name)
-    }
     for node in ast.walk(tree):
         if not isinstance(node, SCALE_NODES):
             raise ValueError("not allowed in a scale input: " + type(node).__name__)
         if isinstance(node, ast.Call) and not (
-            isinstance(node.func, ast.Name)
-            and node.func.id in SCALE_NAMES
-            and node.func.id not in bound
+            isinstance(node.func, ast.Name) and node.func.id in SCALE_NAMES
         ):
             raise ValueError("not allowed in a scale input: a call of something else")
-        if (
-            isinstance(node, ast.Name)
-            and node.id not in SCALE_NAMES
-            and node.id not in bound
-        ):
+        if isinstance(node, ast.Name) and node.id not in SCALE_NAMES:
             raise ValueError("not allowed in a scale input: " + node.id)
     scope = {"__builtins__": {}}
     scope.update(SCALE_NAMES)
@@ -185,11 +159,11 @@ def main():
             continue
         try:
             arguments = [argument(source, scale) for source in case["args"]]
-            call_arguments = copy.deepcopy(arguments)
         except Exception as error:
             emit(nonce, case_id, "error", error="bad arguments: " + describe(error))
             failing = True
             continue
+        call_arguments = copy.deepcopy(arguments)
         sink = io.StringIO()
         failure = None
         result = None
