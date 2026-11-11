@@ -95,3 +95,14 @@ fn a_quoted_span_beside_a_code_span_leaves_only_the_own_words() {
     );
     assert!(found.is_empty(), "{found:?}");
 }
+
+#[test]
+fn a_source_line_with_too_few_words_to_quote_is_no_wording() {
+    // A table row: long enough as written, two words once its marks are set aside.
+    let source = Wording::of_excerpts(["| ^ | - | upper shelf | - |"]);
+    let found = copied(
+        "Put the jar back on the upper shelf when you are done.",
+        &source,
+    );
+    assert!(found.is_empty(), "{found:?}");
+}
