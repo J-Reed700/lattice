@@ -30,11 +30,15 @@ pub(super) fn schema(keys: &[String], ids: &[String], recorded: &[String]) -> Va
             .map(String::as_str)
             .chain(["none"])
             .collect();
-        decision["required"]
-            .as_array_mut()
-            .into_iter()
-            .for_each(|required| required.push(json!("recordedAs")));
-        decision["properties"]["recordedAs"] = json!({"type":"string","enum":named});
+        if let Some(required) = decision.get_mut("required").and_then(Value::as_array_mut) {
+            required.push(json!("recordedAs"));
+        }
+        if let Some(properties) = decision
+            .get_mut("properties")
+            .and_then(Value::as_object_mut)
+        {
+            properties.insert("recordedAs".into(), json!({"type":"string","enum":named}));
+        }
     }
     json!({"type":"object","additionalProperties":false,"required":["decisions"],"properties":{
         "decisions":{"type":"array","items":decision}}})

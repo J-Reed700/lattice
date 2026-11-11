@@ -93,6 +93,14 @@ fn invalid_finding(index: usize, detail: &str) -> AppError {
     ))
 }
 
+/// `prompt` with the findings other checks recorded, when there are any.
+fn with_recorded(mut prompt: Value, recorded: &[Value]) -> Value {
+    if let Some(fields) = prompt.as_object_mut().filter(|_| !recorded.is_empty()) {
+        fields.insert("recordedFindings".into(), json!(recorded));
+    }
+    prompt
+}
+
 /// The id a recorded finding has in the request.
 fn recorded_id(index: usize) -> String {
     format!("recorded-{index}")
@@ -344,10 +352,10 @@ pub async fn check(
     } else {
         format!("{SYSTEM}{RECORDED}")
     };
-    let mut skeleton = json!({"proposals":notes,"requirements":requirements,"candidateParts":candidate_parts,"referencePassages":[]});
-    if !recorded.is_empty() {
-        skeleton["recordedFindings"] = json!(recorded_list);
-    }
+    let skeleton = with_recorded(
+        json!({"proposals":notes,"requirements":requirements,"candidateParts":candidate_parts,"referencePassages":[]}),
+        &recorded_list,
+    );
     let mut request = GroundedRequest::new(&system, skeleton.to_string());
     request.output_tokens = 2 * OUTPUT_TOKENS;
     let room = crate::model_call::source_room(llm, &request, usize::MAX);
@@ -426,10 +434,10 @@ pub async fn check(
             .collect();
         let mut ids: Vec<_> = evidence.keys().cloned().collect();
         ids.sort();
-        let mut prompt = json!({"proposals":proposals,"requirements":{"id":"requirements","content":requirements},"candidateParts":candidate_parts,"referencePassages":reference_parts});
-        if !recorded.is_empty() {
-            prompt["recordedFindings"] = json!(recorded_list);
-        }
+        let prompt = with_recorded(
+            json!({"proposals":proposals,"requirements":{"id":"requirements","content":requirements},"candidateParts":candidate_parts,"referencePassages":reference_parts}),
+            &recorded_list,
+        );
         let request = crate::model_call::structured(
             &system,
             prompt.to_string(),
