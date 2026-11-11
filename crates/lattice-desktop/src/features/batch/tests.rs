@@ -1130,6 +1130,34 @@ async fn a_refused_space_assignment_leaves_the_owner_unstamped_and_the_retry_fil
 }
 
 #[tokio::test]
+async fn a_url_import_over_a_model_that_failed_to_load_fails_with_the_load_error(
+) -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let harness = ImportHarness::new(dir.path()).await?;
+    *harness.loaded.lock() = Some(Arc::new(
+        lattice_core::application::ports::UnavailableEmbedding::failed_to_load(
+            AppError::ModelLoadFailed("weights are corrupt".into()),
+        ),
+    ));
+
+    let job_id = harness
+        .imports
+        .start_urls(&["https://example.com/article1".to_string()], None)
+        .await?;
+    harness.wait(&job_id).await?;
+
+    let job = harness.jobs.store().get(&job_id).await?;
+    assert_eq!(job.status, JobStatus::Failed);
+    let message = job.error_message.unwrap_or_default();
+    assert!(
+        message.contains("weights are corrupt"),
+        "the load failure is missing from: {message}"
+    );
+    assert!(harness.ingestion.ingested.lock().is_empty());
+    Ok(())
+}
+
+#[tokio::test]
 async fn a_url_import_ingests_each_url_and_records_the_one_that_failed() -> anyhow::Result<()> {
     let dir = tempfile::tempdir()?;
     let harness = ImportHarness::new(dir.path()).await?;
