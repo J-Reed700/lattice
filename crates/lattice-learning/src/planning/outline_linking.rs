@@ -11,9 +11,9 @@ use crate::{
     lessons::structured_call::{complete_reasoned_json, CallKind, ReasonFirst},
     outline_draft::OutlineDraft,
     outline_progress::{OutlineProgress, OutlineStage},
+    persistence::hash_text,
     reference_collection::{ReferenceCollection, ReferencePassage},
 };
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::{ports::LLMPort, services::grounded_generation::GroundedRequest},
     shared::error::Result,
@@ -144,7 +144,7 @@ fn citation(field: &Value) -> Option<(usize, &str)> {
 pub(crate) fn source_hashes(sources: &[LearningSourceDto]) -> Vec<String> {
     sources
         .iter()
-        .map(|source| sha256_hex(source.excerpt.trim()))
+        .map(|source| hash_text(source.excerpt.trim()))
         .collect()
 }
 
@@ -155,8 +155,8 @@ pub(crate) fn receipt_key(
     source_hash: &str,
     quote: &str,
 ) -> String {
-    sha256_hex(
-        json!({"policy":POLICY,"model":model,"kind":kind.name(),"text":text.trim(),"source":source_hash,"quote":quote.trim()})
+    hash_text(
+        &json!({"policy":POLICY,"model":model,"kind":kind.name(),"text":text.trim(),"source":source_hash,"quote":quote.trim()})
             .to_string(),
     )
 }
@@ -164,8 +164,8 @@ pub(crate) fn receipt_key(
 /// The key of a declined candidate set: the same item under the same model,
 /// offered exactly these passages, is not asked about again.
 fn declined_key(model: &str, kind: ItemKind, text: &str, candidates: &[Candidate]) -> String {
-    sha256_hex(
-        json!({"policy":POLICY,"model":model,"kind":kind.name(),"text":text.trim(),"declined":candidates.iter().map(|c| json!({"source":c.hash,"quote":c.quote})).collect::<Vec<_>>()})
+    hash_text(
+        &json!({"policy":POLICY,"model":model,"kind":kind.name(),"text":text.trim(),"declined":candidates.iter().map(|c| json!({"source":c.hash,"quote":c.quote})).collect::<Vec<_>>()})
             .to_string(),
     )
 }

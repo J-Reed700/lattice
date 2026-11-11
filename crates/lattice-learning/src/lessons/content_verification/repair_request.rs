@@ -15,17 +15,15 @@ pub(super) struct PendingRepair {
 pub(crate) async fn has_pending_repair(
     llm: &dyn LLMPort,
     prompt: &str,
-    shape: &dyn crate::lessons::shape::ShapePolicy,
-    source_count: usize,
+    schema: &Value,
     raw: &str,
     references: &ReferenceCollection<'_>,
 ) -> Result<bool> {
-    let schema = shape.schema(crate::lessons::shape::Phase::Kept, source_count);
     let candidate: Value = crate::generation::parse_json(raw)?;
     Ok(crate::lesson_drafts::pending_repair(raw)
         .await?
         .and_then(|raw| serde_json::from_str::<PendingRepair>(&raw).ok())
-        .is_some_and(|saved| saved.matches(llm, prompt, schema.value(), &candidate, references)))
+        .is_some_and(|saved| saved.matches(llm, prompt, schema, &candidate, references)))
 }
 
 pub(super) fn repair_fingerprint(
@@ -38,10 +36,10 @@ pub(super) fn repair_fingerprint(
     let mut sources: Vec<_> = references
         .sources
         .iter()
-        .map(|source| (&source.id, sha256_hex(&source.excerpt)))
+        .map(|source| (&source.id, digest(&source.excerpt)))
         .collect();
     sources.sort();
-    sha256_hex(json!({"policy":POLICY,"repairPolicy":"pending-repair-v3","model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
+    digest(&json!({"policy":POLICY,"repairPolicy":"pending-repair-v3","model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
 }
 
 impl PendingRepair {
@@ -122,15 +120,6 @@ pub(super) fn repair_context(
                 // after it tests, and why the first could not be applied.
                 if let Some((goal, why)) = ledger.rewrite_ask(policy, id) {
                     fields.insert("goal".into(), json!(goal_words(goal)));
-                    if goal == Goal::CorrectWhatWasFound {
-                        let (veto, ground) = ledger.veto_and_ground_reasons(id);
-                        if let Some(reason) = veto {
-                            fields.insert("reason".into(), json!(reason));
-                        }
-                        if let Some(reason) = ground {
-                            fields.insert("groundReason".into(), json!(reason));
-                        }
-                    }
                     if let Some(reason) = why {
                         fields.insert("notApplied".into(), json!(reason));
                     }

@@ -66,11 +66,6 @@ pub fn diagnostics() -> ModelRequirements {
     ModelRequirements::default()
 }
 
-/// Planning a course's topics, or changing some: each call sizes its answer to fit.
-pub fn course_plan() -> ModelRequirements {
-    ModelRequirements::default()
-}
-
 /// Drill building: each call sizes its answer to fit.
 pub fn drills() -> ModelRequirements {
     ModelRequirements::default()

@@ -7,8 +7,8 @@ use crate::{
     outline_draft::OutlineDraft, pack::DecodedLearningPack,
 };
 use lattice_core::shared::error::Result;
-use lattice_core::shared::hash::sha256_hex;
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 use std::collections::{HashMap, HashSet};
 
@@ -39,7 +39,10 @@ struct LessonReceipt {
 }
 
 fn validate_outline(draft: &OutlineDraft) -> Result<()> {
-    let fingerprint = sha256_hex(draft.candidate.to_string());
+    let fingerprint = format!(
+        "{:x}",
+        Sha256::digest(draft.candidate.to_string().as_bytes())
+    );
     if draft.review.content_hash != fingerprint {
         return Err(invalid(
             "Pack outline provenance has an invalid content fingerprint.",

@@ -115,21 +115,10 @@ fn is_heading(line: &str) -> bool {
 }
 
 /// Whether `line` opens a list item: a bullet or an ordered marker, and whitespace after it.
-pub(super) fn is_list_item(line: &str) -> bool {
-    item_marker_end(line).is_some()
-}
-
-/// Where the list marker opening `line`, a bullet or an ordered one, and the
-/// whitespace after it end, if one does.
-pub fn item_marker_end(line: &str) -> Option<usize> {
-    let rest = line.trim_start();
-    let indent = line.len() - rest.len();
-    let bullet = rest.strip_prefix(['-', '*', '+', '•', '◦', '▪', '‣', '–']);
-    if let Some(after) = bullet.filter(|after| after.starts_with([' ', '\t'])) {
-        let space = after.len() - after.trim_start_matches([' ', '\t']).len();
-        return Some(indent + (rest.len() - after.len()) + space);
-    }
-    list_marker_end(rest).map(|end| indent + end)
+fn is_list_item(line: &str) -> bool {
+    let line = line.trim_start();
+    let bullet = line.strip_prefix(['-', '*', '+', '•', '◦', '▪', '‣', '–']);
+    bullet.is_some_and(|rest| rest.starts_with([' ', '\t'])) || list_marker_end(line).is_some()
 }
 
 /// Whether `line` is a rule: three or more of one of `-`, `*`, `_` or `=`, with spaces between them.
@@ -281,9 +270,7 @@ impl Layout {
 /// Where the break UAX #29 put at `at` lands: after the whitespace it leads
 /// into. A break right after its terminator and before a run of `*`, `_`, `~`
 /// or backticks moves past the run, the quotes and brackets after it, and the
-/// whitespace after them, or is dropped (`None`) when text follows directly. A
-/// break right after an ASCII `.`, `!` or `?` and its closers is dropped too:
-/// a sentence ends at a stop followed by whitespace, not inside a token.
+/// whitespace after them, or is dropped (`None`) when text follows directly.
 fn settle(text: &str, at: usize) -> Option<usize> {
     let mut end = at;
     if !text.get(..at)?.ends_with(char::is_whitespace) {
@@ -293,12 +280,6 @@ fn settle(text: &str, at: usize) -> Option<usize> {
             if !text.get(end..)?.starts_with(char::is_whitespace) {
                 return None;
             }
-        } else if text
-            .get(..at)?
-            .trim_end_matches(is_closer)
-            .ends_with(['.', '!', '?'])
-        {
-            return None;
         }
     }
     let end = past(text, end, char::is_whitespace);
@@ -430,7 +411,7 @@ fn list_marker_end(line: &str) -> Option<usize> {
 
 /// The inline code spans of `line`: a backtick run to the next run of the
 /// same length.
-pub fn code_spans(line: &str) -> Vec<Span> {
+fn code_spans(line: &str) -> Vec<Span> {
     let bytes = line.as_bytes();
     let run = |from: usize| {
         bytes.get(from..).map_or(0, |rest| {

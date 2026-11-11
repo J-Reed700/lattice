@@ -1,9 +1,10 @@
 use super::*;
 use crate::lessons::course_generation_tests::property_count;
+use crate::review_findings::FindingKind;
 
 fn issues(count: usize) -> Vec<ReviewFinding> {
     (0..count)
-        .map(|i| ReviewFinding::reviewer(u32::try_from(i).unwrap(), None, format!("Proposal {i}.")))
+        .map(|i| ReviewFinding::new(FindingKind::Teaching, None, format!("Proposal {i}.")))
         .collect()
 }
 
@@ -31,34 +32,18 @@ fn answer(decisions: Vec<Value>) -> String {
 }
 
 fn first(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
-    accepted(
-        raw,
-        &issues(count),
-        Beside::NONE,
-        &evidence(),
-        false,
-        &mut HashMap::new(),
-    )
-    .map(|checked| checked.established)
+    accepted(raw, &issues(count), &evidence(), false, &mut HashMap::new())
 }
 
 fn last(raw: &str, count: usize) -> Result<Vec<ReviewFinding>> {
-    accepted(
-        raw,
-        &issues(count),
-        Beside::NONE,
-        &evidence(),
-        true,
-        &mut HashMap::new(),
-    )
-    .map(|checked| checked.established)
+    accepted(raw, &issues(count), &evidence(), true, &mut HashMap::new())
 }
 
 #[test]
 fn the_schema_is_as_large_for_fifty_issues_as_for_one() {
     let ids = ["blocks-0", "reference-0", "requirements"].map(String::from);
-    let one = schema(&keys(1), &ids, &[], &[]);
-    let fifty = schema(&keys(50), &ids, &[], &[]);
+    let one = schema(&keys(1), &ids);
+    let fifty = schema(&keys(50), &ids);
     assert_eq!(property_count(&one), property_count(&fifty));
     let listed = &fifty["properties"]["decisions"]["items"]["properties"]["issueId"]["enum"];
     assert_eq!(listed.as_array().map(Vec::len), Some(50));
@@ -127,7 +112,7 @@ fn on_the_last_answer_only_the_missing_issue_is_left_not_established() -> Result
 #[test]
 fn the_decision_schema_requires_a_part_among_the_candidates_or_lesson() {
     let ids = ["blocks-0", "questions-1", "reference-0", "requirements"].map(String::from);
-    let schema = schema(&keys(1), &ids, &[], &[]);
+    let schema = schema(&keys(1), &ids);
     let decision = &schema["properties"]["decisions"]["items"];
     assert!(decision["required"]
         .as_array()
@@ -142,7 +127,6 @@ fn the_decision_schema_requires_a_part_among_the_candidates_or_lesson() {
 #[test]
 fn the_decision_schema_bounds_no_text_but_a_blank() {
     let ids = ["blocks-0", "requirements"].map(String::from);
-    let bounds =
-        crate::lessons::course_generation_tests::length_bounds(&schema(&keys(1), &ids, &[], &[]));
+    let bounds = crate::lessons::course_generation_tests::length_bounds(&schema(&keys(1), &ids));
     assert!(bounds.is_empty(), "{bounds:?}");
 }

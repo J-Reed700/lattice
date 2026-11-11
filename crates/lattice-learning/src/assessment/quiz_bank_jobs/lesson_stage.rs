@@ -10,35 +10,6 @@ fn seed_difficulty(kind: &LessonQuestionKind) -> u8 {
     }
 }
 
-/// A lesson question with its key as the single-choice item it is in the bank
-/// and in review. Options and their reasons keep the writer's order.
-pub(crate) fn lesson_question_item(
-    q: &LessonQuestion,
-    key: &LessonAnswerKey,
-    outcome_ids: Vec<String>,
-) -> engine::LearningAssessmentCandidate {
-    engine::LearningAssessmentCandidate {
-        id: q.id.clone(),
-        outcome_ids,
-        format: LearningItemFormat::SingleChoice,
-        difficulty: seed_difficulty(&q.kind),
-        prompt: q.prompt.clone(),
-        options: q.options.clone(),
-        left: vec![],
-        source_version_ids: q
-            .source_ids
-            .iter()
-            .filter(|id| uuid::Uuid::parse_str(id).is_ok())
-            .take(24)
-            .cloned()
-            .collect(),
-        rubric: vec![],
-        key: engine::LearningAssessmentKey::Choice(key.correct_index),
-        explanation: key.explanation.clone(),
-        distractor_rationales: key.rationales.clone(),
-    }
-}
-
 /// A prepared lesson's own reviewed questions as bank items (single choice;
 /// difficulty from their kind: practice 2, quiz 3, test 4). Options and their
 /// reasons keep the writer's order, which claims and the published editor
@@ -55,7 +26,26 @@ pub(crate) fn lesson_seed_items(
         .iter()
         .filter_map(|q| {
             let key = keys.iter().find(|k| k.question_id == q.id)?;
-            let candidate = lesson_question_item(q, key, vec![outcome_id.to_string()]);
+            let candidate = engine::LearningAssessmentCandidate {
+                id: q.id.clone(),
+                outcome_ids: vec![outcome_id.to_string()],
+                format: LearningItemFormat::SingleChoice,
+                difficulty: seed_difficulty(&q.kind),
+                prompt: q.prompt.clone(),
+                options: q.options.clone(),
+                left: vec![],
+                source_version_ids: q
+                    .source_ids
+                    .iter()
+                    .filter(|id| uuid::Uuid::parse_str(id).is_ok())
+                    .take(24)
+                    .cloned()
+                    .collect(),
+                rubric: vec![],
+                key: engine::LearningAssessmentKey::Choice(key.correct_index),
+                explanation: key.explanation.clone(),
+                distractor_rationales: key.rationales.clone(),
+            };
             let review_status = match engine::validate_candidate(&candidate) {
                 Ok(()) => "agreed",
                 Err(error) => {

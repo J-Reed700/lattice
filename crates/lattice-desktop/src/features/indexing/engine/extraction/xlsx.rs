@@ -1,10 +1,10 @@
 //! Excel (XLSX) extraction.
 
 use super::archive_budget::{run_archive_work, ArchiveBudget, MAX_ARCHIVE_MEMBERS};
+use super::markup::{attr, decode_entities, Markup, MarkupCursor};
 use super::types::{ContentMetadata, ExtractedContent};
 use super::ExtractionWorkers;
 use crate::features::indexing::engine::error::{IndexingError, Result};
-use crate::infrastructure::extraction::markup::{attr, decode_entities, Markup, MarkupCursor};
 use std::borrow::Cow;
 use std::fs::File;
 use std::path::Path;

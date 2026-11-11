@@ -503,8 +503,8 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
     let world = world_of(&references, citations);
     let earlier = format!(
         "claim-v1:{}",
-        sha256_hex(
-            json!({"policy": "lesson-evidence-v20", "model": model.model_name(),
+        digest(
+            &json!({"policy": "lesson-evidence-v20", "model": model.model_name(),
                 "context": model.max_context_tokens(), "comparison": comparison,
                 "challenge": "challenge-contrary-evidence-v1"})
             .to_string()
@@ -517,8 +517,8 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
         current,
         format!(
             "claim-v1:{}",
-            sha256_hex(
-                json!({"policy": POLICY, "model": model.model_name(),
+            digest(
+                &json!({"policy": POLICY, "model": model.model_name(),
                     "context": model.max_context_tokens(), "comparison": comparison,
                     "trust": lattice_core::domain::provenance::TRUST_POLICY_VERSION})
                 .to_string()

@@ -1158,12 +1158,6 @@ export async function installLearningStudioBackend(page: Page) {
       list_learning_tangents: (): LearningTangentDto[] => [],
       set_conversation_course: (): null => null,
       get_learning_program: () => program,
-      prepare_learning_ahead: (args) => {
-        const request = getRequest<{ programId: string; lessonId: string }>(args);
-        if (request.programId !== program.summary.id) throw new Error("Learning program not found");
-        findLesson(request.lessonId);
-        return program;
-      },
       get_learning_outline_evidence: () => {
         if (state.outlineEvidenceFailuresRemaining > 0) {
           state.outlineEvidenceFailuresRemaining -= 1;
@@ -2313,16 +2307,6 @@ export async function installLearningStudioBackend(page: Page) {
       skip_learning_diagnostic: () => {
         state.planWorkspace.latestDiagnostic = { id: "diagnostic-skipped", programId: program.summary.id, status: "skipped", revision: 0, prompts: [], responses: [], findings: [], sourceCoverageGaps: [], interpretation: "Skipped", createdAt: Date.now(), submittedAt: null };
         return state.planWorkspace.latestDiagnostic;
-      },
-      get_learning_course_plan: (args) => {
-        const { programId } = args as { programId: string };
-        if (programId !== program.summary.id) throw new Error("Learning program not found");
-        return { programId, outlineRevision: program.summary.revision, state: "none", error: null, entries: [] };
-      },
-      plan_learning_course: (args) => {
-        const { programId } = (args as { request: { programId: string } }).request;
-        if (programId !== program.summary.id) throw new Error("Learning program not found");
-        return { programId, outlineRevision: program.summary.revision, state: "planning", error: null, entries: [] };
       },
       get_learning_plan: () => {
         state.planWorkspace.programRevision = program.summary.revision;

@@ -1,10 +1,12 @@
 //! The files: `~/.lattice/web-snapshots/<id>.html`, written through
 //! `<id>.html.part`, fsynced and renamed, 0600 on unix (§7).
 
-use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use std::io::Write;
 use std::path::{Path, PathBuf};
+
+use sha2::{Digest, Sha256};
+
+use lattice_core::shared::error::{AppError, Result};
 
 /// Suffix of a finished snapshot file.
 pub const HTML_SUFFIX: &str = ".html";
@@ -18,6 +20,10 @@ pub fn is_valid_id(id: &str) -> bool {
 
 pub fn new_id() -> String {
     uuid::Uuid::new_v4().simple().to_string()
+}
+
+pub fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
 }
 
 /// What reading a stored file against its recorded hash found.

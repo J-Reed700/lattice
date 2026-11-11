@@ -1,6 +1,5 @@
 //! Exercise the real authoring, validation and persistence boundaries without a live model.
 use crate::content_verification::tests::{fixture_completion, fixture_prompts};
-use crate::lessons::course_plan::CoursePlan;
 use crate::{
     dto::*, generation, practice_repository::LearningPracticeRepository,
     repository::LearningRepository, service,
@@ -45,12 +44,15 @@ impl Model {
         if prompt.starts_with("Source passages:") {
             return Ok("supported\nReason: The fixture reference supports the experimental design.\nSource quote: A randomized comparison isolates the intervention.\nSource passage: passage-0".into());
         }
+        if prompt.starts_with("Verify instructional answer keys independently.") {
+            return Ok(json!({"answers":(0..6).map(|index| json!({"index":index,"correctIndices":[0],"reason":"A randomized comparison isolates the intervention."})).collect::<Vec<_>>()} ).to_string());
+        }
         if prompt.starts_with("Review instructional quality.") {
             let context: serde_json::Value =
                 serde_json::from_str(prompt.rsplit("\n\n").next().unwrap_or("{}"))?;
-            // Only the outline plan review numbers the modules it shows;
-            // the teaching reviews keep their own response shape.
-            if context.get("moduleNumbering").is_some() {
+            // The outline review names its open findings; lesson reviews
+            // keep their own response shape.
+            if context.get("openFindings").is_some() {
                 return Ok(json!({"newFindings":[]}).to_string());
             }
             if context["candidate"].get("blocks").is_none() {
@@ -136,11 +138,9 @@ const LESSON_SHAPE: [&str; 11] = [
 ];
 
 fn lesson_response() -> serde_json::Value {
-    let teaching = |step: usize, pass: usize| {
-        format!("Start with a measurable question, identify the comparison, and define the outcome before collecting data in design step {step}, pass {pass}. Explain the assumptions behind the design in design step {step}, pass {pass}. Work through the decisions in order and examine how a confounding variable could change the conclusion of design step {step}, pass {pass}. A concrete example should show both the result and the limitations of that result in design step {step}, pass {pass}. ")
-    };
+    let teaching = "Start with a measurable question, identify the comparison, and define the outcome before collecting data. Explain the assumptions behind the design. Work through the decisions in order and examine how a confounding variable could change the conclusion. A concrete example should show both the result and the limitations of that result. ";
     json!({
-        "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{}\n\n{}\n\n{}", teaching(i, 0), crate::generation::CHECK_REVEAL, teaching(i, 1)) } else { format!("{}{} Assignment step {}: produce a design, state your assumptions, and justify your decisions.", teaching(i, 0), teaching(i, 1), char::from(b'a' + u8::try_from(i).unwrap_or(0))) },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":"","citations":[]})).collect::<Vec<_>>()),
+        "blocks":(LESSON_SHAPE.iter().enumerate().map(|(i,kind)| json!({"kind":kind,"title":format!("Design step {i}"),"body":if *kind == "check" { format!("{teaching}\n\n{}\n\n{teaching}", crate::generation::CHECK_REVEAL) } else { format!("{teaching}{teaching} Assignment step {}: produce a design, state your assumptions, and justify your decisions.", char::from(b'a' + u8::try_from(i).unwrap_or(0))) },"rubric":if ["guided_practice","independent_practice"].contains(kind) { task_rubric() } else { json!([]) },"sourceIndex":null,"quote":"","citations":[]})).collect::<Vec<_>>()),
         "questions":(["practice","quiz","test"].iter().flat_map(|kind| (0..2).map(move |i|json!({"kind":kind,"prompt":format!("Which experimental design decision is appropriate in {kind} scenario {i}?"),"options":["Compare randomized groups","Change several variables together","Select only positive results","Omit the comparison group"],"correctIndex":0,"rationales":["","Several changed variables confound the result.","Selecting only positive results biases the sample.","Without a comparison group nothing separates the effect."],"explanation":"A randomized comparison helps separate the intervention from confounding factors.","sourceIndex":null,"quote":"","citations":[]}))).collect::<Vec<_>>())
     })
 }
@@ -194,11 +194,9 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
     }
     crate::tests::assert_conflict(
         service::prepare(
-            &Database::from(pool.clone()),
             &repo,
             &Model(lesson_candidate.to_string()),
             &crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-            &Default::default(),
             PrepareLearningLessonRequestDto {
                 program_id: draft.summary.id.clone(),
                 lesson_id: lesson_id.clone(),
@@ -208,11 +206,9 @@ async fn topic_course_with_acquired_reference_runs_through_assignment_and_recall
         .await,
     );
     let prepared = service::prepare(
-        &Database::from(pool.clone()),
         &repo,
         &Model(lesson_candidate.to_string()),
         &crate::embedded_runtime::BuiltinRuntimes::for_tests(),
-        &Default::default(),
         PrepareLearningLessonRequestDto {
             program_id: draft.summary.id.clone(),
             lesson_id: lesson_id.clone(),
@@ -493,13 +489,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             &jobs,
             &job.id,
             &lesson.id,
-            generation::prepare_lesson(
-                &llm,
-                &runtimes,
-                &program,
-                lesson,
-                &CoursePlan::blank(&program),
-            ),
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
         ),
     )
     .await;
@@ -530,13 +520,7 @@ async fn failed_lesson_review_retries_the_saved_draft_then_verifies_and_publishe
             &jobs,
             &retry.id,
             &lesson.id,
-            generation::prepare_lesson(
-                &llm,
-                &runtimes,
-                &program,
-                lesson,
-                &CoursePlan::blank(&program),
-            ),
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
         ),
     )
     .await?;
@@ -586,51 +570,6 @@ impl LLMPort for ScriptedModel {
         Ok(true)
     }
 }
-/// A teaching-review verdict on the finding `id`: "present" or "resolved".
-pub(crate) fn verdict(id: &str, verdict: &str) -> serde_json::Value {
-    json!({"id":id,"quote":"","verdict":verdict})
-}
-
-/// A "present" verdict on the finding `id` that quotes the words showing it.
-pub(crate) fn present(id: &str, quote: &str) -> serde_json::Value {
-    json!({"id":id,"quote":quote,"verdict":"present"})
-}
-
-/// A teaching-review reply that reports no issue, finds no defect in the
-/// sections it checks, and gives `verdicts` on the findings it was asked about.
-pub(crate) fn clean_review(sections: &[usize], verdicts: &[serde_json::Value]) -> String {
-    review_reply(
-        &[],
-        sections
-            .iter()
-            .map(|index| section_check(*index, None))
-            .collect(),
-        verdicts,
-    )
-}
-
-/// The check of section `index`: a defect when `defect` is given.
-pub(crate) fn section_check(index: usize, defect: Option<&str>) -> serde_json::Value {
-    let finding = defect.unwrap_or("No defect was found in this section.");
-    json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":finding,"hasDefect":defect.is_some()})
-}
-
-/// A teaching-review reply as it is written: `checks` are for exactly the
-/// sections the review asks about, `verdicts` for exactly the findings it asks
-/// about (none: no `openFindings`).
-pub(crate) fn review_reply(
-    issues: &[&str],
-    checks: Vec<serde_json::Value>,
-    verdicts: &[serde_json::Value],
-) -> String {
-    let mut reply =
-        json!({"issues":issues,"blockChecks":crate::teaching_review::fixture_checks(checks)});
-    if !verdicts.is_empty() {
-        reply["openFindings"] = json!(verdicts);
-    }
-    reply.to_string()
-}
-
 impl ScriptedModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
         self.prompts
@@ -827,13 +766,7 @@ async fn a_question_may_cite_a_reference_verification_saved_for_the_program() ->
         accepted.summary.id.clone(),
         accepted.summary.goal.clone(),
         Some(research_tests::web(false)),
-        generation::prepare_lesson(
-            &llm,
-            &runtimes,
-            &program,
-            lesson,
-            &CoursePlan::blank(&program),
-        ),
+        generation::prepare_lesson(&llm, &runtimes, &program, lesson),
     ))
     .await?;
 
@@ -863,7 +796,7 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
             vec![
                 issue.clone(),
                 patch.clone(),
-                json!({"issues":[],"openFindings":[verdict("reviewer/1", "resolved")]}).to_string(),
+                json!({"issues":[]}).to_string(),
             ]
             .into(),
         ),
@@ -886,19 +819,12 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
             .map_err(|_| AppError::InternalError("fixture lock".into()))?;
         assert_eq!(prompts.len(), 3);
         assert!(prompts[1].contains("Correct the comparison"));
-        assert!(prompts[2].contains("openFindings"));
-        assert!(prompts[2].contains("judge the correction"));
+        assert!(prompts[2].contains("originalIssuesToRecheck"));
+        assert!(prompts[2].contains("final publication check"));
         assert!(prompts[2].contains("Correct the comparison"));
     }
     let model = ScriptedModel {
-        outputs: std::sync::Mutex::new(
-            vec![
-                issue.clone(),
-                patch,
-                json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."],"openFindings":[present("reviewer/1", "The exercise answer contradicts its stated condition.")]}).to_string(),
-            ]
-            .into(),
-        ),
+        outputs: std::sync::Mutex::new(vec![issue.clone(), patch, issue].into()),
         prompts: std::sync::Mutex::new(vec![]),
     };
     assert!(crate::teaching::review_and_repair(
@@ -921,18 +847,12 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
         "A running total is initialized to zero and each accepted value is added exactly once. "
             .repeat(10);
     let candidate = json!({"blocks":[{"kind":"explanation","body":body}]});
-    let check = |has_defect, verdicts: &[serde_json::Value]| {
-        review_reply(
-            &[],
-            vec![
-                json!({"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect}),
-            ],
-            verdicts,
-        )
+    let check = |has_defect| {
+        json!({"issues":[],"blockChecks":crate::teaching_review::fixture_checks(vec![json!({"index":0,"passageId":"section-0-passage-0","finding":"The example contradicts its return value; correct the returned total to match the accumulation.","hasDefect":has_defect})])}).to_string()
     };
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
-            vec![check(true, &[]), json!({"edits":[{"path":"/blocks/0/body","before":body,"after":format!("{body}Return the accumulated total.")}]}).to_string(), check(false, &[verdict("reviewer/1", "resolved")])].into(),
+            vec![check(true), json!({"edits":[{"path":"/blocks/0/body","before":body,"after":format!("{body}Return the accumulated total.")}]}).to_string(), check(false)].into(),
         ),
         prompts: std::sync::Mutex::new(vec![]),
     };
@@ -976,22 +896,18 @@ async fn lesson_review_requires_evidence_for_every_section_and_repairs_reported_
 
 #[tokio::test]
 async fn disputed_answer_keys_are_blinded_repaired_and_checked_again() -> Result<()> {
-    let candidate = json!({"questions":[{"kind":"quiz","prompt":"What is two plus two?","options":["Three","Four","Five","Six"],"correctIndex":0,"explanation":"AUTHOR_KEY_SECRET","quote":""}]});
+    let candidate = json!({"questions":[{"prompt":"What is two plus two?","options":["Three","Four","Five","Six"],"correctIndex":0,"explanation":"AUTHOR_KEY_SECRET","quote":""}]});
     let mut repaired = candidate.clone();
     repaired["questions"][0]["correctIndex"] = json!(1);
     repaired["questions"][0]["explanation"] = json!("Two plus two is four.");
-    let solved = json!({"answers":[{"index":0,"reason":"Adding two pairs produces four items.","correctIndices":[1],"answer":"","blankAnswers":[],"matches":[],"orderedValues":[]}]}).to_string();
-    let judged =
-        json!({"checks":[{"id":"new-0","finding":"","hasDefect":false,"repeats":[]}]}).to_string();
+    let check = json!({"answers":[{"index":0,"correctIndices":[1],"reason":"Adding two pairs produces four items."}]}).to_string();
     let model = ScriptedModel {
         outputs: std::sync::Mutex::new(
             vec![
-                solved.clone(),
-                judged.clone(),
+                check.clone(),
                 json!({"issues":[]}).to_string(),
                 json!({"edits":[{"path":"/questions/0/correctIndex","before":0,"after":1},{"path":"/questions/0/explanation","before":"AUTHOR_KEY_SECRET","after":"Two plus two is four."}]}).to_string(),
-                solved,
-                judged,
+                check,
                 json!({"issues":[]}).to_string(),
             ]
             .into(),
@@ -1016,11 +932,11 @@ async fn disputed_answer_keys_are_blinded_repaired_and_checked_again() -> Result
             .prompts
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?;
-        assert_eq!(prompts.len(), 7);
+        assert_eq!(prompts.len(), 5);
         assert!(!prompts[0].contains("AUTHOR_KEY_SECRET"));
         assert!(!prompts[0].contains("\"correctIndex\":"));
-        assert!(prompts[3].contains("An independent solution answered options [1]"));
-        assert!(prompts[4].starts_with("Solve quiz questions independently"));
+        assert!(prompts[2].contains("disputed or ambiguous answer key"));
+        assert!(prompts[3].starts_with("Verify instructional answer keys independently."));
     }
     let incomplete = ScriptedModel {
         outputs: std::sync::Mutex::new(vec![json!({"answers":[]}).to_string()].into()),
@@ -1980,13 +1896,7 @@ async fn a_drafts_citation_list_is_gone_before_review_and_verification_read_it()
             &jobs,
             &job.id,
             &lesson.id,
-            generation::prepare_lesson(
-                &llm,
-                &runtimes,
-                &program,
-                lesson,
-                &CoursePlan::blank(&program),
-            ),
+            generation::prepare_lesson(&llm, &runtimes, &program, lesson),
         ),
     )
     .await?;

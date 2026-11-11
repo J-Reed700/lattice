@@ -4,7 +4,6 @@
 //! structured-output accuracy. The answer step continues the draft's
 //! conversation, so it reuses the prompt the server just read.
 
-use lattice_core::shared::hash::sha256_hex;
 use serde_json::{json, Value};
 
 use crate::outline_progress::OutlineProgress;
@@ -12,7 +11,7 @@ use crate::{lesson_drafts, lesson_progress, model_call};
 use lattice_core::application::ports::llm_port::SamplingOverride;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::grounded_generation::{
-    self, GroundedOutput, GroundedRequest, HistoryItem, Streaming,
+    GroundedOutput, GroundedRequest, HistoryItem, Streaming,
 };
 use lattice_core::shared::error::{AppError, Result};
 
@@ -252,8 +251,8 @@ pub(crate) async fn complete_checked_request<T>(
 
     let key = format!(
         "{DRAFT_CHECKPOINT_POLICY}:{}",
-        sha256_hex(
-            json!({"model":llm.model_name(),"system":two_step_system,"prompt":prompt}).to_string()
+        crate::content_verification::digest(
+            &json!({"model":llm.model_name(),"system":two_step_system,"prompt":prompt}).to_string()
         )
     );
     let saved = lesson_drafts::checkpoint(&key).await?.and_then(|value| {
@@ -381,10 +380,8 @@ pub(crate) async fn complete_checked_request<T>(
 /// `accept`. A refused answer is asked for once more: the request continues
 /// with the refused answer and the reason, so the server reads the opening it
 /// has just read. When the window cannot also hold the refused answer, the
-/// task is sent again with the reason added instead; when neither fits,
-/// a caller that packs material is refused for its size and sends less; any
-/// other caller gets the answer's refusal. Returns the accepted value and the
-/// response it came from.
+/// task is sent again with the reason added instead. Returns the accepted
+/// value and the response it came from.
 async fn answer<T>(
     llm: &dyn LLMPort,
     request: impl Fn(usize) -> GroundedRequest,
@@ -415,7 +412,12 @@ async fn answer<T>(
         }
     };
     if !continues && !model_call::fits(llm, &again(output_tokens)).await {
-        return Err(correction_too_large(llm, &again(output_tokens), reason, step).await);
+        tracing::warn!(
+            step = step.name(),
+            reason,
+            "A refused answer cannot be asked for again within the window"
+        );
+        return Err(AppError::ModelAnswerUnusable(reason.to_owned()));
     }
     tracing::warn!(
         step = step.name(),
@@ -430,47 +432,6 @@ async fn answer<T>(
         Err(error) => Err(refusal(&error)
             .map(|reason| AppError::ModelAnswerUnusable(reason.to_owned()))
             .unwrap_or(error)),
-    }
-}
-
-/// The refusal for a correction `restated` that the window cannot hold: for a
-/// packer's call, with the size the planner measured; otherwise, or when that
-/// size cannot be measured, the answer's own refusal.
-async fn correction_too_large(
-    llm: &dyn LLMPort,
-    restated: &GroundedRequest,
-    reason: &str,
-    step: Step,
-) -> AppError {
-    let size = match grounded_generation::measure(llm, restated).await {
-        Ok(measured) => Some((measured.prompt_tokens, measured.exact)),
-        Err(error) => error.overflow().map(|overflow| (overflow.required, false)),
-    };
-    let window = llm.max_context_tokens();
-    tracing::warn!(
-        step = step.name(),
-        reason,
-        prompt_tokens = size.map(|(tokens, _)| tokens),
-        counted_exactly = size.map(|(_, exact)| exact),
-        window,
-        "A refused answer cannot be asked for again within the window"
-    );
-    let Some((prompt_tokens, counted_exactly)) = size.filter(|_| model_call::sent_by_packer())
-    else {
-        return AppError::ModelAnswerUnusable(reason.to_owned());
-    };
-    let counted = if counted_exactly {
-        "counted exactly"
-    } else {
-        "estimated"
-    };
-    AppError::PromptExceedsWindow {
-        prompt_tokens,
-        window,
-        counted_exactly,
-        message: format!(
-            "The model's answer could not be used: {reason} Asking again with that reason needs a prompt of {prompt_tokens} tokens ({counted}), which does not fit the configured context window of {window}."
-        ),
     }
 }
 
@@ -603,8 +564,6 @@ async fn send(
     .await?;
     tracing::info!(
         stage = ?progress.map(|value| value.snapshot().stage),
-        lesson = ?lesson_drafts::lesson_id(),
-        work = ?lesson_progress::current_stage(),
         step = step.name(),
         input_tokens = response.input_tokens,
         output_tokens = response.output_tokens,

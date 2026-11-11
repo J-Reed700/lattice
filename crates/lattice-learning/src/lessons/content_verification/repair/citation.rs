@@ -80,6 +80,38 @@ pub(in crate::lessons::content_verification) fn quotation<'s>(
         .find(|run| validate_excerpt_quote(run, source).is_ok())
 }
 
+/// Every `sourceIndex` of a lesson `schema` allows the `count` sources the
+/// lesson numbers, once verification has numbered one more.
+pub(in crate::lessons::content_verification) fn number_sources(schema: &mut Value, count: usize) {
+    fn allow(index: &mut Value, count: usize) {
+        if let Some(maximum) = index.get_mut("maximum") {
+            *maximum = json!(count.saturating_sub(1));
+        }
+        if let Some(options) = index.get_mut("anyOf").and_then(Value::as_array_mut) {
+            for option in options {
+                allow(option, count);
+            }
+        }
+    }
+    match schema {
+        Value::Object(fields) => {
+            for (name, value) in fields.iter_mut() {
+                if name == "sourceIndex" {
+                    allow(value, count);
+                } else {
+                    number_sources(value, count);
+                }
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                number_sources(item, count);
+            }
+        }
+        _ => {}
+    }
+}
+
 /// Names, in the repair context's evidence table, the `sourceIndex` of each
 /// passage whose source the lesson numbers, so a repair that cites a passage
 /// can say which excerpt it is.
@@ -240,21 +272,6 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             continue;
         }
         let (field, item) = super::location(candidate, finding.unit)?;
-        let numbered_at = numbered.iter().position(|known| known.id == source.id);
-        let index = numbered_at.unwrap_or(numbered.len());
-        let added = candidate
-            .get(field)
-            .and_then(Value::as_array)
-            .and_then(|items| items.get(item))
-            .and_then(|part| {
-                crate::lessons::text_edits::citation_entry(
-                    part,
-                    field != "blocks",
-                    sentence,
-                    json!(index),
-                    quote,
-                )
-            });
         let Some(section) = candidate
             .get_mut(field)
             .and_then(Value::as_array_mut)
@@ -264,6 +281,8 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
             repairs.push(Cited::Cannot);
             continue;
         };
+        let numbered_at = numbered.iter().position(|known| known.id == source.id);
+        let index = numbered_at.unwrap_or(numbered.len());
         let listed = section.get("citations").and_then(Value::as_array);
         let own = listed.and_then(|listed| {
             listed.iter().position(|entry| {
@@ -305,13 +324,14 @@ pub(in crate::lessons::content_verification) fn cite_where_supported(
                     entry.insert("quote".into(), json!(quote));
                     entry.insert("sourceIndex".into(), json!(index));
                 }),
-            None => added.and_then(|entry| {
-                section
-                    .entry("citations")
-                    .or_insert_with(|| json!([]))
-                    .as_array_mut()
-                    .map(|listed| listed.push(entry))
-            }),
+            None => section
+                .entry("citations")
+                .or_insert_with(|| json!([]))
+                .as_array_mut()
+                .map(|listed| {
+                    listed
+                        .push(json!({"sentence": sentence, "sourceIndex": index, "quote": quote}));
+                }),
         };
         if wrote.is_none() {
             repairs.push(Cited::Cannot);

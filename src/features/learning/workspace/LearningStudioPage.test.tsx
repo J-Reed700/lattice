@@ -45,7 +45,7 @@ async function openLab(user: ReturnType<typeof userEvent.setup>) {
 }
 
 const mocks = vi.hoisted(() => ({
-  list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), prepareModule: vi.fn(), prepareAhead: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
+  list: vi.fn(), get: vi.fn(), generate: vi.fn(), repair: vi.fn(), cancel: vi.fn(), accept: vi.fn(), prepare: vi.fn(), prepareModule: vi.fn(), complete: vi.fn(), startQuiz: vi.fn(), form: vi.fn(),
   documents: vi.fn(), plan: vi.fn(), memory: vi.fn(), flush: vi.fn(), decks: vi.fn(), deck: vi.fn(), outlineEvidence: vi.fn(), exportAll: vi.fn(),
 }));
 vi.mock('@/lib/pendingSaves', async (importOriginal) => ({
@@ -66,7 +66,6 @@ vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeo
   acceptLearningProgram: mocks.accept,
   prepareLearningLesson: mocks.prepare,
   prepareLearningModule: mocks.prepareModule,
-  prepareLearningAhead: mocks.prepareAhead,
   completeLearningLesson: mocks.complete,
   getLearningPlan: mocks.plan,
   getLearningPracticeWorkspace: async (programId: string) => ({ ok: true, data: { programId, sessions: [] } }),
@@ -148,8 +147,6 @@ describe('Learning Studio program workflow', () => {
     mocks.memory.mockResolvedValue(ok({ programId: 'program-1', journalId: null, lessonNotes: [], studyDeck: null, drafts: [], acceptedCards: [], dueCount: 0 }));
     mocks.flush.mockResolvedValue(true);
     mocks.outlineEvidence.mockResolvedValue(ok(null));
-    // A lesson that opens prepared asks to prepare ahead; unless a test cares, that call stays pending.
-    mocks.prepareAhead.mockReturnValue(new Promise(() => {}));
   });
 
   it('surfaces an outline evidence failure in the workspace and recovers on retry', async () => {
@@ -210,8 +207,6 @@ describe('Learning Studio program workflow', () => {
     mocks.generate.mockResolvedValue(ok(draft));
     mocks.accept.mockResolvedValue(ok(active));
     mocks.prepare.mockResolvedValue(ok(prepared));
-    mocks.prepareModule.mockResolvedValue(ok(active));
-    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
     mocks.get.mockImplementation(async () => ok(draft));
 
     show('/studio?new=1');
@@ -233,12 +228,8 @@ describe('Learning Studio program workflow', () => {
     expect(mocks.memory).not.toHaveBeenCalled();
     await user.clear(screen.getByRole('textbox', { name: 'Program title' }));
     await user.type(screen.getByRole('textbox', { name: 'Program title' }), 'My considered plan');
-    expect(screen.getByText('Starting prepares module 1 now, and each next module while you study.')).toBeVisible();
-    await user.click(screen.getByRole('button', { name: 'Start this course' }));
+    await user.click(screen.getByRole('button', { name: 'Accept program' }));
     await waitFor(() => expect(mocks.accept).toHaveBeenCalledWith({ programId: 'program-1', expectedRevision: 0, title: 'My considered plan' }));
-    await waitFor(() => expect(mocks.prepareModule).toHaveBeenCalledWith({ programId: 'program-1', moduleId: 'module-1', expectedRevision: 1 }));
-    expect(mocks.prepareModule).toHaveBeenCalledTimes(1);
-    expect(mocks.prepareAhead).not.toHaveBeenCalled();
     await user.click(screen.getByRole('combobox', { name: 'Module' }));
     await user.type(screen.getByRole('combobox', { name: 'Search module' }), 'Putting it');
     await user.click(screen.getByRole('option', { name: /Putting it together/ }));
@@ -275,27 +266,27 @@ describe('Learning Studio program workflow', () => {
     expect(screen.getByText('A contradicting passage from the saved reference.')).toBeVisible();
     expect(screen.getByText(/Plan check/)).toBeVisible();
     expect(screen.getByText(/2 of 2 attempts used · automatic repair has stopped/)).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Start this course' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Accept program' })).toBeDisabled();
     expect(screen.getByText(/References were gathered from public searches planned for each subtopic/)).toBeVisible();
     expect(screen.queryByRole('checkbox', { name: /Search the web/ })).not.toBeInTheDocument();
     await user.click(screen.getByRole('button', { name: 'Repair remaining issues' }));
     expect(mocks.repair).toHaveBeenCalledWith({ programId: 'program-1', expectedRevision: 4 }, expect.objectContaining({ requestId: expect.any(String), onProgress: expect.any(Function) }));
     expect(await screen.findByText('Revising the course outline')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Start this course' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Accept program' })).toBeDisabled();
     // Leaving the workspace unmounts its repair hook, but the backend request
     // continues. Reopening must rejoin it instead of offering another repair.
     await user.click(screen.getByRole('button', { name: 'All programs' }));
     await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
     expect(await screen.findByText('Revising the course outline')).toBeVisible();
     expect(screen.queryByRole('button', { name: 'Repair remaining issues' })).not.toBeInTheDocument();
-    expect(screen.getByRole('button', { name: 'Start this course' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Accept program' })).toBeDisabled();
     mocks.cancel.mockResolvedValue(ok(false));
     await user.click(screen.getByRole('button', { name: 'Cancel generation' }));
     expect(mocks.cancel).toHaveBeenCalledWith(mocks.repair.mock.calls[0][1].requestId);
     expect(mocks.repair).toHaveBeenCalledTimes(1);
     await act(async () => finish());
     expect(await screen.findByText('Outline checks passed')).toBeVisible();
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Start this course' })).toBeEnabled());
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Accept program' })).toBeEnabled());
     expect(mocks.generate).not.toHaveBeenCalled();
   });
 
@@ -314,7 +305,7 @@ describe('Learning Studio program workflow', () => {
     await act(async () => update({ stage: 'reviewing', programId: draft.summary.id, elapsedSeconds: 120, stageSeconds: 10, responseCharacters: 0, modelName: 'test' }));
     await user.click(await screen.findByRole('button', { name: 'Inspect saved draft' }));
     expect(await screen.findByText('Saved draft · review incomplete')).toBeVisible();
-    expect(screen.getByRole('button', { name: 'Start this course' })).toBeDisabled();
+    expect(screen.getByRole('button', { name: 'Accept program' })).toBeDisabled();
     expect(screen.getByRole('button', { name: 'Cancel generation' })).toBeVisible();
     await act(async () => finish());
   });
@@ -366,108 +357,6 @@ describe('Learning Studio program workflow', () => {
     await user.click(await screen.findByRole('button', { name: 'Prepare all lessons' }));
     await waitFor(() => expect(mocks.prepareModule).toHaveBeenCalledWith({ programId: 'program-1', moduleId: 'module-1', expectedRevision: 1 }));
     expect(mocks.prepare).not.toHaveBeenCalled();
-  });
-
-  it('asks to prepare ahead of a lesson that opens prepared, and not of one that is not', async () => {
-    const user = userEvent.setup();
-    const active = program('active', true);
-    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
-    mocks.list.mockResolvedValue(ok([summary(active)]));
-    mocks.get.mockResolvedValue(ok(active));
-    show();
-    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    await waitFor(() => expect(mocks.prepareAhead).toHaveBeenCalledWith({ programId: 'program-1', lessonId: 'lesson-1' }));
-    expect(mocks.prepareAhead).toHaveBeenCalledTimes(1);
-    await user.click(await screen.findByRole('button', { name: /^Read a worked example/ }));
-    expect(await screen.findByRole('button', { name: 'Prepare lesson' })).toBeVisible();
-    expect(mocks.prepareAhead).toHaveBeenCalledTimes(1);
-    expect(mocks.prepareModule).not.toHaveBeenCalled();
-  });
-
-  it('does not prepare ahead while no lesson is prepared', async () => {
-    const user = userEvent.setup();
-    const active = program('active');
-    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
-    mocks.list.mockResolvedValue(ok([summary(active)]));
-    mocks.get.mockResolvedValue(ok(active));
-    show();
-    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    await user.click(await screen.findByRole('button', { name: /^Read a worked example/ }));
-    expect(await screen.findAllByRole('button', { name: 'Prepare lesson' })).not.toHaveLength(0);
-    expect(mocks.prepareAhead).not.toHaveBeenCalled();
-  });
-
-  it('never prepares ahead of a draft course', async () => {
-    const user = userEvent.setup();
-    const draft = program('draft', true);
-    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
-    mocks.list.mockResolvedValue(ok([summary(draft)]));
-    mocks.get.mockResolvedValue(ok(draft));
-    show();
-    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    expect(await screen.findByRole('button', { name: 'Start this course' })).toBeVisible();
-    expect(mocks.prepareAhead).not.toHaveBeenCalled();
-  });
-
-  it('shows why preparing a module failed', async () => {
-    const user = userEvent.setup();
-    const active = program('active');
-    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
-    mocks.list.mockResolvedValue(ok([summary(active)]));
-    mocks.get.mockResolvedValue(ok(active));
-    mocks.prepareModule.mockResolvedValue(fail('The module could not be queued.'));
-    show();
-    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    await user.click(await screen.findByRole('button', { name: 'Prepare all lessons' }));
-    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('The module could not be queued.'))).toBe(true));
-  });
-
-  it('shows why preparing ahead failed', async () => {
-    const user = userEvent.setup();
-    const active = program('active', true);
-    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
-    mocks.list.mockResolvedValue(ok([summary(active)]));
-    mocks.get.mockResolvedValue(ok(active));
-    mocks.prepareAhead.mockResolvedValue(fail('The next lessons could not be queued.'));
-    show();
-    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('The next lessons could not be queued.'))).toBe(true));
-  });
-
-  it('drops a module preparation error once a single lesson is prepared', async () => {
-    const user = userEvent.setup();
-    const active = program('active');
-    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
-    mocks.list.mockResolvedValue(ok([summary(active)]));
-    mocks.get.mockResolvedValue(ok(active));
-    mocks.prepareModule.mockResolvedValue(fail('The module could not be queued.'));
-    mocks.prepare.mockResolvedValue(ok(active));
-    show();
-    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    await user.click(await screen.findByRole('button', { name: 'Prepare all lessons' }));
-    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('The module could not be queued.'))).toBe(true));
-    await user.click(await screen.findByRole('button', { name: /^Read a worked example/ }));
-    const card = screen.getByRole('button', { name: /^Read a worked example/ }).closest('article') as HTMLElement;
-    await user.click(await within(card).findByRole('button', { name: 'Prepare lesson' }));
-    await waitFor(() => expect(mocks.prepare).toHaveBeenCalledTimes(1));
-    await waitFor(() => expect(screen.queryAllByRole('alert').some((alert) => alert.textContent?.includes('The module could not be queued.'))).toBe(false));
-  });
-
-  it('shows no preparation error of another course', async () => {
-    const user = userEvent.setup();
-    const first = program('active', true);
-    const second = imported(first, 'program-2', 'Another course');
-    mocks.plan.mockResolvedValue(ok({ jobs: [] }));
-    mocks.list.mockResolvedValue(ok([summary(first), summary(second)]));
-    mocks.get.mockImplementation(async (id: string) => ok(id === 'program-2' ? second : first));
-    mocks.prepareAhead.mockResolvedValue(fail('The next lessons could not be queued.'));
-    show();
-    await user.click(await screen.findByRole('button', { name: /A thoughtful course/ }));
-    await waitFor(() => expect(screen.getAllByRole('alert').some((alert) => alert.textContent?.includes('The next lessons could not be queued.'))).toBe(true));
-    await user.click(screen.getByRole('button', { name: 'All programs' }));
-    await user.click(await screen.findByRole('button', { name: /Another course/ }));
-    expect(await screen.findByRole('heading', { level: 1, name: 'Another course' })).toBeVisible();
-    expect(screen.queryAllByRole('alert').some((alert) => alert.textContent?.includes('The next lessons could not be queued.'))).toBe(false);
   });
 
   it('lets the learner prepare another lesson while one is being prepared', async () => {

@@ -1609,122 +1609,6 @@ async fn a_quiz_never_draws_the_dropped_lesson_question() -> Result<()> {
     Ok(())
 }
 
-/// The lesson's own question ids in order, with the middle one agreed and a
-/// bank-origin item added; and the ids `bank_in` returns.
-async fn three_own_questions(pool: &SqlitePool) -> Result<(String, String, Vec<String>)> {
-    let (program_id, lesson_id) = placed_lesson(pool).await?;
-    sqlx::query("UPDATE learning_assessment_candidates SET review_status='agreed' WHERE lesson_id=? AND origin='lesson'")
-        .bind(&lesson_id)
-        .execute(pool)
-        .await
-        .map_err(db)?;
-    let scope = LearningQuizScopeDto {
-        kind: LearningQuizScopeKind::Lesson,
-        id: Some(lesson_id.clone()),
-    };
-    fill_bank(pool, &program_id, &scope).await?;
-    let own: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM learning_assessment_candidates WHERE lesson_id=? AND origin='lesson' ORDER BY rowid",
-    )
-    .bind(&lesson_id)
-    .fetch_all(pool)
-    .await
-    .map_err(db)?;
-    assert_eq!(own.len(), 3);
-    Ok((program_id, lesson_id, own))
-}
-
-async fn add_finding(
-    pool: &SqlitePool,
-    lesson_id: &str,
-    site: &str,
-    index: i64,
-    state: &str,
-    part_changed_at: Option<i64>,
-) -> Result<()> {
-    let kept_at = (state == "kept").then_some(1_i64);
-    sqlx::query("INSERT INTO learning_lesson_teaching_findings(lesson_id,finding_key,kind,site,unit_index,unit_title,unit_sha256,note,repairs,state,found_at,kept_at,part_changed_at) VALUES(?,?,'answer_key',?,?,'q','sha','note',0,?,1,?,?)")
-        .bind(lesson_id)
-        .bind(format!("{site}-{index}"))
-        .bind(site)
-        .bind(index)
-        .bind(state)
-        .bind(kept_at)
-        .bind(part_changed_at)
-        .execute(pool)
-        .await
-        .map_err(db)?;
-    Ok(())
-}
-
-async fn drawn_ids(pool: &SqlitePool, program_id: &str) -> Result<Vec<String>> {
-    let mut connection = pool.acquire().await.map_err(db)?;
-    let bank = LearningAssessmentRepository::bank_in(&mut connection, program_id).await?;
-    Ok(bank.into_iter().map(|c| c.candidate.id).collect())
-}
-
-#[tokio::test]
-async fn a_lesson_question_with_a_waiting_finding_is_not_drawn() -> Result<()> {
-    let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
-    add_finding(&pool, &lesson_id, "question", 1, "waiting", None).await?;
-    let drawn = drawn_ids(&pool, &program_id).await?;
-    assert!(!drawn.contains(&own[1]));
-    assert!(drawn.contains(&own[0]) && drawn.contains(&own[2]));
-    let banked: Vec<String> = sqlx::query_scalar(
-        "SELECT id FROM learning_assessment_candidates WHERE program_id=? AND origin='bank'",
-    )
-    .bind(&program_id)
-    .fetch_all(&pool)
-    .await
-    .map_err(db)?;
-    assert!(!banked.is_empty() && banked.iter().all(|b| drawn.contains(b)));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_kept_finding_leaves_the_question_drawn() -> Result<()> {
-    let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
-    add_finding(&pool, &lesson_id, "question", 1, "kept", None).await?;
-    assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
-    Ok(())
-}
-
-#[tokio::test]
-async fn an_edited_question_with_a_waiting_finding_is_drawn() -> Result<()> {
-    let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
-    add_finding(&pool, &lesson_id, "question", 1, "waiting", Some(5)).await?;
-    assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_waiting_section_finding_leaves_the_question_drawn() -> Result<()> {
-    let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
-    add_finding(&pool, &lesson_id, "section", 1, "waiting", None).await?;
-    assert!(drawn_ids(&pool, &program_id).await?.contains(&own[1]));
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_finding_index_counts_a_dropped_question() -> Result<()> {
-    let pool = migrated().await?;
-    let (program_id, lesson_id, own) = three_own_questions(&pool).await?;
-    sqlx::query("UPDATE learning_assessment_candidates SET review_status='dropped' WHERE id=?")
-        .bind(&own[0])
-        .execute(&pool)
-        .await
-        .map_err(db)?;
-    add_finding(&pool, &lesson_id, "question", 1, "waiting", None).await?;
-    let drawn = drawn_ids(&pool, &program_id).await?;
-    assert!(!drawn.contains(&own[1]));
-    assert!(drawn.contains(&own[2]));
-    Ok(())
-}
-
 /// A program accepted at revision 1, its lessons not yet published.
 async fn accepted_program(pool: &SqlitePool) -> Result<LearningProgramDto> {
     let program = crate::tests::fixture();
@@ -1785,6 +1669,7 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
         "Which command shows the permissions of every file in the current directory?",
         "Which command shows the owner of every file in the current directory?",
     ];
+    assert!(engine::near_duplicate(prompts[1], prompts[2]));
     publish_questions(
         &pool,
         &program.summary.id,
@@ -1810,52 +1695,6 @@ async fn near_duplicate_lesson_questions_all_stay_in_the_bank_in_order() -> Resu
         lesson_rows(&pool, &lesson_id).await?,
         rows_of(&prompts, &["agreed", "agreed", "agreed"])
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn bank_items_sharing_most_of_their_words_are_both_stored() -> Result<()> {
-    let pool = migrated().await?;
-    let program = accepted_program(&pool).await?;
-    let mut setup = pool.begin().await.map_err(db)?;
-    LearningAssessmentRepository::ensure_outcomes(&mut setup, &program.summary.id).await?;
-    setup.commit().await.map_err(db)?;
-    let outcome: String = sqlx::query_scalar("SELECT id FROM learning_outcome_definitions LIMIT 1")
-        .fetch_one(&pool)
-        .await
-        .map_err(db)?;
-    let prompts = [
-        "Which command shows the permissions of every file in the current directory?",
-        "Which command shows the owner of every file in the current directory?",
-    ];
-    let items: Vec<BankItem> = prompts
-        .iter()
-        .enumerate()
-        .map(|(n, prompt)| {
-            let mut stored = item(LearningItemFormat::SingleChoice, &outcome, 2, 900 + n);
-            stored.prompt = (*prompt).to_string();
-            BankItem {
-                item: stored,
-                source_quote: String::new(),
-                lesson_id: None,
-                origin: "bank",
-                review_status: "agreed",
-            }
-        })
-        .collect();
-    let mut tx = pool.begin().await.map_err(db)?;
-    let stored =
-        insert_bank_items_in(&mut tx, &program.summary.id, &items, Some("test-model")).await?;
-    tx.commit().await.map_err(db)?;
-    assert_eq!(stored, 2);
-    let rows: Vec<String> = sqlx::query_scalar(
-        "SELECT prompt FROM learning_assessment_candidates WHERE program_id=? AND origin='bank' ORDER BY rowid",
-    )
-    .bind(&program.summary.id)
-    .fetch_all(&pool)
-    .await
-    .map_err(db)?;
-    assert_eq!(rows, prompts);
     Ok(())
 }
 
@@ -1941,71 +1780,4 @@ fn a_form_draw_of_a_lesson_question_shuffles_and_each_reason_moves_with_its_choi
     let right = order.iter().position(|authored| *authored == 1).unwrap();
     assert_eq!(reveal.correct_indices, vec![right]);
     assert_eq!(reveal.distractor_rationales[right], "");
-}
-
-#[test]
-fn a_lesson_question_that_cannot_be_asked_is_stored_dropped_in_its_place() {
-    let kind = LessonQuestionKind::Quiz;
-    let texts = |options: &[&str]| options.iter().map(|o| (*o).to_owned()).collect::<Vec<_>>();
-    let cases: [(&str, Vec<String>, usize); 6] = [
-        (
-            "Which layer holds most weather?",
-            texts(&["Alpha", "Bravo", "Charlie", "Delta"]),
-            1,
-        ),
-        ("  ", texts(&["Alpha", "Bravo", "Charlie", "Delta"]), 1),
-        ("Which of these is named first?", texts(&["Alpha"]), 0),
-        (
-            "Which of these is named second?",
-            texts(&["Alpha", "Bravo", "Bravo", "Delta"]),
-            1,
-        ),
-        (
-            "Which of these is named third?",
-            texts(&["Alpha", "Bravo", "Charlie", "Delta"]),
-            9,
-        ),
-        (
-            "Which of these is named last?",
-            texts(&["Echo", "Foxtrot", "Golf", "Hotel"]),
-            2,
-        ),
-    ];
-    let (questions, keys): (Vec<_>, Vec<_>) = cases
-        .into_iter()
-        .map(|(prompt, options, correct_index)| {
-            let question_id = id();
-            (
-                LessonQuestion {
-                    id: question_id.clone(),
-                    kind: kind.clone(),
-                    prompt: prompt.into(),
-                    options,
-                    source_ids: vec![],
-                },
-                LessonAnswerKey {
-                    question_id,
-                    correct_index,
-                    explanation: "Because.".into(),
-                    rationales: vec![],
-                },
-            )
-        })
-        .unzip();
-    let seeded = crate::quiz_bank_jobs::lesson_seed_items(&id(), &id(), &questions, &keys);
-    let seen: Vec<(&str, &str)> = seeded
-        .iter()
-        .map(|item| (item.item.prompt.as_str(), item.review_status))
-        .collect();
-    assert_eq!(
-        seen,
-        [
-            ("Which layer holds most weather?", "agreed"),
-            ("  ", "dropped"),
-            ("Which of these is named first?", "dropped"),
-            ("Which of these is named second?", "dropped"),
-            ("Which of these is named third?", "dropped"),
-            ("Which of these is named last?", "agreed"),
-        ]
-    );
 }

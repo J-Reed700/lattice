@@ -185,7 +185,7 @@ async fn an_outage_stays_an_error_and_another_policy_makes_no_call() {
         .await;
     assert!(matches!(wrong, ClassJudgment::Unusable));
     let wrong = checker(&llm, CheckPolicy::Consistency)
-        .check_knowledge("S.", None)
+        .check_knowledge("S.")
         .await;
     assert!(matches!(wrong, ClassJudgment::Unusable));
     assert!(llm.sent().is_empty());
@@ -200,7 +200,7 @@ async fn the_knowledge_judge_asks_three_times_at_temperature_and_keeps_every_sam
     ]);
     let outcome = judged(
         checker(&llm, CheckPolicy::Knowledge)
-            .check_knowledge("OCR reads pixels into text.", None)
+            .check_knowledge("OCR reads pixels into text.")
             .await,
     );
     let verdicts: Vec<KnowledgeVerdict> = outcome.samples.iter().map(|s| s.verdict).collect();
@@ -223,31 +223,6 @@ async fn the_knowledge_judge_asks_three_times_at_temperature_and_keeps_every_sam
 }
 
 #[tokio::test]
-async fn a_knowledge_check_with_a_case_sends_the_case_before_the_statement_and_says_what_it_is() {
-    let llm = Scripted::new(vec![
-        answer("true_common"),
-        answer("true_common"),
-        answer("true_common"),
-    ]);
-    let case = "A rope is cut into a piece of 3 units and a piece of 4 units.";
-    judged(
-        checker(&llm, CheckPolicy::Knowledge)
-            .check_knowledge("Together the pieces make 7 units.", Some(case))
-            .await,
-    );
-    let sent = llm.sent();
-    assert_eq!(sent.len(), KNOWLEDGE_SAMPLES);
-    for request in &sent {
-        let (system, user) = messages(request);
-        assert_eq!(system, format!("{KNOWLEDGE_SYSTEM}{KNOWLEDGE_CASE}"));
-        assert_eq!(
-            user,
-            format!("Case:\n{case}\n\nStatement: Together the pieces make 7 units.")
-        );
-    }
-}
-
-#[tokio::test]
 async fn a_sample_that_cannot_be_read_leaves_the_statement_unchecked() {
     let llm = Scripted::new(vec![
         answer("true_common"),
@@ -255,7 +230,7 @@ async fn a_sample_that_cannot_be_read_leaves_the_statement_unchecked() {
         Reply::Text("{}".into()),
     ]);
     let judgment = checker(&llm, CheckPolicy::Knowledge)
-        .check_knowledge("OCR reads pixels into text.", None)
+        .check_knowledge("OCR reads pixels into text.")
         .await;
     assert!(matches!(judgment, ClassJudgment::Unusable), "{judgment:?}");
     assert_eq!(llm.sent().len(), 3, "no further samples after a bad one");
@@ -354,16 +329,6 @@ fn a_consistency_check_fits_the_window_only_beside_its_answer() {
     assert!(!checker.consistency_fits("S.", &["word ".repeat(40_000)]));
     let room = checker.consistency_evidence_room("S.");
     assert!(room > 0 && room < 8_192, "{room}");
-}
-
-#[test]
-fn the_consistency_and_knowledge_judges_are_told_what_the_lesson_s_own_figures_are() {
-    let own_figures = "The lesson's own figures are the quantities its own example, scenario or exercise sets, and the results calculated from them.";
-    assert!(
-        CONSISTENCY_SYSTEM.contains(own_figures),
-        "{CONSISTENCY_SYSTEM}"
-    );
-    assert!(KNOWLEDGE_SYSTEM.contains(own_figures), "{KNOWLEDGE_SYSTEM}");
 }
 
 #[tokio::test]

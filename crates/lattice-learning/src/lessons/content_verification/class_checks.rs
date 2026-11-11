@@ -5,7 +5,7 @@
 //! `readings` ask these judges along its graphs. Every judgment is saved as a
 //! receipt, so a resumed pass asks nothing twice.
 use super::claim_ledger::{sentences, Place, Rewrites};
-use super::classify::{classify, ruling, Case, ToSort};
+use super::classify::{classify, rule_class, Case, ToSort};
 use super::*;
 use crate::lessons::call_plan::{Planned, PlannedAt, SAMPLES};
 use lattice_core::application::services::claim_verification::{
@@ -54,21 +54,18 @@ pub(super) async fn sort(
                 class: Class::Sourced,
                 by: ClassifiedBy::Writer,
             }),
-            None => {
-                let ruling = ruling(&claim.statement, field, case);
-                match ruling.decided() {
-                    Some(class) => Some(Classed {
+            None => match rule_class(&claim.statement, field, case) {
+                Some(class) => Some(Classed {
+                    class,
+                    by: ClassifiedBy::Rule,
+                }),
+                None => saved_class(llm, &claim.statement)
+                    .await?
+                    .map(|class| Classed {
                         class,
-                        by: ClassifiedBy::Rule,
+                        by: ClassifiedBy::Model,
                     }),
-                    None => saved_class(llm, &claim.statement)
-                        .await?
-                        .map(|class| Classed {
-                            class: ruling.settle(class),
-                            by: ClassifiedBy::Model,
-                        }),
-                }
-            }
+            },
         });
     }
     {
@@ -190,9 +187,8 @@ pub(super) fn unjudged_finding(
     )
 }
 
-/// Why a statement the model called false fails, `with_case` when it was
-/// asked with the case it comes from.
-pub(super) fn vetoed(knowledge: &KnowledgeOutcome, with_case: bool) -> String {
+/// Why a statement the model called false fails.
+pub(super) fn vetoed(knowledge: &KnowledgeOutcome) -> String {
     let says_false = |sample: &&KnowledgeSample| sample.verdict == KnowledgeVerdict::False;
     let reason = knowledge
         .samples
@@ -200,13 +196,8 @@ pub(super) fn vetoed(knowledge: &KnowledgeOutcome, with_case: bool) -> String {
         .find(says_false)
         .map(|sample| sample.reason.as_str())
         .unwrap_or_default();
-    let asked = if with_case {
-        "Asked with only the case it comes from"
-    } else {
-        "Asked on its own"
-    };
     format!(
-        "{asked}, the model calls this false ({} of {}): {reason}",
+        "Asked on its own, the model calls this false ({} of {}): {reason}",
         knowledge.samples.iter().filter(says_false).count(),
         knowledge.samples.len()
     )
@@ -270,8 +261,8 @@ pub(super) fn consistency_key(
         .collect();
     format!(
         "{CONSISTENCY_POLICY}:{}",
-        sha256_hex(
-            json!({
+        digest(
+            &json!({
                 "model": llm.model_name(),
                 "context": llm.max_context_tokens(),
                 "statement": statement,
@@ -317,17 +308,15 @@ pub(super) async fn consistency_of(
     }
 }
 
-/// Where the knowledge judge's three samples on `statement`, asked with
-/// `case`, are saved.
-pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str, case: Option<&str>) -> String {
+/// Where the knowledge judge's three samples on `statement` are saved.
+pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str) -> String {
     format!(
         "{KNOWLEDGE_POLICY}:{}",
-        sha256_hex(
-            json!({
+        digest(
+            &json!({
                 "model": llm.model_name(),
                 "context": llm.max_context_tokens(),
                 "statement": statement,
-                "case": case,
             })
             .to_string()
         )
@@ -342,13 +331,12 @@ pub(super) async fn saved_knowledge(key: &str) -> Result<Option<KnowledgeOutcome
         .and_then(|value| serde_json::from_value::<KnowledgeOutcome>(value).ok()))
 }
 
-/// The knowledge judge's three samples on `statement` and its `case`, asked
-/// for and saved under `key`. `None` when a reply could not be read.
+/// The knowledge judge's three samples on `statement`, asked for and saved
+/// under `key`. `None` when a reply could not be read.
 pub(super) async fn knowledge_of(
     llm: &dyn LLMPort,
     key: &str,
     statement: &str,
-    case: Option<&str>,
 ) -> Result<Option<KnowledgeOutcome>> {
     let checker = ClaimChecker::new(
         llm,
@@ -359,7 +347,7 @@ pub(super) async fn knowledge_of(
     let judged = {
         let _model_calls =
             crate::lesson_progress::model_calls(SAMPLES, crate::lesson_progress::Term::Reading);
-        checker.check_knowledge(statement, case).await
+        checker.check_knowledge(statement).await
     };
     match judged {
         ClassJudgment::Judged(outcome) => {
@@ -373,8 +361,8 @@ pub(super) async fn knowledge_of(
 
 fn class_key(llm: &dyn LLMPort, statement: &str) -> String {
     format!(
-        "classes-v2:{}",
-        sha256_hex(json!({"model": llm.model_name(), "statement": statement}).to_string())
+        "classes-v1:{}",
+        digest(&json!({"model": llm.model_name(), "statement": statement}).to_string())
     )
 }
 

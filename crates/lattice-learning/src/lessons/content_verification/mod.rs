@@ -14,18 +14,17 @@ use lattice_core::application::services::claim_verification::{
 use lattice_core::domain::learning::claim_review::{ClaimId, Class, ClassifiedBy};
 use lattice_core::domain::provenance::Label;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
 mod apparatus;
 #[cfg(test)]
 use apparatus::strip_citation_apparatus;
-pub(crate) use apparatus::{fences, strip_draft_apparatus};
+pub(crate) use apparatus::strip_draft_apparatus;
 mod citations;
 mod claim_ledger;
-mod claim_sentences;
 pub(crate) use citations::names_a_source;
 use citations::{
     overlaps, restates, section_citations, source_mentions, take_cited, Citations, CITED,
@@ -38,7 +37,7 @@ pub(crate) use claim_ledger::{
 };
 mod class_checks;
 mod classify;
-pub(crate) use classify::{quoted_wording, CITED_KINDS, QUOTE_MARKS};
+pub(crate) use classify::{figures, needs_citation, Givens, CITED_KINDS};
 mod coverage;
 #[cfg(any(test, feature = "test-support"))]
 pub use coverage::live_mapping_fixture;
@@ -114,8 +113,6 @@ pub mod test_support;
 pub(crate) mod tests;
 use inventory_checkpoint::{complete_inventory, extract_audited_inventory, valid_saved_coverage};
 #[cfg(test)]
-pub(crate) use repair_loop::settle_after_cuts;
-#[cfg(test)]
 pub(crate) use repair_loop::verify_and_repair;
 pub(crate) use repair_loop::verify_and_repair_with_references;
 pub(crate) use repair_request::has_pending_repair;
@@ -128,8 +125,7 @@ pub(crate) use report::{not_verified_line, persist_report, sources_changed};
 /// v21: the evidence challenge is gone; a supported verdict is weighed by
 /// the provenance gate (source provenance §11) and passages carry their
 /// source's title, domain and date.
-/// v22: the part-wise judge has a kind for the lesson's own figures.
-const POLICY: &str = "lesson-evidence-v22";
+const POLICY: &str = "lesson-evidence-v21";
 
 /// The evidence policy checks are judged under: what a labelled checker
 /// example records (§15).
@@ -138,12 +134,15 @@ pub(crate) fn evidence_policy() -> &'static str {
 }
 // Extraction is versioned independently of coverage and factual judgment.
 // Its exact-content checkpoint contains no factual approvals to inherit.
-const INVENTORY_POLICY: &str = "lesson-evidence-v9";
+const INVENTORY_POLICY: &str = "lesson-evidence-v8";
 
 pub(crate) async fn normalize_example_fences(llm: &dyn LLMPort, raw: String) -> Result<String> {
     execution::label_unlabeled(llm, raw).await
 }
 
+pub(crate) fn digest(text: &str) -> String {
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
@@ -184,14 +183,11 @@ struct InventoryCheckpoint {
     coverage_policy: Option<String>,
 }
 /// An assertion of one original passage that the fidelity audit found
-/// unrepresented, located by its app-owned passage ID and, once the judge
-/// named it, the ID of the sentence that states it.
+/// unrepresented, located by its app-owned passage ID.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase", deny_unknown_fields)]
 struct MissingAssertion {
     passage_id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    sentence_id: Option<String>,
     statement: String,
 }
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -298,7 +294,7 @@ impl ClaimChecks {
         // Each decision is restricted to this claim and its assigned evidence,
         // including when requests share a bank of passages. Other targets are
         // never evidence. Fresh coverage and final content binding still run.
-        sha256_hex(json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string())
+        digest(&json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string())
     }
 }
 
@@ -323,8 +319,8 @@ struct ClaimReceipt {
 fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
     format!(
         "claim-v1:{}",
-        sha256_hex(
-            json!({
+        digest(
+            &json!({
                 "policy": POLICY, "model": llm.model_name(),
                 "context": llm.max_context_tokens(), "comparison": comparison,
                 "trust": lattice_core::domain::provenance::TRUST_POLICY_VERSION,
@@ -417,8 +413,8 @@ fn units(candidate: &Value) -> Result<Vec<Value>> {
         .get("questions")
         .and_then(Value::as_array)
         .ok_or_else(|| invalid("Verification needs lesson questions."))?;
-    if blocks.is_empty() {
-        return Err(invalid("Verification needs lesson blocks."));
+    if blocks.is_empty() || blocks.len() > 32 || questions.len() > 24 {
+        return Err(invalid("Invalid verification unit count."));
     }
     Ok(blocks.iter().map(|b| json!({"kind":"teaching", "role":b["kind"], "title":b["title"], "body":b["body"], "rubric":b["rubric"]}))
         .chain(questions.iter().map(|q| {

@@ -2,7 +2,7 @@
 use crate::dto::*;
 use crate::{
     operations::Operation,
-    persistence::{db, now},
+    persistence::{db, hash_text, now},
 };
 use lattice_core::shared::constants::MAX_CHAT_MESSAGE_CHARS;
 use lattice_core::shared::error::{AppError, Result};

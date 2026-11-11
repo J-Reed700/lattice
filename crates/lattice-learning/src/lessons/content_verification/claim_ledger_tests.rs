@@ -42,7 +42,7 @@ fn statement_in(text: &str) -> Option<String> {
         let rest = &text[start..];
         return Some(rest[..=rest.find('.').unwrap()].to_owned());
     }
-    [BAD, GOOD, FIXED]
+    [BAD, GOOD]
         .into_iter()
         .find(|statement| text.contains(*statement))
         .map(str::to_owned)
@@ -105,15 +105,6 @@ impl Figures {
         }
     }
 
-    /// A judge that calls a figure contradicted, which is what takes a
-    /// statement to its rewrite and its cut.
-    pub(super) fn contradicting() -> Self {
-        Self {
-            contradicted: true,
-            ..Self::new()
-        }
-    }
-
     pub(super) async fn respond(&self, prompt: &str) -> Result<String> {
         if prompt.starts_with("Extract lesson claims.") {
             let data = self::context(prompt);
@@ -132,9 +123,9 @@ impl Figures {
                             .iter()
                             .find(|p| p["field"] == "/body" || p["field"] == "/explanation")
                             .unwrap();
-                        let statement = statement_in(&passage_text(passage));
+                        let statement = statement_in(passage["text"].as_str().unwrap());
                         match statement {
-                            Some(statement) => json!({"index":unit["index"],"claims":[{"sentenceId":sentence_id(passage, &statement),"statement":statement}],"nonFactualReason":""}),
+                            Some(statement) => json!({"index":unit["index"],"claims":[{"passageId":passage["id"],"statement":statement}],"nonFactualReason":""}),
                             None => json!({"index":unit["index"],"claims":[],"nonFactualReason":NOTHING_TO_CHECK}),
                         }
                     })
@@ -142,8 +133,15 @@ impl Figures {
             )
             .to_string());
         }
-        if let Some(reply) = super::question_review_response(prompt) {
-            return Ok(reply);
+        if prompt.starts_with("Verify instructional answer keys independently.") {
+            let asked = self::context(prompt)["requestedIndices"].clone();
+            let answers: Vec<Value> = asked
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."}))
+                .collect();
+            return Ok(json!({"answers":answers}).to_string());
         }
         if prompt.starts_with("Repair verified lesson defects.") {
             let data = self::context(prompt);
@@ -168,7 +166,7 @@ impl Figures {
                 ),
             };
             let replacement = if self.repair_to_good {
-                FIXED.to_owned()
+                GOOD.to_owned()
             } else {
                 figure(repair)
             };
@@ -369,7 +367,7 @@ async fn a_claim_still_failing_after_its_rewrite_is_taken_out_and_the_lesson_pub
     let pool = crate::tests::pool().await?;
     let (repo, job, lesson_id) = batch_scheduler_tests::setup(&pool).await?;
     let sources = [source()];
-    let model = Figures::contradicting();
+    let model = Figures::new();
     // A second section keeps a claim: a lesson with none left is no
     // extraction the loop accepts.
     let (raw, report) = prepare(
@@ -922,7 +920,7 @@ async fn a_claim_confirmed_while_its_repair_was_interrupted_is_not_sent_on_resum
         "the confirmed claim's repair is dropped"
     );
     let lesson: Value = serde_json::from_str(&raw)?;
-    assert_eq!(lesson["blocks"][0]["body"], section(FIXED));
+    assert_eq!(lesson["blocks"][0]["body"], section(GOOD));
     assert_eq!(lesson["blocks"][1]["body"], section(BAD));
     assert!(report.issues.is_empty(), "{:?}", report.issues);
     let confirmed = report.findings.iter().find(|f| f.unit == 1).unwrap();
@@ -980,7 +978,7 @@ async fn human_verdicts_on_flagged_claims_are_labelled_examples_that_export_as_c
                 program_id: program_id.clone(),
                 job_id: job.clone(),
                 state: LessonReviewState::NeedsReview,
-                draft_sha256: sha256_hex(&draft),
+                draft_sha256: digest(&draft),
                 checker_model: "figures-fixture".into(),
                 stop_reason: None,
             },
@@ -1589,7 +1587,7 @@ async fn remove_and_edit_act_on_the_located_sentence() -> Result<()> {
                 program_id,
                 job_id: job.clone(),
                 state: LessonReviewState::NeedsReview,
-                draft_sha256: sha256_hex(&draft),
+                draft_sha256: digest(&draft),
                 checker_model: "figures-fixture".into(),
                 stop_reason: None,
             },
@@ -1732,7 +1730,7 @@ async fn the_undo_of_an_edit_a_pass_already_carried_into_the_draft_says_to_edit_
                 program_id,
                 job_id: job.clone(),
                 state: LessonReviewState::NeedsReview,
-                draft_sha256: sha256_hex(&draft),
+                draft_sha256: digest(&draft),
                 checker_model: "figures-fixture".into(),
                 stop_reason: None,
             },
@@ -2801,7 +2799,7 @@ fn with_questions(questions: Vec<Value>) -> Value {
 }
 
 #[tokio::test]
-async fn statements_alone_in_their_sections_are_published_not_verified_instead_of_taking_the_sections_out(
+async fn a_lesson_whose_cuts_would_take_more_than_a_third_of_its_sections_is_published_with_those_statements_not_verified(
 ) -> Result<()> {
     let course = Course::new().await?;
     let (first, second) = (figure(5), figure(6));
@@ -2811,7 +2809,7 @@ async fn statements_alone_in_their_sections_are_published_not_verified_instead_o
         bare(2, &second)
     ],"questions":[]});
     let prepared = course
-        .prepare(&Figures::contradicting(), &draft)
+        .prepare(&Figures::new(), &draft)
         .await
         .expect("the lesson publishes, two statements not verified");
 
@@ -2823,7 +2821,7 @@ async fn statements_alone_in_their_sections_are_published_not_verified_instead_o
     for sentence in [figure(0), figure(1)] {
         let on = shown.on(&sentence);
         assert_eq!(on.len(), 1, "{sentence}: {:?}", shown.claims);
-        shown.assert_not_verified(on[0], "contradicted");
+        shown.assert_not_verified(on[0], "unsupported");
     }
     Ok(())
 }
@@ -2838,7 +2836,7 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("quiz", &figure(5)), quiz("quiz", &figure(6))]);
     let (raw, report) = course
-        .prepare(&Figures::contradicting(), &draft)
+        .prepare(&Figures::new(), &draft)
         .await
         .expect("the lesson publishes, two statements not verified");
 
@@ -2860,14 +2858,14 @@ async fn a_lesson_whose_cuts_would_take_all_of_its_questions_is_published_with_t
 }
 
 #[tokio::test]
-async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_without_that_question(
+async fn a_lesson_whose_cuts_would_take_every_question_of_a_kind_it_asks_is_published_with_that_statement_standing(
 ) -> Result<()> {
     let course = Course::new().await?;
     let draft = with_questions(vec![quiz("practice", &figure(5)), quiz("quiz", GOOD)]);
     let (raw, report) = course
-        .prepare(&Figures::contradicting(), &draft)
+        .prepare(&Figures::new(), &draft)
         .await
-        .expect("the lesson publishes, one question cut");
+        .expect("the lesson publishes, one statement not verified");
 
     assert!(report.issues.is_empty(), "{:?}", report.issues);
     assert!(held_for_review(
@@ -2879,9 +2877,10 @@ async fn a_lesson_whose_cuts_take_every_question_of_a_kind_it_asks_is_published_
     .is_none());
     let published: Value = serde_json::from_str(&raw)?;
     let questions = published["questions"].as_array().unwrap();
-    assert_eq!(questions.len(), 1, "{questions:?}");
-    assert_eq!(questions[0]["kind"], json!("quiz"));
-    assert_eq!(questions[0]["explanation"], json!(GOOD));
+    assert_eq!(questions.len(), 2, "{questions:?}");
+    assert_eq!(questions[0]["kind"], json!("practice"));
+    assert_eq!(questions[0]["explanation"], json!(figure(0)));
+    assert_eq!(questions[1]["explanation"], json!(GOOD));
     Ok(())
 }
 

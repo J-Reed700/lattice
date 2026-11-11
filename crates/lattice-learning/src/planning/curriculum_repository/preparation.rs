@@ -2,9 +2,8 @@
 use super::jobs::job_scope;
 use super::LearningCurriculumRepository;
 use crate::curriculum::{self, LearningCurriculumLessonState, LearningCurriculumRevision};
-use crate::persistence::{db, decode, encode, now};
+use crate::persistence::{db, decode, encode, hash_text, now};
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobStatus, JobStore};
 use sqlx::Row;
@@ -252,7 +251,7 @@ impl LearningCurriculumRepository {
         snapshot.created_at = now();
         curriculum::validate_curriculum(&snapshot)?;
         let snapshot_json = encode(&snapshot)?;
-        let snapshot_hash = sha256_hex(&snapshot_json);
+        let snapshot_hash = hash_text(&snapshot_json);
         let required = snapshot
             .modules
             .iter()

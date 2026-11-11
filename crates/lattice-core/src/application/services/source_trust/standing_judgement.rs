@@ -9,12 +9,11 @@ use serde_json::{json, Value};
 use super::{data_prompt, judge, names, sanitised, CallOutcome};
 use crate::application::ports::LLMPort;
 use crate::domain::provenance::{
-    canonical_json, ContentEvidence, ContentNature, EditorialProcess, Judged, JudgementKey,
-    NamedEntity, ProvenanceSignals, PublisherKind, Reason, ReasonCode, RiskFlag, Standing,
-    StandingAssessment, TrackRecord, WorkEvidence,
+    canonical_json, sha256_hex, ContentEvidence, ContentNature, EditorialProcess, Judged,
+    JudgementKey, NamedEntity, ProvenanceSignals, PublisherKind, Reason, ReasonCode, RiskFlag,
+    Standing, StandingAssessment, TrackRecord, WorkEvidence,
 };
 use crate::shared::error::Result;
-use crate::shared::hash::sha256_hex;
 
 /// The prompt's version: part of every cache key.
 pub const STANDING_POLICY: &str = "source-standing-v2";
@@ -86,7 +85,7 @@ pub fn standing_key(
     JudgementKey {
         policy: STANDING_POLICY.to_owned(),
         model: model.to_owned(),
-        input_sha256: sha256_hex(canonical_json(&keyed)),
+        input_sha256: sha256_hex(&canonical_json(&keyed)),
     }
 }
 

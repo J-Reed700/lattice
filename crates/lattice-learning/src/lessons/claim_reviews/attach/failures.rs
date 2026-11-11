@@ -5,7 +5,6 @@
 
 use lattice_core::application::contracts::web::FetchUrlContentOutput;
 use lattice_core::shared::error::AppError;
-use lattice_core::shared::http::host_of;
 use serde::{Deserialize, Serialize};
 
 /// The start of the web service's thin-page refusal (`fetch_reference_content`).
@@ -77,6 +76,13 @@ pub struct AttachFailureDto {
     pub next_steps: Vec<AttachNextStepDto>,
 }
 
+fn host_of(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned))
+        .unwrap_or_else(|| url.to_owned())
+}
+
 impl AttachFailureDto {
     fn new(kind: AttachFailureKindDto, message: String, url: &str) -> Self {
         let paste = AttachNextStepDto::PasteText {
@@ -100,7 +106,7 @@ impl AttachFailureDto {
 
     /// The card's account of a failed read of `url`.
     pub fn from_fetch_error(url: &str, error: &AppError) -> Self {
-        let host = host_of(url).unwrap_or_else(|| url.to_owned());
+        let host = host_of(url);
         let (kind, message) = match error {
             AppError::HttpStatus { status, .. } if REFUSING_STATUSES.contains(status) => (
                 AttachFailureKindDto::Refused,

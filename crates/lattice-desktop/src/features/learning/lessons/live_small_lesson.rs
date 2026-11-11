@@ -152,10 +152,9 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
         let issues: Vec<crate::features::learning::review_findings::ReviewFinding> =
             serde_json::from_value::<Vec<String>>(case["issues"].clone())?
                 .into_iter()
-                .enumerate()
-                .map(|(index, issue)| {
-                    crate::features::learning::review_findings::ReviewFinding::reviewer(
-                        u32::try_from(index).unwrap(),
+                .map(|issue| {
+                    crate::features::learning::review_findings::ReviewFinding::new(
+                        crate::features::learning::review_findings::FindingKind::Teaching,
                         None,
                         issue,
                     )
@@ -164,14 +163,12 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
         let accepted = crate::features::learning::review_evidence::check(
             &model,
             &issues,
-            crate::features::learning::review_evidence::Beside::NONE,
             &case["requirements"],
             &case["candidate"],
             &references,
             Some(&progress),
         )
-        .await?
-        .established;
+        .await?;
         std::fs::write(
             directory.join(format!("case-{index}.json")),
             serde_json::to_vec_pretty(&accepted)?,

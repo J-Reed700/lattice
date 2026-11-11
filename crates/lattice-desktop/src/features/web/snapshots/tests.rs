@@ -8,11 +8,10 @@ use sqlx::SqlitePool;
 use tempfile::TempDir;
 
 use super::protocol::{respond, route, Route, CSP};
-use super::store::new_id;
+use super::store::{new_id, sha256_hex};
 use super::*;
 use crate::features::web::mocks::MockPageCapture;
 use crate::features::web::traits::page_snapshot::CaptureError;
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::runtime::jobs::JobHandler;
 
 const CONVERSATION: &str = "conv-snap";

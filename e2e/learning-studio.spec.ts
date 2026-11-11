@@ -223,7 +223,7 @@ test("Learning Studio saved draft findings can be repaired at desktop and narrow
   const review = page.getByRole("region", { name: "Outline review" });
   await expect(review.getByText("Saved draft · 1 unresolved finding")).toBeVisible();
   await expect(review.getByText("This unsupported statement is retained for review.")).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start this course" })).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Accept program" })).toBeDisabled();
   await page.screenshot({ path: `e2e-results/learning-draft-${browserName}.png`, fullPage: true });
   await page.setViewportSize({ width: 390, height: 844 });
   await expect(review.getByRole("button", { name: "Repair remaining issues" })).toBeVisible();
@@ -234,7 +234,7 @@ test("Learning Studio saved draft findings can be repaired at desktop and narrow
   await page.screenshot({ path: `e2e-results/learning-draft-narrow-${browserName}.png`, fullPage: true });
   await review.getByRole("button", { name: "Repair remaining issues" }).click();
   await expect(review.getByText("Outline checks passed", { exact: true })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Start this course" })).toBeEnabled();
+  await expect(page.getByRole("button", { name: "Accept program" })).toBeEnabled();
   await expectNoUnsupportedIpc(page);
 });
 

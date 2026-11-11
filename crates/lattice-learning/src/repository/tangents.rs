@@ -283,7 +283,7 @@ impl LearningRepository {
                 program.title, module.title, lesson.title, quoted_selection
             )
         };
-        let content_digest = format!("sha256:{}", sha256_hex(&message_content));
+        let content_digest = format!("sha256:{}", hash_text(&message_content));
 
         sqlx::query(
             r#"

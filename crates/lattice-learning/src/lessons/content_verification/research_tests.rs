@@ -813,7 +813,7 @@ async fn expanded_collection_checks_new_evidence_and_reuses_unchanged_comparison
             &llm,
             &runtimes,
             "{}",
-            &crate::lessons::shape::FixedSchema(json!({"type":"object"})),
+            &json!({"type":"object"}),
             candidate.to_string(),
             &references,
             (3000, &mut sources.clone()),

@@ -65,7 +65,7 @@ pub(super) async fn extract(
             saved.policy == INVENTORY_POLICY
                 && saved.model == llm.model_name()
                 && saved.model_context == llm.max_context_tokens()
-                && saved.content_sha256 == sha256_hex(&candidate_text)
+                && saved.content_sha256 == digest(&candidate_text)
                 && validate_inventory(&saved.inventory, &content).is_ok()
         });
     let (inventory, coverage) = match checkpoint {
@@ -103,7 +103,7 @@ pub(super) async fn extract(
         policy: INVENTORY_POLICY.into(),
         model: llm.model_name().into(),
         model_context: llm.max_context_tokens(),
-        content_sha256: sha256_hex(&candidate_text),
+        content_sha256: digest(&candidate_text),
         inventory,
         coverage,
         coverage_policy: Some(coverage::POLICY.into()),
@@ -678,7 +678,7 @@ pub(super) fn report(
             .iter()
             .map(|s| SourceBinding {
                 id: s.id.clone(),
-                sha256: sha256_hex(&s.excerpt),
+                sha256: digest(&s.excerpt),
             })
             .collect(),
         coverage: accounted,

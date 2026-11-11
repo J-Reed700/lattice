@@ -2,11 +2,9 @@
 //! building articles from video metadata.
 
 use super::WebIngestionService;
-use crate::infrastructure::extraction::markup::{decode_entities, escape_html};
 use chrono::{DateTime, NaiveDate, Utc};
 use lattice_core::application::contracts::web::CleanArticle;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::text::normalize_whitespace;
 use serde::Deserialize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -46,6 +44,18 @@ struct Json3Segment {
 impl WebIngestionService {
     fn host_matches_domain(host: &str, base_domain: &str) -> bool {
         host == base_domain || host.ends_with(&format!(".{}", base_domain))
+    }
+
+    pub(super) fn normalize_whitespace(text: &str) -> String {
+        text.split_whitespace().collect::<Vec<_>>().join(" ")
+    }
+
+    fn escape_html(text: &str) -> String {
+        text.replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;")
+            .replace('"', "&quot;")
+            .replace('\'', "&#39;")
     }
 
     fn parse_yt_dlp_upload_date(&self, value: &str) -> Option<DateTime<Utc>> {
@@ -134,8 +144,9 @@ impl WebIngestionService {
                 continue;
             }
 
-            let cleaned =
-                normalize_whitespace(&decode_entities(&Self::strip_html_like_tags(trimmed)));
+            let cleaned = Self::normalize_whitespace(
+                &Self::strip_html_like_tags(trimmed).replace("&nbsp;", " "),
+            );
             if !cleaned.is_empty() {
                 lines.push(cleaned);
             }
@@ -153,8 +164,7 @@ impl WebIngestionService {
                 continue;
             }
 
-            let cleaned =
-                normalize_whitespace(&decode_entities(&Self::strip_html_like_tags(trimmed)));
+            let cleaned = Self::normalize_whitespace(&Self::strip_html_like_tags(trimmed));
             if !cleaned.is_empty() {
                 lines.push(cleaned);
             }
@@ -170,7 +180,7 @@ impl WebIngestionService {
         for event in parsed.events.unwrap_or_default() {
             for segment in event.segs.unwrap_or_default() {
                 if let Some(text) = segment.utf8 {
-                    let cleaned = normalize_whitespace(&Self::strip_html_like_tags(&text));
+                    let cleaned = Self::normalize_whitespace(&Self::strip_html_like_tags(&text));
                     if !cleaned.is_empty() {
                         lines.push(cleaned);
                     }
@@ -193,7 +203,7 @@ impl WebIngestionService {
         transcript: &str,
     ) -> Result<CleanArticle> {
         let mut article = self.build_video_article_from_metadata(source_url, metadata)?;
-        let normalized_transcript = normalize_whitespace(transcript);
+        let normalized_transcript = Self::normalize_whitespace(transcript);
         if normalized_transcript.is_empty() {
             return Ok(article);
         }
@@ -206,7 +216,7 @@ impl WebIngestionService {
         article.reading_time_minutes = Self::calculate_reading_time_minutes(article.word_count);
         article.excerpt = Self::generate_excerpt(&article.text_content);
 
-        let transcript_html = escape_html(&normalized_transcript).replace('\n', "<br/>");
+        let transcript_html = Self::escape_html(&normalized_transcript).replace('\n', "<br/>");
         if let Some(stripped) = article.content.strip_suffix("</article>") {
             article.content = format!(
                 "{}<h2>Transcript</h2><p>{}</p></article>",
@@ -285,19 +295,19 @@ impl WebIngestionService {
     ) -> Result<CleanArticle> {
         let title = metadata
             .title
-            .map(|value| normalize_whitespace(&value))
+            .map(|value| Self::normalize_whitespace(&value))
             .filter(|value| !value.is_empty())
             .unwrap_or_else(|| "Video".to_string());
 
         let author = metadata
             .uploader
             .or(metadata.channel)
-            .map(|value| normalize_whitespace(&value))
+            .map(|value| Self::normalize_whitespace(&value))
             .filter(|value| !value.is_empty());
 
         let description = metadata
             .description
-            .map(|value| normalize_whitespace(&value))
+            .map(|value| Self::normalize_whitespace(&value))
             .filter(|value| !value.is_empty());
 
         let canonical_url = metadata
@@ -319,7 +329,7 @@ impl WebIngestionService {
 
         let extractor_text = metadata
             .extractor
-            .map(|value| normalize_whitespace(&value))
+            .map(|value| Self::normalize_whitespace(&value))
             .filter(|value| !value.is_empty())
             .map(|value| format!("Extractor: {}", value));
 
@@ -348,26 +358,26 @@ impl WebIngestionService {
             });
         }
 
-        let mut content_parts = vec![format!("<h1>{}</h1>", escape_html(&title))];
+        let mut content_parts = vec![format!("<h1>{}</h1>", Self::escape_html(&title))];
         if let Some(author_value) = &author {
             content_parts.push(format!(
                 "<p><strong>Creator:</strong> {}</p>",
-                escape_html(author_value)
+                Self::escape_html(author_value)
             ));
         }
-        content_parts.push(format!("<p>{}</p>", escape_html(&duration_text)));
+        content_parts.push(format!("<p>{}</p>", Self::escape_html(&duration_text)));
         if let Some(description_value) = &description {
-            content_parts.push(format!("<p>{}</p>", escape_html(description_value)));
+            content_parts.push(format!("<p>{}</p>", Self::escape_html(description_value)));
         }
         if let Some(extractor_value) = &extractor_text {
             content_parts.push(format!(
                 "<p><strong>{}</strong></p>",
-                escape_html(extractor_value)
+                Self::escape_html(extractor_value)
             ));
         }
         content_parts.push(format!(
             "<p><a href=\"{}\">Open source video</a></p>",
-            escape_html(&canonical_url)
+            Self::escape_html(&canonical_url)
         ));
 
         Ok(CleanArticle {

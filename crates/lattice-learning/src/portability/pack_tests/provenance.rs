@@ -1,13 +1,12 @@
 use super::*;
 use crate::{
-    content_verification::tests::attest,
+    content_verification::{digest, tests::attest},
     dto::*,
     lesson_evidence,
     outline_draft::{LearningOutlineReviewStatus, OutlineDraft},
     outline_evidence_view,
     pack::{decode_learning_pack, encode_learning_pack, LearningPackEntry, LearningPackInput},
 };
-use lattice_core::shared::hash::sha256_hex;
 use serde_json::{json, Value};
 
 const PROVENANCE: &str = "program/provenance.json";
@@ -64,7 +63,7 @@ async fn ready_course(pool: &sqlx::SqlitePool) -> Result<LearningProgramDto> {
         verification: None,
     };
     let mut report = serde_json::to_value(attest(&lesson.id, &prepared))?;
-    report["sources"] = json!([{"id":program.sources[0].id,"sha256":sha256_hex(QUOTE)}]);
+    report["sources"] = json!([{"id":program.sources[0].id,"sha256":digest(QUOTE)}]);
     report["findings"][0]["evidence"] = json!([{
         "source_id":program.sources[0].id,"text":QUOTE,"start_byte":0,"end_byte":QUOTE.len(),"retrieval_kind":"lexical","score":1.0
     }]);

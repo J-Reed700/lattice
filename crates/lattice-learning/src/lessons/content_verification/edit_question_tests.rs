@@ -14,6 +14,7 @@ use crate::assessment_engine::{
     LearningAssessmentCandidate, LearningAssessmentKey, LearningItemFormat,
 };
 use crate::assessment_repository::{insert_bank_items_in, BankItem};
+use crate::content_verification::digest;
 use crate::lessons::claim_reviews::dto::ClaimActionRequestDto;
 use crate::lessons::claim_reviews::repository::ClaimReviewRepository;
 use crate::lessons::claim_reviews::service::{
@@ -29,7 +30,6 @@ use lattice_core::domain::learning::claim_review::{
     Ledger, UnitKind, UnverifiedReason,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 use serde_json::{json, Value};
 
@@ -926,7 +926,7 @@ async fn notes(course: &Course) -> Result<TeachingFindingsRepository> {
         {"prompt":P1,"options":C1,"explanation":E1}
     ]});
     let note = |kind, site, text: &str| SetAside {
-        finding: ReviewFinding::of_kind(kind, site, text),
+        finding: ReviewFinding::new(kind, Some(site), text),
         repairs: 0,
     };
     store
@@ -1029,7 +1029,7 @@ async fn the_report_takes_the_questions_new_title_and_text_and_one_confirmed_fin
     let text = format!("{}\n\n{NEW_EXPLANATION}", choices.join("\n\n"));
     assert_eq!(
         now.0,
-        sha256_hex(json!([before.0, SECTIONS, NEW_PROMPT, text]).to_string())
+        digest(&json!([before.0, SECTIONS, NEW_PROMPT, text]).to_string())
     );
     let findings = serde_json::from_str::<Value>(&now.1)?["findings"]
         .as_array()

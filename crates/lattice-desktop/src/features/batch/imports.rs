@@ -9,13 +9,13 @@ use super::items::{BatchItem, ItemCounts};
 use super::repository::BatchItems;
 use crate::features::web::services::web::check_public_url;
 use lattice_core::application::ports::document_scope::DocumentScopePort;
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::{Database, Transactions, WriteTx};
 use lattice_core::shared::{
     error::{AppError, Result},
     runtime::jobs::{JobRecord, JobRuntime, JobStore, NewJob},
     types::ValidatedFilePath,
 };
+use sha2::{Digest, Sha256};
 use std::{path::PathBuf, sync::Arc};
 
 pub const FILE_IMPORT: &str = "batch.file_import";
@@ -125,7 +125,7 @@ impl BatchImports {
             kind: kind.to_string(),
             subject_id: None,
             operation_id,
-            payload_hash: sha256_hex(payload),
+            payload_hash: format!("{:x}", Sha256::digest(payload)),
             requested,
             progress_total: u32::try_from(targets.len()).unwrap_or(u32::MAX),
             message: "Queued".into(),

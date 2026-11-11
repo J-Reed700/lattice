@@ -289,7 +289,7 @@ async fn a_claim_a_repair_awaits_is_decided_by_the_pass_that_finds_no_statement_
     let to_rewrite = [
         (Step::Read(Reading::Parts), Outcome::Unproven),
         (Step::Research, Outcome::FoundNothing),
-        (Step::Read(Reading::Page), Outcome::Refuted),
+        (Step::Read(Reading::Page), Outcome::Unproven),
     ];
     walk(&mut ledger, &id, Class::Sourced, &to_rewrite).await?;
     ledger

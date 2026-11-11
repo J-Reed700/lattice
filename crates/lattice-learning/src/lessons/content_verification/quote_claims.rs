@@ -5,6 +5,8 @@
 //! else, including a quotation that is not found, goes to the model's check.
 use super::*;
 
+/// Marks that open or close a quotation in a claim.
+const QUOTE_MARKS: &[char] = &['"', '\u{201c}', '\u{201d}'];
 /// Marks a quotation uses for words it leaves out.
 const ELLIPSES: &[&str] = &["[\u{2026}]", "[...]", "\u{2026}", "..."];
 

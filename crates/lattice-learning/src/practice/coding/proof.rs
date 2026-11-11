@@ -3,12 +3,12 @@
 
 use crate::drills::runner::{CodeRunner, RunOutcome};
 use crate::lab_runtime::{LearningLabFile, LearningLabLimits};
+use crate::persistence::hash_text;
 use crate::practice::coding::harness::{new_nonce, CaseHarness, RunEnd};
 use crate::practice::coding::problem::{
     CaseResult, CaseStatus, Misreading, ProblemCase, ProblemSpec, SOLUTION_PATH,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use std::collections::BTreeMap;
 use tokio_util::sync::CancellationToken;
 
@@ -168,7 +168,7 @@ pub(crate) async fn establish_reference(
                 case.id
             )));
         };
-        case.digest = Some(sha256_hex(actual));
+        case.digest = Some(hash_text(actual));
     }
 
     let second = proving.run(reference, &cases).await?;

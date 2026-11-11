@@ -2,7 +2,7 @@
 
 use lattice_core::shared::error::Result;
 use lattice_learning::lessons::teaching_review::test_support::candidate;
-use lattice_learning::lessons::teaching_review::{review, LengthRule, Scope};
+use lattice_learning::lessons::teaching_review::{review, LengthRule};
 use serde_json::json;
 
 /// Opt-in provider acceptance check. No application data is written and
@@ -24,12 +24,10 @@ async fn live_review_passage_protocol() -> Result<()> {
         system,
         json!({}),
         &content,
-        Scope::default(),
         Some(&run.progress),
         LengthRule::Fail,
     )
-    .await?
-    .reported;
+    .await?;
     assert!(clean.is_empty(), "Live review reported defects: {clean:?}");
     content["blocks"][0]["body"] = json!("The Rust expression 2 + 2 evaluates to 5. This is exact integer arithmetic, without overflow.");
     let defects = review(
@@ -37,12 +35,10 @@ async fn live_review_passage_protocol() -> Result<()> {
         system,
         json!({}),
         &content,
-        Scope::default(),
         Some(&run.progress),
         LengthRule::Fail,
     )
-    .await?
-    .reported;
+    .await?;
     assert!(
         !defects.is_empty(),
         "The live reviewer must reject the incorrect arithmetic"

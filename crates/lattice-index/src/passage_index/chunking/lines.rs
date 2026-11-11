@@ -11,8 +11,6 @@
 //! to point at lines, so a passage's heading is already a line reference.
 //! A chunk becomes a [`NewPassage`] whose `start` and `end` are those lines.
 
-use lattice_core::shared::text::segmentation::{is_blank, opens_item};
-
 use super::NewPassage;
 
 /// A chunk past this many lines is cut wherever a boundary first allows.
@@ -85,6 +83,52 @@ pub fn looks_minified(text: &str) -> bool {
 /// written by hand.
 pub fn is_minified(bytes: usize, lines: usize) -> bool {
     bytes / lines.max(1) > MAX_AVERAGE_LINE_CHARS
+}
+
+fn is_blank(line: &str) -> bool {
+    line.trim().is_empty()
+}
+
+/// A line at indentation 0 that opens a top-level item, or leads into one
+/// (an attribute, a doc comment, a decorator).
+fn opens_item(line: &str) -> bool {
+    const OPENERS: [&str; 26] = [
+        "fn ",
+        "pub ",
+        "pub(",
+        "impl ",
+        "impl<",
+        "struct ",
+        "enum ",
+        "trait ",
+        "mod ",
+        "unsafe ",
+        "async ",
+        "class ",
+        "def ",
+        "function ",
+        "export ",
+        "const ",
+        "interface ",
+        "type ",
+        "func ",
+        "module ",
+        "#[",
+        "///",
+        "//!",
+        "/**",
+        "@",
+        "#!",
+    ];
+    if line.starts_with(char::is_whitespace) {
+        return false;
+    }
+    if OPENERS.iter().any(|opener| line.starts_with(opener)) {
+        return true;
+    }
+    // A Markdown heading: one to six `#` and a space.
+    let hashes = line.chars().take_while(|&c| c == '#').count();
+    (1..=6).contains(&hashes) && line.chars().nth(hashes) == Some(' ')
 }
 
 /// How good a place the line boundary before `lines[at]` is to cut.

@@ -1,4 +1,3 @@
-import { preparationQueue, queuedLesson } from '@/features/learning/lessons/preparationQueue';
 import type { LearningPlanDto, LearningPracticeWorkspaceDto, LearningProgramDto, LearningQuizOverviewDto, LearningQuizStatusDto } from '@/lib/bindings';
 
 export type CourseStep = { kind: 'lesson' | 'guided' | 'assignment' | 'assessment' | 'quiz' | 'starting_point' | 'recall'; title: string; reason: string; lessonId?: string; sessionId?: string; formId?: string };
@@ -49,10 +48,7 @@ export function nextCourseStep(program: LearningProgramDto, practice?: LearningP
   }
   const current = lessons.find((l) => l.id === program.summary.currentLessonId && !l.completed) ?? lessons.find((l) => !l.completed);
   if (current) {
-    if (current.preparation !== 'ready') {
-      if (queuedLesson(preparationQueue(plan?.jobs ?? []), current.id)) return { kind: 'lesson', title: 'Open your next lesson', reason: `${current.title} is queued and opens when it is ready.`, lessonId: current.id };
-      return { kind: 'lesson', title: 'Prepare your next lesson', reason: current.title, lessonId: current.id };
-    }
+    if (current.preparation !== 'ready') return { kind: 'lesson', title: 'Prepare your next lesson', reason: current.title, lessonId: current.id };
     const submissions = practice?.sessions.filter((s) => s.lessonId === current.id && s.status === 'submitted') ?? [];
     if (current.blocks.some((b) => b.kind === 'guided_practice') && !submissions.some((s) => s.taskKind === 'guided')) return { kind: 'guided', title: 'Try the guided exercise', reason: 'Work through the idea with feedback and one hint at a time.', lessonId: current.id };
     if (!submissions.some((s) => (s.taskKind ?? 'independent') === 'independent')) return { kind: 'assignment', title: 'Apply it independently', reason: 'Create your own response and get feedback against the assignment criteria.', lessonId: current.id };

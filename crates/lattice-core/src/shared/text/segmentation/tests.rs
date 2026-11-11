@@ -346,68 +346,6 @@ fn a_sentence_goes_on_after_a_closing_emphasis_mark_too() {
     );
 }
 
-#[test]
-fn a_stop_inside_a_path_ends_no_sentence() {
-    assert_eq!(
-        pieces("The entry ../Name names the place above, and it is one sentence. The next one follows."),
-        [
-            "The entry ../Name names the place above, and it is one sentence.",
-            "The next one follows."
-        ]
-    );
-}
-
-#[test]
-fn a_stop_inside_a_file_name_ends_no_sentence() {
-    assert_eq!(
-        pieces("Open notes.Txt and read it. Then close it."),
-        ["Open notes.Txt and read it.", "Then close it."]
-    );
-}
-
-#[test]
-fn a_question_mark_inside_an_address_ends_no_sentence() {
-    assert_eq!(
-        pieces("Go to page?Mode=Full to switch. Then return."),
-        ["Go to page?Mode=Full to switch.", "Then return."]
-    );
-}
-
-#[test]
-fn a_terminator_with_no_space_after_it_stays_in_one_sentence() {
-    assert_eq!(pieces("Is it ready?Yes"), ["Is it ready?Yes"]);
-    assert_eq!(pieces("Stop!Now"), ["Stop!Now"]);
-}
-
-#[test]
-fn a_stop_and_a_space_still_end_a_sentence() {
-    assert_eq!(
-        pieces("One ends here. Two starts."),
-        ["One ends here.", "Two starts."]
-    );
-    assert_eq!(pieces("One. Two."), ["One.", "Two."]);
-}
-
-#[test]
-fn a_closing_quote_or_emphasis_after_a_stop_and_a_space_still_ends_a_sentence() {
-    assert_eq!(
-        pieces("She said \"stop.\" Then she left."),
-        ["She said \"stop.\"", "Then she left."]
-    );
-    assert_eq!(
-        pieces("It is **done.** Next one."),
-        ["It is **done.**", "Next one."]
-    );
-}
-
-#[test]
-fn a_full_width_stop_ends_a_sentence_without_a_space() {
-    assert_eq!(
-        pieces("これは一つ目です。これは二つ目です。"),
-        ["これは一つ目です。", "これは二つ目です。"]
-    );
-}
-
 const WORDS: [&str; 9] = [
     "alpha",
     "Beta",
@@ -654,26 +592,5 @@ proptest! {
     #[test]
     fn sentences_ascend_trimmed_and_non_empty(text in texts()) {
         check_sentences(&text)?;
-    }
-}
-
-#[test]
-fn a_list_marker_and_the_whitespace_after_it_end_where_the_line_text_starts() {
-    fn line(text: &str) -> Option<&str> {
-        item_marker_end(text).map(|end| &text[..end])
-    }
-    assert_eq!(line("3. Alpha holds."), Some("3. "));
-    assert_eq!(line("- Alpha holds."), Some("- "));
-    assert_eq!(line("   2) Alpha holds."), Some("   2) "));
-    assert_eq!(line("  * Alpha holds."), Some("  * "));
-    assert_eq!(line("Alpha holds."), None);
-    assert_eq!(line("3 things hold."), None);
-    assert_eq!(line("-Alpha holds."), None);
-    for text in ["3. A.", "- A.", "   2) A.", "A.", "3 things", "-A."] {
-        assert_eq!(
-            prose::is_list_item(text),
-            item_marker_end(text).is_some(),
-            "{text}"
-        );
     }
 }

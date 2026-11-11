@@ -2,7 +2,7 @@
 //! the place of a claim's quote among them (claim sources design §18.3).
 
 use lattice_core::domain::learning::claim_review::{ClaimLocation, UnitKind};
-use lattice_core::shared::text::{claim_sentence, sentences};
+use lattice_core::shared::text::claim_sentence;
 use serde_json::Value;
 
 /// Where a lesson field is in the lesson, as a JSON pointer: `body`,
@@ -80,13 +80,11 @@ pub(crate) fn unit_texts(candidate: &Value) -> Vec<(String, String)> {
     units
 }
 
-/// Where `quote` is in unit `unit`: the first field holding it, at the
-/// earliest place it stands there. A quote of one sentence is the claim's
-/// sentence as it was named and stays. With the claim's `statement`, a quote
-/// of several sentences (a claim an older pass stored) narrows to the one
-/// sentence the statement restates (claim sources design §18.3), its span the
-/// sentence's own place; a statement the locator cannot place, and a code
-/// example (`None`, its quote is the code), keep the quote.
+/// Where `quote` is in unit `unit`: the first field holding it. With the
+/// claim's `statement`, the location narrows to the one sentence of the
+/// quote that the statement restates (claim sources design §18.3), its span
+/// the sentence's own place; a statement the locator cannot place, and a
+/// code example (`None`, its quote is the code), keep the quote.
 pub(crate) fn locate(
     candidate: &Value,
     unit: usize,
@@ -125,15 +123,13 @@ pub(crate) fn locate(
         }
         (false, _) => UnitKind::Question,
     };
-    let sentence = statement
-        .filter(|_| sentences(quote).len() > 1)
-        .and_then(|statement| {
-            let within = text
-                .find(quote)
-                .map_or((0, text.len()), |at| (at, at + quote.len()));
-            let (start, end) = claim_sentence(&text, within, statement)?;
-            Some((text.get(start..end)?.to_owned(), (start, end)))
-        });
+    let sentence = statement.and_then(|statement| {
+        let within = text
+            .find(quote)
+            .map_or((0, text.len()), |at| (at, at + quote.len()));
+        let (start, end) = claim_sentence(&text, within, statement)?;
+        Some((text.get(start..end)?.to_owned(), (start, end)))
+    });
     match sentence {
         Some((sentence, span)) => ClaimLocation {
             unit_index: unit,
@@ -142,15 +138,6 @@ pub(crate) fn locate(
             quote: sentence,
             span: Some(span),
         },
-        None => ClaimLocation {
-            span: text
-                .find(quote)
-                .filter(|_| !quote.is_empty())
-                .map(|at| (at, at + quote.len())),
-            unit_index: unit,
-            unit_kind: kind,
-            field,
-            quote: quote.to_owned(),
-        },
+        None => ClaimLocation::locate(unit, kind, field, quote, &text),
     }
 }

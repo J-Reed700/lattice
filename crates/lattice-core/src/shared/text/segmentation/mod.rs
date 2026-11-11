@@ -18,10 +18,10 @@ mod golden;
 mod tests;
 
 pub use align::{align, common_subsequence, Alignment, Fate};
-pub use code::{is_blank, opens_item, Code};
+pub use code::Code;
 pub use measure::{Bytes, Chars, Measure, Words};
 pub use pack::{partition, windows, Overflow, Plan, Rung};
-pub use prose::{code_spans, item_marker_end, Flowed, Prose};
+pub use prose::{Flowed, Prose};
 
 /// A byte range of a text, both ends on char boundaries.
 pub type Span = std::ops::Range<usize>;

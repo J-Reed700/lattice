@@ -60,29 +60,21 @@ fn a_step_that_fits_is_sent_to_the_node_the_graph_names() {
         decide(&policy, first, parts(Unproven)),
         Some((
             named("s.research", Step::Research),
-            Some(position(Sourced, false, false, "s.research", 2))
+            Some(position(Sourced, false, false, "s.research"))
         ))
     );
     assert_eq!(
         decide(&policy, first, parts(Stands)),
         Some((Then::End(End::Resolved), None))
     );
-    for (outcome, end) in [
-        (
-            Outcome::Cut,
-            End::Removed {
-                section_goes: false,
-            },
-        ),
-        (Outcome::CannotCut, End::Unverified),
-    ] {
+    for (outcome, section_goes) in [(Outcome::Cut, false), (Outcome::CannotCut, true)] {
         assert_eq!(
             decide(
                 &policy,
-                position(Sourced, false, false, "s.cut", 0),
+                position(Sourced, false, false, "s.cut"),
                 cut(outcome)
             ),
-            Some((Then::End(end), None))
+            Some((Then::End(End::Removed { section_goes }), None))
         );
     }
 }
@@ -93,12 +85,12 @@ fn a_change_of_class_names_the_other_classs_node() {
     assert_eq!(
         decide(
             &policy,
-            position(Sourced, false, false, "s.uncite", 2),
+            position(Sourced, false, false, "s.uncite"),
             uncite()
         ),
         Some((
             named("c.read", Step::Read(Reading::Knowledge)),
-            Some(position(Common, true, false, "c.read", 2))
+            Some(position(Common, true, false, "c.read"))
         ))
     );
     // After a rewrite it is the other class's post-rewrite node, which has no
@@ -106,24 +98,24 @@ fn a_change_of_class_names_the_other_classs_node() {
     assert_eq!(
         decide(
             &policy,
-            position(Sourced, false, false, "s.final.uncite", 1),
+            position(Sourced, false, false, "s.final.uncite"),
             uncite()
         ),
         Some((
             named("c.final", Step::Read(Reading::Knowledge)),
-            Some(position(Common, true, false, "c.final", 1))
+            Some(position(Common, true, false, "c.final"))
         ))
     );
     // Even a statement that has changed class may.
     assert_eq!(
         decide(
             &policy,
-            position(Sourced, true, false, "s.final.uncite", 1),
+            position(Sourced, true, false, "s.final.uncite"),
             uncite()
         ),
         Some((
             named("c.final", Step::Read(Reading::Knowledge)),
-            Some(position(Common, true, false, "c.final", 1))
+            Some(position(Common, true, false, "c.final"))
         ))
     );
 }
@@ -134,12 +126,12 @@ fn the_re_ask_stays_at_the_node_with_the_re_ask_spent_and_the_next_one_stops() {
     let reading = named("s.read", Step::Read(Reading::Parts));
     assert_eq!(
         decide(&policy, start(&policy, Sourced), parts(Unjudged)),
-        Some((reading, Some(position(Sourced, false, true, "s.read", 2))))
+        Some((reading, Some(position(Sourced, false, true, "s.read"))))
     );
     assert_eq!(
         decide(
             &policy,
-            position(Sourced, false, true, "s.read", 2),
+            position(Sourced, false, true, "s.read"),
             parts(Unjudged)
         ),
         Some((Then::Stop, None))
@@ -148,7 +140,7 @@ fn the_re_ask_stays_at_the_node_with_the_re_ask_spent_and_the_next_one_stops() {
     assert_eq!(
         decide(
             &policy,
-            position(Sourced, false, false, "s.research", 2),
+            position(Sourced, false, false, "s.research"),
             research(Unjudged)
         ),
         None
@@ -170,7 +162,7 @@ fn a_step_that_does_not_fit_is_not_decided() {
     assert_eq!(
         decide(
             &twice,
-            position(Common, true, false, "c.read", 2),
+            position(Common, true, false, "c.read"),
             knowledge(NeedsSource)
         ),
         None
@@ -197,7 +189,7 @@ fn walking_from_a_position_is_walking_from_the_classs_start_when_it_is_the_start
     assert_eq!(
         walk_from(
             &policy,
-            position(Sourced, false, false, "s.final", 1),
+            position(Sourced, false, false, "s.final"),
             &[parts(AllCommon), uncite(), knowledge(Stands)]
         ),
         Walked::Ended(End::GeneralKnowledge)
@@ -218,7 +210,6 @@ fn a_rewrite_is_ahead_of_every_node_that_can_reach_one() {
         (Reasoning, "r.read"),
         (Reasoning, "r.veto"),
         (Reasoning, "r.ground"),
-        (Reasoning, "r.correct"),
         (Reasoning, "r.rewrite"),
         (Common, "c.read"),
         (Common, "c.ground"),
@@ -228,18 +219,18 @@ fn a_rewrite_is_ahead_of_every_node_that_can_reach_one() {
         (Internal, "i.rewrite.again"),
     ] {
         assert!(
-            rewrite_ahead(&policy, position(class, false, false, name, 2)),
+            rewrite_ahead(&policy, position(class, false, false, name)),
             "{name}"
         );
     }
     // The uncite reaches Common's whole check by a change of class.
     assert!(rewrite_ahead(
         &policy,
-        position(Sourced, false, false, "s.uncite", 2)
+        position(Sourced, false, false, "s.uncite")
     ));
     assert!(rewrite_ahead(
         &policy,
-        position(Sourced, true, false, "s.read", 2)
+        position(Sourced, true, false, "s.read")
     ));
 }
 
@@ -263,7 +254,7 @@ fn no_rewrite_is_ahead_of_a_post_rewrite_node_or_the_cut() {
     ] {
         for changed_class in [false, true] {
             assert!(
-                !rewrite_ahead(&policy, position(class, changed_class, false, name, 0)),
+                !rewrite_ahead(&policy, position(class, changed_class, false, name)),
                 "{name}"
             );
         }
@@ -357,7 +348,7 @@ fn a_step_the_graph_does_not_have_is_a_fault() {
 fn a_successor_starts_at_its_parents_post_rewrite_node() {
     let policy = StandardPolicy::new();
     let first = start(&policy, Sourced);
-    let after = position(Sourced, false, false, "s.final", 1);
+    let after = position(Sourced, false, false, "s.final");
     let taken = [parts(AllCommon), uncite(), knowledge(Stands)];
     let steps = recorded(after, &taken);
     assert_eq!(steps.len(), 3);
@@ -379,7 +370,7 @@ fn a_successor_starts_at_its_parents_post_rewrite_node() {
     );
 
     // And Common's successor starts at its own post-rewrite node.
-    let common = position(Common, false, false, "c.final", 1);
+    let common = position(Common, false, false, "c.final");
     let steps = recorded(common, &[knowledge(Refuted), ground(Stands)]);
     assert_eq!(
         steps,

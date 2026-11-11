@@ -2,6 +2,7 @@
 
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 /// A judgement's cache key: the policy (its prompt version), the model, and
 /// the sha256 of what it judged. A model or policy change makes a new row;
@@ -27,6 +28,11 @@ pub struct Judged<T> {
 /// fields were written in.
 pub fn canonical_json(value: &Value) -> String {
     sorted(value).to_string()
+}
+
+/// Lower-case hex sha256 of `text`.
+pub fn sha256_hex(text: &str) -> String {
+    hex::encode(Sha256::digest(text.as_bytes()))
 }
 
 fn sorted(value: &Value) -> Value {

@@ -167,20 +167,4 @@ describe('TeachingFindings', () => {
     expect(box(0)).toBeChecked();
     expect(screen.queryByText(/Kept 2 teaching notes/)).not.toBeInTheDocument();
   });
-
-  it('two notes on one section have different names', () => {
-    show([
-      note(0, { findingKey: 'teaching:section-0:a' }),
-      note(0, { findingKey: 'teaching:section-0:b', summary: 'Part 1 has a second problem.' }),
-      note(1),
-    ]);
-    const [first, second, alone] = screen.getAllByRole('article').map((card) => card.getAttribute('aria-label'));
-    expect(first).not.toEqual(second);
-    expect(first).toBe('Section 1: Part 1: Teaching review, note 1 of 2');
-    expect(second).toBe('Section 1: Part 1: Teaching review, note 2 of 2');
-    const [firstBox, secondBox, aloneBox] = screen.getAllByRole('checkbox').map((input) => input.getAttribute('aria-label'));
-    expect(firstBox).not.toEqual(secondBox);
-    expect(alone).toBe('Section 2: Part 2: Teaching review');
-    expect(aloneBox).toBe('Select the note on Section 2: Part 2');
-  });
 });

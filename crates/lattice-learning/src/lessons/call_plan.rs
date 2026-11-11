@@ -8,13 +8,9 @@
 //! cut that narrows its sentence holds the narrowing's call. A statement the
 //! plan was not made for, which a stage outside the checks wrote after the
 //! sort, is taken in where it first stands, sized as a statement sorted there
-//! would be. A rise, beyond a reserve or for a statement taken in, is shown. A
-//! statement whose path is over still holds the readings of the successor the
-//! teaching review may give it, while a rewrite is left.
+//! would be. A rise, beyond a reserve or for a statement taken in, is shown.
 use lattice_core::application::services::claim_verification::KNOWLEDGE_SAMPLES;
-use lattice_core::domain::learning::acceptance::{
-    most_calls, start, AcceptancePolicy, Position, Walked,
-};
+use lattice_core::domain::learning::acceptance::{most_calls, AcceptancePolicy, Position, Walked};
 use lattice_core::domain::learning::claim_review::Class;
 
 /// The calls of one knowledge check: its samples.
@@ -29,9 +25,8 @@ pub(crate) enum PlannedAt {
     /// At a cut that narrows its sentence: the narrowing's call is still to
     /// come.
     Narrowing(Position),
-    /// Its path is over. `Some` holds where a successor would begin when the
-    /// teaching review may still rewrite its sentence.
-    Ended(Option<Position>),
+    /// Its path is over.
+    Ended,
 }
 
 impl PlannedAt {
@@ -41,7 +36,7 @@ impl PlannedAt {
     pub(crate) fn of(walked: Option<Walked>) -> Self {
         match walked {
             Some(Walked::At(at)) => Self::At(at),
-            Some(Walked::Ended(_) | Walked::Stopped) => Self::Ended(None),
+            Some(Walked::Ended(_) | Walked::Stopped) => Self::Ended,
             Some(Walked::Diverged { .. }) | None => Self::Entry,
         }
     }
@@ -97,17 +92,23 @@ pub(crate) struct CallPlan {
 /// The most calls a statement of `class` can still cost at `at`.
 fn most(policy: &dyn AcceptancePolicy, class: Class, at: PlannedAt) -> u32 {
     match at {
-        PlannedAt::Entry => most_calls(policy, start(policy, class)),
-        PlannedAt::At(at) | PlannedAt::Ended(Some(at)) => most_calls(policy, at),
+        PlannedAt::Entry => most_calls(
+            policy,
+            Position {
+                class,
+                changed_class: false,
+                reasked: false,
+                node: policy.graph(class).entry(),
+            },
+        ),
+        PlannedAt::At(at) => most_calls(policy, at),
         PlannedAt::Narrowing(at) => most_calls(policy, at).saturating_add(1),
-        PlannedAt::Ended(None) => 0,
+        PlannedAt::Ended => 0,
     }
 }
 
 /// M for a statement of `class`: two readings from its post-rewrite node,
-/// each with the statement's re-ask still possible, and the narrowing call. A
-/// successor beyond the statement's budget, or a neighbour's change of a
-/// statement with no rewrite left, is covered by it, so it holds no rewrite.
+/// each with the statement's re-ask still possible, and the narrowing call.
 fn reserve(policy: &dyn AcceptancePolicy, class: Class) -> u32 {
     let reading = most_calls(
         policy,
@@ -116,7 +117,6 @@ fn reserve(policy: &dyn AcceptancePolicy, class: Class) -> u32 {
             changed_class: false,
             reasked: false,
             node: policy.graph(class).after_rewrite(),
-            rewrites_left: 0,
         },
     );
     reading.saturating_mul(2).saturating_add(1)
@@ -140,10 +140,8 @@ fn settled(policy: &dyn AcceptancePolicy, at: PlannedAt) -> PlannedAt {
 /// The class a statement sorted into `sorted` is in at `at`: where its walk is.
 fn class_at(sorted: Class, at: PlannedAt) -> Class {
     match at {
-        PlannedAt::At(position)
-        | PlannedAt::Narrowing(position)
-        | PlannedAt::Ended(Some(position)) => position.class,
-        PlannedAt::Entry | PlannedAt::Ended(None) => sorted,
+        PlannedAt::At(position) | PlannedAt::Narrowing(position) => position.class,
+        PlannedAt::Entry | PlannedAt::Ended => sorted,
     }
 }
 
@@ -169,7 +167,7 @@ impl CallPlan {
                     } else {
                         0
                     },
-                    ended: at == PlannedAt::Ended(None),
+                    ended: at == PlannedAt::Ended,
                 }
             })
             .collect();
@@ -201,7 +199,7 @@ impl CallPlan {
                 } else {
                     0
                 },
-                ended: at == PlannedAt::Ended(None),
+                ended: at == PlannedAt::Ended,
             });
         }
         self.shares()
@@ -308,7 +306,7 @@ impl CallPlan {
         for (slot, statement) in self.slots.iter_mut().zip(statements) {
             let at = settled(policy, statement.at);
             slot.class = class_at(slot.class, at);
-            slot.ended = at == PlannedAt::Ended(None);
+            slot.ended = at == PlannedAt::Ended;
             let now = most(policy, slot.class, at);
             if now <= slot.most {
                 slot.most = now;
