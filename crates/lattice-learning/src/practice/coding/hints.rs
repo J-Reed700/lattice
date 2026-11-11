@@ -350,7 +350,6 @@ async fn write_checked(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::practice::coding::dto::CodingStage;
     use lattice_core::application::ports::llm_port::{CompletionRequest, CompletionResponse};
     use lattice_core::domain::learning::practice::PROBLEM_PATTERNS;
     use std::collections::VecDeque;

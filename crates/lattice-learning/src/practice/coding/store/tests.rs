@@ -17,7 +17,6 @@ fn file(path: &str, content: &str) -> LearningLabFile {
     LearningLabFile {
         path: path.into(),
         content: content.into(),
-        editable: true,
     }
 }
 

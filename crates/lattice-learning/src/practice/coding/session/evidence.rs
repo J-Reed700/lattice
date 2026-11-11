@@ -1,11 +1,10 @@
-//! What a finished session is judged on: the evidence the debrief reads and the outcome the pattern ratings use.
+//! What a finished session is judged on: the evidence the debrief reads.
 use super::view::{example_views, settings_used};
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::CaseCheckDetailDto;
 use crate::practice::coding::debrief::{CodingEventRow, EvidenceRun, SessionEvidence};
 use crate::practice::coding::dto::{CodeHintDto, CodingRunScope};
-use crate::practice::coding::patterns::ProblemOutcome;
-use crate::practice::coding::problem::{CaseResult, CaseStatus};
+use crate::practice::coding::problem::CaseResult;
 use crate::practice::coding::records::{SessionBundle, StoredRun};
 use lattice_core::shared::error::{AppError, Result};
 
@@ -29,47 +28,6 @@ pub fn last_all_run(bundle: &SessionBundle) -> Option<&StoredRun> {
         .iter()
         .rev()
         .find(|run| run.scope == CodingRunScope::All)
-}
-
-fn passed_every_case(run: &StoredRun) -> bool {
-    !run.cases.is_empty()
-        && run
-            .cases
-            .iter()
-            .all(|case| case.status == CaseStatus::Passed)
-}
-
-/// Cases passed and run on the last submit.
-pub fn submit_counts(bundle: &SessionBundle) -> (u32, u32) {
-    last_all_run(bundle).map_or((0, 0), |run| {
-        let passed = run
-            .cases
-            .iter()
-            .filter(|case| case.status == CaseStatus::Passed)
-            .count();
-        (
-            u32::try_from(passed).unwrap_or(u32::MAX),
-            u32::try_from(run.cases.len()).unwrap_or(u32::MAX),
-        )
-    })
-}
-
-/// How the session went, for the pattern ratings.
-pub fn outcome_of(bundle: &SessionBundle) -> Result<ProblemOutcome> {
-    let first_pass = bundle
-        .runs
-        .iter()
-        .filter(|run| run.scope == CodingRunScope::All && passed_every_case(run))
-        .map(|run| run.created_at)
-        .min();
-    Ok(ProblemOutcome {
-        all_passed: last_all_run(bundle).is_some_and(passed_every_case),
-        highest_rung: hints_of(bundle)?.iter().map(|hint| hint.rung).max(),
-        solution_seen_before_passing: bundle
-            .row
-            .solution_seen_at
-            .is_some_and(|seen| first_pass.is_none_or(|pass| seen < pass)),
-    })
 }
 
 pub fn result_of(detail: &CaseCheckDetailDto) -> CaseResult {

@@ -9,7 +9,6 @@ use crate::practice::session::ports::{
     Aids, At, CheckFinished, CheckStart, Checks, Clock, Debriefer, SessionStore,
 };
 use crate::practice::session::record::{Applied, Finish, Help, NewHint, NewSession, Op, Session};
-use crate::practice::simulation_policy::TurnPolicy;
 use lattice_core::domain::learning::practice::work::{
     CaseStatus, CheckScope, CheckStatus, Exercise, Piece, Setting, Stage,
 };

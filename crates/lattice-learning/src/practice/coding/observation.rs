@@ -420,7 +420,8 @@ mod tests {
                 content: "o1\n".to_owned(),
             },
         ];
-        let found: Vec<(&str, LineChangeKind, u32)> = changes_since(&session.draft, &seen)
+        let changes = changes_since(&session.draft, &seen);
+        let found: Vec<(&str, LineChangeKind, u32)> = changes
             .iter()
             .map(|change| (change.path.as_str(), change.kind, change.line))
             .collect();
