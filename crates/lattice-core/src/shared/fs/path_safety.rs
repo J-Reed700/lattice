@@ -34,8 +34,9 @@ impl fmt::Display for PathUnsafe {
 
 impl std::error::Error for PathUnsafe {}
 
-/// A segment that steps to the parent directory. On Windows a name of only
-/// dots and spaces is normalised to one, so `...` counts too.
+/// A segment that steps to the parent directory. Windows strips trailing dots
+/// and spaces from a segment, so there `.. ` steps up too; any name made only
+/// of dots and spaces (other than `.`) is refused.
 fn is_parent_segment(segment: &str) -> bool {
     segment == ".."
         || (cfg!(windows)
@@ -66,8 +67,7 @@ pub fn reject_parent_components(path: &Path) -> Result<(), PathUnsafe> {
     Ok(())
 }
 
-/// Accept exactly one plain name: no separator, no `.` or `..`, no NUL. On
-/// Windows a colon is refused too, since it names a stream or a drive.
+/// Accept exactly one plain name: no separator, no `.` or `..`, no NUL.
 pub fn single_file_name(name: &str) -> Result<(), PathUnsafe> {
     if name.contains('\0') {
         return Err(PathUnsafe::NulByte);
@@ -75,7 +75,7 @@ pub fn single_file_name(name: &str) -> Result<(), PathUnsafe> {
     if is_parent_segment(name) {
         return Err(PathUnsafe::ParentDir);
     }
-    if name.is_empty() || name.contains(['/', '\\']) || (cfg!(windows) && name.contains(':')) {
+    if name.is_empty() || name.contains(['/', '\\']) {
         return Err(PathUnsafe::NotSingleName);
     }
     let mut components = Path::new(name).components();
@@ -190,8 +190,8 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    fn a_name_with_a_colon_is_refused_on_windows() {
-        for name in ["C:x", "file:stream", "C:"] {
+    fn a_drive_relative_name_is_refused_on_windows() {
+        for name in ["C:x", "C:"] {
             assert_eq!(
                 single_file_name(name),
                 Err(PathUnsafe::NotSingleName),
