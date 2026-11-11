@@ -434,7 +434,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             Some(Arc::new(LlamaReranker::new(
                 path,
                 Arc::new(StandaloneServers::from_env()),
-            )))
+            )?))
         }
         Some(path) => Some(load_reranker(path).await?),
         None => None,

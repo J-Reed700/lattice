@@ -107,56 +107,10 @@ pub struct ModelManager {
 impl ModelManager {
     pub fn new(model_dir: PathBuf) -> Result<Self> {
         let timeout = std::time::Duration::from_secs(300);
-        let disable_system_proxy =
-            cfg!(test) || std::env::var("RECALL_DISABLE_SYSTEM_PROXY").is_ok();
-
-        if disable_system_proxy {
-            let client = Client::builder()
-                .timeout(timeout)
-                .no_proxy()
-                .build()
-                .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {}", e)))?;
-
-            return Ok(Self {
-                model_dir,
-                client,
-                bytes_downloaded: Arc::new(AtomicU64::new(0)),
-                download_current_bytes: Arc::new(AtomicU64::new(0)),
-                download_total_bytes: Arc::new(AtomicU64::new(0)),
-                is_cancelled: Arc::new(AtomicBool::new(false)),
-                app_handle: None,
-                download_start_time: Arc::new(Mutex::new(None)),
-            });
-        }
-
-        let client = match std::panic::catch_unwind(|| Client::builder().timeout(timeout).build()) {
-            Ok(Ok(client)) => client,
-            Ok(Err(e)) => {
-                tracing::warn!(
-                    "Failed to create HTTP client with system proxy ({}); retrying without proxy",
-                    e
-                );
-                Client::builder()
-                    .timeout(timeout)
-                    .no_proxy()
-                    .build()
-                    .map_err(|e| {
-                        AppError::Network(format!("Failed to create HTTP client: {}", e))
-                    })?
-            }
-            Err(_) => {
-                tracing::warn!(
-                    "HTTP client build panicked while resolving system proxy; retrying without proxy"
-                );
-                Client::builder()
-                    .timeout(timeout)
-                    .no_proxy()
-                    .build()
-                    .map_err(|e| {
-                        AppError::Network(format!("Failed to create HTTP client: {}", e))
-                    })?
-            }
-        };
+        let client = lattice_core::shared::http::reqwest_client_builder()
+            .timeout(timeout)
+            .build()
+            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {e}")))?;
 
         Ok(Self {
             model_dir,

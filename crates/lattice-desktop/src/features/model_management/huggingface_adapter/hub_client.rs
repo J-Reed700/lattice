@@ -16,13 +16,13 @@ impl HuggingFaceAdapter {
     ///
     /// # Configuration
     /// - HTTP client with 10s timeout
-    pub fn new() -> Self {
+    pub fn new() -> Result<Self, AppError> {
         let client = reqwest_client_builder()
             .timeout(Duration::from_secs(10))
             .build()
-            .unwrap_or_else(|_| Client::new());
+            .map_err(|e| AppError::Network(format!("Failed to create HTTP client: {e}")))?;
 
-        Self { client }
+        Ok(Self { client })
     }
 
     /// The Hub HTTP client, with the adapter's timeout, for other Hub requests to share.
@@ -116,12 +116,6 @@ impl HuggingFaceAdapter {
         })?;
 
         Ok(model)
-    }
-}
-
-impl Default for HuggingFaceAdapter {
-    fn default() -> Self {
-        Self::new()
     }
 }
 
