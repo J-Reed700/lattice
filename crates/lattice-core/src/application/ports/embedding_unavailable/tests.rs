@@ -23,9 +23,10 @@ async fn the_not_installed_error_says_where_to_download_a_model() {
         .await
         .unwrap_err();
 
-    assert_eq!(
-        error.to_string(),
-        AppError::AiModelsNotInstalled("No embedding model is installed".into()).to_string()
+    assert!(matches!(error, AppError::AiModelsNotInstalled(_)));
+    assert!(
+        error.to_string().contains("Settings → Models"),
+        "the download hint is missing from: {error}"
     );
 }
 

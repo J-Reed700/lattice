@@ -117,11 +117,13 @@ pub struct SettingsImportOutcome {
     pub vault_just_enabled: bool,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 /// Mock implementation for testing.
 pub struct MockSettingsRepository {
     settings: tokio::sync::RwLock<SettingsDto>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MockSettingsRepository {
     /// Create a new mock repository with default settings.
     pub fn new() -> Self {
@@ -138,12 +140,14 @@ impl MockSettingsRepository {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for MockSettingsRepository {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl SettingsRepositoryPort for MockSettingsRepository {
     async fn get_all(&self) -> Result<SettingsDto> {
