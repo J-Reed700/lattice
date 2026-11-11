@@ -18,7 +18,6 @@ fn missing_note(belongs: Option<&Part>) -> String {
         used_before_taught: Vec::new(),
         contradictions: Vec::new(),
         unseen: Vec::new(),
-        reports: Vec::new(),
     };
     let item = Item {
         id: "action-1".to_owned(),
@@ -57,7 +56,6 @@ fn used_note(protected: &[Protected]) -> String {
         used_before_taught: Vec::new(),
         contradictions: Vec::new(),
         unseen: Vec::new(),
-        reports: Vec::new(),
     };
     let settled = Settled {
         taught: Vec::new(),
@@ -103,7 +101,7 @@ fn a_use_in_a_passage_nothing_protects_keeps_its_note() {
 
 #[test]
 fn the_answer_names_each_thing_once_with_every_use_and_where_it_is_taught_later() {
-    let schema = schema(&[], 0);
+    let schema = schema(&[]);
     let entry = &schema["properties"]["usedBeforeTaught"]["items"];
     assert_eq!(entry["required"], json!(["what", "uses", "taughtLater"]));
     assert_eq!(entry["additionalProperties"], json!(false));

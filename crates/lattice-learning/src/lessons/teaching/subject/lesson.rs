@@ -17,7 +17,6 @@ use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits::{self, Named};
 use crate::outline_progress::OutlineProgress;
 use crate::reference_collection::ReferenceCollection;
-use crate::review_evidence::Checked;
 use crate::review_findings::{
     new_sentences, part_at, plain_part, sentences_of, FindingSite, Held, ReviewFinding, SetAside,
 };
@@ -256,10 +255,10 @@ impl Subject for LessonSubject<'_> {
                         LengthRule::DropBlank,
                     );
                     let (judged, plan) = futures::try_join!(review, against_plan)?;
-                    (Some(judged), plan.findings)
+                    (Some(judged), plan)
                 }
                 // The reviewer has seen exactly this lesson: its findings stand.
-                None => (None, against_plan.await?.findings),
+                None => (None, against_plan.await?),
             };
             let mut raised = Vec::new();
             if let (Some(round), Some(judged)) = (&round, judged) {
@@ -286,20 +285,12 @@ impl Subject for LessonSubject<'_> {
                 None,
             )
             .await?;
-            let Checked {
-                mut established,
-                left,
-            } = checked;
-            let gate_established = established.len();
-            let (plan_lefts, other_lefts): (Vec<_>, Vec<_>) =
-                left.iter().partition(|left| left.check == PLAN_CHECK);
-            established.extend(
-                other_lefts
-                    .iter()
-                    .filter_map(|left| left.established.clone()),
-            );
-            let reported: Vec<&ReviewFinding> =
-                plan_lefts.iter().map(|left| &left.finding).collect();
+            let reported: Vec<&ReviewFinding> = checked
+                .left
+                .iter()
+                .filter(|left| left.check == PLAN_CHECK)
+                .map(|left| &left.finding)
+                .collect();
             let plan_findings = if reported.is_empty() {
                 plan_findings
             } else {
@@ -313,29 +304,16 @@ impl Subject for LessonSubject<'_> {
                 )
                 .await?;
                 let before = plan_findings.len();
-                let all = plan_findings_of(plan_findings, ruled.findings);
+                let all = plan_findings_of(plan_findings, ruled);
                 tracing::info!(
                     reported = reported.len(),
                     held = all.len().saturating_sub(before),
-                    outside = ruled.outside.len(),
                     "The check against the course plan ruled on what the review reported"
                 );
-                established.extend(ruled.outside.iter().filter_map(|index| {
-                    plan_lefts
-                        .get(*index)
-                        .and_then(|left| left.established.clone())
-                }));
                 all
             };
-            if !left.is_empty() {
-                tracing::info!(
-                    left = left.len(),
-                    returned = established.len().saturating_sub(gate_established),
-                    "Findings left to a check that did not rule on them stand on the gate's verdict"
-                );
-            }
             if round.is_some() {
-                self.standing.admit(pass.value, established);
+                self.standing.admit(pass.value, checked.established);
             }
             let mut issues = question_issues;
             issues.extend(self.standing.open().iter().cloned());
