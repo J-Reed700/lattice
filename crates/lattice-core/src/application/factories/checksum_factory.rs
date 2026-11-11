@@ -55,10 +55,7 @@ impl ChecksumFactory {
     ///
     /// Returns an error if checksum validation fails (should not happen with SHA-256).
     pub fn from_bytes(content: &[u8]) -> Result<Checksum> {
-        let hash = Sha256::digest(content);
-        let checksum_str = format!("{:x}", hash);
-
-        Checksum::new(checksum_str)
+        Checksum::new(crate::shared::hash::sha256_hex(content))
     }
 
     /// Verify that content matches the expected checksum.

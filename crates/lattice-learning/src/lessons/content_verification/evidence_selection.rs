@@ -59,7 +59,7 @@ pub(super) fn selection_of(sources: &[SourceBinding], evidence: &[EvidencePassag
                 source_id: p.source_id.clone(),
                 start: p.start_byte,
                 end: p.end_byte,
-                sha256: digest(&p.text),
+                sha256: sha256_hex(&p.text),
                 kind: [CITED, RESEARCHED]
                     .contains(&p.retrieval_kind.as_str())
                     .then(|| p.retrieval_kind.clone()),
@@ -77,7 +77,7 @@ fn selection_key(
     (unit, statement): (usize, &str),
     ranking: &str,
 ) -> String {
-    format!("claim-evidence-v2:{}", digest(&json!({
+    format!("claim-evidence-v2:{}", sha256_hex(json!({
         "policy":POLICY, "model":llm.model_name(), "context":llm.max_context_tokens(),
         "unit":unit, "statement":statement, "retrieval":references.mode().label(), "embedding":references.embedding_model(),
         "ranking":ranking,
@@ -113,7 +113,7 @@ pub(super) fn sources(references: &ReferenceCollection<'_>) -> Vec<SourceBinding
         .iter()
         .map(|source| SourceBinding {
             id: source.id.clone(),
-            sha256: digest(&source.excerpt),
+            sha256: sha256_hex(&source.excerpt),
         })
         .collect();
     sources.sort_by(|a, b| a.id.cmp(&b.id));
@@ -123,7 +123,7 @@ pub(super) fn sources(references: &ReferenceCollection<'_>) -> Vec<SourceBinding
 fn research_scope_key(current: &[SourceBinding]) -> String {
     format!(
         "claim-research-scope-v1:{}",
-        digest(&json!({"policy":RESEARCH_SCOPE_POLICY,"sources":current}).to_string())
+        sha256_hex(json!({"policy":RESEARCH_SCOPE_POLICY,"sources":current}).to_string())
     )
 }
 
@@ -235,7 +235,7 @@ impl Selection {
                     .iter()
                     .find(|source| source.id == passage.source_id)?;
                 let text = source.excerpt.get(passage.start..passage.end)?;
-                if digest(text) != passage.sha256 {
+                if sha256_hex(text) != passage.sha256 {
                     return None;
                 }
                 Some(EvidencePassage {

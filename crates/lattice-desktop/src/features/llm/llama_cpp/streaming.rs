@@ -3,6 +3,7 @@ use crate::features::llm::scheduler::rejection;
 use lattice_core::application::ports::llm_port::RequestSize;
 use lattice_core::application::ports::llm_port::ServedTiming;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::Duration;
@@ -280,11 +281,7 @@ impl ServerFailure {
     /// One structured line per failure: the server's sanitized account and
     /// its words' digest, against the request's size and the window.
     pub fn log(&self, request_texts: &[&str], attempt: usize, size: RequestSize, window: usize) {
-        let digest = self
-            .message
-            .as_deref()
-            .map(rejection::digest)
-            .unwrap_or_default();
+        let digest = self.message.as_deref().map(sha256_hex).unwrap_or_default();
         tracing::warn!(
             status = self.status,
             kind = self.kind.trim(),

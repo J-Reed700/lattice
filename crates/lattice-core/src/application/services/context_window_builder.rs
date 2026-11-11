@@ -125,16 +125,10 @@ impl ContextWindowBuilder {
     }
 }
 
-/// Estimated token count for `text`: about 1.3 tokens per word, a
-/// conservative estimate for most models.
-pub fn estimate_tokens(text: &str) -> usize {
-    let words = text.split_whitespace().count();
-    (words as f32 * 1.3) as usize
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::application::ports::llm_port::estimate_tokens;
 
     struct EmptyConversationHistory;
 
@@ -146,14 +140,6 @@ mod tests {
         ) -> Result<Option<crate::domain::conversation::ConversationAggregate>> {
             Ok(None)
         }
-    }
-
-    #[test]
-    fn test_estimate_tokens() {
-        assert_eq!(estimate_tokens("hello world"), 2); // 2 words * 1.3 = 2.6 → 2
-        assert_eq!(estimate_tokens("the quick brown fox"), 5); // 4 * 1.3 = 5.2 → 5
-        assert_eq!(estimate_tokens(""), 0);
-        assert_eq!(estimate_tokens("   "), 0);
     }
 
     #[test]

@@ -25,8 +25,8 @@ use crate::{
     },
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use serde::Serialize;
-use sha2::{Digest, Sha256};
 use sqlx::SqliteConnection;
 use std::collections::{HashMap, HashSet};
 
@@ -336,7 +336,7 @@ pub(super) async fn insert_practical_snapshot(
                     "A pack cannot import hidden practical evaluator files.",
                 ));
             }
-            if format!("{:x}", Sha256::digest(file.content.as_bytes())) != file.content_sha256 {
+            if sha256_hex(&file.content) != file.content_sha256 {
                 return Err(invalid("Practical activity file checksum does not match."));
             }
             let role = enum_label(&file.role)?;
@@ -344,7 +344,7 @@ pub(super) async fn insert_practical_snapshot(
         }
         if let Some(plan) = &activity.interview_plan {
             let content = json_string(plan)?;
-            let checksum = format!("{:x}", Sha256::digest(content.as_bytes()));
+            let checksum = sha256_hex(&content);
             sqlx::query("INSERT INTO learning_practical_files(activity_id,ordinal,path,role,content,content_sha256,editable) VALUES(?,?,?,'reference',?,?,0)")
                 .bind(&activity.id)
                 .bind(activity.files.len() as i64)
@@ -461,7 +461,7 @@ pub(super) async fn insert_source_workspace(
                     .to_owned(),
                 None => version.excerpt.clone(),
             };
-            let content_digest = format!("{:x}", Sha256::digest(full_text.as_bytes()));
+            let content_digest = sha256_hex(&full_text);
             if body.is_none() && !restored_digests.insert(content_digest.clone()) {
                 return Err(invalid("Two source versions have the same available excerpt. Include licensed full source bodies to preserve both immutable versions."));
             }
