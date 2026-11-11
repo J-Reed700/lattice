@@ -1,4 +1,5 @@
 //! The repair call: the model's answer to a review's findings.
+use super::answers;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::text_edits;
 use crate::lessons::writer_excerpts::{self, WriterExcerpts};
@@ -9,6 +10,7 @@ use lattice_core::{
     shared::error::{AppError, Result},
 };
 use serde_json::{json, Map, Value};
+use std::collections::BTreeMap;
 
 /// One finding sent to a repair.
 pub(super) struct Issue<'a> {
@@ -53,8 +55,13 @@ pub(super) struct Request<'a> {
 }
 
 pub(super) enum Repaired {
-    /// The patch, not yet applied (edits form).
-    Patch(String),
+    /// The flat patch, not yet applied, and each finding's plan (edits form).
+    Patch {
+        patch: String,
+        plans: BTreeMap<String, String>,
+    },
+    /// An answer of plans and no change (edits form).
+    Declined { plans: BTreeMap<String, String> },
     /// The whole material (rewrite form).
     Whole(String),
 }
@@ -132,15 +139,16 @@ pub(super) fn apply(
     wording: &Wording,
 ) -> Result<String> {
     match repaired {
-        Repaired::Patch(raw) => {
-            text_edits::apply_for(previous, &raw, &Value::Null, wording, &reach(sent))
+        Repaired::Patch { patch, .. } => {
+            text_edits::apply_for(previous, &patch, &Value::Null, wording, &reach(sent))
                 .map(|applied| applied.value.to_string())
         }
+        Repaired::Declined { .. } => Ok(previous.to_string()),
         Repaired::Whole(text) => Ok(text),
     }
 }
 
-const REPAIR_POLICY: &str = "teaching-repair-v2";
+const REPAIR_POLICY: &str = "teaching-repair-v3";
 
 /// What text a repair adds or changes is held to, beyond the finding it is for.
 const KEPT_TO_THE_CONTRACT: &str =
@@ -154,7 +162,7 @@ trait Form: Sync {
     fn prompt(&self, request: &Request<'_>, requirements: Value) -> Map<String, Value>;
     /// Whether the form can use this raw answer.
     fn accept(&self, request: &Request<'_>, raw: &str) -> Result<()>;
-    fn repaired(&self, raw: String) -> Repaired;
+    fn repaired(&self, raw: String) -> Result<Repaired>;
 }
 
 struct Edits;
@@ -171,7 +179,7 @@ fn parts(request: &Request<'_>, requirements: Value) -> [(&'static str, Value); 
 
 impl Form for Edits {
     fn system(&self, request: &Request<'_>) -> String {
-        format!("You are editing a rejected draft. Correct only the established teaching defects. issuesToFix lists them, one entry each: its id, the part it is about (the path of a block or question; null when it is about the material as a whole), a second part when it is about two (also), the words it is about when it names any (passage), what to correct (note), and what became of the last repair's attempt at it (lastAttempt; null on a first attempt). Each edit, citation and uncite names in finding the id of the entry it is for, and changes only that entry's part or its also part; one for an entry whose part is null may change any part. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. Add it after a sentence whose thought is complete, so that no sentence is parted from the one it continues. The learner sees only the lesson: added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. {KEPT_TO_THE_CONTRACT} {}", text_edits::instructions(request.schema))
+        format!("You are editing a rejected draft. Correct only the established teaching defects. issuesToFix lists them, one entry each: its id, the part it is about (the path of a block or question; null when it is about the material as a whole), a second part when it is about two (also), the words it is about when it names any (passage), what to correct (note), and what became of the last repair's attempt at it (lastAttempt; null on a first attempt). Answer every entry once in answers: its id (finding), what you will change for it and where (plan), then the edits, citations and uncite that make that change. These change only that entry's part or its also part; those for an entry whose part is null may change any part. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. Add it after a sentence whose thought is complete, so that no sentence is parted from the one it continues. The learner sees only the lesson: added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. {KEPT_TO_THE_CONTRACT} {}", text_edits::instructions(request.schema))
     }
 
     fn schema(&self, request: &Request<'_>) -> Value {
@@ -186,10 +194,14 @@ impl Form for Edits {
     }
 
     fn accept(&self, request: &Request<'_>, raw: &str) -> Result<()> {
+        let answered = answers::read(raw, &request.finding_ids())?;
+        if !answered.changed {
+            return Ok(());
+        }
         let may_change = reach(request.issues.iter().map(|issue| issue.finding));
         text_edits::apply_for(
             request.candidate,
-            raw,
+            &answered.patch,
             &Value::Null,
             request.wording,
             &may_change,
@@ -197,8 +209,19 @@ impl Form for Edits {
         .map(|_| ())
     }
 
-    fn repaired(&self, raw: String) -> Repaired {
-        Repaired::Patch(raw)
+    fn repaired(&self, raw: String) -> Result<Repaired> {
+        answers::reread(&raw).map(|answered| {
+            if answered.changed {
+                Repaired::Patch {
+                    patch: answered.patch,
+                    plans: answered.plans,
+                }
+            } else {
+                Repaired::Declined {
+                    plans: answered.plans,
+                }
+            }
+        })
     }
 }
 
@@ -224,8 +247,8 @@ impl Form for Rewrite {
         Ok(())
     }
 
-    fn repaired(&self, raw: String) -> Repaired {
-        Repaired::Whole(raw)
+    fn repaired(&self, raw: String) -> Result<Repaired> {
+        Ok(Repaired::Whole(raw))
     }
 }
 
@@ -248,7 +271,7 @@ pub(super) async fn ask(
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key).await? {
         if let Some(raw) = saved.get("answer").and_then(Value::as_str) {
             crate::lesson_progress::stage("Reusing the completed teaching repair");
-            return Ok(form.repaired(raw.to_owned()));
+            return form.repaired(raw.to_owned());
         }
         if let Some(reason) = saved.get("refused").and_then(Value::as_str) {
             return Err(AppError::ModelAnswerUnusable(reason.to_owned()));
@@ -277,7 +300,7 @@ pub(super) async fn ask(
         }
         Err(_) => {}
     }
-    result.map(|raw| form.repaired(raw))
+    result.and_then(|raw| form.repaired(raw))
 }
 
 #[cfg(test)]
@@ -421,6 +444,30 @@ mod tests {
             &wording,
         );
         assert_eq!(sent.finding_ids(), ["reviewer/1", "reviewer/5"]);
+    }
+
+    #[test]
+    fn an_answer_of_plans_and_no_change_is_accepted_and_changes_nothing() {
+        let finding = at(FindingSite::Section(0), "one");
+        let schema = json!({"blocks":[{"body":"One."}],"questions":[]});
+        let wording = Wording::default();
+        let sent = request(vec![plain(&finding)], &schema, &wording);
+        let raw = json!({"answers":[{"finding":"reviewer/1","plan":"It is right.","edits":[]}]})
+            .to_string();
+        assert!(Edits.accept(&sent, &raw).is_ok());
+        let declined = Edits.repaired(raw).unwrap();
+        assert!(matches!(declined, Repaired::Declined { .. }));
+        if let Repaired::Declined { plans } = &declined {
+            assert_eq!(
+                plans.get("reviewer/1").map(String::as_str),
+                Some("It is right.")
+            );
+        }
+        let sent_findings = [finding];
+        assert_eq!(
+            apply(&schema, declined, &sent_findings, &wording).unwrap(),
+            schema.to_string()
+        );
     }
 
     #[test]

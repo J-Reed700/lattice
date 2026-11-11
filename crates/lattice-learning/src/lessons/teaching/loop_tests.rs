@@ -3912,6 +3912,49 @@ fn a_copied_sentence_does_not_hold_up_the_content_review() {
 }
 
 #[test]
+fn an_answer_of_plans_and_no_change_declines_each_finding_and_changes_nothing() -> Result<()> {
+    use super::repair::Repaired;
+    use super::subject::{Settled, Subject};
+    let previous = shaped_lesson();
+    let about = |sentence: &str| {
+        ReviewFinding::rule_about(
+            Rule::SentenceRepeated,
+            FindingKind::Teaching,
+            FindingSite::Section(0),
+            sentence,
+            "Say it once.",
+        )
+        .with_passage(sentence)
+    };
+    let (first, second) = (about("Beta is second."), about("Body of First idea."));
+    let plans = std::collections::BTreeMap::from([
+        (first.id().as_str().to_owned(), "Leave it.".to_owned()),
+        (second.id().as_str().to_owned(), "Say it once.".to_owned()),
+    ]);
+    let sources = references();
+    let references = ReferenceCollection::lexical(&sources)?;
+    let mut subject = LessonSubject::new(&references, &[], Held::default());
+
+    let settled = subject.settle_repair(
+        &previous,
+        &[first.clone(), second.clone()],
+        true,
+        Ok(Repaired::Declined { plans }),
+    )?;
+
+    assert!(matches!(settled, Settled::Unchanged));
+    assert_eq!(
+        subject.last_attempt(&first).as_deref(),
+        Some("The last repair gave no change for this finding; its plan was: \"Leave it.\"")
+    );
+    assert_eq!(
+        subject.last_attempt(&second).as_deref(),
+        Some("The last repair gave no change for this finding; its plan was: \"Say it once.\"")
+    );
+    Ok(())
+}
+
+#[test]
 fn a_finding_whose_edit_overlapped_another_findings_is_not_charged_and_is_told_to_give_it_again(
 ) -> Result<()> {
     use super::repair::Repaired;
@@ -3942,7 +3985,10 @@ fn a_finding_whose_edit_overlapped_another_findings_is_not_charged_and_is_told_t
         &previous,
         &[first.clone(), second.clone()],
         true,
-        Ok(Repaired::Patch(patch)),
+        Ok(Repaired::Patch {
+            patch,
+            plans: std::collections::BTreeMap::new(),
+        }),
     )?;
 
     assert!(matches!(settled, Settled::Changed(_)));

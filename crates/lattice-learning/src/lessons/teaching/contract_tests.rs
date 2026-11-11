@@ -32,6 +32,8 @@ struct Routed<'a> {
 fn not_confirmed(user: &str) -> String {
     if user.contains(contract::confirm::PLANNED_TASK) {
         json!({"taught":false,"quote":"","belongs":"section-1"}).to_string()
+    } else if user.contains("Confirm that two statements of a lesson contradict each other") {
+        json!({"case":"","contradict":false}).to_string()
     } else {
         json!({"asked":true,"taught":false,"where":"thisLesson","quote":""}).to_string()
     }
@@ -487,7 +489,10 @@ async fn a_contradiction_is_sited_at_the_statement_that_is_not_protected() -> Re
         }]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![clash]);
+    let model = Routed::new(&scripted, vec![clash]).confirming(
+        "Confirm that two statements of a lesson contradict each other",
+        json!({"case":"A command that takes no folder name cannot be given one.","contradict":true}),
+    );
     let candidate = lesson([
         "Commands like ls take no folder name.",
         "The list shows names.",
@@ -536,7 +541,10 @@ async fn a_contradiction_between_two_parts_that_can_change_is_about_both() -> Re
         }]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![clash.clone(), clash.clone(), clash]);
+    let model = Routed::new(&scripted, vec![clash.clone(), clash.clone(), clash]).confirming(
+        "Confirm that two statements of a lesson contradict each other",
+        json!({"case":"A command that takes no folder name cannot be given one.","contradict":true}),
+    );
     let candidate = lesson([
         "Commands like ls take no folder name.",
         "The list shows names.",
@@ -874,6 +882,10 @@ async fn a_defect_in_words_a_repair_wrote_continues_the_count_of_its_own_kind_of
             uses_of(&[("the third tool", "the third tool")]),
             uses_of(&[("the third tool", "the third tool")]),
         ],
+    )
+    .confirming(
+        "Confirm that two statements of a lesson contradict each other",
+        json!({"case":"Names cannot both never change and change when listed.","contradict":true}),
     );
     let candidate = lesson([
         "A terminal takes typed commands. Names never change when listed.",

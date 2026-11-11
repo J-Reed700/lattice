@@ -115,6 +115,7 @@ pub(crate) const CONFIRM_PLANNED_NOTHING: &str =
     "{\"taught\":false,\"quote\":\"\",\"belongs\":\"\"}";
 pub(crate) const CONFIRM_USE_NOTHING: &str =
     "{\"asked\":true,\"taught\":false,\"where\":\"thisLesson\",\"quote\":\"\"}";
+pub(crate) const CONFIRM_CLASH_NOTHING: &str = "{\"case\":\"\",\"contradict\":false}";
 
 /// The fixture's replies to [`fixture_prompts`], answered in the typed
 /// protocol: one batched reply, a check's verdict as its last line, or the
@@ -131,6 +132,8 @@ pub(crate) fn fixture_completion(
         return CompletionResponse::from_text(
             if user.contains(crate::lessons::teaching::contract::confirm::PLANNED_TASK) {
                 CONFIRM_PLANNED_NOTHING
+            } else if user.contains("Confirm that two statements of a lesson contradict each other") {
+                CONFIRM_CLASH_NOTHING
             } else {
                 CONFIRM_USE_NOTHING
             },
@@ -176,10 +179,10 @@ pub(crate) fn fixture_completion(
 }
 
 /// A scripted repair answer made to obey the schema it was asked under: when
-/// the schema has each edit name its finding, every edit, citation and
-/// uncite that names none gets the finding sent for its part; when it does
-/// not, the names are taken away. A change that names a finding keeps it, and
-/// any other reply is returned as written.
+/// the schema asks for an entry for each finding, the changes are put in the
+/// entries of the findings they name or, naming none, the finding sent for
+/// their part; otherwise the names are taken away. Any other reply is
+/// returned as written.
 fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -> String {
     let Ok(Value::Object(mut answer)) = serde_json::from_str::<Value>(&text) else {
         return text;
@@ -190,11 +193,6 @@ fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -
     {
         return text;
     }
-    let names = request.json_schema.as_ref().is_some_and(|schema| {
-        schema
-            .pointer("/properties/edits/items/properties/finding")
-            .is_some()
-    });
     let entries = request
         .json_schema
         .as_ref()
@@ -230,23 +228,12 @@ fn fixture_repair_edits(request: &CompletionRequest, user: &str, text: String) -
             let Some(fields) = change.as_object_mut() else {
                 continue;
             };
-            if !names {
-                fields.remove("finding");
-            } else if !fields.contains_key("finding") {
-                let path = fields.get("path").and_then(Value::as_str).unwrap_or("");
-                let finding = finding_for(path);
-                fields.insert("finding".into(), finding);
-            }
+            fields.remove("finding");
         }
     }
     if let Some(Value::Array(unciting)) = answer.get_mut("uncite") {
         for entry in unciting.iter_mut() {
-            if names {
-                if let Some(path) = entry.as_str().map(str::to_owned) {
-                    *entry = json!({"finding": finding_for(&path), "path": path});
-                }
-            } else if let Some(path) = entry.get("path").and_then(Value::as_str).map(str::to_owned)
-            {
+            if let Some(path) = entry.get("path").and_then(Value::as_str).map(str::to_owned) {
                 *entry = json!(path);
             }
         }

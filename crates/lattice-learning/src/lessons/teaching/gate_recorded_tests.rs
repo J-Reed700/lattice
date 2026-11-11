@@ -23,6 +23,8 @@ struct Routed {
     plan: Mutex<VecDeque<String>>,
     gate: Mutex<Vec<Value>>,
     plan_asked: Mutex<Vec<Value>>,
+    clash_reply: Mutex<String>,
+    clash_asked: Mutex<usize>,
 }
 
 #[async_trait::async_trait]
@@ -41,6 +43,14 @@ impl LLMPort for Routed {
                 .pop_front()
                 .unwrap_or_else(|| CONTRACT_NOTHING.to_owned());
             return Ok(fixture_completion(request, vec![reply]));
+        }
+        if !drafting
+            && system.starts_with(contract::confirm::SYSTEM)
+            && user.contains("Confirm that two statements of a lesson contradict each other")
+        {
+            *self.clash_asked.lock().unwrap() += 1;
+            let reply = self.clash_reply.lock().unwrap().clone();
+            return Ok(CompletionResponse::from_text(reply.as_str()));
         }
         if !drafting {
             if let Some(asked) = serde_json::from_str::<Value>(user)
@@ -75,6 +85,11 @@ fn routed(outputs: Vec<String>, plan: Vec<String>) -> Routed {
         plan: Mutex::new(plan.into()),
         gate: Mutex::new(Vec::new()),
         plan_asked: Mutex::new(Vec::new()),
+        clash_reply: Mutex::new(
+            json!({"case":"The beads cannot be counted once and twice on one day.","contradict":true})
+                .to_string(),
+        ),
+        clash_asked: Mutex::new(0),
     }
 }
 
@@ -325,6 +340,45 @@ async fn a_finding_left_to_the_question_review_is_not_given_to_the_plan_check() 
     let reviewed = run(&model, &beads()).await?;
     assert!(reviewed.set_aside.is_empty());
     assert_eq!(plan_requests(&model).len(), 1);
+    assert!(repair_requests(&model).is_empty());
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_contradiction_the_reported_ask_lists_is_confirmed_once_before_it_is_repaired(
+) -> Result<()> {
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 2),
+            gate_answer("check-1"),
+            repair_edit(),
+            clean(2),
+        ],
+        vec![CONTRACT_NOTHING.to_owned(), contradiction()],
+    );
+    run(&model, &beads()).await?;
+    assert_eq!(*model.clash_asked.lock().unwrap(), 1);
+    assert_eq!(repair_requests(&model).len(), 1);
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_contradiction_the_reported_ask_lists_and_the_read_refuses_repairs_nothing() -> Result<()>
+{
+    let model = routed(
+        vec![
+            reporting(REVIEWER_ONLY, 2),
+            gate_answer("check-1"),
+            clean(2),
+        ],
+        vec![CONTRACT_NOTHING.to_owned(), contradiction()],
+    );
+    *model.clash_reply.lock().unwrap() =
+        json!({"case":"Counted once a day, the beads can still be counted twice on one day.","contradict":false})
+            .to_string();
+    let reviewed = run(&model, &beads()).await?;
+    assert!(reviewed.set_aside.is_empty());
+    assert_eq!(*model.clash_asked.lock().unwrap(), 1);
     assert!(repair_requests(&model).is_empty());
     Ok(())
 }
