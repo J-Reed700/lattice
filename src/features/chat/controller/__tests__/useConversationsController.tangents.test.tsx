@@ -27,10 +27,10 @@ describe('shared conversation lifecycle with tangents', () => {
       composerDraft: 'Main draft', optimisticMessages: new Map(), inFlightGenerations: new Map(), liveRetrieval: new Map(), liveSteps: new Map(), error: null,
       requestedLinkedConversationIds: new Set(), requestedWebSourceConversationIds: new Set(), requestedMembershipDocumentIds: new Set() });
     api.listConversationSpaces = vi.fn().mockResolvedValue({ ok: true, data: [] });
-    api.listConversationsExplorer = vi.fn().mockResolvedValue({ ok: true, data: { conversations: [parent], total: 1 } });
+    api.listConversationsExplorer = vi.fn().mockResolvedValue({ ok: true, data: { conversations: [parent] } });
     api.getConversation = vi.fn().mockResolvedValue({ ok: true, data: { conversation: parent } });
     api.getConversationMessages = vi.fn().mockResolvedValue({ ok: true, data: { messages: [], total: 0 } });
-    api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [], total: 0 } });
+    api.listMessageBookmarks = vi.fn().mockResolvedValue({ ok: true, data: { bookmarks: [] } });
     api.listConversationLinkedDocuments = vi.fn().mockResolvedValue({ ok: true, data: [] });
     api.listConversationWebSources = vi.fn().mockResolvedValue({ ok: true, data: [] });
   });

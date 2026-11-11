@@ -11,7 +11,7 @@ use lattice_core::domain::conversation::{ConversationMessage, DocumentReference,
 use lattice_core::domain::entities::document::Document;
 use lattice_core::shared::text::build_excerpt;
 
-use super::super::document_text::{assemble_document_text, truncate_to_token_budget};
+use super::super::document_text::truncate_to_token_budget;
 use super::{infer_category, select_informative_terms, tokenize_keyword_terms};
 
 /// The document an earlier turn discussed, reopened for a follow-up.
@@ -147,7 +147,7 @@ pub(super) async fn build_followup_context(
         }
     };
 
-    let content = assemble_document_text(&document);
+    let content = document.reading_text();
     if content.trim().is_empty() {
         return None;
     }

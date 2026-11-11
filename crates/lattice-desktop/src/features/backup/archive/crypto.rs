@@ -169,21 +169,16 @@ impl Argon2Params {
 // Primitives
 // ---------------------------------------------------------------------------
 
-/// HKDF-SHA256 into `okm`. `salt` is `None` for the "no salt" variant.
-fn hkdf_sha256(ikm: &[u8], salt: Option<&[u8]>, info: &[u8], okm: &mut [u8]) -> bool {
-    Hkdf::<Sha256>::new(salt, ikm).expand(info, okm).is_ok()
-}
-
-/// A 256-bit key derived with HKDF-SHA256.
-fn hkdf_key(
+/// `N` bytes derived with HKDF-SHA256. `salt` is `None` for the "no salt" variant.
+fn hkdf<const N: usize>(
     ikm: &[u8],
     salt: Option<&[u8]>,
     info: &[u8],
-) -> Result<Zeroizing<[u8; 32]>, ArchiveError> {
-    let mut okm = Zeroizing::new([0u8; 32]);
-    if !hkdf_sha256(ikm, salt, info, okm.as_mut()) {
-        return Err(ArchiveError::Other("key derivation failed".to_string()));
-    }
+) -> Result<Zeroizing<[u8; N]>, ArchiveError> {
+    let mut okm = Zeroizing::new([0u8; N]);
+    Hkdf::<Sha256>::new(salt, ikm)
+        .expand(info, okm.as_mut())
+        .map_err(|_| ArchiveError::Other("key derivation failed".to_string()))?;
     Ok(okm)
 }
 
@@ -275,13 +270,8 @@ fn ct_eq(a: &[u8], b: &[u8]) -> bool {
 }
 
 /// First `KCV_LEN` bytes of HKDF-SHA256(master, no salt, INFO_KCV).
-fn kcv_bytes(master: &MasterKey) -> [u8; KCV_LEN] {
-    let mut out = [0u8; KCV_LEN];
-    // `KCV_LEN` is far below HKDF-SHA256's 255*32 byte ceiling, so this
-    // cannot fail; a failure would leave an all-zero KCV, which only ever
-    // causes a false "wrong secret".
-    let _ = hkdf_sha256(master.as_bytes(), None, INFO_KCV, &mut out);
-    out
+fn kcv_bytes(master: &MasterKey) -> Result<[u8; KCV_LEN], ArchiveError> {
+    Ok(*hkdf::<KCV_LEN>(master.as_bytes(), None, INFO_KCV)?)
 }
 
 // ---------------------------------------------------------------------------
@@ -324,7 +314,7 @@ pub fn set_passphrase_slot(
         nonce: BASE64.encode(nonce),
         wrapped_key: BASE64.encode(wrapped),
     });
-    envelope.kcv = BASE64.encode(kcv_bytes(master));
+    envelope.kcv = BASE64.encode(kcv_bytes(master)?);
     Ok(())
 }
 
@@ -343,7 +333,7 @@ pub fn rotate_recovery_slot(
 ) -> Result<(), ArchiveError> {
     let salt = random_bytes::<SLOT_SALT_LEN>();
     let nonce = random_bytes::<WRAP_NONCE_LEN>();
-    let kek = hkdf_key(recovery.entropy(), Some(&salt), INFO_RECOVERY_KEK)?;
+    let kek = hkdf::<32>(recovery.entropy(), Some(&salt), INFO_RECOVERY_KEK)?;
     let wrapped = seal(&kek, &nonce, master.as_bytes(), AAD_SLOT_RECOVERY)?;
     envelope
         .slots
@@ -353,7 +343,7 @@ pub fn rotate_recovery_slot(
         nonce: BASE64.encode(nonce),
         wrapped_key: BASE64.encode(wrapped),
     });
-    envelope.kcv = BASE64.encode(kcv_bytes(master));
+    envelope.kcv = BASE64.encode(kcv_bytes(master)?);
     Ok(())
 }
 
@@ -380,7 +370,7 @@ fn unwrap_with_recovery(
     let wrapped = BASE64
         .decode(wrapped)
         .map_err(|_| ArchiveError::WrongSecret)?;
-    let kek = hkdf_key(recovery.entropy(), Some(&salt), INFO_RECOVERY_KEK)
+    let kek = hkdf::<32>(recovery.entropy(), Some(&salt), INFO_RECOVERY_KEK)
         .map_err(|_| ArchiveError::WrongSecret)?;
     open(&kek, &nonce, wrapped.as_slice(), AAD_SLOT_RECOVERY)
 }
@@ -439,31 +429,26 @@ pub fn unwrap_master_key(envelope: &KeyEnvelope, secret: &str) -> Result<MasterK
     }
     // Never leak which step failed.
     .map_err(|_| ArchiveError::WrongSecret)?;
-    if !kcv_matches(envelope, &master) {
+    if !kcv_matches(envelope, &master)? {
         return Err(ArchiveError::WrongSecret);
     }
     Ok(master)
 }
 
 /// True when `master` is the key this envelope wraps.
-pub fn kcv_matches(envelope: &KeyEnvelope, master: &MasterKey) -> bool {
+pub fn kcv_matches(envelope: &KeyEnvelope, master: &MasterKey) -> Result<bool, ArchiveError> {
     match decode_fixed::<KCV_LEN>(&envelope.kcv) {
-        Some(expected) => ct_eq(&expected, &kcv_bytes(master)),
-        None => false,
+        Some(expected) => Ok(ct_eq(&expected, &kcv_bytes(master)?)),
+        None => Ok(false),
     }
 }
 
 /// Per-archive file key: HKDF-SHA256(master, salt = file_salt, info = INFO_FILE_KEY).
-pub fn derive_file_key(master: &MasterKey, file_salt: &[u8]) -> Zeroizing<[u8; 32]> {
-    let mut key = Zeroizing::new([0u8; 32]);
-    // 32 bytes is always a valid HKDF-SHA256 output length.
-    let _ = hkdf_sha256(
-        master.as_bytes(),
-        Some(file_salt),
-        INFO_FILE_KEY,
-        key.as_mut(),
-    );
-    key
+pub fn derive_file_key(
+    master: &MasterKey,
+    file_salt: &[u8],
+) -> Result<Zeroizing<[u8; 32]>, ArchiveError> {
+    hkdf::<32>(master.as_bytes(), Some(file_salt), INFO_FILE_KEY)
 }
 
 /// Random bytes helper for salts and nonces.

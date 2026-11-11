@@ -21,6 +21,7 @@ use lattice_core::application::contracts::settings::{
 };
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::shared::hash::sha256_hex;
+use lattice_core::shared::runtime::jobs::JobStatus;
 use serde::Deserialize;
 use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
@@ -361,6 +362,28 @@ pub(super) fn lesson_step(
     }
 }
 
+/// What the quiz stage does with a lesson's quiz job.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum QuizJobStep {
+    /// Dispatch it.
+    Run,
+    /// A killed run left it running: requeue it, then dispatch.
+    Recover,
+    /// It stopped without finishing: a new attempt that reuses its saved work.
+    Retry,
+    /// It completed; record its numbers.
+    Record,
+}
+
+pub(super) fn quiz_job_step(status: JobStatus) -> QuizJobStep {
+    match status {
+        JobStatus::Pending => QuizJobStep::Run,
+        JobStatus::Running => QuizJobStep::Recover,
+        JobStatus::Failed | JobStatus::Cancelled | JobStatus::Interrupted => QuizJobStep::Retry,
+        JobStatus::Completed => QuizJobStep::Record,
+    }
+}
+
 /// Whether a job's error text is the display of an error the job runtime
 /// treats as transient (`JobFailure::is_transient`).
 pub(super) fn transient_text(error: &str) -> bool {
@@ -483,7 +506,7 @@ async fn probe(settings: &LLMSettingsDto, expected_slots: u64) -> Result<Value> 
         );
     }
     let network = |e: reqwest::Error| AppError::Network(e.to_string());
-    let client = reqwest::Client::builder()
+    let client = lattice_core::shared::http::reqwest_client_builder()
         .default_headers(headers)
         .build()
         .map_err(network)?;

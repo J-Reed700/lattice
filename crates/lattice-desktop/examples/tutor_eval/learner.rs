@@ -64,7 +64,8 @@ pub async fn played(
     play: Play,
     misconception: Option<&str>,
 ) -> Res<String> {
-    let mut request = reqwest::Client::new()
+    let mut request = lattice_core::shared::http::reqwest_client_builder()
+        .build()?
         .post(format!(
             "{}/v1/chat/completions",
             upstream.trim_end_matches('/')

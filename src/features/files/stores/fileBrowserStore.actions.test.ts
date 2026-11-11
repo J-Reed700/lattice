@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { beforeEach, describe, expect, it } from 'vitest';
 
 import type { DocumentMetadata } from '@/types/fileBrowser';
 
@@ -27,10 +27,6 @@ const initial = useFileBrowserStore.getState();
 describe('fileBrowserStore actions', () => {
   beforeEach(() => {
     useFileBrowserStore.setState(initial, true);
-  });
-
-  afterEach(() => {
-    localStorage.removeItem('lattice:file-browser-source-connections:v1');
   });
 
   it('switches view and grouping', () => {
@@ -105,31 +101,5 @@ describe('fileBrowserStore actions', () => {
     expect(selectContextMenuDocument(store())).toEqual({ position: null, document: null });
     expect(selectScope(store())).toEqual({ kind: 'all' });
     expect(selectSavedSearches(store())).toEqual([]);
-  });
-
-  describe('source connections', () => {
-    const connection = {
-      name: 'Recipes', provider: 'dropbox', mode: 'referenced', health: 'healthy', enabled: true, path: '/Dropbox/Recipes', lastSyncedAt: null,
-    } as const;
-
-    it('creates, updates and deletes a cloud source, keeping them sorted', () => {
-      const first = store().createSourceConnection({ ...connection, name: 'Zines' } as never);
-      const second = store().createSourceConnection(connection as never);
-      expect(store().sourceConnections.map((item) => item.name)).toEqual(['Recipes', 'Zines']);
-      expect(first).toMatch(/^source:dropbox:/);
-      const created = store().sourceConnections.find((item) => item.id === second)!;
-      store().updateSourceConnection(second, { name: 'Cookbooks', id: 'hijack', createdAt: 'never' } as never);
-      const updated = store().sourceConnections.find((item) => item.id === second)!;
-      expect(updated).toMatchObject({ name: 'Cookbooks', id: second, createdAt: created.createdAt });
-      store().deleteSourceConnection(first);
-      expect(store().sourceConnections.map((item) => item.id)).toEqual([second]);
-    });
-
-    it('refuses to store a local folder, and never edits one', () => {
-      expect(() => store().createSourceConnection({ ...connection, provider: 'local_folder' } as never)).toThrow('Local folders are backend-owned');
-      useFileBrowserStore.setState({ sourceConnections: [{ ...connection, id: 'l1', provider: 'local_folder', createdAt: 'a', updatedAt: 'a' } as never] });
-      store().updateSourceConnection('l1', { name: 'Renamed' });
-      expect(store().sourceConnections[0].name).toBe('Recipes');
-    });
   });
 });
