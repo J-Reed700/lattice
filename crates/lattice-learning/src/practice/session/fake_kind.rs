@@ -357,7 +357,7 @@ impl FakeKindBuilder {
             truth: roles.clone(),
             gaps: self.gaps.then(|| roles.clone() as Arc<dyn Gaps>),
             order: self.order.then(|| roles.clone() as Arc<dyn Order>),
-            learner_cases: self.learner_cases.then(|| roles as Arc<dyn LearnerCases>),
+            learner_cases: self.learner_cases.then_some(roles as Arc<dyn LearnerCases>),
         }
     }
 }

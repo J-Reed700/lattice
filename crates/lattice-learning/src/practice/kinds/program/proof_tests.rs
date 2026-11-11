@@ -115,7 +115,7 @@ async fn both(
             assert_eq!(new.cases, old_cases, "{form:?}");
             assert_eq!(new.misreadings, old_misreadings, "{form:?}");
             assert_eq!(new.proof, proof_of(&old.reference_ms).unwrap(), "{form:?}");
-            Agreed::Proven(new)
+            Agreed::Proven(*new)
         }
         (Ok(TodaysProof::Unproven(old)), Ok(Proof::Unproven(new))) => {
             assert_eq!(new, old, "{form:?}");

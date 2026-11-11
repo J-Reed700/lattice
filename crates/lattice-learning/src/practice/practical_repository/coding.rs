@@ -304,7 +304,7 @@ impl LearningPracticalRepository {
             at,
         )
         .await?;
-        operation.record(&mut *tx, &session_id).await?;
+        operation.record(&mut tx, &session_id).await?;
         tx.commit().await.map_err(db)?;
         Ok((session_id, true))
     }
@@ -323,7 +323,7 @@ impl LearningPracticalRepository {
         uuid(op.operation_id, "operation")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let operation = op.operation(program_id, session_id);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(Applied::Replayed);
         }
@@ -367,7 +367,7 @@ impl LearningPracticalRepository {
             .await?;
             bump_revision(&mut tx, session_id).await?;
         }
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok(Applied::Done(moved))
     }
@@ -388,7 +388,7 @@ impl LearningPracticalRepository {
         uuid(op.operation_id, "operation")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let operation = op.operation(program_id, session_id);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(Applied::Replayed);
         }
@@ -432,7 +432,7 @@ impl LearningPracticalRepository {
             at,
         )
         .await?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok(Applied::Done(ordinal))
     }
@@ -449,7 +449,7 @@ impl LearningPracticalRepository {
         uuid(op.operation_id, "operation")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let operation = op.operation(program_id, session_id);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(Applied::Replayed);
         }
@@ -471,7 +471,7 @@ impl LearningPracticalRepository {
             )
             .await?;
         }
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok(Applied::Done(()))
     }
@@ -679,7 +679,7 @@ impl LearningPracticalRepository {
         uuid(op.operation_id, "operation")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let operation = op.operation(program_id, session_id);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(Applied::Replayed);
         }
@@ -696,7 +696,7 @@ impl LearningPracticalRepository {
             .await
             .map_err(db)?;
         bump_revision(&mut tx, session_id).await?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok(Applied::Done(()))
     }
@@ -716,7 +716,7 @@ impl LearningPracticalRepository {
         uuid(op.operation_id, "operation")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let operation = op.operation(program_id, session_id);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(Applied::Replayed);
         }
@@ -776,7 +776,7 @@ impl LearningPracticalRepository {
             .await
             .map_err(db)?;
         bump_revision(&mut tx, session_id).await?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok(Applied::Done(stored))
     }
@@ -848,7 +848,7 @@ impl LearningPracticalRepository {
         uuid(op.operation_id, "operation")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let operation = op.operation(program_id, session_id);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(Applied::Replayed);
         }
@@ -889,7 +889,7 @@ impl LearningPracticalRepository {
             .await?;
             bump_revision(&mut tx, session_id).await?;
         }
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok(Applied::Done(()))
     }
@@ -906,7 +906,7 @@ impl LearningPracticalRepository {
         uuid(op.operation_id, "operation")?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let operation = op.operation(program_id, session_id);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(Applied::Replayed);
         }
@@ -936,7 +936,7 @@ impl LearningPracticalRepository {
             .await?;
             bump_revision(&mut tx, session_id).await?;
         }
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok(Applied::Done(()))
     }
