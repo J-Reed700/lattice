@@ -947,6 +947,30 @@ fn deletions_keys_and_unreadable_settings_drop_what_they_name() {
 }
 
 #[test]
+fn changing_only_a_remote_servers_auth_value_drops_only_that_servers_models() {
+    use lattice_core::application::ports::llm_port::RemoteServer;
+    let before = settings();
+    assert_eq!(
+        stale(
+            &before,
+            InvalidationCause::RemoteAuthChanged {
+                server: RemoteServer::Ollama
+            }
+        ),
+        vec!["ollama:qwen3:8b"]
+    );
+    assert_eq!(
+        stale(
+            &before,
+            InvalidationCause::RemoteAuthChanged {
+                server: RemoteServer::LlamaCpp
+            }
+        ),
+        vec!["llamacpp:qwen3.5-27b"]
+    );
+}
+
+#[test]
 fn refusals_say_what_is_wrong_with_the_numbers_and_the_fix() {
     use refusal::{no_tools, not_downloaded, window_too_small, Window};
     let message = |error: AppError| match error {

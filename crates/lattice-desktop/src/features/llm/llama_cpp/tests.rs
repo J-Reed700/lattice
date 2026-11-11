@@ -12,10 +12,16 @@ fn settings(url: String) -> LLMSettingsDto {
             url,
             model: "test-model".into(),
             auth_header_name: "Authorization".into(),
-            auth_header_value: "Basic test-credential".into(),
         },
         ..Default::default()
     }
+}
+
+fn credential() -> Option<RemoteHeader> {
+    Some(RemoteHeader {
+        name: "Authorization".into(),
+        value: "Basic test-credential".into(),
+    })
 }
 fn reply() -> Value {
     json!({"choices":[{"message":{"role":"assistant","content":"Hello"},"finish_reason":"stop"}]})
@@ -95,7 +101,7 @@ async fn first_response_and_followup_work_with_a_single_system_template() {
         .await;
     let mut config = settings(server.uri());
     config.prompts.system_prompt = "Global default".into();
-    let client = LlamaCppLlm::new(&config).unwrap();
+    let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let mut context = vec![
         "System: Conversation override".into(),
         "System: Cite the PDF.".into(),
@@ -126,7 +132,7 @@ async fn first_response_and_followup_work_with_a_single_system_template() {
 
 #[test]
 fn typed_system_messages_coalesce_without_altering_native_tools_or_images() {
-    let client = LlamaCppLlm::new(&settings("http://localhost:8080".into())).unwrap();
+    let client = LlamaCppLlm::new(&settings("http://localhost:8080".into()), credential()).unwrap();
     let assistant = json!({"role":"assistant","content":null,"reasoning_content":"reasoning", "tool_calls":[
         {"id":"call_1","type":"function","function":{"name":"search","arguments":"{}"}}
     ]});
@@ -198,7 +204,7 @@ async fn template_rejections_explain_the_cause_without_echoing_private_content()
         }})))
         .mount(&server).await;
     let error = text(
-        &LlamaCppLlm::new(&settings(server.uri())).unwrap(),
+        &LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap(),
         "Private prompt",
         &[],
     )
@@ -225,7 +231,7 @@ async fn live_first_response_and_followup() {
     let fixture: Value = serde_json::from_slice(&std::fs::read(fixture_path).unwrap()).unwrap();
     let prompt = fixture["prompt"].as_str().unwrap();
     let mut context: Vec<String> = serde_json::from_value(fixture["context"].clone()).unwrap();
-    let client = LlamaCppLlm::new(&config).unwrap();
+    let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let start = std::time::Instant::now();
     let answer = text(&client, prompt, &context).await.unwrap();
     assert!(!answer.trim().is_empty(), "first response was empty");
@@ -274,9 +280,12 @@ async fn connection_test_checks_models_and_chat_with_the_same_auth() {
         .expect(1)
         .mount(&server)
         .await;
-    let models = LlamaCppLlm::test_connection(&settings(format!("{}/v1/", server.uri())).llama_cpp)
-        .await
-        .unwrap();
+    let models = LlamaCppLlm::test_connection(
+        &settings(format!("{}/v1/", server.uri())).llama_cpp,
+        credential(),
+    )
+    .await
+    .unwrap();
     assert_eq!(models, ["test-model"]);
 }
 
@@ -289,7 +298,7 @@ async fn model_listing_success_does_not_hide_a_missing_chat_endpoint() {
         )
         .mount(&server)
         .await;
-    let error = LlamaCppLlm::test_connection(&settings(server.uri()).llama_cpp)
+    let error = LlamaCppLlm::test_connection(&settings(server.uri()).llama_cpp, credential())
         .await
         .unwrap_err()
         .to_string();
@@ -305,7 +314,7 @@ async fn tools_and_native_assistant_messages_survive_followup() {
     Mock::given(method("POST")).and(path("/v1/chat/completions")).and(header("authorization","Basic test-credential"))
         .and(body_partial_json(json!({"stream":true,"messages":[{"role":"user","content":"Find rust"}],"tools":[{"type":"function","function":{"name":"search","description":"Search","parameters":{"type":"object"}}}],"parallel_tool_calls":true})))
         .respond_with(ResponseTemplate::new(200).set_body_string(stream_reply(message.clone(), "tool_calls"))).expect(1).mount(&server).await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
         .complete(&CompletionRequest {
             input: vec![CompletionInput::Message {
@@ -363,7 +372,7 @@ async fn streaming_uses_chat_completions_with_auth_and_emits_content() {
         .expect(1)
         .mount(&server)
         .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let shown = std::sync::Mutex::new(Vec::new());
     let on_text = |text: String| {
         shown.lock().unwrap().push(text);
@@ -385,7 +394,7 @@ async fn errors_do_not_expose_credentials_or_response_bodies() {
         .mount(&server)
         .await;
     let error = text(
-        &LlamaCppLlm::new(&settings(server.uri())).unwrap(),
+        &LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap(),
         "Private prompt",
         &[],
     )
@@ -459,7 +468,7 @@ fn sse_error_names_the_servers_error_type_and_tells_its_words() {
 }
 
 #[test]
-fn connections_reject_unsafe_urls_and_partial_auth() {
+fn connections_reject_unsafe_urls() {
     for (url, valid) in [
         ("https://example.com", true),
         ("https://example.com/v1/", true),
@@ -472,9 +481,6 @@ fn connections_reject_unsafe_urls_and_partial_auth() {
             valid
         );
     }
-    let mut connection = settings("https://example.com".into()).llama_cpp;
-    connection.auth_header_value.clear();
-    assert!(connection.validated_base_url().is_err());
 }
 
 #[tokio::test]
@@ -487,15 +493,9 @@ async fn ollama_test_does_not_accept_a_llama_cpp_model_list() {
         .expect(0)
         .mount(&server)
         .await;
-    let error = crate::features::settings::plugin::test_ollama_connection(
-        crate::features::settings::plugin::TestOllamaConnectionRequest {
-            ollama_url: server.uri(),
-            auth_header_name: String::new(),
-            auth_header_value: String::new(),
-        },
-    )
-    .await
-    .unwrap_err();
+    let error = crate::features::settings::plugin::probe_ollama_connection(&server.uri(), None)
+        .await
+        .unwrap_err();
     assert!(error
         .details
         .as_deref()
@@ -513,12 +513,12 @@ async fn ollama_test_keeps_native_model_discovery() {
         .expect(1)
         .mount(&server)
         .await;
-    let response = crate::features::settings::plugin::test_ollama_connection(
-        crate::features::settings::plugin::TestOllamaConnectionRequest {
-            ollama_url: server.uri(),
-            auth_header_name: "Authorization".into(),
-            auth_header_value: "Basic test-credential".into(),
-        },
+    let response = crate::features::settings::plugin::probe_ollama_connection(
+        &server.uri(),
+        Some(RemoteHeader {
+            name: "Authorization".into(),
+            value: "Basic test-credential".into(),
+        }),
     )
     .await
     .unwrap();
@@ -683,7 +683,7 @@ async fn active_completion_can_outlast_the_read_timeout() {
     });
     let mut config = settings(format!("http://{address}"));
     config.timeout_seconds = 1;
-    let client = LlamaCppLlm::new(&config).unwrap();
+    let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let response = client
         .complete(&CompletionRequest::default())
         .await
@@ -718,7 +718,7 @@ async fn stream_that_goes_silent_after_starting_is_retried() {
     });
     let mut config = settings(format!("http://{address}"));
     config.timeout_seconds = 1;
-    let client = LlamaCppLlm::new(&config).unwrap();
+    let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let retries = std::sync::atomic::AtomicUsize::new(0);
     let response = client
         .complete_with_retry_progress(&CompletionRequest::default(), &|_| Ok(()), &|_| {
@@ -749,7 +749,7 @@ async fn prompt_progress_alone_does_not_arm_the_stall_timer() {
     });
     let mut config = settings(format!("http://{address}"));
     config.timeout_seconds = 1;
-    let client = LlamaCppLlm::new(&config).unwrap();
+    let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let response = client
         .complete(&CompletionRequest::default())
         .await
@@ -777,7 +777,7 @@ async fn a_retry_shares_the_budget_instead_of_restarting_it() {
         })
         .mount(&server)
         .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let error = client
         .complete(&CompletionRequest {
             time_budget: Some(Duration::from_millis(600)),
@@ -796,7 +796,7 @@ async fn queued_request_may_wait_longer_than_the_stall_timeout() {
     .await;
     let mut config = settings(server.uri());
     config.timeout_seconds = 1;
-    let client = LlamaCppLlm::new(&config).unwrap();
+    let client = LlamaCppLlm::new(&config, credential()).unwrap();
     let response = client
         .complete(&CompletionRequest::default())
         .await
@@ -813,7 +813,7 @@ async fn time_budget_bounds_the_whole_generation() {
         .respond_with(sse_response(json!({"content":"Late"})).set_delay(Duration::from_secs(5)))
         .mount(&server)
         .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let error = client
         .complete(&CompletionRequest {
             time_budget: Some(Duration::from_millis(300)),
@@ -844,7 +844,7 @@ async fn typed_completion_delivers_answer_progress_and_preserves_tool_response()
         .respond_with(ResponseTemplate::new(200).set_body_string(
             "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"private reasoning\"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"First \"}}]}\n\ndata: {\"choices\":[{\"delta\":{\"content\":\"answer\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n"))
         .mount(&server).await;
-    let llm = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let llm = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let deltas = std::sync::Mutex::new(Vec::new());
     let on_text = |text: String| {
         deltas.lock().unwrap().push(text);
@@ -878,7 +878,7 @@ async fn typed_completion_delivers_reasoning_on_its_own_progress_channel() {
         ))
         .mount(&server)
         .await;
-    let llm = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let llm = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let reasoning = std::sync::Mutex::new(String::new());
     let response = llm
         .complete_with_reasoning_progress(
@@ -955,7 +955,7 @@ async fn reasoning_only_empty_and_transient_failures_retry_identical_request() {
         sse_response(json!({"content":"Recovered answer"})),
     ])
     .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
         .complete(&CompletionRequest::default())
         .await
@@ -974,7 +974,7 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
         sse_response(json!({"content":"Recovered"})),
     ])
     .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let attempts = std::sync::Mutex::new(Vec::new());
     let response = client
         .complete_with_retry_progress(&CompletionRequest::default(), &|_| Ok(()), &|attempt| {
@@ -999,7 +999,7 @@ async fn transient_sse_errors_retry_but_context_errors_do_not() {
         "data: {\"error\":{\"code\":400,\"type\":\"exceed_context_size_error\",\"message\":\"request (9000 tokens) exceeds the available context size (8192 tokens)\"}}\n\n",
     )])
     .await;
-    let error = LlamaCppLlm::new(&settings(server.uri()))
+    let error = LlamaCppLlm::new(&settings(server.uri()), credential())
         .unwrap()
         .complete(&CompletionRequest::default())
         .await
@@ -1060,7 +1060,7 @@ async fn http_server_failure_retries_with_a_fresh_prompt_cache_and_same_input() 
         sse_response(json!({"content":"Recovered"})),
     ])
     .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
         .complete(&CompletionRequest {
             no_time_limit: true,
@@ -1086,7 +1086,7 @@ async fn failed_partial_draft_is_reset_before_recovery_and_tools_are_returned_on
     let server = sequence_server(vec![truncated, sse_response(json!({
         "content":"Recovered", "tool_calls":[{"id":"valid", "type":"function", "function":{"name":"search", "arguments":"{}"}}]
     }))]).await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let events = std::sync::Mutex::new(Vec::new());
     let response = client
         .complete_with_retry_progress(
@@ -1115,7 +1115,7 @@ async fn failed_partial_draft_is_reset_before_recovery_and_tools_are_returned_on
 #[tokio::test]
 async fn empty_response_exhaustion_returns_error_after_five_attempts() {
     let server = sequence_server(vec![sse_response(json!({"reasoning":"hidden"})); 5]).await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     assert!(client
         .complete(&CompletionRequest::default())
         .await
@@ -1125,7 +1125,7 @@ async fn empty_response_exhaustion_returns_error_after_five_attempts() {
 #[tokio::test]
 async fn authentication_and_invalid_tools_are_not_retried() {
     let server = sequence_server(vec![ResponseTemplate::new(401)]).await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     assert!(client
         .complete(&CompletionRequest::default())
         .await
@@ -1137,7 +1137,7 @@ async fn authentication_and_invalid_tools_are_not_retried() {
         json!({"tool_calls":[{"id":"x","type":"function","function":{"name":"search","arguments":"[1]"}}]}),
     )])
     .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
         .complete(&CompletionRequest::default())
         .await
@@ -1152,7 +1152,7 @@ async fn an_output_limit_stop_returns_the_text_once_without_retrying() {
     let server = sequence_server(vec![ResponseTemplate::new(200)
         .set_body_string(stream_reply(json!({"content":"unfinished"}), "length"))])
     .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let response = client
         .complete(&CompletionRequest::default())
         .await
@@ -1165,7 +1165,7 @@ async fn an_output_limit_stop_returns_the_text_once_without_retrying() {
     let server = sequence_server(vec![ResponseTemplate::new(200)
         .set_body_string(stream_reply(json!({"reasoning_content":"hmm"}), "length"))])
     .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     assert!(client
         .complete(&CompletionRequest::default())
         .await
@@ -1179,7 +1179,7 @@ async fn dropping_generation_during_backoff_prevents_another_request() {
         ResponseTemplate::new(503).insert_header("Retry-After", "30")
     ])
     .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let reset = std::sync::atomic::AtomicBool::new(false);
     let request = CompletionRequest::default();
     let on_retry = |_| {
@@ -1199,7 +1199,7 @@ async fn dropping_generation_during_backoff_prevents_another_request() {
 #[tokio::test]
 async fn callback_failure_does_not_retry() {
     let server = sequence_server(vec![sse_response(json!({"content":"Answer"}))]).await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     assert!(client
         .complete_with_retry_progress(
             &CompletionRequest::default(),
@@ -1233,7 +1233,7 @@ async fn text_only_progress_does_not_repeat_a_partial_answer() {
     let server = sequence_server(vec![ResponseTemplate::new(200)
         .set_body_string("data: {\"choices\":[{\"delta\":{\"content\":\"Partial\"}}]}\n\n")])
     .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let text = std::sync::Mutex::new(String::new());
     let result = client
         .complete_with_progress(&CompletionRequest::default(), &|chunk| {
@@ -1247,7 +1247,7 @@ async fn text_only_progress_does_not_repeat_a_partial_answer() {
 
 #[test]
 fn a_logprobs_request_reads_the_first_tokens_alternatives_back() {
-    let client = LlamaCppLlm::new(&settings("http://127.0.0.1:1".into())).unwrap();
+    let client = LlamaCppLlm::new(&settings("http://127.0.0.1:1".into()), credential()).unwrap();
     let request = CompletionRequest {
         input: vec![CompletionInput::Message {
             role: "user".into(),
@@ -1370,7 +1370,7 @@ async fn interactive_completion_is_not_cut_off_by_a_request_time_budget() {
         .expect(1)
         .mount(&server)
         .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let result = client
         .complete(&CompletionRequest {
             time_budget: Some(Duration::from_millis(10)),
@@ -1410,7 +1410,7 @@ fn reasoning_probabilities_are_never_treated_as_verdict_confidence() {
 
 #[test]
 fn a_scheduled_request_carries_its_slot_and_reuses_the_cached_prefix() {
-    let client = LlamaCppLlm::new(&settings("http://localhost:8080".into())).unwrap();
+    let client = LlamaCppLlm::new(&settings("http://localhost:8080".into()), credential()).unwrap();
     let request = CompletionRequest {
         input: vec![CompletionInput::Message {
             role: "user".into(),
@@ -1444,7 +1444,7 @@ async fn a_remote_server_is_sized_from_its_props_and_counts_tokens_exactly() {
         .mount(&server)
         .await;
 
-    let llm = LlamaCppLlm::new(&settings(server.uri()))
+    let llm = LlamaCppLlm::new(&settings(server.uri()), credential())
         .unwrap()
         .schedule(&SchedulerRegistry::default())
         .await;
@@ -1458,7 +1458,7 @@ async fn a_remote_server_that_does_not_report_its_window_is_sized_to_the_setting
     let server = MockServer::start().await;
     let configured = settings(server.uri());
 
-    let llm = LlamaCppLlm::new(&configured)
+    let llm = LlamaCppLlm::new(&configured, credential())
         .unwrap()
         .schedule(&SchedulerRegistry::default())
         .await;
@@ -1502,7 +1502,7 @@ async fn the_bundled_sidecar_and_a_remote_server_send_identical_requests() {
             .mount(server)
             .await;
     }
-    let remote = LlamaCppLlm::new(&settings(remote_server.uri())).unwrap();
+    let remote = LlamaCppLlm::new(&settings(remote_server.uri()), credential()).unwrap();
     let sidecar =
         LlamaCppLlm::connect(&sidecar_server.uri(), "sidecar-token", server_config(true)).unwrap();
     let request = CompletionRequest {
@@ -1597,7 +1597,7 @@ fn a_model_without_a_tool_template_refuses_tool_traffic() {
 
 #[test]
 fn ownership_names_the_provider_and_keeps_a_remote_server_alive() {
-    let remote = LlamaCppLlm::new(&settings("http://localhost:8080".into())).unwrap();
+    let remote = LlamaCppLlm::new(&settings("http://localhost:8080".into()), credential()).unwrap();
     assert_eq!(remote.provider_name(), "llamacpp");
     assert!(remote.is_alive());
     assert!(!remote.config.prefill_guard);
@@ -1732,7 +1732,7 @@ async fn the_same_server_failure_twice_is_one_rejection_and_no_third_attempt() {
         server_failure(500, "Context size has been exceeded."),
     ])
     .await;
-    let client = LlamaCppLlm::new(&settings(server.uri())).unwrap();
+    let client = LlamaCppLlm::new(&settings(server.uri()), credential()).unwrap();
     let retries = std::sync::Mutex::new(Vec::new());
     let error = client
         .complete_with_retry_progress(
@@ -1790,7 +1790,7 @@ async fn outages_and_failures_of_another_kind_are_still_retried() {
         sse_response(json!({"content":"Recovered"})),
     ])
     .await;
-    let response = LlamaCppLlm::new(&settings(server.uri()))
+    let response = LlamaCppLlm::new(&settings(server.uri()), credential())
         .unwrap()
         .complete(&CompletionRequest {
             no_time_limit: true,
@@ -1810,7 +1810,7 @@ async fn a_failure_whose_words_change_each_time_is_still_the_same_failure() {
         server_failure(500, "slot 1 failed, request 9c21"),
     ])
     .await;
-    let error = LlamaCppLlm::new(&settings(server.uri()))
+    let error = LlamaCppLlm::new(&settings(server.uri()), credential())
         .unwrap()
         .complete(&CompletionRequest {
             no_time_limit: true,
@@ -1835,7 +1835,7 @@ async fn a_rejection_shows_the_servers_words_but_never_the_prompt_they_quote() {
         server_failure(500, &quoted),
     ])
     .await;
-    let error = LlamaCppLlm::new(&settings(server.uri()))
+    let error = LlamaCppLlm::new(&settings(server.uri()), credential())
         .unwrap()
         .complete(&CompletionRequest {
             input: vec![CompletionInput::Message {
@@ -1873,7 +1873,7 @@ async fn a_request_the_configured_window_cannot_hold_is_never_sent() {
         context_window: 4_096,
         ..settings(server.uri())
     };
-    let error = LlamaCppLlm::new(&settings)
+    let error = LlamaCppLlm::new(&settings, credential())
         .unwrap()
         .schedule(&SchedulerRegistry::default())
         .await
@@ -1927,7 +1927,7 @@ async fn an_answer_larger_than_the_room_left_is_cut_to_fit_not_refused() {
     };
     // "user" and 11 996 characters: 3 000 tokens by the estimate and 24 of
     // framing, 1 072 left.
-    LlamaCppLlm::new(&settings)
+    LlamaCppLlm::new(&settings, credential())
         .unwrap()
         .schedule(&SchedulerRegistry::default())
         .await

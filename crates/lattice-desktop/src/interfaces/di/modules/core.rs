@@ -8,9 +8,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 // Application Use Cases - Credentials
-use crate::features::credentials::use_cases::{
-    DeleteApiKeyUseCase, GetApiKeyUseCase, SetApiKeyUseCase, SetCustomEndpointUseCase,
-};
+use crate::features::credentials::use_cases::SetApiKeyUseCase;
 
 // Application Ports
 use lattice_core::application::ports::CredentialsPort;
@@ -113,17 +111,5 @@ impl CoreModule {
 
     pub fn set_api_key_use_case(&self) -> &Arc<SetApiKeyUseCase> {
         &self.credentials.set_api_key_use_case
-    }
-
-    pub fn get_api_key_use_case(&self) -> &Arc<GetApiKeyUseCase> {
-        &self.credentials.get_api_key_use_case
-    }
-
-    pub fn delete_api_key_use_case(&self) -> &Arc<DeleteApiKeyUseCase> {
-        &self.credentials.delete_api_key_use_case
-    }
-
-    pub fn set_custom_endpoint_use_case(&self) -> &Arc<SetCustomEndpointUseCase> {
-        &self.credentials.set_custom_endpoint_use_case
     }
 }

@@ -23,6 +23,7 @@ use lattice_core::application::ports::{FileMetadata, FileStoragePort};
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::error::Result;
 use lattice_core::shared::fs::atomic::AtomicFs;
+use lattice_core::shared::path_safety::{reject_parent_components, PathUnsafe};
 use std::io::ErrorKind;
 use std::path::Path;
 use tokio::fs;
@@ -77,18 +78,10 @@ impl SecureFileStorage {
     /// - Check for null bytes
     fn validate_path(&self, path: &Path) -> Result<()> {
         let path_str = path.to_string_lossy();
-        if path_str.contains("..") {
-            return Err(AppError::InvalidInput(format!(
-                "Path contains directory traversal: {}",
-                path_str
-            )));
-        }
-
-        if path_str.contains('\0') {
-            return Err(AppError::InvalidInput(
-                "Path contains null bytes".to_string(),
-            ));
-        }
+        reject_parent_components(path).map_err(|reason| match reason {
+            PathUnsafe::NulByte => AppError::InvalidInput("Path contains null bytes".to_string()),
+            _ => AppError::InvalidInput(format!("Path contains directory traversal: {}", path_str)),
+        })?;
 
         match std::fs::symlink_metadata(path) {
             Ok(metadata) if metadata.file_type().is_symlink() => {
@@ -105,11 +98,6 @@ impl SecureFileStorage {
             }
             _ => {}
         }
-
-        // TODO: Add more validation
-        // - Check against allowed directories
-        // - Resolve and validate symlinks
-        // - Check file permissions
 
         Ok(())
     }
@@ -297,6 +285,25 @@ mod tests {
 
         let result = storage.validate_path(Path::new("/path/../file.txt"));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn a_path_with_two_dots_inside_a_name_is_accepted() {
+        let storage = SecureFileStorage::new();
+
+        assert!(storage.validate_path(Path::new("v1..v2/notes..md")).is_ok());
+        assert!(storage
+            .validate_path(Path::new("/library/v1..v2/notes..md"))
+            .is_ok());
+    }
+
+    #[test]
+    fn a_parent_directory_component_is_still_rejected() {
+        let storage = SecureFileStorage::new();
+
+        assert!(storage.validate_path(Path::new("../secret")).is_err());
+        assert!(storage.validate_path(Path::new("a/../../b")).is_err());
+        assert!(storage.validate_path(Path::new("..")).is_err());
     }
 
     #[test]

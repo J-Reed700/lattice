@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used)]
 use super::super::tests::readings_tests::{read_one, world_of};
 use super::*;
 use crate::lessons::course_generation_tests::ScriptedModel;

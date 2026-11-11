@@ -198,7 +198,7 @@ pub async fn update_card(repo: &StudyRepository, request: UpdateStudyCardRequest
 
 /// A target must be ahead of now and within a few years, so a mistyped date
 /// cannot make every review land in the past or centuries out.
-fn validate_target(target_at: Option<i64>, now: i64) -> Result<()> {
+pub(crate) fn validate_target(target_at: Option<i64>, now: i64) -> Result<()> {
     const YEAR_MS: i64 = 366 * super::schedule::DAY_MS;
     match target_at {
         Some(target) if target <= now => Err(AppError::InvalidInput(
@@ -220,6 +220,14 @@ pub async fn set_target(
     repo.set_target(&request.deck_id, request.target_at, now)
         .await?;
     repo.get(&request.deck_id).await
+}
+
+/// The IDs of the decks the course's ready interviews make.
+pub(crate) async fn interview_deck_ids(
+    database: &Database,
+    program_id: &str,
+) -> Result<Vec<String>> {
+    super::interview_deck::deck_ids(database, program_id).await
 }
 
 /// A deck of the interview's questions, checked against its answer guides,

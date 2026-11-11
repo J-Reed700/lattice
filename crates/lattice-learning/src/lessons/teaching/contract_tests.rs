@@ -669,7 +669,10 @@ async fn a_recheck_after_a_repair_checks_the_whole_lesson_again() -> Result<()> 
         json!([]),
         json!([]),
     );
-    let model = Routed::new(&scripted, vec![first, second]);
+    let model = Routed::new(&scripted, vec![first, second]).confirming(
+        contract::confirm::CLASH_TASK,
+        json!({"case":"One lists sizes and the other only names.","contradict":true}),
+    );
     let candidate = lesson([
         "Type ls -l to see sizes.",
         "The list shows names.",

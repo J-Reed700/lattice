@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, clippy::indexing_slicing)]
 //! The course that goes first: a course opened in its workspace takes the
 //! build slot from another course's build, which gives up its turn at its
 //! next batch and finishes after it, whether the course was opened before

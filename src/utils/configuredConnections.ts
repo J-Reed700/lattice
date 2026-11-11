@@ -11,7 +11,7 @@ export function configuredConnections(settings: LLMSettings | null | undefined) 
     || settings.provider === 'ollama'
     || (url !== '' && url !== 'http://localhost:11434')
     || Boolean(settings.ollamaUtilityModel.trim())
-    || Boolean(settings.ollamaAuthHeaderName.trim() && settings.ollamaAuthHeaderValue.trim());
+    || Boolean(settings.ollamaAuthHeaderName.trim());
 
   return {
     ollama: Boolean(ollamaSaved && url && settings.model.trim()),

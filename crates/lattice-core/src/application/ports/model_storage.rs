@@ -10,9 +10,12 @@
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
+#[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
+#[cfg(any(test, feature = "test-support"))]
 use std::collections::HashMap;
 use std::path::PathBuf;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 /// Information about a downloaded model.
@@ -47,6 +50,7 @@ pub trait ModelStoragePort: Send + Sync {
     async fn delete_model(&self, model_id: &str) -> Result<(), AppError>;
 }
 
+#[cfg(any(test, feature = "test-support"))]
 /// Mock implementation for testing.
 ///
 /// Provides an in-memory mock of model storage for testing
@@ -55,6 +59,7 @@ pub struct MockModelStoragePort {
     models: Arc<Mutex<HashMap<String, DownloadedModel>>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MockModelStoragePort {
     /// Create a new empty mock storage.
     pub fn new() -> Self {
@@ -100,12 +105,14 @@ impl MockModelStoragePort {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for MockModelStoragePort {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl ModelStoragePort for MockModelStoragePort {
     async fn list_models(&self) -> Result<Vec<DownloadedModel>, AppError> {

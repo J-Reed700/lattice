@@ -143,7 +143,6 @@ fn remove_path(path: &Path) -> Result<()> {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
 

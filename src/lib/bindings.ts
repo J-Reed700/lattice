@@ -1072,6 +1072,38 @@ async getLearningPracticeWorkspace(id: string) : Promise<Result<LearningPractice
     else return { status: "error", error: e  as any };
 }
 },
+async getLearningPracticeProfile(request: GetLearningPracticeProfileRequestDto) : Promise<Result<LearningPracticeProfileDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practice_profile", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async saveLearningPracticeProfile(request: SaveLearningPracticeProfileRequestDto) : Promise<Result<LearningPracticeProfileDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|save_learning_practice_profile", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getPracticeFit(request: PracticeFitRequestDto) : Promise<Result<PracticeFitDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_practice_fit", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async checkPracticeFit(request: PracticeFitRequestDto) : Promise<Result<PracticeFitDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|check_practice_fit", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
 async getLearningPracticeSession(id: string) : Promise<Result<LearningPracticeSessionDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_learning_practice_session", { id }) };
@@ -1531,6 +1563,156 @@ async codeReviewLanguages() : Promise<string[]> {
 async courseDrills(programId: string, language: string | null) : Promise<Result<CourseDrillsDto, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:learning|course_drills", { programId, language }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Queues a coding problem build job that generates and proves a problem before saving it.
+ */
+async startPracticeBuild(request: StartPracticeBuildRequestDto) : Promise<Result<StartPracticeBuildResultDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_practice_build", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async startPracticeSession(request: StartPracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|start_practice_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getPracticeSession(request: PracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|get_practice_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async listPracticeSessions(request: ListPracticeSessionsRequestDto) : Promise<Result<PracticeSessionSummaryDto[], ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|list_practice_sessions", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async movePracticeStage(request: MovePracticeStageRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|move_practice_stage", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async checkCodingExample(request: CheckCodingExampleRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|check_coding_example", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async removeCodingExample(request: RemoveCodingExampleRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|remove_coding_example", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async checkPracticePiece(request: CheckPracticePieceRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|check_practice_piece", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * The learner's code on one input of their choosing, with no verdict.
+ */
+async runCodingInput(request: RunCodingInputRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|run_coding_input", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async askPracticeHint(request: AskPracticeHintRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|ask_practice_hint", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async sendPracticeTurn(request: SendPracticeTurnRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|send_practice_turn", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async respondPracticeSession(request: PracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|respond_practice_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async observePracticeDraft(request: ObservePracticeDraftRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|observe_practice_draft", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setPracticeClock(request: SetPracticeClockRequestDto) : Promise<Result<ClockDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_practice_clock", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async setPracticeSetting(request: SetPracticeSettingRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|set_practice_setting", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async revealPracticeSolution(request: RevealPracticeSolutionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|reveal_practice_solution", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async finishPracticeSession(request: FinishPracticeSessionRequestDto) : Promise<Result<PracticeSessionDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|finish_practice_session", { request }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async practiceDue(request: PracticeDueRequestDto) : Promise<Result<PracticeDueDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:learning|practice_due", { request }) };
 } catch (e) {
     if(e instanceof Error) throw e;
     else return { status: "error", error: e  as any };
@@ -2869,14 +3051,6 @@ async getHuggingfaceTokenStatus() : Promise<Result<HfTokenStatus, ApiError>> {
     else return { status: "error", error: e  as any };
 }
 },
-async getHuggingfaceToken() : Promise<Result<string | null, ApiError>> {
-    try {
-    return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|get_huggingface_token") };
-} catch (e) {
-    if(e instanceof Error) throw e;
-    else return { status: "error", error: e  as any };
-}
-},
 async deleteHuggingfaceToken() : Promise<Result<null, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:huggingface|delete_huggingface_token") };
@@ -3814,6 +3988,10 @@ async getModelLimits(model: ModelRef) : Promise<Result<ModelWindowDto, ApiError>
     else return { status: "error", error: e  as any };
 }
 },
+/**
+ * Try an Ollama connection. A blank header value tries the one already
+ * stored for the saved server URL.
+ */
 async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_ollama_connection", { request }) };
@@ -3822,7 +4000,32 @@ async testOllamaConnection(request: TestOllamaConnectionRequest) : Promise<Resul
     else return { status: "error", error: e  as any };
 }
 },
-async testLlamaCppConnection(request: LlamaCppSettingsDto) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
+/**
+ * Save (`Some`) or clear (`None`, or blank) the authentication header value
+ * of a remote model server. The value goes to the keyring and is never
+ * returned.
+ */
+async saveRemoteAuthHeaderValue(server: RemoteServer, value: string | null) : Promise<Result<null, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|save_remote_auth_header_value", { server, value }) };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+async getRemoteAuthHeaderStatus() : Promise<Result<RemoteAuthStatusDto, ApiError>> {
+    try {
+    return { status: "ok", data: await TAURI_INVOKE("plugin:settings|get_remote_auth_header_status") };
+} catch (e) {
+    if(e instanceof Error) throw e;
+    else return { status: "error", error: e  as any };
+}
+},
+/**
+ * Try a llama.cpp connection. A blank header value tries the one already
+ * stored for the saved server URL.
+ */
+async testLlamaCppConnection(request: TestLlamaCppConnectionRequest) : Promise<Result<TestOllamaConnectionResponse, ApiError>> {
     try {
     return { status: "ok", data: await TAURI_INVOKE("plugin:settings|test_llama_cpp_connection", { request }) };
 } catch (e) {
@@ -4211,7 +4414,7 @@ async synthesizeSpeech(text: string, voice: string, speed: number) : Promise<Res
 
 /** user-defined constants **/
 
-
+export const FILE_TYPES = [{"extension":"txt","mimeType":"text/plain","category":"document","route":"plain_text"},{"extension":"md","mimeType":"text/markdown","category":"document","route":"plain_text"},{"extension":"markdown","mimeType":"text/markdown","category":"document","route":"plain_text"},{"extension":"pdf","mimeType":"application/pdf","category":"document","route":"pdf"},{"extension":"docx","mimeType":"application/vnd.openxmlformats-officedocument.wordprocessingml.document","category":"document","route":"docx"},{"extension":"doc","mimeType":"application/msword","category":"document","route":null},{"extension":"rtf","mimeType":"application/rtf","category":"document","route":"rtf"},{"extension":"odt","mimeType":"application/vnd.oasis.opendocument.text","category":"document","route":"odt"},{"extension":"xlsx","mimeType":"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet","category":"document","route":"xlsx"},{"extension":"xls","mimeType":"application/vnd.ms-excel","category":"document","route":null},{"extension":"pptx","mimeType":"application/vnd.openxmlformats-officedocument.presentationml.presentation","category":"document","route":"pptx"},{"extension":"ppt","mimeType":"application/vnd.ms-powerpoint","category":"document","route":null},{"extension":"rs","mimeType":"text/x-rust","category":"code","route":"code"},{"extension":"toml","mimeType":"text/x-toml","category":"code","route":"code"},{"extension":"js","mimeType":"text/javascript","category":"code","route":"code"},{"extension":"mjs","mimeType":"text/javascript","category":"code","route":"code"},{"extension":"cjs","mimeType":"text/javascript","category":"code","route":"code"},{"extension":"ts","mimeType":"text/typescript","category":"code","route":"code"},{"extension":"tsx","mimeType":"text/typescript-jsx","category":"code","route":"code"},{"extension":"jsx","mimeType":"text/javascript-jsx","category":"code","route":"code"},{"extension":"html","mimeType":"text/html","category":"document","route":"html"},{"extension":"htm","mimeType":"text/html","category":"document","route":"html"},{"extension":"css","mimeType":"text/css","category":"code","route":"code"},{"extension":"scss","mimeType":"text/x-scss","category":"code","route":"code"},{"extension":"sass","mimeType":"text/x-scss","category":"code","route":"code"},{"extension":"less","mimeType":"text/x-less","category":"code","route":"code"},{"extension":"py","mimeType":"text/x-python","category":"code","route":"code"},{"extension":"pyw","mimeType":"text/x-python","category":"code","route":"code"},{"extension":"pyi","mimeType":"text/x-python","category":"code","route":"code"},{"extension":"c","mimeType":"text/x-c","category":"code","route":"code"},{"extension":"h","mimeType":"text/x-c-header","category":"code","route":"code"},{"extension":"cpp","mimeType":"text/x-c++","category":"code","route":"code"},{"extension":"cxx","mimeType":"text/x-c++","category":"code","route":"code"},{"extension":"cc","mimeType":"text/x-c++","category":"code","route":"code"},{"extension":"hpp","mimeType":"text/x-c++-header","category":"code","route":"code"},{"extension":"hxx","mimeType":"text/x-c++-header","category":"code","route":"code"},{"extension":"hh","mimeType":"text/x-c++-header","category":"code","route":"code"},{"extension":"go","mimeType":"text/x-go","category":"code","route":"code"},{"extension":"java","mimeType":"text/x-java","category":"code","route":"code"},{"extension":"kt","mimeType":"text/x-kotlin","category":"code","route":"code"},{"extension":"kts","mimeType":"text/x-kotlin","category":"code","route":"code"},{"extension":"scala","mimeType":"text/x-scala","category":"code","route":"code"},{"extension":"clj","mimeType":"text/x-clojure","category":"code","route":"code"},{"extension":"cljs","mimeType":"text/x-clojure","category":"code","route":"code"},{"extension":"cljc","mimeType":"text/x-clojure","category":"code","route":"code"},{"extension":"rb","mimeType":"text/x-ruby","category":"code","route":"code"},{"extension":"rake","mimeType":"text/x-ruby","category":"code","route":"code"},{"extension":"php","mimeType":"text/x-php","category":"code","route":"code"},{"extension":"swift","mimeType":"text/x-swift","category":"code","route":"code"},{"extension":"r","mimeType":"text/x-r","category":"code","route":"code"},{"extension":"m","mimeType":"text/x-matlab","category":"code","route":"code"},{"extension":"mm","mimeType":"text/x-objective-c","category":"code","route":null},{"extension":"pl","mimeType":"text/x-perl","category":"code","route":null},{"extension":"pm","mimeType":"text/x-perl","category":"code","route":null},{"extension":"lua","mimeType":"text/x-lua","category":"code","route":null},{"extension":"hs","mimeType":"text/x-haskell","category":"code","route":null},{"extension":"lhs","mimeType":"text/x-haskell","category":"code","route":null},{"extension":"cs","mimeType":"text/x-csharp","category":"code","route":null},{"extension":"vb","mimeType":"text/x-vb","category":"code","route":null},{"extension":"fs","mimeType":"text/x-fsharp","category":"code","route":null},{"extension":"ex","mimeType":"text/x-elixir","category":"code","route":"code"},{"extension":"exs","mimeType":"text/x-elixir","category":"code","route":"code"},{"extension":"erl","mimeType":"text/x-erlang","category":"code","route":"code"},{"extension":"hrl","mimeType":"text/x-erlang","category":"code","route":"code"},{"extension":"sh","mimeType":"text/x-shellscript","category":"code","route":"code"},{"extension":"bash","mimeType":"text/x-bash","category":"code","route":"code"},{"extension":"zsh","mimeType":"text/x-zsh","category":"code","route":"code"},{"extension":"fish","mimeType":"text/x-fish","category":"code","route":"code"},{"extension":"ps1","mimeType":"text/x-powershell","category":"code","route":"code"},{"extension":"psm1","mimeType":"text/x-powershell","category":"code","route":"code"},{"extension":"bat","mimeType":"text/x-batch","category":"code","route":"code"},{"extension":"cmd","mimeType":"text/x-batch","category":"code","route":"code"},{"extension":"json","mimeType":"application/json","category":"code","route":"code"},{"extension":"xml","mimeType":"application/xml","category":"code","route":"code"},{"extension":"yaml","mimeType":"text/x-yaml","category":"code","route":"code"},{"extension":"yml","mimeType":"text/x-yaml","category":"code","route":"code"},{"extension":"ini","mimeType":"text/x-ini","category":"code","route":"code"},{"extension":"conf","mimeType":"text/plain","category":"code","route":"plain_text"},{"extension":"config","mimeType":"text/plain","category":"code","route":"plain_text"},{"extension":"sql","mimeType":"text/x-sql","category":"code","route":"code"},{"extension":"graphql","mimeType":"application/graphql","category":"code","route":"code"},{"extension":"gql","mimeType":"application/graphql","category":"code","route":"code"},{"extension":"csv","mimeType":"text/csv","category":"data","route":"csv"},{"extension":"tsv","mimeType":"text/tab-separated-values","category":"data","route":"csv"},{"extension":"parquet","mimeType":"application/octet-stream","category":"data","route":null},{"extension":"arrow","mimeType":"application/octet-stream","category":"data","route":null},{"extension":"jpg","mimeType":"image/jpeg","category":"image","route":null},{"extension":"jpeg","mimeType":"image/jpeg","category":"image","route":null},{"extension":"png","mimeType":"image/png","category":"image","route":null},{"extension":"gif","mimeType":"image/gif","category":"image","route":null},{"extension":"bmp","mimeType":"image/bmp","category":"image","route":null},{"extension":"svg","mimeType":"image/svg+xml","category":"image","route":null},{"extension":"webp","mimeType":"image/webp","category":"image","route":null},{"extension":"ico","mimeType":"image/x-icon","category":"image","route":null},{"extension":"tiff","mimeType":"image/tiff","category":"image","route":null},{"extension":"tif","mimeType":"image/tiff","category":"image","route":null},{"extension":"heic","mimeType":"image/heic","category":"image","route":null},{"extension":"heif","mimeType":"image/heif","category":"image","route":null},{"extension":"mp4","mimeType":"video/mp4","category":"video","route":null},{"extension":"mov","mimeType":"video/quicktime","category":"video","route":null},{"extension":"avi","mimeType":"video/x-msvideo","category":"video","route":null},{"extension":"mkv","mimeType":"video/x-matroska","category":"video","route":null},{"extension":"webm","mimeType":"video/webm","category":"video","route":null},{"extension":"flv","mimeType":"video/x-flv","category":"video","route":null},{"extension":"wmv","mimeType":"video/x-ms-wmv","category":"video","route":null},{"extension":"m4v","mimeType":"video/x-m4v","category":"video","route":null},{"extension":"mp3","mimeType":"audio/mpeg","category":"audio","route":"audio"},{"extension":"wav","mimeType":"audio/wav","category":"audio","route":"audio"},{"extension":"ogg","mimeType":"audio/ogg","category":"audio","route":"audio"},{"extension":"flac","mimeType":"audio/flac","category":"audio","route":"audio"},{"extension":"aac","mimeType":"audio/aac","category":"audio","route":"audio"},{"extension":"m4a","mimeType":"audio/mp4","category":"audio","route":"audio"},{"extension":"wma","mimeType":"audio/x-ms-wma","category":"audio","route":"audio"},{"extension":"zip","mimeType":"application/zip","category":"archive","route":null},{"extension":"tar","mimeType":"application/x-tar","category":"archive","route":null},{"extension":"gz","mimeType":"application/gzip","category":"archive","route":null},{"extension":"tgz","mimeType":"application/gzip","category":"archive","route":null},{"extension":"bz2","mimeType":"application/x-bzip2","category":"archive","route":null},{"extension":"7z","mimeType":"application/x-7z-compressed","category":"archive","route":null},{"extension":"rar","mimeType":"application/vnd.rar","category":"archive","route":null},{"extension":"xz","mimeType":"application/x-xz","category":"archive","route":null},{"extension":"exe","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"dll","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"dylib","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"so","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"bin","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"msi","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"app","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"apk","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"deb","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"rpm","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"pkg","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"dmg","mimeType":"application/octet-stream","category":"binary","route":null},{"extension":"iso","mimeType":"application/octet-stream","category":"binary","route":null}] as const;
 
 /** user-defined types **/
 
@@ -4509,6 +4712,10 @@ export type AppError =
  */
 { ConcurrentModification: { resource: string; details: string } } |
 /**
+ * Conflict error (e.g. revision mismatch)
+ */
+{ Conflict: string } |
+/**
  * Domain layer error - business rule violations
  * BOXED to prevent stack overflow (DomainError is ~160 variants)
  */
@@ -4641,6 +4848,7 @@ dataDirCloudProvider: string | null;
  * Newest first.
  */
 archives: ArchiveFileDto[] }
+export type AskPracticeHintRequestDto = { operationId: string; programId: string; sessionId: string; piece: Piece; expectedRevision: number }
 export type AttachEvidenceDto = { kind: "attach_saved_source"; sourceVersionId: string; startByte: number; endByte: number } | { kind: "attach_link"; url: string } | { kind: "attach_document"; documentId: string } | { kind: "attach_text"; title: string; text: string }
 export type AttachFailureDto = { kind: AttachFailureKindDto; message: string; nextSteps: AttachNextStepDto[] }
 export type AttachFailureKindDto =
@@ -4905,6 +5113,48 @@ export type CapturedSourcesDto = { messageId: string;
  * could be read carrying its snapshot.
  */
 sources: SourceDto[] }
+export type CaseCheckDetailDto = { caseId: string; category: string; visibility: CaseVisibility; scale: boolean;
+/**
+ * A learner example run as a case.
+ */
+mine: boolean; status: CaseStatus; args: string[] | null; expected: string | null; actual: string | null; printed: string | null; error: string | null; elapsedMs: number | null }
+/**
+ * How one case ended.
+ */
+export type CaseStatus = "passed" | "failed" |
+/**
+ * The call raised.
+ */
+"error" |
+/**
+ * The case had no expected value; the call finished.
+ */
+"ran" |
+/**
+ * The run stopped while this case was running.
+ */
+"timed_out" |
+/**
+ * The run stopped before this case started.
+ */
+"not_run"
+/**
+ * One case as the learner sees it. A field is None when the setting keeps it back, or the case has none.
+ */
+export type CaseViewDto = { caseId: string; category: string; visibility: CaseVisibility;
+/**
+ * A learner example run as a case.
+ */
+mine: boolean; scale: boolean; status: CaseStatus; args: string[] | null; expected: string | null; actual: string | null; printed: string | null; error: string | null; elapsedMs: number | null }
+export type CaseVisibility =
+/**
+ * Shown in the statement.
+ */
+"example" |
+/**
+ * Run on submit; a setting decides how much of a failure the learner sees.
+ */
+"hidden"
 export type ChangeCoursePlanEntriesRequestDto = { programId: string; outlineRevision: number; lessons: CoursePlanEntryRefDto[]; instruction: string }
 export type ChangeLearningPracticeModeRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; mode: LearningPracticeMode }
 /**
@@ -5028,13 +5278,34 @@ captured?: CapturedSourcesDto | null;
  * message carries the attached ones in `metadata.images`.
  */
 images?: ChatImageDto[] | null }
+export type CheckCodingExampleRequestDto = { operationId: string; programId: string; sessionId: string;
+/**
+ * Some edits that example.
+ */
+ordinal: number | null; args: string[]; expected: string }
 export type CheckDto = { checker: CheckerDto; result: CheckResultDto; reason: string; fingerprint: string; evidence: EvidenceSeenDto[]; windowTokens: number }
+/**
+ * The engine's check runs the scopes `shown` and `all`; a kind's own commands run anything else.
+ */
+export type CheckPracticePieceRequestDto = { operationId: string; checkId: string; programId: string; sessionId: string; scope: CheckScope; piece: Piece }
 export type CheckResultDto = { verdict: "supported"; sourceVersionId: string; supportingQuote: string } |
 /**
  * Supported by a passage of another course source than the ones its
  * section cites; the lesson's citation is repaired to it.
  */
 { verdict: "supported_elsewhere"; cited: string[]; sourceVersionId: string; supportingQuote: string } | { verdict: "consistent" } | { verdict: "known_common" } | { verdict: "not_false" } | { verdict: "failed"; kind: VerdictKindDto }
+/**
+ * Which cases a check runs.
+ */
+export type CheckScope = "shown" | "all" |
+/**
+ * One case the learner supplied; it asks for no verdict.
+ */
+"own"
+/**
+ * How a check as a whole stands.
+ */
+export type CheckStatus = "pending" | "running" | "passed" | "failed" | "timed_out" | "cancelled" | "interrupted" | "unavailable"
 /**
  * The checker's accuracy for one Learning model (§15 "Visible to the user").
  */
@@ -5356,6 +5627,15 @@ publishedDate?: string | null;
  * Excerpt (first ~200 characters of text)
  */
 excerpt?: string | null }
+export type ClockDto = {
+/**
+ * Time the session was open on screen, closed spans only.
+ */
+activeMs: number;
+/**
+ * When the open span began, while one is open.
+ */
+openSince: number | null; budgetSeconds: number | null }
 export type CloudModelCatalogDto = { hasApiKey: boolean; models: CloudModelDto[] }
 export type CloudModelDto = { id: string; name: string }
 /**
@@ -5384,7 +5664,11 @@ export type CodeReviewDrillDto = { title: string; material: CodeReviewMaterialDt
  * The lesson the drill was built from, while it exists; none for a drill from before drills were built from
  * lessons.
  */
-lesson: DrillLessonRefDto | null }
+lesson: DrillLessonRefDto | null;
+/**
+ * How many issues were planted: the number the learner is asked to find, and the one the score counts against.
+ */
+issues: number }
 /**
  * One file of a drill, as the learner reads it or leaves it.
  */
@@ -5478,6 +5762,27 @@ export type CodeReviewSeverity = "critical" | "major" | "minor" | "nit"
  * Whole lines of one file: 1-based, both ends included.
  */
 export type CodeReviewSpanDto = { path: string; start: number; end: number }
+export type CodingExampleDto = { ordinal: number; args: string[]; expected: string; verdict: ExampleVerdict;
+/**
+ * Coached, verdict Wrong: what the problem expects.
+ */
+expects: string | null; whyInvalid: string | null }
+/**
+ * Which cases a run covers.
+ */
+export type CodingRunScope =
+/**
+ * The statement's examples and the learner's right examples.
+ */
+"shown" |
+/**
+ * Every case of the problem: a submit.
+ */
+"all" |
+/**
+ * One input of the learner's choosing.
+ */
+"input"
 /**
  * Request to compact a conversation's oldest messages into an LLM summary.
  *
@@ -5975,6 +6280,7 @@ defaultMaxResults: number }
 export type DailyNoteCompatDto = { id: string; date: string; content: string; createdAt: string; updatedAt: string }
 export type DailyNoteCursorRequestDto = { currentDate: string }
 export type DailyNotesRangeRequestDto = { startDate: string; endDate: string }
+export type DebriefFactsDto = { stageMs: StageTimeDto[]; checks: number; submits: number; hints: RungCountDto[]; settings: Setting[] }
 export type DecideLearningFollowUpRequestDto = { operationId: string; programId: string; followUpId: string }
 export type DecideLearningPracticeProposalRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; proposalId: string }
 export type DecideLearningRecallDuplicateRequestDto = { operationId: string; programId: string; suggestionId: string; accept: boolean }
@@ -6051,6 +6357,7 @@ export type DiffKind =
  * One line of a diff, without its line break.
  */
 export type DiffLine = { kind: DiffKind; text: string }
+export type Difficulty = "easy" | "medium" | "hard"
 export type DiscardLearningCurriculumRevisionRequestDto = { operationId: string; programId: string; revisionId: string; expectedRevision: number }
 /**
  * Document metadata DTO for display in UI
@@ -6185,6 +6492,18 @@ geometry: VisionGeometry;
  */
 projector_bytes: number }
 /**
+ * Why the screen reports the draft.
+ */
+export type DraftObservation =
+/**
+ * The learner stopped typing.
+ */
+"pause" |
+/**
+ * Nothing has happened for a while.
+ */
+"idle"
+/**
  * A lesson a drill can be built from, and where its drills stand.
  */
 export type DrillLessonDto = { lessonId: string; title: string; standing: DrillStandingDto;
@@ -6246,6 +6565,12 @@ export type DrillStandingDto =
  * A drill of it is out and not yet graded, or ready to be taken.
  */
 "pending"
+export type DueItemDto = { kind: DueKind;
+/**
+ * Never a pattern name: "3 problem patterns", or the lesson title.
+ */
+label: string; count: number; dueAt: number; lessonId: string | null; material: string | null }
+export type DueKind = "coding_patterns" | "drill_lesson" | "drill_patterns"
 export type EditCoursePlanEntryRequestDto = { programId: string; outlineRevision: number; expectedEntryRevision: number; topics: PlannedLesson }
 /**
  * A published lesson's question as the user rewrote it, with the question
@@ -6481,6 +6806,10 @@ export type ErrorCode =
  */
 "CONCURRENT_MODIFICATION" |
 /**
+ * Conflict detected (e.g. revision mismatch)
+ */
+"CONFLICT" |
+/**
  * Processing queue is full
  */
 "QUEUE_FULL" |
@@ -6513,6 +6842,10 @@ export type ErrorCode =
  */
 export type EvidenceDto = { kind: "measured"; suites: string[] } | { kind: "untested" }
 export type EvidenceSeenDto = { sourceVersionId: string; startByte: number; endByte: number; textSha256: string }
+/**
+ * What the reference said about a learner's example.
+ */
+export type ExampleVerdict = "right" | "wrong" | "invalid"
 /**
  * A code example's run, as the checker saw it (§5.5).
  */
@@ -6705,10 +7038,6 @@ isWritable: boolean;
  */
 path: string }
 /**
- * Supported file types for internal viewing
- */
-export type FileType = "web_article_html" | "pdf" | "image" | "text" | "unknown"
-/**
  * Why a finder cannot run under the user's settings and keys.
  */
 export type FinderGateDto =
@@ -6801,6 +7130,7 @@ export type FindingResultKind =
  */
 "valid_extra" | "false_positive"
 export type FinishLearningSimulationRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+export type FinishPracticeSessionRequestDto = { operationId: string; programId: string; sessionId: string; piece: Piece }
 /**
  * The device a verdict was judged against.
  */
@@ -6917,6 +7247,10 @@ export type ForkConversationRequestDto = { conversationId: string;
  */
 upToMessageId?: string | null }
 export type ForkConversationResponseDto = { conversation: ConversationDto; copiedMessageCount: number }
+/**
+ * How the starting state is derived from proven material.
+ */
+export type Form = "build" | "repair" | "complete" | "arrange"
 /**
  * A function call request from the LLM
  *
@@ -7036,6 +7370,7 @@ export type GetConversationResponseDto = {
  */
 conversation: ConversationDto | null }
 export type GetLearningPracticalDraftRequestDto = { programId: string; activityId: string; activityRevision: number }
+export type GetLearningPracticeProfileRequestDto = { programId: string }
 export type GetLearningSourceTrustRequestDto = { programId: string;
 /**
  * These sources only; empty for every active source of the course.
@@ -7241,6 +7576,10 @@ export type KeyStatusDto = { service: KeyServiceDto; name: string;
  * The provider's own page for getting a key.
  */
 keyPageUrl: string; stored: boolean }
+/**
+ * Whether a course has a kind of work.
+ */
+export type KindFit = "fits" | "does_not_fit" | "checking"
 export type KnowledgeItemDto = { id: string; conversationId: string; conversationTitle: string; label: string; kind: string; state: string; scope: string; learnedAt: string; validFrom: string | null; validUntil: string | null; verifiedAt: string | null; forgotten: boolean; supersededBy: string | null;
 /**
  * Exact original passages, resolved on every read.
@@ -7420,10 +7759,6 @@ ollamaUtilityModel: string;
  * Optional Ollama auth header name (e.g., "Authorization")
  */
 ollamaAuthHeaderName: string;
-/**
- * Optional Ollama auth header value (e.g., "Bearer ...")
- */
-ollamaAuthHeaderValue: string;
 /**
  * Independent remote llama.cpp connection; switching providers retains both.
  */
@@ -8317,9 +8652,9 @@ export type LearningPlanDto = { programId: string;
 programRevision: number; acceptedRevision: LearningCurriculumRevision | null; draftRevision: LearningCurriculumRevision | null; previewChanges: LearningCurriculumChange[]; requiredLessonCountBefore: number; requiredLessonCountAfter: number; resumeLessonId: string | null; jobs: LearningGenerationJob[]; latestDiagnostic: LearningDiagnosticAttemptDto | null }
 export type LearningPortabilityWorkspaceDto = { programId: string; exports: LearningPackExportDto[]; importPreviews: LearningPackImportPreviewDto[]; imports: LearningPackImportResultDto[]; sourceWorkspace: LearningSourceWorkspaceDto; exportNotice: LearningPackExportNoticeDto }
 export type LearningPracticalActivityDto = { id: string; programId: string; lessonId: string; predecessorId: string | null; kind: LearningPracticalActivityKind; title: string; brief: string; status: LearningPracticalActivityStatus; practiceMode: LearningPracticeMode; allowedAids: string[]; outcomeIds: string[]; sourceVersionIds: string[]; rubric: LearningRubricCriterion[]; runtimeKind: LearningPracticalRuntimeKind; builtinRuntime?: LearningBuiltinRuntime | null; runtimeProfileId: string | null; runtimeEngine: LearningContainerEngine | null; runtimeImageId: string | null; runtimeCommand: string[] | null; runtimeLimits: LearningLabLimits | null; runtimeAvailable: boolean; runtimeUnavailableReason: string | null; generatorModel: string; files: LearningPracticalFileDto[]; interviewPlan?: LearningInterviewPlanDto | null; revision: number; createdAt: number; updatedAt: number }
-export type LearningPracticalActivityKind = "code_lab" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
+export type LearningPracticalActivityKind = "code_lab" | "exercise" | "debugging" | "code_review" | "incident" | "system_design" | "project" | "interview" | "conversation" | "writing_revision" | "custom"
 export type LearningPracticalActivityStatus = "draft" | "ready" | "retired"
-export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null }
+export type LearningPracticalCheckResultDto = { name: string; status: LearningPracticalCheckStatus; message: string; durationMs: number | null; detail?: CaseCheckDetailDto | null }
 export type LearningPracticalCheckStatus = "passed" | "failed" | "error" | "not_run"
 /**
  * Learner-owned starter files for one immutable practical activity revision.
@@ -8342,6 +8677,7 @@ export type LearningPracticeEvidenceEventDto = { dimension: LearningPracticeEvid
 export type LearningPracticeGradeStatus = "provisional" | "uncertain"
 export type LearningPracticeHintLevel = "orienting_question" | "concept_or_source" | "partial_strategy" | "worked_explanation"
 export type LearningPracticeMode = "explore" | "practice" | "demonstrate"
+export type LearningPracticeProfileDto = { programId: string; details: string; language: string | null; interviewAt: number | null; company: string | null; role: string | null; revision: number }
 export type LearningPracticeProposalDto = { id: string; kind: LearningPracticeProposalKind; text: string; evidenceQuote: string | null; tutorTurnId: string | null; status: LearningPracticeProposalStatus; createdAt: number; decidedAt: number | null }
 export type LearningPracticeProposalKind = "misconception" | "follow_up"
 export type LearningPracticeProposalStatus = "pending" | "accepted" | "rejected"
@@ -8980,6 +9316,7 @@ export type ListJournalConversationsQueryDto = { journalSpaceId: string; query: 
 export type ListLearningTangentsRequestDto = { programId?: string | null }
 export type ListMessageBookmarksQueryDto = { conversationId: string | null; query: string | null; limit: number | null; offset: number | null }
 export type ListMessageBookmarksResponseDto = { bookmarks: ConversationMessageBookmarkDto[] }
+export type ListPracticeSessionsRequestDto = { programId: string }
 export type ListWorkspaceNotesRequestDto = {
 /**
  * List only the pages this journal owns. Omitted lists every page, which
@@ -8988,7 +9325,7 @@ export type ListWorkspaceNotesRequestDto = {
  */
 journalId: string | null }
 export type ListWorkspaceNotesResponseDto = { notes: WorkspaceNoteDto[] }
-export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string; authHeaderValue: string }
+export type LlamaCppSettingsDto = { url: string; model: string; authHeaderName: string }
 /**
  * A model loaded right now, for diagnostics.
  */
@@ -9093,6 +9430,15 @@ metadata: string | null;
  * Message status (pending/completed/failed)
  */
 status: string }
+/**
+ * How many of the exercise's misreadings the learner's right cases catch.
+ */
+export type MisreadingCoverageDto = { caught: number; total: number;
+/**
+ * Coached: the description of one misreading not caught yet.
+ */
+uncaught: string | null }
+export type MisreadingViewDto = { description: string; caught: boolean }
 /**
  * Cache statistics.
  */
@@ -9357,6 +9703,7 @@ export type ModelWaitDto = { retryInSeconds: number; errorCode: ErrorCode }
  */
 export type ModelWindowDto = { contextWindow: number | null; maxOutputTokens: number | null }
 export type MoveConversationToSpaceRequestDto = { conversationId: string; spaceId: string }
+export type MovePracticeStageRequestDto = { operationId: string; programId: string; sessionId: string; stage: Stage; expectedRevision: number }
 export type MutateLearningAssessmentFormRequestDto = { operationId: string; programId: string; formId: string; expectedRevision: number }
 /**
  * The lesson a start with no lesson asked for draws on, and what it comes to.
@@ -9379,6 +9726,7 @@ export type NextDrillStatus =
  */
 "to_build"
 export type NoteHighlightDto = { id: string; text: string; createdAt: string }
+export type ObservePracticeDraftRequestDto = { programId: string; sessionId: string; piece: Piece; reason: DraftObservation }
 /**
  * Onboarding state — what the user has already been through.
  *
@@ -9403,10 +9751,6 @@ export type OpenFileResponseDto = {
  * Action taken: "render_internal" or "opened_external"
  */
 action: string;
-/**
- * File type detected (enum: WebArticleHtml, Pdf, Image, Text, Unknown)
- */
-fileType: FileType;
 /**
  * Path to content (HTML file for internal rendering, original file for external)
  */
@@ -9471,11 +9815,75 @@ export type PerformanceTierDto =
  * Accurate models (> 5s/response)
  */
 "Accurate"
+/**
+ * One state of the work: a draft, a reference, a misreading. The engine stores it and never reads inside it.
+ */
+export type Piece = JsonValue
 export type PlanLearningCourseRequestDto = { programId: string }
 /**
  * What one lesson teaches, as topics.
  */
 export type PlannedLesson = { lessonId: string; ideas: string[]; terms: string[]; actions: string[]; contrast: string }
+/**
+ * One check as every kind has it. What it found is in the kind's `work`, under the same id.
+ */
+export type PracticeCheckDto = { checkId: string; scope: CheckScope; status: CheckStatus; passed: number; total: number; at: number }
+export type PracticeDebriefDto = { scorecard: Scorecard; facts: DebriefFactsDto;
+/**
+ * Empty when the kind has no cases the learner writes.
+ */
+misreadings: MisreadingViewDto[]; techniques: TechniqueRatingDto[]; model: string;
+/**
+ * What the kind's screen draws of the debrief.
+ */
+work: JsonValue }
+/**
+ * Most overdue first.
+ */
+export type PracticeDueDto = { items: DueItemDto[] }
+export type PracticeDueRequestDto = { programId: string }
+export type PracticeFitDto = { kinds: PracticeKindFitDto[] }
+export type PracticeFitRequestDto = { programId: string }
+export type PracticeHintDto = { ordinal: number; rung: Rung; text: string; reason: string; stage: Stage;
+/**
+ * The last check made when the hint was given.
+ */
+checkId: string | null;
+/**
+ * Watched: given by the interviewer, in the thread.
+ */
+inRole: boolean; at: number }
+export type PracticeKindFitDto = { kind: string; fit: KindFit; reason: string | null }
+export type PracticeSessionDto = { sessionId: string; programId: string; activityId: string; lessonId: string | null; kind: string; title: string; difficulty: Difficulty; form: Form; setting: Setting; settingsUsed: Setting[]; stage: Stage;
+/**
+ * The stages of the form, in order.
+ */
+stages: StageLabelDto[]; clock: ClockDto;
+/**
+ * Oldest first.
+ */
+checks: PracticeCheckDto[]; hints: PracticeHintDto[]; nextRung: Rung; turns: LearningSimulationTurnDto[]; cuePending: boolean;
+/**
+ * Some exactly when the kind has cases the learner writes.
+ */
+coverage: MisreadingCoverageDto | null; submitted: boolean; solutionAvailable: boolean;
+/**
+ * The learner has the reference open.
+ */
+solutionShown: boolean; finished: boolean; revision: number;
+/**
+ * What the kind's screen draws of the work.
+ */
+work: JsonValue; debrief: PracticeDebriefDto | null }
+/**
+ * Names a session: get and respond.
+ */
+export type PracticeSessionRequestDto = { programId: string; sessionId: string }
+export type PracticeSessionSummaryDto = { sessionId: string; activityId: string; kind: string; title: string; form: Form; setting: Setting; stage: Stage; finished: boolean;
+/**
+ * Cases passed on the last submit.
+ */
+passed: number | null; total: number | null; createdAt: number; finishedAt: number | null }
 export type PrepareLearningAheadRequestDto = { programId: string; lessonId: string }
 export type PrepareLearningLessonRequestDto = { programId: string; lessonId: string; expectedRevision: number }
 export type PrepareLearningModuleRequestDto = { programId: string; moduleId: string; expectedRevision: number }
@@ -9507,7 +9915,73 @@ telemetryEnabled: boolean;
  * Send crash reports. Off by default.
  */
 crashReporting: boolean }
+export type ProblemDifficulty = "easy" | "medium" | "hard"
+/**
+ * The function the learner writes in `solution.py`.
+ */
+export type ProblemSignature = { function: string; params: SignatureParam[];
+/**
+ * The Python return annotation.
+ */
+returns: string }
+/**
+ * What a finished session's `work` holds for the program kind.
+ */
+export type ProgramDebriefWorkDto = { strongAnswer: StrongAnswerDto;
+/**
+ * The last submit, nothing kept back.
+ */
+cases: CaseViewDto[] }
+/**
+ * Where a hint points in the draft it was written for.
+ */
+export type ProgramHintMarkDto = { ordinal: number;
+/**
+ * The file of the first line.
+ */
+path: string | null;
+/**
+ * 1-based lines.
+ */
+lines: number[] }
+/**
+ * What one run of the learner's code found.
+ */
+export type ProgramRunDto = { runId: string; scope: CodingRunScope; status: LearningPracticalRunStatus;
+/**
+ * In case order; the screen lists failures first.
+ */
+cases: CaseViewDto[];
+/**
+ * What the program printed outside any case.
+ */
+stdout: string; stderr: string; durationMs: number | null;
+/**
+ * An input run in Coached: what the reference returns.
+ */
+referenceActual: string | null; createdAt: number }
+/**
+ * What a session's `work` holds for the program kind.
+ */
+export type ProgramWorkDto = { problem: PublicProblemDto; draft: LearningLabFile[]; examples: CodingExampleDto[];
+/**
+ * Oldest first; each `run_id` is the `check_id` of the engine's summary of the check.
+ */
+runs: ProgramRunDto[];
+/**
+ * One for each hint that points at lines.
+ */
+hintMarks: ProgramHintMarkDto[];
+/**
+ * Some once revealed, or in the debrief.
+ */
+workedSolution: string | null }
 export type ProvenanceDto = { input: "saved_passage"; startByte: number; endByte: number } | { input: "link"; url: string } | { input: "document"; documentId: string } | { input: "pasted_text" }
+export type PublicProblemDto = { title: string; statement: string; signature: ProblemSignature; constraints: string[]; difficulty: ProblemDifficulty; language: string;
+/**
+ * The statement's examples, in full.
+ */
+examples: CaseViewDto[]; starter: string }
 /**
  * What a source did for a sentence the machine took out.
  */
@@ -9585,6 +10059,16 @@ total_functions: number;
  */
 call_counts: { [key in string]: number } }
 export type ReimportLearningSourceRequestDto = { operationId: string; programId: string; sourceId: string; versionId: string; expectedRevision: number; replacementText: string | null }
+/**
+ * Whether each remote server has an authentication header value stored.
+ * The values themselves never leave the keyring.
+ */
+export type RemoteAuthStatusDto = { ollama: boolean; llamaCpp: boolean }
+/**
+ * A model server the user runs and connects to over the network.
+ */
+export type RemoteServer = "ollama" | "llamaCpp"
+export type RemoveCodingExampleRequestDto = { operationId: string; programId: string; sessionId: string; ordinal: number }
 export type RemoveConversationFromJournalRequestDto = { journalSpaceId: string; conversationId: string }
 export type RemoveConversationSpaceMemberRequestDto = { spaceId: string; memberId: string }
 /**
@@ -9917,6 +10401,7 @@ newJobId: string;
  */
 retriedCount: number }
 export type RevealLearningPracticeSolutionRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number }
+export type RevealPracticeSolutionRequestDto = { operationId: string; programId: string; sessionId: string }
 /**
  * One finding of the learner's, with what came of it.
  */
@@ -10047,6 +10532,16 @@ promptTemplate: string;
  * Clarification prompt template shown to users.
  */
 clarifyPromptTemplate: string }
+export type RunCodingInputRequestDto = { operationId: string; runId: string; programId: string; sessionId: string; files: LearningLabFile[];
+/**
+ * One literal per parameter.
+ */
+input: string[] }
+/**
+ * How much of the answer a hint gives, in the order they are offered.
+ */
+export type Rung = "nudge" | "idea" | "plan" | "point"
+export type RungCountDto = { rung: Rung; count: number }
 /**
  * The sampling a model runs with in one mode.
  */
@@ -10069,8 +10564,31 @@ export type SaveLearningCardDraftRequestDto = { draftId: string | null; programI
 export type SaveLearningPackAsResultDto = { outcome: "cancelled" } | { outcome: "saved"; export: LearningPackExportDto }
 export type SaveLearningPracticalDraftRequestDto = { operationId: string; programId: string; activityId: string; activityRevision: number; expectedDraftRevision: number; files: LearningLabFile[] }
 export type SaveLearningPracticeArtifactRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; text: string }
+export type SaveLearningPracticeProfileRequestDto = { programId: string; details: string; language: string | null; interviewAt: number | null; company: string | null; role: string | null;
+/**
+ * The revision the learner last read; 0 for a profile never saved.
+ */
+expectedRevision: number }
 export type SaveLearningRecallCardRequestDto = { operationId: string; programId: string; cardId: string; expectedContentRevision: number | null; format: LearningRecallCardFormat; content: LearningRecallContentDto; sourceVersionIds: string[]; changeReason: string }
 export type SaveLearningRuntimeProfileRequestDto = { operationId: string; programId: string; profileId: string; expectedRevision: number | null; name: string; engine: LearningContainerEngine; imageId: string; command: string[]; limits: LearningLabLimits }
+/**
+ * Whether a row was scored.
+ */
+export type ScoreStatus = "observed" | "insufficient_evidence"
+export type Scorecard = { rows: ScorecardRow[] }
+/**
+ * One checked fact behind a row.
+ */
+export type ScorecardEvidence =
+/**
+ * An exact substring of that learner turn.
+ */
+{ kind: "quote"; turnId: string; text: string } |
+/**
+ * Lines `start` to `end`, 1-based and inclusive, of `path` in that run's files.
+ */
+{ kind: "lines"; runId: string; path: string; start: number; end: number } | { kind: "run"; runId: string } | { kind: "example"; ordinal: number } | { kind: "hint"; ordinal: number }
+export type ScorecardRow = { criterionId: string; title: string; status: ScoreStatus; points: number | null; maxPoints: number; evidence: ScorecardEvidence[]; feedback: string; nextStep: string }
 export type SearchCacheStats = { size: number; capacity: number; hits: number; misses: number; totalTimeSavedMs: number; hitRate: number }
 export type SearchLearningSourcesRequestDto = { programId: string; query: string; limit: number }
 export type SearchLearningSourcesSemanticallyRequestDto = { programId: string; query: string; limit: number }
@@ -10264,6 +10782,7 @@ vectorIndexCompression: VectorIndexCompressionSettingsDto;
  */
 summaryIndexEnabled: boolean }
 export type SendLearningSimulationTurnRequestDto = { operationId: string; programId: string; sessionId: string; expectedRevision: number; content: string }
+export type SendPracticeTurnRequestDto = { operationId: string; programId: string; sessionId: string; content: string; spoken: boolean; piece: Piece; expectedRevision: number }
 export type SetArchiveKeepCountRequestDto = { keepCount: number }
 export type SetArchivePassphraseRequestDto = {
 /**
@@ -10281,10 +10800,16 @@ export type SetConversationStateRequestDto = { conversationId: string; value: bo
  * Chat sidebar is separate.
  */
 export type SetJournalEntryPinnedRequestDto = { journalSpaceId: string; conversationId: string; pinned: boolean }
+export type SetPracticeClockRequestDto = { programId: string; sessionId: string; open: boolean }
+export type SetPracticeSettingRequestDto = { operationId: string; programId: string; sessionId: string; setting: Setting; expectedRevision: number }
 /**
  * Set or clear the moment a deck must be remembered by.
  */
 export type SetStudyDeckTargetRequestDto = { deckId: string; targetAt: number | null }
+/**
+ * Who the counterpart is, and what the learner may see.
+ */
+export type Setting = "coached" | "mock" | "watched"
 /**
  * Complete application settings structure.
  */
@@ -10335,6 +10860,11 @@ findingKeys: string[]; settle: TeachingSettleDto }
  * The key's issues of one severity and how many of them were found.
  */
 export type SeverityTallyDto = { severity: CodeReviewSeverity; found: number; halfFound: number; total: number }
+export type SignatureParam = { name: string;
+/**
+ * The Python annotation: `list[int]`.
+ */
+annotation: string }
 /**
  * One neighbour of a document, collapsed from its chunk hits.
  */
@@ -10623,6 +11153,15 @@ downloadBytes: number }
  */
 export type SpeedClassDto = "fast" | "balanced" | "thorough"
 /**
+ * Where a session is in its form.
+ */
+export type Stage = "understand" | "examples" | "plan" | "make" | "check" | "review" | "reproduce" | "locate" | "fix" | "verify"
+/**
+ * A stage of the session's form, under the label the counterpart also says.
+ */
+export type StageLabelDto = { stage: Stage; label: string }
+export type StageTimeDto = { stage: Stage; activeMs: number }
+/**
  * A `StandingAssessed` event's payload: the claim's kind, whether its
  * support met the bar (and which bar it failed), each support's level for
  * the claim's subject, the gate's reason, and the trust change that made
@@ -10700,6 +11239,9 @@ export type StartLearningPracticalRunRequestDto = { operationId: string; runId: 
 export type StartLearningPracticeSessionRequestDto = { operationId: string; sessionId: string; programId: string; lessonId: string; expectedProgramRevision: number; mode: LearningPracticeMode; taskKind?: LearningPracticeTaskKind; revisesSessionId?: string | null }
 export type StartLearningQuizRequestDto = { operationId: string; formId: string; programId: string; scope: LearningQuizScopeDto; mode: LearningQuizMode; retakeOfFormId: string | null }
 export type StartLearningSimulationRequestDto = { operationId: string; sessionId: string; programId: string; activityId: string; expectedActivityRevision: number; practiceSessionId: string | null; learnerRole: string; counterpartRole: string }
+export type StartPracticeBuildRequestDto = { operationId: string; programId: string; lessonId: string | null; form: Form; language: string; difficulty: ProblemDifficulty; focus: string | null }
+export type StartPracticeBuildResultDto = { jobId: string }
+export type StartPracticeSessionRequestDto = { operationId: string; programId: string; activityId: string; setting: Setting; budgetSeconds: number | null }
 /**
  * What starting a drill came to.
  */
@@ -10717,6 +11259,7 @@ export type StickyItemDto = { id: string; text: string; color: string; createdAt
  * Why a lesson's preparation stopped, verbatim for "Copy details" (§8.4).
  */
 export type StopReasonDto = { code: string; message: string; fix: string; at: number; request: RequestFactsDto | null }
+export type StrongAnswerDto = { approach: string; complexity: string; reference: string }
 export type StructureMode = "sections" | "pages"
 export type StudyCardDto = { id: string; format?: StudyCardFormat; deckId: string; question: string; answer: string; options: string[]; correctIndex: number; explanation: string; source: StudySourceDto;
 /**
@@ -11007,8 +11550,14 @@ export type TeachingSettleDto =
  * A source was added for the sentence: waiting becomes resolved.
  */
 "source_added"
+export type TechniqueRatingDto = { techniqueId: string; name: string; family: string; cue: string; rating: PatternRating; dueAt: number }
 export type TestCustomToolRequest = { endpoint: string; queryParam: string; maxResultsParam: string | null; defaultMaxResults: number; query: string; maxResults: number | null }
 export type TestCustomToolResponse = { finalUrl: string; status: number; contentType: string | null; bodyPreview: string }
+/**
+ * A llama.cpp connection to try. The header value may be left blank to try
+ * the one already stored for the saved server URL.
+ */
+export type TestLlamaCppConnectionRequest = { url: string; model?: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionRequest = { ollamaUrl: string; authHeaderName?: string; authHeaderValue?: string }
 export type TestOllamaConnectionResponse = { endpoint: string; models: string[] }
 /**

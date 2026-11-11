@@ -1,9 +1,3 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 //! The provenance gate over fake judgements: levels are given, so these
 //! tests pin what the gate builds from a finding (supports, clusters,
 //! passage kinds, citations), how it maps the decision onto the claim

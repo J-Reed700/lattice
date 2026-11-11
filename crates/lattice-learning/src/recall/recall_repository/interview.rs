@@ -32,6 +32,20 @@ pub(in crate::recall) async fn activity(
     }))
 }
 
+/// The ids of the course's ready interview activities, oldest first.
+pub(in crate::recall) async fn ready_activity_ids(
+    conn: &mut SqliteConnection,
+    program_id: &str,
+) -> Result<Vec<String>> {
+    sqlx::query_scalar(
+        "SELECT id FROM learning_practical_activities WHERE program_id=? AND kind='interview' AND status='ready' ORDER BY created_at,id",
+    )
+    .bind(program_id)
+    .fetch_all(&mut *conn)
+    .await
+    .map_err(db)
+}
+
 /// The path and content of each of the activity's files at `paths`.
 pub(in crate::recall) async fn files(
     conn: &mut SqliteConnection,

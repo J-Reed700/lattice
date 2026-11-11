@@ -31,18 +31,8 @@ fn imports(container: &Container) -> BatchImports {
 /// An import waits for the embedding model, so starting one without a model
 /// that can load is refused up front.
 async fn require_embedding(container: &Container) -> Result<(), AppError> {
-    let embedding = container.get_or_load_embedding().await.map_err(|error| {
-        AppError::ServiceNotAvailable(format!(
-            "Could not load the active embedding model: {error}"
-        ))
-    })?;
-    if !embedding.is_ready().await? {
-        return Err(AppError::AiModelsNotInstalled(
-            "AI embedding model is not ready yet. Activate an embedding model in Settings → Downloaded and try again."
-                .into(),
-        ));
-    }
-    Ok(())
+    lattice_core::application::ports::require_loaded_ready(container.get_or_load_embedding().await)
+        .await
 }
 
 #[tauri::command]

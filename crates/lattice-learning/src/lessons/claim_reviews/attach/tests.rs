@@ -1,9 +1,3 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 //! Attaching evidence end to end over a real database, against an
 //! in-memory ledger, a scripted web, frozen-copy service and judge (§5.4,
 //! §12): the link failures of the §5.4 table (fixture

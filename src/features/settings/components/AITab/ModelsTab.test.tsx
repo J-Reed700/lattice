@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react';
+import { screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { VaultAPI } from '@/lib/api';
 import { makeAppSettings } from '@/tests/fixtures/appSettings';
+import { render } from '@/tests/renderWithQueryClient';
 
 import { ModelsTab } from './ModelsTab';
 

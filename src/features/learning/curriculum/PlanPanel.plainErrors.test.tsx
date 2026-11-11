@@ -14,7 +14,7 @@ import { expectPlainError, findAlertWith, NO_LEARNING_MODEL_TEXT } from '@/tests
  */
 
 const mocks = vi.hoisted(() => ({ getPlan: vi.fn() }));
-vi.mock('@/lib/api', () => ({ default: {
+vi.mock('@/lib/api', async (importOriginal) => ({ ...(await importOriginal<typeof import('@/lib/api')>()), default: {
   getLearningPlan: mocks.getPlan,
   getLearningProgramVerifierAudit: async (programId: string) => ({ ok: true, data: {
     programId, on: false, webSearch: false, consentAt: null, consentProvider: null, verifier: null,

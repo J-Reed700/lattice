@@ -76,12 +76,12 @@ pub(crate) async fn get_embedding_model_info_impl(
     state: &EmbeddingState,
 ) -> Result<ModelInfo, AppError> {
     Ok(match state.loaded.current_model() {
-        Some(model) => ModelInfo {
+        Some(model) if model.load_failure().is_none() => ModelInfo {
             model_name: model.model_identity(),
             dimensions: i32::try_from(model.dimension()).unwrap_or(i32::MAX),
             is_loaded: true,
         },
-        None => ModelInfo {
+        _ => ModelInfo {
             model_name: String::new(),
             dimensions: 0,
             is_loaded: false,

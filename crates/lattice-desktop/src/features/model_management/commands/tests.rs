@@ -150,7 +150,9 @@ fn a_file_reference_cannot_leave_its_repository() {
     for repo in ["", "a", "a/b/c", "../b", "a/..", "a/b c"] {
         assert!(!is_plain_repo(repo), "{repo:?}");
     }
+    assert!(is_plain_repo("publisher/model..v2"));
     assert!(is_plain_file("Qwen3.5-9B-Q4_K_M.gguf"));
+    assert!(is_plain_file("folder/model..Q4.gguf"));
     assert!(is_plain_file("folder/model.gguf"));
     for file in [
         "",

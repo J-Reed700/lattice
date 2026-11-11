@@ -554,8 +554,9 @@ step_claims() {
   local scores=evals/grounding/results/$DATE-lesson-w1-scores.json
   local settings=$DIR/claims-judge-settings.json code
   claim_output $results $scores
-  # A settings copy pointing at the judge, as the testing doc describes; it
-  # holds the auth header, so it is private and removed when the run ends.
+  # A settings copy pointing at the judge, as the testing doc describes. It
+  # holds only the header name; the value goes to the eval through the
+  # environment.
   python3 -I - $source $settings <<'EOF' || return 2
 import json, os, sys
 source, out = sys.argv[1], sys.argv[2]
@@ -569,7 +570,6 @@ llm["llamaCpp"] = {
     "url": os.environ["LATTICE_JUDGE_URL"],
     "model": os.environ["LATTICE_JUDGE_MODEL"],
     "authHeaderName": name.strip(),
-    "authHeaderValue": value.strip(),
 }
 llm["contextWindow"] = int(os.environ["LATTICE_JUDGE_WINDOW"])
 fd = os.open(out, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -583,6 +583,9 @@ EOF
       export LATTICE_LLAMACPP_SETTINGS=$settings
       export LATTICE_CLAIM_PAIRS=$REPO/$CLAIM_GOLD LATTICE_CLAIM_RESULTS=$REPO/$results
       export LATTICE_CLAIM_CHECKER=$checker
+      if [[ -n ${LATTICE_JUDGE_AUTH:-} ]]; then
+        export LATTICE_LLAMACPP_AUTH_HEADER_VALUE=${LATTICE_JUDGE_AUTH#*:}
+      fi
       exec $LIB_BIN live_claim_pairs_eval --ignored --nocapture
     )
     code=$?

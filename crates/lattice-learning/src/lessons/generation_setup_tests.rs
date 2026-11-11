@@ -1,6 +1,5 @@
 //! A course's setup is the one part of lesson preparation that touches state
 //! every lesson of the course shares, so two lessons never set it up at once.
-#![allow(clippy::unwrap_used, clippy::panic, clippy::indexing_slicing)]
 use super::*;
 use crate::lessons::course_setup::CourseSetups;
 use std::sync::atomic::{AtomicUsize, Ordering};

@@ -7,6 +7,7 @@ import { canvasTextOutline, parseCanvasScene, serializeCanvasScene } from '@/fea
 import type { CanvasSurfaceHandle } from '@/features/learning/canvas/CanvasSurface';
 import DualCodingToolbar from '@/features/learning/canvas/DualCodingToolbar';
 import { useCreateLearningCanvas, useCreateLearningCanvasSnapshot, useLearningCanvas, useRestoreLearningCanvasSnapshot, useSaveLearningCanvas } from '@/features/learning/canvas/useLearningCanvas';
+import { isConflict } from '@/lib/api';
 import type { JsonValue, LearningCanvasDto, LearningCanvasSnapshotDto, LearningLessonDto } from '@/lib/bindings';
 import { registerPendingSave } from '@/lib/pendingSaves';
 
@@ -28,7 +29,6 @@ function initialEditable(canvas: LearningCanvasDto): Editable {
 }
 function samePayload(a: Editable | null, b: Editable) { return Boolean(a?.title.trim() === b.title.trim() && a.description.trim() === b.description.trim() && a.sceneJson === b.sceneJson); }
 function timestamp(value: number) { const date = new Date(value); return Number.isNaN(date.getTime()) ? 'Date unavailable' : date.toLocaleString(); }
-function saveConflict(error: unknown) { return /revision|conflict|changed since|stale/i.test(error instanceof Error ? error.message : String(error)); }
 
 export default function CanvasPanel({
   programId,
@@ -173,7 +173,7 @@ export default function CanvasPanel({
           return true;
         } catch (failure) {
           setSaveState('error'); setError(failure instanceof Error ? failure.message : 'Canvas could not be saved.');
-          if (saveConflict(failure)) { conflictRef.current = true; setConflict(true); }
+          if (isConflict(failure)) { conflictRef.current = true; setConflict(true); }
           return false;
         }
       }

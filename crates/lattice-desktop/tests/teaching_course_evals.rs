@@ -122,16 +122,23 @@ impl ConfiguredModel {
             llama_cpp: lattice_core::application::contracts::settings::LlamaCppSettingsDto {
                 url: p["options"]["baseURL"].as_str().expect("Endpoint").into(),
                 model: model.into(),
-                auth_header_name,
-                auth_header_value,
+                auth_header_name: auth_header_name.clone(),
             },
             ..Default::default()
         };
         Self {
-            inner: lattice::features::llm::llama_cpp::LlamaCppLlm::new(&settings)
-                .expect("Configured production adapter")
-                .into_port()
-                .await,
+            inner: lattice::features::llm::llama_cpp::LlamaCppLlm::new(
+                &settings,
+                (!auth_header_name.is_empty()).then_some(
+                    lattice_core::application::ports::llm_port::RemoteHeader {
+                        name: auth_header_name,
+                        value: auth_header_value,
+                    },
+                ),
+            )
+            .expect("Configured production adapter")
+            .into_port()
+            .await,
             model: model.into(),
             context,
             output,

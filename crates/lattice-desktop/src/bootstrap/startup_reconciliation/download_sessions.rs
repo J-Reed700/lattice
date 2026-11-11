@@ -138,7 +138,6 @@ pub async fn reconcile_orphaned_sessions(
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
     use crate::features::download::download_repository::mock::MockDownloadRepository;

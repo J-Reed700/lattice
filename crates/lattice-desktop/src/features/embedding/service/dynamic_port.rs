@@ -1,13 +1,13 @@
 //! Dynamic embedding adapter implementing [`EmbeddingPort`].
 //!
 //! Reads the loaded model through a read-only provider. If none is loaded,
-//! the degraded adapter returns the existing model-not-installed errors.
+//! the unavailable adapter returns the model-not-installed errors.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use lattice_core::application::ports::{EmbeddingPort, MockEmbeddingPort};
+use lattice_core::application::ports::{EmbeddingPort, UnavailableEmbedding};
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
 pub struct DynamicEmbedding {
@@ -20,6 +20,18 @@ impl DynamicEmbedding {
     ) -> Self {
         Self { provider }
     }
+
+    fn loaded_model(&self) -> lattice_core::shared::error::Result<Arc<dyn EmbeddingPort>> {
+        let model = self.provider.current_model().ok_or_else(|| {
+            lattice_core::shared::error::AppError::AiModelsNotInstalled(
+                "Load an embedding model before indexing".into(),
+            )
+        })?;
+        match model.load_failure() {
+            Some(error) => Err(error),
+            None => Ok(model),
+        }
+    }
 }
 
 #[async_trait]
@@ -27,14 +39,22 @@ impl EmbeddingPort for DynamicEmbedding {
     async fn embed_single(&self, text: &str) -> lattice_core::shared::error::Result<Vec<f32>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_single(text).await,
-            None => MockEmbeddingPort::new_degraded().embed_single(text).await,
+            None => {
+                UnavailableEmbedding::not_installed()
+                    .embed_single(text)
+                    .await
+            }
         }
     }
 
     async fn embed_query(&self, text: &str) -> lattice_core::shared::error::Result<Vec<f32>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_query(text).await,
-            None => MockEmbeddingPort::new_degraded().embed_single(text).await,
+            None => {
+                UnavailableEmbedding::not_installed()
+                    .embed_single(text)
+                    .await
+            }
         }
     }
 
@@ -44,7 +64,11 @@ impl EmbeddingPort for DynamicEmbedding {
     ) -> lattice_core::shared::error::Result<Vec<Vec<f32>>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_batch(texts).await,
-            None => MockEmbeddingPort::new_degraded().embed_batch(texts).await,
+            None => {
+                UnavailableEmbedding::not_installed()
+                    .embed_batch(texts)
+                    .await
+            }
         }
     }
 
@@ -69,14 +93,7 @@ impl EmbeddingPort for DynamicEmbedding {
     ) -> lattice_core::shared::error::Result<
         Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
-        self.provider
-            .current_model()
-            .ok_or_else(|| {
-                lattice_core::shared::error::AppError::AiModelsNotInstalled(
-                    "Load an embedding model before indexing".into(),
-                )
-            })?
-            .split_text(text, prefix)
+        self.loaded_model()?.split_text(text, prefix)
     }
 
     fn window_parts(
@@ -85,14 +102,11 @@ impl EmbeddingPort for DynamicEmbedding {
     ) -> lattice_core::shared::error::Result<
         Vec<lattice_core::application::ports::embedding_port::EmbeddingTextChunk>,
     > {
-        self.provider
-            .current_model()
-            .ok_or_else(|| {
-                lattice_core::shared::error::AppError::AiModelsNotInstalled(
-                    "Load an embedding model before indexing".into(),
-                )
-            })?
-            .window_parts(text)
+        self.loaded_model()?.window_parts(text)
+    }
+
+    fn load_failure(&self) -> Option<lattice_core::shared::error::AppError> {
+        self.provider.current_model()?.load_failure()
     }
 
     async fn is_ready(&self) -> lattice_core::shared::error::Result<bool> {

@@ -4,9 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 
 use crate::features::credentials::adapter::CredentialsAdapter;
-use crate::features::credentials::use_cases::{
-    DeleteApiKeyUseCase, GetApiKeyUseCase, SetApiKeyUseCase, SetCustomEndpointUseCase,
-};
+use crate::features::credentials::use_cases::SetApiKeyUseCase;
 use crate::interfaces::di::Container;
 use lattice_core::application::ports::CredentialsPort;
 
@@ -14,9 +12,6 @@ use lattice_core::application::ports::CredentialsPort;
 pub struct CredentialsDi {
     pub credentials: Arc<dyn CredentialsPort>,
     pub set_api_key_use_case: Arc<SetApiKeyUseCase>,
-    pub get_api_key_use_case: Arc<GetApiKeyUseCase>,
-    pub delete_api_key_use_case: Arc<DeleteApiKeyUseCase>,
-    pub set_custom_endpoint_use_case: Arc<SetCustomEndpointUseCase>,
 }
 
 pub fn build(credentials_path: PathBuf) -> CredentialsDi {
@@ -25,9 +20,6 @@ pub fn build(credentials_path: PathBuf) -> CredentialsDi {
 
     CredentialsDi {
         set_api_key_use_case: Arc::new(SetApiKeyUseCase::new(credentials.clone())),
-        get_api_key_use_case: Arc::new(GetApiKeyUseCase::new(credentials.clone())),
-        delete_api_key_use_case: Arc::new(DeleteApiKeyUseCase::new(credentials.clone())),
-        set_custom_endpoint_use_case: Arc::new(SetCustomEndpointUseCase::new(credentials.clone())),
         credentials,
     }
 }
@@ -37,5 +29,10 @@ impl Container {
     // Credentials (from CoreModule)
     pub fn set_api_key_use_case(&self) -> Arc<SetApiKeyUseCase> {
         Arc::clone(self.core.set_api_key_use_case())
+    }
+
+    /// The keyring every credential is read from and written to.
+    pub fn credentials(&self) -> Arc<dyn CredentialsPort> {
+        Arc::clone(self.core.credentials())
     }
 }

@@ -11,8 +11,12 @@
 
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef } from 'react';
 
+import { QueryClientContext } from '@tanstack/react-query';
+
+import { useApi } from '@/contexts/ApiContext';
+import { NO_REMOTE_AUTH, REMOTE_AUTH_STATUS_QUERY_KEY, useRemoteAuthStatus } from '@/features/settings/hooks/useRemoteAuthStatus';
 import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
-import type { JsonValue } from '@/lib/bindings';
+import type { JsonValue, RemoteAuthStatusDto, RemoteServer } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
 
@@ -20,6 +24,10 @@ export type LlmSettingsContextValue = {
   llmSettings: ApiLLMSettings | null;
   isLoading: boolean;
   saveLlmUpdates: (updates: Partial<ApiLLMSettings>) => Promise<boolean>;
+  /** Whether the keyring holds an auth header value for each remote server. */
+  authValueSet: RemoteAuthStatusDto;
+  /** Store (or with null, delete) a remote server's auth header value. Write-only: `authValueSet` reports whether one is set. */
+  saveAuthHeaderValue: (server: RemoteServer, value: string | null) => Promise<boolean>;
   /** Re-read the settings after a failed load. Backs the "Retry" affordance. */
   reload: () => void;
 };
@@ -27,8 +35,11 @@ export type LlmSettingsContextValue = {
 export const LlmSettingsContext = createContext<LlmSettingsContextValue | null>(null);
 
 export function useLlmSettingsProvider(): LlmSettingsContextValue {
+  const api = useApi();
   const { data, isPending, error, refetch } = useSettingsQuery();
   const { mutateAsync } = useUpdateSettingsMutation();
+  const queryClient = useContext(QueryClientContext);
+  const { data: authValueSet = NO_REMOTE_AUTH } = useRemoteAuthStatus();
 
   const llmSettings = data?.llm ?? null;
 
@@ -63,9 +74,25 @@ export function useLlmSettingsProvider(): LlmSettingsContextValue {
     [mutateAsync]
   );
 
+  const saveAuthHeaderValue = useCallback(
+    async (server: RemoteServer, value: string | null): Promise<boolean> => {
+      const result = await api.saveRemoteAuthHeaderValue(server, value);
+      if (!result.ok) {
+        toast.error('Failed to update the authentication header', { message: result.error });
+        return false;
+      }
+      await Promise.all([
+        refetch(),
+        queryClient?.invalidateQueries({ queryKey: REMOTE_AUTH_STATUS_QUERY_KEY }),
+      ]);
+      return true;
+    },
+    [api, refetch, queryClient]
+  );
+
   return useMemo(
-    () => ({ llmSettings, isLoading: isPending, saveLlmUpdates, reload }),
-    [llmSettings, isPending, saveLlmUpdates, reload]
+    () => ({ llmSettings, isLoading: isPending, authValueSet, saveLlmUpdates, saveAuthHeaderValue, reload }),
+    [llmSettings, isPending, authValueSet, saveLlmUpdates, saveAuthHeaderValue, reload]
   );
 }
 

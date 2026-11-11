@@ -2,6 +2,21 @@ use super::*;
 use lattice_core::application::contracts::web::CleanArticle;
 
 #[test]
+fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
+    let base = PathBuf::from("/web-archive");
+    let service = WebArchiveService::with_base_dir(base.clone());
+    assert!(!service.owns(&base.join("a\\..\\..\\x")));
+}
+
+#[cfg(windows)]
+#[test]
+fn owns_refuses_a_dots_only_segment_on_windows() {
+    let base = PathBuf::from("/web-archive");
+    let service = WebArchiveService::with_base_dir(base.clone());
+    assert!(!service.owns(&base.join("...").join("x")));
+}
+
+#[test]
 fn test_extract_domain() {
     assert_eq!(
         WebArchiveService::extract_domain("https://github.com/user/repo").unwrap(),
