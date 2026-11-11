@@ -5,6 +5,7 @@ use crate::practice::kinds::program::checker::ProgramChecker;
 use crate::practice::kinds::program::diff::ProgramDiff;
 use crate::practice::kinds::program::learner_cases::ProgramLearnerCases;
 use crate::practice::kinds::program::parts::ProgramParts;
+use crate::practice::kinds::program::reply::ProgramReply;
 use crate::practice::kinds::program::showing::ProgramShowing;
 use crate::practice::kinds::program::toolchain::Toolchains;
 use crate::practice::kinds::program::truth::ProgramTruth;
@@ -17,6 +18,7 @@ pub mod checker;
 pub mod diff;
 pub mod learner_cases;
 pub mod parts;
+pub mod reply;
 pub mod shape;
 pub mod showing;
 pub mod toolchain;
@@ -25,6 +27,8 @@ pub mod wording;
 
 #[cfg(test)]
 mod observation_tests;
+#[cfg(test)]
+mod policy_tests;
 #[cfg(test)]
 mod proof_tests;
 
@@ -38,6 +42,7 @@ pub fn kind(tools: Arc<dyn Toolchains>) -> Kind {
         spacing: Spacing::Technique,
         misreadings_needed: MIN_KILLED_MISREADINGS,
         wording: Arc::new(ProgramWording),
+        reply_guard: Arc::new(ProgramReply),
         checker: Arc::new(ProgramChecker {
             tools: tools.clone(),
         }),

@@ -33,20 +33,20 @@ use lattice_core::domain::learning::practice::work::{
 use serde_json::json;
 use std::sync::Arc;
 
-fn program_kind() -> Kind {
+pub(super) fn program_kind() -> Kind {
     kind(Arc::new(FakeToolchains::new(FakeRunner::new(|_, _| {
         Behaviour::Fails
     }))))
 }
 
-fn form_of(task: CodingTask) -> Form {
+pub(super) fn form_of(task: CodingTask) -> Form {
     match task {
         CodingTask::Problem => Form::Build,
         CodingTask::BugFix => Form::Repair,
     }
 }
 
-fn setting_of(setting: CodingSetting) -> Setting {
+pub(super) fn setting_of(setting: CodingSetting) -> Setting {
     match setting {
         CodingSetting::Coached => Setting::Coached,
         CodingSetting::Mock => Setting::Mock,
@@ -54,7 +54,7 @@ fn setting_of(setting: CodingSetting) -> Setting {
     }
 }
 
-fn stage_of(stage: CodingStage) -> Stage {
+pub(super) fn stage_of(stage: CodingStage) -> Stage {
     match stage {
         CodingStage::Understand => Stage::Understand,
         CodingStage::Examples => Stage::Examples,
@@ -69,7 +69,7 @@ fn stage_of(stage: CodingStage) -> Stage {
     }
 }
 
-fn scope_of(scope: CodingRunScope) -> CheckScope {
+pub(super) fn scope_of(scope: CodingRunScope) -> CheckScope {
     match scope {
         CodingRunScope::Examples => CheckScope::Shown,
         CodingRunScope::All => CheckScope::All,
@@ -139,7 +139,7 @@ fn case_view_of(view: &CaseViewDto, disclose: bool) -> CaseView {
 
 /// The engine's observation of the session `observe` observes. `disclose` is what the session's views were cut
 /// with.
-fn engine_observation(
+pub(super) fn engine_observation(
     problem: &Problem,
     session: &CodingSessionDto,
     seen: Option<&[LearningLabFile]>,

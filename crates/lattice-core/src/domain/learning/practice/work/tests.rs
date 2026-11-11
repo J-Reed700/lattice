@@ -337,3 +337,67 @@ fn an_exercise_round_trips_through_json() {
     let back: Exercise = serde_json::from_str(&text).unwrap();
     assert_eq!(back, exercise);
 }
+
+#[test]
+fn every_label_is_the_name_the_value_had() {
+    let labels: Vec<(&str, &str)> = vec![
+        (Setting::Coached.label(), "Coached"),
+        (Setting::Mock.label(), "Mock"),
+        (Setting::Watched.label(), "Watched"),
+        (Form::Build.label(), "Build"),
+        (Form::Repair.label(), "Repair"),
+        (Form::Complete.label(), "Complete"),
+        (Form::Arrange.label(), "Arrange"),
+        (Stage::Understand.label(), "Understand"),
+        (Stage::Examples.label(), "Examples"),
+        (Stage::Plan.label(), "Plan"),
+        (Stage::Make.label(), "Make"),
+        (Stage::Check.label(), "Check"),
+        (Stage::Review.label(), "Review"),
+        (Stage::Reproduce.label(), "Reproduce"),
+        (Stage::Locate.label(), "Locate"),
+        (Stage::Fix.label(), "Fix"),
+        (Stage::Verify.label(), "Verify"),
+        (CheckScope::Shown.label(), "Shown"),
+        (CheckScope::All.label(), "All"),
+        (CheckScope::Own.label(), "Own"),
+        (Rung::Nudge.label(), "Nudge"),
+        (Rung::Idea.label(), "Idea"),
+        (Rung::Plan.label(), "Plan"),
+        (Rung::Point.label(), "Point"),
+        (CheckStatus::Pending.label(), "Pending"),
+        (CheckStatus::Running.label(), "Running"),
+        (CheckStatus::Passed.label(), "Passed"),
+        (CheckStatus::Failed.label(), "Failed"),
+        (CheckStatus::TimedOut.label(), "TimedOut"),
+        (CheckStatus::Cancelled.label(), "Cancelled"),
+        (CheckStatus::Interrupted.label(), "Interrupted"),
+        (CheckStatus::Unavailable.label(), "Unavailable"),
+        (CaseStatus::Passed.label(), "Passed"),
+        (CaseStatus::Failed.label(), "Failed"),
+        (CaseStatus::Error.label(), "Error"),
+        (CaseStatus::Ran.label(), "Ran"),
+        (CaseStatus::TimedOut.label(), "TimedOut"),
+        (CaseStatus::NotRun.label(), "NotRun"),
+        (LearnerCaseVerdict::Right.label(), "Right"),
+        (LearnerCaseVerdict::Wrong.label(), "Wrong"),
+        (LearnerCaseVerdict::Invalid.label(), "Invalid"),
+    ];
+    for (label, expected) in labels {
+        assert_eq!(label, expected);
+    }
+}
+
+#[test]
+fn a_label_is_what_debug_printed() {
+    assert_eq!(Setting::Watched.label(), format!("{:?}", Setting::Watched));
+    assert_eq!(Stage::Verify.label(), format!("{:?}", Stage::Verify));
+    assert_eq!(
+        CheckStatus::TimedOut.label(),
+        format!("{:?}", CheckStatus::TimedOut)
+    );
+    assert_eq!(
+        CaseStatus::NotRun.label(),
+        format!("{:?}", CaseStatus::NotRun)
+    );
+}

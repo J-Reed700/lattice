@@ -3,12 +3,13 @@
 //! A case's body is `{"index": i, "expected": "x"}`; it passes when the piece holds that string at that index.
 
 use crate::practice::session::kind::{
-    Checker, Diff, Established, Gaps, Kind, LearnerCases, Order, Parts, Showing, Truth, Wording,
+    Checker, Diff, Established, Gaps, Kind, LearnerCases, Order, Parts, ReplyGuard, Showing, Truth,
+    Wording,
 };
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{
-    Brief, Case, CaseResult, CaseStatus, Change, ChangeKind, CheckReport, Draft, Exercise, KindId,
-    MarkState, PartMark, PartRef, Piece, Spacing,
+    Brief, Case, CaseResult, CaseStatus, Change, ChangeKind, CheckReport, Draft, Exercise, Form,
+    KindId, MarkState, PartMark, PartRef, Piece, Spacing, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
 use serde_json::{json, Value};
@@ -206,6 +207,24 @@ impl Wording for Letters {
     fn card(&self) -> String {
         "Letters".to_owned()
     }
+
+    fn stage_instruction(&self, brief: &Brief, form: Form, stage: Stage) -> String {
+        format!(
+            "Do the {} step of {}.",
+            self.stage_label(brief, form, stage),
+            brief.title
+        )
+    }
+}
+
+impl ReplyGuard for Letters {
+    fn rules(&self, _brief: &Brief) -> String {
+        String::new()
+    }
+
+    fn format(&self) -> String {
+        String::new()
+    }
 }
 
 impl LearnerCases for Letters {
@@ -299,6 +318,7 @@ pub(crate) struct FakeKindBuilder {
     learner_cases: bool,
     needed: usize,
     ambiguous: Option<String>,
+    spacing: Spacing,
 }
 
 /// A fake kind whose reference piece is `reference`. It supports Build and Repair only, needs no misreadings and
@@ -311,10 +331,16 @@ pub(crate) fn fake_kind(reference: &[&str]) -> FakeKindBuilder {
         learner_cases: false,
         needed: 0,
         ambiguous: None,
+        spacing: Spacing::Item,
     }
 }
 
 impl FakeKindBuilder {
+    pub(crate) fn with_spacing(mut self, spacing: Spacing) -> Self {
+        self.spacing = spacing;
+        self
+    }
+
     pub(crate) fn with_gaps(mut self) -> Self {
         self.gaps = true;
         self
@@ -347,9 +373,10 @@ impl FakeKindBuilder {
         });
         Kind {
             id: KindId::new("letters"),
-            spacing: Spacing::Item,
+            spacing: self.spacing,
             misreadings_needed: self.needed,
             wording: roles.clone(),
+            reply_guard: roles.clone(),
             checker: roles.clone(),
             parts: roles.clone(),
             diff: roles.clone(),

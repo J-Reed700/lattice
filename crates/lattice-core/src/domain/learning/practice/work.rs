@@ -373,3 +373,25 @@ pub struct Exercise {
     /// The kind's proof record.
     pub proof: serde_json::Value,
 }
+
+macro_rules! labels {
+    ($($ty:ident),* $(,)?) => {
+        $(impl $ty {
+            /// The name text uses for this value.
+            pub fn label(self) -> &'static str {
+                ""
+            }
+        })*
+    };
+}
+
+labels!(
+    Setting,
+    Form,
+    Stage,
+    CheckScope,
+    Rung,
+    CheckStatus,
+    CaseStatus,
+    LearnerCaseVerdict
+);

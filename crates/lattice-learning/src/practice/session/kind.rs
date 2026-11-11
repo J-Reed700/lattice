@@ -78,6 +78,62 @@ pub trait Wording: Send + Sync {
     fn rung_label(&self, rung: Rung) -> String {
         format!("{rung:?}")
     }
+
+    fn practice_scene(&self) -> String {
+        String::new()
+    }
+
+    fn interview_scene(&self) -> String {
+        String::new()
+    }
+
+    fn task_noun(&self) -> String {
+        String::new()
+    }
+
+    fn piece_noun(&self) -> String {
+        String::new()
+    }
+
+    fn evidence(&self) -> String {
+        String::new()
+    }
+
+    fn refer_rule(&self) -> String {
+        String::new()
+    }
+
+    fn unsolved_rule(&self) -> String {
+        String::new()
+    }
+
+    /// What the kind calls the part of its pieces a reply may quote, when it has one.
+    fn quoted_work(&self) -> Option<String> {
+        None
+    }
+
+    fn checked_verb(&self) -> String {
+        String::new()
+    }
+
+    fn submit_probes(&self) -> String {
+        String::new()
+    }
+
+    fn checkpoint_probes(&self) -> String {
+        String::new()
+    }
+
+    /// The instruction a stage opens with.
+    fn stage_instruction(&self, brief: &Brief, form: Form, stage: Stage) -> String;
+}
+
+/// What a kind adds to a counterpart's reply: the fields that point at the work, and their rules.
+pub trait ReplyGuard: Send + Sync {
+    /// The rules of the kind's reply fields, as sentences of the system prompt. Empty when it has none.
+    fn rules(&self, brief: &Brief) -> String;
+    /// What each of the kind's reply fields holds, as clauses of the format line. Empty when it has none.
+    fn format(&self) -> String;
 }
 
 /// A kind whose learner writes cases of their own.
@@ -129,6 +185,7 @@ pub struct Kind {
     /// The misreadings a proven exercise must kill. Each kind states its reason where it sets it.
     pub misreadings_needed: usize,
     pub wording: Arc<dyn Wording>,
+    pub reply_guard: Arc<dyn ReplyGuard>,
     pub checker: Arc<dyn Checker>,
     pub parts: Arc<dyn Parts>,
     pub diff: Arc<dyn Diff>,

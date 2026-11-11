@@ -2,6 +2,7 @@
 
 pub mod kind;
 pub mod observation;
+pub mod policy;
 pub mod proof;
 
 #[cfg(test)]

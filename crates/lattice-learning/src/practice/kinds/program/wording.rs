@@ -47,4 +47,8 @@ impl Wording for ProgramWording {
             other => format!("{other:?}"),
         }
     }
+
+    fn stage_instruction(&self, _brief: &Brief, _form: Form, _stage: Stage) -> String {
+        String::new()
+    }
 }
