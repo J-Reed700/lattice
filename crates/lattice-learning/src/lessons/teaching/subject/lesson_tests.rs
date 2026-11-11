@@ -62,16 +62,10 @@ fn cited(index: u64, quote: &str) -> Value {
 }
 
 fn quote_checks_of(numbered: &[crate::dto::LearningSourceDto], candidate: &Value) -> Vec<Value> {
-    let _ = numbered;
-    let sources = numbered_references();
-    let references = ReferenceCollection::lexical(&sources).unwrap();
-    LessonSubject::new(&references, &[], Held::default())
+    let references = ReferenceCollection::lexical(&numbered[..1]).unwrap();
+    LessonSubject::new(&references, numbered, &[], Held::default())
         .quote_checks(candidate, &writer_context(), 1)
         .unwrap()
-}
-
-fn numbered_references() -> Vec<crate::dto::LearningSourceDto> {
-    vec![source("written", WRITTEN)]
 }
 
 #[test]
@@ -79,9 +73,9 @@ fn a_quotation_of_a_source_research_numbered_holds_though_the_writer_was_not_giv
     let candidate = cited(1, RESEARCHED);
     assert!(quote_checks_of(&numbered(), &candidate).is_empty());
 
-    let sources = numbered_references();
-    let references = ReferenceCollection::lexical(&sources).unwrap();
-    let subject = LessonSubject::new(&references, &[], Held::default());
+    let numbered = numbered();
+    let references = ReferenceCollection::lexical(&numbered[..1]).unwrap();
+    let subject = LessonSubject::new(&references, &numbered, &[], Held::default());
     let mut settled = candidate.clone();
     subject.settle_quotes(&mut settled, &writer_context(), 1);
     assert_eq!(settled, candidate);

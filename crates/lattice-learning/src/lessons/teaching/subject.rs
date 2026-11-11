@@ -2,7 +2,7 @@
 //! differs between a lesson, a curriculum outline and other material.
 mod closed;
 mod lesson;
-use super::quotes::{reanchor_lesson_quotes, restore_lesson_quotes};
+use super::quotes::{authored, reanchor_quotes_in, restore_quotes_in, Table};
 use super::repair::Repaired;
 use super::standing::Round;
 use super::ReviewSchema;
@@ -313,8 +313,13 @@ fn review_instructions(
 /// Quotations restored to their sources' bytes, and a revised lesson's
 /// re-anchored to the nearest real passage; true when either changed it.
 fn settle_lesson_quotes(candidate: &mut Value, authoring: &Value, attempt: usize) -> bool {
+    authored(authoring).is_some_and(|table| settle_quotes_in(candidate, &table, attempt))
+}
+
+/// `settle_lesson_quotes` against the sources in `table`.
+fn settle_quotes_in(candidate: &mut Value, table: &Table, attempt: usize) -> bool {
     let mut changed = false;
-    let restored = restore_lesson_quotes(candidate, authoring);
+    let restored = restore_quotes_in(candidate, table);
     if restored > 0 {
         crate::lesson_progress::stage("Restoring exact saved-source quotations");
         tracing::info!(
@@ -324,7 +329,7 @@ fn settle_lesson_quotes(candidate: &mut Value, authoring: &Value, attempt: usize
         changed = true;
     }
     if attempt > 0 {
-        let reanchored = reanchor_lesson_quotes(candidate, authoring);
+        let reanchored = reanchor_quotes_in(candidate, table);
         if reanchored > 0 {
             crate::lesson_progress::stage(
                 "Citing the saved passages the revised quotations referred to",

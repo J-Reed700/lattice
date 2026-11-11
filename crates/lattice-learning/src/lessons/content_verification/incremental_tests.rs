@@ -517,7 +517,7 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             crate::teaching::ReviewSchema::Other(&json!({})),
             candidate.clone(),
             3000,
-            &ReferenceCollection::lexical(&sources)?,
+            (&ReferenceCollection::lexical(&sources)?, &[]),
             &[],
         )
         .await?;
@@ -559,7 +559,7 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             crate::teaching::ReviewSchema::Other(&json!({})),
             first.clone(),
             3000,
-            &ReferenceCollection::lexical(&sources)?,
+            (&ReferenceCollection::lexical(&sources)?, &[]),
             &[],
         )
         .await?;
@@ -572,7 +572,7 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             crate::teaching::ReviewSchema::Other(&json!({})),
             first,
             3000,
-            &ReferenceCollection::lexical(&sources)?,
+            (&ReferenceCollection::lexical(&sources)?, &[]),
             &[],
         )
         .await
@@ -584,7 +584,7 @@ async fn teaching_review_survives_added_sources_but_not_changed_content_or_sourc
             crate::teaching::ReviewSchema::Other(&json!({})),
             candidate.replace(GOOD, BAD),
             3000,
-            &ReferenceCollection::lexical(&sources)?,
+            (&ReferenceCollection::lexical(&sources)?, &[]),
             &[],
         )
         .await

@@ -11,6 +11,7 @@
 use super::claim_ledger::ClaimLedger;
 use super::repair_work::rejected;
 use super::*;
+use crate::dto::LearningSourceDto;
 use crate::generation::{parse_json, split_check, teaching_sentences};
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::{LessonShape, ShapePolicy};
@@ -611,7 +612,7 @@ pub(super) enum Settled {
 pub(super) async fn settle(
     llm: &dyn LLMPort,
     (prompt, shape, output_tokens): (&str, LessonShape<'_>, usize),
-    references: &ReferenceCollection<'_>,
+    (references, numbered): (&ReferenceCollection<'_>, &[LearningSourceDto]),
     raw: &str,
     ledger: &mut ClaimLedger,
 ) -> Result<Settled> {
@@ -730,7 +731,7 @@ pub(super) async fn settle(
             shape,
             without_going.to_string(),
             output_tokens,
-            references,
+            (references, numbered),
             &protected,
         ))
         .await?;

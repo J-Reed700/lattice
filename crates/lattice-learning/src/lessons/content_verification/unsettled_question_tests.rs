@@ -107,7 +107,7 @@ async fn a_waiting_question_finding_sends_the_question_out_of_the_lesson() -> Re
         let settled = settle(
             &llm,
             ("{}", loose(), 4_000),
-            &references,
+            (&references, &[]),
             &lesson.to_string(),
             &mut ledger,
         )
@@ -140,7 +140,7 @@ async fn a_floor_failure_with_an_unsettled_question_going_puts_it_back() -> Resu
     let settled = settle(
         &llm,
         ("{}", loose(), 4_000),
-        &references,
+        (&references, &[]),
         &shaped_lesson().to_string(),
         &mut ledger,
     )

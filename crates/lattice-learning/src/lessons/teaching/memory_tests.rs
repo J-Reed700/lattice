@@ -51,7 +51,7 @@ async fn review(
         ReviewSchema::Other(&json!({"type":"object"})),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, &[], Held::default()),
+        &mut LessonSubject::new(&references, sources, &[], Held::default()),
     )
     .await
 }

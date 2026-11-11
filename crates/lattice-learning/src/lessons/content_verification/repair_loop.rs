@@ -251,7 +251,7 @@ impl Review for PreparationReview<'_, '_> {
                 LessonShape::new(&self.schema, self.shape),
                 std::mem::take(&mut self.raw),
                 self.output_tokens,
-                active,
+                (active, &*self.numbered),
                 &protected,
             )
             .await?;
@@ -293,7 +293,7 @@ impl Review for PreparationReview<'_, '_> {
             LessonShape::new(&self.schema, self.shape),
             context,
             self.output_tokens,
-            active,
+            (active, &*self.numbered),
             &mut self.ledger,
         ))
         .await?;
@@ -623,7 +623,7 @@ impl Review for PreparationReview<'_, '_> {
             LessonShape::new(&self.schema, self.shape),
             context,
             self.output_tokens,
-            active,
+            (active, &*self.numbered),
             &mut self.ledger,
         ))
         .await?;
@@ -650,7 +650,7 @@ impl Review for PreparationReview<'_, '_> {
                 LessonShape::new(&self.schema, self.shape),
                 self.output_tokens,
             ),
-            active,
+            (active, &*self.numbered),
             &self.raw,
             &mut self.ledger,
         ))

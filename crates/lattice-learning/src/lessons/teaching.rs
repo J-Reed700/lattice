@@ -372,7 +372,10 @@ pub(crate) async fn review_lesson<'s>(
     review_schema: impl Into<ReviewSchema<'s>>,
     candidate: String,
     output_tokens: usize,
-    references: &crate::reference_collection::ReferenceCollection<'_>,
+    (references, numbered): (
+        &crate::reference_collection::ReferenceCollection<'_>,
+        &[crate::dto::LearningSourceDto],
+    ),
     protected: &[crate::lessons::content_verification::Protected],
 ) -> Result<String> {
     let review_schema = review_schema.into();
@@ -420,7 +423,7 @@ pub(crate) async fn review_lesson<'s>(
         review_schema,
         candidate,
         output_tokens,
-        &mut LessonSubject::new(references, protected, held),
+        &mut LessonSubject::new(references, numbered, protected, held),
     )
     .await?;
     waiting::settle(&json_or_text(&candidate), &set_aside).await?;

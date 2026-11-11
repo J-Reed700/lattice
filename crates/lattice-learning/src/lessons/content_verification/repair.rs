@@ -8,6 +8,7 @@ use super::repair_work::{
     withdraw_resolved,
 };
 use super::*;
+use crate::dto::LearningSourceDto;
 use crate::lessons::copied_wording::Wording;
 use crate::lessons::shape::LessonShape;
 use crate::lessons::text_edits;
@@ -431,7 +432,7 @@ pub(crate) async fn candidate(
     shape: LessonShape<'_>,
     mut context: Value,
     output_tokens: usize,
-    references: &ReferenceCollection<'_>,
+    (references, numbered): (&ReferenceCollection<'_>, &[LearningSourceDto]),
     ledger: &mut ClaimLedger,
 ) -> Result<String> {
     let sent = context_claims(&context);
@@ -469,7 +470,7 @@ pub(crate) async fn candidate(
         shape,
         candidate.to_string(),
         output_tokens,
-        references,
+        (references, numbered),
         &protected,
     ))
     .await

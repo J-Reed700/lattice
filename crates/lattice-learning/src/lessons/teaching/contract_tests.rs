@@ -286,7 +286,7 @@ async fn run_under(
         ReviewSchema::Other(schema),
         candidate.to_string(),
         4000,
-        &mut LessonSubject::new(&references, protected, Held::default()),
+        &mut LessonSubject::new(&references, &sources, protected, Held::default()),
     )
     .await
 }
