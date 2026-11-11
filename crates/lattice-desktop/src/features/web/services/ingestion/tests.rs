@@ -14,7 +14,6 @@ use lattice_core::shared::error::{AppError, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tokenizers::Tokenizer;
 
 struct MockWebArchiveService;
 
@@ -112,16 +111,11 @@ async fn test_ingest_url_with_mock_article() {
     let web_archive = Arc::new(MockWebArchiveService);
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let service = WebIngestionService::new(
         mock_article_extractor,
         web_archive,
         embedding_service,
         index_storage,
-        Arc::new(tokenizer),
     );
 
     // Ingest the URL
@@ -184,16 +178,11 @@ fn test_builder_builds_with_custom_config() {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let service = WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .chunk_size(256)
         .chunk_overlap(32)
         .prefer_sentence_boundaries(false)
@@ -224,16 +213,11 @@ fn test_builder_rejects_invalid_chunk_config() {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let result = WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .chunk_size(64)
         .chunk_overlap(64)
         .build();
@@ -256,16 +240,11 @@ fn test_builder_rejects_empty_ytdlp_binary_when_enabled() {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let result = WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .enable_video_fallback(true)
         .yt_dlp_binary("")
         .build();
@@ -298,16 +277,11 @@ fn test_extraction_strategy_when_video_fallback_disabled() {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let service = WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .enable_video_fallback(false)
         .build()
         .unwrap();
@@ -435,16 +409,11 @@ fn test_builder_rejects_zero_ytdlp_timeout_when_enabled() {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let result = WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .enable_video_fallback(true)
         .yt_dlp_timeout_secs(0)
         .build();
@@ -467,16 +436,11 @@ fn test_builder_rejects_empty_asr_binary_when_enabled() {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let result = WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .enable_asr_fallback(true)
         .asr_binary("")
         .build();
@@ -499,16 +463,11 @@ fn test_builder_rejects_zero_asr_timeout_when_enabled() {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let result = WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .enable_asr_fallback(true)
         .asr_timeout_secs(0)
         .build();
@@ -544,16 +503,11 @@ fn create_test_service() -> WebIngestionService {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .build()
         .unwrap()
 }
@@ -567,16 +521,11 @@ async fn test_non_video_urls_prefer_article_error_when_all_strategies_fail() {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let service = WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .enable_video_fallback(true)
         .yt_dlp_binary("yt-dlp-command-that-does-not-exist")
         .build()
@@ -599,16 +548,11 @@ async fn test_likely_video_urls_prefer_video_error_when_all_strategies_fail() {
     let embedding_service = Arc::new(MockEmbeddingService);
     let index_storage = Arc::new(MockIndexStorage);
 
-    use tokenizers::models::wordpiece::WordPiece;
-    let wp = WordPiece::default();
-    let tokenizer = Tokenizer::new(wp);
-
     let service = WebIngestionService::builder()
         .article_extractor(article_extractor)
         .web_archive(web_archive)
         .embedding_service(embedding_service)
         .index_storage(index_storage)
-        .tokenizer(Arc::new(tokenizer))
         .enable_video_fallback(true)
         .yt_dlp_binary("yt-dlp-command-that-does-not-exist")
         .build()
@@ -623,8 +567,6 @@ async fn test_likely_video_urls_prefer_video_error_when_all_strategies_fail() {
 }
 
 fn service_with_no_article_extractor_and_no_yt_dlp() -> WebIngestionService {
-    use tokenizers::models::wordpiece::WordPiece;
-
     WebIngestionService::builder()
         .article_extractor(Arc::new(MockArticleExtractorService::new_disabled(
             "article extractor unavailable".to_string(),
@@ -632,7 +574,6 @@ fn service_with_no_article_extractor_and_no_yt_dlp() -> WebIngestionService {
         .web_archive(Arc::new(MockWebArchiveService))
         .embedding_service(Arc::new(MockEmbeddingService))
         .index_storage(Arc::new(MockIndexStorage))
-        .tokenizer(Arc::new(Tokenizer::new(WordPiece::default())))
         .enable_video_fallback(true)
         .yt_dlp_binary("yt-dlp-command-that-does-not-exist")
         .build()
@@ -835,13 +776,11 @@ mod article_vectors {
         );
         let storage = Arc::new(RecordingStorage::default());
         let vectors = Arc::new(RecordingVectorSearch::default());
-        use tokenizers::models::wordpiece::WordPiece;
         let service = WebIngestionService::new(
             extractor,
             Arc::new(MockWebArchiveService),
             Arc::new(RecordingEmbeddingService::new(12)),
             storage.clone(),
-            Arc::new(Tokenizer::new(WordPiece::default())),
         )
         .with_vector_search(Some(vectors.clone()));
 

@@ -1,6 +1,5 @@
 //! Web feature dependency injection.
 
-use std::path::Path;
 use std::sync::Arc;
 
 use crate::features::web::services::archive::WebArchiveService;
@@ -15,7 +14,6 @@ use crate::features::web::{
 use crate::interfaces::di::Container;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Database;
-use tokenizers::Tokenizer;
 
 #[derive(Clone)]
 pub struct WebDi {
@@ -28,7 +26,6 @@ pub struct WebDi {
 }
 
 pub fn build(
-    model_dir: &Path,
     embedding: Arc<dyn lattice_core::application::ports::EmbeddingPort>,
     store: Arc<dyn lattice_core::application::ports::IngestedDocumentStorePort>,
     vector_search: Arc<dyn lattice_core::application::ports::VectorSearchPort>,
@@ -43,18 +40,12 @@ pub fn build(
             .map_err(|e| AppError::Other(format!("Failed to create web archive service: {}", e)))?,
     ) as Arc<dyn WebArchiveServiceTrait>;
 
-    let tokenizer = match crate::infrastructure::setup::setup_tokenizer(model_dir) {
-        Some(tokenizer) => tokenizer,
-        None => build_fallback_tokenizer()?,
-    };
-
     let web_ingestion_service = Arc::new(
         WebIngestionService::builder()
             .article_extractor(article_extractor_service.clone())
             .web_archive(web_archive.clone())
             .embedding_service(embedding)
             .index_storage(store)
-            .tokenizer(tokenizer)
             .vector_search(vector_search)
             .query_cache(query_cache)
             .build()?,
@@ -109,43 +100,6 @@ pub fn build_chat_images(
         background,
         sweep_gate,
     )))
-}
-
-/// Minimal BPE tokenizer used when no real tokenizer is available (tests /
-/// first-run before model download). Avoids network fetches and provides
-/// deterministic tokenization.
-fn build_fallback_tokenizer() -> Result<Arc<Tokenizer>> {
-    use std::collections::HashMap;
-    use tokenizers::models::bpe::BPE;
-    use tokenizers::pre_tokenizers::whitespace::Whitespace;
-
-    let mut vocab = HashMap::new();
-    for (id, c) in (b'a'..=b'z')
-        .chain(b'A'..=b'Z')
-        .chain(b'0'..=b'9')
-        .enumerate()
-    {
-        vocab.insert((c as char).to_string(), id as u32);
-    }
-    vocab.insert(" ".to_string(), 62);
-    vocab.insert(".".to_string(), 63);
-    vocab.insert(",".to_string(), 64);
-    vocab.insert("-".to_string(), 65);
-    vocab.insert("[UNK]".to_string(), 66);
-
-    let merges = vec![];
-    let bpe = BPE::builder()
-        .vocab_and_merges(vocab, merges)
-        // This character fallback has no merges to memoize. The default
-        // 10,000-entry BPE cache reserves ~800 KiB before its first use.
-        .cache_capacity(0)
-        .unk_token("[UNK]".to_string())
-        .build()
-        .map_err(|error| AppError::Other(format!("Failed to build fallback tokenizer: {error}")))?;
-
-    let mut tokenizer = Tokenizer::new(bpe);
-    tokenizer.with_pre_tokenizer(Whitespace {});
-    Ok(Arc::new(tokenizer))
 }
 
 /// Web's registrar surface on `Container`.
@@ -231,27 +185,5 @@ impl Container {
     /// startup sweep need more than the port.
     pub fn chat_images_service(&self) -> Arc<crate::features::web::images::ChatImageService> {
         Arc::clone(&self.chat_images)
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn fallback_vocabulary_has_unique_ids_and_preserves_character_tokens() {
-        let tokenizer = build_fallback_tokenizer().unwrap();
-        let vocab = tokenizer.get_vocab(false);
-        let ids: std::collections::HashSet<_> = vocab.values().collect();
-        assert_eq!(
-            ids.len(),
-            vocab.len(),
-            "Reverse token lookup must be unambiguous"
-        );
-        let encoded = tokenizer.encode("aAGgZz09", false).unwrap();
-        assert_eq!(
-            encoded.get_tokens(),
-            &["a", "A", "G", "g", "Z", "z", "0", "9"]
-        );
     }
 }
