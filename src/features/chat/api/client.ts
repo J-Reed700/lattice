@@ -467,21 +467,17 @@ export const chatApi = {
    * Lists message-level bookmarks with optional conversation and text filters.
    */
   listMessageBookmarks: async (
-    query?: ListMessageBookmarksQuery,
+    query: ListMessageBookmarksQuery,
   ): Promise<ApiResult<ListMessageBookmarksResponse>> =>
-    apiCall('list_message_bookmarks', {
-      query: query ?? {},
-    }),
+    apiCall('list_message_bookmarks', { query }),
 
   /**
    * Lists conversations for the explorer with filters and text search.
    */
   listConversationsExplorer: async (
-    query?: ListConversationsExplorerQuery,
+    query: ListConversationsExplorerQuery,
   ): Promise<ApiResult<ListConversationsResponse>> =>
-    apiCall('list_conversations_explorer', {
-      query: query ?? {},
-    }),
+    apiCall('list_conversations_explorer', { query }),
 
   /**
    * Lists conversations included in a journal (additive membership).

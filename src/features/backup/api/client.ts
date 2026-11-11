@@ -60,10 +60,7 @@ export const backupApi = {
    * Off-device backup (encrypted archive).
    *
    * Every path in this group is chosen by a native picker on the Rust side —
-   * the webview neither sends nor receives a folder to write to. The generic
-   * on each `apiCall` is the local DTO type in `types/api/backup.ts` rather
-   * than a `Wire.*` type, because these commands are added to
-   * `lib/bindings.ts` by `npm run bindings:generate` on the Rust side.
+   * the webview neither sends nor receives a folder to write to.
    * ---------------------------------------------------------------- */
 
   /** Current archive configuration, last run, and the archives on disk. */
