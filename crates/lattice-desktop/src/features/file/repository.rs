@@ -80,6 +80,8 @@ impl CitingConversationsRepositoryPort for SqliteCitingConversationsRepository {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::features::file::use_cases::ListCitingConversationsUseCase;
+    use std::sync::Arc;
 
     async fn pool() -> SqlitePool {
         let pool = SqlitePool::connect("sqlite::memory:").await.unwrap();
@@ -183,5 +185,39 @@ mod tests {
         let rows = repo.find_citing_conversations("doc-a", 2).await.unwrap();
         assert_eq!(rows.len(), 2);
         assert_eq!(rows[0].conversation_id, "conv-4");
+    }
+
+    async fn use_case_over(count: usize) -> ListCitingConversationsUseCase {
+        let pool = pool().await;
+        insert_document(&pool, "doc-a").await;
+        for i in 0..count {
+            let id = format!("conv-{i}");
+            insert_conversation(&pool, &id, &id, &format!("2026-01-01T00:{i:02}:00Z")).await;
+            cite(&pool, &id, "doc-a", &format!("chunk-{i}")).await;
+        }
+        ListCitingConversationsUseCase::new(Arc::new(SqliteCitingConversationsRepository::new(
+            pool,
+        )))
+    }
+
+    #[tokio::test]
+    async fn no_limit_lists_every_citing_conversation() {
+        let use_case = use_case_over(11).await;
+        let rows = use_case.execute("doc-a".into(), None).await.unwrap();
+        assert_eq!(rows.len(), 11);
+    }
+
+    #[tokio::test]
+    async fn a_limit_above_fifty_is_honoured() {
+        let use_case = use_case_over(60).await;
+        let rows = use_case.execute("doc-a".into(), Some(60)).await.unwrap();
+        assert_eq!(rows.len(), 60);
+    }
+
+    #[tokio::test]
+    async fn a_limit_of_zero_is_refused() {
+        let use_case = use_case_over(3).await;
+        let refused = use_case.execute("doc-a".into(), Some(0)).await;
+        assert!(matches!(refused, Err(AppError::InvalidInput(_))));
     }
 }

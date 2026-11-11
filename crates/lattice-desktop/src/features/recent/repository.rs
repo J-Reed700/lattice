@@ -323,6 +323,19 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_limit_above_one_hundred_is_honoured() {
+        let pool = create_test_pool().await;
+        setup_schema(&pool).await;
+        sqlx::raw_sql("WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<150)
+            INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, checksum) SELECT 'old-'||x, '/test/old-'||x, 'old', 0, '2020-01-01T00:00:00Z', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa' FROM n;
+            INSERT INTO recent_documents (id, document_id, last_accessed_at, access_count)
+                SELECT id, id, '2020-01-01', 1 FROM documents WHERE id LIKE 'old-%';")
+            .execute(&pool).await.unwrap();
+        let repo = RecentDocumentsRepository::new(pool);
+        assert_eq!(repo.get_recent_documents(150).await.unwrap().len(), 150);
+    }
+
+    #[tokio::test]
     async fn test_clear_recent_history_all() {
         let pool = create_test_pool().await;
         setup_schema(&pool).await;

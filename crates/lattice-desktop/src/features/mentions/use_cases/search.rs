@@ -102,12 +102,13 @@ mod tests {
         async fn search_mentions(
             &self,
             query: &str,
-            _limit: i64,
+            limit: i64,
         ) -> Result<Vec<MentionData>, AppError> {
             let mentions = self.mentions.lock().unwrap();
             let results: Vec<MentionData> = mentions
                 .iter()
                 .filter(|m| m.name.to_lowercase().contains(&query.to_lowercase()))
+                .take(usize::try_from(limit).unwrap_or(0))
                 .cloned()
                 .collect();
             Ok(results)
@@ -197,5 +198,50 @@ mod tests {
         let result = use_case.execute("Nobody".to_string(), None).await.unwrap();
 
         assert!(result.mentions.is_empty());
+    }
+
+    fn numbered_mentions(count: usize) -> Vec<MentionData> {
+        (0..count)
+            .map(|n| MentionData {
+                id: n.to_string(),
+                name: format!("Topic {n}"),
+                mention_type: "topic".to_string(),
+                metadata: None,
+                created_at: "2024-01-01T00:00:00Z".to_string(),
+            })
+            .collect()
+    }
+
+    #[tokio::test]
+    async fn no_limit_returns_every_match() {
+        let repository = Arc::new(MockMentionRepository::with_mentions(numbered_mentions(150)));
+        let use_case = SearchMentionsUseCase::new(repository, Arc::new(MentionMapper::new()));
+
+        let result = use_case.execute("Topic".to_string(), None).await.unwrap();
+
+        assert_eq!(result.mentions.len(), 150);
+    }
+
+    #[tokio::test]
+    async fn a_limit_returns_at_most_that_many() {
+        let repository = Arc::new(MockMentionRepository::with_mentions(numbered_mentions(150)));
+        let use_case = SearchMentionsUseCase::new(repository, Arc::new(MentionMapper::new()));
+
+        let result = use_case
+            .execute("Topic".to_string(), Some(120))
+            .await
+            .unwrap();
+
+        assert_eq!(result.mentions.len(), 120);
+    }
+
+    #[tokio::test]
+    async fn a_limit_of_zero_is_refused() {
+        let repository = Arc::new(MockMentionRepository::with_mentions(numbered_mentions(3)));
+        let use_case = SearchMentionsUseCase::new(repository, Arc::new(MentionMapper::new()));
+
+        let refused = use_case.execute("Topic".to_string(), Some(0)).await;
+
+        assert!(matches!(refused, Err(AppError::InvalidInput(_))));
     }
 }

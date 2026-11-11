@@ -1280,3 +1280,45 @@ async fn a_running_import_can_be_neither_retried_nor_deleted() -> anyhow::Result
     assert_eq!(harness.count("SELECT count(*) FROM documents").await?, 1);
     Ok(())
 }
+
+/// Saves `count` imports with no items, after stopping the runtime so no
+/// worker picks them up.
+async fn save_imports(harness: &ImportHarness, count: usize) -> anyhow::Result<()> {
+    harness.jobs.close();
+    harness.jobs.drain().await;
+    let store = JobStore::new(harness.db.database().clone());
+    for n in 0..count {
+        store
+            .submit(&NewJob {
+                kind: FILE_IMPORT.into(),
+                subject_id: None,
+                operation_id: format!("import-{n}"),
+                payload_hash: format!("import-{n}"),
+                requested: serde_json::json!({}),
+                progress_total: 1,
+                message: "Queued".into(),
+            })
+            .await?;
+    }
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_history_without_a_limit_lists_every_import() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let harness = ImportHarness::new(dir.path()).await?;
+    save_imports(&harness, 101).await?;
+    assert_eq!(harness.imports.list(None, None).await?.len(), 101);
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_history_gives_the_limit_the_caller_asked_for() -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let harness = ImportHarness::new(dir.path()).await?;
+    save_imports(&harness, 150).await?;
+    assert_eq!(harness.imports.list(Some(150), None).await?.len(), 150);
+    assert_eq!(harness.imports.list(Some(20), Some(140)).await?.len(), 10);
+    assert_eq!(harness.imports.list(Some(7), None).await?.len(), 7);
+    Ok(())
+}

@@ -211,6 +211,30 @@ mod tests {
     }
 
     #[test]
+    fn no_limit_reads_every_line_the_files_hold() {
+        let dir = tempfile::tempdir().unwrap();
+        write_lines(
+            &dir.path().join("lattice.log.2026-10-14"),
+            (0..301).map(|n| format!("line {n}")),
+        );
+
+        let entries = read_recent(dir.path(), None);
+        assert_eq!(entries.len(), 301);
+        assert_eq!(entries.first().map(|e| e.message.as_str()), Some("line 0"));
+    }
+
+    #[test]
+    fn a_limit_above_one_thousand_is_honoured() {
+        let dir = tempfile::tempdir().unwrap();
+        write_lines(
+            &dir.path().join("lattice.log.2026-10-14"),
+            (0..1500).map(|n| format!("line {n}")),
+        );
+
+        assert_eq!(read_recent(dir.path(), Some(1500)).len(), 1500);
+    }
+
+    #[test]
     fn the_size_cap_reads_only_whole_lines_from_the_end() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("lattice.log.2026-10-14");

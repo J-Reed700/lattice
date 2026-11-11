@@ -295,4 +295,21 @@ mod tests {
         assert_eq!(activities[2].status, "pending");
         assert_eq!(activities[2].timestamp, "");
     }
+
+    #[tokio::test]
+    async fn an_activity_limit_above_ten_thousand_is_honoured() {
+        let (pool, repo) = fixture().await;
+        sqlx::raw_sql(
+            "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<10001)
+             INSERT INTO documents (id, file_path, file_name, size_bytes, modified_at, indexed_at, checksum, status)
+             SELECT 'bulk-'||x, '/bulk/'||x, 'bulk', 1, '2026-01-01', '2026-01-01', 'checksum', 'indexed' FROM n",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            repo.indexing_activities(10_001).await.unwrap().len(),
+            10_001
+        );
+    }
 }
