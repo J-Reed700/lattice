@@ -99,7 +99,6 @@ fn decode_raw(bytes: &[u8]) -> Result<Vec<f32>> {
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
 

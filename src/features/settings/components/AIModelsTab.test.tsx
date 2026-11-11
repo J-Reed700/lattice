@@ -52,7 +52,7 @@ describe('Downloaded model chat selection', () => {
     settings.llm.provider = 'local';
     settings.llm.llamaCpp = {
       url: 'https://llama.example.com', model: 'remote-model.gguf',
-      authHeaderName: 'Authorization', authHeaderValue: 'Bearer test-credential',
+      authHeaderName: 'Authorization',
     };
     models = [{
       id: 'local-1', model_id: 'local-model', model_name: 'Local model',

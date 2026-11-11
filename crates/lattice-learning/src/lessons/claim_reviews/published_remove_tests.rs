@@ -1,9 +1,3 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 //! What a section reads like once a sentence is taken out of it.
 use super::published_remove::{removal_text, without_sentence};
 

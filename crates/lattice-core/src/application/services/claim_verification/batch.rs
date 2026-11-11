@@ -187,7 +187,6 @@ impl ClaimChecker<'_> {
 
 #[cfg(test)]
 mod tests {
-    #![allow(clippy::unwrap_used, clippy::indexing_slicing)]
     use super::*;
 
     fn targets() -> Vec<LocatedClaim> {

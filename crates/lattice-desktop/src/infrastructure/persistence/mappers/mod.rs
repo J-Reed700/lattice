@@ -23,7 +23,6 @@
 
 pub mod chunk_mapper;
 pub mod document_mapper;
-// TODO: Add mention_mapper when mention entity structure is finalized
 
 pub use chunk_mapper::ChunkMapper;
 pub use document_mapper::DocumentMapper;

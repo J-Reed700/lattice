@@ -190,8 +190,8 @@ mod shutdown_tests {
     }
 
     #[tokio::test]
-    async fn test_forced_cleanup_fallback() {
-        // Simulate scenario where forced cleanup is needed
+    async fn close_times_out_while_a_transaction_holds_a_connection() {
+        // Closing the pool waits on a connection held by an open transaction
         let pool = SqlitePoolOptions::new()
             .max_connections(2)
             .connect("sqlite::memory:")

@@ -56,10 +56,7 @@ async fn live_topic_course_passes_review_and_prepares_its_first_lesson() -> Resu
     let _ = tracing_subscriber::fmt()
         .with_env_filter("lattice::features::learning=info")
         .try_init();
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(
-        std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap(),
-    )?)?;
-    let config = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
     let request: GenerateLearningProgramRequestDto = serde_json::from_slice(&std::fs::read(
         std::env::var("LATTICE_COURSE_REQUEST").unwrap(),
     )?)?;

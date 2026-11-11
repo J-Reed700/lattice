@@ -1,9 +1,3 @@
-#![allow(
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::indexing_slicing,
-    clippy::panic
-)]
 //! In a published lesson the user puts back a sentence the machine took out
 //! (where it stood, in their own words, or at the end of a section they
 //! choose), restores the original of a rewrite, and undoes each; the text,

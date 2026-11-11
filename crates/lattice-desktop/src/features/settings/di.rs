@@ -8,7 +8,7 @@ use crate::features::settings::use_cases::{
     UpdateSettingsUseCase, ValidateSettingsUseCase,
 };
 use crate::interfaces::di::Container;
-use lattice_core::application::ports::SettingsRepositoryPort;
+use lattice_core::application::ports::{CredentialsPort, SettingsRepositoryPort};
 use lattice_core::shared::error::Result;
 use std::path::Path;
 
@@ -23,9 +23,13 @@ pub struct SettingsDi {
     pub validate_settings_use_case: Arc<ValidateSettingsUseCase>,
 }
 
-pub async fn build(settings_path: &Path) -> Result<SettingsDi> {
-    let settings_repo = Arc::new(SettingsRepository::new(settings_path.to_path_buf()).await?)
-        as Arc<dyn SettingsRepositoryPort>;
+pub async fn build(
+    settings_path: &Path,
+    credentials: Arc<dyn CredentialsPort>,
+) -> Result<SettingsDi> {
+    let settings_repo = Arc::new(
+        SettingsRepository::with_credentials(settings_path.to_path_buf(), credentials).await?,
+    ) as Arc<dyn SettingsRepositoryPort>;
 
     Ok(SettingsDi {
         get_settings_use_case: Arc::new(GetSettingsUseCase::new(settings_repo.clone())),

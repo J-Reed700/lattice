@@ -1,4 +1,3 @@
-#![allow(clippy::unwrap_used, clippy::expect_used)]
 //! Holding a lesson for review after an audit sends the review back to Needs
 //! review and nothing else: a draft written while the hold waits for the
 //! write lock is kept.

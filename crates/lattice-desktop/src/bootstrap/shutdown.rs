@@ -20,6 +20,7 @@ const JOBS_DRAIN_TIMEOUT: Duration = Duration::from_secs(5);
 pub struct SidecarSweep(pub fn(&tauri::AppHandle) -> Option<usize>);
 
 pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
+    let started = std::time::Instant::now();
     tracing::info!("Exit requested, starting graceful shutdown");
 
     // Close background admission and broadcast cancellation before sweeping
@@ -55,8 +56,6 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
 
     tauri::async_runtime::block_on(async {
         let shutdown_future = async {
-            let mut cleanup_results = Vec::new();
-
             if let Some(tasks) = app_handle
                 .try_state::<std::sync::Arc<lattice_core::shared::runtime::background::BackgroundTasks>>()
             {
@@ -120,29 +119,13 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
                 );
 
                 match tokio::time::timeout(DB_CLOSE_TIMEOUT, database.close()).await {
-                    Ok(_) => {
-                        tracing::info!("Database connections closed successfully");
-                        cleanup_results.push("database: ok");
-                    }
-                    Err(_) => {
-                        tracing::warn!(
-                            timeout_secs = DB_CLOSE_TIMEOUT.as_secs(),
-                            connection_count,
-                            "Database close timed out, will attempt forced cleanup"
-                        );
-                        cleanup_results.push("database: timeout");
-
-                        // Attempt forced cleanup (best-effort)
-                        tracing::info!("Attempting forced database cleanup");
-                        // The pool will be dropped anyway, but log the attempt
-                        cleanup_results.push("database: forced_cleanup_attempted");
-                    }
+                    Ok(_) => tracing::info!("Database connections closed successfully"),
+                    Err(_) => tracing::warn!(
+                        timeout_secs = DB_CLOSE_TIMEOUT.as_secs(),
+                        connection_count,
+                        "Database close timed out; the connections close when the process exits"
+                    ),
                 }
-
-                tracing::info!(
-                    cleanup_summary = ?cleanup_results,
-                    "Shutdown cleanup summary"
-                );
             } else {
                 tracing::warn!("Container not available during shutdown");
             }
@@ -151,7 +134,7 @@ pub fn graceful_shutdown(app_handle: &tauri::AppHandle) {
         match tokio::time::timeout(TOTAL_SHUTDOWN_TIMEOUT, shutdown_future).await {
             Ok(_) => {
                 tracing::info!(
-                    duration_secs = TOTAL_SHUTDOWN_TIMEOUT.as_secs(),
+                    duration_ms = started.elapsed().as_millis(),
                     "Graceful shutdown completed successfully"
                 );
             }

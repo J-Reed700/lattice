@@ -1,121 +1,4 @@
-const SUPPORTED_EXTENSIONS = new Set<string>([
-  // Documents
-  'txt',
-  'md',
-  'markdown',
-  'pdf',
-  'docx',
-  'rtf',
-  'odt',
-  'xlsx',
-  'pptx',
-  // Code - Rust
-  'rs',
-  'toml',
-  // Code - Web
-  'js',
-  'mjs',
-  'cjs',
-  'ts',
-  'tsx',
-  'jsx',
-  'html',
-  'htm',
-  'css',
-  'scss',
-  'sass',
-  'less',
-  // Code - Python
-  'py',
-  'pyw',
-  'pyi',
-  // Code - Systems
-  'c',
-  'h',
-  'cpp',
-  'cxx',
-  'cc',
-  'hpp',
-  'hxx',
-  'hh',
-  'go',
-  // Code - JVM
-  'java',
-  'kt',
-  'kts',
-  'scala',
-  'clj',
-  'cljs',
-  'cljc',
-  // Code - Other
-  'rb',
-  'rake',
-  'php',
-  'swift',
-  'r',
-  'm',
-  'ex',
-  'exs',
-  'erl',
-  'hrl',
-  // Shell scripts
-  'sh',
-  'bash',
-  'zsh',
-  'fish',
-  'ps1',
-  'psm1',
-  'bat',
-  'cmd',
-  // Config/Data formats
-  'json',
-  'xml',
-  'yaml',
-  'yml',
-  'ini',
-  'conf',
-  'config',
-  // Database
-  'sql',
-  'graphql',
-  'gql',
-  // Data files
-  'csv',
-  'tsv',
-  // Audio
-  'mp3',
-  'wav',
-  'ogg',
-  'flac',
-  'aac',
-  'm4a',
-  'wma',
-]);
-
-const BLOCKED_EXTENSIONS = new Set<string>([
-  'exe',
-  'dll',
-  'dylib',
-  'so',
-  'bin',
-  'msi',
-  'app',
-  'apk',
-  'deb',
-  'rpm',
-  'pkg',
-  'dmg',
-  'iso',
-  // Archives
-  'zip',
-  'rar',
-  '7z',
-  'tar',
-  'gz',
-  'bz2',
-  'xz',
-  'tgz',
-]);
+import { formatOfExtension, INDEXABLE_EXTENSIONS, isIndexableFormat } from './fileTypeCatalogue';
 
 export type ValidationResult =
   | { ok: true; extension: string }
@@ -135,14 +18,15 @@ export function validateIndexablePath(path: string): ValidationResult {
   if (!extension) {
     return { ok: false, reason: 'Missing file extension' };
   }
-  if (BLOCKED_EXTENSIONS.has(extension)) {
+  const format = formatOfExtension(extension);
+  if (format?.category === 'archive' || format?.category === 'binary') {
     return {
       ok: false,
       reason: 'Executables and archives are not supported',
       extension,
     };
   }
-  if (!SUPPORTED_EXTENSIONS.has(extension)) {
+  if (!isIndexableFormat(format)) {
     return { ok: false, reason: 'Unsupported file type', extension };
   }
   return { ok: true, extension };
@@ -171,4 +55,4 @@ export function filterIndexablePaths(paths: string[]): {
   return { accepted, rejected };
 }
 
-export const SUPPORTED_EXTENSIONS_LIST = Array.from(SUPPORTED_EXTENSIONS.values());
+export const SUPPORTED_EXTENSIONS_LIST = [...INDEXABLE_EXTENSIONS];

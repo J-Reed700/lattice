@@ -22,15 +22,6 @@ export const huggingfaceApi = {
     apiCall('get_huggingface_token_status'),
 
   /**
-   * Gets the actual HuggingFace token value.
-   * Should only be used internally for download authentication.
-   *
-   * @returns Token string or null if not set
-   */
-  getHuggingFaceToken: async (): Promise<ApiResult<string | null>> =>
-    apiCall('get_huggingface_token'),
-
-  /**
    * Deletes the stored HuggingFace token from OS keyring.
    *
    * @returns Void on success
