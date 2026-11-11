@@ -231,6 +231,12 @@ impl Roles {
                 )
             }),
             Some(wording.refer_rule()),
+            sentence(&wording.check_noun(), |check| {
+                sentence(&wording.piece_noun(), |piece| {
+                    format!("When a {check} fails, say what it shows and leave the cause to the learner: never say or hint which part of their {piece} causes it, or why; that is what hints are for, when they ask.")
+                })
+                .unwrap_or_default()
+            }),
             sentence(&wording.unsolved_rule(), |rule| {
                 format!("Do not show a complete solution: {rule}.")
             }),
@@ -249,17 +255,23 @@ impl Roles {
         }
     }
 
+    fn relay(&self, state: &Observation, stage: Stage) -> String {
+        format!(
+            "The stage asks the learner: \"{}\" That is the learner's work: do none of it for them.",
+            self.wording.stage_instruction(&state.brief, self.form, stage)
+        )
+    }
+
     fn instruction(&self, setting: Setting, cue: &Cue, state: &Observation) -> String {
         let wording = &self.wording;
         let coached = setting == Setting::Coached;
-        let stage_line = |stage: Stage| wording.stage_instruction(&state.brief, self.form, stage);
         let stage_label = |stage: Stage| wording.stage_label(&state.brief, self.form, stage);
         let noun = wording.check_noun();
         match cue {
             Cue::Opening if coached => format!(
-                "Open the session: greet the learner in a sentence, then give the instruction of the {} stage in your own words: {}",
+                "Open the session: greet the learner in a sentence, then tell them in your own words what the {} stage asks of them. {}",
                 stage_label(state.stage),
-                stage_line(state.stage)
+                self.relay(state, state.stage)
             ),
             Cue::Opening => format!(
                 "Open the interview: introduce yourself in a sentence, say the {} is on screen, and ask the candidate to read it and say what they would like to clarify.",
@@ -267,9 +279,9 @@ impl Roles {
             ),
             Cue::Reply => "Answer the learner's last message in the transcript.".to_owned(),
             Cue::StageOpened(stage) => format!(
-                "The learner has moved to the {} stage. Open it with its instruction, in your own words: {}",
+                "The learner has moved to the {} stage. Tell them in your own words what it asks of them. {}",
                 stage_label(*stage),
-                stage_line(*stage)
+                self.relay(state, *stage)
             ),
             Cue::AskForSkipped(stages) => format!(
                 "The candidate skipped {}. As an interviewer would, ask for it in one question: what they would have done there.",
@@ -280,7 +292,7 @@ impl Roles {
                     .join(" and ")
             ),
             Cue::CheckReview(scope) => format!(
-                "The learner {} {}. Read the last {noun}. Say what it shows, point at what to look at without fixing it, and ask what they make of it.",
+                "The learner {} {}. Read the last {noun}. Say what it shows, and ask what they make of it.",
                 wording.checked_verb(),
                 wording.scope_label(*scope)
             ),
