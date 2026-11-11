@@ -105,6 +105,8 @@ describe('useWeeklySynthesisCandidatesQuery', () => {
       notes: 20,
       total: 100,
     });
+    expect(listConversations).toHaveBeenCalledWith();
+    expect(listPassageReferences).toHaveBeenCalledWith();
   });
 
   it('counts a failing call as nothing rather than failing the row', async () => {
