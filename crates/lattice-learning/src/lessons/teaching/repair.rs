@@ -140,7 +140,11 @@ pub(super) fn apply(
     }
 }
 
-const REPAIR_POLICY: &str = "teaching-repair-v1";
+const REPAIR_POLICY: &str = "teaching-repair-v2";
+
+/// What text a repair adds or changes is held to, beyond the finding it is for.
+const KEPT_TO_THE_CONTRACT: &str =
+    "Added or changed text uses a term, or asks the learner to do or use something, only where the lesson has taught it by that point; otherwise it says there what the term means or how to do it. It never says again what the sentence before or after it already says.";
 
 /// One way of asking for a repair: what it sends, and what it makes of the answer.
 trait Form: Sync {
@@ -167,7 +171,7 @@ fn parts(request: &Request<'_>, requirements: Value) -> [(&'static str, Value); 
 
 impl Form for Edits {
     fn system(&self, request: &Request<'_>) -> String {
-        format!("You are editing a rejected draft. Correct only the established teaching defects. issuesToFix lists them, one entry each: its id, the part it is about (the path of a block or question; null when it is about the material as a whole), a second part when it is about two (also), the words it is about when it names any (passage), what to correct (note), and what became of the last repair's attempt at it (lastAttempt; null on a first attempt). Each edit, citation and uncite names in finding the id of the entry it is for, and changes only that entry's part or its also part; one for an entry whose part is null may change any part. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. Add it after a sentence whose thought is complete, so that no sentence is parted from the one it continues. The learner sees only the lesson: added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. {}", text_edits::instructions(request.schema))
+        format!("You are editing a rejected draft. Correct only the established teaching defects. issuesToFix lists them, one entry each: its id, the part it is about (the path of a block or question; null when it is about the material as a whole), a second part when it is about two (also), the words it is about when it names any (passage), what to correct (note), and what became of the last repair's attempt at it (lastAttempt; null on a first attempt). Each edit, citation and uncite names in finding the id of the entry it is for, and changes only that entry's part or its also part; one for an entry whose part is null may change any part. A defect that something is not taught is corrected by adding it: before is an existing sentence beside the place, after is that sentence followed by the added text. Add it after a sentence whose thought is complete, so that no sentence is parted from the one it continues. The learner sees only the lesson: added or changed text teaches in the lesson's own words and never mentions the course plan, the review, the sources' excerpts or these instructions. {KEPT_TO_THE_CONTRACT} {}", text_edits::instructions(request.schema))
     }
 
     fn schema(&self, request: &Request<'_>) -> Value {
@@ -211,7 +215,7 @@ impl Form for Rewrite {
         [("task", json!("Repair the teaching material"))]
             .into_iter()
             .chain(parts(request, requirements))
-            .chain([("instruction", json!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review, the course plan or the sources' excerpts in the learner-facing material."))])
+            .chain([("instruction", json!(format!("Give the complete corrected material. Change every defective passage, exercise, key or explanation identified above. An unchanged draft is not a repair. Preserve valid content. Do not mention this internal review, the course plan or the sources' excerpts in the learner-facing material. {KEPT_TO_THE_CONTRACT}")))])
             .map(|(key, value)| (key.to_owned(), value))
             .collect()
     }
