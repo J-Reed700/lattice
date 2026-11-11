@@ -93,8 +93,8 @@ impl Debriefer for NoDebrief {
     }
 }
 
-/// The kinds of work the app registers, running programs on the built-in runtimes.
-fn kinds_of(runtimes: &BuiltinRuntimes) -> CoreResult<Kinds> {
+/// The kinds of work the app registers, running programs on the built-in runtimes. Built once, at plugin setup.
+pub(crate) fn kinds_of(runtimes: &BuiltinRuntimes) -> CoreResult<Kinds> {
     Kinds::new([lattice_learning::practice::kinds::program::kind(Arc::new(
         BuiltinToolchains::new(runtimes.clone()),
     ))])
@@ -148,15 +148,14 @@ async fn runner_of(
 
 /// Binds `$sessions` to the session services around `$aids` and `$debriefer`.
 macro_rules! sessions {
-    ($sessions:ident, $container:expr, $runtimes:expr, $repo:expr, $aids:expr, $own:expr, $debriefer:expr) => {
-        let kinds = kinds_of(&$runtimes).map_err(ApiError::from)?;
+    ($sessions:ident, $container:expr, $runtimes:expr, $kinds:expr, $repo:expr, $aids:expr, $own:expr, $debriefer:expr) => {
         let runs = DesktopRuns {
             container: &$container,
             runtimes: &$runtimes,
         };
         let $sessions = CodingSessions {
             repo: &$repo,
-            kinds: &kinds,
+            kinds: &$kinds,
             aids: $aids,
             own: $own,
             runs: &runs,
@@ -168,14 +167,14 @@ macro_rules! sessions {
 
 /// Binds `$sessions` for a command that never reaches the model or the runner.
 macro_rules! plain_sessions {
-    ($sessions:ident, $container:expr, $runtimes:expr, $repo:expr) => {
-        sessions!($sessions, $container, $runtimes, $repo, &NoAids, &NoAids, &NoDebrief);
+    ($sessions:ident, $container:expr, $runtimes:expr, $kinds:expr, $repo:expr) => {
+        sessions!($sessions, $container, $runtimes, $kinds, $repo, &NoAids, &NoAids, &NoDebrief);
     };
 }
 
 /// Binds `$sessions` and the aids for a command that asks the model and runs code.
 macro_rules! live_sessions {
-    ($sessions:ident, $request:expr, $container:expr, $runtimes:expr, $repo:expr, $debriefer:expr) => {
+    ($sessions:ident, $request:expr, $container:expr, $runtimes:expr, $kinds:expr, $repo:expr, $debriefer:expr) => {
         let runner = runner_of(
             &$repo,
             &$request.program_id,
@@ -195,7 +194,7 @@ macro_rules! live_sessions {
             runner: runner.as_ref(),
             cancel: $container.core.background().token(),
         };
-        sessions!($sessions, $container, $runtimes, $repo, &aids, &own, $debriefer);
+        sessions!($sessions, $container, $runtimes, $kinds, $repo, &aids, &own, $debriefer);
     };
 }
 
@@ -236,9 +235,10 @@ pub async fn start_coding_session(
     request: StartCodingSessionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.start(&request).await.map_err(ApiError::from)
 }
 
@@ -248,9 +248,10 @@ pub async fn get_coding_session(
     request: CodingSessionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.get(&request).await.map_err(ApiError::from)
 }
 
@@ -260,9 +261,10 @@ pub async fn list_coding_sessions(
     request: ListCodingSessionsRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<Vec<CodingSessionSummaryDto>, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.list(&request).await.map_err(ApiError::from)
 }
 
@@ -272,9 +274,10 @@ pub async fn move_coding_stage(
     request: MoveCodingStageRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.move_stage(&request).await.map_err(ApiError::from)
 }
 
@@ -284,9 +287,10 @@ pub async fn check_coding_example(
     request: CheckCodingExampleRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    live_sessions!(sessions, request, container, runtimes, repo, &NoDebrief);
+    live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
     sessions
         .check_example(&request)
         .await
@@ -299,9 +303,10 @@ pub async fn remove_coding_example(
     request: RemoveCodingExampleRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions
         .remove_example(&request)
         .await
@@ -314,9 +319,10 @@ pub async fn run_coding_session(
     request: RunCodingSessionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    live_sessions!(sessions, request, container, runtimes, repo, &NoDebrief);
+    live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
     sessions.run(&request).await.map_err(ApiError::from)
 }
 
@@ -326,9 +332,10 @@ pub async fn ask_coding_hint(
     request: AskCodingHintRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    live_sessions!(sessions, request, container, runtimes, repo, &NoDebrief);
+    live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
     sessions.ask_hint(&request).await.map_err(ApiError::from)
 }
 
@@ -338,9 +345,10 @@ pub async fn send_coding_turn(
     request: SendCodingTurnRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.send_turn(&request).await.map_err(ApiError::from)
 }
 
@@ -350,9 +358,10 @@ pub async fn respond_coding_session(
     request: CodingSessionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    live_sessions!(sessions, request, container, runtimes, repo, &NoDebrief);
+    live_sessions!(sessions, request, container, runtimes, kinds, repo, &NoDebrief);
     sessions.respond(&request).await.map_err(ApiError::from)
 }
 
@@ -362,9 +371,10 @@ pub async fn observe_coding_draft(
     request: ObserveCodingDraftRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions
         .observe_draft(&request)
         .await
@@ -377,9 +387,10 @@ pub async fn set_coding_clock(
     request: SetCodingClockRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<ClockDto, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.set_clock(&request).await.map_err(ApiError::from)
 }
 
@@ -389,9 +400,10 @@ pub async fn set_coding_setting(
     request: SetCodingSettingRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions.set_setting(&request).await.map_err(ApiError::from)
 }
 
@@ -401,9 +413,10 @@ pub async fn reveal_coding_solution(
     request: RevealCodingSolutionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions
         .reveal_solution(&request)
         .await
@@ -416,6 +429,7 @@ pub async fn finish_coding_session(
     request: FinishCodingSessionRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<CodingSessionDto, ApiError> {
     let repo = repo_of(&container);
     let runner = runner_of(&repo, &request.program_id, &request.session_id, &runtimes).await?;
@@ -434,7 +448,7 @@ pub async fn finish_coding_session(
     let debriefer = LiveDebriefer {
         llm: pin.llm.as_ref(),
     };
-    sessions!(sessions, container, runtimes, repo, &aids, &own, &debriefer);
+    sessions!(sessions, container, runtimes, kinds, repo, &aids, &own, &debriefer);
     sessions.finish(&request).await.map_err(ApiError::from)
 }
 
@@ -444,6 +458,7 @@ pub async fn practice_due(
     request: PracticeDueRequestDto,
     container: State<'_, Container>,
     runtimes: State<'_, BuiltinRuntimes>,
+    kinds: State<'_, Kinds>,
 ) -> Result<PracticeDueDto, ApiError> {
     let code_fits = crate::features::learning::practice_fit::code_fits(
         &super::practice::practice_repo(&container),
@@ -452,7 +467,7 @@ pub async fn practice_due(
     .await
     .map_err(ApiError::from)?;
     let repo = repo_of(&container);
-    plain_sessions!(sessions, container, runtimes, repo);
+    plain_sessions!(sessions, container, runtimes, kinds, repo);
     sessions
         .due(&request, code_fits)
         .await

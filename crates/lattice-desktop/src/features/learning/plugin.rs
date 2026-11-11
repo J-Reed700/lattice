@@ -151,6 +151,10 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // practical commands and lesson verification share its guest slots.
             let runtimes = BuiltinRuntimes::new(bundled_python(app));
             app.manage(runtimes.clone());
+            app.manage(
+                coding::kinds_of(&runtimes)
+                    .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?,
+            );
             // Registration settles the jobs the last process left running,
             // then starts delivering saved work. A kind that fails to register
             // is retried in the background and never fails setup.
