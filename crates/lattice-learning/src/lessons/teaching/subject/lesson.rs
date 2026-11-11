@@ -6,7 +6,7 @@ use super::super::repair::{self, Repaired};
 use super::super::standing::Standing;
 use super::super::{
     holds_up_review, quotation_findings, structural_findings, whole_repairs,
-    LESSON_REVIEW_EVIDENCE_SCOPE,
+    LESSON_REVIEW_EVIDENCE_SCOPE, RULES_DECIDE,
 };
 use super::{
     review_instructions, review_prompt, settle_lesson_quotes, Decision, Found, Pass, ReviewTexts,
@@ -26,10 +26,32 @@ use lattice_core::{
     shared::error::{AppError, Result},
 };
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 /// Why a finding about a sentence a live claim stands on is held.
 const PROTECTED_SENTENCE: &str = "a sentence a live claim stands on";
+
+/// The checks that read a lesson beside the reviewer, in the order the gate is given them.
+const BESIDE: [&str; 3] = [
+    crate::question_review::DECIDES,
+    contract::DECIDES,
+    RULES_DECIDE,
+];
+/// Where the check against the course plan stands among them.
+const PLAN_CHECK: usize = 1;
+
+/// The plan findings of a pass: the first ask's, then those of the second
+/// that the first did not give.
+fn plan_findings_of(first: Vec<ReviewFinding>, second: Vec<ReviewFinding>) -> Vec<ReviewFinding> {
+    let given: HashSet<_> = first.iter().map(ReviewFinding::id).collect();
+    let mut all = first;
+    all.extend(
+        second
+            .into_iter()
+            .filter(|finding| !given.contains(&finding.id())),
+    );
+    all
+}
 
 /// A lesson: it publishes with what the repairs could not settle waiting for
 /// the user, and holds what its live claims stand on.
@@ -213,6 +235,7 @@ impl Subject for LessonSubject<'_> {
                 pass.value,
                 self.protected,
                 &mut self.receipts,
+                &[],
             );
             let (judged, plan_findings) = match &round {
                 Some(round) => {
@@ -249,18 +272,48 @@ impl Subject for LessonSubject<'_> {
                 .chain(&structure)
                 .cloned()
                 .collect();
-            let established = crate::review_evidence::check(
+            let checked = crate::review_evidence::check(
                 llm,
                 &raised,
-                &recorded,
+                crate::review_evidence::Beside {
+                    decides: &BESIDE,
+                    recorded: &recorded,
+                },
                 pass.authoring,
                 pass.value,
                 self.references,
                 None,
             )
             .await?;
+            let reported: Vec<&ReviewFinding> = checked
+                .left
+                .iter()
+                .filter(|left| left.check == PLAN_CHECK)
+                .map(|left| &left.finding)
+                .collect();
+            let plan_findings = if reported.is_empty() {
+                plan_findings
+            } else {
+                let ruled = contract::check(
+                    llm,
+                    pass.authoring,
+                    pass.value,
+                    self.protected,
+                    &mut self.receipts,
+                    &reported,
+                )
+                .await?;
+                let before = plan_findings.len();
+                let all = plan_findings_of(plan_findings, ruled);
+                tracing::info!(
+                    reported = reported.len(),
+                    held = all.len().saturating_sub(before),
+                    "The check against the course plan ruled on what the review reported"
+                );
+                all
+            };
             if round.is_some() {
-                self.standing.admit(pass.value, established);
+                self.standing.admit(pass.value, checked.established);
             }
             let mut issues = question_issues;
             issues.extend(self.standing.open().iter().cloned());
@@ -621,3 +674,7 @@ fn touched_by_sites<'a>(
         })
         .collect()
 }
+
+#[cfg(test)]
+#[path = "lesson_tests.rs"]
+mod tests;

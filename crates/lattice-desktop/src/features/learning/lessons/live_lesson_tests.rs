@@ -862,13 +862,14 @@ async fn live_review_findings_require_evidence() -> Result<()> {
     let accepted = review_evidence::check(
         &model,
         &issues,
-        &[],
+        review_evidence::Beside::NONE,
         &authoring,
         &candidate,
         &references,
         Some(&progress),
     )
-    .await?;
+    .await?
+    .established;
     std::fs::write(
         directory.join("accepted-replay-issues.json"),
         serde_json::to_vec_pretty(&accepted)?,
@@ -896,13 +897,14 @@ async fn live_review_findings_require_evidence() -> Result<()> {
         let accepted = review_evidence::check(
             &model,
             &issues,
-            &[],
+            review_evidence::Beside::NONE,
             &case["requirements"],
             &case["candidate"],
             &references,
             Some(&progress),
         )
-        .await?;
+        .await?
+        .established;
         std::fs::write(
             directory.join(format!("accepted-control-{index}.json")),
             serde_json::to_vec_pretty(&accepted)?,

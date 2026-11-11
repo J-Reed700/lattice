@@ -173,13 +173,14 @@ async fn live_review_schema_preserves_grounding() -> Result<()> {
         let accepted = crate::features::learning::review_evidence::check(
             &model,
             &issues,
-            &[],
+            crate::features::learning::review_evidence::Beside::NONE,
             &case["requirements"],
             &case["candidate"],
             &references,
             Some(&progress),
         )
-        .await?;
+        .await?
+        .established;
         std::fs::write(
             directory.join(format!("case-{index}.json")),
             serde_json::to_vec_pretty(&accepted)?,

@@ -10,8 +10,9 @@ use crate::review_findings::{FindingKind, FindingSite, ReviewFinding, Rule};
 use lattice_core::shared::text::{code_spans, sentences};
 use serde_json::Value;
 
-/// Source wording as folded runs of words, each long enough to be quoted: a
-/// copy of a shorter span is no copy of the source. Folded once, when built.
+/// Source wording as folded runs of words, each long enough to be quoted in
+/// the words that are compared: a copy of a shorter span is no copy of the
+/// source. Folded once, when built.
 #[derive(Clone, Debug, Default)]
 pub(crate) struct Wording(Vec<Vec<String>>);
 
@@ -72,9 +73,8 @@ impl Wording {
         self.0.extend(
             texts
                 .into_iter()
-                .filter(|text| long_enough_quote(text))
                 .map(words)
-                .filter(|run| !run.is_empty()),
+                .filter(|run| long_enough_quote(&run.join(" "))),
         );
     }
 }

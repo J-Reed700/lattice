@@ -288,3 +288,76 @@ fn a_new_sentence_equal_to_one_the_section_already_has_is_not_kept() {
         .section;
     assert_eq!(confined["body"], format!("{VERIFIED} {FAILED}"));
 }
+
+const KETTLE: &str = "The kettle sits on the shelf.";
+const ROPE: &str = "A rope hangs beside it.";
+const BEADS: &str = "Beads fill the jar.";
+
+fn cited(first: &str, second: &str) -> Value {
+    json!({
+        "kind": "explanation",
+        "body": format!("{KETTLE} {ROPE} {BEADS}"),
+        "citations": [
+            {"sentence": first, "sourceIndex": 0, "quote": "a line about it"},
+            {"sentence": second, "sourceIndex": 0, "quote": "another line about it"},
+        ],
+    })
+}
+
+/// `value` and everything under it as targets, a string by its whole text.
+fn whole(value: &Value, path: &str, targets: &mut Vec<Protected>) {
+    targets.push(sentence(path, value.as_str().unwrap_or_default()));
+    match value {
+        Value::Object(fields) => fields
+            .iter()
+            .for_each(|(key, value)| whole(value, &format!("{path}/{key}"), targets)),
+        Value::Array(items) => items
+            .iter()
+            .enumerate()
+            .for_each(|(at, value)| whole(value, &format!("{path}/{at}"), targets)),
+        _ => {}
+    }
+}
+
+fn citation_targets(section: &Value) -> Vec<Protected> {
+    let mut targets = Vec::new();
+    if let Some(citations) = section.get("citations") {
+        whole(citations, "citations", &mut targets);
+    }
+    targets
+}
+
+#[test]
+fn citations_that_name_other_sentences_of_the_body_are_kept_when_a_repair_shifts_them() {
+    let before = cited(KETTLE, ROPE);
+    let repaired = cited(ROPE, BEADS);
+    let confined = confine(&before, &repaired, &citation_targets(&before), &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined["citations"], repaired["citations"]);
+    assert_eq!(confined["citations"][0]["sentence"], ROPE);
+    assert_eq!(confined["citations"][1]["sentence"], BEADS);
+}
+
+#[test]
+fn citations_no_target_names_stand_as_they_were() {
+    let before = cited(KETTLE, ROPE);
+    let repaired = cited(ROPE, BEADS);
+    let confined = confine(&before, &repaired, &[], &[]).unwrap().section;
+    assert_eq!(confined["citations"], before["citations"]);
+}
+
+#[test]
+fn a_citation_that_names_another_sentence_of_the_body_in_place_is_kept() {
+    let before = json!({
+        "kind": "explanation",
+        "body": format!("{KETTLE} {ROPE}"),
+        "citations": [{"sentence": KETTLE, "sourceIndex": 0, "quote": "a line about it"}],
+    });
+    let mut repaired = before.clone();
+    repaired["citations"][0]["sentence"] = json!(ROPE);
+    let confined = confine(&before, &repaired, &citation_targets(&before), &[])
+        .unwrap()
+        .section;
+    assert_eq!(confined["citations"][0]["sentence"], ROPE);
+}
