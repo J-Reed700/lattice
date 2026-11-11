@@ -1,4 +1,4 @@
-import { useCallback, useEffect } from 'react';
+import { useCallback, useEffect, useEffectEvent } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 
@@ -91,16 +91,19 @@ export function useJournalSynthesis(options: {
 
   // Home's "Synthesize last week" row lands here with ?synthesize=week.
   const weekSynthesisRequested = searchParams.get('synthesize') === 'week';
-  useEffect(() => {
-    if (!weekSynthesisRequested || !activeNote) return;
+  const startWeekSynthesis = useEffectEvent(() => {
+    if (!activeNote) return;
     const next = new URLSearchParams(searchParams);
     next.delete('synthesize');
     setSearchParams(next, { replace: true });
     void handleSynthesize('week');
-    // handleSynthesize is intentionally excluded: this must fire once per
-    // arrival, not on every re-derivation of the callback.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [weekSynthesisRequested, activeNote?.id]);
+  });
+
+  const activeNoteId = activeNote?.id;
+  useEffect(() => {
+    if (!weekSynthesisRequested || activeNoteId === undefined) return;
+    startWeekSynthesis();
+  }, [weekSynthesisRequested, activeNoteId]);
 
   return handleSynthesize;
 }
