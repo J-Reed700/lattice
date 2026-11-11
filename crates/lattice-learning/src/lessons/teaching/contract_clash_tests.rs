@@ -107,6 +107,7 @@ async fn found(
         reported,
     )
     .await
+    .map(|ruled| ruled.findings)
 }
 
 fn clashes(found: &[ReviewFinding]) -> Vec<&ReviewFinding> {
