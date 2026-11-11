@@ -625,19 +625,6 @@ impl FakeKindBuilder {
         self
     }
 
-    /// The criteria a session is scored on, as (id, title, earns).
-    pub(crate) fn scored_on(mut self, criteria: &[(&str, &str, &str)]) -> Self {
-        self.rubric.criteria = criteria
-            .iter()
-            .map(|(id, title, earns)| Criterion {
-                id: (*id).to_owned(),
-                title: (*title).to_owned(),
-                earns: (*earns).to_owned(),
-            })
-            .collect();
-        self
-    }
-
     /// The debrief states a model answer and a pitfall beside the scores.
     pub(crate) fn stating_a_model_and_a_pitfall(mut self) -> Self {
         self.rubric.statement = Some(Statement {
