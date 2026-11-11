@@ -26,32 +26,3 @@ pub fn setup_tokenizer(model_dir: &Path) -> Option<Arc<tokenizers::Tokenizer>> {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-    use std::path::PathBuf;
-
-    #[test]
-    fn test_tokenizer_error_messages() {
-        let tokenizer_path = PathBuf::from("/test/tokenizer.json");
-        let err = format!(
-            "Required tokenizer file not found at {:?}.
-
-\
-             The application requires the tokenizer to function.
-
-\
-             Suggested actions:
-\
-             - Download models using the initialize_models command
-\
-             - Check if tokenizer.json was deleted or moved
-\
-             - Ensure sufficient disk space",
-            tokenizer_path
-        );
-
-        assert!(err.contains("Required tokenizer file not found"));
-        assert!(err.contains("/test/tokenizer.json"));
-    }
-}
