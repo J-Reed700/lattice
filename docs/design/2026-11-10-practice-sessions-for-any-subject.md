@@ -148,6 +148,8 @@ pub struct Kind {
     pub hinting: Arc<dyn Hinting>,
     pub reply_guard: Arc<dyn ReplyGuard>,
     pub rubric: Arc<dyn Rubric>,
+    pub account: Arc<dyn Account>,
+    pub budget: Arc<dyn Budget>,
     pub author: Arc<dyn Author>,
     pub truth: Arc<dyn Truth>,
     pub gaps: Option<Arc<dyn Gaps>>,              // enables Complete, and revealing one part
@@ -166,12 +168,14 @@ pub struct Kinds(BTreeMap<KindId, Kind>);         // built once, in the composit
 | `Wording` | the nouns, verbs and stage labels for this work, per exercise | every prompt template and label |
 | `Hinting` | the hint for a rung, already checked | hint command |
 | `ReplyGuard` | why a counterpart reply may not be shown, if so | counterpart |
-| `Rubric` | the criteria for a form and the facts the debrief states | debrief |
+| `Rubric` | `criteria(form)`, in the order the scorecard lists them, and `statement(form)`: what the debrief states beside the scores, as keys with the sentence that asks for each (None when the kind states nothing) | debrief |
+| `Account` | the session's work as the debrief's model reads and cites it: the exercise with its reference, the form, each check given the one before it, a piece no check holds, how parts and checks are cited, and the fields an evidence item has beyond its kind, ref and text | debrief |
+| `Budget` | the seconds a session gets when the learner chose none, per brief; None leaves it untimed | start, change of setting |
 | `Author` | a draft exercise for a lesson, or "this lesson has nothing of this kind to make" with a reason | build job |
 | `Truth` | whether the reference is right, and whether the task has one right answer | proof |
 | `Gaps` | a piece with parts emptied; a piece with one part restored | Complete, the Point rung |
 | `Order` | a piece with its parts in a seeded shuffle | Arrange |
-| `LearnerCases` | whether a case the learner wrote is right, wrong or invalid | Examples stage |
+| `LearnerCases` | how a case the learner wrote is shown and accounted for, and `case(exercise, learner_case) -> Case`: the case a check runs, with the comparison the exercise's own examples use | Examples stage, check, debrief |
 
 `CheckReport.marks` is the kind's own diagnosis: which parts are wrong or empty. The verdict never depends on it.
 
@@ -194,16 +198,36 @@ is how one kind serves any subject without a subject list.
 
 ### 4.1 Session service
 
-`PracticeSessions { repo, kinds, clock }` with `start, get, list, move_stage, check, ask_hint, send_turn, respond,
-observe_draft, set_clock, set_setting, reveal_solution, finish, due`. It is today's `CodingSessions` with every call
-into code replaced by a call to a role of the session's kind. Program keeps three commands of its own, which go
-through `LearnerCases` and the Program checker: check an example, remove an example, run on my own input.
+`PracticeSessions { store, kinds, aids, checks, debriefer, clock }` with `start, move_stage, check, ask_hint,
+send_turn, respond, observe_draft, set_setting, reveal_solution, finish` and `happened`. It is today's
+`CodingSessions` with every call into code replaced by a call to a role of the session's kind. It is written against
+five ports, so its tests need no database, model or runner:
+
+| Port | Answers |
+|---|---|
+| `SessionStore` | the session as the engine reads it, and every write as one transaction: create, stage move, draft, a recorded check, the pending cue (offer, take, restore), reply, turn, hint, setting, reveal, finish |
+| `Checks` | one check of a piece against cases, stored; the same check id answers with the check it stored |
+| `Aids` | the model calls of a session: the hint for a rung and the counterpart's checked reply, and the model's name |
+| `Debriefer` | the debrief of a finished session |
+| `Clock` | the time |
+
+A command reads what it needs, makes its model call and its check outside any write, and then writes. A command
+that did something the counterpart may answer reports it with `happened(event)`; the setting's policy decides
+whether that becomes a cue.
+
+The engine's `check` runs the scopes the engine knows, `shown` and `all`. A kind's own commands stay with the kind's
+adapter: Program keeps three, which go through `LearnerCases` and the Program checker: check an example, remove an
+example, run on my own input. The input run stores its check itself and ends with
+`happened(Checked { scope: Own })`, as every engine check does, so the same policy answers it. Checks sit behind a
+port, not inside the engine, until step 9: the run machinery (a stored row while it runs, a cancel registry,
+recovery at startup) is the app's, and a second kind has not yet shown which part of it is general.
 
 A check of any kind is stored the way a run is stored today: one row per check with its scope (`shown`, `all`) and
 one row per case with the kind's detail as JSON. No new table.
 
-A clock default comes from the kind: Program keeps 20, 35 and 45 minutes by difficulty. A kind with no default is
-untimed unless the learner sets a time.
+A clock default comes from the kind's `Budget`: Program keeps 20, 35 and 45 minutes by difficulty. A kind with no
+default is untimed unless the learner sets a time. Coached never has a budget; leaving Coached gives an untimed
+session the kind's default, and a session that has one keeps it.
 
 ### 4.2 What the counterpart sees
 
@@ -249,7 +273,10 @@ it (§8). Help that names content comes only from the ladder.
 ### 4.5 Debrief
 
 The prompt, the evidence checks and the scorecard are the engine's. Criteria come from the kind's `Rubric` for the
-form. Program keeps its four. Evidence kinds become `quote, part, check, learner_case, hint`; a cited part must
+form, and so do the statements the debrief asks for beside them. Program keeps its four criteria and states an
+approach and a complexity. The text the model reads, and the evidence fields it fills, come from the kind's `Account`:
+the keys the exercise, the form and the checks sit under, how a part or a check is cited, and the extra fields of an
+evidence item, all required. Evidence kinds become `quote, part, check, learner_case, hint`; a cited part must
 exist in the draft (`Parts`), a cited check must be one the session made.
 
 ### 4.6 Ratings and spacing
@@ -414,8 +441,16 @@ Tests come first in every step. Nothing is built locally; each step is pushed to
 1. The vocabulary in core: `work.rs` (§2, §3.2 values), with the stage lists and the disclosure table.
 2. The roles, `Kind`, `Kinds` and the fake kind (§3.2).
 3. The golden requests of §8, captured from today's code.
-4. The move, in dependency order: Program's roles as adapters over today's functions; observation; policies; hints,
-   counterpart and debrief; the service and its records; the proof template and the build job; ratings.
+4. The move, in dependency order. Built so far:
+   - 4.1 Program's roles as adapters over today's functions, and the session observation on the kind's roles.
+   - 4.2 The counterpart policies, worded by the kind.
+   - 4.3 The counterpart's reply and the hint ladder, with Program's reply guard and hints.
+   - 4.4 The debrief, with `Rubric` and `Account`.
+   - 4.5 The session service and its records behind the kind seam: the four ports and `Clock`, `Budget`,
+     `LearnerCases::case`, the pure functions (`observe`, `cases_for`, `outcome`, `submit_counts`), Program's
+     store, checks and adapter, and the removal of the coding observation, policies, hint entry point and
+     counterpart reply that lost their last caller. The stored cue stays `CodingCue` until step 5.
+   Still to move: the proof template and the build job; ratings.
 5. The renames of §7: migration, DTOs, commands, bindings.
 6. The screen: `session/` and the kind registry, with Program's editor and results views under `kinds/program/`;
    the dependency rule in the architecture check; the fake-kind tests.
