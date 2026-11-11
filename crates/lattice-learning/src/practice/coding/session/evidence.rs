@@ -1,10 +1,8 @@
 //! What a finished session is judged on: the evidence the debrief reads.
 use crate::lab_runtime::LearningLabFile;
 use crate::practical_dto::CaseCheckDetailDto;
-use crate::practice::coding::debrief::{CodingEventRow, EvidenceRun, SessionEvidence};
 use crate::practice::coding::problem::CaseResult;
-use crate::practice::coding::records::{SessionBundle, StoredExample, StoredHint};
-use crate::practice::kinds::program::dto::{CodingExampleDto, ExampleVerdict};
+use crate::practice::coding::records::{SessionBundle, StoredHint};
 use lattice_core::domain::learning::practice::work::Setting;
 use lattice_core::shared::error::{AppError, Result};
 
@@ -46,24 +44,6 @@ pub fn settings_used(bundle: &SessionBundle) -> Result<Vec<Setting>> {
     Ok(used)
 }
 
-/// The stored examples as the learner sees them. `expects` is what the reference returned for a wrong example.
-pub fn example_views(examples: &[StoredExample], expects_shown: bool) -> Vec<CodingExampleDto> {
-    examples
-        .iter()
-        .map(|example| CodingExampleDto {
-            ordinal: example.ordinal,
-            args: example.args.clone(),
-            expected: example.expected.clone(),
-            verdict: example.verdict,
-            expects: example
-                .reference_actual
-                .clone()
-                .filter(|_| expects_shown && example.verdict == ExampleVerdict::Wrong),
-            why_invalid: example.why_invalid.clone(),
-        })
-        .collect()
-}
-
 /// What the reference answered on the input of a run, from the run's `check` event.
 pub fn reference_actual_of(bundle: &SessionBundle, run_id: &str) -> Option<String> {
     bundle
@@ -85,40 +65,6 @@ pub fn result_of(detail: &CaseCheckDetailDto) -> CaseResult {
         error: detail.error.clone(),
         elapsed_ms: detail.elapsed_ms,
     }
-}
-
-/// The whole session for the debriefer: nothing is cut by a setting.
-pub fn evidence_of(bundle: &SessionBundle, draft: &[LearningLabFile]) -> Result<SessionEvidence> {
-    Ok(SessionEvidence {
-        problem: bundle.problem.clone(),
-        form: bundle.row.form,
-        settings: settings_used(bundle)?,
-        turns: bundle.turns.clone(),
-        runs: bundle
-            .runs
-            .iter()
-            .map(|run| EvidenceRun {
-                run_id: run.run_id.clone(),
-                scope: run.scope,
-                files: run.files.clone(),
-                results: run.cases.iter().map(result_of).collect(),
-                created_at: run.created_at,
-            })
-            .collect(),
-        examples: example_views(&bundle.examples, true),
-        hints: hints_of(bundle)?,
-        events: bundle
-            .events
-            .iter()
-            .map(|event| CodingEventRow {
-                ordinal: event.ordinal,
-                kind: event.kind.clone(),
-                payload: event.payload.clone(),
-                at: event.at,
-            })
-            .collect(),
-        draft: draft.to_vec(),
-    })
 }
 
 /// The draft the counterpart last saw, from the latest `draft_seen` event.
