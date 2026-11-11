@@ -1,7 +1,7 @@
 //! The check, the confirming read and the writer work from one definition of what a record needs taught.
 use super::*;
 
-const OWN_NOTES: &str = "Writing in the learner's own notes, on paper or wherever they already keep notes, needs nothing taught. A record kept anywhere else (a named file, folder, app or tool) needs the way to make it taught.";
+const OWN_NOTES: &str = "Writing in the learner's own notes, on paper or wherever they already keep notes, needs nothing taught. A record the lesson asks for anywhere else needs the way to make it taught.";
 
 #[test]
 fn the_check_and_the_confirming_read_share_the_own_notes_sentence() {

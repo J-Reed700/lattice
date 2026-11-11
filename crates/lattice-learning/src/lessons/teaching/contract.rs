@@ -21,7 +21,7 @@ macro_rules! shown {
 /// What needs teaching about a record: the one definition the check, the confirming read and the lesson writer share.
 macro_rules! own_notes {
     () => {
-        "Writing in the learner's own notes, on paper or wherever they already keep notes, needs nothing taught. A record kept anywhere else (a named file, folder, app or tool) needs the way to make it taught."
+        "Writing in the learner's own notes, on paper or wherever they already keep notes, needs nothing taught. A record the lesson asks for anywhere else needs the way to make it taught."
     };
 }
 pub(crate) use own_notes;

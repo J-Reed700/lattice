@@ -1044,7 +1044,14 @@ async fn one_finding_s_unusable_answer_does_not_stop_the_others() -> Result<()> 
         vec![
             parts_review(2, &[0, 1]),
             parts_evidence(&[0, 1]),
-            parts_recheck(&[1], &["reviewer/2"]),
+            parts_checked(
+                &[1],
+                &[],
+                &[
+                    verdict("reviewer/1", "present"),
+                    verdict("reviewer/2", "resolved"),
+                ],
+            ),
         ],
         |sent| {
             if ids_of(sent).contains(&section_id(0)) {
@@ -1077,7 +1084,14 @@ async fn findings_whose_repair_does_not_fit_wait_and_the_others_are_still_repair
         vec![
             parts_review(2, &[0, 1]),
             parts_evidence(&[0, 1]),
-            parts_recheck(&[0], &["reviewer/1"]),
+            parts_checked(
+                &[0],
+                &[],
+                &[
+                    verdict("reviewer/1", "resolved"),
+                    verdict("reviewer/2", "present"),
+                ],
+            ),
         ],
         |sent| {
             if ids_of(sent).contains(&section_id(1)) {
@@ -1831,7 +1845,14 @@ async fn an_edit_outside_its_finding_s_part_leaves_the_other_findings_edits_appl
             better_idea(0, "reviewer/1"),
             better_idea(2, "reviewer/2"),
         ]),
-        parts_recheck(&[0], &["reviewer/1"]),
+        parts_checked(
+            &[0],
+            &[],
+            &[
+                verdict("reviewer/1", "resolved"),
+                verdict("reviewer/2", "present"),
+            ],
+        ),
         edits_answer(vec![better_idea(1, "reviewer/2")]),
         parts_recheck(&[1], &["reviewer/2"]),
     ]);
@@ -1857,7 +1878,14 @@ async fn a_finding_no_edit_named_is_told_so_on_its_second_attempt() -> Result<()
         parts_review(2, &[0, 1]),
         parts_evidence(&[0, 1]),
         edits_answer(vec![better_idea(0, "reviewer/1")]),
-        parts_recheck(&[0], &["reviewer/1"]),
+        parts_checked(
+            &[0],
+            &[],
+            &[
+                verdict("reviewer/1", "resolved"),
+                verdict("reviewer/2", "present"),
+            ],
+        ),
         edits_answer(vec![better_idea(1, "reviewer/2")]),
         parts_recheck(&[1], &["reviewer/2"]),
     ]);
@@ -1917,7 +1945,14 @@ async fn a_reverted_edit_gets_a_second_attempt() -> Result<()> {
             touches_the_protected_sentence.clone(),
             better_idea(1, "reviewer/2"),
         ]),
-        parts_recheck(&[1], &["reviewer/2"]),
+        parts_checked(
+            &[1],
+            &[],
+            &[
+                verdict("reviewer/1", "present"),
+                verdict("reviewer/2", "resolved"),
+            ],
+        ),
         edits_answer(vec![touches_the_protected_sentence]),
     ]);
     let reviewed = review_protecting(&model, &candidate, &protected).await?;
