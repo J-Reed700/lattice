@@ -573,3 +573,7 @@ pub(super) async fn check(
 #[cfg(test)]
 #[path = "contract_identity_tests.rs"]
 mod identity_tests;
+
+#[cfg(test)]
+#[path = "contract_note_tests.rs"]
+mod note_tests;
