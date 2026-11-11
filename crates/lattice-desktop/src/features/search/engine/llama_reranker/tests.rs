@@ -127,7 +127,7 @@ async fn scores_come_back_by_document_index() {
     let server = rerank_server().await;
     let (_dir, gguf) = gguf();
     let starter = FakeStarter::at(&server.uri());
-    let reranker = LlamaReranker::new(&gguf, starter.clone());
+    let reranker = LlamaReranker::new(&gguf, starter.clone()).expect("loopback client");
 
     assert!(reranker.is_available());
     let mut results = reranker.rerank("which", documents(), 3).await.unwrap();
@@ -150,7 +150,7 @@ async fn one_server_answers_every_query_while_it_runs() {
     let server = rerank_server().await;
     let (_dir, gguf) = gguf();
     let starter = FakeStarter::at(&server.uri());
-    let reranker = LlamaReranker::new(&gguf, starter.clone());
+    let reranker = LlamaReranker::new(&gguf, starter.clone()).expect("loopback client");
 
     reranker.rerank("one", documents(), 3).await.unwrap();
     reranker.rerank("two", documents(), 3).await.unwrap();
@@ -162,7 +162,8 @@ async fn one_server_answers_every_query_while_it_runs() {
 async fn a_reranker_that_is_not_downloaded_is_unavailable_and_starts_nothing() {
     let dir = tempfile::tempdir().unwrap();
     let starter = FakeStarter::at(NOWHERE);
-    let reranker = LlamaReranker::new(dir.path().join("missing.gguf"), starter.clone());
+    let reranker = LlamaReranker::new(dir.path().join("missing.gguf"), starter.clone())
+        .expect("loopback client");
 
     assert!(!reranker.is_available());
     assert!(!reranker.is_available());
@@ -173,7 +174,7 @@ async fn a_reranker_that_is_not_downloaded_is_unavailable_and_starts_nothing() {
 async fn a_server_that_will_not_start_leaves_the_reranker_unavailable_for_a_while() {
     let (_dir, gguf) = gguf();
     let starter = FakeStarter::new(NOWHERE, true, 0);
-    let reranker = LlamaReranker::new(&gguf, starter.clone());
+    let reranker = LlamaReranker::new(&gguf, starter.clone()).expect("loopback client");
 
     assert!(reranker.is_available());
     assert!(reranker.rerank("which", documents(), 3).await.is_err());
@@ -187,7 +188,7 @@ async fn a_server_whose_process_is_gone_is_started_again() {
     let server = rerank_server().await;
     let (_dir, gguf) = gguf();
     let starter = FakeStarter::new(&server.uri(), false, 1);
-    let reranker = LlamaReranker::new(&gguf, starter.clone());
+    let reranker = LlamaReranker::new(&gguf, starter.clone()).expect("loopback client");
 
     reranker.rerank("which", documents(), 3).await.unwrap();
 
@@ -205,7 +206,7 @@ async fn a_server_too_slow_to_answer_rests_the_reranker() {
         .await;
     let (_dir, gguf) = gguf();
     let starter = FakeStarter::at(&server.uri());
-    let mut reranker = LlamaReranker::new(&gguf, starter.clone());
+    let mut reranker = LlamaReranker::new(&gguf, starter.clone()).expect("loopback client");
     reranker.request_timeout = Duration::from_millis(50);
 
     assert!(reranker.is_available());
@@ -230,7 +231,8 @@ async fn a_server_error_is_reported_in_its_own_words() {
         .mount(&server)
         .await;
     let (_dir, gguf) = gguf();
-    let reranker = LlamaReranker::new(&gguf, FakeStarter::at(&server.uri()));
+    let reranker =
+        LlamaReranker::new(&gguf, FakeStarter::at(&server.uri())).expect("loopback client");
 
     let error = reranker
         .rerank("which", documents(), 3)
@@ -248,7 +250,7 @@ async fn serving_from_another_gguf_starts_the_next_server_from_it() {
     let (_other_dir, other) = self::gguf();
     let first = FakeStarter::at(&server.uri());
     let second = FakeStarter::at(&server.uri());
-    let reranker = LlamaReranker::new(&gguf, first.clone());
+    let reranker = LlamaReranker::new(&gguf, first.clone()).expect("loopback client");
 
     reranker.rerank("which", documents(), 3).await.unwrap();
     reranker.serve_from(&other, second.clone()).await;
@@ -304,7 +306,7 @@ async fn the_real_server_scores_the_answering_passage_highest() {
     let starter = Arc::new(OnCpu(
         crate::interfaces::di::modules::standalone::StandaloneServers::from_env(),
     ));
-    let reranker = LlamaReranker::new(gguf, starter);
+    let reranker = LlamaReranker::new(gguf, starter).expect("loopback client");
     let passages = vec![
         "The wool market in Ghent reopened after the spring floods.".to_string(),
         "Either party may prevent renewal by giving 12 working days of written notice.".to_string(),

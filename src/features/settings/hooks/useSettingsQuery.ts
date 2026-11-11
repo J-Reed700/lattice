@@ -6,15 +6,11 @@ import {
 } from '@tanstack/react-query';
 
 import { useApi } from '@/contexts/ApiContext';
-import { useFileBrowserStore } from '@/features/files/stores/fileBrowserStore';
 import { LEARNING_CLAIM_REVIEW_ROOT } from '@/features/learning/api/learningQueryKeys';
 import { CLOUD_MODELS_QUERY_KEY } from '@/features/model/hooks/useCloudModels';
 import VaultAPI, { type ApiClient } from '@/lib/api';
 import type { UpdateSettingsRequest } from '@/lib/bindings';
-import {
-  INDEXED_FOLDERS_QUERY_KEY,
-  SETTINGS_QUERY_KEY,
-} from '@/lib/queryClient';
+import { SETTINGS_QUERY_KEY } from '@/lib/queryClient';
 import type { AppSettings } from '@/types/api/settings';
 
 export { SETTINGS_QUERY_KEY };
@@ -85,25 +81,6 @@ export function useSettingsTransfer() {
   });
   const exportJson = useMutation({ mutationFn: () => api.exportSettings() });
   return { resetSettings: reset.mutateAsync, importSettings: importJson.mutateAsync, exportSettings: exportJson.mutateAsync };
-}
-
-/**
- * Adds or removes a watched folder. The backend validates the path and
- * serializes concurrent changes; a success refreshes the settings cache.
- */
-export function useWatchFolderMutations() {
-  const api = useApi();
-  const queryClient = useQueryClient();
-  const refreshOnSuccess = (result: { ok: boolean }) => {
-    if (result.ok) {
-      void queryClient.invalidateQueries({ queryKey: SETTINGS_QUERY_KEY });
-      void queryClient.invalidateQueries({ queryKey: INDEXED_FOLDERS_QUERY_KEY });
-      (useFileBrowserStore.getState() as { loadSourceConnections?: () => void }).loadSourceConnections?.();
-    }
-  };
-  const add = useMutation({ mutationFn: (path: string) => api.addWatchFolder(path), onSuccess: refreshOnSuccess });
-  const remove = useMutation({ mutationFn: (path: string) => api.removeWatchFolder(path), onSuccess: refreshOnSuccess });
-  return { addWatchFolder: add.mutateAsync, removeWatchFolder: remove.mutateAsync };
 }
 
 /**

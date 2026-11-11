@@ -85,7 +85,7 @@ impl GetSystemStatsUseCase {
 mod tests {
     use super::*;
     use async_trait::async_trait;
-    use lattice_core::application::ports::{Filter, RepositoryPort};
+    use lattice_core::application::ports::RepositoryPort;
     use lattice_core::domain::entities::{Chunk as ChunkEntity, Document as DocumentEntity};
 
     struct MockDocumentRepo {
@@ -96,10 +96,6 @@ mod tests {
     impl RepositoryPort<DocumentEntity> for MockDocumentRepo {
         async fn find_by_id(&self, _id: &str) -> Result<Option<DocumentEntity>> {
             Ok(None)
-        }
-
-        async fn find_by_filter(&self, _filter: &dyn Filter) -> Result<Vec<DocumentEntity>> {
-            Ok(vec![])
         }
 
         async fn find_all(&self) -> Result<Vec<DocumentEntity>> {
@@ -139,10 +135,6 @@ mod tests {
     impl RepositoryPort<ChunkEntity> for MockChunkRepo {
         async fn find_by_id(&self, _id: &str) -> Result<Option<ChunkEntity>> {
             Ok(None)
-        }
-
-        async fn find_by_filter(&self, _filter: &dyn Filter) -> Result<Vec<ChunkEntity>> {
-            Ok(vec![])
         }
 
         async fn find_all(&self) -> Result<Vec<ChunkEntity>> {

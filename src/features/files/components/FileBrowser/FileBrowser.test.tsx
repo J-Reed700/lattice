@@ -97,7 +97,6 @@ const makeStore = (overrides: Record<string, unknown> = {}) => ({
   clearSelection: vi.fn(),
   scope: { kind: 'all' },
   setScope: vi.fn(),
-  sourceConnections: [],
   searchQuery: '',
   setSearchQuery: vi.fn(),
   filterByType: null,

@@ -3,7 +3,7 @@
 use super::*;
 use crate::infrastructure::persistence::repositories::DocumentRepositoryImpl;
 use async_trait::async_trait;
-use lattice_core::application::ports::{FileMetadata, Filter};
+use lattice_core::application::ports::FileMetadata;
 use lattice_core::domain::entities::Document;
 use lattice_core::shared::types::ValidatedFilePath;
 use sqlx::SqlitePool;
@@ -220,10 +220,6 @@ impl RepositoryPort<Document> for MockDocumentRepo {
 
     async fn find_all(&self) -> Result<Vec<Document>> {
         Ok(self.document.lock().unwrap().iter().cloned().collect())
-    }
-
-    async fn find_by_filter(&self, _filter: &dyn Filter) -> Result<Vec<Document>> {
-        Ok(vec![])
     }
 
     async fn save_batch(&self, entities: &[Document]) -> Result<()> {

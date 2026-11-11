@@ -3,13 +3,14 @@
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
 use lattice_core::domain::entities::chunk::Chunk;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
 use lattice_core::shared::types::TagId;
 use sqlx::{QueryBuilder, SqliteConnection};
 use std::time::Instant;
 use tracing::{info, instrument};
 
-const CHUNK_BATCH_SIZE: usize = 64;
-const TAG_BATCH_SIZE: usize = 450;
+const CHUNK_BATCH_SIZE: usize = rows_per_statement(15, 0);
+const TAG_BATCH_SIZE: usize = rows_per_statement(2, 0);
 
 pub async fn fetch_chunks_for_document(
     conn: &mut SqliteConnection,

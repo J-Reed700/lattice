@@ -1,12 +1,10 @@
 import {
   type SavedSearchPreset,
-  type SourceConnection,
   type SourceFilter,
 } from '@/types/fileBrowser';
 
 import { normalizeToken } from './libraryDocumentFilters';
 
-const SOURCE_CONNECTIONS_STORAGE_KEY = 'lattice:file-browser-source-connections:v1';
 const SAVED_SEARCHES_STORAGE_KEY = 'lattice:file-browser-saved-searches:v1';
 
 export const sanitizeName = (value: string): string => value.trim().replace(/\s+/g, ' ');
@@ -86,84 +84,3 @@ export const persistSavedSearches = (searches: SavedSearchPreset[]): void => {
     // Ignore persistence failures; in-memory state remains valid
   }
 };
-
-const sanitizeSourceConnection = (item: unknown): SourceConnection | null => {
-  if (!item || typeof item !== 'object') {
-    return null;
-  }
-
-  const candidate = item as Partial<SourceConnection>;
-  if (
-    typeof candidate.id !== 'string' ||
-    typeof candidate.name !== 'string' ||
-    typeof candidate.provider !== 'string' ||
-    typeof candidate.mode !== 'string' ||
-    typeof candidate.health !== 'string' ||
-    typeof candidate.enabled !== 'boolean' ||
-    typeof candidate.createdAt !== 'string' ||
-    typeof candidate.updatedAt !== 'string'
-  ) {
-    return null;
-  }
-
-  if (
-    !['web_import', 'dropbox', 'google_drive', 'onedrive', 'icloud'].includes(candidate.provider) ||
-    !['referenced', 'managed'].includes(candidate.mode) ||
-    !['healthy', 'attention', 'error', 'paused'].includes(candidate.health)
-  ) {
-    return null;
-  }
-
-  return {
-    id: candidate.id,
-    name: candidate.name,
-    provider: candidate.provider,
-    mode: candidate.mode,
-    health: candidate.health,
-    enabled: candidate.enabled,
-    path: typeof candidate.path === 'string' ? candidate.path : undefined,
-    lastSyncedAt: typeof candidate.lastSyncedAt === 'string' ? candidate.lastSyncedAt : null,
-    createdAt: candidate.createdAt,
-    updatedAt: candidate.updatedAt,
-  };
-};
-
-export const loadSourceConnections = (): SourceConnection[] => {
-  if (typeof window === 'undefined') {
-    return [];
-  }
-
-  try {
-    const raw = window.localStorage.getItem(SOURCE_CONNECTIONS_STORAGE_KEY);
-    if (!raw) {
-      return [];
-    }
-
-    const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed
-      .map((item) => sanitizeSourceConnection(item))
-      .filter((item): item is SourceConnection => item !== null);
-  } catch {
-    return [];
-  }
-};
-
-export const persistSourceConnections = (connections: SourceConnection[]): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  try {
-    const clientOnlyConnections = connections.filter(connection => connection.provider !== 'local_folder');
-    window.localStorage.setItem(SOURCE_CONNECTIONS_STORAGE_KEY, JSON.stringify(clientOnlyConnections));
-  } catch {
-    // Ignore persistence failures; in-memory state remains valid
-  }
-};
-
-export const sortSourceConnections = (connections: SourceConnection[]): SourceConnection[] =>
-  [...connections].sort((a, b) => a.name.localeCompare(b.name, undefined, { sensitivity: 'base' }));

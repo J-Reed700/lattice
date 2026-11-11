@@ -68,20 +68,23 @@ impl std::fmt::Debug for LlamaReranker {
 impl LlamaReranker {
     /// The reranker in `gguf`, served by servers `starter` starts. Nothing
     /// starts until the first query.
-    pub fn new(gguf: impl Into<PathBuf>, starter: Arc<dyn RerankServerStarter>) -> Self {
-        Self {
+    pub fn new(gguf: impl Into<PathBuf>, starter: Arc<dyn RerankServerStarter>) -> Result<Self> {
+        let http = lattice_core::shared::http::loopback_client_builder()
+            .build()
+            .map_err(|e| AppError::ModelLoadFailed(format!("No HTTP client: {e}")))?;
+        Ok(Self {
             serving: parking_lot::RwLock::new(Serving {
                 gguf: gguf.into(),
                 starter,
             }),
-            http: reqwest::Client::new(),
+            http,
             server: tokio::sync::Mutex::new(None),
             resting_until: parking_lot::Mutex::new(None),
             request_timeout: REQUEST_TIMEOUT,
             told_missing: AtomicBool::new(false),
             told_failed: AtomicBool::new(false),
             told_slow: AtomicBool::new(false),
-        }
+        })
     }
 
     /// Serve the reranker in `gguf` through `starter` from the next query on,

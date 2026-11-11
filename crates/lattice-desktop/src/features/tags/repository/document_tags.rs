@@ -5,6 +5,7 @@ use sqlx::Row;
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::types::TagName;
 
@@ -177,7 +178,7 @@ impl TagRepository {
 
     /// Get tags for multiple documents (optimized batch query).
     ///
-    /// Handles SQLite's 999 parameter limit by batching.
+    /// Batches the ids to stay inside SQLite's bound-parameter limit.
     ///
     /// # Errors
     ///
@@ -192,8 +193,7 @@ impl TagRepository {
             return Ok(HashMap::new());
         }
 
-        // SQLite has a 999 parameter limit, so batch requests
-        const BATCH_SIZE: usize = 900;
+        const BATCH_SIZE: usize = rows_per_statement(1, 0);
         let mut all_results = HashMap::new();
 
         for chunk in document_ids.chunks(BATCH_SIZE) {

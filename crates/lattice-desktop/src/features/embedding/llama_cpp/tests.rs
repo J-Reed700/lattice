@@ -64,6 +64,7 @@ fn service(uri: &str, prefixes: &'static EmbeddingPrefixes) -> LlamaEmbeddingSer
         InputPolicy::new(tokenizer(), 2048).unwrap(),
         prefixes,
     )
+    .expect("loopback client")
 }
 
 /// Answers every input with a vector whose first element is the input's

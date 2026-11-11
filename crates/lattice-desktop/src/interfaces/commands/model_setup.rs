@@ -223,11 +223,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Requires writable filesystem, run manually with --ignored"]
     async fn test_check_first_run_status_command() {
         let (container, _temp_dir) = create_test_container().await;
 
-        // Resolve the repository from the container (proper DI) and run the use case.
         let repository = container.downloaded_models();
         let use_case =
             CheckFirstRunStatusUseCase::new(repository, container.machine_profile_probe());
@@ -237,15 +235,9 @@ mod tests {
     }
 
     #[tokio::test]
-    #[ignore = "Requires writable filesystem, run manually with --ignored"]
     async fn test_models_path_from_container() {
-        let (container, _temp_dir) = create_test_container().await;
+        let (container, temp_dir) = create_test_container().await;
 
-        let models_path = container.models_path();
-
-        assert!(models_path.to_string_lossy().contains("models"));
-
-        // Verify fallback works (should use home dir)
-        assert!(models_path.exists() || models_path.to_string_lossy().contains(".lattice"));
+        assert_eq!(container.models_path(), temp_dir.path().join("models"));
     }
 }

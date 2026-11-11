@@ -239,7 +239,7 @@ pub async fn build_with_compression(
     let reranker = Arc::new(LlamaReranker::new(
         lattice_core::domain::models::curated::CURATED_RERANKER.path_in(&models_path),
         rerank_starter,
-    ));
+    )?);
 
     let dynamic_embedding = embedding;
     let chunk_repository = Arc::new(

@@ -1,19 +1,19 @@
 //! Generate Tags Use Case
 
 use crate::features::tags::dto::{GenerateTagsRequestDto, GenerateTagsResponseDto};
-use lattice_core::application::ports::TagServiceTrait;
+use crate::features::tags::tag_generation::TagGenerationService;
 use lattice_core::shared::error::Result;
 use std::sync::Arc;
 
 /// Use case for generating tags using LLM
 pub struct GenerateTagsUseCase {
-    tag_service: Arc<dyn TagServiceTrait>,
+    generation: Arc<TagGenerationService>,
 }
 
 impl GenerateTagsUseCase {
     /// Create a new use case instance
-    pub fn new(tag_service: Arc<dyn TagServiceTrait>) -> Self {
-        Self { tag_service }
+    pub fn new(generation: Arc<TagGenerationService>) -> Self {
+        Self { generation }
     }
 
     /// Execute the use case
@@ -22,7 +22,7 @@ impl GenerateTagsUseCase {
         request: GenerateTagsRequestDto,
     ) -> Result<GenerateTagsResponseDto> {
         let tags = self
-            .tag_service
+            .generation
             .generate_tags(&request.document_id, request.max_tags)
             .await?;
 
@@ -30,28 +30,5 @@ impl GenerateTagsUseCase {
             tags,
             status: "success".to_string(),
         })
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::features::tags::mocks::MockTagService;
-
-    #[tokio::test]
-
-    async fn test_generate_tags_success() {
-        let mock_service = Arc::new(MockTagService::new());
-        let use_case = GenerateTagsUseCase::new(mock_service);
-
-        let request = GenerateTagsRequestDto {
-            document_id: "doc-123".to_string(),
-            max_tags: 5,
-        };
-
-        let response = use_case.execute(request).await.unwrap();
-
-        assert_eq!(response.status, "success");
-        assert!(!response.tags.is_empty());
     }
 }
