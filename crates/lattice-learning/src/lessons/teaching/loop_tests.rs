@@ -1993,11 +1993,6 @@ fn shaped_lesson_after_a_cut() -> Value {
     lesson
 }
 
-fn shaped_answers(candidate: &Value) -> String {
-    let count = candidate["questions"].as_array().unwrap().len();
-    json!({"answers":(0..count).map(|index| json!({"index":index,"correctIndices":[0],"reason":"The fixture's key."})).collect::<Vec<_>>()}).to_string()
-}
-
 /// The blind solver's answers for the lesson's questions: each picks the first option.
 fn shaped_solutions(candidate: &Value) -> String {
     let count = candidate["questions"].as_array().unwrap().len();
@@ -2023,7 +2018,11 @@ fn shaped_review(candidate: &Value) -> String {
 }
 
 async fn waiting_after_review(candidate: &Value, protected: bool) -> Result<Vec<String>> {
-    let model = model(vec![shaped_answers(candidate), shaped_review(candidate)]);
+    let model = model(vec![
+        shaped_solutions(candidate),
+        shaped_judgement(candidate, None),
+        shaped_review(candidate),
+    ]);
     let sources = references();
     let references = ReferenceCollection::lexical(&sources)?;
     let sentences = [crate::lessons::content_verification::Protected {
@@ -3459,10 +3458,12 @@ async fn a_lesson_question_the_judge_faults_reaches_the_repair_as_a_finding_at_t
 async fn a_copied_sentence_is_repaired_by_one_patch_after_the_content_was_reviewed() -> Result<()> {
     let candidate = lesson_that_copies();
     let model = model(vec![
-        shaped_answers(&candidate),
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, None),
         shaped_review(&candidate),
         say_it_yourself(&copied_id()),
-        shaped_answers(&candidate),
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, None),
         crate::lessons::course_generation_tests::clean_review(&[0], &[]),
     ]);
 
@@ -3508,10 +3509,12 @@ async fn a_whole_repair_is_sent_only_what_needs_the_whole_lesson_and_the_copied_
     cut["questions"].as_array_mut().unwrap().pop();
     let model = model(vec![
         full.to_string(),
-        shaped_answers(&full),
+        shaped_solutions(&full),
+        shaped_judgement(&full, None),
         shaped_review(&full),
         say_it_yourself(&copied_id()),
-        shaped_answers(&full),
+        shaped_solutions(&full),
+        shaped_judgement(&full, None),
         crate::lessons::course_generation_tests::clean_review(&[0], &[]),
     ]);
 
@@ -3550,10 +3553,12 @@ async fn a_copied_sentence_no_claim_stands_on_is_repaired_by_edits_while_claims_
         released: false,
     }];
     let model = model(vec![
-        shaped_answers(&candidate),
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, None),
         shaped_review(&candidate),
         say_it_yourself(&copied_id()),
-        shaped_answers(&candidate),
+        shaped_solutions(&candidate),
+        shaped_judgement(&candidate, None),
         crate::lessons::course_generation_tests::clean_review(&[0], &[]),
     ]);
 
@@ -3649,10 +3654,12 @@ async fn a_whole_repair_is_neither_sent_nor_charged_a_failing_quotation() -> Res
     let fix = json!({"edits":[{"finding":quotation_id,"path":"/blocks/0/quote","before":BAD,"after":EXCERPT}]}).to_string();
     let model = model(vec![
         full.to_string(),
-        shaped_answers(&full),
+        shaped_solutions(&full),
+        shaped_judgement(&full, None),
         shaped_review(&full),
         fix,
-        shaped_answers(&full),
+        shaped_solutions(&full),
+        shaped_judgement(&full, None),
         crate::lessons::course_generation_tests::clean_review(&[0], &[]),
     ]);
 

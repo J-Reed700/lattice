@@ -20,6 +20,7 @@ struct Script {
     solves: Solves,
     judges: Judges,
     seen: Mutex<Vec<(&'static str, String)>>,
+    schemas: Mutex<Vec<Value>>,
 }
 
 #[async_trait::async_trait]
@@ -34,6 +35,10 @@ impl LLMPort for Script {
             "other"
         };
         self.seen.lock().unwrap().push((kind, user.to_owned()));
+        self.schemas
+            .lock()
+            .unwrap()
+            .extend(request.json_schema.clone());
         let context: Value = serde_json::from_str(user)
             .or_else(|_| serde_json::from_str(user.rsplit("\n\n").next().unwrap_or("")))
             .unwrap_or(Value::Null);
@@ -82,6 +87,7 @@ impl Script {
             solves,
             judges,
             seen: Mutex::new(Vec::new()),
+            schemas: Mutex::new(Vec::new()),
         }
     }
 
@@ -267,5 +273,21 @@ async fn the_review_reads_a_lesson_question_as_the_item_the_bank_seeds() -> Resu
         .map(|(option, reason)| json!({"option": option, "reason": reason}))
         .collect();
     assert_eq!(shown["reasons"], json!(reasons));
+    Ok(())
+}
+
+#[tokio::test]
+async fn the_question_review_asks_for_no_text_length() -> Result<()> {
+    use crate::practice::practice_tests::text_length_rules;
+    let llm = Script::new(Script::agreeing(), Script::sound());
+
+    check(&llm, &lesson(), outcome()).await?;
+
+    let schemas = llm.schemas.lock().unwrap().clone();
+    assert!(schemas.len() >= 2);
+    for schema in &schemas {
+        let rules = text_length_rules(schema);
+        assert!(rules.is_empty(), "{rules:?}");
+    }
     Ok(())
 }

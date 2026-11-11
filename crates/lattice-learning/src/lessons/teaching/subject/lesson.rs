@@ -196,7 +196,12 @@ impl Subject for LessonSubject<'_> {
         self.held_up = blocking;
         let issues = if !blocking {
             self.step(Step::CheckingKeys);
-            let answer_issues = crate::key_review::check(llm, pass.value).await?;
+            let answer_issues = crate::question_review::check(
+                llm,
+                pass.value,
+                crate::question_review::Outcome::of_lesson(pass.authoring),
+            )
+            .await?;
             let round = self.standing.round(pass.value);
             self.step(if round.as_ref().is_some_and(|round| round.first) {
                 Step::Reviewing
