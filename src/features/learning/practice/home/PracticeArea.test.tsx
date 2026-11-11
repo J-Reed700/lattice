@@ -30,7 +30,7 @@ vi.mock('@/features/learning/drills/CourseDrillsPanel', () => ({
 }));
 vi.mock('@/features/learning/practice/kinds', () => ({
   kinds: {},
-  codeKind: { Entry: ({ choice }: { choice: { language: string } }) => <p>{`Coding build ${choice.language}`}</p> },
+  CodingEntry: ({ choice }: { choice: { language: string } }) => <p>{`Coding build ${choice.language}`}</p>,
 }));
 vi.mock('@/features/learning/practice/session/PracticeSession', () => ({
   PracticeSession: ({ onTryInterview }: { onTryInterview: (setting: 'mock') => void }) => (

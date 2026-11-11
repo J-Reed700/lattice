@@ -99,6 +99,5 @@ export function createFakeKind(ownCommand: () => Promise<Wire.PracticeSessionDto
     Results: FakeResults,
     HintMark: ({ hint }) => <p>{`Points at part ${hint.ordinal}`}</p>,
     Debrief: ({ debrief }) => <p>{(debrief.work as { note: string }).note}</p>,
-    Entry: () => null,
   };
 }

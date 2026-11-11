@@ -4,7 +4,7 @@ import { ArrowLeft } from 'lucide-react';
 
 import { CourseDrillsPanel } from '@/features/learning/drills/CourseDrillsPanel';
 import { FeynmanTechniquePanel } from '@/features/learning/practice/FeynmanTechniquePanel';
-import { codeKind, kinds } from '@/features/learning/practice/kinds';
+import { CodingEntry, kinds } from '@/features/learning/practice/kinds';
 import { PracticalWorkbenchPanel } from '@/features/learning/practice/practical/PracticalWorkbenchPanel';
 import { PracticeWorkbenchPanel } from '@/features/learning/practice/PracticeWorkbenchPanel';
 import { PracticeSession } from '@/features/learning/practice/session/PracticeSession';
@@ -25,8 +25,6 @@ export interface PracticeAreaProps {
   currentModule: Wire.LearningModuleDto | undefined;
   view: PracticeViewState;
 }
-
-const { Entry: CodeEntry } = codeKind;
 
 const SUB_TABS = [
   { id: 'attempt', label: 'Written practice' },
@@ -195,7 +193,7 @@ export function PracticeArea({ program, currentLesson, currentModule, view }: Pr
       )}
 
       {view.view.kind === 'coding-build' && (
-        <CodeEntry programId={programId} choice={view.view.choice} onReady={view.openCoding} onCancel={view.openHome} />
+        <CodingEntry programId={programId} choice={view.view.choice} onReady={view.openCoding} onCancel={view.openHome} />
       )}
       {view.view.kind === 'coding' && (
         <PracticeSession key={view.view.sessionId} programId={programId} sessionId={view.view.sessionId} kinds={kinds} onExit={view.openHome} onTryInterview={tryInterview} />

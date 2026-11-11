@@ -48,24 +48,6 @@ export interface KindCopy {
   rung(rung: Wire.Rung): { name: string; ask: string };
 }
 
-/** What the card chose before its start screen builds the task. */
-export interface CodingBuildChoice {
-  lessonId?: string | null;
-  form: Wire.Form;
-  setting: Wire.Setting;
-  language: string;
-  difficulty: Wire.ProblemDifficulty;
-  focus?: string | null;
-  budgetSeconds?: number | null;
-}
-
-export interface KindEntryProps {
-  programId: string;
-  choice: CodingBuildChoice;
-  onReady: (sessionId: string) => void;
-  onCancel: () => void;
-}
-
 export interface KindView {
   copy: KindCopy;
   /** What the kind reads once before the session opens. */
@@ -81,8 +63,6 @@ export interface KindView {
   HintMark?: ComponentType<{ session: Wire.PracticeSessionDto; hint: Wire.PracticeHintDto }>;
   /** The kind's part of the debrief. */
   Debrief: ComponentType<{ session: Wire.PracticeSessionDto; debrief: Wire.PracticeDebriefDto }>;
-  /** The card's start screen. */
-  Entry: ComponentType<KindEntryProps>;
 }
 
 export type Kinds = Readonly<Record<string, KindView>>;

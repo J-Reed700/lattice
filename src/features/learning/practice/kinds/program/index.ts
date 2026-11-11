@@ -1,4 +1,3 @@
-import { CodingEntry } from './CodingEntry';
 import { programCopy } from './copy';
 import { prepareProgram } from './prepare';
 import { ProgramDebrief } from './ProgramDebrief';
@@ -10,6 +9,8 @@ import { useProgramDraft } from './useProgramDraft';
 
 import type { KindView } from '../../session/kind';
 
+export { CodingEntry, type CodingBuildChoice } from './CodingEntry';
+
 export const programKind: KindView = {
   copy: programCopy,
   prepare: prepareProgram,
@@ -19,5 +20,4 @@ export const programKind: KindView = {
   Results: ProgramResults,
   HintMark: ProgramHintMark,
   Debrief: ProgramDebrief,
-  Entry: CodingEntry,
 };

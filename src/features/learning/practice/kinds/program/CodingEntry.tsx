@@ -11,13 +11,28 @@ import { programApi } from './programApi';
 import { SETTING_NAMES } from '../../session/practiceNames';
 import { sessionApi } from '../../session/sessionApi';
 
-import type { KindEntryProps } from '../../session/kind';
+export interface CodingBuildChoice {
+  lessonId?: string | null;
+  form: Wire.Form;
+  setting: Wire.Setting;
+  language: string;
+  difficulty: Wire.ProblemDifficulty;
+  focus?: string | null;
+  budgetSeconds?: number | null;
+}
+
+export interface CodingEntryProps {
+  programId: string;
+  choice: CodingBuildChoice;
+  onReady: (sessionId: string) => void;
+  onCancel: () => void;
+}
 
 const STEPS = ['Writing the problem', 'Proving it', 'Saving'] as const;
 
 type Phase = { kind: 'building' } | { kind: 'starting' } | { kind: 'failed'; message: string; stage: 'build' | 'start' };
 
-export function CodingEntry({ programId, choice, onReady, onCancel }: KindEntryProps) {
+export function CodingEntry({ programId, choice, onReady, onCancel }: CodingEntryProps) {
   const [phase, setPhase] = useState<Phase>({ kind: 'building' });
   const [step, setStep] = useState(0);
   const [attempt, setAttempt] = useState(0);
