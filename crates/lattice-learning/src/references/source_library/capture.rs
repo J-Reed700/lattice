@@ -8,6 +8,7 @@ use super::repository::{
 };
 use super::*;
 use crate::references::trust;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::http::url_identity::identity;
 use lattice_core::shared::persistence::{Transactions, WriteTx};
 
@@ -153,7 +154,7 @@ impl LearningSourceLibraryRepository {
         {
             return Ok(SelectedSaved::Added);
         }
-        let text_digest = hash_text(&full_text);
+        let text_digest = sha256_hex(&full_text);
         if selection.as_ref().is_some_and(|selection| selection.once) {
             if let Some(version_id) = held_page(
                 &mut tx,
@@ -385,7 +386,7 @@ impl LearningSourceLibraryRepository {
             } else {
                 let title = shown(captured.title.trim());
                 let publisher = captured.publisher.as_deref().map(shown);
-                let new_digest = hash_text(&text);
+                let new_digest = sha256_hex(&text);
                 if active_digest.as_deref() == Some(new_digest.as_str()) {
                     (LearningSourceCheckStatus::Unchanged, None, None)
                 } else {

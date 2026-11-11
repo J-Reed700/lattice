@@ -47,6 +47,7 @@ use lattice_core::domain::learning::claim_review::{
     ClaimState, CutPlace, EventProvenance, LessonReview, LessonReviewState, RepairOutcome,
     Revision, StopReason, UserAction, MACHINE_ATTEMPTS,
 };
+use lattice_core::shared::hash::sha256_hex;
 
 pub(crate) use fields::{field_pointer, field_text, locate, unit_fields, unit_texts};
 pub(crate) use held::{held_for_review, held_lessons, needs_review, review_outcome, HeldForReview};
@@ -308,7 +309,7 @@ impl ClaimLedger {
                     program_id: sink.program_id.clone(),
                     job_id: sink.job_id.clone(),
                     state,
-                    draft_sha256: digest(raw),
+                    draft_sha256: sha256_hex(raw),
                     checker_model: self.checker_model.clone(),
                     stop_reason,
                 },

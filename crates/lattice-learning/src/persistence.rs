@@ -28,8 +28,6 @@ pub(crate) fn hash<T: Serialize + ?Sized>(value: &T) -> Result<String> {
     Ok(sha256_hex(bytes))
 }
 
-pub(crate) use lattice_core::shared::hash::sha256_hex as hash_text;
-
 pub(crate) fn encode<T: Serialize + ?Sized>(value: &T) -> Result<String> {
     serde_json::to_string(value).map_err(|error| AppError::Serialization(error.to_string()))
 }
@@ -45,8 +43,8 @@ mod tests {
     #[test]
     fn hash_matches_the_hash_of_the_encoded_text() -> Result<()> {
         let value = serde_json::json!({"programId": "p", "revision": 3});
-        assert_eq!(hash(&value)?, hash_text(&encode(&value)?));
-        assert_eq!(hash_text("abc").len(), 64);
+        assert_eq!(hash(&value)?, sha256_hex(&encode(&value)?));
+        assert_eq!(sha256_hex("abc").len(), 64);
         Ok(())
     }
 

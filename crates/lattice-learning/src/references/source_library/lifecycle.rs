@@ -2,6 +2,7 @@
 use super::repository::{self, lifecycle as stored, SourceVersionInsert};
 use super::*;
 use crate::references::trust;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningSourceLibraryRepository {
@@ -283,7 +284,7 @@ impl LearningSourceLibraryRepository {
         if text.trim().is_empty() {
             return Err(invalid("Re-imported source text must not be empty."));
         }
-        let digest_value = hash_text(&text);
+        let digest_value = sha256_hex(&text);
         let existing = repository::version_with_digest(
             &mut tx,
             &req.program_id,

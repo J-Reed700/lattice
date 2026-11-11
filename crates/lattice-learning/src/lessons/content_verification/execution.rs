@@ -3,6 +3,7 @@ use crate::embedded_runtime::{BuiltinLabExecutionSpec, BuiltinRuntimes, Learning
 use crate::lab_runtime::{
     LearningLabExecutionResult, LearningLabFile, LearningLabLimits, LearningLabRunStatus,
 };
+use lattice_core::shared::hash::sha256_hex;
 use tokio_util::sync::CancellationToken;
 
 /// Sections whose fenced code is a worked example the lesson stands behind:
@@ -216,7 +217,7 @@ async fn run(
         id,
         unit,
         runtime: runtime.version().into(),
-        code_sha256: digest(&code),
+        code_sha256: sha256_hex(&code),
         code,
         result,
     })

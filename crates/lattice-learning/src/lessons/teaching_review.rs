@@ -174,7 +174,7 @@ pub async fn review(
 ) -> Result<Vec<ReviewFinding>> {
     // Save findings, including defects, before the later grounding/repair step.
     // Reusing a completed review never approves the lesson or skips grounding.
-    let key = format!("teaching-review-findings-v2:{}", crate::content_verification::digest(
+    let key = format!("teaching-review-findings-v2:{}", sha256_hex(
         &json!({"policy":POLICY,"model":llm.model_name(),"context":llm.max_context_tokens(),"system":system,"prompt":prompt,"candidate":candidate}).to_string()
     ));
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)
@@ -383,6 +383,7 @@ mod tests {
     use super::test_support::candidate;
     use super::*;
     use crate::lessons::course_generation_tests::{ScriptedModel, Windowed};
+    use lattice_core::shared::hash::sha256_hex;
 
     fn check(index: usize) -> Value {
         json!({"index":index,"passageId":format!("section-{index}-passage-0"),"finding":"The explanation correctly distinguishes the stated inputs and resulting behavior.","hasDefect":false})

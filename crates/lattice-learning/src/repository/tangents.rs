@@ -2,6 +2,7 @@
 
 use super::*;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 
 #[derive(sqlx::FromRow)]
@@ -283,7 +284,7 @@ impl LearningRepository {
                 program.title, module.title, lesson.title, quoted_selection
             )
         };
-        let content_digest = format!("sha256:{}", hash_text(&message_content));
+        let content_digest = format!("sha256:{}", sha256_hex(&message_content));
 
         sqlx::query(
             r#"

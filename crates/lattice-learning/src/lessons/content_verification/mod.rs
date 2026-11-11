@@ -14,6 +14,7 @@ use lattice_core::application::services::claim_verification::{
 use lattice_core::domain::learning::claim_review::{ClaimId, Class, ClassifiedBy};
 use lattice_core::domain::provenance::Label;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::hash::sha256_hex;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet};
@@ -139,7 +140,6 @@ pub(crate) async fn normalize_example_fences(llm: &dyn LLMPort, raw: String) -> 
     execution::label_unlabeled(llm, raw).await
 }
 
-pub(crate) use lattice_core::shared::hash::sha256_hex as digest;
 fn invalid(message: impl Into<String>) -> AppError {
     AppError::InvalidInput(message.into())
 }
@@ -291,7 +291,9 @@ impl ClaimChecks {
         // Each decision is restricted to this claim and its assigned evidence,
         // including when requests share a bank of passages. Other targets are
         // never evidence. Fresh coverage and final content binding still run.
-        digest(&json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string())
+        sha256_hex(
+            &json!({"unit":unit,"statement":claim.statement,"passages":passages}).to_string(),
+        )
     }
 }
 
@@ -316,7 +318,7 @@ struct ClaimReceipt {
 fn claim_receipt_key(llm: &dyn LLMPort, comparison: &str) -> String {
     format!(
         "claim-v1:{}",
-        digest(
+        sha256_hex(
             &json!({
                 "policy": POLICY, "model": llm.model_name(),
                 "context": llm.max_context_tokens(), "comparison": comparison,

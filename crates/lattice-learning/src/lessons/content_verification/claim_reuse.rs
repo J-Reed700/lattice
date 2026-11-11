@@ -2,6 +2,7 @@
 //! A receipt saved under the earlier key is found by the claim's own unit,
 //! quote, statement and passages, never by an equal statement on another quote.
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 
 pub(super) async fn legacy_receipt(
     llm: &dyn LLMPort,
@@ -27,6 +28,6 @@ pub(super) fn legacy_key(
         .collect();
     claim_receipt_key(
         llm,
-        &digest(&json!({"unit":unit,"claim":claim,"passages":passages}).to_string()),
+        &sha256_hex(&json!({"unit":unit,"claim":claim,"passages":passages}).to_string()),
     )
 }

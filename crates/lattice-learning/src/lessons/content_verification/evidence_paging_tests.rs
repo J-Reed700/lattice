@@ -4,6 +4,7 @@
 use super::readings_tests::{claim, paged, read_one, world_of};
 use super::*;
 use lattice_core::domain::learning::acceptance::{Outcome, Reading};
+use lattice_core::shared::hash::sha256_hex;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Mutex;
 
@@ -503,7 +504,7 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
     let world = world_of(&references, citations);
     let earlier = format!(
         "claim-v1:{}",
-        digest(
+        sha256_hex(
             &json!({"policy": "lesson-evidence-v20", "model": model.model_name(),
                 "context": model.max_context_tokens(), "comparison": comparison,
                 "challenge": "challenge-contrary-evidence-v1"})
@@ -517,7 +518,7 @@ async fn a_verdict_the_challenge_overturned_is_checked_again_under_the_trust_pol
         current,
         format!(
             "claim-v1:{}",
-            digest(
+            sha256_hex(
                 &json!({"policy": POLICY, "model": model.model_name(),
                     "context": model.max_context_tokens(), "comparison": comparison,
                     "trust": lattice_core::domain::provenance::TRUST_POLICY_VERSION})

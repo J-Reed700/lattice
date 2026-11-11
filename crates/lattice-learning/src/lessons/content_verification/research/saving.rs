@@ -1,5 +1,6 @@
 //! Saving the pages a research round captures.
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 
 /// Where a research round saves what it captures.
 pub(super) struct Saving<'s> {
@@ -30,7 +31,7 @@ impl Saving<'_> {
             return Ok(None);
         }
         let version_id = uuid::Uuid::new_v4().to_string();
-        let hash = digest(&captured.text);
+        let hash = sha256_hex(&captured.text);
         let saved = self
             .library
             .add_selected_once(

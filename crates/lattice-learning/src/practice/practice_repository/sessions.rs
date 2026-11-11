@@ -1,5 +1,6 @@
 //! Starting practice sessions, saving artifact revisions and changing modes.
 use super::*;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Transactions;
 
 impl LearningPracticeRepository {
@@ -133,7 +134,7 @@ impl LearningPracticeRepository {
         let timestamp = now();
         sqlx::query("INSERT INTO learning_practice_sessions(id,program_id,lesson_id,lesson_title,lesson_objective,task_prompt,status,mode,revision,source_version_ids_json,rubric_json,created_at,updated_at,task_kind,revises_session_id) VALUES(?,?,?,?,?,?,'active',?,0,?,?,?,?,?,?)")
             .bind(&req.session_id).bind(&req.program_id).bind(&req.lesson_id).bind(&title).bind(&objective).bind(&task_prompt).bind(mode(&req.mode)).bind(json(&source_ids)?).bind(json(&rubric)?).bind(timestamp).bind(timestamp).bind(task_kind(&req.task_kind)).bind(&req.revises_session_id).execute(&mut *tx).await.map_err(db)?;
-        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(&initial_text).bind(hash_text(&initial_text)).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,0,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(&initial_text).bind(sha256_hex(&initial_text)).bind(&req.operation_id).bind(timestamp).execute(&mut *tx).await.map_err(db)?;
         if let Some(details) = inherited_assistance {
             Self::insert_assistance(
                 &mut tx,
@@ -214,7 +215,7 @@ impl LearningPracticeRepository {
         if update.rows_affected() != 1 {
             return Err(invalid("Practice session changed; reload and retry."));
         }
-        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(next).bind(&req.text).bind(hash_text(&req.text)).bind(&req.operation_id).bind(t).execute(&mut *tx).await.map_err(db)?;
+        sqlx::query("INSERT INTO learning_practice_artifact_revisions(program_id,session_id,revision,text,sha256,operation_id,created_at) VALUES(?,?,?,?,?,?,?)").bind(&req.program_id).bind(&req.session_id).bind(next).bind(&req.text).bind(sha256_hex(&req.text)).bind(&req.operation_id).bind(t).execute(&mut *tx).await.map_err(db)?;
         practice_operation(
             &req.operation_id,
             &req.program_id,

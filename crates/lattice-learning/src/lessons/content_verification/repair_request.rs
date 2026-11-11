@@ -4,6 +4,7 @@ use super::repair::goal_words;
 use super::*;
 use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Goal};
 use lattice_core::domain::learning::claim_review::ClaimId;
+use lattice_core::shared::hash::sha256_hex;
 
 #[derive(Serialize, Deserialize)]
 pub(super) struct PendingRepair {
@@ -36,10 +37,10 @@ pub(super) fn repair_fingerprint(
     let mut sources: Vec<_> = references
         .sources
         .iter()
-        .map(|source| (&source.id, digest(&source.excerpt)))
+        .map(|source| (&source.id, sha256_hex(&source.excerpt)))
         .collect();
     sources.sort();
-    digest(&json!({"policy":POLICY,"repairPolicy":"pending-repair-v3","model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
+    sha256_hex(&json!({"policy":POLICY,"repairPolicy":"pending-repair-v3","model":llm.model_name(),"prompt":prompt,"schema":schema,"candidate":candidate,"sources":sources}).to_string())
 }
 
 impl PendingRepair {

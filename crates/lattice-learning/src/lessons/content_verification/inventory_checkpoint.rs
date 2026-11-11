@@ -3,6 +3,7 @@ use super::claim_ledger::Rewrites;
 use super::classify::{rule_class, Case};
 use super::*;
 use lattice_core::domain::learning::claim_review::{identities, ClaimLedgerEntry, ExtractedClaim};
+use lattice_core::shared::hash::sha256_hex;
 
 async fn save_inventory(
     llm: &dyn LLMPort,
@@ -14,7 +15,7 @@ async fn save_inventory(
         policy: INVENTORY_POLICY.into(),
         model: llm.model_name().into(),
         model_context: llm.max_context_tokens(),
-        content_sha256: digest(candidate),
+        content_sha256: sha256_hex(candidate),
         inventory: inventory.clone(),
         coverage: coverage.cloned().unwrap_or(Coverage { units: Vec::new() }),
         coverage_policy: coverage.map(|_| coverage::POLICY.into()),

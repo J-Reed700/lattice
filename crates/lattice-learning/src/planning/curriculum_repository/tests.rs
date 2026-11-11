@@ -10,6 +10,7 @@ use crate::{
     repository::LearningRepository,
     tests::{fixture, pool},
 };
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::runtime::jobs::RecoveryPolicy;
 
@@ -494,12 +495,7 @@ async fn job_restart_recovery_retry_and_publication_are_durable_and_atomic() -> 
                 reference_hashes: program
                     .sources
                     .iter()
-                    .map(|source| {
-                        (
-                            source.id.clone(),
-                            crate::content_verification::digest(&source.excerpt),
-                        )
-                    })
+                    .map(|source| (source.id.clone(), sha256_hex(&source.excerpt)))
                     .collect(),
             });
             assert!(crate::lesson_drafts::resume("matching-inputs".into())

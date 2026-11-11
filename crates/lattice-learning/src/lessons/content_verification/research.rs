@@ -8,6 +8,7 @@ use lattice_core::application::contracts::web::WebSearchInput;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
 use lattice_core::application::services::grounded_generation::GroundedRequest;
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::http::url_identity::identity;
 use lattice_core::shared::persistence::Database;
 use std::sync::{Arc, Mutex};
@@ -588,7 +589,7 @@ async fn research<'a>(
     );
     let search_key = format!(
         "research-v1:{}",
-        digest(
+        sha256_hex(
             &json!({"topic":context.topic,
         "model":llm.model_name(),"policy":POLICY})
             .to_string()

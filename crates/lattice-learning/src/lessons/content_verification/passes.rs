@@ -12,6 +12,7 @@ use lattice_core::domain::learning::acceptance::{AcceptancePolicy, Position, Wal
 use lattice_core::domain::learning::claim_review::{
     CheckResult, Checker, ClaimEvent, ClaimId, ClaimLedgerEntry, ClaimState, VerdictKind,
 };
+use lattice_core::shared::hash::sha256_hex;
 
 /// What a pass extracts from a candidate lesson before anything is read.
 pub(super) struct Extraction {
@@ -65,7 +66,7 @@ pub(super) async fn extract(
             saved.policy == INVENTORY_POLICY
                 && saved.model == llm.model_name()
                 && saved.model_context == llm.max_context_tokens()
-                && saved.content_sha256 == digest(&candidate_text)
+                && saved.content_sha256 == sha256_hex(&candidate_text)
                 && validate_inventory(&saved.inventory, &content).is_ok()
         });
     let (inventory, coverage) = match checkpoint {
@@ -103,7 +104,7 @@ pub(super) async fn extract(
         policy: INVENTORY_POLICY.into(),
         model: llm.model_name().into(),
         model_context: llm.max_context_tokens(),
-        content_sha256: digest(&candidate_text),
+        content_sha256: sha256_hex(&candidate_text),
         inventory,
         coverage,
         coverage_policy: Some(coverage::POLICY.into()),
@@ -678,7 +679,7 @@ pub(super) fn report(
             .iter()
             .map(|s| SourceBinding {
                 id: s.id.clone(),
-                sha256: digest(&s.excerpt),
+                sha256: sha256_hex(&s.excerpt),
             })
             .collect(),
         coverage: accounted,

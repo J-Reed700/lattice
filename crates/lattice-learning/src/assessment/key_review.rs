@@ -5,6 +5,7 @@
 //! quizzes-and-tests.md, section 5.2).
 use crate::lessons::structured_call::{complete_reasoned_json, CallKind, ReasonFirst};
 use crate::review_findings::{FindingKind, FindingSite, ReviewFinding};
+use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -33,7 +34,7 @@ struct AnswerCheck {
 /// One finding per question whose authored key an independent solution
 /// disputes, placed at that question.
 pub(crate) async fn check(llm: &dyn LLMPort, candidate: &Value) -> Result<Vec<ReviewFinding>> {
-    let key = format!("answer-review-v2:{}", crate::content_verification::digest(
+    let key = format!("answer-review-v2:{}", sha256_hex(
         &json!({"model":llm.model_name(),"context":llm.max_context_tokens(),"questions":candidate.get("questions")}).to_string()
     ));
     if let Some(saved) = crate::lesson_drafts::checkpoint(&key)

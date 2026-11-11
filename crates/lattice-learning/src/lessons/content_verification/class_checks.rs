@@ -13,6 +13,7 @@ use lattice_core::application::services::claim_verification::{
     CONSISTENCY_POLICY, KNOWLEDGE_POLICY,
 };
 use lattice_core::domain::learning::acceptance::AcceptancePolicy;
+use lattice_core::shared::hash::sha256_hex;
 
 /// Tokens a passage costs beside its text in the consistency check: its
 /// label and the blank line after it.
@@ -261,7 +262,7 @@ pub(super) fn consistency_key(
         .collect();
     format!(
         "{CONSISTENCY_POLICY}:{}",
-        digest(
+        sha256_hex(
             &json!({
                 "model": llm.model_name(),
                 "context": llm.max_context_tokens(),
@@ -312,7 +313,7 @@ pub(super) async fn consistency_of(
 pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str) -> String {
     format!(
         "{KNOWLEDGE_POLICY}:{}",
-        digest(
+        sha256_hex(
             &json!({
                 "model": llm.model_name(),
                 "context": llm.max_context_tokens(),
@@ -362,7 +363,7 @@ pub(super) async fn knowledge_of(
 fn class_key(llm: &dyn LLMPort, statement: &str) -> String {
     format!(
         "classes-v1:{}",
-        digest(&json!({"model": llm.model_name(), "statement": statement}).to_string())
+        sha256_hex(&json!({"model": llm.model_name(), "statement": statement}).to_string())
     )
 }
 
