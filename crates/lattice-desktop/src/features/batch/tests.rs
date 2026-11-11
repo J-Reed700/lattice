@@ -116,6 +116,8 @@ struct ImportHarness {
     jobs: Arc<JobRuntime>,
     imports: BatchImports,
     library: PathBuf,
+    /// When set, the embedding the importers load instead of `embedding`.
+    loaded: Arc<parking_lot::Mutex<Option<Arc<dyn EmbeddingPort>>>>,
 }
 
 impl ImportHarness {
@@ -171,6 +173,7 @@ impl ImportHarness {
             jobs,
             imports,
             library,
+            loaded: Arc::new(parking_lot::Mutex::new(None)),
         };
         harness.start().await?;
         Ok(harness)
@@ -180,8 +183,12 @@ impl ImportHarness {
     /// at start.
     async fn start(&self) -> Result<()> {
         let embedding = self.embedding.clone();
+        let loaded = self.loaded.clone();
         let load: EmbeddingLoader = Arc::new(move || {
-            let embedding = embedding.clone() as Arc<dyn EmbeddingPort>;
+            let embedding = loaded
+                .lock()
+                .clone()
+                .unwrap_or_else(|| embedding.clone() as Arc<dyn EmbeddingPort>);
             Box::pin(async move { Ok(embedding) })
         });
         let database = self.db.database().clone();
@@ -285,6 +292,31 @@ fn write_files(dir: &Path, files: &[(&str, &str)]) -> Vec<PathBuf> {
             path
         })
         .collect()
+}
+
+#[tokio::test]
+async fn an_import_over_a_model_that_failed_to_load_fails_with_the_load_error() -> anyhow::Result<()>
+{
+    let dir = tempfile::tempdir()?;
+    let harness = ImportHarness::new(dir.path()).await?;
+    *harness.loaded.lock() = Some(Arc::new(
+        lattice_core::application::ports::UnavailableEmbedding::failed_to_load(
+            AppError::ModelLoadFailed("weights are corrupt".into()),
+        ),
+    ));
+    let paths = write_files(dir.path(), &[("first.txt", "a document")]);
+
+    let job_id = harness.files(&paths, None).await?;
+    harness.wait(&job_id).await?;
+
+    let job = harness.jobs.store().get(&job_id).await?;
+    assert_eq!(job.status, JobStatus::Failed);
+    let message = job.error_message.unwrap_or_default();
+    assert!(
+        message.contains("weights are corrupt"),
+        "the load failure is missing from: {message}"
+    );
+    Ok(())
 }
 
 #[tokio::test]
@@ -1094,6 +1126,34 @@ async fn a_refused_space_assignment_leaves_the_owner_unstamped_and_the_retry_fil
             .await?,
         1
     );
+    Ok(())
+}
+
+#[tokio::test]
+async fn a_url_import_over_a_model_that_failed_to_load_fails_with_the_load_error(
+) -> anyhow::Result<()> {
+    let dir = tempfile::tempdir()?;
+    let harness = ImportHarness::new(dir.path()).await?;
+    *harness.loaded.lock() = Some(Arc::new(
+        lattice_core::application::ports::UnavailableEmbedding::failed_to_load(
+            AppError::ModelLoadFailed("weights are corrupt".into()),
+        ),
+    ));
+
+    let job_id = harness
+        .imports
+        .start_urls(&["https://example.com/article1".to_string()], None)
+        .await?;
+    harness.wait(&job_id).await?;
+
+    let job = harness.jobs.store().get(&job_id).await?;
+    assert_eq!(job.status, JobStatus::Failed);
+    let message = job.error_message.unwrap_or_default();
+    assert!(
+        message.contains("weights are corrupt"),
+        "the load failure is missing from: {message}"
+    );
+    assert!(harness.ingestion.ingested.lock().is_empty());
     Ok(())
 }
 

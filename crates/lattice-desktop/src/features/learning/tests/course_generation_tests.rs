@@ -15,12 +15,10 @@ use serde_json::json;
 #[ignore = "requires LATTICE_LLAMACPP_SETTINGS and LATTICE_OUTLINE_REQUEST"]
 async fn live_outline_generation_and_save() -> Result<()> {
     use crate::features::{llm::llama_cpp::LlamaCppLlm, web::services::web::WebService};
-    use lattice_core::application::contracts::settings::LLMSettingsDto;
     use lattice_core::application::ports::WebServiceTrait;
-    let settings_path = std::env::var("LATTICE_LLAMACPP_SETTINGS").unwrap();
     let request_path = std::env::var("LATTICE_OUTLINE_REQUEST").unwrap();
-    let settings: serde_json::Value = serde_json::from_slice(&std::fs::read(settings_path)?)?;
-    let config: LLMSettingsDto = serde_json::from_value(settings["settings"]["llm"].clone())?;
+    let config = crate::tests::live_llama_cpp::settings()?;
+    let header = crate::tests::live_llama_cpp::header(&config.llama_cpp.auth_header_name)?;
     let request: GenerateLearningProgramRequestDto =
         serde_json::from_slice(&std::fs::read(request_path)?)?;
     assert!(
@@ -98,7 +96,7 @@ async fn live_outline_generation_and_save() -> Result<()> {
         }
     }
     let client = ObservedModel {
-        inner: LlamaCppLlm::new(&config)?.into_port().await,
+        inner: LlamaCppLlm::new(&config, header)?.into_port().await,
         call: std::sync::atomic::AtomicUsize::new(0),
         replay_draft: std::env::var("LATTICE_OUTLINE_REPLAY_DRAFT")
             .ok()

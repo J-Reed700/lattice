@@ -1,7 +1,7 @@
 //! Which loaded models a change makes stale.
 
 use lattice_core::application::contracts::settings::LLMSettingsDto;
-use lattice_core::application::ports::llm_port::InvalidationCause;
+use lattice_core::application::ports::llm_port::{InvalidationCause, RemoteServer};
 use lattice_core::domain::models::model_ref::ModelRef;
 
 use super::ModelKey;
@@ -17,6 +17,11 @@ pub(super) fn matches(key: &ModelKey, cause: &InvalidationCause) -> bool {
         InvalidationCause::CredentialsChanged { provider } => {
             matches!(&key.model, ModelRef::Cloud { provider: p, .. } if p == provider)
         }
+        InvalidationCause::RemoteAuthChanged { server } => matches!(
+            (&key.model, server),
+            (ModelRef::Ollama { .. }, RemoteServer::Ollama)
+                | (ModelRef::LlamaCpp { .. }, RemoteServer::LlamaCpp)
+        ),
         InvalidationCause::SettingsChanged {
             previous: Some(previous),
             current: Some(current),
@@ -31,6 +36,7 @@ pub(super) fn describe(cause: &InvalidationCause) -> &'static str {
         InvalidationCause::ModelDeleted { .. } => "model_deleted",
         InvalidationCause::SettingsChanged { .. } => "settings_changed",
         InvalidationCause::CredentialsChanged { .. } => "credentials_changed",
+        InvalidationCause::RemoteAuthChanged { .. } => "remote_auth_changed",
     }
 }
 
@@ -71,13 +77,11 @@ fn client_changed(key: &ModelKey, before: &LLMSettingsDto, after: &LLMSettingsDt
         ModelRef::Ollama { .. } => {
             before.ollama_url != after.ollama_url
                 || before.ollama_auth_header_name != after.ollama_auth_header_name
-                || before.ollama_auth_header_value != after.ollama_auth_header_value
                 || before.context_window != after.context_window
         }
         ModelRef::LlamaCpp { .. } => {
             before.llama_cpp.url != after.llama_cpp.url
                 || before.llama_cpp.auth_header_name != after.llama_cpp.auth_header_name
-                || before.llama_cpp.auth_header_value != after.llama_cpp.auth_header_value
                 || before.context_window != after.context_window
                 || before.timeout_seconds != after.timeout_seconds
         }

@@ -62,6 +62,28 @@ fn a_parent_dir_component_is_refused() {
 }
 
 #[test]
+fn a_nul_byte_in_a_path_is_refused_not_reported_missing() {
+    let (_dir, scope) = fixture();
+    let error = scope.resolve("src/main\0.rs").unwrap_err();
+    assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
+}
+
+#[test]
+fn a_backslash_separated_parent_is_refused_on_every_platform() {
+    let (_dir, scope) = fixture();
+    let error = scope.resolve("src\\..\\..\\etc").unwrap_err();
+    assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
+}
+
+#[cfg(windows)]
+#[test]
+fn a_dots_only_segment_is_refused_not_reported_missing_on_windows() {
+    let (_dir, scope) = fixture();
+    let error = scope.resolve("src/.../x").unwrap_err();
+    assert!(matches!(error, AppError::PermissionDenied(_)), "{error:?}");
+}
+
+#[test]
 fn an_absolute_path_is_refused_even_inside_the_root() {
     let (_dir, scope) = fixture();
     let inside = scope.root().join("src/main.rs");
@@ -871,4 +893,17 @@ fn the_folder_template_cites_only_numbered_passages() {
         "6ce3edf0508f98fe598f5ca5ed82681ec6e70010114fea969e4157a10f2fbc70",
         "the folder's template is as it was before the tutor"
     );
+}
+
+#[test]
+fn a_cited_path_with_a_nul_byte_is_refused() {
+    let (_dir, scope) = fixture();
+    assert!(fs::locate_file(&scope, "src/main\0.rs").is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_cited_path_with_a_dots_only_segment_is_refused_on_windows() {
+    let (_dir, scope) = fixture();
+    assert!(fs::locate_file(&scope, ".../main.rs").is_err());
 }

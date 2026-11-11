@@ -36,7 +36,6 @@ async fn found(
     )
     .await
     .unwrap()
-    .findings
 }
 
 fn model_answering<'a>(inner: &'a ScriptedModel, used: Vec<Value>) -> Routed<'a> {

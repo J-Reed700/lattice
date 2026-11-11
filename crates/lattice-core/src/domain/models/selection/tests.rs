@@ -95,7 +95,7 @@ fn test_build_download_url_prevents_path_traversal_in_filename() {
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("Invalid filename contains path separators"));
+        .contains("Invalid filename: not a single plain file name"));
 }
 
 #[test]
@@ -109,7 +109,18 @@ fn test_build_download_url_prevents_directory_separators_in_filename() {
     assert!(result
         .unwrap_err()
         .to_string()
-        .contains("Invalid filename contains path separators"));
+        .contains("Invalid filename: not a single plain file name"));
+}
+
+#[test]
+fn a_download_url_keeps_two_dots_inside_a_name() {
+    let mut model = create_test_model();
+    model.model_id = Some("org/repo..v2".into());
+    model.default_filename = Some("model..Q4_K_M.gguf".into());
+
+    let url = model.build_download_url().unwrap();
+
+    assert!(url.ends_with("/org/repo..v2/resolve/main/model..Q4_K_M.gguf"));
 }
 
 #[test]

@@ -10,6 +10,7 @@ use lattice_core::application::ports::download_manager::{
     DownloadBatchItem, DownloadEvent, DownloadManager, DownloadRequest,
 };
 use lattice_core::domain::download::{DownloadError, DownloadSession, DownloadState};
+use lattice_core::shared::path_safety::reject_parent_components;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 use tracing::{debug, info};
@@ -331,15 +332,9 @@ impl DownloadManagerService {
             ));
         }
 
-        if request
-            .destination
-            .components()
-            .any(|c| matches!(c, std::path::Component::ParentDir))
-        {
-            return Err(DownloadError::InvalidDestination(
-                "Path traversal detected in destination path".to_string(),
-            ));
-        }
+        reject_parent_components(&request.destination).map_err(|reason| {
+            DownloadError::InvalidDestination(format!("Destination path {reason}"))
+        })?;
 
         let cache_root = dirs::cache_dir().map(|p| p.join("lattice"));
         let dot_cache_root = std::env::var("HOME")

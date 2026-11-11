@@ -554,7 +554,7 @@ async fn each_candidate_part_is_offered_with_the_label_the_user_sees() -> Result
     Ok(())
 }
 
-const LEFT_TO_SENTENCE: &str = " otherChecks lists the checks that have already read this whole candidate, each with what it decides. recordedFindings, when given, are the defects those checks recorded and will see corrected. For every proposal give in leftTo the id of the recorded finding that describes the same defect; when no recorded finding does, the id of the check that decides what the proposal is about; and none when no check decides it. Judge every proposal on its evidence whatever its leftTo: leftTo says only which check rules on it.";
+const LEFT_TO_SENTENCE: &str = " otherChecks lists the checks that have already read this whole candidate, each with what it decides. recordedFindings, when given, are the defects those checks recorded and will see corrected. For every proposal give in leftTo the id of the recorded finding that describes the same defect; when no recorded finding does, the id of the check that decides what the proposal is about; and none when no check decides it. What another check decides is not corrected from a review finding, whether that check recorded the defect or found none: return not_established for every proposal whose leftTo is not none.";
 
 const DECIDES: [&str; 2] = [
     "whether the kettle is full; whether the lid is shut",
@@ -853,25 +853,16 @@ async fn an_actionable_proposal_left_to_a_check_is_not_established_and_not_asked
 }
 
 #[tokio::test]
-async fn an_actionable_proposal_left_to_a_check_that_breaks_an_evidence_rule_is_asked_for_again(
-) -> Result<()> {
-    // Actionable with no evidence and a placed part breaks the protocol, as for none.
+async fn a_proposal_left_to_a_check_needs_none_of_the_evidence_rules() -> Result<()> {
+    // Actionable with no evidence and no part would break the protocol otherwise.
     let bare =
         json!({"decisions":[{"issueId":"issue-0","verdict":"actionable","basis":"external_fact",
         "evidenceIds":[],"requirementId":null,"partId":"lesson","leftTo":"check-0",
         "reason":"The kettle is described twice."}]})
         .to_string();
-    let (sent, checked) = gate_ruled(
-        vec![bare, gate_decision("actionable", "check-0")],
-        Beside {
-            decides: &DECIDES,
-            recorded: &[],
-        },
-    )
-    .await?;
-    assert_eq!(sent.len(), 2);
-    assert_eq!(checked.left.len(), 1);
-    assert!(checked.left[0].established.is_some());
+    let (sent, established) = gate_checks(vec![bare], &[]).await?;
+    assert!(established.is_empty());
+    assert_eq!(sent.len(), 1);
     Ok(())
 }
 
@@ -905,66 +896,13 @@ async fn a_proposal_left_to_a_check_that_recorded_nothing_is_handed_back_with_th
     )
     .await?;
     assert!(checked.established.is_empty());
-    let mut placed = issues[0].clone();
-    placed.site = Some(FindingSite::Section(0));
     assert_eq!(
         checked.left,
         vec![Left {
             check: 1,
-            finding: issues[0].clone(),
-            established: Some(placed),
+            finding: issues[0].clone()
         }]
     );
-    Ok(())
-}
-
-#[tokio::test]
-async fn a_not_established_proposal_left_to_a_check_is_handed_back_with_nothing_established(
-) -> Result<()> {
-    let issues = proposal("The kettle is described twice.");
-    let (_, checked) = gate_ruled(
-        vec![gate_decision("not_established", "check-1")],
-        Beside {
-            decides: &DECIDES,
-            recorded: &[],
-        },
-    )
-    .await?;
-    assert!(checked.established.is_empty());
-    assert_eq!(
-        checked.left,
-        vec![Left {
-            check: 1,
-            finding: issues[0].clone(),
-            established: None,
-        }]
-    );
-    Ok(())
-}
-
-#[tokio::test]
-async fn an_actionable_proposal_naming_a_recorded_finding_is_neither_established_nor_left(
-) -> Result<()> {
-    let (_, checked) = gate_ruled(
-        vec![gate_decision("actionable", "recorded-0")],
-        Beside {
-            decides: &DECIDES,
-            recorded: &recorded_findings(),
-        },
-    )
-    .await?;
-    assert!(checked.established.is_empty());
-    assert!(checked.left.is_empty());
-    Ok(())
-}
-
-#[tokio::test]
-async fn the_system_text_sent_ends_with_the_sentence_that_leaves_leftto_to_say_who_rules(
-) -> Result<()> {
-    let (sent, _) = gate_checks(vec![gate_decision("not_established", "none")], &[]).await?;
-    assert!(sent[0].system.ends_with(
-        " Judge every proposal on its evidence whatever its leftTo: leftTo says only which check rules on it."
-    ));
     Ok(())
 }
 
@@ -985,7 +923,7 @@ async fn a_proposal_left_to_a_recorded_finding_or_to_none_is_not_handed_back() -
 #[test]
 fn a_proposal_asked_for_a_second_time_is_handed_back_once() -> Result<()> {
     let issues = proposal("The kettle is described twice.");
-    let evidence = HashMap::from([("blocks-0".to_owned(), EvidenceKind::Candidate)]);
+    let evidence = HashMap::new();
     let beside = Beside {
         decides: &DECIDES,
         recorded: &[],

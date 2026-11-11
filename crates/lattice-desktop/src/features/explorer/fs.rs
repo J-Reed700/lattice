@@ -11,6 +11,7 @@ use super::dto::{
 };
 use super::scope::{Scope, ScopedPath};
 use ignore::WalkBuilder;
+use lattice_core::shared::path_safety::reject_parent_components;
 use lattice_core::shared::{AppError, Result};
 use regex::{Regex, RegexBuilder};
 use std::collections::HashSet;
@@ -594,11 +595,9 @@ pub(super) fn locate_file_with_bounds(
     if wanted.is_empty() {
         return Ok(Vec::new());
     }
-    if wanted.split('/').any(|part| part == "..") {
-        return Err(AppError::PermissionDenied(format!(
-            "`..` is not allowed in an Explorer path: {path}"
-        )));
-    }
+    reject_parent_components(Path::new(&wanted)).map_err(|reason| {
+        AppError::PermissionDenied(format!("An Explorer path {reason}: {path}"))
+    })?;
     if let Ok(found) = scope.resolve(&wanted) {
         if found.canonical.is_file() {
             return Ok(vec![found.relative]);

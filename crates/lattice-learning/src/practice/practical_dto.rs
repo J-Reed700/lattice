@@ -10,6 +10,7 @@ use serde::{Deserialize, Serialize};
 #[serde(rename_all = "snake_case")]
 pub enum LearningPracticalActivityKind {
     CodeLab,
+    Exercise,
     Debugging,
     CodeReview,
     Incident,
@@ -128,11 +129,45 @@ pub enum LearningPracticalRunStatus {
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
+pub struct CaseCheckDetailDto {
+    pub case_id: String,
+    pub category: String,
+    pub visibility: crate::practice::coding::problem::CaseVisibility,
+    pub scale: bool,
+    /// A learner example run as a case.
+    pub mine: bool,
+    pub status: crate::practice::coding::problem::CaseStatus,
+    pub args: Option<Vec<String>>,
+    pub expected: Option<String>,
+    pub actual: Option<String>,
+    pub printed: Option<String>,
+    pub error: Option<String>,
+    pub elapsed_ms: Option<u64>,
+}
+
+impl CaseCheckDetailDto {
+    /// What a reader without the setting's leave may see of a hidden case: its category and status.
+    pub(crate) fn without_hidden_content(mut self) -> Self {
+        if self.visibility == crate::practice::coding::problem::CaseVisibility::Hidden {
+            self.args = None;
+            self.expected = None;
+            self.actual = None;
+            self.printed = None;
+            self.error = None;
+        }
+        self
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
 pub struct LearningPracticalCheckResultDto {
     pub name: String,
     pub status: LearningPracticalCheckStatus,
     pub message: String,
     pub duration_ms: Option<i64>,
+    #[serde(default)]
+    pub detail: Option<CaseCheckDetailDto>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, specta::Type, PartialEq, Eq)]

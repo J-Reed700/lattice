@@ -210,7 +210,6 @@ pub fn consolidate_after_turn(
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
     use lattice_core::application::services::context_assembler::{

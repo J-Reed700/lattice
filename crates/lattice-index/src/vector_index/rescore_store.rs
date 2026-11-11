@@ -364,7 +364,6 @@ fn write_all_at(file: &std::fs::File, bytes: &[u8], offset: u64) -> std::io::Res
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
 

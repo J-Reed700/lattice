@@ -273,7 +273,6 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    #[allow(clippy::expect_used)]
     fn windows_guard_sets_the_system_request_and_clears_it_on_release() {
         let mut request = windows_power::Request::begin("Testing power request")
             .expect("A power request must be creatable on Windows");
@@ -287,7 +286,6 @@ mod tests {
 
     #[cfg(windows)]
     #[test]
-    #[allow(clippy::expect_used)]
     fn windows_requests_are_independent_per_holder() {
         let mut first = windows_power::Request::begin("first").expect("first request");
         let mut second = windows_power::Request::begin("second").expect("second request");
@@ -319,7 +317,6 @@ mod tests {
 
     #[cfg(target_os = "macos")]
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
-    #[allow(clippy::expect_used)]
     async fn native_activity_is_retained_across_awaits_and_released_on_cancellation() {
         let guard = UserActivity::begin("Testing background activity lifetime");
         let activity = guard

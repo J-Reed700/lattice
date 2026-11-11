@@ -64,7 +64,6 @@ pub async fn reconcile_orphaned_files(
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used, clippy::panic))]
 mod tests {
     use super::*;
 

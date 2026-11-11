@@ -340,7 +340,6 @@ pub async fn store_document_with_context_and_file_tx(
 }
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use super::*;
     use sqlx::sqlite::SqlitePoolOptions;

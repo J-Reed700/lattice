@@ -85,14 +85,7 @@ pub struct DownloadEventBridge {
     emitter: Arc<DownloadEventEmitter>,
     download_manager: Arc<dyn manager_port::DownloadManager>,
     repository: Arc<dyn crate::features::download::download_repository::DownloadRepository>,
-    event_rx_arc:
-        Arc<RwLock<Option<mpsc::Receiver<manager_port::DownloadEvent>>>>,
-    // reason: holds the repository handle supplied by DI wiring in
-    // bootstrap/app.rs; dropping it would change the public `new` signature.
-    #[allow(dead_code)]
-    downloaded_model_repository: Option<
-        Arc<crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository>,
-    >,
+    event_rx_arc: Arc<RwLock<Option<mpsc::Receiver<manager_port::DownloadEvent>>>>,
     event_bus: Option<
         Arc<
             crate::infrastructure::events::event_bus::EventBus<
@@ -108,9 +101,6 @@ impl DownloadEventBridge {
         download_manager: Arc<dyn manager_port::DownloadManager>,
         repository: Arc<dyn crate::features::download::download_repository::DownloadRepository>,
         event_rx_arc: Arc<RwLock<Option<mpsc::Receiver<manager_port::DownloadEvent>>>>,
-        downloaded_model_repository: Option<
-            Arc<crate::infrastructure::persistence::repositories::downloaded_models::DownloadedModelRepository>,
-        >,
         event_bus: Option<
             Arc<
                 crate::infrastructure::events::event_bus::EventBus<
@@ -126,7 +116,6 @@ impl DownloadEventBridge {
             download_manager,
             repository,
             event_rx_arc,
-            downloaded_model_repository,
             event_bus,
         }
     }

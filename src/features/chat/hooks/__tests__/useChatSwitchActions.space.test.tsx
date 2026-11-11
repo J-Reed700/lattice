@@ -1,8 +1,9 @@
-import { act, renderHook } from '@testing-library/react';
+import { act } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useChatSwitchActions } from '@/features/chat/hooks/useChatSwitchActions';
 import { GENERAL_SPACE_ID } from '@/features/spaces/model/spaces';
+import { renderHook } from '@/tests/renderWithQueryClient';
 
 const h = vi.hoisted(() => ({
   state: {} as Record<string, any>,

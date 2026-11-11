@@ -13,12 +13,14 @@ import {
 
 import { useApi } from '@/contexts/ApiContext';
 import { learningPracticalWorkspaceKey as workspaceKey } from "@/features/learning/api/learningQueryKeys";
+import { newId, unwrap } from '@/lib/api';
 import type {
   LearningContainerEngine,
   LearningBuiltinRuntimeCapability,
   LearningPracticalWorkspaceDto,
   LearningRuntimePresetDto,
 } from "@/lib/bindings";
+import { getErrorMessage } from '@/lib/errorUtils';
 
 const catalogKey = ["learning-runtime-catalog"] as const;
 const presetOrder = ["csharp", "rust", "node", "python"] as const;
@@ -30,24 +32,8 @@ const presetActionNames: Record<(typeof presetOrder)[number], string> = {
 };
 const dockerDocsUrl = "https://docs.docker.com/desktop/";
 
-function uuid() {
-  return (
-    globalThis.crypto?.randomUUID?.() ?? "00000000-0000-4000-8000-000000000004"
-  );
-}
 
-function unwrap<T>(
-  result: { ok: true; data: T } | { ok: false; error: string },
-): T {
-  if (!result.ok) throw new Error(result.error);
-  return result.data;
-}
 
-function errorText(error: unknown) {
-  return error instanceof Error
-    ? error.message
-    : "The request could not be completed.";
-}
 
 function presetLabel(preset: LearningRuntimePresetDto) {
   return presetActionNames[preset.id] ?? preset.name;
@@ -125,7 +111,7 @@ export function RuntimeSetupPanel({
       onWorkspace?.(nextWorkspace);
       await client.invalidateQueries({ queryKey: workspaceKey(programId) });
     },
-    onError: (error) => setSetupError(errorText(error)),
+    onError: (error) => setSetupError(getErrorMessage(error)),
   });
 
   const refreshAvailability = useMutation({
@@ -161,7 +147,7 @@ export function RuntimeSetupPanel({
     const key = `${programId}:${preset.id}:${selectedEngine}`;
     let ids = requestIds.current.get(key);
     if (!ids) {
-      ids = { operationId: uuid(), profileId: uuid() };
+      ids = { operationId: newId(), profileId: newId() };
       requestIds.current.set(key, ids);
     }
     setSetupError(null);
@@ -242,7 +228,7 @@ export function RuntimeSetupPanel({
                         {runtime?.name ?? label}
                       </h3>
                       <span
-                        className={`text-xs ${runtime?.available ? "text-emerald-700 dark:text-emerald-300" : "text-text-muted"}`}
+                        className={`text-xs ${runtime?.available ? "text-success-fg" : "text-text-muted"}`}
                       >
                         {runtime?.available ? "Ready" : "Unavailable"}
                       </span>
@@ -300,7 +286,7 @@ export function RuntimeSetupPanel({
                       <span
                         className={
                           capability.available
-                            ? "text-emerald-700 dark:text-emerald-300"
+                            ? "text-success-fg"
                             : "text-text-muted"
                         }
                       >
@@ -361,7 +347,7 @@ export function RuntimeSetupPanel({
                     className="flex items-center gap-2 rounded-lg border border-border bg-background px-3 py-2"
                   >
                     <span
-                      className={`grid h-6 w-6 place-items-center rounded-full ${profile.enabled ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-300" : "bg-amber-500/10 text-amber-700"}`}
+                      className={`grid h-6 w-6 place-items-center rounded-full ${profile.enabled ? "bg-success-muted text-success-fg" : "bg-warning-muted text-warning-fg"}`}
                     >
                       {profile.enabled ? (
                         <Check size={12} />
@@ -376,7 +362,7 @@ export function RuntimeSetupPanel({
                       {profile.engine}
                     </span>
                     <span
-                      className={`text-xs ${profile.enabled ? "text-emerald-700 dark:text-emerald-300" : "text-text-muted"}`}
+                      className={`text-xs ${profile.enabled ? "text-success-fg" : "text-text-muted"}`}
                     >
                       {profile.enabled ? "Ready" : "Disabled"}
                     </span>
@@ -393,9 +379,9 @@ export function RuntimeSetupPanel({
             </p>
           )}
           {catalog.isError && (
-            <div className="rounded-lg border border-rose-500/20 bg-rose-500/5 p-3">
-              <p role="alert" className="text-xs leading-5 text-rose-700 dark:text-rose-300">
-                {errorText(catalog.error)}
+            <div className="rounded-lg border border-danger-muted bg-danger-muted p-3">
+              <p role="alert" className="text-xs leading-5 text-danger-fg">
+                {getErrorMessage(catalog.error)}
               </p>
               <button
                 type="button"
@@ -456,7 +442,7 @@ export function RuntimeSetupPanel({
                         {preset.description}
                       </p>
                       {matchingProfile ? (
-                        <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-emerald-700 dark:text-emerald-300">
+                        <div className="mt-3 inline-flex items-center gap-1.5 text-xs font-medium text-success-fg">
                           <Check size={12} /> Environment ready
                         </div>
                       ) : (
@@ -483,7 +469,7 @@ export function RuntimeSetupPanel({
           {setupError && (
             <p
               role="alert"
-              className="rounded-lg bg-rose-500/10 p-3 text-xs leading-5 text-rose-700 dark:text-rose-300"
+              className="rounded-lg bg-danger-muted p-3 text-xs leading-5 text-danger-fg"
             >
               {setupError}{" "}
               <button
@@ -500,12 +486,12 @@ export function RuntimeSetupPanel({
             </p>
           )}
           {refreshAvailability.error && (
-            <p role="alert" className="text-xs text-rose-700 dark:text-rose-300">
-              {errorText(refreshAvailability.error)}
+            <p role="alert" className="text-xs text-danger-fg">
+              {getErrorMessage(refreshAvailability.error)}
             </p>
           )}
           {!availableEngines.length && catalog.isSuccess && (
-            <p className="rounded-lg bg-amber-500/10 p-3 text-xs leading-4 text-text-secondary">
+            <p className="rounded-lg bg-warning-muted p-3 text-xs leading-4 text-text-secondary">
               Start Docker Desktop or another supported local container engine
               to prepare these environments.
             </p>

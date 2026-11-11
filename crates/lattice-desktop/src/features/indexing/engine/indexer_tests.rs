@@ -16,7 +16,6 @@
 //! fixtures: they report success for code paths that cannot work.
 
 #[cfg(test)]
-#[cfg_attr(test, allow(clippy::unwrap_used, clippy::expect_used))]
 mod tests {
     use sqlx::SqlitePool;
     use std::fs;

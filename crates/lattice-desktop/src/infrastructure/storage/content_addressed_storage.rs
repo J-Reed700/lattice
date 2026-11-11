@@ -40,9 +40,10 @@ use lattice_core::application::ports::content_addressed_storage_port::{
     ImportedBlob, RetainReason,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::path_safety::reject_parent_components;
 use parking_lot::Mutex;
 use std::collections::HashMap;
-use std::path::{Component, Path, PathBuf};
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tokio::fs;
 
@@ -319,13 +320,7 @@ impl ContentAddressedStoragePort for ContentAddressedStorage {
     fn owns(&self, path: &Path) -> bool {
         // `starts_with` compares components, but `root/../../etc` also starts
         // with `root`. A path that climbs out is not ours, whatever it prefixes.
-        if path
-            .components()
-            .any(|component| matches!(component, Component::ParentDir))
-        {
-            return false;
-        }
-        path.starts_with(&self.library_root)
+        reject_parent_components(path).is_ok() && path.starts_with(&self.library_root)
     }
 
     async fn list_hashes(&self) -> Result<Vec<String>> {
@@ -573,6 +568,23 @@ mod tests {
             !storage.owns(&library_root.join("..").join("escape.txt")),
             "a path that climbs out of the root is not ours"
         );
+    }
+
+    #[tokio::test]
+    async fn owns_refuses_a_backslash_separated_parent_on_every_platform() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let storage = ContentAddressedStorage::with_root(library_root.clone());
+        assert!(!storage.owns(&library_root.join("a\\..\\..\\x")));
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn owns_refuses_a_dots_only_segment_on_windows() {
+        let temp_dir = TempDir::new().unwrap();
+        let library_root = temp_dir.path().join("library");
+        let storage = ContentAddressedStorage::with_root(library_root.clone());
+        assert!(!storage.owns(&library_root.join("...").join("x")));
     }
 
     #[tokio::test]

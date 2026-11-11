@@ -186,6 +186,10 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::decide_learning_recall_duplicate,
             lattice::features::learning::plugin::review_learning_recall_card,
             lattice::features::learning::plugin::get_learning_practice_workspace,
+            lattice::features::learning::plugin::get_learning_practice_profile,
+            lattice::features::learning::plugin::save_learning_practice_profile,
+            lattice::features::learning::plugin::get_practice_fit,
+            lattice::features::learning::plugin::check_practice_fit,
             lattice::features::learning::plugin::get_learning_practice_session,
             lattice::features::learning::plugin::start_learning_practice_session,
             lattice::features::learning::plugin::save_learning_practice_artifact,
@@ -241,6 +245,24 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::learning::plugin::regrade_code_review,
             lattice::features::learning::plugin::code_review_languages,
             lattice::features::learning::plugin::course_drills,
+            lattice::features::learning::plugin::start_practice_build,
+            lattice::features::learning::plugin::start_practice_session,
+            lattice::features::learning::plugin::get_practice_session,
+            lattice::features::learning::plugin::list_practice_sessions,
+            lattice::features::learning::plugin::move_practice_stage,
+            lattice::features::learning::plugin::check_coding_example,
+            lattice::features::learning::plugin::remove_coding_example,
+            lattice::features::learning::plugin::check_practice_piece,
+            lattice::features::learning::plugin::run_coding_input,
+            lattice::features::learning::plugin::ask_practice_hint,
+            lattice::features::learning::plugin::send_practice_turn,
+            lattice::features::learning::plugin::respond_practice_session,
+            lattice::features::learning::plugin::observe_practice_draft,
+            lattice::features::learning::plugin::set_practice_clock,
+            lattice::features::learning::plugin::set_practice_setting,
+            lattice::features::learning::plugin::reveal_practice_solution,
+            lattice::features::learning::plugin::finish_practice_session,
+            lattice::features::learning::plugin::practice_due,
             // Model management plugin
             lattice::features::model_management::plugin::commands::download_model,
             lattice::features::model_management::plugin::commands::check_first_run_status,
@@ -371,7 +393,6 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             // HuggingFace Plugin (4 commands)
             lattice::features::huggingface::plugin::set_huggingface_token,
             lattice::features::huggingface::plugin::get_huggingface_token_status,
-            lattice::features::huggingface::plugin::get_huggingface_token,
             lattice::features::huggingface::plugin::delete_huggingface_token,
             // Extraction Plugin (4 commands)
             lattice::features::extraction::plugin::parse_wikilinks,
@@ -492,6 +513,8 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::interfaces::commands::cloud_models::list_cloud_models,
             lattice::interfaces::commands::cloud_models::get_model_limits,
             lattice::features::settings::plugin::test_ollama_connection,
+            lattice::features::settings::plugin::save_remote_auth_header_value,
+            lattice::features::settings::plugin::get_remote_auth_header_status,
             lattice::interfaces::commands::model_setup::test_llama_cpp_connection,
             lattice::features::settings::plugin::test_custom_tool,
             lattice::features::settings::plugin::get_settings,
@@ -539,6 +562,7 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
             lattice::features::speech::plugin::get_speech_status,
             lattice::features::speech::plugin::synthesize_speech,
         ])
+        .constant("FILE_TYPES", lattice_core::domain::value_objects::FileFormat::all().to_vec())
         .typ::<lattice::features::conversation::chat::ChatResponse>()
         .typ::<lattice::features::conversation::chat::ChatStreamEventDto>()
         .typ::<lattice::features::conversation::chat::RetrievalTraceDto>()
@@ -548,7 +572,13 @@ fn render(workspace_root: &Path) -> Result<Vec<(PathBuf, String)>, String> {
         // Persisted in `metadata.turn` rather than returned by a command, so it
         // reaches no signature on its own and has to be named here.
         .typ::<lattice::features::conversation::chat::TurnRecordDto>()
-        .typ::<lattice::features::conversation::chat::ToolPreferences>();
+        .typ::<lattice::features::conversation::chat::ToolPreferences>()
+        // What `PracticeSessionDto.work` and `PracticeDebriefDto.work` hold for the program kind: the session's
+        // wire carries them as JSON, so no command signature reaches them.
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramWorkDto>()
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramRunDto>()
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramHintMarkDto>()
+        .typ::<lattice_learning::practice::kinds::program::dto::ProgramDebriefWorkDto>();
 
     let bindings = builder
         .export_str(

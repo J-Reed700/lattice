@@ -112,11 +112,14 @@ async fn client() -> Result<(std::sync::Arc<dyn LLMPort>, EvalConfig, bool)> {
                 llama_cpp: LlamaCppSettingsDto {
                     url: endpoint,
                     model: model.clone(),
-                    auth_header_name: header_name,
-                    auth_header_value: header_value,
+                    auth_header_name: header_name.clone(),
                 },
                 ..Default::default()
             },
+            (!header_name.is_empty()).then(|| lattice_core::application::ports::llm_port::RemoteHeader {
+                name: header_name.clone(),
+                value: header_value.clone(),
+            }),
         )?
         .into_port()
         .await,
@@ -126,7 +129,10 @@ async fn client() -> Result<(std::sync::Arc<dyn LLMPort>, EvalConfig, bool)> {
                 model.clone(),
                 Duration::from_secs(30),
                 Duration::from_secs(u64::from(timeout)),
-                (!header_name.is_empty()).then_some((header_name, header_value)),
+                (!header_name.is_empty()).then_some(lattice_core::application::ports::llm_port::RemoteHeader {
+                    name: header_name,
+                    value: header_value,
+                }),
             )?
             .into_port()
         }

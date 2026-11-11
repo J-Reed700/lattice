@@ -226,7 +226,7 @@ pub async fn generate_learning_practical_activity(
         || program.summary.status != LearningProgramStatus::Active
     {
         return Err(ApiError::from(
-            lattice_core::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::Conflict(
                 "The learning program changed; reload before generating this activity.".into(),
             ),
         ));
@@ -445,7 +445,7 @@ pub async fn send_learning_simulation_turn(
         .map_err(ApiError::from)?;
     if session.program_id != request.program_id || session.revision != request.expected_revision {
         return Err(ApiError::from(
-            lattice_core::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::Conflict(
                 "Simulation changed; reload and retry.".into(),
             ),
         ));
@@ -457,7 +457,7 @@ pub async fn send_learning_simulation_turn(
             ),
         ));
     }
-    crate::features::learning::practical_repository::validate_learner_turn(&request.content)
+    lattice_learning::practice::session::turn::validate_learner_turn(&request.content)
         .map_err(ApiError::from)?;
     let (activity, source_ids) = repo
         .simulation_session_generation_context(&request.program_id, &session.id)
@@ -531,7 +531,7 @@ pub async fn finish_learning_simulation(
         .map_err(ApiError::from)?;
     if session.program_id != request.program_id || session.revision != request.expected_revision {
         return Err(ApiError::from(
-            lattice_core::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::Conflict(
                 "Simulation changed; reload and retry.".into(),
             ),
         ));

@@ -75,7 +75,7 @@ struct EvalConfig {
     endpoint: String,
     timeout: Duration,
     log_dir: PathBuf,
-    auth_header: Option<(String, String)>,
+    auth_header: Option<lattice_core::application::ports::llm_port::RemoteHeader>,
     context_tokens: u32,
 }
 
@@ -95,7 +95,7 @@ impl EvalConfig {
         let auth_header = if name.trim().is_empty() {
             None
         } else {
-            Some((name, value))
+            Some(lattice_core::application::ports::llm_port::RemoteHeader { name, value })
         };
         Self {
             provider: std::env::var("LATTICE_LEARNING_EVAL_PROVIDER")
@@ -127,7 +127,11 @@ impl EvalConfig {
 
     async fn provider_client(&self) -> Arc<dyn LLMPort> {
         if self.provider == "llama_cpp" {
-            let (name, value) = self.auth_header.clone().unwrap_or_default();
+            let name = self
+                .auth_header
+                .as_ref()
+                .map(|header| header.name.clone())
+                .unwrap_or_default();
             let settings = LLMSettingsDto {
                 context_window: self.context_tokens,
                 timeout_seconds: u32::try_from(self.timeout.as_secs()).unwrap_or(u32::MAX),
@@ -135,11 +139,10 @@ impl EvalConfig {
                     url: self.endpoint.clone(),
                     model: self.model.clone(),
                     auth_header_name: name,
-                    auth_header_value: value,
                 },
                 ..Default::default()
             };
-            return LlamaCppLlm::new(&settings)
+            return LlamaCppLlm::new(&settings, self.auth_header.clone())
                 .expect("valid llama.cpp evaluation client")
                 .into_port()
                 .await;

@@ -25,6 +25,7 @@ use lattice_core::domain::{
     ModelCatalogService, ModelCategory, ModelSource, SearchFilters, SystemCapabilities,
 };
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::path_safety::{repo_id_parts, single_file_name};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use tauri::State;
@@ -265,24 +266,17 @@ fn order_by_recommendation(rows: &mut [ModelRecommendationDto], order: &[String]
 
 /// A Hugging Face repository such as `publisher/model`, with nothing that could leave it.
 fn is_plain_repo(repo: &str) -> bool {
-    let parts: Vec<_> = repo.split('/').collect();
-    parts.len() == 2
-        && parts.iter().all(|part| {
-            !part.is_empty()
-                && !part.contains("..")
-                && part
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
+    repo_id_parts(repo).is_ok_and(|(org, name)| {
+        [org, name].iter().all(|part| {
+            part.chars()
+                .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
         })
+    })
 }
 
 /// A file path inside a repository: no way out of it and no empty parts.
 fn is_plain_file(file: &str) -> bool {
-    !file.is_empty()
-        && !file.contains('\\')
-        && file
-            .split('/')
-            .all(|part| !part.is_empty() && part != "." && part != "..")
+    file.split('/').all(|part| single_file_name(part).is_ok())
 }
 
 fn catalog_row(entry: DownloadableHfModel, fit: Option<FitVerdictDto>) -> ModelRecommendationDto {
@@ -649,16 +643,7 @@ pub async fn get_model_variants(
     container: State<'_, Container>,
     repo_id: String,
 ) -> Result<Vec<crate::interfaces::dto::ModelMetadataDto>> {
-    let parts: Vec<_> = repo_id.split('/').collect();
-    if parts.len() != 2
-        || parts.iter().any(|part| {
-            part.is_empty()
-                || part.contains("..")
-                || !part
-                    .chars()
-                    .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'))
-        })
-    {
+    if !is_plain_repo(&repo_id) {
         return Err(AppError::InvalidInput(
             "Expected a Hugging Face repository such as publisher/model".into(),
         ));

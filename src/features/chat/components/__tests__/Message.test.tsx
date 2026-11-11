@@ -1,10 +1,11 @@
-import { act, fireEvent, render, screen } from '@testing-library/react';
+import { act, fireEvent, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { Message } from '@/features/chat/components/Message';
 import { setFolderThreadHost } from '@/features/chat/model/folderThreadHost';
 import { useChatReaderStore } from '@/features/reading/stores/chatReaderStore';
 import { useCitationDisplayStore } from '@/features/reading/stores/citationDisplayStore';
+import { render } from '@/tests/renderWithQueryClient';
 import type { MessageVerificationSummary, SourceWithMetadata } from '@/types/conversation';
 
 

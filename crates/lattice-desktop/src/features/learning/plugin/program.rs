@@ -202,7 +202,7 @@ pub async fn prepare_learning_lesson(
         .map_err(ApiError::from)?;
     if program.summary.revision != request.expected_revision {
         return Err(ApiError::from(
-            lattice_core::shared::error::AppError::InvalidInput(
+            lattice_core::shared::error::AppError::Conflict(
                 "Program changed; reload and retry.".into(),
             ),
         ));

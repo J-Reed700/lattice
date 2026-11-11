@@ -1,4 +1,4 @@
-use crate::infrastructure::services::validated_path::{PathValidationError, ValidatedFilePath};
+use lattice_core::shared::path_safety::{reject_parent_components, PathUnsafe};
 use std::path::Path;
 use std::time::Duration;
 use thiserror::Error;
@@ -7,8 +7,11 @@ use tracing::{error, info, warn};
 
 #[derive(Debug, Error)]
 pub enum FileCleanupError {
-    #[error("Path validation failed: {0}")]
-    ValidationFailed(#[from] PathValidationError),
+    #[error("Unsafe path: {0}")]
+    UnsafePath(#[from] PathUnsafe),
+
+    #[error("Symlink attack detected: {0} is a symbolic link")]
+    SymlinkRefused(String),
 
     #[error("IO error: {0}")]
     IoError(#[from] std::io::Error),
@@ -49,19 +52,27 @@ impl FileCleanupService {
     pub async fn delete_file<P: AsRef<Path>>(&self, path: P) -> Result<(), FileCleanupError> {
         let path = path.as_ref();
 
-        let validated = ValidatedFilePath::validate_and_canonicalize(path)?;
+        reject_parent_components(path)?;
 
-        if !validated.exists() {
-            info!(
-                path = %validated.display(),
-                "File does not exist, skipping deletion"
-            );
-            return Ok(());
+        let metadata = match tokio::fs::symlink_metadata(path).await {
+            Ok(metadata) => metadata,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                info!(
+                    path = %path.display(),
+                    "File does not exist, skipping deletion"
+                );
+                return Ok(());
+            }
+            Err(e) => return Err(FileCleanupError::IoError(e)),
+        };
+
+        if metadata.file_type().is_symlink() {
+            return Err(FileCleanupError::SymlinkRefused(path.display().to_string()));
         }
 
-        if !validated.is_file() {
+        if !metadata.is_file() {
             warn!(
-                path = %validated.display(),
+                path = %path.display(),
                 "Path is not a file, refusing to delete"
             );
             return Err(FileCleanupError::IoError(std::io::Error::new(
@@ -76,16 +87,16 @@ impl FileCleanupService {
         while attempts < self.max_retries {
             attempts += 1;
 
-            match tokio::fs::remove_file(validated.path()).await {
+            match tokio::fs::remove_file(path).await {
                 Ok(_) => {
                     if attempts == 1 {
                         info!(
-                            path = %validated.display(),
+                            path = %path.display(),
                             "File deleted successfully"
                         );
                     } else {
                         info!(
-                            path = %validated.display(),
+                            path = %path.display(),
                             attempts = attempts,
                             "File deleted successfully after retry"
                         );
@@ -98,7 +109,7 @@ impl FileCleanupService {
                     if attempts < self.max_retries {
                         let delay = self.calculate_backoff_delay(attempts);
                         warn!(
-                            path = %validated.display(),
+                            path = %path.display(),
                             attempt = attempts,
                             max_retries = self.max_retries,
                             delay_ms = delay.as_millis(),
@@ -119,7 +130,7 @@ impl FileCleanupService {
             )
         })?;
         error!(
-            path = %validated.display(),
+            path = %path.display(),
             attempts = attempts,
             error = %error,
             "File deletion failed after all retry attempts"
@@ -205,7 +216,7 @@ mod tests {
         let result = service.delete_file("../../etc/passwd").await;
 
         assert!(result.is_err());
-        assert!(matches!(result, Err(FileCleanupError::ValidationFailed(_))));
+        assert!(matches!(result, Err(FileCleanupError::UnsafePath(_))));
     }
 
     #[tokio::test]
@@ -276,13 +287,49 @@ mod tests {
         let result = service.delete_file(&link_file).await;
 
         assert!(result.is_err());
-        assert!(matches!(
-            result,
-            Err(FileCleanupError::ValidationFailed(
-                PathValidationError::SymlinkAttack { .. }
-            ))
-        ));
+        assert!(matches!(result, Err(FileCleanupError::SymlinkRefused(_))));
 
         assert!(real_file.exists());
+        assert!(link_file.symlink_metadata().is_ok());
+    }
+
+    #[tokio::test]
+    async fn a_file_with_two_dots_inside_its_name_is_deleted() {
+        let temp_dir = TempDir::new().unwrap();
+        let folder = temp_dir.path().join("v1..v2");
+        fs::create_dir(&folder).unwrap();
+        let file_path = folder.join("notes..md");
+        fs::write(&file_path, "test").unwrap();
+
+        let result = FileCleanupService::new().delete_file(&file_path).await;
+
+        assert!(result.is_ok(), "{:?}", result.err());
+        assert!(!file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn a_parent_component_is_refused_and_the_file_survives() {
+        let temp_dir = TempDir::new().unwrap();
+        let folder = temp_dir.path().join("sub");
+        fs::create_dir(&folder).unwrap();
+        let file_path = temp_dir.path().join("keep.txt");
+        fs::write(&file_path, "test").unwrap();
+
+        let result = FileCleanupService::new()
+            .delete_file(folder.join("..").join("keep.txt"))
+            .await;
+
+        assert!(matches!(result, Err(FileCleanupError::UnsafePath(_))));
+        assert!(file_path.exists());
+    }
+
+    #[tokio::test]
+    async fn a_null_byte_in_the_path_is_refused() {
+        let result = FileCleanupService::new().delete_file("file\0.txt").await;
+
+        assert!(matches!(
+            result,
+            Err(FileCleanupError::UnsafePath(PathUnsafe::NulByte))
+        ));
     }
 }
