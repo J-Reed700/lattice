@@ -5,6 +5,7 @@
 use super::super::class_checks::{
     finding_of, knowledge_key, knowledge_of, saved_knowledge, standard, unjudged_finding, vetoed,
 };
+use super::super::classify::case_text;
 use super::*;
 use lattice_core::application::services::claim_verification::{KnowledgeOutcome, KnowledgeVerdict};
 
@@ -45,24 +46,31 @@ impl Reader for Knowledge {
         let mut made = Made::new(statements.len());
         let mut asks = Vec::new();
         for (ordinal, statement) in statements.iter().enumerate() {
-            let key = knowledge_key(at.llm, &statement.claim.statement);
+            let case = case_text(at.candidate, statement.unit);
+            let key = knowledge_key(at.llm, &statement.claim.statement, case.as_deref());
             match saved_knowledge(&key).await? {
                 Some(saved) => {
-                    made.put(at, ordinal, self.read_of(statement, Some((saved, true))));
+                    let read = self.read_of(statement, Some((saved, true)), case.is_some());
+                    made.put(at, ordinal, read);
                 }
-                None => asks.push((ordinal, *statement, key)),
+                None => asks.push((ordinal, *statement, key, case)),
             }
         }
         let mut asked: futures::stream::FuturesUnordered<_> = asks
             .into_iter()
-            .map(|(ordinal, statement, key)| async move {
-                let judged = knowledge_of(at.llm, &key, &statement.claim.statement).await?;
-                Ok::<_, AppError>((ordinal, statement, judged))
+            .map(|(ordinal, statement, key, case)| async move {
+                let judged =
+                    knowledge_of(at.llm, &key, &statement.claim.statement, case.as_deref()).await?;
+                Ok::<_, AppError>((ordinal, statement, judged, case.is_some()))
             })
             .collect();
         while let Some(asked) = futures::StreamExt::next(&mut asked).await {
-            let (ordinal, statement, judged) = asked?;
-            let read = self.read_of(&statement, judged.map(|knowledge| (knowledge, false)));
+            let (ordinal, statement, judged, with_case) = asked?;
+            let read = self.read_of(
+                &statement,
+                judged.map(|knowledge| (knowledge, false)),
+                with_case,
+            );
             made.put(at, ordinal, read);
         }
         made.all()
@@ -71,8 +79,14 @@ impl Reader for Knowledge {
 
 impl Knowledge {
     /// The reading of `statement` that the knowledge judge's samples make by
-    /// this rule; `None` when a reply could not be read.
-    fn read_of(&self, statement: &Statement<'_>, judged: Option<(KnowledgeOutcome, bool)>) -> Read {
+    /// this rule; `None` when a reply could not be read. `with_case` says the
+    /// samples were asked with the case the statement comes from.
+    fn read_of(
+        &self,
+        statement: &Statement<'_>,
+        judged: Option<(KnowledgeOutcome, bool)>,
+        with_case: bool,
+    ) -> Read {
         let Statement {
             unit,
             claim,
@@ -90,7 +104,9 @@ impl Knowledge {
                     Rule::Veto => knowledge.veto_outcome(),
                 };
                 let (verdict, reason) = match (outcome, self.rule) {
-                    (Outcome::Refuted, _) => (ClaimVerdict::Contradicted, vetoed(&knowledge)),
+                    (Outcome::Refuted, _) => {
+                        (ClaimVerdict::Contradicted, vetoed(&knowledge, with_case))
+                    }
                     (Outcome::Stands, Rule::Knowledge) => {
                         (ClaimVerdict::Supported, standard(&knowledge))
                     }

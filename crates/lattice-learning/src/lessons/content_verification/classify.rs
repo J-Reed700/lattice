@@ -5,7 +5,7 @@
 //! wording); for a figure in a part that states what is so it only refuses
 //! Internal. The model sorts the rest, twenty statements to a call.
 
-use super::invalid;
+use super::{invalid, unit_fields};
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::claim_review::{Class, ClassifiedBy};
 use lattice_core::shared::error::{AppError, Result};
@@ -68,23 +68,31 @@ impl Givens {
 
     /// The figures of `part`'s prompt and options.
     pub(super) fn of(part: &Value) -> Self {
-        let options = part
-            .get("options")
-            .and_then(Value::as_array)
-            .into_iter()
-            .flatten()
-            .filter_map(Value::as_str);
-        let texts = part
-            .get("prompt")
-            .and_then(Value::as_str)
-            .into_iter()
-            .chain(options);
-        Self(texts.flat_map(figures).map(str::to_owned).collect())
+        Self(
+            question_texts(part)
+                .flat_map(figures)
+                .map(str::to_owned)
+                .collect(),
+        )
     }
 
     pub(super) fn holds(&self, figure: &str) -> bool {
         self.0.contains(figure)
     }
+}
+
+/// A question's prompt and its options: the texts that set its case.
+fn question_texts(part: &Value) -> impl Iterator<Item = &str> {
+    let options = part
+        .get("options")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str);
+    part.get("prompt")
+        .and_then(Value::as_str)
+        .into_iter()
+        .chain(options)
 }
 
 /// Whether a part of a lesson states what is so or works a hypothetical
@@ -120,6 +128,34 @@ impl Case {
             _ => Self::Stated(Givens::NONE),
         }
     }
+}
+
+/// The case the part at `unit` works, as the learner reads it: a hypothetical
+/// block's own text, or a question's prompt and options. `None` for a section
+/// that states what is so.
+pub(super) fn case_text(candidate: &Value, unit: usize) -> Option<String> {
+    let blocks = candidate
+        .get("blocks")
+        .and_then(Value::as_array)
+        .map_or(&[][..], Vec::as_slice);
+    let paragraphs: Vec<&str> = match blocks.get(unit) {
+        Some(block) if Case::of(candidate, unit) == Case::Hypothetical => unit_fields(block, true)
+            .iter()
+            .filter_map(|field| block.pointer(&format!("/{field}")).and_then(Value::as_str))
+            .collect(),
+        Some(_) => return None,
+        None => candidate
+            .get("questions")
+            .and_then(Value::as_array)
+            .and_then(|questions| questions.get(unit.checked_sub(blocks.len())?))
+            .map(question_texts)?
+            .collect(),
+    };
+    let paragraphs: Vec<&str> = paragraphs
+        .into_iter()
+        .filter(|text| !text.is_empty())
+        .collect();
+    (!paragraphs.is_empty()).then(|| paragraphs.join("\n\n"))
 }
 
 /// A mark of a specific in a text: a figure beyond the part's givens, or quoted

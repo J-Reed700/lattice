@@ -190,8 +190,9 @@ pub(super) fn unjudged_finding(
     )
 }
 
-/// Why a statement the model called false fails.
-pub(super) fn vetoed(knowledge: &KnowledgeOutcome) -> String {
+/// Why a statement the model called false fails, `with_case` when it was
+/// asked with the case it comes from.
+pub(super) fn vetoed(knowledge: &KnowledgeOutcome, with_case: bool) -> String {
     let says_false = |sample: &&KnowledgeSample| sample.verdict == KnowledgeVerdict::False;
     let reason = knowledge
         .samples
@@ -199,8 +200,13 @@ pub(super) fn vetoed(knowledge: &KnowledgeOutcome) -> String {
         .find(says_false)
         .map(|sample| sample.reason.as_str())
         .unwrap_or_default();
+    let asked = if with_case {
+        "Asked with only the case it comes from"
+    } else {
+        "Asked on its own"
+    };
     format!(
-        "Asked on its own, the model calls this false ({} of {}): {reason}",
+        "{asked}, the model calls this false ({} of {}): {reason}",
         knowledge.samples.iter().filter(says_false).count(),
         knowledge.samples.len()
     )
@@ -311,8 +317,9 @@ pub(super) async fn consistency_of(
     }
 }
 
-/// Where the knowledge judge's three samples on `statement` are saved.
-pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str) -> String {
+/// Where the knowledge judge's three samples on `statement`, asked with
+/// `case`, are saved.
+pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str, case: Option<&str>) -> String {
     format!(
         "{KNOWLEDGE_POLICY}:{}",
         digest(
@@ -320,6 +327,7 @@ pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str) -> String {
                 "model": llm.model_name(),
                 "context": llm.max_context_tokens(),
                 "statement": statement,
+                "case": case,
             })
             .to_string()
         )
@@ -334,12 +342,13 @@ pub(super) async fn saved_knowledge(key: &str) -> Result<Option<KnowledgeOutcome
         .and_then(|value| serde_json::from_value::<KnowledgeOutcome>(value).ok()))
 }
 
-/// The knowledge judge's three samples on `statement`, asked for and saved
-/// under `key`. `None` when a reply could not be read.
+/// The knowledge judge's three samples on `statement` and its `case`, asked
+/// for and saved under `key`. `None` when a reply could not be read.
 pub(super) async fn knowledge_of(
     llm: &dyn LLMPort,
     key: &str,
     statement: &str,
+    case: Option<&str>,
 ) -> Result<Option<KnowledgeOutcome>> {
     let checker = ClaimChecker::new(
         llm,
@@ -350,7 +359,7 @@ pub(super) async fn knowledge_of(
     let judged = {
         let _model_calls =
             crate::lesson_progress::model_calls(SAMPLES, crate::lesson_progress::Term::Reading);
-        checker.check_knowledge(statement).await
+        checker.check_knowledge(statement, case).await
     };
     match judged {
         ClassJudgment::Judged(outcome) => {
