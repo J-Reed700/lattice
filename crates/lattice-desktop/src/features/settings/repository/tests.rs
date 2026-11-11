@@ -841,3 +841,23 @@ async fn a_legacy_value_the_keyring_refuses_stays_for_the_next_start() {
         .unwrap();
     assert!(!on_disk.contains("legacy-ollama-secret"), "{on_disk}");
 }
+
+#[tokio::test]
+async fn the_legacy_value_in_use_replaces_an_older_one_in_the_keyring() {
+    use crate::features::credentials::keys::CredentialKey;
+    let dir = legacy_settings_dir().await;
+    let keyring = Arc::new(crate::features::credentials::memory::InMemoryCredentials::default());
+    keyring
+        .set_api_key(CredentialKey::OllamaAuthHeader.as_str(), "Bearer older")
+        .await
+        .unwrap();
+
+    SettingsRepository::with_credentials(dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+
+    assert_eq!(
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some(LEGACY_OLLAMA_VALUE.to_string())
+    );
+}
