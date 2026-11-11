@@ -573,7 +573,12 @@ impl LLMPort for ScriptedModel {
 }
 /// A teaching-review verdict on the finding `id`: "present" or "resolved".
 pub(crate) fn verdict(id: &str, verdict: &str) -> serde_json::Value {
-    json!({"id":id,"verdict":verdict,"note":""})
+    json!({"id":id,"quote":"","verdict":verdict})
+}
+
+/// A "present" verdict on the finding `id` that quotes the words showing it.
+pub(crate) fn present(id: &str, quote: &str) -> serde_json::Value {
+    json!({"id":id,"quote":quote,"verdict":"present"})
 }
 
 /// A teaching-review reply that reports no issue, finds no defect in the
@@ -613,10 +618,6 @@ pub(crate) fn review_reply(
 
 impl ScriptedModel {
     async fn respond(&self, prompt: &str) -> Result<String> {
-        // The form read runs beside the blind solver, so it takes no queued reply and leaves no prompt.
-        if let Some(reply) = crate::content_verification::tests::form_review_response(prompt) {
-            return Ok(reply);
-        }
         self.prompts
             .lock()
             .map_err(|_| AppError::InternalError("fixture lock".into()))?
@@ -879,7 +880,7 @@ async fn instructional_review_repairs_once_and_rejects_unresolved_defects() -> R
             vec![
                 issue.clone(),
                 patch,
-                json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."],"openFindings":[verdict("reviewer/1", "present")]}).to_string(),
+                json!({"issues":["The exercise answer contradicts its stated condition. Correct the comparison."],"openFindings":[present("reviewer/1", "The exercise answer contradicts its stated condition.")]}).to_string(),
             ]
             .into(),
         ),

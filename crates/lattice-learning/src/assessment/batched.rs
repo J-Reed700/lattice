@@ -1,5 +1,5 @@
 //! Questions put to a model in as many requests as its window needs, shared
-//! by the blind solver and the form read.
+//! by the blind solver.
 use crate::lessons::structured_call::cut_off;
 use crate::model_call;
 use lattice_core::{

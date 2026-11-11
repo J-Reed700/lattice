@@ -44,30 +44,6 @@ export interface DocumentMetadata {
 
 export type CustomCollection = CustomCollectionDto;
 
-export type SourceProvider =
-  | 'local_folder'
-  | 'web_import'
-  | 'dropbox'
-  | 'google_drive'
-  | 'onedrive'
-  | 'icloud';
-
-export type SourceMode = 'referenced' | 'managed';
-export type SourceHealth = 'healthy' | 'attention' | 'error' | 'paused';
-
-export interface SourceConnection {
-  id: string;
-  name: string;
-  provider: SourceProvider;
-  mode: SourceMode;
-  health: SourceHealth;
-  enabled: boolean;
-  path?: string;
-  lastSyncedAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-}
-
 export interface FileBrowserState {
   // View configuration
   viewMode: ViewMode;
@@ -84,7 +60,6 @@ export interface FileBrowserState {
   // Data
   savedSearches: SavedSearchPreset[];
   activeSavedSearchId: string | null;
-  sourceConnections: SourceConnection[];
 
   // Scope
   scope: LibraryScope;
@@ -139,9 +114,6 @@ export interface FileBrowserActions {
   duplicateSavedSearch: (_searchId: string) => string | null;
   deleteSavedSearch: (_searchId: string) => void;
   clearActiveSavedSearch: () => void;
-  createSourceConnection: (_connection: Omit<SourceConnection, 'id' | 'createdAt' | 'updatedAt'>) => string;
-  updateSourceConnection: (_sourceId: string, _updates: Partial<SourceConnection>) => void;
-  deleteSourceConnection: (_sourceId: string) => void;
 
   // Context menu
   openContextMenu: (_position: { x: number; y: number }, _document: DocumentMetadata) => void;

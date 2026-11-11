@@ -129,12 +129,10 @@ async fn embedding_throughput_on_the_llama_server() {
         let window = facts.window_tokens();
         let live = LiveServer::start(&gguf, slots, window).await;
         let prefixes = resolve_prefixes("qwen3-embedding-0.6b", &facts.architecture);
-        let service = Arc::new(LlamaEmbeddingService::connect(
-            Arc::clone(&live.server),
-            facts,
-            policy,
-            prefixes,
-        ));
+        let service = Arc::new(
+            LlamaEmbeddingService::connect(Arc::clone(&live.server), facts, policy, prefixes)
+                .expect("loopback client"),
+        );
         println!(
             "\n-np {slots}, window {window} tokens a slot, {BATCH_SIZE} passages per index call"
         );

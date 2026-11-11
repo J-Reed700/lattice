@@ -1,15 +1,15 @@
 //! `RepositoryPort<TagEntity>` and `TagRepositoryTrait` over the SQLite repository.
 
 use async_trait::async_trait;
-use sqlx::{Row, SqliteConnection};
+use sqlx::SqliteConnection;
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
-use lattice_core::application::ports::{Filter, RepositoryPort};
+use lattice_core::application::ports::RepositoryPort;
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::Transactions;
 
-use super::{TagFilter, TagRepository};
+use super::TagRepository;
 
 impl TagRepository {
     async fn all_in(connection: &mut SqliteConnection) -> Result<Vec<TagEntity>> {
@@ -48,82 +48,6 @@ impl RepositoryPort<TagEntity> for TagRepository {
         match db_model {
             Some(model) => Ok(Some(TagMapper::to_entity(&model)?)),
             None => Ok(None),
-        }
-    }
-
-    async fn find_by_filter(&self, filter: &dyn Filter) -> Result<Vec<TagEntity>> {
-        filter.validate()?;
-
-        let mut tx = self
-            .pool
-            .begin_read()
-            .await
-            .map_err(|e| AppError::Database(format!("Failed to begin transaction: {}", e)))?;
-
-        // Downcast to TagFilter if possible
-        let filter_any = filter.as_any();
-        if let Some(tag_filter) = filter_any.downcast_ref::<TagFilter>() {
-            let limit = tag_filter.limit.unwrap_or(1000);
-
-            let db_models = if let Some(pattern) = &tag_filter.name_pattern {
-                // Case-insensitive partial match
-                let search_pattern =
-                    lattice_core::shared::persistence::sql_like::contains_pattern(&pattern.to_lowercase());
-                let limit_i64 = limit as i64;
-                sqlx::query(
-                    r#"
-                    SELECT id, name, color, created_at, updated_at
-                    FROM tags
-                    WHERE LOWER(name) LIKE ? ESCAPE '\'
-                    ORDER BY name ASC
-                    LIMIT ?
-                    "#,
-                )
-                .bind(search_pattern)
-                .bind(limit_i64)
-                .fetch_all(&mut *tx)
-                .await
-                .and_then(|rows| {
-                    rows.into_iter()
-                        .map(|row| {
-                            Ok(TagModel {
-                                id: row.try_get("id")?,
-                                name: row.try_get("name")?,
-                                color: row.try_get("color")?,
-                                created_at: row.try_get("created_at")?,
-                                updated_at: row.try_get("updated_at")?,
-                            })
-                        })
-                        .collect()
-                })
-            } else {
-                let limit_i64 = limit as i64;
-                sqlx::query_as!(
-                    TagModel,
-                    r#"
-                    SELECT id as "id!", name as "name!", color as "color!", created_at as "created_at!", updated_at as "updated_at!"
-                    FROM tags
-                    ORDER BY name ASC
-                    LIMIT ?
-                    "#,
-                    limit_i64
-                )
-                .fetch_all(&mut *tx)
-                .await
-            }
-            .map_err(|e| AppError::Database(format!("Failed to find tags by filter: {}", e)))?;
-
-            tx.commit()
-                .await
-                .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
-            Ok(TagMapper::to_entities(&db_models))
-        } else {
-            // If not a TagFilter, return all tags
-            let tags = Self::all_in(&mut tx).await?;
-            tx.commit()
-                .await
-                .map_err(|e| AppError::Database(format!("Failed to commit transaction: {}", e)))?;
-            Ok(tags)
         }
     }
 
@@ -279,13 +203,6 @@ impl crate::features::tags::TagRepositoryTrait for TagRepository {
 
     async fn find_by_id(&self, id: &str) -> Result<Option<TagEntity>> {
         RepositoryPort::find_by_id(self, id).await
-    }
-
-    async fn find_by_filter(
-        &self,
-        filter: &dyn lattice_core::application::ports::Filter,
-    ) -> Result<Vec<TagEntity>> {
-        RepositoryPort::find_by_filter(self, filter).await
     }
 
     async fn find_all(&self) -> Result<Vec<TagEntity>> {

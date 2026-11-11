@@ -84,13 +84,6 @@ pub trait ChunkRepositoryPort: RepositoryPort<Chunk> + Send + Sync {
     /// - `AppError::Database` if count query fails
     async fn count_all(&self) -> Result<i64>;
 
-    /// How many documents have at least one chunk.
-    ///
-    /// # Errors
-    ///
-    /// - `AppError::Database` if count query fails
-    async fn count_indexed_documents(&self) -> Result<i64>;
-
     /// How many chunks a document has.
     ///
     /// # Errors

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 
 import { useApi } from '@/contexts/ApiContext';
 import type { LearningLabFile, LearningPracticalDraftDto, SaveLearningPracticalDraftRequestDto } from '@/lib/bindings';
@@ -192,16 +192,17 @@ export function useLearningLabDraft({
   }
   const current = currentKey ? contexts.current.get(currentKey) ?? null : null;
 
+  // The file array can be reconstructed by callers on render; its serialized
+  // contents, rather than its object identity, define this load boundary.
+  const loadWithStarter = useEffectEvent((context: DraftContext) => load(context, starterFiles));
+
   useEffect(() => {
     if (!current) return;
-    void load(current, starterFiles);
+    void loadWithStarter(current);
     return () => {
       if (current.timer) { window.clearTimeout(current.timer); current.timer = null; }
       if (current.saveState === 'dirty' || current.saveState === 'error') void drainContext(current);
     };
-  // The file array can be reconstructed by callers on render; its serialized
-  // contents, rather than its object identity, define this load boundary.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [current, starterSignature, load, drainContext]);
 
   useEffect(() => {
