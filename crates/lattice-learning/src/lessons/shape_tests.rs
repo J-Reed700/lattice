@@ -140,12 +140,12 @@ fn the_order_rules_hold_in_both_phases() {
     for phase in [Phase::Draft, Phase::Kept] {
         let mut lesson = lesson();
         let blocks = lesson["blocks"].as_array_mut().unwrap();
-        blocks.swap(5, 6);
+        blocks.swap(1, 3);
         blocks.swap(9, 10);
         let findings = found(&lesson, phase);
         assert_eq!(
             ids(&findings),
-            ["structure:section-5", "structure:section-9"]
+            ["structure:section-1", "structure:section-9"]
         );
         assert!(findings[0].note.contains("no worked example has shown"));
         assert!(findings[1].note.contains("from memory"));
