@@ -4,6 +4,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import type * as Wire from '@/lib/bindings';
 
+import { PROGRAM_KIND_ID } from '@/features/learning/practice/kinds';
+
 import { PracticeHome, type PracticeHomeProps } from './PracticeHome';
 
 import type { HistoryItem } from './historyItems';
@@ -21,6 +23,8 @@ vi.mock('./usePracticeData', () => ({
   usePracticeDue: () => ({ items: data.due, loading: false, error: null, retry: vi.fn() }),
   usePracticeHistory: () => ({ ...data.history, loading: false, error: null, retry: vi.fn() }),
 }));
+
+const fitOf = (fit: Wire.KindFit): Wire.PracticeFitDto => ({ kinds: [{ kind: PROGRAM_KIND_ID, fit, reason: null }] });
 
 const profile = (patch: Partial<Wire.LearningPracticeProfileDto> = {}): Wire.LearningPracticeProfileDto => ({
   programId: 'course-1',
@@ -56,7 +60,7 @@ const cardTitles = () => screen.getAllByRole('heading', { level: 3 }).map((headi
 
 beforeEach(() => {
   data.profile = profile();
-  data.fit = { code: 'fits', reason: null };
+  data.fit = fitOf('fits');
   data.due = [];
   data.history = { items: [], continueItem: null };
 });
@@ -71,18 +75,18 @@ describe('PracticeHome', () => {
   });
 
   it('leaves out Code when the course does not teach code', () => {
-    data.fit = { code: 'does_not_fit', reason: null };
+    data.fit = fitOf('does_not_fit');
     show();
     expect(cardTitles()).toEqual(['Explain', 'Spot the mistakes', 'Mock interview', 'Role-play']);
   });
 
   it('names code only when the course teaches it', () => {
-    data.fit = { code: 'does_not_fit', reason: null };
+    data.fit = fitOf('does_not_fit');
     const { unmount } = render(<PracticeHome {...homeProps()} />);
     for (const card of screen.getAllByRole('article')) expect(card.textContent).not.toMatch(/code|coding|debugging|system design/i);
     unmount();
 
-    data.fit = { code: 'fits', reason: null };
+    data.fit = fitOf('fits');
     show();
     expect(screen.getByTestId('card-spot')).toHaveTextContent('code or an explanation');
     expect(screen.getByTestId('card-mock')).toHaveTextContent('live coding, debugging, technical questions, system design or behavioral');

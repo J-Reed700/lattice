@@ -1,5 +1,17 @@
 use super::*;
 use crate::practice::coding::golden_support::{add_requests, assert_golden, Golden, Recorder};
+use crate::practice::coding::proof::fakes::{Behaviour, FakeRunner};
+use crate::practice::kinds::program::toolchain::FakeToolchains;
+use crate::practice::kinds::program::{kind, KIND};
+use crate::practice::session::kind::Kinds;
+use std::sync::Arc;
+
+fn kinds() -> Kinds {
+    Kinds::new([kind(Arc::new(FakeToolchains::new(FakeRunner::new(
+        |_, _| Behaviour::Fails,
+    ))))])
+    .expect("one kind registers")
+}
 
 fn outline() -> CourseOutline {
     CourseOutline {
@@ -33,15 +45,16 @@ fn outline() -> CourseOutline {
 async fn golden_fit() {
     let mut golden = Golden::default();
     golden.add("system", SYSTEM);
-    golden.add("prompt", &prompt(&outline()));
+    golden.add("prompt", &prompt(&outline(), &kinds()));
     golden.add(
         "schema",
-        &serde_json::to_string_pretty(&schema()).expect("a schema writes out"),
+        &serde_json::to_string_pretty(&schema(&kinds())).expect("a schema writes out"),
     );
-    let model = Recorder::new([
-        json!({"reason": "Sample reason.", "courseTeachesProgramCode": true}).to_string(),
-    ]);
-    let judgement = ask(&model, &outline()).await;
+    let model = Recorder::new([json!({"kinds": [
+        {"kind": KIND, "reason": "Sample reason.", "courseAsksForIt": true}
+    ]})
+    .to_string()]);
+    let judgement = ask(&model, &kinds(), &outline()).await;
     assert!(judgement.is_ok(), "{:?}", judgement.err());
     add_requests(&mut golden, "the request", &model);
     assert_golden(

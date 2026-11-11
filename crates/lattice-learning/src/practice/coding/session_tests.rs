@@ -32,7 +32,7 @@ use crate::practice::test_support::fixture;
 use crate::repository::LearningRepository;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{
-    Brief, CheckScope, Exercise, Form, Piece, Rung, Setting, Stage,
+    Brief, CheckScope, Exercise, Form, KindId, Piece, Rung, Setting, Stage,
 };
 use lattice_core::domain::learning::practice::{ScoreStatus, PROBLEM_PATTERNS};
 use lattice_core::shared::error::{AppError, Result};
@@ -1698,9 +1698,10 @@ async fn due_with_fit(ctx: &Ctx) -> PracticeDueDto {
     .await
     .unwrap();
     let practice = crate::practice_repository::LearningPracticeRepository::new(ctx.pool.clone());
-    let code_fits = crate::practice::practice_fit::code_fits(&practice, &ctx.program_id)
+    let code_fits = crate::practice::practice_fit::fits(&practice, &ctx.kinds, &ctx.program_id)
         .await
-        .unwrap();
+        .unwrap()
+        .contains(&KindId::new(crate::practice::kinds::program::KIND));
     ctx.sessions()
         .due(
             &PracticeDueRequestDto {
@@ -1717,9 +1718,19 @@ async fn due_lists_no_problem_patterns_for_a_course_with_a_no_code_verdict() {
     let ctx = Ctx::new().await;
     let practice = crate::practice_repository::LearningPracticeRepository::new(ctx.pool.clone());
     let state = practice.fit_state(&ctx.program_id).await.unwrap();
-    let basis = crate::practice::practice_fit::basis_of(&state.outline).unwrap();
+    let basis = crate::practice::practice_fit::basis_of(&state.outline, &ctx.kinds).unwrap();
     practice
-        .record_fit(&ctx.program_id, &basis, false, "About speaking.", "test", 1)
+        .record_fits(
+            &ctx.program_id,
+            &basis,
+            &[crate::practice_repository::KindVerdict {
+                kind: crate::practice::kinds::program::KIND.to_owned(),
+                fits: false,
+                reason: "About speaking.".to_owned(),
+            }],
+            "test",
+            1,
+        )
         .await
         .unwrap();
     let due = due_with_fit(&ctx).await;

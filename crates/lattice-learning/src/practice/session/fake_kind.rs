@@ -2,11 +2,12 @@
 //!
 //! A case's body is `{"index": i, "expected": "x"}`; it passes when the piece holds that string at that index.
 
+use crate::dto::LearningPracticeProfileDto;
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
 use crate::practice::session::author::{Author, Authored, Commission, Failed};
 use crate::practice::session::kind::{
-    Account, Budget, Checker, Citation, Criterion, Diff, Established, Gaps, Hint, HintAsk, Hinting,
-    Kind, LearnerCases, MisreadingNeed, Order, Parts, ReplyGuard, Rubric, Screen, Showing,
+    Account, Budget, Checker, Citation, Criterion, Diff, Established, Fit, Gaps, Hint, HintAsk,
+    Hinting, Kind, LearnerCases, MisreadingNeed, Order, Parts, ReplyGuard, Rubric, Screen, Showing,
     Statement, Truth, Wording,
 };
 use crate::practice::session::observation::{ClockView, Coverage, Observation};
@@ -98,6 +99,8 @@ pub(crate) struct Letters {
     off: Vec<Rung>,
     /// The `observed` text of every hint asked for.
     observed: Arc<Mutex<Vec<String>>>,
+    asked_when: String,
+    wanted: bool,
     answers: Mutex<VecDeque<Authored>>,
     commissioned: Arc<Mutex<Vec<Commissioned>>>,
 }
@@ -125,6 +128,16 @@ impl Author for Letters {
             .ok()
             .and_then(|mut answers| answers.pop_front())
             .ok_or_else(|| AppError::InternalError("Unexpected extra draft".into()))
+    }
+}
+
+impl Fit for Letters {
+    fn asked_when(&self) -> String {
+        self.asked_when.clone()
+    }
+
+    fn wanted_by(&self, _profile: &LearningPracticeProfileDto) -> bool {
+        self.wanted
     }
 }
 
@@ -651,6 +664,9 @@ impl Truth for Letters {
 
 /// Builds the fake kind with the roles and needs a test chooses.
 pub(crate) struct FakeKindBuilder {
+    id: String,
+    asked_when: String,
+    wanted: bool,
     reference: Vec<String>,
     rubric: RubricConfig,
     gaps: bool,
@@ -668,6 +684,10 @@ pub(crate) struct FakeKindBuilder {
 /// finds every exercise unambiguous until a test says otherwise.
 pub(crate) fn fake_kind(reference: &[&str]) -> FakeKindBuilder {
     FakeKindBuilder {
+        id: "letters".to_owned(),
+        asked_when: "Plain work with letters. A course asks for it when learners arrange letters."
+            .to_owned(),
+        wanted: false,
         reference: reference.iter().map(|slot| (*slot).to_owned()).collect(),
         rubric: RubricConfig::default(),
         gaps: false,
@@ -683,6 +703,24 @@ pub(crate) fn fake_kind(reference: &[&str]) -> FakeKindBuilder {
 }
 
 impl FakeKindBuilder {
+    /// The kind is registered under `id`.
+    pub(crate) fn with_id(mut self, id: &str) -> Self {
+        self.id = id.to_owned();
+        self
+    }
+
+    /// What the fit check is told about the kind.
+    pub(crate) fn asked_when(mut self, words: &str) -> Self {
+        self.asked_when = words.to_owned();
+        self
+    }
+
+    /// Every profile asks for the kind outright.
+    pub(crate) fn wanted_outright(mut self) -> Self {
+        self.wanted = true;
+        self
+    }
+
     pub(crate) fn with_spacing(mut self, spacing: Spacing) -> Self {
         self.spacing = spacing;
         self
@@ -780,11 +818,13 @@ impl FakeKindBuilder {
             reply: self.reply,
             off: self.off,
             observed: observed.clone(),
+            asked_when: self.asked_when,
+            wanted: self.wanted,
             answers: Mutex::new(self.script.into()),
             commissioned: commissioned.clone(),
         });
         let kind = Kind {
-            id: KindId::new("letters"),
+            id: KindId::new(&self.id),
             spacing: self.spacing,
             misreadings_needed: MisreadingNeed {
                 count: self.needed,
@@ -803,6 +843,7 @@ impl FakeKindBuilder {
             showing: roles.clone(),
             screen: roles.clone(),
             truth: roles.clone(),
+            fit: roles.clone(),
             gaps: self.gaps.then(|| roles.clone() as Arc<dyn Gaps>),
             order: self.order.then(|| roles.clone() as Arc<dyn Order>),
             learner_cases: self.learner_cases.then_some(roles as Arc<dyn LearnerCases>),

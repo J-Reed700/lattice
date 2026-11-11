@@ -42,6 +42,8 @@ mod counterpart_tests;
 #[cfg(test)]
 mod debrief_tests;
 #[cfg(test)]
+mod fit_tests;
+#[cfg(test)]
 mod hinting_tests;
 #[cfg(test)]
 mod observation_tests;

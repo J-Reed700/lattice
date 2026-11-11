@@ -855,9 +855,14 @@ fn a_repair_lists_its_own_stages() {
 }
 
 #[test]
-fn the_engine_debrief_names_nothing_of_a_subject() -> std::io::Result<()> {
-    let session = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/practice/session");
-    let mut sources = vec![session.join("debrief.rs"), session.join("record.rs")];
+fn the_engines_debrief_and_fit_check_name_nothing_of_a_subject() -> std::io::Result<()> {
+    let practice = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/practice");
+    let session = practice.join("session");
+    let mut sources = vec![
+        session.join("debrief.rs"),
+        session.join("record.rs"),
+        practice.join("practice_fit.rs"),
+    ];
     for entry in std::fs::read_dir(session.join("debrief"))? {
         let path = entry?.path();
         if path.extension().is_some_and(|extension| extension == "rs")
@@ -874,6 +879,7 @@ fn the_engine_debrief_names_nothing_of_a_subject() -> std::io::Result<()> {
             "kinds::program",
             "drills::runner",
             "lab_runtime",
+            "program code",
         ] {
             assert!(!source.contains(named), "{} names {named}", path.display());
         }

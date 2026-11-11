@@ -15,12 +15,25 @@ const profile = (patch: Partial<Wire.LearningPracticeProfileDto> = {}): Wire.Lea
   ...patch,
 });
 
+const fitOf = (...kinds: Array<[string, Wire.KindFit]>): Wire.PracticeFitDto => ({
+  kinds: kinds.map(([kind, fit]) => ({ kind, fit, reason: null })),
+});
+
 describe('which cards the course gets', () => {
+  it('reads the fit of the kind it is asked about', () => {
+    const fit = fitOf(['beads', 'fits'], ['rope', 'does_not_fit'], ['shelf', 'checking']);
+    expect(fitState(fit, 'beads')).toBe('fits');
+    expect(fitState(fit, 'rope')).toBe('does_not_fit');
+    expect(fitState(fit, 'shelf')).toBe('unknown');
+    expect(fitState(fit, 'kettle')).toBe('unknown');
+    expect(fitState(undefined, 'beads')).toBe('unknown');
+  });
+
   it('offers Code only when the course teaches code', () => {
-    expect(visibleCards(fitState({ code: 'fits', reason: null }))).toEqual(['explain', 'spot', 'code', 'mock', 'role']);
-    expect(visibleCards(fitState({ code: 'does_not_fit', reason: null }))).toEqual(['explain', 'spot', 'mock', 'role']);
-    expect(visibleCards(fitState({ code: 'checking', reason: null }))).not.toContain('code');
-    expect(visibleCards(fitState(undefined))).not.toContain('code');
+    expect(visibleCards(fitState(fitOf(['beads', 'fits']), 'beads'))).toEqual(['explain', 'spot', 'code', 'mock', 'role']);
+    expect(visibleCards(fitState(fitOf(['beads', 'does_not_fit']), 'beads'))).toEqual(['explain', 'spot', 'mock', 'role']);
+    expect(visibleCards(fitState(fitOf(['beads', 'checking']), 'beads'))).not.toContain('code');
+    expect(visibleCards(fitState(undefined, 'beads'))).not.toContain('code');
   });
 
   it('keeps coding rounds out of the mock interview unless code fits', () => {
