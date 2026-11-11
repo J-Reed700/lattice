@@ -9,12 +9,12 @@
  * cache is what makes it a single fetch.
  */
 
-import { QueryClientContext } from '@tanstack/react-query';
 import { createContext, useContext, useCallback, useEffect, useMemo, useRef } from 'react';
+import { QueryClientContext } from '@tanstack/react-query';
 
-import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import { useApi } from '@/contexts/ApiContext';
 import { NO_REMOTE_AUTH, REMOTE_AUTH_STATUS_QUERY_KEY, useRemoteAuthStatus } from '@/features/settings/hooks/useRemoteAuthStatus';
+import { useSettingsQuery, useUpdateSettingsMutation } from '@/features/settings/hooks/useSettingsQuery';
 import type { JsonValue, RemoteAuthStatusDto, RemoteServer } from '@/lib/bindings';
 import { toast } from '@/stores/toastStore';
 import type { LLMSettings as ApiLLMSettings } from '@/types/api/settings';
