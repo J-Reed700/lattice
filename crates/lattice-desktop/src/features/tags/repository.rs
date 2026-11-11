@@ -2,7 +2,7 @@
 //! the `TagMapper` layer; DB models stay internal.
 
 use crate::features::tags::persistence_mapper::{TagMapper, TagModel};
-use lattice_core::application::ports::{Filter, RepositoryPort};
+use lattice_core::application::ports::RepositoryPort;
 use lattice_core::domain::entities::Tag as TagEntity;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
@@ -12,32 +12,6 @@ use sqlx::{Row, SqliteConnection, SqlitePool};
 
 mod document_tags;
 mod ports;
-
-/// Filter for querying tags by various criteria.
-#[derive(Debug, Clone)]
-pub struct TagFilter {
-    /// Filter by name pattern (case-insensitive partial match)
-    pub name_pattern: Option<String>,
-    /// Limit number of results
-    pub limit: Option<usize>,
-}
-
-impl Filter for TagFilter {
-    fn validate(&self) -> Result<()> {
-        if let Some(limit) = self.limit {
-            if limit == 0 || limit > 10000 {
-                return Err(AppError::InvalidInput(
-                    "Limit must be between 1 and 10000".to_string(),
-                ));
-            }
-        }
-        Ok(())
-    }
-
-    fn as_any(&self) -> &dyn std::any::Any {
-        self
-    }
-}
 
 /// SQLite implementation of tag repository.
 ///

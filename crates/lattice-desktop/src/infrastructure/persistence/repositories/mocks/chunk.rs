@@ -176,13 +176,5 @@ impl RepositoryPort<ChunkEntity> for MockChunkRepository {
     async fn exists(&self, id: &str) -> Result<bool> {
         Ok(self.chunks.read().contains_key(id))
     }
-
-    async fn find_by_filter(
-        &self,
-        _filter: &dyn lattice_core::application::ports::Filter,
-    ) -> Result<Vec<ChunkEntity>> {
-        // For mock, just return all chunks
-        self.find_all().await
-    }
 }
 // END REMOVED MockChunkRepository

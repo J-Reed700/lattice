@@ -111,13 +111,6 @@ mod tests {
             unimplemented!()
         }
 
-        async fn find_by_filter(
-            &self,
-            _filter: &dyn lattice_core::application::ports::repository_port::Filter,
-        ) -> Result<Vec<Document>> {
-            unimplemented!()
-        }
-
         async fn find_all(&self) -> Result<Vec<Document>> {
             unimplemented!()
         }

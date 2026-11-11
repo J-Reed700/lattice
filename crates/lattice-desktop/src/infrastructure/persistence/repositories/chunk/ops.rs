@@ -7,7 +7,9 @@ use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
 use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
 use lattice_core::shared::error::{AppError, Result};
 use sqlx::QueryBuilder;
+use sqlx::Row;
 use sqlx::SqliteConnection;
+use std::collections::HashMap;
 
 pub async fn save(conn: &mut SqliteConnection, chunk: &ChunkEntity) -> Result<()> {
     let model = ChunkMapper::to_model(chunk)?;
@@ -137,6 +139,53 @@ pub async fn find_by_ids(conn: &mut SqliteConnection, ids: &[String]) -> Result<
     Ok(all)
 }
 
+/// The text of each of these chunks, keyed by chunk id.
+pub async fn find_content_by_ids(
+    conn: &mut SqliteConnection,
+    ids: &[String],
+) -> Result<HashMap<String, String>> {
+    const BATCH: usize = 400;
+    let mut content = HashMap::with_capacity(ids.len());
+    for batch in ids.chunks(BATCH) {
+        let mut query =
+            QueryBuilder::<sqlx::Sqlite>::new("SELECT id, content FROM text_chunks WHERE id IN (");
+        let mut separated = query.separated(", ");
+        for id in batch {
+            separated.push_bind(id);
+        }
+        query.push(")");
+        let rows = query.build().fetch_all(&mut *conn).await.map_err(|error| {
+            AppError::Database(format!("Failed to fetch candidate chunk content: {error}"))
+        })?;
+        for row in rows {
+            let id: String = row
+                .try_get("id")
+                .map_err(|error| AppError::Database(format!("row.id: {error}")))?;
+            let body: String = row
+                .try_get("content")
+                .map_err(|error| AppError::Database(format!("row.content: {error}")))?;
+            content.insert(id, body);
+        }
+    }
+    Ok(content)
+}
+
+/// Ids of the chunks of documents attached to a conversation.
+pub async fn find_conversation_attached_chunk_ids(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<String>> {
+    sqlx::query_scalar(
+        "SELECT tc.id FROM text_chunks tc JOIN documents d ON d.id = tc.document_id WHERE d.owner_conversation_id IS NOT NULL",
+    )
+    .fetch_all(conn)
+    .await
+    .map_err(|e| {
+        AppError::Database(format!(
+            "Failed to list conversation attachment chunks: {e}"
+        ))
+    })
+}
+
 pub async fn find_by_document(
     conn: &mut SqliteConnection,
     document_id: &str,
@@ -207,18 +256,15 @@ pub async fn count_all(conn: &mut SqliteConnection) -> Result<i64> {
     Ok(result)
 }
 
-pub async fn count_indexed_documents(conn: &mut SqliteConnection) -> Result<i64> {
-    let result =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE status = 'indexed'")
-            .fetch_one(conn)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Failed to count indexed documents");
-                AppError::Database(format!("Failed to count indexed documents: {}", e))
-            })?;
-
-    tracing::debug!(count = result, "Counted indexed documents");
-    Ok(result)
+/// How many documents have at least one chunk.
+pub async fn count_documents_with_chunks(conn: &mut SqliteConnection) -> Result<i64> {
+    sqlx::query_scalar::<_, i64>("SELECT COUNT(DISTINCT document_id) FROM text_chunks")
+        .fetch_one(conn)
+        .await
+        .map_err(|e| {
+            tracing::error!(error = %e, "Failed to count indexed documents");
+            AppError::Database(format!("Failed to count indexed documents: {}", e))
+        })
 }
 
 pub async fn count(conn: &mut SqliteConnection) -> Result<usize> {

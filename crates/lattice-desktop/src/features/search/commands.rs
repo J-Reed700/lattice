@@ -31,7 +31,7 @@ mod enrichment;
 mod recency;
 mod searches;
 
-use enrichment::{enrich_hybrid_results, enrich_vector_results, LibraryMode};
+use enrichment::{enrich_hybrid_results, LibraryMode};
 pub use recency::search_with_recency_impl;
 use searches::search_fast_impl;
 pub use searches::{
@@ -155,36 +155,7 @@ pub async fn find_similar(
     chunk_id: String,
     limit: Option<usize>,
 ) -> Result<Vec<SearchResultDto>, AppError> {
-    let limit = limit.unwrap_or(10);
-
-    let enrichment_service = container.search_enrichment_service();
-    let enriched = enrichment_service
-        .enrich_results(std::slice::from_ref(&chunk_id))
-        .await?;
-
-    let doc_content = enriched
-        .get(&chunk_id)
-        .ok_or_else(|| AppError::NotFound(format!("Chunk not found: {}", chunk_id)))?;
-
-    let embedding_service = container.get_or_load_embedding().await.map_err(|e| {
-        AppError::AiModelsNotInstalled(
-            format!("Failed to load embedding model: {}. Download models from Settings → Models to enable search.", e)
-        )
-    })?;
-    let doc_embedding = embedding_service.embed_single(&doc_content.snippet).await?;
-
-    let search_service = container.search_service();
-    let results = search_service.search(&doc_embedding, limit + 1)?;
-
-    let filtered: Vec<_> = results
-        .into_iter()
-        .filter(|r| r.id != chunk_id)
-        .take(limit)
-        .collect();
-
-    let similar = enrich_vector_results(filtered, enrichment_service).await?;
-
-    Ok(similar)
+    find_similar_impl(&container, chunk_id, limit).await
 }
 
 /// Time-aware search with recency boosting

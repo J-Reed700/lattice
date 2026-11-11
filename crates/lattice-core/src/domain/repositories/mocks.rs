@@ -24,7 +24,6 @@ use crate::domain::entities::model::Model;
 
 use crate::domain::value_objects::model_status::{FileStatus, ModelStatus};
 
-use crate::application::ports::repository_port::Filter;
 use crate::application::ports::repository_port::RepositoryPort;
 
 pub struct MockChunkRepository;
@@ -93,10 +92,6 @@ impl RepositoryPort<Chunk> for MockChunkRepository {
         Ok(None)
     }
 
-    async fn find_by_filter(&self, _filter: &dyn Filter) -> Result<Vec<Chunk>> {
-        Ok(vec![])
-    }
-
     async fn find_all(&self) -> Result<Vec<Chunk>> {
         Ok(vec![])
     }
@@ -146,10 +141,6 @@ impl crate::application::ports::repository_port::RepositoryPort<Document>
 {
     async fn find_by_id(&self, _id: &str) -> Result<Option<Document>> {
         Ok(None)
-    }
-
-    async fn find_by_filter(&self, _filter: &dyn Filter) -> Result<Vec<Document>> {
-        Ok(vec![])
     }
 
     async fn find_all(&self) -> Result<Vec<Document>> {

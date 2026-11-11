@@ -287,33 +287,6 @@ pub async fn find_all(conn: &mut SqliteConnection) -> Result<Vec<DocumentEntity>
     hydrate_many(conn, metadata).await
 }
 
-pub async fn find_by_filter(
-    conn: &mut SqliteConnection,
-    filter: &lattice_core::application::ports::DocumentFilter,
-) -> Result<Vec<DocumentEntity>> {
-    use lattice_core::application::ports::Filter;
-    filter.validate()?;
-    let mut query = sqlx::QueryBuilder::new("SELECT id, file_path, file_name, file_type, mime_type, size_bytes, modified_at, indexed_at, checksum, status, error_message, language, category, quality_score, access_count, last_accessed_at, word_count, source_context FROM documents WHERE 1=1");
-    if let Some(pattern) = &filter.path_pattern {
-        query.push(" AND file_path LIKE ").push_bind(pattern);
-    }
-    if let Some(status) = &filter.status {
-        query.push(" AND status = ").push_bind(status);
-    }
-    query
-        .push(" ORDER BY indexed_at DESC LIMIT ")
-        .push_bind(filter.limit.unwrap_or(1000) as i64);
-    let models = query
-        .build_query_as::<DocumentModel>()
-        .fetch_all(&mut *conn)
-        .await?;
-    let mut documents = Vec::with_capacity(models.len());
-    for model in models {
-        documents.push(DocumentMapper::to_entity(&model)?);
-    }
-    hydrate_many(conn, documents).await
-}
-
 pub async fn find_metadata_by_ids(
     conn: &mut SqliteConnection,
     ids: &[String],
