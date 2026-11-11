@@ -17,13 +17,16 @@ const DEFAULT_SPACE_ID: &str = "space_general";
 mod bookmarks;
 mod explorer;
 mod journals;
+mod listing;
 mod memberships;
 mod retrieval;
 mod sources;
 mod spaces;
 mod state;
 
-use explorer::{build_fts_query, ConversationExplorerRow};
+use listing::{
+    build_fts_query, listing_response, ConversationExplorerRow, ConversationListing,
+};
 use spaces::ensure_standard_space;
 
 #[cfg(test)]
