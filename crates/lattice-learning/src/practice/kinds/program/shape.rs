@@ -91,7 +91,7 @@ pub fn solution_of(piece: &Piece) -> Result<String> {
         })
 }
 
-fn difficulty_of(difficulty: coding::ProblemDifficulty) -> work::Difficulty {
+pub fn difficulty_of(difficulty: coding::ProblemDifficulty) -> work::Difficulty {
     match difficulty {
         coding::ProblemDifficulty::Easy => work::Difficulty::Easy,
         coding::ProblemDifficulty::Medium => work::Difficulty::Medium,
@@ -454,13 +454,35 @@ pub fn verdict_of(verdict: ExampleVerdict) -> LearnerCaseVerdict {
 }
 
 /// The engine's cue as the coding code stores it.
-pub fn coding_cue_of(_cue: &Cue) -> CodingCue {
-    CodingCue::Idle
+pub fn coding_cue_of(cue: &Cue) -> CodingCue {
+    match cue {
+        Cue::Opening => CodingCue::Opening,
+        Cue::Reply => CodingCue::Reply,
+        Cue::StageOpened(stage) => CodingCue::StageOpened(coding_stage_of(*stage)),
+        Cue::AskForSkipped(stages) => {
+            CodingCue::AskForSkipped(stages.iter().copied().map(coding_stage_of).collect())
+        }
+        Cue::CheckReview(scope) => CodingCue::RunReview(coding_scope_of(*scope)),
+        Cue::Submitted => CodingCue::Submitted,
+        Cue::Checkpoint => CodingCue::Checkpoint,
+        Cue::Idle => CodingCue::Idle,
+    }
 }
 
 /// The cue the coding code stored, in the engine's words.
-pub fn cue_of(_cue: &CodingCue) -> Cue {
-    Cue::Idle
+pub fn cue_of(cue: &CodingCue) -> Cue {
+    match cue {
+        CodingCue::Opening => Cue::Opening,
+        CodingCue::Reply => Cue::Reply,
+        CodingCue::StageOpened(stage) => Cue::StageOpened(stage_of(*stage)),
+        CodingCue::AskForSkipped(stages) => {
+            Cue::AskForSkipped(stages.iter().copied().map(stage_of).collect())
+        }
+        CodingCue::RunReview(scope) => Cue::CheckReview(scope_of(*scope)),
+        CodingCue::Submitted => Cue::Submitted,
+        CodingCue::Checkpoint => Cue::Checkpoint,
+        CodingCue::Idle => Cue::Idle,
+    }
 }
 
 /// How a run stands, as a check stands.

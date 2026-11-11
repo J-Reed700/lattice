@@ -1,8 +1,12 @@
 //! The cases a learner writes for a program: the arguments of a call and what it should return.
 
+use crate::practice::coding::problem::{
+    CaseCompare, CaseVisibility as ProblemCaseVisibility, ProblemCase,
+};
+use crate::practice::kinds::program::shape::{case_of, problem_case_of};
 use crate::practice::session::kind::{Citation, LearnerCases};
 use crate::practice::session::record::SessionLearnerCase;
-use lattice_core::domain::learning::practice::work::{Brief, Case, Exercise};
+use lattice_core::domain::learning::practice::work::{Brief, Case, CaseVisibility, Exercise};
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
 use serde_json::json;
@@ -60,7 +64,25 @@ impl LearnerCases for ProgramLearnerCases {
         }
     }
 
-    fn case(&self, _exercise: &Exercise, _case: &SessionLearnerCase) -> Result<Case> {
-        Err(AppError::InvalidState("Not built yet.".into()))
+    fn case(&self, exercise: &Exercise, case: &SessionLearnerCase) -> Result<Case> {
+        let body = read_body(&case.body)?;
+        let compare = match exercise
+            .cases
+            .iter()
+            .find(|case| case.visibility == CaseVisibility::Shown)
+        {
+            Some(shown) => problem_case_of(shown)?.compare,
+            None => CaseCompare::Exact,
+        };
+        case_of(&ProblemCase {
+            id: format!("{MINE_CASE_PREFIX}{}", case.ordinal),
+            category: format!("Your example {}", case.ordinal),
+            args: body.args,
+            expected: Some(body.expected),
+            compare,
+            visibility: ProblemCaseVisibility::Example,
+            scale: false,
+            digest: None,
+        })
     }
 }
