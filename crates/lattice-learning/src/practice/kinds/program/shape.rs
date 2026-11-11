@@ -424,7 +424,9 @@ pub fn task_of(form: Form) -> Result<CodingTask> {
 
 /// The problem a proven exercise is saved as: its starter is the piece the learner starts from.
 pub fn built_problem_of(exercise: &Exercise) -> Result<Problem> {
-    problem_of(exercise)
+    let mut problem = problem_of(exercise)?;
+    problem.spec.starter = solution_of(&exercise.start)?;
+    Ok(problem)
 }
 
 pub fn stage_of(stage: CodingStage) -> Stage {

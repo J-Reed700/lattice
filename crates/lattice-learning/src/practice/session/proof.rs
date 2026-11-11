@@ -86,13 +86,10 @@ pub async fn prove(kind: &Kind, draft: Draft, cancel: CancellationToken) -> Resu
         }
     }
 
-    let needed = kind
-        .misreadings_needed
-        .count
-        .max(draft.form.misreadings_needed());
+    let (needed, reason) = misreadings_needed(kind, draft.form);
     if kept.len() < needed {
         return Ok(Proof::Unproven(format!(
-            "Only {} of the {} misreadings fail a case and run; {needed} are needed. {} Write misreadings that are plausible wrong readings of the statement, and add cases that tell each one from the reference.",
+            "Only {} of the {} misreadings fail a case and run; {needed} are needed. {} Write misreadings that are plausible wrong readings of the statement, and add cases that tell each one from the reference. They are needed because {reason}.",
             kept.len(),
             draft.misreadings.len(),
             notes.join(" ")
@@ -121,6 +118,20 @@ pub async fn prove(kind: &Kind, draft: Draft, cancel: CancellationToken) -> Resu
         return Ok(Proof::Unproven(reason));
     }
     Ok(Proof::Proven(Box::new(exercise)))
+}
+
+/// Why a form needs the misreadings it does.
+const REPAIR_REASON: &str = "a repair starts from one of them";
+
+/// How many misreadings a draft of `form` must keep, and why: the kind's need or the form's, whichever is larger.
+fn misreadings_needed(kind: &Kind, form: Form) -> (usize, &'static str) {
+    let own = kind.misreadings_needed;
+    let of_form = form.misreadings_needed();
+    if of_form > own.count {
+        (of_form, REPAIR_REASON)
+    } else {
+        (own.count, own.reason)
+    }
 }
 
 enum Start {

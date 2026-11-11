@@ -134,12 +134,21 @@ fn drill_grading_worker(
 
 fn practice_worker(
     container: &Container,
+    kinds: lattice_learning::practice::session::kind::Kinds,
     runtimes: BuiltinRuntimes,
 ) -> super::coding::jobs::PracticeBuildWorker {
+    let builds = std::sync::Arc::new(super::coding::builds::CodingBuilds {
+        database: container.database().clone(),
+        tools: std::sync::Arc::new(
+            lattice_learning::practice::kinds::program::toolchain::BuiltinToolchains::new(runtimes),
+        ),
+    });
     super::coding::jobs::PracticeBuildWorker {
         database: container.database().clone(),
         load_llm: drill_model(container),
-        runtimes,
+        kinds,
+        nothing: builds.clone(),
+        exercises: builds,
     }
 }
 
@@ -151,10 +160,9 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             // practical commands and lesson verification share its guest slots.
             let runtimes = BuiltinRuntimes::new(bundled_python(app));
             app.manage(runtimes.clone());
-            app.manage(
-                coding::kinds_of(&runtimes)
-                    .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?,
-            );
+            let practice_kinds = coding::kinds_of(&runtimes)
+                .map_err(|error| Box::<dyn std::error::Error>::from(error.to_string()))?;
+            app.manage(practice_kinds.clone());
             // Registration settles the jobs the last process left running,
             // then starts delivering saved work. A kind that fails to register
             // is retried in the background and never fails setup.
@@ -194,7 +202,11 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
                 },
                 JobKindRegistration {
                     kind: super::coding::jobs::PRACTICE_BUILD.into(),
-                    handler: std::sync::Arc::new(practice_worker(&container, runtimes)),
+                    handler: std::sync::Arc::new(practice_worker(
+                        &container,
+                        practice_kinds,
+                        runtimes,
+                    )),
                     config: super::coding::jobs::practice_job_config(),
                 },
             ];

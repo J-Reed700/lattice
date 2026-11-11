@@ -1,12 +1,13 @@
 //! The build template, the same for every kind: the author drafts, the proof checks, and a draft that does not hold
 //! is written again with the reason. A lesson with nothing of the kind to make is remembered and not asked again.
 
-use crate::practice::session::author::Lesson;
+use crate::practice::session::author::{Authored, Commission, Failed, Lesson};
 use crate::practice::session::kind::Kind;
+use crate::practice::session::proof::{prove, Proof};
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{Exercise, Form, KindId};
-use lattice_core::shared::error::Result;
+use lattice_core::shared::error::{AppError, Result};
 use serde_json::Value;
 use tokio_util::sync::CancellationToken;
 
@@ -87,14 +88,73 @@ pub enum Built {
 }
 
 /// Builds one exercise of `kind`: the author drafts, the proof checks, and a refused draft is written again with the
-/// reason, up to `MAX_PROOF_REASKS` times.
+/// reason, up to `MAX_PROOF_REASKS` times. A lesson the author says has nothing of the kind to make is remembered, and
+/// a lesson already remembered is not asked.
 pub async fn build(
-    _kind: &Kind,
-    _making: &Making<'_>,
-    _llm: &dyn LLMPort,
-    _store: &dyn NothingStore,
-    _steps: &dyn BuildSteps,
-    _cancel: CancellationToken,
+    kind: &Kind,
+    making: &Making<'_>,
+    llm: &dyn LLMPort,
+    store: &dyn NothingStore,
+    steps: &dyn BuildSteps,
+    cancel: CancellationToken,
 ) -> Result<Built> {
-    Ok(Built::NothingToMake(String::new()))
+    let target = making.lesson.map(|lesson| Target {
+        program_id: making.program_id,
+        lesson_id: &lesson.id,
+        kind: &kind.id,
+        form: making.form,
+    });
+    if let Some(target) = &target {
+        if let Some(reason) = store.nothing_known(target).await? {
+            return Ok(Built::NothingToMake(reason));
+        }
+    }
+
+    let mut failed: Vec<Failed> = Vec::new();
+    loop {
+        // Progress only moves forward, so a draft asked for again is written during the proving step.
+        report(steps, u32::from(!failed.is_empty()), STEP_WRITING).await?;
+        let authored = kind
+            .author
+            .draft(&Commission {
+                program_id: making.program_id,
+                lesson: making.lesson,
+                form: making.form,
+                options: making.options,
+                facts: making.facts,
+                llm,
+                failed: &failed,
+            })
+            .await?;
+        let (draft, raw) = match authored {
+            Authored::Draft { draft, raw } => (*draft, raw),
+            Authored::NothingToMake(reason) => {
+                if let Some(target) = &target {
+                    store.record_nothing(target, &reason).await?;
+                }
+                return Ok(Built::NothingToMake(reason));
+            }
+        };
+        report(steps, 1, STEP_PROVING).await?;
+        match prove(kind, draft, cancel.clone()).await? {
+            Proof::Proven(exercise) => return Ok(Built::Exercise(exercise)),
+            Proof::Unproven(reason) => {
+                if failed.len() >= MAX_PROOF_REASKS {
+                    return Err(AppError::ModelAnswerUnusable(reason));
+                }
+                failed.push(Failed { raw, reason });
+            }
+        }
+    }
+}
+
+/// Tells the build's steps where it is; a build nobody waits for any more stops.
+async fn report(steps: &dyn BuildSteps, current: u32, message: &str) -> Result<()> {
+    if steps.step(current, message).await? {
+        Ok(())
+    } else {
+        Err(AppError::InvalidState(
+            "The practice build was stopped.".into(),
+        ))
+    }
 }

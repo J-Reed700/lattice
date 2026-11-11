@@ -1,26 +1,26 @@
 //! Background jobs for coding sessions: building and proving a problem before it is shown, then saving it as an
 //! activity whose problem file only the app reads.
 
-use crate::drills::runner::runner_for;
-use crate::embedded_runtime::{BuiltinRuntimes, LearningBuiltinRuntime};
-use crate::persistence::{hash, now};
+use crate::embedded_runtime::LearningBuiltinRuntime;
+use crate::persistence::hash;
 use crate::practical_generation::{
     GeneratedPracticalActivity, GeneratedPracticalFile, PracticalFileRole,
 };
 use crate::practice::coding::dto::StartCodingBuildRequestDto;
-use crate::practice::coding::harness::{harness_for, new_nonce, CaseHarness};
-use crate::practice::coding::patterns::targets_in;
-use crate::practice::coding::problem::{
-    Problem, ProblemDifficulty, PROBLEM_FILE_PATH, SOLUTION_PATH,
-};
-use crate::practice::coding::source::{
-    BuildSteps, GeneratedProblems, LessonBrief, ProblemRequest, ProblemSource, STEP_SAVING,
-};
+use crate::practice::coding::harness::{new_nonce, CaseHarness};
+use crate::practice::coding::problem::{Problem, PROBLEM_FILE_PATH, SOLUTION_PATH};
+use crate::practice::coding::source::ProgramOptions;
+use crate::practice::kinds::program::shape::form_of;
+use crate::practice::kinds::program::KIND;
 use crate::practice::practical_dto::{
     GenerateLearningPracticalActivityRequestDto, LearningPracticalActivityKind,
 };
 use crate::practice::practical_repository::LearningPracticalRepository;
-use crate::practice_repository::profile_in;
+use crate::practice::session::author::Lesson;
+use crate::practice::session::builder::{
+    build, BuildSteps, Built, Exercises, Making, NothingStore, Saving, STEP_SAVING,
+};
+use crate::practice::session::kind::Kinds;
 use crate::quiz_bank_jobs::ModelLoader;
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{Form, KindId};
@@ -31,6 +31,7 @@ use lattice_core::shared::runtime::jobs::{
 };
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
+use std::sync::Arc;
 use uuid::Uuid;
 
 #[cfg(test)]
@@ -47,7 +48,7 @@ pub const PRACTICE_BUILD_STEPS: u32 = 3;
 pub const EASY_PATTERNS: usize = 1;
 
 /// How many patterns a harder problem calls for.
-const HARDER_PATTERNS: usize = 2;
+pub(crate) const HARDER_PATTERNS: usize = 2;
 
 /// One build per program at a time; a running build starts again after a restart, and a disconnected model defers it
 /// rather than failing it.
@@ -73,13 +74,19 @@ pub struct PracticeBuildRequest {
 pub fn practice_build_request(
     request: &StartCodingBuildRequestDto,
 ) -> Result<PracticeBuildRequest> {
+    let options = serde_json::to_value(ProgramOptions {
+        language: request.language.clone(),
+        difficulty: request.difficulty,
+        focus: request.focus.clone(),
+    })
+    .map_err(|error| AppError::Serialization(error.to_string()))?;
     Ok(PracticeBuildRequest {
         operation_id: request.operation_id.clone(),
         program_id: request.program_id.clone(),
         lesson_id: request.lesson_id.clone(),
-        kind: KindId::new(""),
-        form: Form::Complete,
-        options: Value::Null,
+        kind: KindId::new(KIND),
+        form: form_of(request.task),
+        options,
     })
 }
 
@@ -88,7 +95,7 @@ pub async fn queue_coding_build(
     database: &Database,
     request: &StartCodingBuildRequestDto,
 ) -> Result<String> {
-    let requested = serde_json::to_value(request)
+    let requested = serde_json::to_value(practice_build_request(request)?)
         .map_err(|error| AppError::Serialization(error.to_string()))?;
     let payload_hash = hash(&requested)?;
     let mut transaction = database
@@ -137,22 +144,14 @@ impl BuildSteps for JobSteps<'_> {
     }
 }
 
-/// Builds coding problems, on the Learning model, pinned for the whole build.
+/// Builds practice exercises of every registered kind, on the Learning model, pinned for the whole build.
 #[derive(Clone)]
 pub struct PracticeBuildWorker {
     pub database: Database,
     pub load_llm: ModelLoader,
-    pub runtimes: BuiltinRuntimes,
-}
-
-impl PracticeBuildWorker {
-    pub fn new(database: Database, load_llm: ModelLoader, runtimes: BuiltinRuntimes) -> Self {
-        Self {
-            database,
-            load_llm,
-            runtimes,
-        }
-    }
+    pub kinds: Kinds,
+    pub nothing: Arc<dyn NothingStore>,
+    pub exercises: Arc<dyn Exercises>,
 }
 
 /// What a proven problem is saved as.
@@ -237,113 +236,82 @@ pub async fn save_problem(
 #[async_trait]
 impl JobHandler for PracticeBuildWorker {
     async fn run(&self, context: &JobContext) -> Result<JobOutcome> {
-        let request: StartCodingBuildRequestDto =
-            serde_json::from_value(context.job().requested.clone()).map_err(|error| {
-                AppError::InvalidInput(format!("Invalid coding build job request: {error}"))
+        let request: PracticeBuildRequest = serde_json::from_value(context.job().requested.clone())
+            .map_err(|error| {
+                AppError::InvalidInput(format!("Invalid practice build job request: {error}"))
             })?;
+        let kind = self.kinds.get(&request.kind)?;
         let repository = LearningPracticalRepository::new(self.database.clone());
-        let lesson = repository
+        let found = repository
             .build_lesson(&request.program_id, request.lesson_id.as_deref())
             .await?;
-
-        let mut transaction = self
-            .database
-            .begin_read()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-        let profile = profile_in(&mut transaction, &request.program_id).await?;
-        let language = Some(request.language.trim())
-            .filter(|language| !language.is_empty())
-            .map(str::to_owned)
-            .or_else(|| {
-                profile
-                    .as_ref()
-                    .and_then(|profile| profile.language.clone())
-            })
-            .ok_or_else(|| {
-                AppError::InvalidInput(
-                    "Choose a language for the problem; the practice profile names none.".into(),
-                )
-            })?;
-        let wanted = if request.difficulty == ProblemDifficulty::Easy {
-            EASY_PATTERNS
-        } else {
-            HARDER_PATTERNS
+        let lesson = Lesson {
+            id: found.id,
+            title: found.title,
+            objective: found.objective,
         };
-        let patterns: Vec<String> =
-            targets_in(&mut transaction, &request.program_id, &language, now())
-                .await?
-                .into_iter()
-                .take(wanted)
-                .collect();
-        transaction
-            .commit()
-            .await
-            .map_err(|error| AppError::Database(error.to_string()))?;
-
-        let runner = runner_for(&language, &self.runtimes).ok_or_else(|| {
-            AppError::ServiceNotAvailable(format!("No runtime is available to run {language}."))
-        })?;
-        let harness = harness_for(&language).ok_or_else(|| {
-            AppError::InvalidInput(format!(
-                "Coding problems are not written in {language} yet."
-            ))
-        })?;
+        let facts = self
+            .exercises
+            .facts(
+                &request.kind,
+                &request.program_id,
+                request.form,
+                &request.options,
+            )
+            .await?;
         let Some(pin) = context.until_cancelled((self.load_llm)()).await else {
             return Ok(JobOutcome::Stopped);
         };
         let pin = pin?;
         let llm = pin.llm.as_ref();
 
-        let problem_request = ProblemRequest {
-            program_id: request.program_id.clone(),
-            lesson: Some(LessonBrief {
-                title: lesson.title.clone(),
-                objective: lesson.objective.clone(),
-            }),
-            task: request.task,
-            language: language.clone(),
-            difficulty: request.difficulty,
-            patterns,
-            focus: request.focus.clone(),
-            details: profile.map(|profile| profile.details),
-        };
-        let source = GeneratedProblems {
+        let built = match build(
+            kind,
+            &Making {
+                program_id: &request.program_id,
+                lesson: Some(&lesson),
+                form: request.form,
+                options: &request.options,
+                facts: &facts,
+            },
             llm,
-            runner: runner.as_ref(),
-            harness: harness.as_ref(),
-        };
-        let problem = match source
-            .problem(
-                &problem_request,
-                &JobSteps::new(context),
-                context.cancellation().clone(),
-            )
-            .await
+            self.nothing.as_ref(),
+            &JobSteps::new(context),
+            context.cancellation().clone(),
+        )
+        .await
         {
-            Ok(problem) => problem,
+            Ok(built) => built,
             Err(_) if context.cancellation().is_cancelled() => return Ok(JobOutcome::Stopped),
             Err(error) => return Err(error),
+        };
+        let exercise = match built {
+            Built::Exercise(exercise) => exercise,
+            Built::NothingToMake(reason) => {
+                return Ok(JobOutcome::Completed {
+                    result_ref: String::new(),
+                    message: reason,
+                })
+            }
         };
         if !context.progress(2, STEP_SAVING, None).await? {
             return Ok(JobOutcome::Stopped);
         }
-        let activity_id = save_problem(
-            &self.database,
-            &ProblemSave {
-                job_id: &context.job().id,
-                program_id: &request.program_id,
-                lesson_id: &lesson.id,
-                focus: request.focus.as_deref(),
-                language: &language,
-                model: llm.model_name(),
-            },
-            &problem,
-            harness.as_ref(),
-        )
-        .await?;
+        let exercise_id = self
+            .exercises
+            .save(
+                &Saving {
+                    job_id: &context.job().id,
+                    program_id: &request.program_id,
+                    lesson_id: &lesson.id,
+                    options: &request.options,
+                    model: llm.model_name(),
+                },
+                &exercise,
+            )
+            .await?;
         Ok(JobOutcome::Completed {
-            result_ref: activity_id,
+            result_ref: exercise_id,
             message: "The problem is ready".into(),
         })
     }

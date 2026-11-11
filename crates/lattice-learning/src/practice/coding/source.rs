@@ -12,8 +12,11 @@ use crate::practice::coding::problem::{
     ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
 };
 use crate::practice::coding::proof::{prove, Proof};
-use crate::practice::kinds::program::shape::{built_problem_of, form_of};
+use crate::practice::kinds::program::shape::{
+    brief_of, built_problem_of, case_of, form_of, misreading_of, solution_piece, task_of,
+};
 use crate::practice::kinds::program::toolchain::Toolchains;
+use crate::practice::kinds::program::KIND;
 use crate::practice::session::author::{Author, Authored, Commission, Lesson};
 use crate::practice::session::builder::{build, Built, Making, NothingStore, Target};
 pub use crate::practice::session::builder::{
@@ -25,7 +28,9 @@ use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::problem_patterns::{
     named_in, problem_pattern, PROBLEM_PATTERNS,
 };
+use lattice_core::domain::learning::practice::work::{Draft as ExerciseDraft, Form, KindId};
 use lattice_core::shared::error::{AppError, Result};
+use serde::de::DeserializeOwned;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::collections::HashSet;
@@ -173,9 +178,84 @@ pub struct ProgramAuthor {
 
 #[async_trait]
 impl Author for ProgramAuthor {
-    async fn draft(&self, _commission: &Commission<'_>) -> Result<Authored> {
-        Ok(Authored::NothingToMake(String::new()))
+    async fn draft(&self, commission: &Commission<'_>) -> Result<Authored> {
+        let request = request_of(commission)?;
+        for id in &request.patterns {
+            if problem_pattern(id).is_none() {
+                return Err(AppError::InvalidInput(format!(
+                    "{id} is not one of the problem patterns."
+                )));
+            }
+        }
+        let runner = self.tools.runner(&request.language)?;
+        let mut asking = model_call::structured(
+            SYSTEM,
+            prompt(&request, runner.contract()),
+            schema(),
+            PROBLEM_ANSWER_TOKENS,
+            "low",
+        );
+        for failed in commission.failed {
+            asking = reask(asking, &failed.raw, &failed.reason);
+        }
+        let asked = ask_request(commission.llm, asking, |raw| read(raw, &request)).await?;
+        Ok(Authored::Draft {
+            draft: Box::new(exercise_draft_of(asked.value, commission.form)?),
+            raw: asked.raw,
+        })
     }
+}
+
+fn parsed<T: DeserializeOwned>(value: &Value, what: &str) -> Result<T> {
+    serde_json::from_value(value.clone()).map_err(|error| {
+        AppError::InvalidInput(format!(
+            "The program's build {what} are not usable: {error}."
+        ))
+    })
+}
+
+/// The problem request a commission stands for.
+fn request_of(commission: &Commission<'_>) -> Result<ProblemRequest> {
+    let options: ProgramOptions = parsed(commission.options, "options")?;
+    let facts: ProgramFacts = parsed(commission.facts, "facts")?;
+    Ok(ProblemRequest {
+        program_id: commission.program_id.to_owned(),
+        lesson: commission.lesson.map(|lesson| LessonBrief {
+            title: lesson.title.clone(),
+            objective: lesson.objective.clone(),
+        }),
+        task: task_of(commission.form)?,
+        language: facts.language,
+        difficulty: options.difficulty,
+        patterns: facts.patterns,
+        focus: options.focus,
+        details: facts.details,
+    })
+}
+
+/// A drafted problem in the core vocabulary. Fix a bug starts from a misreading the proof picks, so it has no starter.
+fn exercise_draft_of(drafted: Draft, form: Form) -> Result<ExerciseDraft> {
+    let starter = (form == Form::Build)
+        .then(|| solution_piece(&drafted.spec.starter))
+        .transpose()?;
+    Ok(ExerciseDraft {
+        kind: KindId::new(KIND),
+        form,
+        brief: brief_of(&drafted.spec)?,
+        reference: solution_piece(&drafted.reference)?,
+        misreadings: drafted
+            .misreadings
+            .iter()
+            .map(misreading_of)
+            .collect::<Result<Vec<_>>>()?,
+        cases: drafted
+            .cases
+            .iter()
+            .map(case_of)
+            .collect::<Result<Vec<_>>>()?,
+        starter,
+        asks: Vec::new(),
+    })
 }
 
 /// A problem request written as the build template takes it.

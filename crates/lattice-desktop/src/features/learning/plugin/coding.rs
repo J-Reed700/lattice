@@ -17,7 +17,9 @@ use lattice_learning::practical_dto::LearningPracticalRunDto;
 use lattice_learning::practical_runs::CodingRunStart;
 use lattice_learning::practice::coding::dto::*;
 use lattice_learning::practice::coding::examples::ExampleCheck;
-use lattice_learning::practice::coding::jobs::{PRACTICE_BUILD, PRACTICE_BUILD_STEPS};
+use lattice_learning::practice::coding::jobs::{
+    practice_build_request, PRACTICE_BUILD, PRACTICE_BUILD_STEPS,
+};
 use lattice_learning::practice::coding::problem::{CaseResult, Problem};
 use lattice_learning::practice::coding::session::{
     CodingAids, CodingRuns, CodingSessions, LiveCodingAids, SystemClock,
@@ -205,7 +207,7 @@ pub async fn start_coding_build(
     request: StartCodingBuildRequestDto,
     container: State<'_, Container>,
 ) -> Result<StartCodingBuildResultDto, ApiError> {
-    let requested = serde_json::to_value(&request)
+    let requested = serde_json::to_value(practice_build_request(&request).map_err(ApiError::from)?)
         .map_err(|e| ApiError::internal(format!("Failed to serialize build request: {e}")))?;
     let payload_hash = format!(
         "{:x}",
