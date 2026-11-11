@@ -196,6 +196,21 @@ mod tests {
     }
 
     #[test]
+    fn file_path_accepts_two_dots_inside_a_filename() {
+        let paths = ModelPaths::new("phi-3-mini").expect("valid model id");
+        let resolved = paths
+            .file_path("model..Q4_K_M.gguf")
+            .expect("dots inside a name are fine");
+        assert!(resolved.ends_with("model..Q4_K_M.gguf"));
+    }
+
+    #[test]
+    fn a_model_id_with_two_dots_inside_it_is_valid() {
+        assert!(ModelPaths::validate_model_id("model..v2").is_ok());
+        assert!(ModelPaths::validate_model_id("..").is_err());
+    }
+
+    #[test]
     fn manifest_file_path_allows_confined_subdirectories() {
         let paths = ModelPaths::new("phi-3-mini").expect("valid model id");
         let resolved = paths

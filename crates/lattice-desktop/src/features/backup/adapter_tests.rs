@@ -262,6 +262,25 @@ async fn test_create_backup_rejects_url_encoded_traversal() {
 }
 
 #[tokio::test]
+async fn a_backup_name_with_two_dots_or_percent_signs_is_a_plain_name() {
+    for name in ["notes..db", "%2e%2e%2fetc.db"] {
+        let (pool, db_path, _dir) = create_test_pool().await;
+        let adapter = BackupAdapter::new(Database::from(pool.clone()), db_path.clone());
+
+        let backup_dir = db_path.parent().unwrap().join("backups");
+        fs::create_dir_all(&backup_dir).unwrap();
+        let path = backup_dir.join(name);
+
+        let result = adapter.create_backup(Some(path.clone())).await;
+
+        assert!(result.is_ok(), "{name}: {result:?}");
+        assert!(path.exists(), "{name}");
+
+        pool.close().await;
+    }
+}
+
+#[tokio::test]
 
 async fn test_create_backup_allows_valid_path_in_backup_dir() {
     let (pool, db_path, _dir) = create_test_pool().await;

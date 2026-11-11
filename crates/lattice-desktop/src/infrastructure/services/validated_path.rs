@@ -248,6 +248,24 @@ mod tests {
     }
 
     #[test]
+    fn two_dots_inside_a_name_are_accepted() {
+        assert!(ValidatedFilePath::new("/home/user/v1..v2/notes..md").is_ok());
+        assert!(ValidatedFilePath::new("v1..v2/notes..md").is_ok());
+    }
+
+    #[test]
+    fn a_whole_name_of_two_dots_is_rejected() {
+        assert!(matches!(
+            ValidatedFilePath::new("/home/user/.."),
+            Err(PathValidationError::PathTraversal(_))
+        ));
+        assert!(matches!(
+            ValidatedFilePath::new("../secret"),
+            Err(PathValidationError::PathTraversal(_))
+        ));
+    }
+
+    #[test]
     fn test_rejects_null_byte_in_path() {
         let path = "/tmp/file\0.txt";
 

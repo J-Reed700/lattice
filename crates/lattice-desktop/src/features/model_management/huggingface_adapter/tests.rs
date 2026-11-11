@@ -372,3 +372,10 @@ async fn test_get_model_by_id_not_found() {
 
     assert!(model.is_none());
 }
+
+#[test]
+fn a_standalone_gguf_may_have_two_dots_inside_its_name() {
+    assert!(HuggingFaceModel::is_standalone_gguf("model..Q4_K_M.gguf"));
+    assert!(!HuggingFaceModel::is_standalone_gguf("../model.gguf"));
+    assert!(!HuggingFaceModel::is_standalone_gguf("a/model.gguf"));
+}

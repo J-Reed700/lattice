@@ -300,6 +300,25 @@ mod tests {
     }
 
     #[test]
+    fn a_path_with_two_dots_inside_a_name_is_accepted() {
+        let storage = SecureFileStorage::new();
+
+        assert!(storage.validate_path(Path::new("v1..v2/notes..md")).is_ok());
+        assert!(storage
+            .validate_path(Path::new("/library/v1..v2/notes..md"))
+            .is_ok());
+    }
+
+    #[test]
+    fn a_parent_directory_component_is_still_rejected() {
+        let storage = SecureFileStorage::new();
+
+        assert!(storage.validate_path(Path::new("../secret")).is_err());
+        assert!(storage.validate_path(Path::new("a/../../b")).is_err());
+        assert!(storage.validate_path(Path::new("..")).is_err());
+    }
+
+    #[test]
     fn test_validate_path_null_byte() {
         let storage = SecureFileStorage::new();
 

@@ -573,6 +573,47 @@ mod tests {
     }
 
     #[test]
+    fn a_model_name_with_two_dots_inside_it_is_accepted() {
+        let validator = InputValidator::new();
+
+        assert!(validator.validate_model_name("model..Q4_K_M.gguf").is_ok());
+        assert!(validator.validate_model_name("v1..v2").is_ok());
+        assert!(validator.validate_model_name(" ..").is_err());
+    }
+
+    #[test]
+    fn a_directory_path_with_two_dots_inside_a_name_is_accepted() {
+        let validator = InputValidator::new();
+
+        assert!(validator
+            .validate_directory_path(&test_paths::abs_str("home/v1..v2/notes..md"), false)
+            .is_ok());
+    }
+
+    #[test]
+    fn a_model_path_with_two_dots_inside_a_name_is_accepted() {
+        let validator = InputValidator::new();
+        let temp = tempfile::tempdir().unwrap();
+        let folder = temp.path().join("v1..v2");
+        std::fs::create_dir(&folder).unwrap();
+        let file = folder.join("model..Q4_K_M.gguf");
+        std::fs::write(&file, b"gguf").unwrap();
+
+        assert!(validator.validate_model_path(&file, temp.path()).is_ok());
+    }
+
+    #[test]
+    fn a_model_path_with_a_parent_component_is_still_rejected() {
+        let validator = InputValidator::new();
+        let temp = tempfile::tempdir().unwrap();
+        let file = temp.path().join("model.gguf");
+        std::fs::write(&file, b"gguf").unwrap();
+        let sneaky = temp.path().join("sub").join("..").join("model.gguf");
+
+        assert!(validator.validate_model_path(&sneaky, temp.path()).is_err());
+    }
+
+    #[test]
     fn test_directory_path_validation() {
         let validator = InputValidator::new();
 
