@@ -466,6 +466,14 @@ mod tests {
     use super::*;
     use sqlx::SqlitePool;
 
+    #[cfg(windows)]
+    #[test]
+    fn a_note_id_windows_reads_as_a_parent_or_a_drive_is_not_safe() {
+        for id in ["...", ".. ", "C:x"] {
+            assert!(!safe_note_id(id), "{id:?}");
+        }
+    }
+
     #[test]
     fn non_empty_write_is_indexed() {
         assert_eq!(

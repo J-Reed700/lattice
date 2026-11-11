@@ -872,3 +872,16 @@ fn the_folder_template_cites_only_numbered_passages() {
         "the folder's template is as it was before the tutor"
     );
 }
+
+#[test]
+fn a_cited_path_with_a_nul_byte_is_refused() {
+    let (_dir, scope) = fixture();
+    assert!(fs::locate_file(&scope, "src/main\0.rs").is_err());
+}
+
+#[cfg(windows)]
+#[test]
+fn a_cited_path_with_a_dots_only_segment_is_refused_on_windows() {
+    let (_dir, scope) = fixture();
+    assert!(fs::locate_file(&scope, ".../main.rs").is_err());
+}

@@ -184,6 +184,15 @@ mod tests {
         assert!(paths.file_path("..").is_err());
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn file_path_refuses_names_windows_reads_as_a_parent_or_a_drive() {
+        let paths = ModelPaths::new("phi-3-mini").expect("valid model id");
+        for name in ["...", ".. ", "C:x"] {
+            assert!(paths.file_path(name).is_err(), "{name:?}");
+        }
+    }
+
     #[test]
     fn file_path_accepts_a_plain_filename_and_stays_under_the_root() {
         let paths = ModelPaths::new("phi-3-mini").expect("valid model id");
