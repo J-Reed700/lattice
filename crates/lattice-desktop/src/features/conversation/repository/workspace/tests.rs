@@ -429,3 +429,94 @@ async fn the_journal_listing_searches_hides_archived_pages_and_stays_in_its_jour
         Err(AppError::InvalidInput(_))
     ));
 }
+
+async fn bookmarked_message(
+    repo: &ConversationRepository,
+    conversation_id: &str,
+    content: &str,
+    created_at: &str,
+) -> String {
+    let message = repo
+        .add_message(
+            conversation_id,
+            lattice_core::domain::conversation::MessageRole::User,
+            content,
+            1,
+            None,
+        )
+        .await
+        .unwrap();
+    let message_id = message.id.to_string();
+    repo.bookmark_conversation_message(BookmarkConversationMessageRequestDto {
+        conversation_id: conversation_id.to_string(),
+        message_id: message_id.clone(),
+        title: None,
+        note: None,
+    })
+    .await
+    .unwrap();
+    sqlx::query("UPDATE conversation_message_bookmarks SET created_at = ? WHERE message_id = ?")
+        .bind(created_at)
+        .bind(&message_id)
+        .execute(&repo.pool)
+        .await
+        .unwrap();
+    message_id
+}
+
+fn bookmark_query(query: Option<&str>) -> ListMessageBookmarksQueryDto {
+    ListMessageBookmarksQueryDto {
+        conversation_id: None,
+        query: query.map(str::to_string),
+        limit: None,
+        offset: None,
+    }
+}
+
+#[tokio::test]
+async fn bookmark_search_ranks_each_bookmark_by_its_own_match() {
+    let (_directory, repo) = repository().await;
+    let field_log = repo.create("Field log", None).await.unwrap().id.to_string();
+    let shopping = repo.create("Shopping", None).await.unwrap().id.to_string();
+    let strong = bookmarked_message(
+        &repo,
+        &field_log,
+        "kestrel kestrel kestrel",
+        "2026-01-01T00:00:00Z",
+    )
+    .await;
+    let weak = bookmarked_message(
+        &repo,
+        &field_log,
+        "a kestrel flew over the quiet harbor today",
+        "2026-01-02T00:00:00Z",
+    )
+    .await;
+    let unrelated =
+        bookmarked_message(&repo, &shopping, "bread and milk", "2026-01-03T00:00:00Z").await;
+    let message_ids = |response: ListMessageBookmarksResponseDto| {
+        response
+            .bookmarks
+            .into_iter()
+            .map(|bookmark| bookmark.message_id)
+            .collect::<Vec<_>>()
+    };
+
+    let found = repo
+        .list_message_bookmarks(bookmark_query(Some("kestrel")))
+        .await
+        .unwrap();
+    assert_eq!(message_ids(found), [strong.clone(), weak.clone()]);
+
+    let none = repo
+        .list_message_bookmarks(bookmark_query(Some("osprey")))
+        .await
+        .unwrap();
+    assert!(none.bookmarks.is_empty());
+
+    let all = repo
+        .list_message_bookmarks(bookmark_query(None))
+        .await
+        .unwrap();
+    assert_eq!(message_ids(all), [unrelated, weak, strong]);
+}
