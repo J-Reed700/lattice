@@ -152,6 +152,88 @@ fn the_order_rules_hold_in_both_phases() {
     }
 }
 
+fn lesson_of(kinds: &[&str]) -> Value {
+    let blocks: Vec<Value> = kinds
+        .iter()
+        .enumerate()
+        .map(|(index, kind)| block(kind, &format!("Section {index}")))
+        .collect();
+    json!({"blocks":blocks,"questions":[]})
+}
+
+fn unshown_sites(kinds: &[&str]) -> Vec<Option<FindingSite>> {
+    order_findings(items(&lesson_of(kinds), "blocks"))
+        .into_iter()
+        .filter(|finding| finding.note.contains("no worked example has shown"))
+        .map(|finding| finding.site)
+        .collect()
+}
+
+#[test]
+fn the_last_of_several_checks_mixes_the_ideas_and_needs_no_example_of_its_own() {
+    let closing = ["reflection", "recap"];
+    let kettle = [
+        "explanation",
+        "worked_example",
+        "check",
+        "explanation",
+        "worked_example",
+        "check",
+        "contrast",
+        "check",
+    ];
+    assert!(unshown_sites(&[&kettle[..], &closing[..]].concat()).is_empty());
+    let shelf = [
+        "explanation",
+        "worked_example",
+        "check",
+        "worked_example",
+        "check",
+        "check",
+    ];
+    assert!(unshown_sites(&shelf).is_empty());
+}
+
+#[test]
+fn a_check_that_is_not_the_last_still_needs_the_example_before_it() {
+    let rope = [
+        "worked_example",
+        "check",
+        "check",
+        "worked_example",
+        "check",
+    ];
+    assert_eq!(unshown_sites(&rope), [Some(FindingSite::Section(2))]);
+}
+
+#[test]
+fn a_lone_check_mixes_nothing_and_needs_its_example() {
+    let beads = ["explanation", "check", "recap"];
+    assert_eq!(unshown_sites(&beads), [Some(FindingSite::Section(1))]);
+}
+
+#[test]
+fn a_cut_leaves_the_mixed_check_alone_and_takes_the_one_before_it() {
+    let kinds = [
+        "worked_example",
+        "check",
+        "worked_example",
+        "check",
+        "check",
+    ];
+    let lesson = lesson_of(&kinds);
+    assert_eq!(policy().dependants(&lesson, &units([2])), units([3]));
+    assert_eq!(policy().dependants(&lesson, &units([2, 4])), units([3]));
+}
+
+#[test]
+fn a_kept_lesson_is_told_the_last_of_several_checks_mixes_the_ideas() {
+    assert_eq!(
+        StandardShape.asked(Phase::Kept)[1],
+        "It is held to this instead: at least one explanation; each check after a worked example shown since the previous check, except the last of two or more checks, which mixes the lesson's ideas; the recap after the reflection when it has both; and at least one question."
+    );
+}
+
 #[test]
 fn a_cut_takes_the_check_that_loses_its_worked_example() {
     // The first example goes: the check at unit 3 follows no example now.
