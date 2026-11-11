@@ -712,5 +712,83 @@ async fn review_reports_a_repeat_apart_from_the_defects() -> Result<()> {
     assert_eq!(found.len(), 1);
     assert!(found[0].defects.is_empty(), "{:?}", found[0]);
     assert_eq!(found[0].repeats.len(), 1, "{:?}", found[0]);
+    assert_eq!(
+        found[0].repeats[0].of,
+        item_review::RepeatOf::Held,
+        "{:?}",
+        found[0]
+    );
+    Ok(())
+}
+
+const THIRD_FIXED: &str = "A torn green stamp arrives at the desk with its colour still readable. Which place takes it first?";
+const FOURTH: &str = "A torn yellow stamp arrives at the desk. Which place takes it first?";
+const FIFTH: &str = "A torn white stamp arrives at the desk. Which place takes it first?";
+
+/// Round one: the first item is sound, the second and third each have a
+/// defect. The reply to the rewrites is chosen by the id each is reviewed under.
+fn two_rewrites(
+    second_review: impl Fn(&str) -> (String, Vec<String>) + Send + Sync + 'static,
+    existing: &[&str],
+    next: Value,
+    count: usize,
+) -> (Script, AuthoringNeed) {
+    let llm = Script::new(
+        vec![
+            written(&[FIRST, SECOND, THIRD]),
+            written(&[SECOND_FIXED]),
+            written(&[THIRD_FIXED]),
+            next,
+        ],
+        agrees(),
+        finds(move |item| match item["prompt"].as_str() {
+            Some(SECOND | THIRD) => ("The question needs a value.".into(), vec![]),
+            Some(SECOND_FIXED | THIRD_FIXED) => second_review(item["id"].as_str().unwrap_or("")),
+            _ => (String::new(), vec![]),
+        }),
+    );
+    (llm, need(LearningItemFormat::SingleChoice, count, existing))
+}
+
+#[tokio::test]
+async fn a_rewrite_that_repeats_only_a_rewrite_dropped_for_a_defect_is_written_again() -> Result<()>
+{
+    let (llm, need) = two_rewrites(
+        |id| match id {
+            "new-0" => ("The question needs a value.".into(), vec![]),
+            _ => (String::new(), vec!["new-0".into()]),
+        },
+        &[],
+        written(&[FOURTH, FIFTH]),
+        3,
+    );
+
+    let result = author_items(&llm, &need).await;
+
+    llm.no_lesson_review();
+    assert_eq!(writes(&llm), 4, "{:?}", llm.kinds());
+    assert_eq!(llm.request("write", 3)["returnCount"], 2);
+    assert_eq!(prompts(&result?), [FIRST, FOURTH, FIFTH]);
+    Ok(())
+}
+
+/// Passes before the change as well: both rewrites have no defect.
+#[tokio::test]
+async fn a_rewrite_that_repeats_a_rewrite_dropped_as_a_repeat_is_not_written_again() -> Result<()> {
+    let (llm, need) = two_rewrites(
+        |id| match id {
+            "new-0" => (String::new(), vec!["have-0".into()]),
+            _ => (String::new(), vec!["new-0".into()]),
+        },
+        &[HAD],
+        written(&[FOURTH]),
+        3,
+    );
+
+    let result = author_items(&llm, &need).await;
+
+    llm.no_lesson_review();
+    assert_eq!(writes(&llm), 3, "{:?}", llm.kinds());
+    assert_eq!(prompts(&result?), [FIRST]);
     Ok(())
 }
