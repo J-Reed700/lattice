@@ -111,15 +111,15 @@ impl Container {
     /// the file itself.
     pub fn gguf_header_source(
         &self,
-    ) -> std::sync::Arc<crate::features::model_management::header_source::HuggingFaceHeaderSource>
-    {
+    ) -> lattice_core::shared::error::Result<
+        std::sync::Arc<crate::features::model_management::header_source::HuggingFaceHeaderSource>,
+    > {
         let cache = dirs::cache_dir()
             .map(|path| path.join("lattice"))
             .unwrap_or_else(|| self.core.data_dir().join("cache"))
             .join("gguf-headers");
-        std::sync::Arc::new(
-            crate::features::model_management::header_source::HuggingFaceHeaderSource::new(cache),
-        )
+        crate::features::model_management::header_source::HuggingFaceHeaderSource::new(cache)
+            .map(std::sync::Arc::new)
     }
 
     /// The manager that fetches and inspects the models kept under

@@ -318,13 +318,6 @@ impl lattice_core::application::ports::RepositoryPort<Document> for MockDocument
         Ok(false)
     }
 
-    async fn find_by_filter(
-        &self,
-        _filter: &dyn lattice_core::application::ports::repository_port::Filter,
-    ) -> Result<Vec<Document>> {
-        Ok(vec![])
-    }
-
     async fn save_batch(&self, _entities: &[Document]) -> Result<()> {
         Ok(())
     }

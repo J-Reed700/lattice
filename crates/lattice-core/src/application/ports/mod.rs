@@ -91,10 +91,6 @@ pub use corpus_listeners::{DocumentIndexObserver, SearchResultCachePort};
 pub use credentials_port::CredentialsPort;
 pub use database_stats_port::DatabaseStatsPort;
 pub use document_repository_port::DocumentRepositoryPort;
-#[cfg(any(test, feature = "test-support"))]
-pub use mock_web_service::MockWebService;
-mod document_filter;
-pub use document_filter::DocumentFilter;
 pub use embedding_index_binding::EmbeddingIndexBinding;
 pub use embedding_port::EmbeddingPort;
 pub use embedding_repository_port::EmbeddingRepositoryPort;
@@ -111,6 +107,8 @@ pub use loaded_embedding_model::LoadedEmbeddingModelPort;
 pub use mention_repository_port::{MentionData, MentionRepositoryPort, MentionWithContextData};
 pub use metrics_port::{MetricsPort, MetricsSnapshotData};
 pub use mock_embedding_port::MockEmbeddingPort;
+#[cfg(any(test, feature = "test-support"))]
+pub use mock_web_service::MockWebService;
 pub use model_catalog::{ExternalModelMetadata, MockModelCatalogPort, ModelCatalogPort};
 pub use model_file_inspector::ModelFileInspector;
 pub use model_storage::{DownloadedModel, ModelStoragePort};
@@ -118,10 +116,12 @@ pub use note_index_sink::NoteIndexSink;
 pub use ocr_port::{NoopOcr, OcrError, OcrPort};
 pub use recent_documents_port::RecentDocumentsRepositoryPort;
 pub use reference_snapshots::{ReferenceSnapshot, ReferenceSnapshotPort};
-pub use repository_port::{Filter, NoFilter, RepositoryPort};
+pub use repository_port::RepositoryPort;
 pub use search_engines::{BM25SearchTrait, SearchServiceTrait};
 pub use settings_port::merge_json_update;
-pub use settings_port::{MockSettingsRepository, SettingsRepositoryPort};
+#[cfg(any(test, feature = "test-support"))]
+pub use settings_port::MockSettingsRepository;
+pub use settings_port::SettingsRepositoryPort;
 pub use settings_reader::SettingsReaderPort;
 pub use settings_side_effects_port::{NoopSettingsSideEffects, SettingsSideEffectsPort};
 pub use source_finder::{Budget, SourceFinder};

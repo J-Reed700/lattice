@@ -317,13 +317,6 @@ mod tests {
             Ok(None)
         }
 
-        async fn find_by_filter(
-            &self,
-            _filter: &dyn lattice_core::application::ports::Filter,
-        ) -> AppResult<Vec<Document>> {
-            Ok(vec![])
-        }
-
         async fn find_all(&self) -> AppResult<Vec<Document>> {
             Ok(vec![])
         }

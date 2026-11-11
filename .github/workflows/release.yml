@@ -1,0 +1,282 @@
+name: Release
+
+on:
+  workflow_dispatch:
+  pull_request:
+    paths: ['.github/workflows/release.yml']
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Installer (${{ matrix.name }})
+    runs-on: ${{ matrix.os }}
+    # No timeout of our own: a cold Windows release build takes 45 to 55 minutes.
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: Windows-x64, os: windows-2025, bundles: nsis, pattern: '*-setup.exe' }
+          - { name: macOS-Apple-Silicon, os: macos-15, bundles: dmg, pattern: '*.dmg' }
+          - { name: Ubuntu-24.04-x64, os: ubuntu-24.04, bundles: deb, pattern: '*.deb' }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - uses: actions/setup-python@v7
+        with:
+          python-version: '3.12'
+      - name: Linux desktop dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev patchelf
+      - name: Fetch verified published sidecars
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: bash crates/lattice-desktop/scripts/fetch-llama-binaries.sh --strict
+      - run: npm ci
+      - name: Cache Tauri's bundling tools
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\tauri
+          key: tauri-tools-${{ runner.os }}-${{ hashFiles('Cargo.lock') }}
+          restore-keys: tauri-tools-${{ runner.os }}-
+      # The pinned values come from the tauri-cli version's nsis/mod.rs; update them with the CLI.
+      - name: Fetch Tauri's NSIS tools through the GitHub API
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          $tools = Join-Path $env:LOCALAPPDATA 'tauri'
+          $nsis = Join-Path $tools 'NSIS'
+          $dll = Join-Path $nsis 'Plugins\x86-unicode\additional\nsis_tauri_utils.dll'
+          if ((Test-Path (Join-Path $nsis 'makensis.exe')) -and (Test-Path $dll)) {
+            Write-Host 'NSIS tools already present'
+            return
+          }
+          function Get-Asset($tag, $repo, $pattern, $sha1) {
+            for ($attempt = 1; $attempt -le 5; $attempt++) {
+              gh release download $tag --repo $repo --pattern $pattern --dir $env:RUNNER_TEMP --clobber | Out-Host
+              if ($LASTEXITCODE -eq 0) { break }
+              if ($attempt -eq 5) { throw "gh release download $tag failed after $attempt attempts" }
+              Start-Sleep -Seconds 15
+            }
+            $file = Join-Path $env:RUNNER_TEMP $pattern
+            $actual = (Get-FileHash -Algorithm SHA1 $file).Hash
+            if ($actual -ine $sha1) { throw "$pattern SHA1 $actual does not match $sha1" }
+            return $file
+          }
+          if (Test-Path $nsis) { Remove-Item -Recurse -Force $nsis }
+          New-Item -ItemType Directory -Force $tools | Out-Null
+          $zip = Get-Asset 'nsis-3.11' 'tauri-apps/binary-releases' 'nsis-3.11.zip' 'EF7FF767E5CBD9EDD22ADD3A32C9B8F4500BB10D'
+          Expand-Archive -Path $zip -DestinationPath $tools -Force
+          Rename-Item (Join-Path $tools 'nsis-3.11') 'NSIS'
+          $utils = Get-Asset 'nsis_tauri_utils-v0.5.3' 'tauri-apps/nsis-tauri-utils' 'nsis_tauri_utils.dll' '75197FEE3C6A814FE035788D1C34EAD39349B860'
+          New-Item -ItemType Directory -Force (Split-Path $dll) | Out-Null
+          Copy-Item $utils $dll
+          foreach ($required in 'makensis.exe', 'Bin\makensis.exe', 'Include\MUI2.nsh') {
+            if (-not (Test-Path (Join-Path $nsis $required))) { throw "NSIS tools incomplete: $required is missing" }
+          }
+      - name: Build the installer
+        if: runner.os != 'Windows'
+        env:
+          STATIC_VCRUNTIME: 'true'
+        run: npm run tauri -- build --ci --bundles ${{ matrix.bundles }}
+      - name: Build the Windows binaries
+        if: runner.os == 'Windows'
+        env:
+          STATIC_VCRUNTIME: 'true'
+        run: npm run tauri -- build --ci --no-bundle
+      - name: Stage the Visual C++ runtime the binaries import
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $vs = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
+          if (-not $vs) { throw 'Visual Studio was not found.' }
+          $redist = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          if (-not $redist) { throw "No VC\Redist\MSVC version under $vs" }
+          $crt = Get-ChildItem (Join-Path $redist.FullName 'x64') -Directory -Filter 'Microsoft.VC14*.CRT' | Select-Object -First 1
+          if (-not $crt) { throw "No Microsoft.VC14*.CRT folder under $($redist.FullName)d" }
+          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw 'dumpbin.exe was not found.' }
+          $desktop = 'crates/lattice-desktop'
+          $target = (cargo metadata --format-version 1 --no-deps --manifest-path "$desktop/Cargo.toml" | ConvertFrom-Json).target_directory
+          $shipped = @(Get-Item (Join-Path $target 'release\lattice-desktop.exe')) + @(Get-ChildItem (Join-Path $desktop 'binaries') -Include '*.exe', '*.dll' -Recurse)
+          Write-Host "Redist: $($crt.FullName)"
+          $stage = Join-Path $desktop 'vcredist'
+          if (Test-Path $stage) { Remove-Item -Recurse -Force $stage }
+          New-Item -ItemType Directory $stage | Out-Null
+          $resources = [ordered]@{ 'resources/learning-python/' = 'resources/learning-python/' }
+          $queue = [System.Collections.Generic.Queue[object]]::new()
+          $shipped | ForEach-Object { $queue.Enqueue($_) }
+          while ($queue.Count -gt 0) {
+            $binary = $queue.Dequeue()
+            $imports = & $dumpbin /nologo /dependents $binary.FullName
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed on $($binary.FullName)" }
+            $dlls = $imports | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() }
+            Write-Host "$($binary.Name) imports: $($dlls -join ', ')"
+            foreach ($dll in $dlls) {
+              $source = Join-Path $crt.FullName $dll
+              if ((Test-Path $source) -and -not (Test-Path (Join-Path $stage $dll))) {
+                $copy = Copy-Item $source $stage -Force -PassThru
+                $resources["vcredist/$dll"] = $dll
+                $queue.Enqueue($copy)
+              }
+            }
+          }
+          if ($resources.Count -eq 1) { throw 'No Visual C++ runtime import found; the check below would not be testing anything.' }
+          $overlay = @{ bundle = @{ resources = $resources } }
+          $overlay | ConvertTo-Json -Depth 5 | Set-Content (Join-Path $desktop 'tauri.release.conf.json') -Encoding utf8
+          Get-Content (Join-Path $desktop 'tauri.release.conf.json') | Write-Host
+      - name: Bundle the Windows installer
+        if: runner.os == 'Windows'
+        env:
+          STATIC_VCRUNTIME: 'true'
+        shell: pwsh
+        run: npm run tauri -- build --ci --bundles nsis --config (Resolve-Path crates/lattice-desktop/tauri.release.conf.json).Path
+      - name: Locate the installer
+        id: bundle
+        shell: bash
+        run: |
+          target="$(cd crates/lattice-desktop && cargo metadata --format-version 1 --no-deps \
+            | python -c 'import json, pathlib, sys; print(pathlib.Path(json.load(sys.stdin)["target_directory"]).as_posix())')"
+          dir="$target/release/bundle/${{ matrix.bundles }}"
+          file="$(ls -t "$dir"/${{ matrix.pattern }} 2>/dev/null | head -n1)"
+          [[ -n "$file" ]] || { echo "The build produced no ${{ matrix.pattern }} in $dir"; exit 1; }
+          echo "Built $file"
+          echo "file=$file" >> "$GITHUB_OUTPUT"
+      - name: Smoke check the installer (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        env:
+          INSTALLER: ${{ steps.bundle.outputs.file }}
+        run: |
+          $process = Start-Process $env:INSTALLER -ArgumentList '/S' -Wait -PassThru
+          if ($process.ExitCode -ne 0) { throw "The installer exited with code $($process.ExitCode)." }
+          $installed = $null
+          foreach ($dir in @((Join-Path $env:LOCALAPPDATA 'Lattice'), (Join-Path $env:LOCALAPPDATA 'Programs\Lattice'), (Join-Path $env:ProgramFiles 'Lattice'))) {
+            if (-not (Test-Path $dir)) { continue }
+            $exe = Get-ChildItem $dir -Filter '*.exe' | Where-Object { $_.Name -notmatch '^(llama-server|uninstall)' } | Select-Object -First 1
+            if ($exe) { $installed = $dir; break }
+          }
+          if (-not $installed) { throw 'The installer finished but the Lattice executable was not found.' }
+          Write-Host "Installed $($exe.FullName)"
+          if (-not (Get-ChildItem $installed -Filter 'llama-server*.exe')) { throw "No llama-server*.exe in $installed" }
+          if (-not (Test-Path (Join-Path $installed 'resources\learning-python'))) { throw "resources\learning-python is missing from $installed" }
+          # Every import must resolve beside the binary, or be a Windows system DLL.
+          # The runner has the redist installed system-wide, so redist DLLs must sit beside the binary.
+          $vswhere = Join-Path ${env:ProgramFiles(x86)} 'Microsoft Visual Studio\Installer\vswhere.exe'
+          $dumpbin = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -find 'VC\Tools\MSVC\**\bin\Hostx64\x64\dumpbin.exe' | Select-Object -First 1
+          if (-not $dumpbin) { throw 'dumpbin.exe was not found.' }
+          $vs = & $vswhere -latest -products * -property installationPath | Select-Object -First 1
+          $redistRoot = Get-ChildItem (Join-Path $vs 'VC\Redist\MSVC') -Directory | Where-Object { $_.Name -match '^\d+\.' } | Sort-Object { [version]$_.Name } -Descending | Select-Object -First 1
+          $crt = Get-ChildItem (Join-Path $redistRoot.FullName 'x64') -Directory -Filter 'Microsoft.VC14*.CRT' | Select-Object -First 1
+          $redistNames = @(Get-ChildItem $crt.FullName -Filter '*.dll' | ForEach-Object { $_.Name.ToLower() })
+          $system32 = Join-Path $env:SystemRoot 'System32'
+          $rows = @()
+          $failures = @()
+          foreach ($binary in Get-ChildItem $installed -Include '*.exe', '*.dll' -Recurse | Where-Object { $_.Name -notmatch '^uninstall' }) {
+            $output = & $dumpbin /nologo /dependents $binary.FullName
+            if ($LASTEXITCODE -ne 0) { throw "dumpbin failed on $($binary.FullName)" }
+            $dlls = $output | Where-Object { $_ -match '^\s+\S+\.dll\s*$' } | ForEach-Object { $_.Trim() }
+            foreach ($dll in $dlls) {
+              $name = $dll.ToLower()
+              $local = Test-Path (Join-Path $binary.DirectoryName $dll)
+              $where = 'unresolved'
+              if ($local) { $where = 'beside the binary' }
+              elseif ($redistNames -contains $name) { $failures += "$($binary.Name) imports $dll, a Visual C++ runtime DLL that is not beside it." }
+              elseif ($name -like 'api-ms-win-*' -or (Test-Path (Join-Path $system32 $dll))) { $where = 'Windows' }
+              else { $failures += "$($binary.Name) imports $dll, which is neither beside it nor in Windows." }
+              $rows += [pscustomobject]@{ Binary = $binary.FullName.Substring($installed.Length + 1); Import = $dll; ResolvedFrom = $where }
+            }
+          }
+          $rows | Format-Table -AutoSize -Wrap | Out-String -Width 200 | Write-Host
+          if (-not ($rows | Where-Object { $redistNames -contains $_.Import.ToLower() })) { throw 'No installed binary imports the Visual C++ runtime; the check is not testing anything.' }
+          if ($failures) { throw ($failures -join "`n") }
+      - name: Smoke check the installer (macOS)
+        if: runner.os == 'macOS'
+        env:
+          INSTALLER: ${{ steps.bundle.outputs.file }}
+        run: |
+          mount="$RUNNER_TEMP/lattice-dmg"
+          mkdir -p "$mount"
+          hdiutil attach "$INSTALLER" -mountpoint "$mount" -nobrowse -readonly
+          status=0
+          codesign --verify --deep --strict --verbose=2 "$mount/Lattice.app" || status=$?
+          hdiutil detach "$mount"
+          exit $status
+      - name: Smoke check the installer (Linux)
+        if: runner.os == 'Linux'
+        env:
+          INSTALLER: ${{ steps.bundle.outputs.file }}
+        run: |
+          dpkg-deb --info "$INSTALLER"
+          dpkg-deb --contents "$INSTALLER" | tee contents.txt
+          grep -E ' (\./)?usr/bin/[^/]+$' contents.txt | grep -v llama-server
+          grep -E ' (\./)?usr/bin/llama-server' contents.txt
+      - uses: actions/upload-artifact@v4
+        with:
+          name: installer-${{ matrix.name }}
+          path: ${{ steps.bundle.outputs.file }}
+          if-no-files-found: error
+
+  publish:
+    name: Draft release
+    needs: build
+    if: ${{ github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: installer-*
+          path: installers
+          merge-multiple: true
+      - name: Create the draft release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_NUMBER: ${{ github.run_number }}
+        run: |
+          version="$(jq -r .version crates/lattice-desktop/tauri.conf.json)"
+          tag="app/v${version}-r${RUN_NUMBER}"
+          (cd installers && sha256sum * > ../SHA256SUMS.txt)
+          cat SHA256SUMS.txt
+          {
+            echo "Lattice $version, built from commit \`$GITHUB_SHA\`."
+            echo
+            echo "| File | For |"
+            echo "|---|---|"
+            echo "| \`*-setup.exe\` | Windows 11 (x64) |"
+            echo "| \`*.dmg\` | macOS on Apple Silicon |"
+            echo "| \`*.deb\` | Ubuntu 24.04 (x64) |"
+            echo
+            echo "Install steps: https://github.com/$GITHUB_REPOSITORY/blob/main/docs/user/getting-started.md#installation"
+            echo
+            echo "These installers are not signed or notarized. On Windows, SmartScreen shows a warning: choose More info, then Run anyway. On macOS, open System Settings, then Privacy & Security, and choose Open Anyway."
+            echo
+            echo "Intel Macs are not included yet."
+            echo
+            echo "\`SHA256SUMS.txt\` lists the checksum of each file."
+          } > notes.md
+          gh release create "$tag" installers/* SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY" \
+            --draft \
+            --target "$GITHUB_SHA" \
+            --title "Lattice $version (r$RUN_NUMBER)" \
+            --notes-file notes.md

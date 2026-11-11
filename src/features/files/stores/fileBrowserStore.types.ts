@@ -2,7 +2,6 @@ import {
   type FileBrowserActions,
   type LibraryScope,
   type SavedSearchPreset,
-  type SourceConnection,
   type SourceFilter,
   type ViewMode,
   type SortField,
@@ -27,7 +26,6 @@ export interface FileBrowserStoreState {
   // Data
   savedSearches: SavedSearchPreset[];
   activeSavedSearchId: string | null;
-  sourceConnections: SourceConnection[];
 
   // Scope
   scope: LibraryScope;

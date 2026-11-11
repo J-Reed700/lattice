@@ -9,14 +9,16 @@ type Callbacks = { onError?: (error: Error) => void };
 const h = vi.hoisted(() => ({
   settings: { data: undefined as unknown, isLoading: false },
   mutation: { mutate: vi.fn(), isPending: false },
-  addWatchFolder: vi.fn(),
-  removeWatchFolder: vi.fn(),
+  addFolder: vi.fn(),
+  removeFolder: vi.fn(),
   toast: { error: vi.fn() },
 }));
 vi.mock('../hooks/useSettingsQuery', () => ({
   useSettingsQuery: () => h.settings,
   useUpdateSettingsMutation: () => h.mutation,
-  useWatchFolderMutations: () => ({ addWatchFolder: h.addWatchFolder, removeWatchFolder: h.removeWatchFolder }),
+}));
+vi.mock('@/features/files/hooks/useIndexedFoldersQuery', () => ({
+  useIndexedFoldersActions: () => ({ addFolder: h.addFolder, removeFolder: h.removeFolder }),
 }));
 vi.mock('@/stores/toastStore', () => ({ toast: h.toast }));
 vi.mock('@/features/files/components/IndexingStatus/IndexingActivitySection', () => ({ IndexingActivitySection: () => null }));
@@ -32,8 +34,8 @@ describe('IndexingTab controls', () => {
     vi.clearAllMocks();
     h.settings = indexing();
     h.mutation.isPending = false;
-    h.addWatchFolder.mockResolvedValue({ ok: true, data: undefined });
-    h.removeWatchFolder.mockResolvedValue({ ok: true, data: undefined });
+    h.addFolder.mockResolvedValue(undefined);
+    h.removeFolder.mockResolvedValue(undefined);
   });
 
   afterEach(() => {
@@ -74,12 +76,12 @@ describe('IndexingTab controls', () => {
   describe('watched folders', () => {
     it('adds a picked folder, skipping one already watched, and reports a refusal', async () => {
       vi.mocked(open).mockResolvedValueOnce('/Users/ada/Archive').mockResolvedValueOnce('/Volumes/Notes').mockResolvedValueOnce('/Volumes/Bad');
-      h.addWatchFolder.mockResolvedValueOnce({ ok: true, data: undefined }).mockResolvedValueOnce({ ok: false, error: 'folder unreadable' });
+      h.addFolder.mockResolvedValueOnce(undefined).mockRejectedValueOnce(new Error('folder unreadable'));
       render(<IndexingTab />);
       await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Add folder' })); });
-      expect(h.addWatchFolder).not.toHaveBeenCalled();
+      expect(h.addFolder).not.toHaveBeenCalled();
       await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Add folder' })); });
-      expect(h.addWatchFolder).toHaveBeenCalledWith('/Volumes/Notes');
+      expect(h.addFolder).toHaveBeenCalledWith('/Volumes/Notes');
       await act(async () => { fireEvent.click(screen.getByRole('button', { name: 'Add folder' })); });
       expect(h.toast.error).toHaveBeenCalledWith("Couldn't add watch folder", { message: 'folder unreadable' });
     });
@@ -94,7 +96,7 @@ describe('IndexingTab controls', () => {
     });
 
     it('removes a folder, reporting a refusal', async () => {
-      h.removeWatchFolder.mockResolvedValueOnce({ ok: false, error: 'in use' });
+      h.removeFolder.mockRejectedValueOnce(new Error('in use'));
       render(<IndexingTab />);
       fireEvent.click(screen.getByRole('button', { name: 'Remove folder /Users/ada/Archive' }));
       await waitFor(() => expect(h.toast.error).toHaveBeenCalledWith("Couldn't remove watch folder", { message: 'in use' }));

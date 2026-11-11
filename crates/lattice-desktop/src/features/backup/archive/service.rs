@@ -395,10 +395,12 @@ impl ArchiveService {
     }
 
     async fn require_master(&self, config: &ArchiveConfig) -> Result<MasterKey> {
-        self.key_store
-            .load()?
-            .filter(|key| crypto::kcv_matches(&config.envelope, key))
-            .ok_or_else(|| AppError::InvalidState(writer::MISSING_KEY_MESSAGE.to_string()))
+        match self.key_store.load()? {
+            Some(key) if crypto::kcv_matches(&config.envelope, &key)? => Ok(key),
+            _ => Err(AppError::InvalidState(
+                writer::MISSING_KEY_MESSAGE.to_string(),
+            )),
+        }
     }
 }
 

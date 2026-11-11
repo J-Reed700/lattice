@@ -232,7 +232,6 @@ insta = { version = "1.45", features = ["json", "redactions"] }
 mockall = { workspace = true }
 rand = { workspace = true }
 futures = { workspace = true }
-mockito = "1.0"
 wiremock = "0.6"
 hound = "=3.5.1"   # generates WAV fixtures for the audio-decode unit tests
 tokio = { workspace = true, features = ["test-util"] }   # paused clocks for the stream-timeout tests

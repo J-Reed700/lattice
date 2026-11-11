@@ -15,8 +15,8 @@
 //! - **Thread Safety**: Read-modify-write operations are serialized by a mutex
 
 use crate::features::settings::dto::{
-    LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
-    DEFAULT_LLM_STALL_TIMEOUT_SECONDS, MIN_LLM_STALL_TIMEOUT_SECONDS,
+    LLMProvider, SettingsCategory, SettingsDto, DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
+    MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 use async_trait::async_trait;
 use lattice_core::application::ports::settings_port::SettingsImportOutcome;
@@ -24,11 +24,10 @@ use lattice_core::application::ports::{merge_json_update, SettingsRepositoryPort
 use lattice_core::shared::error::{AppError, Result};
 use serde_json;
 use std::collections::HashMap;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use tokio::fs;
 
 mod file_store;
-mod validation;
 
 /// File name for settings storage.
 const SETTINGS_FILE_NAME: &str = "settings.json";
@@ -139,7 +138,7 @@ impl SettingsRepository {
 
     /// Validate and atomically replace the file. The caller holds `write_lock`.
     async fn persist(&self, settings: &SettingsDto) -> Result<()> {
-        let validation = self.validate_settings(settings);
+        let validation = settings.validate();
         if validation.has_errors() {
             return Err(AppError::ValidationFailed(format!(
                 "Settings validation failed: {:?}",
@@ -169,7 +168,7 @@ impl SettingsRepository {
         let previous_vault_enabled = existing.vault.enabled;
         restore_redacted_secrets(&mut imported_settings, &existing);
 
-        let validation = self.validate_settings(&imported_settings);
+        let validation = imported_settings.validate();
         if validation.has_errors() {
             return Err(AppError::ValidationFailed(format!(
                 "Imported settings validation failed: {:?}",
@@ -418,16 +417,6 @@ impl SettingsRepositoryPort for SettingsRepository {
         })?;
 
         self.import_settings(imported_settings, merge).await
-    }
-
-    fn validate(&self, settings: &SettingsDto) -> ValidationResult {
-        self.validate_settings(settings)
-    }
-
-    fn validate_folder_path(&self, path: &str) -> bool {
-        let path = Path::new(path);
-        // repository-barrier-allow: settings validation checks a user-selected folder resource.
-        path.exists() && path.is_dir()
     }
 }
 

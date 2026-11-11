@@ -429,36 +429,6 @@ async fn test_validation_on_save() {
 }
 
 #[tokio::test]
-async fn test_validation_errors() {
-    let (repo, _temp_dir) = create_test_repository().await;
-
-    let mut settings = SettingsDto::default();
-    settings.indexing.chunk_size = 0;
-    settings.search.similarity_threshold = 1.5;
-
-    let validation = repo.validate(&settings);
-
-    assert!(!validation.valid);
-    assert!(validation.has_errors());
-    assert!(validation.errors.contains_key("indexing"));
-    assert!(validation.errors.contains_key("search"));
-}
-
-#[tokio::test]
-async fn test_validation_warnings() {
-    let (repo, _temp_dir) = create_test_repository().await;
-
-    let mut settings = SettingsDto::default();
-    settings.llm.tool_output.highlight_terms_max = 0;
-
-    let validation = repo.validate(&settings);
-
-    assert!(validation.valid); // Still valid, just has warnings
-    assert!(validation.has_warnings());
-    assert!(validation.warnings.contains_key("llm"));
-}
-
-#[tokio::test]
 async fn test_atomic_write_creates_temp_file() {
     let (repo, temp_dir) = create_test_repository().await;
 
@@ -470,22 +440,6 @@ async fn test_atomic_write_creates_temp_file() {
 
     let temp_path = settings_path.with_extension(TEMP_SUFFIX);
     assert!(!temp_path.exists());
-}
-
-#[tokio::test]
-async fn test_validate_folder_path() {
-    let (repo, temp_dir) = create_test_repository().await;
-
-    // Valid directory
-    assert!(repo.validate_folder_path(temp_dir.path().to_str().unwrap()));
-
-    // Invalid path
-    assert!(!repo.validate_folder_path("/nonexistent/path"));
-
-    // File instead of directory
-    let file_path = temp_dir.path().join("test.txt");
-    fs::write(&file_path, "test").await.unwrap();
-    assert!(!repo.validate_folder_path(file_path.to_str().unwrap()));
 }
 
 #[tokio::test]
@@ -667,53 +621,4 @@ async fn version_two_rerank_candidates_default_migrates_to_the_pool() {
             expected
         );
     }
-}
-
-/// The dims are remembered while the mode is `none`, so validation only
-/// reads them when truncation is actually on. Rejecting a remembered value
-/// nothing consumes would make the whole settings document unsaveable.
-#[tokio::test]
-async fn vector_compression_dims_are_only_checked_when_truncation_is_on() {
-    let (repo, _dir) = create_test_repository().await;
-
-    let mut settings = SettingsDto::default();
-    settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::None;
-    settings.search.vector_index_compression.dims = 0;
-    assert!(repo.validate_settings(&settings).valid);
-
-    settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::Truncated;
-    let rejected = repo.validate_settings(&settings);
-    assert!(!rejected.valid);
-    assert!(rejected
-        .errors
-        .values()
-        .flatten()
-        .any(|message| message.contains("vector_index_compression.dims")));
-
-    settings.search.vector_index_compression.dims = 512;
-    assert!(repo.validate_settings(&settings).valid);
-
-    settings.search.vector_index_compression.dims = 100_000;
-    assert!(repo.validate_settings(&settings).valid);
-}
-
-/// The page-fetch timeout bounds the pipeline's own page reads. With page
-/// reading off nothing uses it, and a 0 left there made every save fail.
-#[tokio::test]
-async fn the_page_fetch_timeout_is_only_checked_when_pages_are_read() {
-    let (repo, _dir) = create_test_repository().await;
-
-    let mut settings = SettingsDto::default();
-    settings.search.retrieval_tuning.read_web_pages = false;
-    settings.search.retrieval_tuning.web_page_fetch_timeout_secs = 0;
-    assert!(repo.validate_settings(&settings).valid);
-
-    settings.search.retrieval_tuning.read_web_pages = true;
-    let rejected = repo.validate_settings(&settings);
-    assert!(!rejected.valid);
-    assert!(rejected
-        .errors
-        .values()
-        .flatten()
-        .any(|message| message.contains("web_page_fetch_timeout_secs")));
 }

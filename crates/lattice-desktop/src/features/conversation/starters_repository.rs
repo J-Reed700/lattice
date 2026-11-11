@@ -3,16 +3,14 @@ use super::chat::ports::ChatStarterCache;
 use crate::features::conversation::repository::ConversationRepository;
 use async_trait::async_trait;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
 use lattice_core::shared::persistence::driver::DriverPool;
 use sqlx::{QueryBuilder, Row, Sqlite, SqlitePool};
 use std::collections::{HashMap, HashSet};
 
-/// How many document ids one statement binds at a time.
-///
-/// SQLite's oldest variable ceiling is 999 and a General space in a real vault
-/// is far larger than that, so the id list is bound in batches and the
-/// aggregates are merged here rather than in SQL.
-const ID_BIND_BATCH: usize = 900;
+/// How many document ids one statement binds at a time; the aggregates over
+/// more are merged here rather than in SQL.
+const ID_BIND_BATCH: usize = rows_per_statement(1, 0);
 
 /// Repository-backed cache for corpus-derived chat starters, one row per
 /// corpus fingerprint, plus the aggregate reads the starter prompt needs. Every

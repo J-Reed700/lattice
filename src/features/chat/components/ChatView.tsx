@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useEffectEvent, useRef, useState } from 'react';
 
 import { useQueryClient } from '@tanstack/react-query';
 import { MessageSquarePlus, PanelLeft } from 'lucide-react';
@@ -79,13 +79,13 @@ export function ChatView() {
     skipConversationId: string | null;
   } | null>(null);
 
+  const loadData = useEffectEvent(async () => {
+    await Promise.all([loadSpaces(), fetchDownloadedModels()]);
+    await loadConversations();
+  });
+
   useEffect(() => {
-    const loadData = async () => {
-      await Promise.all([loadSpaces(), fetchDownloadedModels()]);
-      await loadConversations();
-    };
     void loadData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []); // Load once on mount only
 
   useEffect(() => {

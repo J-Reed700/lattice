@@ -6,8 +6,15 @@
 use crate::infrastructure::persistence::mappers::{ChunkMapper, ChunkModel};
 use lattice_core::domain::entities::chunk::Chunk as ChunkEntity;
 use lattice_core::shared::error::{AppError, Result};
+use lattice_core::shared::persistence::bind_limit::rows_per_statement;
 use sqlx::QueryBuilder;
+use sqlx::Row;
 use sqlx::SqliteConnection;
+use std::collections::HashMap;
+
+const IDS_PER_STATEMENT: usize = rows_per_statement(1, 0);
+/// Chunk rows one INSERT takes: fifteen bound fields each.
+pub(super) const CHUNK_ROWS_PER_INSERT: usize = rows_per_statement(15, 0);
 
 pub async fn save(conn: &mut SqliteConnection, chunk: &ChunkEntity) -> Result<()> {
     let model = ChunkMapper::to_model(chunk)?;
@@ -104,10 +111,9 @@ pub async fn find_by_ids(conn: &mut SqliteConnection, ids: &[String]) -> Result<
         return Ok(Vec::new());
     }
 
-    const BATCH_SIZE: usize = 900; // SQLite parameter limit safety
     let mut all = Vec::new();
 
-    for batch in ids.chunks(BATCH_SIZE) {
+    for batch in ids.chunks(IDS_PER_STATEMENT) {
         let mut query_builder = QueryBuilder::new(
             r#"
             SELECT
@@ -135,6 +141,52 @@ pub async fn find_by_ids(conn: &mut SqliteConnection, ids: &[String]) -> Result<
     }
 
     Ok(all)
+}
+
+/// The text of each of these chunks, keyed by chunk id.
+pub async fn find_content_by_ids(
+    conn: &mut SqliteConnection,
+    ids: &[String],
+) -> Result<HashMap<String, String>> {
+    let mut content = HashMap::with_capacity(ids.len());
+    for batch in ids.chunks(IDS_PER_STATEMENT) {
+        let mut query =
+            QueryBuilder::<sqlx::Sqlite>::new("SELECT id, content FROM text_chunks WHERE id IN (");
+        let mut separated = query.separated(", ");
+        for id in batch {
+            separated.push_bind(id);
+        }
+        query.push(")");
+        let rows = query.build().fetch_all(&mut *conn).await.map_err(|error| {
+            AppError::Database(format!("Failed to fetch candidate chunk content: {error}"))
+        })?;
+        for row in rows {
+            let id: String = row
+                .try_get("id")
+                .map_err(|error| AppError::Database(format!("row.id: {error}")))?;
+            let body: String = row
+                .try_get("content")
+                .map_err(|error| AppError::Database(format!("row.content: {error}")))?;
+            content.insert(id, body);
+        }
+    }
+    Ok(content)
+}
+
+/// Ids of the chunks of documents attached to a conversation.
+pub async fn find_conversation_attached_chunk_ids(
+    conn: &mut SqliteConnection,
+) -> Result<Vec<String>> {
+    sqlx::query_scalar(
+        "SELECT tc.id FROM text_chunks tc JOIN documents d ON d.id = tc.document_id WHERE d.owner_conversation_id IS NOT NULL",
+    )
+    .fetch_all(conn)
+    .await
+    .map_err(|e| {
+        AppError::Database(format!(
+            "Failed to list conversation attachment chunks: {e}"
+        ))
+    })
 }
 
 pub async fn find_by_document(
@@ -207,20 +259,6 @@ pub async fn count_all(conn: &mut SqliteConnection) -> Result<i64> {
     Ok(result)
 }
 
-pub async fn count_indexed_documents(conn: &mut SqliteConnection) -> Result<i64> {
-    let result =
-        sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM documents WHERE status = 'indexed'")
-            .fetch_one(conn)
-            .await
-            .map_err(|e| {
-                tracing::error!(error = %e, "Failed to count indexed documents");
-                AppError::Database(format!("Failed to count indexed documents: {}", e))
-            })?;
-
-    tracing::debug!(count = result, "Counted indexed documents");
-    Ok(result)
-}
-
 pub async fn count(conn: &mut SqliteConnection) -> Result<usize> {
     sqlx::query_scalar::<_, i64>("SELECT COUNT(*) FROM text_chunks")
         .fetch_one(conn)
@@ -261,16 +299,14 @@ pub async fn save_batch_optimized(
     }
 
     let start = Instant::now();
-    // Fifteen bound fields per row keeps each statement under 900 parameters.
-    const CHUNK_BATCH_SIZE: usize = 60;
 
     let models: Vec<ChunkModel> = chunks
         .iter()
         .map(ChunkMapper::to_model)
         .collect::<Result<_>>()?;
-    let batch_count = models.len().div_ceil(CHUNK_BATCH_SIZE);
+    let batch_count = models.len().div_ceil(CHUNK_ROWS_PER_INSERT);
 
-    for batch in models.chunks(CHUNK_BATCH_SIZE) {
+    for batch in models.chunks(CHUNK_ROWS_PER_INSERT) {
         let mut query_builder = QueryBuilder::new(
             "INSERT INTO text_chunks (
                 id, document_id, content, chunk_index,
@@ -332,7 +368,7 @@ pub async fn save_batch_optimized(
         duration_ms = elapsed.as_millis(),
         chunk_count = chunks.len(),
         batch_count = batch_count,
-        batch_size = CHUNK_BATCH_SIZE,
+        batch_size = CHUNK_ROWS_PER_INSERT,
         chunks_per_second = format!("{:.1}", chunks_per_second),
         "Chunks saved successfully using bulk INSERT"
     );
@@ -351,9 +387,8 @@ pub async fn delete_batch_optimized(conn: &mut SqliteConnection, ids: &[&str]) -
     }
 
     let start = Instant::now();
-    const DELETE_BATCH_SIZE: usize = 500; // SQLite can handle larger batches for DELETE
 
-    for batch in ids.chunks(DELETE_BATCH_SIZE) {
+    for batch in ids.chunks(IDS_PER_STATEMENT) {
         let placeholders = batch.iter().map(|_| "?").collect::<Vec<_>>().join(",");
         let query = format!("DELETE FROM text_chunks WHERE id IN ({})", placeholders);
 
@@ -372,7 +407,7 @@ pub async fn delete_batch_optimized(conn: &mut SqliteConnection, ids: &[&str]) -
     info!(
         duration_ms = elapsed.as_millis(),
         id_count = ids.len(),
-        batch_size = DELETE_BATCH_SIZE,
+        batch_size = IDS_PER_STATEMENT,
         "Chunks deleted successfully using bulk DELETE"
     );
 

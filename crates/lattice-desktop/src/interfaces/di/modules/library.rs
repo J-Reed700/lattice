@@ -47,9 +47,10 @@ impl LibraryModule {
     pub async fn new(
         database: Database,
         _core: Arc<CoreModule>,
+        tag_service: Arc<dyn TagServiceTrait>,
     ) -> lattice_core::shared::error::Result<Self> {
         Ok(Self {
-            tags: crate::features::tags::di::build(database.clone()),
+            tags: crate::features::tags::di::build(tag_service),
             favorites: crate::features::favorites::di::build(database.clone()),
             recent: crate::features::recent::di::build(database.clone()),
             mentions: crate::features::mentions::di::build(database),
