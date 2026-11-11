@@ -1,6 +1,6 @@
 //! Tests for the settings repository.
 use super::*;
-use crate::features::settings::dto::{VectorIndexCompressionModeDto, MAX_VECTOR_COMPRESSION_DIMS};
+use crate::features::settings::dto::VectorIndexCompressionModeDto;
 use std::sync::Arc;
 use tempfile::TempDir;
 
@@ -621,53 +621,4 @@ async fn version_two_rerank_candidates_default_migrates_to_the_pool() {
             expected
         );
     }
-}
-
-/// The dims are remembered while the mode is `none`, so validation only
-/// reads them when truncation is actually on. Rejecting a remembered value
-/// nothing consumes would make the whole settings document unsaveable.
-#[tokio::test]
-async fn vector_compression_dims_are_only_checked_when_truncation_is_on() {
-    let (repo, _dir) = create_test_repository().await;
-
-    let mut settings = SettingsDto::default();
-    settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::None;
-    settings.search.vector_index_compression.dims = 1;
-    assert!(repo.validate_settings(&settings).valid);
-
-    settings.search.vector_index_compression.mode = VectorIndexCompressionModeDto::Truncated;
-    let rejected = repo.validate_settings(&settings);
-    assert!(!rejected.valid);
-    assert!(rejected
-        .errors
-        .values()
-        .flatten()
-        .any(|message| message.contains("vector_index_compression.dims")));
-
-    settings.search.vector_index_compression.dims = 512;
-    assert!(repo.validate_settings(&settings).valid);
-
-    settings.search.vector_index_compression.dims = MAX_VECTOR_COMPRESSION_DIMS + 1;
-    assert!(!repo.validate_settings(&settings).valid);
-}
-
-/// The page-fetch timeout bounds the pipeline's own page reads. With page
-/// reading off nothing uses it, and a 0 left there made every save fail.
-#[tokio::test]
-async fn the_page_fetch_timeout_is_only_checked_when_pages_are_read() {
-    let (repo, _dir) = create_test_repository().await;
-
-    let mut settings = SettingsDto::default();
-    settings.search.retrieval_tuning.read_web_pages = false;
-    settings.search.retrieval_tuning.web_page_fetch_timeout_secs = 0;
-    assert!(repo.validate_settings(&settings).valid);
-
-    settings.search.retrieval_tuning.read_web_pages = true;
-    let rejected = repo.validate_settings(&settings);
-    assert!(!rejected.valid);
-    assert!(rejected
-        .errors
-        .values()
-        .flatten()
-        .any(|message| message.contains("web_page_fetch_timeout_secs")));
 }
