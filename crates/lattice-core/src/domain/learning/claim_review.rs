@@ -49,7 +49,7 @@ pub const MACHINE_ATTEMPTS: u8 = 2;
 
 /// Lower-case hex SHA-256 of `text`: quote bindings and passage digests.
 pub fn text_sha256(text: &str) -> String {
-    crate::shared::hash::sha256_hex(text)
+    hex::encode(Sha256::digest(text.as_bytes()))
 }
 
 /// A claim's identity: a uuid assigned at first extraction and kept across

@@ -4,7 +4,6 @@
 //! structured-output accuracy. The answer step continues the draft's
 //! conversation, so it reuses the prompt the server just read.
 
-use lattice_core::shared::hash::sha256_hex;
 use serde_json::{json, Value};
 
 use crate::outline_progress::OutlineProgress;
@@ -252,8 +251,8 @@ pub(crate) async fn complete_checked_request<T>(
 
     let key = format!(
         "{DRAFT_CHECKPOINT_POLICY}:{}",
-        sha256_hex(
-            json!({"model":llm.model_name(),"system":two_step_system,"prompt":prompt}).to_string()
+        crate::content_verification::digest(
+            &json!({"model":llm.model_name(),"system":two_step_system,"prompt":prompt}).to_string()
         )
     );
     let saved = lesson_drafts::checkpoint(&key).await?.and_then(|value| {

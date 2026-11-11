@@ -22,7 +22,6 @@ use lattice_core::domain::learning::claim_review::{
 };
 use lattice_core::domain::provenance::ClaimKind;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::http::host_of;
 use lattice_core::shared::persistence::{Database, Transactions};
 use std::sync::Arc;
 
@@ -441,7 +440,11 @@ async fn current_ledger(
 /// The first stage of an attach: fetching a link, or saving anything else.
 fn acquiring_stage(evidence: &Evidence) -> ClaimAttachProgressDto {
     match evidence {
-        Evidence::Link { url } => ClaimAttachProgressDto::Fetching { host: host_of(url) },
+        Evidence::Link { url } => ClaimAttachProgressDto::Fetching {
+            host: url::Url::parse(url)
+                .ok()
+                .and_then(|url| url.host_str().map(str::to_owned)),
+        },
         _ => ClaimAttachProgressDto::Saving,
     }
 }

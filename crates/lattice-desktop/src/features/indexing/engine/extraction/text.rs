@@ -1,8 +1,8 @@
 //! Plain text and markdown file extraction.
 
+use super::markup::decode_text_bytes;
 use super::types::{ContentMetadata, ExtractedContent};
 use crate::features::indexing::engine::error::{IndexingError, Result};
-use crate::infrastructure::extraction::markup::decode_text_bytes;
 use std::path::Path;
 
 /// Extract content from plain text or markdown files.

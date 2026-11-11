@@ -7,7 +7,6 @@ use crate::assessment_repository::LearningAssessmentRepository;
 use crate::curriculum_repository::lesson_rank_in;
 use crate::persistence::db;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use lattice_core::shared::runtime::jobs::{JobStore, NewJob};
@@ -46,6 +45,10 @@ pub(super) async fn lesson_inputs(
     })
 }
 
+fn digest(text: &str) -> String {
+    format!("{:x}", Sha256::digest(text.as_bytes()))
+}
+
 /// A UUID derived from text, so a repeated request finds the same job.
 fn derived_uuid(seed: &str) -> String {
     let hash = Sha256::digest(seed.as_bytes());
@@ -74,7 +77,7 @@ pub(super) async fn queue_in(
             kind: kind.into(),
             subject_id: Some(program_id.into()),
             operation_id,
-            payload_hash: sha256_hex(requested.to_string()),
+            payload_hash: digest(&requested.to_string()),
             requested,
             progress_total: total.max(1),
             message: message.into(),

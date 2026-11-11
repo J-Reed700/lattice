@@ -23,10 +23,10 @@ use crate::{
     source_library::workspace_in,
 };
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Transactions;
 use serde::Serialize;
+use sha2::{Digest, Sha256};
 use sqlx::{Row, SqliteConnection};
 use std::collections::HashMap;
 
@@ -238,7 +238,7 @@ pub(super) async fn source_library(
             let body = source_bodies.get(&version.id).ok_or_else(|| {
                 AppError::Database("Exported source snapshot is incomplete.".into())
             })?;
-            version.content_sha256 = sha256_hex(body);
+            version.content_sha256 = format!("{:x}", Sha256::digest(body.as_bytes()));
             version.word_count = body.split_whitespace().count();
         }
         let summaries = source.versions.clone();

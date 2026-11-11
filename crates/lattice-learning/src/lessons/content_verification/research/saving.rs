@@ -30,7 +30,7 @@ impl Saving<'_> {
             return Ok(None);
         }
         let version_id = uuid::Uuid::new_v4().to_string();
-        let hash = sha256_hex(&captured.text);
+        let hash = digest(&captured.text);
         let saved = self
             .library
             .add_selected_once(

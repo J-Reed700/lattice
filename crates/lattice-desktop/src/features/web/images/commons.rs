@@ -1,9 +1,7 @@
 //! Finding candidates (§7.3): Wikimedia Commons' keyless search API, and the
 //! picture a page offers for itself.
 
-use crate::infrastructure::extraction::html_text::html_to_text;
 use lattice_core::application::contracts::images::ImageOrigin;
-use lattice_core::shared::text::normalize_whitespace;
 use serde_json::Value;
 
 use super::{extension_for_mime, COMMONS_THUMB_WIDTH};
@@ -117,7 +115,7 @@ pub fn page_title(html: &str) -> Option<String> {
         .next()?
         .text()
         .collect::<String>();
-    let title = normalize_whitespace(&title);
+    let title = collapse(&title);
     (!title.is_empty()).then_some(title)
 }
 
@@ -139,14 +137,19 @@ fn metadata(info: &Value, field: &str) -> Option<String> {
     (!plain.is_empty()).then_some(plain)
 }
 
-/// HTML to a one-line caption: its readable text, whitespace collapsed.
+/// HTML to text: tags dropped, entities decoded, whitespace collapsed.
 pub fn strip_html(html: &str) -> String {
-    normalize_whitespace(&html_to_text(html))
+    let fragment = scraper::Html::parse_fragment(html);
+    collapse(&fragment.root_element().text().collect::<String>())
+}
+
+fn collapse(text: &str) -> String {
+    text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// `File:Grey heron (Ardea cinerea).jpg` → `Grey heron (Ardea cinerea)`.
 fn title_caption(title: &str) -> String {
     let name = title.strip_prefix("File:").unwrap_or(title);
     let stem = name.rsplit_once('.').map_or(name, |(stem, _)| stem);
-    normalize_whitespace(&stem.replace('_', " "))
+    collapse(&stem.replace('_', " "))
 }

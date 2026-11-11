@@ -24,6 +24,14 @@ fn dominant_result_terms(
     (ranked.into_iter().take(limit).collect(), total)
 }
 
+/// The host a URL names, or the URL itself when it will not parse.
+fn host_of(url: &str) -> String {
+    url::Url::parse(url)
+        .ok()
+        .and_then(|parsed| parsed.host_str().map(str::to_owned))
+        .unwrap_or_else(|| "a web page".to_string())
+}
+
 /// Pages a search opens: none when the user turned page reading off (the
 /// search then answers from snippets), otherwise as many as the page budget
 /// gives a share worth reading.
@@ -52,11 +60,7 @@ impl ExternalLookup<'_> {
         // Named by host so progress and a blocked site are visible.
         let step = self.recorder.begin_guarded_with_links(
             TurnStepKind::ReadPage,
-            format!(
-                "Reading {}",
-                lattice_core::shared::http::host_of(&url)
-                    .unwrap_or_else(|| "a web page".to_string())
-            ),
+            format!("Reading {}", host_of(&url)),
             Some(url.clone()),
             vec![TurnStepLinkDto::new(url.clone(), None)],
         );

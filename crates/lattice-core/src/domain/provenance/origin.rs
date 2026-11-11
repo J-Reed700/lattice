@@ -4,6 +4,7 @@
 
 use chrono::{NaiveDate, NaiveDateTime};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use url::{Host, Url};
 
 /// Identity of a publishing origin after canonicalisation and archive
@@ -156,7 +157,7 @@ impl Origin {
     pub fn of_file(file_name: &str) -> Self {
         Self::opaque(format!(
             "file:{}",
-            crate::shared::hash::sha256_hex(file_name)
+            hex::encode(Sha256::digest(file_name.as_bytes()))
         ))
     }
 

@@ -20,11 +20,11 @@ use super::{
 use async_trait::async_trait;
 use lattice_core::application::services::completion_input::strip_images;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::runtime::jobs::{
     JobContext, JobHandler, JobKindConfig, JobOutcome, JobRecord, JobStatus, JobStore, NewJob,
     RecoveryPolicy,
 };
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
 use tokio::sync::oneshot;
@@ -254,7 +254,7 @@ fn research_job(request: &TurnRequest) -> Result<NewJob> {
         kind: DEEP_RESEARCH.into(),
         subject_id: request.conversation_id.clone(),
         operation_id: operation_id(request.request_id.as_deref().unwrap_or_default()),
-        payload_hash: sha256_hex(requested.to_string()),
+        payload_hash: format!("{:x}", Sha256::digest(requested.to_string().as_bytes())),
         requested,
         progress_total: rounds_total(),
         message: "Waiting to research".into(),

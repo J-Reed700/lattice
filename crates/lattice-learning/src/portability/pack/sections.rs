@@ -3,7 +3,7 @@
 //! from the same rows the repository encodes and imports by, without
 //! depending on the repository.
 use super::LearningPackEntryKind;
-use lattice_core::shared::hash::sha256_hex;
+use sha2::{Digest, Sha256};
 
 pub const PROGRAM_ENTRY: &str = "program/program.json";
 pub const PROVENANCE_ENTRY: &str = "program/provenance.json";
@@ -141,5 +141,7 @@ pub const SECTIONS: &[SectionDescriptor] = &[
 
 /// The content-addressed entry for one source version's full text.
 pub fn source_body_path(version_id: &str) -> String {
-    format!("{SOURCE_BODY_PREFIX}{}.txt", sha256_hex(version_id))
+    let digest = Sha256::digest(version_id.as_bytes());
+    let hex: String = digest.iter().map(|byte| format!("{byte:02x}")).collect();
+    format!("{SOURCE_BODY_PREFIX}{hex}.txt")
 }

@@ -308,7 +308,7 @@ impl ClaimLedger {
                     program_id: sink.program_id.clone(),
                     job_id: sink.job_id.clone(),
                     state,
-                    draft_sha256: sha256_hex(raw),
+                    draft_sha256: digest(raw),
                     checker_model: self.checker_model.clone(),
                     stop_reason,
                 },

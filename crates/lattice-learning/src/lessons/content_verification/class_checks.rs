@@ -261,8 +261,8 @@ pub(super) fn consistency_key(
         .collect();
     format!(
         "{CONSISTENCY_POLICY}:{}",
-        sha256_hex(
-            json!({
+        digest(
+            &json!({
                 "model": llm.model_name(),
                 "context": llm.max_context_tokens(),
                 "statement": statement,
@@ -312,8 +312,8 @@ pub(super) async fn consistency_of(
 pub(super) fn knowledge_key(llm: &dyn LLMPort, statement: &str) -> String {
     format!(
         "{KNOWLEDGE_POLICY}:{}",
-        sha256_hex(
-            json!({
+        digest(
+            &json!({
                 "model": llm.model_name(),
                 "context": llm.max_context_tokens(),
                 "statement": statement,
@@ -362,7 +362,7 @@ pub(super) async fn knowledge_of(
 fn class_key(llm: &dyn LLMPort, statement: &str) -> String {
     format!(
         "classes-v1:{}",
-        sha256_hex(json!({"model": llm.model_name(), "statement": statement}).to_string())
+        digest(&json!({"model": llm.model_name(), "statement": statement}).to_string())
     )
 }
 

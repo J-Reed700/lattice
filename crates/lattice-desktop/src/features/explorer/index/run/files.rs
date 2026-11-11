@@ -5,7 +5,6 @@ use super::StatusCell;
 use crate::features::explorer::fs;
 use crate::features::explorer::scope::Scope;
 use crate::infrastructure::passage_index::chunking::lines::{self as chunker, Chunk};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::Result;
 use sha2::{Digest, Sha256};
 use std::collections::{BinaryHeap, HashSet};
@@ -203,7 +202,7 @@ fn prepare_streaming(path: &Path, previous_hash: Option<&str>) -> std::io::Resul
     let head = reader.fill_buf()?;
     if fs::looks_binary(head) {
         let length = std::fs::metadata(path)?.len();
-        let hash = format!("binary:{length}:{}", sha256_hex(head));
+        let hash = format!("binary:{length}:{:x}", Sha256::digest(head));
         return Ok(if previous_hash == Some(hash.as_str()) {
             Prepared::Touch
         } else {

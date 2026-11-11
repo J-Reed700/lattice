@@ -13,6 +13,7 @@ use std::collections::HashSet;
 use lattice_core::application::ports::llm_port::RequestSize;
 use lattice_core::shared::error::AppError;
 use serde_json::Value;
+use sha2::{Digest, Sha256};
 
 /// A run of at least this many words of a server's message that also occurs
 /// in the request is the prompt quoted back, and is cut.
@@ -69,6 +70,12 @@ pub(crate) fn sanitized_message(server: &str, request_texts: &[&str]) -> String 
     let mut cut: String = joined.chars().take(SERVER_WORDS_SHOWN).collect();
     cut.push('…');
     cut
+}
+
+/// The SHA-256 of a server's raw message, for the log: two failures can be
+/// compared without the words, which may quote the prompt, ever being written.
+pub(crate) fn digest(server: &str) -> String {
+    hex::encode(Sha256::digest(server.as_bytes()))
 }
 
 /// Every string a request body carries: messages, tool schemas, arguments.

@@ -253,13 +253,13 @@ async fn unfinished_sections(
         .join(", ");
     let key = format!(
         "inventory-unfinished-v1:{}",
-        sha256_hex(
-            json!({
+        digest(
+            &json!({
                 "policy": INVENTORY_POLICY,
                 "model": llm.model_name(),
                 "sections": missing
                     .iter()
-                    .map(|index| (index, content.get(*index).map(|unit| sha256_hex(unit.to_string()))))
+                    .map(|index| (index, content.get(*index).map(|unit| digest(&unit.to_string()))))
                     .collect::<Vec<_>>(),
             })
             .to_string()

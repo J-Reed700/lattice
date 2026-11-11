@@ -174,20 +174,20 @@ async fn a_receipt_is_found_only_for_the_statement_on_the_quote_it_was_saved_for
         let claim = &original.units[0].claims[0];
         let evidence = evidence_for(&model, &claim.statement, 0, &collection, &[]).await?;
         let passages: Vec<_> = evidence.iter().map(|p|(&p.source_id,&p.text,p.start_byte,p.end_byte)).collect();
-        let comparison = sha256_hex(json!({"unit":0,"claim":claim,"passages":passages}).to_string());
+        let comparison = digest(&json!({"unit":0,"claim":claim,"passages":passages}).to_string());
         lesson_drafts::record_checkpoint(&claim_receipt_key(&model,&comparison), json!({"verdict":"supported","reason":"Prior complete comparison","supporting_quote":claim.statement})).await?;
         // The unit's saved inventory holds that claim on its quote: where the
         // same statement on another quote of the unit used to look for it.
         lesson_drafts::record_checkpoint("inventory-section-v1:legacy-fixture",json!({"inventory":original.units[0]})).await?;
-        let old_selection = format!("claim-evidence-v1:{}",sha256_hex(json!({"policy":POLICY,"model":model.model_name(),"context":model.max_context_tokens(),"unit":0,"claim":claim,"retrieval":collection.mode().label(),"embedding":collection.embedding_model()}).to_string()));
-        lesson_drafts::record_checkpoint(&old_selection,json!({"sources":evidence_selection::sources(&collection),"passages":evidence.iter().map(|p|json!({"source_id":p.source_id,"start":p.start_byte,"end":p.end_byte,"sha256":sha256_hex(&p.text)})).collect::<Vec<_>>()})).await?;
+        let old_selection = format!("claim-evidence-v1:{}",digest(&json!({"policy":POLICY,"model":model.model_name(),"context":model.max_context_tokens(),"unit":0,"claim":claim,"retrieval":collection.mode().label(),"embedding":collection.embedding_model()}).to_string()));
+        lesson_drafts::record_checkpoint(&old_selection,json!({"sources":evidence_selection::sources(&collection),"passages":evidence.iter().map(|p|json!({"source_id":p.source_id,"start":p.start_byte,"end":p.end_byte,"sha256":digest(&p.text)})).collect::<Vec<_>>()})).await?;
         let mut revised = claims(1);
         revised.units[0].claims[0].quote.push_str(". Corrected neighbor.");
-        let pending_selection = format!("claim-evidence-v1:{}",sha256_hex(json!({"policy":POLICY,"model":model.model_name(),"context":model.max_context_tokens(),"unit":0,"claim":revised.units[0].claims[0],"retrieval":collection.mode().label(),"embedding":collection.embedding_model()}).to_string()));
+        let pending_selection = format!("claim-evidence-v1:{}",digest(&json!({"policy":POLICY,"model":model.model_name(),"context":model.max_context_tokens(),"unit":0,"claim":revised.units[0].claims[0],"retrieval":collection.mode().label(),"embedding":collection.embedding_model()}).to_string()));
         // The previous implementation re-retrieved after relocation. This
         // unfinished ranking change among already searched sources must not
         // displace the evidence of the completed comparison.
-        lesson_drafts::record_checkpoint(&pending_selection,json!({"sources":evidence_selection::sources(&collection),"passages":[{"source_id":"source0","start":0,"end":8,"sha256":sha256_hex("mineral0")}]})).await?;
+        lesson_drafts::record_checkpoint(&pending_selection,json!({"sources":evidence_selection::sources(&collection),"passages":[{"source_id":"source0","start":0,"end":8,"sha256":digest("mineral0")}]})).await?;
         let result = paged(&model,&collection,&revised,&ClaimChecks::default()).await?;
         assert!(!result[0].reused, "A receipt saved for the statement on another quote was found for this one");
         assert_eq!(result[0].finding.quote,revised.units[0].claims[0].quote);

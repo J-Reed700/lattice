@@ -21,7 +21,6 @@ use lattice_core::application::contracts::settings::{
 };
 use lattice_core::application::ports::llm_port::RemoteHeader;
 use lattice_core::application::ports::WebServiceTrait;
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::runtime::jobs::JobStatus;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -415,6 +414,10 @@ mod quiz;
 mod tests;
 
 // ---- the live run -------------------------------------------------------
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    hex::encode(Sha256::digest(bytes))
+}
 
 fn file_sha256(path: &Path) -> Result<String> {
     use std::io::Read;

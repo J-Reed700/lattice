@@ -37,7 +37,7 @@ impl ClaimLedger {
             &sink.program_id,
             &sink.lesson_id,
             candidate,
-            sha256_hex(raw),
+            digest(raw),
         )
         .await?;
         let progress = |progress: AuditProgress| {

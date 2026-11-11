@@ -18,7 +18,7 @@ mod golden;
 mod tests;
 
 pub use align::{align, common_subsequence, Alignment, Fate};
-pub use code::{is_blank, opens_item, Code};
+pub use code::Code;
 pub use measure::{Bytes, Chars, Measure, Words};
 pub use pack::{partition, windows, Overflow, Plan, Rung};
 pub use prose::{Flowed, Prose};

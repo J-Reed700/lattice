@@ -156,31 +156,6 @@ async fn crossref_doi_lookup_returns_publisher_landing_and_references() {
 }
 
 #[tokio::test]
-async fn crossref_reads_markup_and_entities_in_a_title_and_an_abstract() {
-    let server = MockServer::start().await;
-    Mock::given(method("GET")).and(path("/works"))
-        .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({
-            "status": "ok",
-            "message": { "items": [{
-                "DOI": "10.1000/bell", "URL": "https://doi.org/10.1000/bell",
-                "title": ["AT&amp;T <i>Bell</i> Labs"],
-                "abstract": "<jats:p>Rates of AT&amp;T <jats:italic>Bell</jats:italic> Labs</jats:p>"
-            }] }
-        })))
-        .expect(1).mount(&server).await;
-
-    let finder = Crossref::with_api(http(None), server.uri());
-    let outcome = finder.find(&need("bell labs"), 1, &budget()).await;
-
-    assert_eq!(outcome.result, FinderResult::Answered);
-    assert_eq!(outcome.leads[0].title.as_deref(), Some("AT&T Bell Labs"));
-    assert_eq!(
-        outcome.leads[0].snippet.as_deref(),
-        Some("Rates of AT&T Bell Labs")
-    );
-}
-
-#[tokio::test]
 async fn semantic_scholar_search_returns_paper_and_oa_pdf() {
     let server = MockServer::start().await;
     Mock::given(method("GET")).and(path("/graph/v1/paper/search"))

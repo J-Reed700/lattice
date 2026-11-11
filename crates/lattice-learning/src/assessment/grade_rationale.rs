@@ -12,7 +12,6 @@ use crate::dto::{
     LearningAssessmentGradeStatus, LearningCriterionRationaleDto, LearningCriterionVerdict,
     LearningGradeRationaleDto,
 };
-use lattice_core::shared::hash::sha256_hex;
 use serde::Deserialize;
 
 /// A grader's verdict on one criterion, before any check.
@@ -97,7 +96,7 @@ pub fn rubric_version(rubric: &[LearningRubricCriterion]) -> String {
         .map(|c| format!("{}|{}|{}|{}", c.id, c.title, c.description, c.max_points))
         .collect::<Vec<_>>()
         .join("\n");
-    let digest = sha256_hex(&joined);
+    let digest = crate::content_verification::digest(&joined);
     format!("rubric:{}", digest.chars().take(12).collect::<String>())
 }
 

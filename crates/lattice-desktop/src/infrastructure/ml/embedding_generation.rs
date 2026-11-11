@@ -1,10 +1,9 @@
 //! Resumable preparation of a new vector space. Existing vectors remain untouched.
 use crate::infrastructure::persistence::repositories::embedding::generation::{
-    chunk_page_after, is_prepared, store_prepared,
+    chunk_page_after, content_hash, is_prepared, store_prepared,
 };
 use lattice_core::application::ports::EmbeddingPort;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::Database;
 
 /// Reuses completed work only when both model artifacts and source content match.
@@ -26,7 +25,7 @@ pub async fn prepare(database: &Database, model: &dyn EmbeddingPort) -> Result<u
         }
         for (id, text) in rows {
             cursor = id.clone();
-            let hash = sha256_hex(&text);
+            let hash = content_hash(&text);
             if is_prepared(database, &identity, &id, &hash, model.dimension()).await? {
                 completed += 1;
                 continue;

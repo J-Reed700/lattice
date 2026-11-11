@@ -16,6 +16,7 @@ pub(super) fn practice_repo(
 pub(super) fn practice_request_hash<T: serde::Serialize>(
     request: &T,
 ) -> lattice_core::shared::error::Result<String> {
+    use sha2::Digest;
     let mut value = serde_json::to_value(request)
         .map_err(|e| lattice_core::shared::error::AppError::Serialization(e.to_string()))?;
     if let Some(fields) = value.as_object_mut() {
@@ -25,7 +26,7 @@ pub(super) fn practice_request_hash<T: serde::Serialize>(
     }
     let bytes = serde_json::to_vec(&value)
         .map_err(|e| lattice_core::shared::error::AppError::Serialization(e.to_string()))?;
-    Ok(lattice_core::shared::hash::sha256_hex(bytes))
+    Ok(format!("{:x}", sha2::Sha256::digest(bytes)))
 }
 
 #[tauri::command]

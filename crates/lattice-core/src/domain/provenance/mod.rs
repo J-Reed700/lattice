@@ -81,7 +81,7 @@ pub use independence::{
     ClusterId, RelationEvidence, RelationKind, RelationTarget, ShingleSet, Sketch, SourceRelation,
     SKETCH_VALUES,
 };
-pub use judgement::{canonical_json, Judged, JudgementKey};
+pub use judgement::{canonical_json, sha256_hex, Judged, JudgementKey};
 pub use level::{trust_level, work_level, LevelInputs};
 pub use links::markdown_links;
 pub use origin::{

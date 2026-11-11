@@ -12,13 +12,11 @@ use lattice_core::domain::sourcing::{
     Identifier, Identity, KeyService, Lead, LeadKind, NeedKind, Privacy, RatePolicy, Reach, Role,
     SourceNeed, WaveSlot,
 };
-use lattice_core::shared::text::normalize_whitespace;
 use reqwest::header::{HeaderName, HeaderValue};
 use url::Url;
 
 use super::{answered, cause_of, failed, rank_of, Fetched, FinderHttp, GetOptions};
 use crate::features::web::services::identity;
-use crate::infrastructure::extraction::html_text::html_to_text;
 
 /// Crossref limits list requests (queries and filters) to 1 a second in the
 /// public pool and 3 a second in the polite pool.
@@ -151,8 +149,12 @@ fn doi_from(need: &SourceNeed) -> Option<String> {
     re.find(&need.query).map(|m| clean_doi(m.as_str()))
 }
 
-fn plain_text(text: &str) -> String {
-    normalize_whitespace(&html_to_text(text))
+fn strip_tags(text: &str) -> String {
+    let re = lazy_regex::regex!(r"<[^>]*>");
+    re.replace_all(text, "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
 }
 
 fn parse_date_parts(item: &serde_json::Value) -> Option<DateTime<Utc>> {
@@ -207,12 +209,12 @@ fn parse_work_item(
         .and_then(|v| v.as_array())
         .and_then(|arr| arr.first())
         .and_then(|v| v.as_str())
-        .map(plain_text);
+        .map(|t| t.trim().to_string());
 
     let snippet = item
         .get("abstract")
         .and_then(|v| v.as_str())
-        .map(plain_text)
+        .map(strip_tags)
         .filter(|s| !s.is_empty());
 
     let published = parse_date_parts(item);

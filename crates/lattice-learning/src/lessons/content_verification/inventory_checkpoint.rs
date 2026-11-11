@@ -14,7 +14,7 @@ async fn save_inventory(
         policy: INVENTORY_POLICY.into(),
         model: llm.model_name().into(),
         model_context: llm.max_context_tokens(),
-        content_sha256: sha256_hex(candidate),
+        content_sha256: digest(candidate),
         inventory: inventory.clone(),
         coverage: coverage.cloned().unwrap_or(Coverage { units: Vec::new() }),
         coverage_policy: coverage.map(|_| coverage::POLICY.into()),

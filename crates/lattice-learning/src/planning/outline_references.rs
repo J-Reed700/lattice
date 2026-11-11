@@ -9,6 +9,7 @@ use crate::{
     content_verification::research::{select_references, selection_cost, selection_room},
     dto::*,
     outline_progress::{OutlineProgress, OutlineStage},
+    persistence::hash_text,
     reference_collection::ReferenceCollection,
     references::gathering::{Round, Rounds, TopicResearch},
     references::web_research::{self, PlannedNeed},
@@ -17,7 +18,6 @@ use crate::{
 use futures::StreamExt;
 use lattice_core::application::contracts::web::WebSearchResult;
 use lattice_core::application::ports::WebServiceTrait;
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::{
     application::ports::LLMPort,
     shared::error::{AppError, Result},
@@ -259,7 +259,7 @@ pub(crate) async fn gather_for(
     let mut urls: HashSet<String> = existing.iter().filter_map(|s| s.url.clone()).collect();
     let mut hashes: HashSet<String> = existing
         .iter()
-        .map(|s| sha256_hex(s.excerpt.trim()))
+        .map(|s| hash_text(s.excerpt.trim()))
         .collect();
     let mut gathered = Gathered::default();
     let total = plan.subtopics.len();
@@ -426,7 +426,7 @@ impl TopicResearch for SubtopicResearch<'_> {
                 continue;
             }
             self.urls.insert(result.url.clone());
-            if !self.hashes.insert(sha256_hex(captured.text.trim())) {
+            if !self.hashes.insert(hash_text(captured.text.trim())) {
                 continue;
             }
             let id = uuid::Uuid::new_v4().to_string();

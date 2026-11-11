@@ -1,6 +1,6 @@
 //! SQL persistence for Learning Studio. Domain orchestration never issues SQL.
 use super::dto::*;
-use super::persistence::{db, decode, encode as json};
+use super::persistence::{db, decode, encode as json, hash_text};
 use super::recall::{
     study_dto::{StudyCardDto, StudyCardFormat, StudySourceDto},
     study_repository::StudyRepository,
@@ -8,7 +8,6 @@ use super::recall::{
 use super::references::trust::capture;
 use super::references::trust::repository::capture::compare_all;
 use lattice_core::shared::error::{AppError, Result};
-use lattice_core::shared::hash::sha256_hex;
 use lattice_core::shared::persistence::driver::DriverPool;
 use lattice_core::shared::persistence::Database;
 use lattice_core::shared::persistence::{Transactions, WriteTx};
@@ -397,7 +396,7 @@ pub(super) async fn insert_source(
     let resolved_url = reference
         .and_then(|r| r.captured.resolved_url.as_deref())
         .or(source.url.as_deref());
-    let digest = sha256_hex(&text);
+    let digest = hash_text(&text);
     sqlx::query("INSERT INTO learning_source_library(id,program_id,kind,origin,requested_url,freshness_policy,active_version_id,pending_version_id,revision,created_at,updated_at,added_by,found_by_search) VALUES(?,?,?,?,?,?,?,NULL,0,?,?,?,?)")
         .bind(&source.id).bind(program_id).bind(kind).bind(origin).bind(requested_url).bind(policy).bind(&source.id).bind(source.acquired_at).bind(source.acquired_at).bind(lattice_core::domain::learning::claim_review::SourceAddedBy::Outline.as_str()).bind(reference.is_some_and(|r| r.found)).execute(&mut **tx).await.map_err(db)?;
     let publisher = reference.and_then(|r| r.captured.publisher.as_deref());

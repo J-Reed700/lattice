@@ -12,7 +12,7 @@ use reqwest::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use super::{extension_for_mime, MAX_IMAGE_PIXELS};
 use crate::features::web::services::identity;
 use crate::features::web::services::web::{BoundedBody, BoundedFetchError, WebService};
-use lattice_core::shared::hash::sha256_hex;
+use crate::features::web::snapshots::store::sha256_hex;
 // The byte bound lives in lattice-core, so the conversation feature bounds
 // the files the reader attaches with the same number.
 use lattice_core::application::contracts::images::MAX_IMAGE_BYTES;
