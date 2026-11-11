@@ -56,10 +56,19 @@ pub(super) fn valid_saved_coverage(coverage: &Coverage, content: &[Value]) -> bo
             .flatten()
             .filter_map(|passage| passage["id"].as_str())
             .collect();
+        let sentences: HashSet<String> =
+            claim_sentences::ids(input["passages"].as_array().map_or(&[][..], Vec::as_slice))
+                .into_iter()
+                .collect();
         seen.insert(unit.index)
             && unit.complete == unit.missing_assertions.is_empty()
             && unit.missing_assertions.iter().all(|missing| {
-                ids.contains(missing.passage_id.as_str()) && !missing.statement.trim().is_empty()
+                ids.contains(missing.passage_id.as_str())
+                    && missing
+                        .sentence_id
+                        .as_ref()
+                        .is_none_or(|sentence| sentences.contains(sentence))
+                    && !missing.statement.trim().is_empty()
             })
     })
 }
@@ -94,14 +103,14 @@ pub(super) fn adopt_missing(
         let mut kept = Vec::new();
         let mut located: Vec<String> = Vec::new();
         for missing in std::mem::take(&mut unit.missing_assertions) {
-            let claim = passages
-                .iter()
-                .find(|passage| passage["id"] == missing.passage_id)
-                .and_then(|passage| {
-                    Some(Claim {
-                        quote: passage["text"].as_str()?.to_owned(),
-                        statement: missing.statement.clone(),
-                    })
+            let claim = missing
+                .sentence_id
+                .as_deref()
+                .and_then(|sentence| claim_sentences::quote(passages, sentence))
+                .filter(|(passage, _)| *passage == missing.passage_id)
+                .map(|(_, quote)| Claim {
+                    quote: claim_ledger::clip(&quote).to_owned(),
+                    statement: missing.statement.clone(),
                 })
                 .filter(|claim| {
                     let extracted = ExtractedClaim {

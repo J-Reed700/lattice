@@ -117,11 +117,11 @@ impl Corrections {
                 .iter()
                 .find(|p| p["field"] == "/body")
                 .unwrap();
-            let text = passage["text"].as_str().unwrap();
+            let text = passage_text(passage);
             let claims: Vec<_> = [BAD, SECOND, GOOD]
                 .into_iter()
                 .filter(|s| text.contains(s))
-                .map(|statement| json!({"passageId":passage["id"],"statement":statement}))
+                .map(|statement| json!({"sentenceId":sentence_id(passage, statement),"statement":statement}))
                 .collect();
             return Ok(inventory::fixture_response(vec![
                 json!({"index":0,"claims":claims,"nonFactualReason":""}),
