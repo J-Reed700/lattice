@@ -245,6 +245,19 @@ pub enum Origin {
 #[serde(transparent)]
 pub struct FindingId(String);
 
+impl Origin {
+    /// What raised a finding and which of its checks, without place or
+    /// subject: the first part of its id.
+    pub fn kind(&self) -> String {
+        match self {
+            Self::Rule { rule, .. } => format!("rule/{}", serde_name(rule)),
+            Self::Plan { check, .. } => format!("plan/{}", serde_name(check)),
+            Self::AnswerKey => "key".to_owned(),
+            Self::Reviewer { .. } => "reviewer".to_owned(),
+        }
+    }
+}
+
 impl FindingId {
     pub fn as_str(&self) -> &str {
         &self.0
@@ -477,24 +490,20 @@ impl ReviewFinding {
     /// is raised, whatever its note says.
     pub fn id(&self) -> FindingId {
         let site = site_text(self.site.unwrap_or(FindingSite::Lesson));
+        let kind = self.origin.kind();
         FindingId(match &self.origin {
+            Origin::Rule { subject: None, .. } => format!("{kind}/{site}"),
             Origin::Rule {
-                rule,
-                subject: None,
-            } => format!("rule/{}/{site}", serde_name(rule)),
-            Origin::Rule {
-                rule,
                 subject: Some(subject),
-            } => format!("rule/{}/{site}/{subject}", serde_name(rule)),
+                ..
+            } => format!("{kind}/{site}/{subject}"),
             Origin::Plan {
                 check: PlanCheck::Planned,
                 subject,
-            } => format!("plan/planned/{subject}"),
-            Origin::Plan { check, subject } => {
-                format!("plan/{}/{site}/{subject}", serde_name(check))
-            }
-            Origin::AnswerKey => format!("key/{site}"),
-            Origin::Reviewer { number } => format!("reviewer/{number}"),
+            } => format!("{kind}/{subject}"),
+            Origin::Plan { subject, .. } => format!("{kind}/{site}/{subject}"),
+            Origin::AnswerKey => format!("{kind}/{site}"),
+            Origin::Reviewer { number } => format!("{kind}/{number}"),
         })
     }
 

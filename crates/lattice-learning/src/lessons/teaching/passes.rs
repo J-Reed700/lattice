@@ -16,8 +16,14 @@
 //! A finding is followed by its id (`FindingId`): what raised it and what it
 //! is about, never its wording. Findings with one id are one finding; each id
 //! has its own count of repairs. Every repair can leave a new defect with a
-//! new id, so a new finding about words an earlier repair already worked on
-//! starts at that repair's count, and the review still ends. A new reviewer
+//! new id, so the repairs are also counted per kind of defect (what raised
+//! the finding and which of its checks, never its place or subject) on the
+//! words they worked on: a new finding about those words starts at the most
+//! repairs of its own kind they have been through, and text a repair writes
+//! carries every kind's count of the words it was written for. Along any chain
+//! of findings about words a repair wrote, every charged repair raises one
+//! kind's count on those words, a count stops at `REPAIRS_PER_FINDING`, and
+//! the kinds are finitely many, so the review still ends. A new reviewer
 //! finding with no passage has no words to count, so it starts at the count
 //! of the reviewer's findings with no passage already at its place.
 use std::collections::{BTreeMap, BTreeSet};
@@ -107,8 +113,9 @@ pub(super) struct Passes {
     inherited: BTreeMap<FindingId, u8>,
     /// Why each finding held during this review was held.
     held_because: BTreeMap<FindingId, &'static str>,
-    /// Sentence digest to the repairs those words have been through.
-    worked: BTreeMap<String, u8>,
+    /// Sentence digest to the repairs those words have been through, per kind
+    /// of defect.
+    worked: BTreeMap<String, BTreeMap<String, u8>>,
     /// For each place, the most repairs a reviewer finding with no passage
     /// there has been charged.
     passage_less: BTreeMap<FindingSite, u8>,
@@ -126,13 +133,21 @@ pub(super) struct Passes {
 struct Kept {
     spent: Vec<(FindingId, u8)>,
     last: Vec<(FindingId, Outcome)>,
-    worked: BTreeMap<String, u8>,
+    worked: BTreeMap<String, BTreeMap<String, u8>>,
     #[serde(default)]
     passage_less: Vec<(FindingSite, u8)>,
     #[serde(default)]
     attempts: Vec<(FindingId, Vec<Outcome>)>,
     #[serde(default)]
     inherited: Vec<(FindingId, u8)>,
+}
+
+/// Raises `kind`'s count in `counts` to at least `count`.
+fn raise(counts: &mut BTreeMap<String, u8>, kind: &str, count: u8) {
+    if count > 0 {
+        let held = counts.entry(kind.to_owned()).or_default();
+        *held = (*held).max(count);
+    }
 }
 
 /// Whether a reviewer's finding has no passage to count the repairs of.
@@ -258,9 +273,10 @@ impl Passes {
                 .iter()
                 .map(|sentence| subject_of(sentence))
                 .collect();
+            let kind = finding.origin.kind();
             let mut start = about
                 .iter()
-                .filter_map(|digest| self.worked.get(digest).copied())
+                .filter_map(|digest| self.worked.get(digest)?.get(&kind).copied())
                 .max()
                 .unwrap_or_default();
             self.words.insert(id.clone(), about.clone());
@@ -317,8 +333,8 @@ impl Passes {
         *spent += 1;
         let own = *spent;
         for digest in self.words.get(&id).into_iter().flatten() {
-            let held = self.worked.entry(digest.clone()).or_default();
-            *held = (*held).max(own);
+            let counts = self.worked.entry(digest.clone()).or_default();
+            raise(counts, &finding.origin.kind(), own);
         }
         if passage_less(finding) {
             let site = finding.site.unwrap_or(FindingSite::Lesson);
@@ -369,18 +385,34 @@ impl Passes {
         }
     }
 
-    /// An applied repair put these sentences through the repairs `id` had
-    /// been charged: what it wrote, or the words it was applied for. A new
-    /// finding about them starts at that count.
+    /// An applied repair for `finding` put these sentences through the repairs
+    /// of every kind the words it is about have been through, and through the
+    /// repairs `finding` has been charged under its own kind: what it wrote,
+    /// or the words it was applied for.
     pub fn worked_on(
         &mut self,
         finding: &ReviewFinding,
         sentences: impl IntoIterator<Item = String>,
     ) {
-        let count = self.spent.get(&finding.id()).copied().unwrap_or_default();
+        let mut carried = BTreeMap::new();
+        for counts in self
+            .words
+            .get(&finding.id())
+            .into_iter()
+            .flatten()
+            .filter_map(|digest| self.worked.get(digest))
+        {
+            for (kind, count) in counts {
+                raise(&mut carried, kind, *count);
+            }
+        }
+        let spent = self.spent.get(&finding.id()).copied().unwrap_or_default();
+        raise(&mut carried, &finding.origin.kind(), spent);
         for sentence in sentences {
-            let held = self.worked.entry(subject_of(&sentence)).or_default();
-            *held = (*held).max(count);
+            let counts = self.worked.entry(subject_of(&sentence)).or_default();
+            for (kind, count) in &carried {
+                raise(counts, kind, *count);
+            }
         }
     }
 

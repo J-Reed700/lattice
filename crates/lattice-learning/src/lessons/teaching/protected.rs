@@ -3,7 +3,9 @@
 //! finding about a protected sentence waits for the user, except one about the
 //! sentence of a machine's claim with rewrites left, which is repaired. The
 //! review's repair changes only the sentences its findings name, every other
-//! one reverted and every protected one byte-identical.
+//! one reverted and every protected one byte-identical. A finding that the
+//! lesson lacks teaching is never held: its correction adds sentences beside
+//! the protected ones, which stay as they are.
 
 use crate::lessons::content_verification::{confine, unit_fields, Protected};
 use crate::review_findings::{FindingId, FindingSite, ReviewFinding};
@@ -91,7 +93,7 @@ pub(super) fn on_protected(
         return Vec::new();
     }
     let mut held = Vec::new();
-    for finding in findings {
+    for finding in findings.iter().filter(|finding| !finding.adds()) {
         if finding.site.unwrap_or(FindingSite::Lesson) == FindingSite::Lesson {
             held.push(finding.id());
             continue;
@@ -223,8 +225,10 @@ fn about_whole_unit(finding: &ReviewFinding, fields: &[(String, &str)]) -> bool 
 /// block): each finding's passage where any field holds it; for a finding
 /// with no passage, every sentence of the unit's teaching text that no
 /// protected sentence overlaps (`protected` holds the sentences that are not
-/// released). A finding about the unit names all of it: its sentences, its
-/// citations, and for a question its key.
+/// released); for a finding that adds teaching, every sentence of it, protected
+/// or not, since its correction adds sentences and `confine` keeps the
+/// protected ones as they are. A finding about the unit names all of it: its
+/// sentences, its citations, and for a question its key.
 fn targets_of(
     section: &Value,
     (unit, block): (usize, bool),
@@ -235,8 +239,9 @@ fn targets_of(
     leaves(section, String::new(), &mut fields);
     let mut targets = Vec::new();
     for finding in sent {
+        let open: &[Protected] = if finding.adds() { &[] } else { protected };
         if about_whole_unit(finding, &fields) {
-            unprotected_sentences(section, (unit, block), protected, &mut targets);
+            unprotected_sentences(section, (unit, block), open, &mut targets);
             if let (false, Some(key)) = (block, section.get("correctIndex")) {
                 whole_value(key, "correctIndex".into(), unit, &mut targets);
             }
@@ -264,7 +269,7 @@ fn targets_of(
                     }
                 }
             }
-            _ => unprotected_sentences(section, (unit, block), protected, &mut targets),
+            _ => unprotected_sentences(section, (unit, block), open, &mut targets),
         }
     }
     targets
