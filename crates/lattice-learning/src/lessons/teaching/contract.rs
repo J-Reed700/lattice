@@ -357,13 +357,16 @@ fn findings(
         } else {
             "The quoted name is a short label for it, not wording for the lesson: teach what it names in the lesson's own sentences, worked into what the part already says, without copying the label. "
         };
+        let fits = belongs.map_or_else(String::new, |part| {
+            format!(" It fits best in {}.", label(part.site).to_lowercase())
+        });
         found.push(
             ReviewFinding::plan(
                 PlanCheck::Planned,
                 &item.id,
                 site,
                 format!(
-                    "The lesson does not yet teach the {} \"{}\". {label}Teach it in the lesson's own words: {}",
+                    "The lesson does not yet teach the {} \"{}\". {label}Teach it in the lesson's own words: {}{fits}",
                     item.kind,
                     item.text,
                     how_to_teach(item.kind)
@@ -585,3 +588,7 @@ mod identity_tests;
 #[cfg(test)]
 #[path = "contract_own_notes_tests.rs"]
 mod own_notes_tests;
+
+#[cfg(test)]
+#[path = "contract_note_tests.rs"]
+mod note_tests;
