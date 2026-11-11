@@ -1,13 +1,13 @@
 //! Dynamic embedding adapter implementing [`EmbeddingPort`].
 //!
 //! Reads the loaded model through a read-only provider. If none is loaded,
-//! the degraded adapter returns the existing model-not-installed errors.
+//! the unavailable adapter returns the model-not-installed errors.
 
 use std::sync::Arc;
 
 use async_trait::async_trait;
 
-use lattice_core::application::ports::{EmbeddingPort, MockEmbeddingPort};
+use lattice_core::application::ports::{EmbeddingPort, UnavailableEmbedding};
 use lattice_core::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
 
 pub struct DynamicEmbedding {
@@ -27,14 +27,22 @@ impl EmbeddingPort for DynamicEmbedding {
     async fn embed_single(&self, text: &str) -> lattice_core::shared::error::Result<Vec<f32>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_single(text).await,
-            None => MockEmbeddingPort::new_degraded().embed_single(text).await,
+            None => {
+                UnavailableEmbedding::not_installed()
+                    .embed_single(text)
+                    .await
+            }
         }
     }
 
     async fn embed_query(&self, text: &str) -> lattice_core::shared::error::Result<Vec<f32>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_query(text).await,
-            None => MockEmbeddingPort::new_degraded().embed_single(text).await,
+            None => {
+                UnavailableEmbedding::not_installed()
+                    .embed_single(text)
+                    .await
+            }
         }
     }
 
@@ -44,7 +52,11 @@ impl EmbeddingPort for DynamicEmbedding {
     ) -> lattice_core::shared::error::Result<Vec<Vec<f32>>> {
         match self.provider.current_model() {
             Some(inner) => inner.embed_batch(texts).await,
-            None => MockEmbeddingPort::new_degraded().embed_batch(texts).await,
+            None => {
+                UnavailableEmbedding::not_installed()
+                    .embed_batch(texts)
+                    .await
+            }
         }
     }
 

@@ -1,0 +1,73 @@
+//! The embedding port used while no embedding model is loaded.
+
+use crate::application::ports::EmbeddingPort;
+use crate::domain::models::embedding_defaults::DEFAULT_EMBEDDING_DIM;
+use crate::shared::error::{AppError, Result};
+use async_trait::async_trait;
+
+/// Why no embedding model is available.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EmbeddingUnavailable {
+    /// No embedding model is installed or active.
+    NotInstalled,
+    /// An embedding model is active but loading it failed; carries the error as displayed.
+    FailedToLoad(String),
+}
+
+/// An [`EmbeddingPort`] that is never ready and fails every embedding with its reason.
+#[derive(Debug, Clone)]
+pub struct UnavailableEmbedding {
+    reason: EmbeddingUnavailable,
+}
+
+impl UnavailableEmbedding {
+    pub fn new(reason: EmbeddingUnavailable) -> Self {
+        Self { reason }
+    }
+
+    pub fn not_installed() -> Self {
+        Self::new(EmbeddingUnavailable::NotInstalled)
+    }
+
+    pub fn failed_to_load(error: impl Into<String>) -> Self {
+        Self::new(EmbeddingUnavailable::FailedToLoad(error.into()))
+    }
+
+    fn error(&self) -> AppError {
+        match &self.reason {
+            EmbeddingUnavailable::NotInstalled => {
+                AppError::AiModelsNotInstalled("AI embedding models not installed".to_string())
+            }
+            EmbeddingUnavailable::FailedToLoad(error) => AppError::ModelLoadFailed(format!(
+                "The active embedding model failed to load: {error}"
+            )),
+        }
+    }
+}
+
+#[async_trait]
+impl EmbeddingPort for UnavailableEmbedding {
+    async fn embed_single(&self, _text: &str) -> Result<Vec<f32>> {
+        Err(self.error())
+    }
+
+    async fn embed_batch(&self, _texts: &[String]) -> Result<Vec<Vec<f32>>> {
+        Err(self.error())
+    }
+
+    fn model_identity(&self) -> String {
+        "unavailable".to_owned()
+    }
+
+    /// No model exists to have a dimension; no caller sizes an index from an unavailable port.
+    fn dimension(&self) -> usize {
+        DEFAULT_EMBEDDING_DIM
+    }
+
+    async fn is_ready(&self) -> Result<bool> {
+        Ok(false)
+    }
+}
+
+#[cfg(test)]
+mod tests;

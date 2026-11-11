@@ -181,7 +181,7 @@ mod tests {
     use crate::features::indexing::commands::require_embedding_ready;
     use crate::features::indexing::engine::progress::IndexStatus;
     use lattice_core::application::ports::{
-        DocumentRepositoryPort, MockEmbeddingPort, RepositoryPort,
+        DocumentRepositoryPort, RepositoryPort, UnavailableEmbedding,
     };
     use lattice_core::domain::entities::Document;
     use lattice_core::shared::error::{AppError, Result as AppResult};
@@ -208,7 +208,7 @@ mod tests {
     #[async_trait]
     impl EmbeddingReadiness for NoActiveModel {
         async fn ensure_ready(&self) -> Result<()> {
-            require_embedding_ready(Ok(Arc::new(MockEmbeddingPort::new_degraded()))).await
+            require_embedding_ready(Ok(Arc::new(UnavailableEmbedding::not_installed()))).await
         }
     }
 

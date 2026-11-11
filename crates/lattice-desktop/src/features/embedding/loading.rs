@@ -3,7 +3,9 @@
 use crate::features::embedding::llama_cpp::{EmbeddingServerStarter, LlamaEmbeddingService};
 use crate::infrastructure::security::SecurityContext;
 use lattice_core::application::ports::active_models::ActiveModels;
-use lattice_core::application::ports::{EmbeddingIndexBinding, EmbeddingPort};
+use lattice_core::application::ports::{
+    EmbeddingIndexBinding, EmbeddingPort, UnavailableEmbedding,
+};
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
 
@@ -140,28 +142,25 @@ impl EmbeddingLoader {
     }
 
     pub(crate) async fn load(&self) -> Result<Arc<dyn EmbeddingPort>> {
-        use lattice_core::application::ports::MockEmbeddingPort;
-
         tracing::debug!("Step 1: Checking for active downloaded embedding model...");
         match self.try_load_active_embedding_model().await {
             Ok(Some(embedding)) => {
                 tracing::info!("Using active downloaded embedding model");
-                return Ok(embedding);
+                Ok(embedding)
             }
             Ok(None) => {
-                tracing::debug!("No active embedding model available, using mock...");
+                tracing::info!("No active embedding model; embedding is unavailable");
+                tracing::info!("💡 Download an embedding model to enable semantic search features");
+                Ok(Arc::new(UnavailableEmbedding::not_installed()))
             }
-            Err(e @ AppError::ModelLoadFailed(_)) => {
-                return Err(e);
-            }
+            Err(e @ AppError::ModelLoadFailed(_)) => Err(e),
             Err(e) => {
-                tracing::warn!("Error loading active embedding model: {}, using mock...", e);
+                tracing::warn!("Error loading active embedding model: {}", e);
+                Ok(Arc::new(UnavailableEmbedding::failed_to_load(
+                    e.to_string(),
+                )))
             }
         }
-
-        tracing::info!("Using Mock embedding implementation");
-        tracing::info!("💡 Download an embedding model to enable semantic search features");
-        Ok(Arc::new(MockEmbeddingPort::new_degraded()) as Arc<dyn EmbeddingPort>)
     }
 }
 

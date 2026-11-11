@@ -11,8 +11,10 @@ use crate::domain::models::selection::{ModelCategory, ModelMetadata, Performance
 use crate::shared::error::AppError;
 use async_trait::async_trait;
 
+#[cfg(any(test, feature = "test-support"))]
 mod mock;
 
+#[cfg(any(test, feature = "test-support"))]
 pub use mock::MockModelCatalogPort;
 
 /// External model metadata from API.

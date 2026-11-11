@@ -740,8 +740,10 @@ fn map_local_model_load_error(error: LLMError, model_path: &Path) -> LLMError {
     error
 }
 
+#[cfg(test)]
 mod mock;
 
+#[cfg(test)]
 pub use mock::MockLLMPort;
 
 /// The first GGUF model file found in the standard directories.

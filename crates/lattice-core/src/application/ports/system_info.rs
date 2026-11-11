@@ -9,7 +9,9 @@
 
 use crate::shared::error::AppError;
 use async_trait::async_trait;
+#[cfg(any(test, feature = "test-support"))]
 use parking_lot::Mutex;
+#[cfg(any(test, feature = "test-support"))]
 use std::sync::Arc;
 
 /// System hardware information.
@@ -92,6 +94,7 @@ impl AcceleratorProbe for NoAcceleratorProbe {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 /// Mock implementation for testing.
 ///
 /// Allows configuring different hardware profiles for testing
@@ -100,6 +103,7 @@ pub struct MockSystemInfoPort {
     system_info: Arc<Mutex<SystemInfo>>,
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl MockSystemInfoPort {
     /// Create a new mock with default medium-tier hardware.
     pub fn new() -> Self {
@@ -172,12 +176,14 @@ impl MockSystemInfoPort {
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 impl Default for MockSystemInfoPort {
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg(any(test, feature = "test-support"))]
 #[async_trait]
 impl SystemInfoPort for MockSystemInfoPort {
     async fn get_system_info(&self) -> Result<SystemInfo, AppError> {
