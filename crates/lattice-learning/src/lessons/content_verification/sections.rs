@@ -64,6 +64,8 @@ pub(super) struct Cuts {
     /// The sections that go, with the title or prompt of each.
     pub(super) going: BTreeMap<usize, String>,
     pub(super) mended: BTreeMap<usize, Mended>,
+    /// The units that go only because a finding on them could not be settled.
+    pub(super) unsettled: BTreeSet<usize>,
     #[serde(default)]
     pub(crate) reviewed_without_going: Option<String>,
 }
@@ -102,6 +104,15 @@ impl Cuts {
 
     pub(super) fn go(&mut self, unit: usize, label: String) {
         self.going.insert(unit, label);
+    }
+
+    /// Sends a unit out because a finding on it could not be settled.
+    pub(super) fn go_unsettled(&mut self, _unit: usize, _label: String) {}
+
+    /// Puts back the units that went because a finding could not be settled;
+    /// whether it put back any.
+    pub(super) fn readmit(&mut self) -> bool {
+        false
     }
 }
 
@@ -339,6 +350,17 @@ pub(super) fn unpublishable(
     cuts.keep_current(lesson);
     send_out(lesson, &mut cuts, shape);
     shape.floor(lesson, cuts.units().units())
+}
+
+/// The questions of `lesson` that go because a finding on them waits for the
+/// user and the lesson's shape can spare them, each with its unit and label.
+pub(super) fn unsettled_questions(
+    _lesson: &Value,
+    _waiting: &BTreeSet<String>,
+    _cuts: &Cuts,
+    _shape: &dyn ShapePolicy,
+) -> Vec<(usize, String)> {
+    Vec::new()
 }
 
 /// Whether a cut took the answer of a check: the first teaching sentence under
@@ -731,3 +753,6 @@ pub(super) async fn excise(
 #[cfg(test)]
 #[path = "sections_tests.rs"]
 mod tests;
+#[cfg(test)]
+#[path = "unsettled_question_tests.rs"]
+mod unsettled_question_tests;

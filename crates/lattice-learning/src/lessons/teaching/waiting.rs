@@ -2,6 +2,7 @@
 //! (`claim_reviews::teaching_findings`). Outside a job (tests, the live
 //! checks) nothing is stored.
 use serde_json::Value;
+use std::collections::BTreeSet;
 
 use crate::lessons::claim_reviews::teaching_findings::TeachingFindingsRepository;
 use crate::review_findings::{Held, ReviewFinding, SetAside};
@@ -24,6 +25,11 @@ pub(crate) async fn held(candidate: &Value) -> Result<Held> {
         Some((store, lesson_id, _)) => store.held(&lesson_id, candidate).await,
         None => Ok(Held::default()),
     }
+}
+
+/// The text hashes of the questions whose findings wait for the user.
+pub(crate) async fn question_texts() -> Result<BTreeSet<String>> {
+    Ok(BTreeSet::new())
 }
 
 /// A completed review's outcome: what it set aside waits for the user, and a
