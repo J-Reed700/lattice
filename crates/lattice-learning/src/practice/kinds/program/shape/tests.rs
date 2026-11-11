@@ -196,6 +196,35 @@ fn a_misreading_round_trips_as_a_solution_piece() {
 }
 
 #[test]
+fn a_run_detail_round_trips_what_was_printed() {
+    let detail = run_detail_of("out", "err").unwrap();
+    assert_eq!(
+        detail,
+        serde_json::json!({"stdout": "out", "stderr": "err"})
+    );
+    assert_eq!(
+        run_output_of(&detail).unwrap(),
+        ("out".to_owned(), "err".to_owned())
+    );
+}
+
+#[test]
+fn a_null_detail_prints_nothing_and_a_foreign_one_is_invalid() {
+    assert_eq!(
+        run_output_of(&serde_json::Value::Null).unwrap(),
+        (String::new(), String::new())
+    );
+    assert_eq!(
+        run_output_of(&serde_json::json!({"stdout": "only"})).unwrap(),
+        ("only".to_owned(), String::new())
+    );
+    assert!(matches!(
+        run_output_of(&serde_json::json!(["not", "an", "object"])),
+        Err(AppError::InvalidState(_))
+    ));
+}
+
+#[test]
 fn a_build_problem_round_trips_through_its_exercise() {
     let problem = sample_problem();
     let exercise = exercise_of(&problem).unwrap();

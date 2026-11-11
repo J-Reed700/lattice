@@ -23,8 +23,8 @@ use serde_json::Value;
 
 use crate::lab_runtime::LearningLabFile;
 use crate::practice::coding::dto::{
-    stages_of, CodeHintDto, CodeHintRung, CodingExampleDto, CodingStage, ExampleCoverageDto,
-    ExampleVerdict,
+    stages_of, CodeHintDto, CodeHintRung, CodingExampleDto, CodingSessionDto, CodingStage,
+    ExampleCoverageDto, ExampleVerdict,
 };
 use crate::practice::coding::observation::test_support::{failing_run, problem, session};
 use crate::practice::coding::observation::{observe, WorkspaceObservation};
@@ -215,6 +215,16 @@ pub(crate) fn rich_observation(
     task: CodingTask,
     setting: CodingSetting,
 ) -> (Problem, WorkspaceObservation) {
+    let (problem, session, seen) = rich_session(task, setting);
+    let observation = observe(&problem, &session, Some(&seen));
+    (problem, observation)
+}
+
+/// The fixture problem, the session `rich_observation` observes and the draft last seen.
+pub(crate) fn rich_session(
+    task: CodingTask,
+    setting: CodingSetting,
+) -> (Problem, CodingSessionDto, Vec<LearningLabFile>) {
     let problem = problem();
     let stages = stages_of(task);
     let stage: CodingStage = stages.get(2).copied().unwrap_or(CodingStage::Code);
@@ -274,10 +284,9 @@ pub(crate) fn rich_observation(
             "Yes, and its total is 0.",
         ),
     ];
-    let seen = [LearningLabFile {
+    let seen = vec![LearningLabFile {
         path: "solution.py".to_owned(),
         content: "def total(values):\n    pass\n".to_owned(),
     }];
-    let observation = observe(&problem, &session, Some(&seen));
-    (problem, observation)
+    (problem, session, seen)
 }

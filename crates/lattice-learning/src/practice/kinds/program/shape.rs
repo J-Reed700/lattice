@@ -33,6 +33,14 @@ struct ResultDetail {
 }
 
 #[derive(Serialize, Deserialize)]
+struct RunDetail {
+    #[serde(default)]
+    stdout: String,
+    #[serde(default)]
+    stderr: String,
+}
+
+#[derive(Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct ExerciseProof {
     reference_ms: BTreeMap<String, u64>,
@@ -221,6 +229,26 @@ pub fn run_result_of(result: &work::CaseResult) -> Result<coding::CaseResult> {
         error: detail.error,
         elapsed_ms: detail.elapsed_ms,
     })
+}
+
+/// The detail of a check whose program printed `stdout` and `stderr` outside any case.
+pub fn run_detail_of(stdout: &str, stderr: &str) -> Result<serde_json::Value> {
+    serde_json::to_value(RunDetail {
+        stdout: stdout.to_owned(),
+        stderr: stderr.to_owned(),
+    })
+    .map_err(|error| invalid("The run could not be written", error))
+}
+
+/// What a check's detail says the program printed outside any case, as `(stdout, stderr)`. A detail of `Null`
+/// says nothing.
+pub fn run_output_of(detail: &serde_json::Value) -> Result<(String, String)> {
+    if detail.is_null() {
+        return Ok((String::new(), String::new()));
+    }
+    let detail: RunDetail = serde_json::from_value(detail.clone())
+        .map_err(|error| invalid("The detail of the check is not a program's", error))?;
+    Ok((detail.stdout, detail.stderr))
 }
 
 pub fn misreading_of(misreading: &coding::Misreading) -> Result<Misreading> {

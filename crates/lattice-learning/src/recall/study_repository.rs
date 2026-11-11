@@ -613,10 +613,11 @@ impl StudyRepository {
         // Setting a date makes every card scheduled into its final window due now.
         // The same date again must not undo the rest a review scheduled before
         // the interview, and no date keeps the one the deck has.
-        if target_at.is_some() && target_at != saved_target {
-            if !set_target_in(&mut tx, &deck.id, target_at, now).await? {
-                return Err(AppError::NotFound("Study deck no longer exists".into()));
-            }
+        if target_at.is_some()
+            && target_at != saved_target
+            && !set_target_in(&mut tx, &deck.id, target_at, now).await?
+        {
+            return Err(AppError::NotFound("Study deck no longer exists".into()));
         }
         let result = deck_in(&mut tx, &deck.id).await?;
         tx.commit().await.map_err(db)?;

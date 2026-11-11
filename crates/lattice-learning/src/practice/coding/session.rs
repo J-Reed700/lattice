@@ -10,7 +10,10 @@ pub use self::aids::{CodingAids, LiveAids};
 use self::cases::cases_for;
 pub use self::evidence::last_draft_seen;
 use self::evidence::{outcome_of, submit_counts};
+#[cfg(test)]
+pub(crate) use self::view::case_is_open;
 pub use self::view::session_view;
+pub(crate) use self::view::{cut_case, example_view};
 use super::debrief::Debriefer;
 use super::dto::*;
 use super::observation::observe;

@@ -10,8 +10,10 @@ use crate::practice::coding::dto::{
 use crate::practice::coding::problem::{
     CodingSetting, CodingTask, Problem, ProblemClarification, ProblemSignature,
 };
+use crate::practice::kinds::program::showing::{
+    brief_text, case_text, draft_text, pattern_names, run_notes, BriefFacts,
+};
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
-use lattice_core::domain::learning::practice::problem_patterns::problem_pattern;
 
 /// Whether a line was added to a file or removed from it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -195,13 +197,7 @@ pub fn observe(
         problem_examples: session.problem.examples.clone(),
         clarifications: problem.spec.clarifications.clone(),
         target_complexity: problem.spec.target_complexity.clone(),
-        pattern_names: problem
-            .spec
-            .patterns
-            .iter()
-            .filter_map(|id| problem_pattern(id))
-            .map(|pattern| pattern.name.to_owned())
-            .collect(),
+        pattern_names: pattern_names(&problem.spec.patterns),
         clock: session.clock.clone(),
         files: session.draft.clone(),
         has_baseline: seen.is_some(),
@@ -245,150 +241,123 @@ impl WorkspaceObservation {
 
     /// The observation as the model reads it: text, with the draft numbered by line.
     pub fn render(&self) -> String {
-        let mut out = String::new();
-        let mut line = |text: String| {
-            out.push_str(&text);
-            out.push('\n');
-        };
-        line(format!("Problem: {}", self.title));
-        line(self.statement.clone());
-        let params = self
-            .signature
-            .params
-            .iter()
-            .map(|param| format!("{}: {}", param.name, param.annotation))
-            .collect::<Vec<_>>()
-            .join(", ");
-        line(format!(
-            "Signature: def {}({}) -> {}",
-            self.signature.function, params, self.signature.returns
-        ));
-        for constraint in &self.constraints {
-            line(format!("Constraint: {constraint}"));
-        }
-        for case in &self.problem_examples {
-            line(format!("Example in the statement: {}", case_text(case)));
-        }
-        for (index, clarification) in self.clarifications.iter().enumerate() {
-            line(format!(
-                "Clarification {index}: asked \"{}\", answered \"{}\"",
-                clarification.question, clarification.answer
-            ));
-        }
-        line(format!("Target complexity: {}", self.target_complexity));
-        if !self.pattern_names.is_empty() {
-            line(format!(
-                "Techniques the problem is built around: {}",
-                self.pattern_names.join(", ")
-            ));
-        }
+        let mut out = brief_text(&BriefFacts {
+            title: &self.title,
+            statement: &self.statement,
+            signature: &self.signature,
+            constraints: &self.constraints,
+            examples: &self.problem_examples,
+            clarifications: &self.clarifications,
+            target_complexity: &self.target_complexity,
+            pattern_names: &self.pattern_names,
+        });
         let reached = self
             .stages_reached
             .iter()
             .map(|stage| format!("{stage:?}"))
             .collect::<Vec<_>>()
             .join(", ");
-        line(format!(
-            "Task: {:?}. Setting: {:?}. Stage: {:?}. Stages reached: {reached}.",
-            self.task, self.setting, self.stage
-        ));
+        push_line(
+            &mut out,
+            &format!(
+                "Task: {:?}. Setting: {:?}. Stage: {:?}. Stages reached: {reached}.",
+                self.task, self.setting, self.stage
+            ),
+        );
         let spent = format!("{} s active", self.clock.active_ms / 1000);
         match self.clock.budget_seconds {
-            Some(budget) => line(format!("Clock: {spent} of a {budget} s budget.")),
-            None => line(format!("Clock: {spent}, no budget.")),
+            Some(budget) => push_line(&mut out, &format!("Clock: {spent} of a {budget} s budget.")),
+            None => push_line(&mut out, &format!("Clock: {spent}, no budget.")),
         }
-        line("Draft:".to_owned());
-        for file in &self.files {
-            line(format!("=== {} ===", file.path));
-            for (index, text) in file.content.lines().enumerate() {
-                line(format!("{} | {text}", index + 1));
-            }
-        }
+        push_line(&mut out, "Draft:");
+        out.push_str(&draft_text(&self.files));
         if !self.has_baseline {
-            line(
-                "Changes since you last looked: you have not looked at the draft before."
-                    .to_owned(),
+            push_line(
+                &mut out,
+                "Changes since you last looked: you have not looked at the draft before.",
             );
         } else if self.changes.is_empty() {
-            line("Changes since you last looked: none.".to_owned());
+            push_line(&mut out, "Changes since you last looked: none.");
         } else {
-            line("Changes since you last looked:".to_owned());
+            push_line(&mut out, "Changes since you last looked:");
             for change in &self.changes {
                 let mark = match change.kind {
                     LineChangeKind::Added => "added",
                     LineChangeKind::Removed => "removed",
                 };
-                line(format!(
-                    "{mark} {} line {}: {}",
-                    change.path, change.line, change.text
-                ));
+                push_line(
+                    &mut out,
+                    &format!(
+                        "{mark} {} line {}: {}",
+                        change.path, change.line, change.text
+                    ),
+                );
             }
         }
         match &self.last_run {
-            None => line("Last run: none yet.".to_owned()),
+            None => push_line(&mut out, "Last run: none yet."),
             Some(run) => {
-                line(format!("Last run: {:?}, {:?}.", run.scope, run.status));
+                push_line(
+                    &mut out,
+                    &format!("Last run: {:?}, {:?}.", run.scope, run.status),
+                );
                 for case in &run.cases {
-                    line(format!("- {:?}: {}", case.status, case_text(case)));
+                    push_line(
+                        &mut out,
+                        &format!("- {:?}: {}", case.status, case_text(case)),
+                    );
                 }
-                if !run.stdout.is_empty() {
-                    line(format!("Printed outside any case: {}", run.stdout));
-                }
-                if !run.stderr.is_empty() {
-                    line(format!("Error output: {}", run.stderr));
+                for note in run_notes(&run.stdout, &run.stderr) {
+                    push_line(&mut out, &note);
                 }
             }
         }
         for example in &self.learner_examples {
-            line(format!(
-                "Learner's example {}: ({}) expects {} - {:?}",
-                example.ordinal,
-                example.args.join(", "),
-                example.expected,
-                example.verdict
-            ));
+            push_line(
+                &mut out,
+                &format!(
+                    "Learner's example {}: ({}) expects {} - {:?}",
+                    example.ordinal,
+                    example.args.join(", "),
+                    example.expected,
+                    example.verdict
+                ),
+            );
         }
-        line(format!(
-            "Examples catch {} of {} common mistakes.",
-            self.coverage.caught, self.coverage.total
-        ));
+        push_line(
+            &mut out,
+            &format!(
+                "Examples catch {} of {} common mistakes.",
+                self.coverage.caught, self.coverage.total
+            ),
+        );
         if let Some(uncaught) = &self.coverage.uncaught {
-            line(format!("One mistake they do not catch yet: {uncaught}"));
+            push_line(
+                &mut out,
+                &format!("One mistake they do not catch yet: {uncaught}"),
+            );
         }
         for hint in &self.hints {
-            line(format!("Hint given ({:?}): {}", hint.rung, hint.text));
+            push_line(
+                &mut out,
+                &format!("Hint given ({:?}): {}", hint.rung, hint.text),
+            );
         }
-        line("Transcript:".to_owned());
+        push_line(&mut out, "Transcript:");
         for turn in &self.turns {
             let speaker = match turn.speaker {
                 LearningSimulationSpeaker::Learner => "Learner",
                 LearningSimulationSpeaker::Counterpart | LearningSimulationSpeaker::Coach => "You",
             };
-            line(format!("{speaker}: {}", turn.content));
+            push_line(&mut out, &format!("{speaker}: {}", turn.content));
         }
         out
     }
 }
 
-/// A case as the learner sees it: its category, then whatever the setting shows of its input and results.
-fn case_text(case: &CaseViewDto) -> String {
-    let mut parts = vec![case.category.clone()];
-    if let Some(args) = &case.args {
-        parts.push(format!("input ({})", args.join(", ")));
-    }
-    if let Some(expected) = &case.expected {
-        parts.push(format!("expected {expected}"));
-    }
-    if let Some(actual) = &case.actual {
-        parts.push(format!("got {actual}"));
-    }
-    if let Some(printed) = case.printed.as_ref().filter(|printed| !printed.is_empty()) {
-        parts.push(format!("printed {printed}"));
-    }
-    if let Some(error) = &case.error {
-        parts.push(format!("raised {error}"));
-    }
-    parts.join("; ")
+fn push_line(out: &mut String, text: &str) {
+    out.push_str(text);
+    out.push('\n');
 }
 
 #[cfg(test)]

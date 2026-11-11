@@ -2,8 +2,8 @@
 
 use async_trait::async_trait;
 use lattice_core::domain::learning::practice::work::{
-    Brief, Case, CaseResult, Change, CheckReport, Draft, Exercise, Form, KindId, PartRef, Piece,
-    Spacing, Stage,
+    Brief, Case, CaseResult, Change, CheckReport, CheckScope, Draft, Exercise, Form, KindId,
+    PartRef, Piece, Rung, Spacing, Stage,
 };
 use lattice_core::shared::error::{AppError, Result};
 use std::collections::BTreeMap;
@@ -37,16 +37,53 @@ pub trait Diff: Send + Sync {
 
 /// Text for a model.
 pub trait Showing: Send + Sync {
-    /// The brief as text. Never the reference.
-    fn brief(&self, brief: &Brief) -> Result<String>;
+    /// The task as a model reads it, with the cases the learner is shown: whole lines, each ending in a newline.
+    /// Never the reference.
+    fn brief(&self, brief: &Brief, shown: &[Case]) -> Result<String>;
+    /// A piece as a model reads it: whole lines, each ending in a newline.
     fn piece(&self, brief: &Brief, piece: &Piece) -> Result<String>;
-    fn result(&self, brief: &Brief, case: &Case, result: &CaseResult) -> Result<String>;
+    /// One case and, once it is checked, its result, on one line. A case that is not `open` shows only what a
+    /// learner who may not look inside it sees.
+    fn case(
+        &self,
+        brief: &Brief,
+        case: &Case,
+        result: Option<&CaseResult>,
+        open: bool,
+    ) -> Result<String>;
+    /// What a check says beyond its cases, one line each.
+    fn check_notes(&self, brief: &Brief, detail: &serde_json::Value) -> Result<Vec<String>>;
 }
 
-/// The words for this work.
+/// The words for this work. A kind overrides only what it words differently from the value's own name.
 pub trait Wording: Send + Sync {
     fn card(&self) -> String;
-    fn stage_label(&self, brief: &Brief, form: Form, stage: Stage) -> String;
+
+    fn form_label(&self, form: Form) -> String {
+        format!("{form:?}")
+    }
+
+    fn stage_label(&self, _brief: &Brief, _form: Form, stage: Stage) -> String {
+        format!("{stage:?}")
+    }
+
+    fn check_noun(&self) -> String {
+        "check".to_owned()
+    }
+
+    fn scope_label(&self, scope: CheckScope) -> String {
+        format!("{scope:?}")
+    }
+
+    fn rung_label(&self, rung: Rung) -> String {
+        format!("{rung:?}")
+    }
+}
+
+/// A kind whose learner writes cases of their own.
+pub trait LearnerCases: Send + Sync {
+    /// A case the learner wrote, on one line.
+    fn show(&self, brief: &Brief, body: &serde_json::Value) -> Result<String>;
 }
 
 /// Enables Complete: a piece with parts emptied, and with one part put back.
@@ -99,6 +136,7 @@ pub struct Kind {
     pub truth: Arc<dyn Truth>,
     pub gaps: Option<Arc<dyn Gaps>>,
     pub order: Option<Arc<dyn Order>>,
+    pub learner_cases: Option<Arc<dyn LearnerCases>>,
 }
 
 impl Kind {

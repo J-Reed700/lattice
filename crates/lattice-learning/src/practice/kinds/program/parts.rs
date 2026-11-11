@@ -6,6 +6,7 @@ use lattice_core::domain::learning::practice::work::{Brief, PartRef, Piece};
 use lattice_core::shared::error::{AppError, Result};
 
 #[cfg(test)]
+#[path = "parts_tests.rs"]
 mod tests;
 
 pub struct ProgramParts;

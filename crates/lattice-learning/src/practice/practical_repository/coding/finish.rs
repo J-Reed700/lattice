@@ -39,7 +39,7 @@ impl LearningPracticalRepository {
         write.scorecard.validate()?;
         let mut tx = self.begin_coding_write(program_id).await?;
         let operation = op.operation(program_id, session_id);
-        if operation.seen(&mut *tx).await? {
+        if operation.seen(&mut tx).await? {
             tx.commit().await.map_err(db)?;
             return Ok(Applied::Replayed);
         }
@@ -124,7 +124,7 @@ impl LearningPracticalRepository {
             .execute(&mut *tx)
             .await
             .map_err(db)?;
-        operation.record(&mut *tx, &()).await?;
+        operation.record(&mut tx, &()).await?;
         tx.commit().await.map_err(db)?;
         Ok(Applied::Done(()))
     }

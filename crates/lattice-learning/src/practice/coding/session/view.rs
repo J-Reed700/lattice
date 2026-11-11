@@ -9,7 +9,7 @@ use crate::practice::coding::dto::{
 };
 use crate::practice::coding::hints::next_rung;
 use crate::practice::coding::problem::{
-    CaseStatus, CaseVisibility, CodingSetting, Hidden, Problem,
+    CaseStatus, CaseVisibility, CodingSetting, Hidden, Problem, ProblemCase,
 };
 use crate::practice::coding::records::{SessionBundle, StoredExample, StoredRun};
 use lattice_core::shared::error::{AppError, Result};
@@ -39,8 +39,20 @@ pub fn settings_used(bundle: &SessionBundle) -> Result<Vec<CodingSetting>> {
     Ok(used)
 }
 
+/// Whether a learner may look inside a case: the setting discloses it, it is a statement example, or it is theirs.
+pub(crate) fn case_is_open(visibility: CaseVisibility, mine: bool, disclose: bool) -> bool {
+    disclose || visibility == CaseVisibility::Example || mine
+}
+
 fn case_view(detail: &CaseCheckDetailDto, disclose: bool) -> CaseViewDto {
-    let shown = disclose || detail.visibility == CaseVisibility::Example || detail.mine;
+    cut_case(
+        detail,
+        case_is_open(detail.visibility, detail.mine, disclose),
+    )
+}
+
+/// A case with what a learner who may not look inside it (`shown` false) does not see left out.
+pub(crate) fn cut_case(detail: &CaseCheckDetailDto, shown: bool) -> CaseViewDto {
     let keep = |value: &Option<String>| value.clone().filter(|_| shown);
     CaseViewDto {
         case_id: detail.case_id.clone(),
@@ -123,6 +135,24 @@ fn coverage(
     }
 }
 
+/// A statement example as the learner sees it before any run.
+pub(crate) fn example_view(case: &ProblemCase) -> CaseViewDto {
+    CaseViewDto {
+        case_id: case.id.clone(),
+        category: case.category.clone(),
+        visibility: case.visibility,
+        mine: false,
+        scale: case.scale,
+        status: CaseStatus::NotRun,
+        args: Some(case.args.clone()),
+        expected: case.expected.clone(),
+        actual: None,
+        printed: None,
+        error: None,
+        elapsed_ms: None,
+    }
+}
+
 fn public_problem(problem: &Problem) -> PublicProblemDto {
     PublicProblemDto {
         title: problem.spec.title.clone(),
@@ -131,23 +161,7 @@ fn public_problem(problem: &Problem) -> PublicProblemDto {
         constraints: problem.spec.constraints.clone(),
         difficulty: problem.spec.difficulty,
         language: problem.spec.language.clone(),
-        examples: problem
-            .examples()
-            .map(|case| CaseViewDto {
-                case_id: case.id.clone(),
-                category: case.category.clone(),
-                visibility: case.visibility,
-                mine: false,
-                scale: case.scale,
-                status: CaseStatus::NotRun,
-                args: Some(case.args.clone()),
-                expected: case.expected.clone(),
-                actual: None,
-                printed: None,
-                error: None,
-                elapsed_ms: None,
-            })
-            .collect(),
+        examples: problem.examples().map(example_view).collect(),
         starter: problem.spec.starter.clone(),
     }
 }

@@ -52,6 +52,7 @@ impl Checker for ProgramChecker {
         Ok(CheckReport {
             results: results.iter().map(result_of).collect::<Result<Vec<_>>>()?,
             marks: Vec::new(),
+            detail: serde_json::Value::Null,
         })
     }
 }

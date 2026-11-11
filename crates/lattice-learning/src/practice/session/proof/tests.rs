@@ -74,7 +74,7 @@ async fn run(kind: &Kind, draft: Draft) -> Result<Proof> {
 
 fn proven(proof: Result<Proof>) -> Exercise {
     match proof {
-        Ok(Proof::Proven(exercise)) => exercise,
+        Ok(Proof::Proven(exercise)) => *exercise,
         other => panic!("expected a proven exercise, got {other:?}"),
     }
 }

@@ -15,7 +15,7 @@ mod tests;
 /// What a proof found.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Proof {
-    Proven(Exercise),
+    Proven(Box<Exercise>),
     /// Why the draft cannot stand, written for the model that drafted it.
     Unproven(String),
 }
@@ -117,7 +117,7 @@ pub async fn prove(kind: &Kind, draft: Draft, cancel: CancellationToken) -> Resu
     if let Some(reason) = kind.truth.unambiguous(&exercise, cancel).await? {
         return Ok(Proof::Unproven(reason));
     }
-    Ok(Proof::Proven(exercise))
+    Ok(Proof::Proven(Box::new(exercise)))
 }
 
 enum Start {
