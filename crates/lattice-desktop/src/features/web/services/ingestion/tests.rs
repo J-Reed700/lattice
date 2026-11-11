@@ -92,7 +92,6 @@ impl IngestedDocumentStorePort for MockIndexStorage {
 }
 
 #[tokio::test]
-#[ignore = "requires tokenizer vocabulary file"]
 async fn test_ingest_url_with_mock_article() {
     let mock_article_extractor = Arc::new(MockArticleExtractorService::new());
     let custom_article = CleanArticle {
@@ -134,7 +133,6 @@ async fn test_ingest_url_with_mock_article() {
 }
 
 #[tokio::test]
-#[ignore = "requires tokenizer vocabulary file"]
 async fn test_chunk_text() {
     let service = create_test_service();
 
