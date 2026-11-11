@@ -1,34 +1,5 @@
-// BGE-M3 Model Manager
-// This module handles downloading the BGE-M3 embedding model from HuggingFace.
-// ## Architecture Note: Why Hardcoded URLs?
-// While we have a domain-driven multi-file download infrastructure (see
-// `domain/modules/model_metadata.rs` with `ModelFile` and `CuratedModel`), this manager
-// uses hardcoded constants for BGE-M3. This is intentional and follows the
-// "ruthless simplicity" principle:
-// - **Current**: BGE-M3 is our only embedding model and requires 5 specific files
-// - **Simple**: Direct URL constants are easy to understand and debug
-// - **Working**: This approach is proven and tested
-// The domain-driven infrastructure exists for:
-// - Future model additions (when we support multiple embedding models)
-// - User-provided models (when that feature is needed)
-// - Complex model configurations (versioning, variants, etc.)
-// ## BGE-M3 File Structure
-// BGE-M3 ONNX model requires 5 files:
-// 1. `model.onnx` - Main ONNX model graph (724 KB)
-// 2. `model.onnx_data` - External tensor data (2.27 GB) **REQUIRED**
-// 3. `tokenizer.json` - Tokenizer configuration
-// 4. `vocab.txt` - Vocabulary file
-// 5. `config.json` - Model configuration
-// IMPORTANT: model.onnx_data is NOT optional - ONNX Runtime loads it automatically
-// when the main model.onnx file references external data. Missing this file
-// causes "failed to load model" errors.
-// ## When to Use Domain Infrastructure
-// Consider migrating to domain-driven approach when:
-// - We support multiple embedding models (e.g., e5-large, instructor-xl)
-// - Users can choose/add custom models
-// - Models have complex version/variant management
-// - We need dynamic model discovery from HuggingFace API
-// Until then, keep it simple with hardcoded constants.
+// Downloads the reranker GGUF from its pinned commit, with resume, retry and
+// checksum verification, and reports progress through Tauri events.
 
 use crate::infrastructure::file_system::compute_file_sha256_async;
 use crate::infrastructure::services::traits::ModelManagerTrait;
@@ -45,19 +16,8 @@ use tauri::Emitter;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-// BGE-M3 embedding model URLs
-const MODEL_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx";
-const MODEL_DATA_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/onnx/model.onnx_data";
-const TOKENIZER_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/tokenizer.json";
-const VOCAB_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/vocab.txt";
-const CONFIG_URL: &str = "https://huggingface.co/BAAI/bge-m3/resolve/main/config.json";
-
-// NOTE: Update this checksum after downloading the actual model
-// To calculate: sha256sum model.onnx or certUtil -hashfile model.onnx SHA256
-const MODEL_CHECKSUM: Option<&str> = None; // Set to Some("actual_hash") when known
 const MAX_RETRIES: u32 = 3;
 const RETRY_DELAY_MS: u64 = 1000;
-const MIN_REQUIRED_SPACE_MB: u64 = 3000; // 3000MB minimum for BGE-M3 model + external data (2.27 GB total)
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DownloadProgress {
@@ -184,72 +144,6 @@ impl ModelManager {
     fn reset_download_progress(&self) {
         self.download_current_bytes.store(0, Ordering::Relaxed);
         self.download_total_bytes.store(0, Ordering::Relaxed);
-    }
-
-    pub async fn ensure_model_available(&self) -> Result<PathBuf> {
-        let model_path = self.model_dir.join("model.onnx");
-        let tokenizer_path = self.model_dir.join("tokenizer.json");
-
-        if model_path.exists() && tokenizer_path.exists() {
-            tracing::info!("Models already exist at {:?}", self.model_dir);
-            return Ok(model_path);
-        }
-
-        tracing::info!("Models not found, initiating download...");
-        match self.download_all_models().await {
-            Ok(_) => {
-                self.emit_complete("bge-m3");
-                self.reset_download_progress();
-                Ok(model_path)
-            }
-            Err(e) => {
-                self.emit_error("bge-m3", &e.to_string());
-                self.reset_download_progress();
-                Err(e)
-            }
-        }
-    }
-
-    async fn download_all_models(&self) -> Result<()> {
-        fs::create_dir_all(&self.model_dir)
-            .await
-            .context("Failed to create model directory")?;
-
-        self.check_disk_space().await?;
-
-        // Track download start time for elapsed_seconds calculation
-        if let Ok(mut guard) = self.download_start_time.lock() {
-            *guard = Some(std::time::Instant::now());
-        }
-
-        // BGE-M3 requires these 5 files - hardcoded for simplicity
-        // See module-level docs for when to migrate to domain-driven approach
-        let files = vec![
-            ("model.onnx", MODEL_URL, MODEL_CHECKSUM),
-            ("model.onnx_data", MODEL_DATA_URL, None), // REQUIRED: 2.27 GB external data
-            ("tokenizer.json", TOKENIZER_URL, None),
-            ("vocab.txt", VOCAB_URL, None),
-            ("config.json", CONFIG_URL, None),
-        ];
-
-        for (filename, url, checksum) in files {
-            let target_path = self.model_dir.join(filename);
-
-            if target_path.exists() {
-                tracing::info!("{} already exists, skipping", filename);
-                continue;
-            }
-
-            tracing::info!("Downloading {}...", filename);
-            self.download_with_retry(url, &target_path, filename, checksum, "bge-m3")
-                .await?;
-
-            if self.is_cancelled.load(Ordering::Relaxed) {
-                return Err(AppError::Other("Download cancelled by user".to_string()));
-            }
-        }
-
-        Ok(())
     }
 
     async fn download_with_retry(
@@ -486,22 +380,6 @@ impl ModelManager {
         self.is_cancelled.store(true, Ordering::Relaxed);
     }
 
-    pub fn get_model_path(&self) -> PathBuf {
-        self.model_dir.join("model.onnx")
-    }
-
-    pub fn get_tokenizer_path(&self) -> PathBuf {
-        self.model_dir.join("tokenizer.json")
-    }
-
-    pub async fn is_model_ready(&self) -> bool {
-        let model_path = self.get_model_path();
-        let tokenizer_path = self.get_tokenizer_path();
-
-        tokio::fs::metadata(&model_path).await.is_ok()
-            && tokio::fs::metadata(&tokenizer_path).await.is_ok()
-    }
-
     /// Download the reranker GGUF from its pinned commit unless it is already
     /// here, and verify its SHA-256.
     pub async fn ensure_reranker_available(&self) -> Result<PathBuf> {
@@ -532,9 +410,12 @@ impl ModelManager {
                 .await
                 .context("Failed to create reranker directory")?;
         }
+        if let Ok(mut guard) = self.download_start_time.lock() {
+            *guard = Some(std::time::Instant::now());
+        }
+        tracing::info!("Downloading reranker {}...", CURATED_RERANKER.file);
         // A file of another size is a stale or foreign one; the download
         // finishes by renaming over it.
-        tracing::info!("Downloading reranker {}...", CURATED_RERANKER.file);
         self.download_with_retry(
             &CURATED_RERANKER.url(),
             gguf,
@@ -561,76 +442,10 @@ impl ModelManager {
             .await
             .is_ok_and(|metadata| metadata.len() == CURATED_RERANKER.bytes)
     }
-
-    async fn check_disk_space(&self) -> Result<()> {
-        let mut disks = sysinfo::Disks::new_with_refreshed_list();
-        disks.refresh();
-
-        let model_dir_canonical = match self.model_dir.canonicalize() {
-            Ok(path) => path,
-            Err(err) => {
-                tracing::warn!(
-                    "Failed to canonicalize model_dir for disk-space check, proceeding: {err}"
-                );
-                return Ok(());
-            }
-        };
-
-        let matched = disks
-            .list()
-            .iter()
-            .filter(|disk| model_dir_canonical.starts_with(disk.mount_point()))
-            .max_by_key(|disk| disk.mount_point().as_os_str().len());
-
-        let Some(disk) = matched else {
-            tracing::warn!(
-                "No disk found for model_dir {:?}; skipping disk-space check",
-                model_dir_canonical
-            );
-            return Ok(());
-        };
-
-        let free_mb = disk.available_space() / (1024 * 1024);
-        if free_mb < MIN_REQUIRED_SPACE_MB {
-            return Err(AppError::Other(format!(
-                "Insufficient disk space: {} MB available, {} MB required. \
-                 Please free up disk space and try again.",
-                free_mb, MIN_REQUIRED_SPACE_MB
-            )));
-        }
-
-        tracing::info!(
-            "Disk space check passed: {} MB available on {:?}",
-            free_mb,
-            disk.mount_point()
-        );
-        Ok(())
-    }
-}
-
-pub async fn ensure_model_downloaded(model_dir: impl AsRef<Path>) -> Result<PathBuf> {
-    let manager = ModelManager::new(model_dir.as_ref().to_path_buf())?;
-    manager.ensure_model_available().await
 }
 
 #[async_trait]
 impl ModelManagerTrait for ModelManager {
-    async fn ensure_model_available(&self) -> Result<PathBuf> {
-        self.ensure_model_available().await
-    }
-
-    async fn is_model_ready(&self) -> bool {
-        self.is_model_ready().await
-    }
-
-    fn get_model_path(&self) -> PathBuf {
-        self.get_model_path()
-    }
-
-    fn get_tokenizer_path(&self) -> PathBuf {
-        self.get_tokenizer_path()
-    }
-
     async fn ensure_reranker_available(&self) -> Result<PathBuf> {
         self.ensure_reranker_available().await
     }
@@ -654,15 +469,6 @@ impl ModelManagerTrait for ModelManager {
         }
         let current = self.download_current_bytes.load(Ordering::Relaxed);
         Some(current as f32 / total as f32)
-    }
-
-    fn get_model_info(&self) -> crate::infrastructure::services::traits::ModelInfo {
-        crate::infrastructure::services::traits::ModelInfo {
-            name: "BAAI/bge-m3".to_string(),
-            version: "1.0.0".to_string(),
-            size_bytes: None,
-            is_downloaded: self.get_model_path().exists(),
-        }
     }
 }
 

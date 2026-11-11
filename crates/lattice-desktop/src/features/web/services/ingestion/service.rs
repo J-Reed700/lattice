@@ -12,7 +12,6 @@ use lattice_core::application::services::live_index::{
 };
 use lattice_core::shared::error::{AppError, Result};
 use std::sync::Arc;
-use tokenizers::Tokenizer;
 
 /// Web ingestion: extracts an article from a URL, archives it as markdown,
 /// chunks it by the embedding model's input policy, embeds the chunks and
@@ -22,10 +21,6 @@ pub struct WebIngestionService {
     pub(super) web_archive: Arc<dyn WebArchiveServiceTrait>,
     pub(super) embedding_service: Arc<dyn EmbeddingPort>,
     pub(super) index_storage: Arc<dyn IngestedDocumentStorePort>,
-    // reason: required dependency of the public constructors and of the builder's
-    // missing-dependency check; chunking currently goes through the embedding service.
-    #[allow(dead_code)]
-    pub(super) tokenizer: Arc<Tokenizer>,
     pub(super) config: WebIngestionConfig,
     /// Live vector index; see [`WebIngestionServiceBuilder::vector_search`].
     pub(super) vector_search: Option<Arc<dyn VectorSearchPort>>,
@@ -40,14 +35,12 @@ impl WebIngestionService {
         web_archive: Arc<dyn WebArchiveServiceTrait>,
         embedding_service: Arc<dyn EmbeddingPort>,
         index_storage: Arc<dyn IngestedDocumentStorePort>,
-        tokenizer: Arc<Tokenizer>,
     ) -> Self {
         Self {
             article_extractor,
             web_archive,
             embedding_service,
             index_storage,
-            tokenizer,
             config: WebIngestionConfig::default(),
             vector_search: None,
             query_cache: None,
@@ -65,7 +58,6 @@ impl WebIngestionService {
         web_archive: Arc<dyn WebArchiveServiceTrait>,
         embedding_service: Arc<dyn EmbeddingPort>,
         index_storage: Arc<dyn IngestedDocumentStorePort>,
-        tokenizer: Arc<Tokenizer>,
         config: WebIngestionConfig,
     ) -> Result<Self> {
         Self::validate_config(&config)?;
@@ -75,7 +67,6 @@ impl WebIngestionService {
             web_archive,
             embedding_service,
             index_storage,
-            tokenizer,
             config,
             vector_search: None,
             query_cache: None,

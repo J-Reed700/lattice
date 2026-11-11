@@ -17,8 +17,7 @@
 //! without it, the bundled build in `binaries/` is used.
 //!
 //! `RERANKER` is a reranker GGUF, served the same way as the app serves it
-//! (`llama-server --reranking`), or a Candle checkpoint directory, as earlier
-//! versions of the app ran it.
+//! (`llama-server --reranking`).
 //!
 //! `--mode embedding` (the default) keeps the historical behaviour: rank documents by the
 //! maximum passage cosine of the raw embedding model, optionally reranking the top-48 pool.
@@ -47,7 +46,7 @@ mod production;
 
 use lattice::features::embedding::llama_cpp::LlamaEmbeddingService;
 use lattice::features::search::engine::llama_reranker::LlamaReranker;
-use lattice::features::search::engine::reranker::{fuse_rerank_order, load_reranker, Reranker};
+use lattice::features::search::engine::reranker::{fuse_rerank_order, Reranker};
 use lattice::infrastructure::vector_index::{VectorIndexCompression, VectorQuantization};
 use lattice::interfaces::di::modules::standalone::{open_gguf, StandaloneServers};
 use lattice_core::application::ports::EmbeddingPort;
@@ -436,7 +435,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 Arc::new(StandaloneServers::from_env()),
             )?))
         }
-        Some(path) => Some(load_reranker(path).await?),
+        Some(path) => {
+            return Err(format!("the reranker must be a .gguf file, got {}", path.display()).into())
+        }
         None => None,
     };
     match args.mode {
@@ -654,8 +655,12 @@ mod tests {
         );
         assert_eq!(parsed.rerank_depth, None);
 
-        let with_reranker = args(&["starter.json", "/models/rr"]).expect("reranker arg parses");
-        assert_eq!(with_reranker.reranker, Some(PathBuf::from("/models/rr")));
+        let with_reranker =
+            args(&["starter.json", "/models/rr.gguf"]).expect("reranker arg parses");
+        assert_eq!(
+            with_reranker.reranker,
+            Some(PathBuf::from("/models/rr.gguf"))
+        );
     }
 
     #[test]

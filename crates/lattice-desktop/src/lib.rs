@@ -75,28 +75,6 @@ pub fn get_model_dir(app: &AppHandle) -> Result<PathBuf> {
     Ok(app_data.join("models"))
 }
 
-/// Get the path to the ONNX model file.
-///
-/// Returns the model directory joined with "model.onnx".
-///
-/// # Errors
-///
-/// Returns an error if the model directory cannot be determined.
-pub fn get_model_path(app: &AppHandle) -> Result<PathBuf> {
-    Ok(get_model_dir(app)?.join("model.onnx"))
-}
-
-/// Get the path to the tokenizer file.
-///
-/// Returns the model directory joined with "tokenizer.json".
-///
-/// # Errors
-///
-/// Returns an error if the model directory cannot be determined.
-pub fn get_tokenizer_path(app: &AppHandle) -> Result<PathBuf> {
-    Ok(get_model_dir(app)?.join("tokenizer.json"))
-}
-
 /// Library version
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
