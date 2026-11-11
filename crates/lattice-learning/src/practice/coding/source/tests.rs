@@ -1,8 +1,7 @@
 #![allow(clippy::indexing_slicing, clippy::unwrap_used, clippy::expect_used)]
 
 use super::*;
-use crate::persistence::hash_text;
-use crate::practice::coding::proof::fakes::{Behaviour, FakeRunner, ScriptedModel};
+use crate::practice::coding::proof::fakes::{Behaviour, FakeRunner, ScriptedModel, SCALE_DIGEST};
 use crate::practice::kinds::program::shape::solution_piece;
 use crate::practice::kinds::program::toolchain::FakeToolchains;
 use crate::practice::kinds::program::{kind, KIND};
@@ -81,7 +80,7 @@ fn answer() -> Value {
     json!({
         "title": "Pair with a given sum",
         "statement": "Return the positions of the two numbers that add up to the target.",
-        "function": "pair_positions",
+        "functionName": "pair_positions",
         "params": [
             {"name": "numbers", "annotation": "list[int]"},
             {"name": "target", "annotation": "int"}
@@ -214,6 +213,51 @@ async fn a_statement_that_names_its_pattern_is_refused_and_asked_again() {
 }
 
 #[tokio::test]
+async fn the_rules_state_what_a_scale_input_may_be_built_from() {
+    let runner = runner(killers());
+    let (_, model) = built(build(vec![answer()], &runner, &request(Form::Build)).await);
+    assert!(model.texts()[0].contains(
+        "- A scale case gives an argument expression, not a literal, built only from calls of range, list, tuple, dict, set, str, int, len, sum, min, max, sorted, reversed, zip and enumerate, literals, arithmetic, comparisons, conditional expressions, indexing and comprehensions, such as list(range(50000)), [3] * 100000 or [i * 7919 % 100003 for i in range(100000)]."
+    ));
+}
+
+#[tokio::test]
+async fn the_function_is_read_from_function_name_and_the_schema_asks_for_that_key() {
+    let runner = runner(killers());
+    let (problem, _) = built(build(vec![answer()], &runner, &request(Form::Build)).await);
+    assert_eq!(problem.spec.signature.function, "pair_positions");
+    let schema = schema();
+    let required: Vec<&str> = schema["required"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    assert!(required.contains(&"functionName"), "{required:?}");
+    assert!(!required.contains(&"function"), "{required:?}");
+    assert!(schema["properties"].get("functionName").is_some());
+    assert!(schema["properties"].get("function").is_none());
+}
+
+#[tokio::test]
+async fn source_in_the_function_name_is_refused_and_asked_again() {
+    let whole = with(
+        answer(),
+        "functionName",
+        json!(
+            "def pair_positions(numbers, target):
+    return []"
+        ),
+    );
+    let runner = runner(killers());
+    let (problem, model) =
+        built(build(vec![whole, answer()], &runner, &request(Form::Build)).await);
+    assert_eq!(model.calls(), 2);
+    assert!(model.texts()[1].contains("is not a Python function name."));
+    assert_eq!(problem.spec.signature.function, "pair_positions");
+}
+
+#[tokio::test]
 async fn a_title_that_names_an_alias_of_its_pattern_is_refused() {
     let alias = PROBLEM_PATTERNS
         .iter()
@@ -311,7 +355,7 @@ async fn cases_are_examples_then_hidden_then_scale_with_the_scale_digest_and_tim
     let scale = problem.cases.last().unwrap();
     assert!(scale.scale);
     assert_eq!(scale.expected, None);
-    assert_eq!(scale.digest, Some(hash_text("'big'")));
+    assert_eq!(scale.digest.as_deref(), Some(SCALE_DIGEST));
     assert_eq!(problem.reference_ms.get("scale-1"), Some(&5));
     assert!(problem
         .cases
