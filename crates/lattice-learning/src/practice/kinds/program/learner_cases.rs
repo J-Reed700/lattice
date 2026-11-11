@@ -1,6 +1,7 @@
 //! The cases a learner writes for a program: the arguments of a call and what it should return.
 
-use crate::practice::session::kind::LearnerCases;
+use crate::practice::session::kind::{Citation, LearnerCases};
+use crate::practice::session::record::SessionLearnerCase;
 use lattice_core::domain::learning::practice::work::Brief;
 use lattice_core::shared::error::{AppError, Result};
 use serde::Deserialize;
@@ -28,5 +29,20 @@ impl LearnerCases for ProgramLearnerCases {
             body.args.join(", "),
             body.expected
         ))
+    }
+
+    fn key(&self) -> String {
+        String::new()
+    }
+
+    fn account(&self, _brief: &Brief, _case: &SessionLearnerCase) -> Result<serde_json::Value> {
+        Ok(serde_json::Value::Null)
+    }
+
+    fn cited(&self) -> Citation {
+        Citation {
+            tag: String::new(),
+            sentence: String::new(),
+        }
     }
 }

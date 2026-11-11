@@ -1,6 +1,7 @@
 //! A kind of work, as a record of small roles. The engine calls these and nothing else.
 
 use crate::practice::session::observation::Observation;
+use crate::practice::session::record::{SessionCheck, SessionLearnerCase};
 use async_trait::async_trait;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::domain::learning::practice::work::{
@@ -92,6 +93,16 @@ pub trait Wording: Send + Sync {
 
     fn task_noun(&self) -> String {
         "task".to_owned()
+    }
+
+    /// What a session is called in the debrief's opening sentence, without an article.
+    fn session_noun(&self) -> String {
+        "practice session".to_owned()
+    }
+
+    /// The checks, in the plural, as the debrief lists what it shows beside the scores.
+    fn check_nouns(&self) -> String {
+        "checks".to_owned()
     }
 
     fn piece_noun(&self) -> String {
@@ -197,6 +208,85 @@ pub trait Hinting: Send + Sync {
 pub trait LearnerCases: Send + Sync {
     /// A case the learner wrote, on one line.
     fn show(&self, brief: &Brief, body: &serde_json::Value) -> Result<String>;
+    /// The key the debrief's list of the learner's cases sits under.
+    fn key(&self) -> String;
+    /// One case the learner wrote, with the verdict it got, as the debrief's model reads it.
+    fn account(&self, brief: &Brief, case: &SessionLearnerCase) -> Result<Value>;
+    /// How the debrief's model cites one of them.
+    fn cited(&self) -> Citation;
+}
+
+/// How the debrief's model cites one kind of evidence the kind names: the tag of its items and the sentence of the
+/// system text that says what the item's fields hold.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Citation {
+    pub tag: String,
+    pub sentence: String,
+}
+
+/// One thing a session is scored on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Criterion {
+    pub id: String,
+    pub title: String,
+    pub earns: String,
+}
+
+/// What the debrief states about a strong answer beside the scores.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Statement {
+    /// The clause that names them in the opening sentence.
+    pub names: String,
+    /// The key of each in the answer.
+    pub keys: Vec<String>,
+    /// The sentence that says what each holds.
+    pub says: String,
+}
+
+/// What a session of a form is scored on.
+pub trait Rubric: Send + Sync {
+    /// The criteria in the order the scorecard lists them.
+    fn criteria(&self, form: Form) -> Vec<Criterion>;
+    /// What the debrief states beside the scores. None when the kind states nothing.
+    fn statement(&self, form: Form) -> Option<Statement>;
+}
+
+/// The session's work as the debrief's model reads and cites it. A refusal is an `AppError::InvalidInput` worded for
+/// the model; any other error is a fault.
+pub trait Account: Send + Sync {
+    /// The key the exercise sits under.
+    fn exercise_key(&self) -> String;
+    /// The exercise with its reference: the debrief is the one reader that sees it.
+    fn exercise(&self, exercise: &Exercise) -> Result<Value>;
+    /// The key the form of the session sits under.
+    fn form_key(&self) -> String;
+    fn form(&self, form: Form) -> Result<Value>;
+    /// The key the list of checks sits under.
+    fn checks_key(&self) -> String;
+    /// One check, given the check made before it.
+    fn check(
+        &self,
+        exercise: &Exercise,
+        check: &SessionCheck,
+        before: Option<&SessionCheck>,
+    ) -> Result<Value>;
+    /// A piece no check holds: the learner's final draft.
+    fn piece(&self, exercise: &Exercise, piece: &Piece) -> Result<Value>;
+    /// How the model cites parts of the piece of a check.
+    fn cites_parts(&self) -> Citation;
+    /// How the model cites a check.
+    fn cites_check(&self) -> Citation;
+    /// The fields an evidence item has beyond `kind`, `ref` and `text`: name and JSON schema. Every one is required.
+    fn fields(&self) -> Vec<(String, Value)>;
+    /// The sentence that says to leave the fields an item does not use empty.
+    fn leave_empty(&self) -> String;
+    /// The parts of the piece of `check` that an item's fields name. Refuses a part the piece does not hold.
+    fn parts(
+        &self,
+        exercise: &Exercise,
+        check: &SessionCheck,
+        fields: &Map<String, Value>,
+    ) -> Result<Vec<PartRef>>;
 }
 
 /// Enables Complete: a piece with parts emptied, and with one part put back.
@@ -244,6 +334,8 @@ pub struct Kind {
     pub wording: Arc<dyn Wording>,
     pub reply_guard: Arc<dyn ReplyGuard>,
     pub hinting: Arc<dyn Hinting>,
+    pub rubric: Arc<dyn Rubric>,
+    pub account: Arc<dyn Account>,
     pub checker: Arc<dyn Checker>,
     pub parts: Arc<dyn Parts>,
     pub diff: Arc<dyn Diff>,

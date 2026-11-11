@@ -4,10 +4,11 @@
 
 use crate::practice::practical_dto::{LearningSimulationSpeaker, LearningSimulationTurnDto};
 use crate::practice::session::kind::{
-    Checker, Diff, Established, Gaps, Hint, HintAsk, Hinting, Kind, LearnerCases, Order, Parts,
-    ReplyGuard, Showing, Truth, Wording,
+    Account, Checker, Citation, Criterion, Diff, Established, Gaps, Hint, HintAsk, Hinting, Kind,
+    LearnerCases, Order, Parts, ReplyGuard, Rubric, Showing, Statement, Truth, Wording,
 };
 use crate::practice::session::observation::{ClockView, Coverage, Observation};
+use crate::practice::session::record::{SessionCheck, SessionLearnerCase};
 use async_trait::async_trait;
 use lattice_core::application::ports::llm_port::{
     CompletionInput, CompletionRequest, CompletionResponse,
@@ -60,9 +61,34 @@ struct ReplyConfig {
     solved_by: Option<String>,
 }
 
+/// What the fake's rubric says, as plain configured values.
+struct RubricConfig {
+    criteria: Vec<Criterion>,
+    statement: Option<Statement>,
+}
+
+impl Default for RubricConfig {
+    fn default() -> Self {
+        let criterion = |id: &str, title: &str, earns: &str| Criterion {
+            id: id.to_owned(),
+            title: title.to_owned(),
+            earns: earns.to_owned(),
+        };
+        Self {
+            criteria: vec![
+                criterion("accuracy", "Accuracy", "Got the letters right."),
+                criterion("process", "Process", "Worked in small steps."),
+                criterion("clarity", "Clarity", "Said what they were doing."),
+            ],
+            statement: None,
+        }
+    }
+}
+
 /// The roles of the fake kind, one struct for all of them.
 pub(crate) struct Letters {
     reference: Vec<String>,
+    rubric: RubricConfig,
     ambiguous: Option<String>,
     reply: ReplyConfig,
     /// The rungs the fake has no hint for.
@@ -359,6 +385,122 @@ impl LearnerCases for Letters {
         let letter = body.get("letter").and_then(Value::as_str).unwrap_or("?");
         Ok(format!("letter {letter}"))
     }
+
+    fn key(&self) -> String {
+        "cases".to_owned()
+    }
+
+    fn account(&self, _brief: &Brief, case: &SessionLearnerCase) -> Result<Value> {
+        Ok(json!({
+            "ordinal": case.ordinal,
+            "letter": case.body.get("letter"),
+            "verdict": case.verdict.label().to_lowercase(),
+        }))
+    }
+
+    fn cited(&self) -> Citation {
+        Citation {
+            tag: "case".to_owned(),
+            sentence: "A case: ref is the case's ordinal.".to_owned(),
+        }
+    }
+}
+
+impl Rubric for Letters {
+    fn criteria(&self, _form: Form) -> Vec<Criterion> {
+        self.rubric.criteria.clone()
+    }
+
+    fn statement(&self, _form: Form) -> Option<Statement> {
+        self.rubric.statement.clone()
+    }
+}
+
+impl Account for Letters {
+    fn exercise_key(&self) -> String {
+        "exercise".to_owned()
+    }
+
+    fn exercise(&self, exercise: &Exercise) -> Result<Value> {
+        Ok(json!({
+            "title": exercise.brief.title,
+            "reference": slots_of(&exercise.reference)?,
+        }))
+    }
+
+    fn form_key(&self) -> String {
+        "form".to_owned()
+    }
+
+    fn form(&self, form: Form) -> Result<Value> {
+        Ok(json!(form.label().to_lowercase()))
+    }
+
+    fn checks_key(&self) -> String {
+        "checks".to_owned()
+    }
+
+    fn check(
+        &self,
+        _exercise: &Exercise,
+        check: &SessionCheck,
+        before: Option<&SessionCheck>,
+    ) -> Result<Value> {
+        let slots = match before {
+            Some(before) if before.piece == check.piece => {
+                json!(format!("the same as check {}", before.id))
+            }
+            _ => json!(slots_of(&check.piece)?),
+        };
+        Ok(json!({
+            "id": check.id,
+            "scope": check.scope.label(),
+            "passed": check.report.results.iter().filter(|result| result.status == CaseStatus::Passed).count(),
+            "total": check.report.results.len(),
+            "slots": slots,
+        }))
+    }
+
+    fn piece(&self, _exercise: &Exercise, piece: &Piece) -> Result<Value> {
+        Ok(json!(slots_of(piece)?))
+    }
+
+    fn cites_parts(&self) -> Citation {
+        Citation {
+            tag: "slot".to_owned(),
+            sentence: "A slot: ref is a check id, index is a slot of that check, counted from 0."
+                .to_owned(),
+        }
+    }
+
+    fn cites_check(&self) -> Citation {
+        Citation {
+            tag: "check".to_owned(),
+            sentence: "A check: ref is a check id.".to_owned(),
+        }
+    }
+
+    fn fields(&self) -> Vec<(String, Value)> {
+        vec![("index".to_owned(), json!({"type": "integer"}))]
+    }
+
+    fn leave_empty(&self) -> String {
+        "Leave index 0 when a slot is not cited.".to_owned()
+    }
+
+    /// The slot is not checked against the piece here: that is the engine's to require.
+    fn parts(
+        &self,
+        _exercise: &Exercise,
+        _check: &SessionCheck,
+        fields: &Map<String, Value>,
+    ) -> Result<Vec<PartRef>> {
+        let index = fields
+            .get("index")
+            .and_then(Value::as_u64)
+            .ok_or_else(|| AppError::InvalidInput("index is a whole number from 0.".into()))?;
+        Ok(vec![PartRef::new(&index.to_string())])
+    }
 }
 
 impl Gaps for Letters {
@@ -440,6 +582,7 @@ impl Truth for Letters {
 /// Builds the fake kind with the roles and needs a test chooses.
 pub(crate) struct FakeKindBuilder {
     reference: Vec<String>,
+    rubric: RubricConfig,
     gaps: bool,
     order: bool,
     learner_cases: bool,
@@ -455,6 +598,7 @@ pub(crate) struct FakeKindBuilder {
 pub(crate) fn fake_kind(reference: &[&str]) -> FakeKindBuilder {
     FakeKindBuilder {
         reference: reference.iter().map(|slot| (*slot).to_owned()).collect(),
+        rubric: RubricConfig::default(),
         gaps: false,
         order: false,
         learner_cases: false,
@@ -479,6 +623,30 @@ impl FakeKindBuilder {
 
     pub(crate) fn with_order(mut self) -> Self {
         self.order = true;
+        self
+    }
+
+    /// The criteria a session is scored on, as (id, title, earns).
+    pub(crate) fn scored_on(mut self, criteria: &[(&str, &str, &str)]) -> Self {
+        self.rubric.criteria = criteria
+            .iter()
+            .map(|(id, title, earns)| Criterion {
+                id: (*id).to_owned(),
+                title: (*title).to_owned(),
+                earns: (*earns).to_owned(),
+            })
+            .collect();
+        self
+    }
+
+    /// The debrief states a model answer and a pitfall beside the scores.
+    pub(crate) fn stating_a_model_and_a_pitfall(mut self) -> Self {
+        self.rubric.statement = Some(Statement {
+            names: "the model answer and the pitfall to avoid".to_owned(),
+            keys: vec!["model".to_owned(), "pitfall".to_owned()],
+            says: "The model is how a strong learner fills the slots, and the pitfall is the mistake to avoid."
+                .to_owned(),
+        });
         self
     }
 
@@ -530,6 +698,7 @@ impl FakeKindBuilder {
         let observed = Arc::new(Mutex::new(Vec::new()));
         let roles = Arc::new(Letters {
             reference: self.reference,
+            rubric: self.rubric,
             ambiguous: self.ambiguous,
             reply: self.reply,
             off: self.off,
@@ -542,6 +711,8 @@ impl FakeKindBuilder {
             wording: roles.clone(),
             reply_guard: roles.clone(),
             hinting: roles.clone(),
+            rubric: roles.clone(),
+            account: roles.clone(),
             checker: roles.clone(),
             parts: roles.clone(),
             diff: roles.clone(),
