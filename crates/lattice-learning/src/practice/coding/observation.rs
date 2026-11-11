@@ -1,6 +1,5 @@
 //! What the counterpart may read of a coding session.
 
-use lattice_core::domain::learning::practice::work::{Form, Rung, Setting, Stage};
 use serde::Serialize;
 
 use crate::lab_runtime::LearningLabFile;
@@ -141,6 +140,7 @@ pub(crate) mod test_support {
         CaseCompare, CaseStatus, CaseVisibility, Misreading, Problem, ProblemCase,
         ProblemClarification, ProblemDifficulty, ProblemSignature, ProblemSpec, SignatureParam,
     };
+    use lattice_core::domain::learning::practice::work::{Form, Rung, Setting, Stage};
 
     pub const REFERENCE: &str = "def total(values):\n    return REFERENCE_SECRET_BODY\n";
     pub const MISREADING_ID: &str = "misreading-secret-id";
@@ -311,6 +311,7 @@ pub(crate) mod test_support {
 mod tests {
     use super::test_support::*;
     use super::*;
+    use lattice_core::domain::learning::practice::work::{Setting, Stage};
 
     fn file(content: &str) -> LearningLabFile {
         LearningLabFile {
