@@ -59,6 +59,7 @@ async fn live_client() -> Result<Arc<dyn LLMPort>> {
                 model,
                 auth_header_name: name,
                 auth_header_value: value,
+                ..Default::default()
             },
             ..Default::default()
         })?

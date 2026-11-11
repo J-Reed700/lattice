@@ -74,7 +74,9 @@ impl SystemModule {
     ) -> lattice_core::shared::error::Result<Self> {
         use crate::infrastructure::adapters::system_info::SystemInfoAdapter;
 
-        let settings = crate::features::settings::di::build(core.data_dir()).await?;
+        let settings =
+            crate::features::settings::di::build(core.data_dir(), core.credentials().clone())
+                .await?;
 
         let db_path = core.data_dir().join("lattice.db");
         let backup = crate::features::backup::di::build(

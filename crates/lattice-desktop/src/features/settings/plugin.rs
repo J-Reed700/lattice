@@ -2,13 +2,17 @@
 //!
 //! Thin plugin wrapper for settings CRUD operations via use cases.
 
+use crate::features::credentials::keys::CredentialKey;
+use crate::features::credentials::remote_auth::{
+    llama_cpp_value_is_set, ollama_value_is_set, saved_ollama_value_for,
+};
 use crate::features::settings::dto::{
     ExportSettingsRequestDto, ImportSettingsRequestDto, SettingsCategory, SettingsDto,
     UpdateSettingsRequestDto,
 };
 use crate::features::settings::text_files::{self, FileFilterDto, NativeDialogs};
 use crate::interfaces::di::Container;
-use lattice_core::application::ports::llm_port::InvalidationCause;
+use lattice_core::application::ports::llm_port::{InvalidationCause, RemoteServer};
 use lattice_core::domain::models::model_ref::CloudProvider;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::http::reqwest_client_builder;
@@ -188,9 +192,27 @@ async fn fetch_models_from_tags(client: &Client, base_url: &str) -> Result<Vec<S
     Ok(models)
 }
 
+/// Try an Ollama connection. A blank header value tries the one already
+/// stored under the same header name.
 #[tauri::command]
 #[specta::specta]
 pub async fn test_ollama_connection(
+    container: State<'_, Container>,
+    mut request: TestOllamaConnectionRequest,
+) -> Result<TestOllamaConnectionResponse, ApiError> {
+    if request.auth_header_value.trim().is_empty() {
+        let saved = container.get_settings_use_case().execute().await?;
+        request.auth_header_value = saved_ollama_value_for(
+            container.credentials().as_ref(),
+            &saved.llm,
+            &request.auth_header_name,
+        )
+        .await?;
+    }
+    probe_ollama_connection(request).await
+}
+
+pub(crate) async fn probe_ollama_connection(
     request: TestOllamaConnectionRequest,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
     let base_url =
@@ -310,6 +332,20 @@ pub async fn test_custom_tool(
     })
 }
 
+/// Fill in whether each remote auth header has a value, which the renderer
+/// shows in place of the value itself.
+async fn with_secret_flags(
+    container: &Container,
+    mut settings: SettingsDto,
+) -> Result<SettingsDto, ApiError> {
+    let credentials = container.credentials();
+    settings.llm.ollama_auth_header_value_set =
+        ollama_value_is_set(credentials.as_ref(), &settings.llm).await?;
+    settings.llm.llama_cpp.auth_header_value_set =
+        llama_cpp_value_is_set(credentials.as_ref(), &settings.llm.llama_cpp).await?;
+    Ok(settings)
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn get_settings(container: State<'_, Container>) -> Result<SettingsDto, ApiError> {
@@ -319,7 +355,34 @@ pub async fn get_settings(container: State<'_, Container>) -> Result<SettingsDto
         .await
         .map_err(ApiError::from)?;
 
-    Ok(settings)
+    with_secret_flags(&container, settings).await
+}
+
+/// Save (`Some`) or clear (`None`, or blank) the authentication header value
+/// of a remote model server. The value goes to the keyring and is never
+/// returned.
+#[tauri::command]
+#[specta::specta]
+pub async fn save_remote_auth_header_value(
+    container: State<'_, Container>,
+    server: RemoteServer,
+    value: Option<String>,
+) -> Result<(), ApiError> {
+    let key = match server {
+        RemoteServer::Ollama => CredentialKey::OllamaAuthHeader,
+        RemoteServer::LlamaCpp => CredentialKey::LlamaCppAuthHeader,
+    };
+    let credentials = container.credentials();
+    match value
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    {
+        Some(value) => credentials.set_api_key(key.as_str(), value).await?,
+        None => credentials.delete_api_key(key.as_str()).await?,
+    }
+    container.invalidate_llm_instances(InvalidationCause::RemoteAuthChanged { server });
+    Ok(())
 }
 
 #[tauri::command]
@@ -329,11 +392,27 @@ pub async fn get_settings_category(
     container: State<'_, Container>,
 ) -> Result<HashMap<String, serde_json::Value>, ApiError> {
     let category = parse_category(&category).map_err(ApiError::from)?;
-    let value = container
+    let mut value = container
         .get_settings_use_case()
         .get_category(category)
         .await
         .map_err(ApiError::from)?;
+    if category == SettingsCategory::Llm {
+        let settings = container.get_settings_use_case().execute().await?;
+        let flagged = with_secret_flags(&container, settings).await?.llm;
+        if let serde_json::Value::Object(fields) = &mut value {
+            fields.insert(
+                "ollamaAuthHeaderValueSet".into(),
+                flagged.ollama_auth_header_value_set.into(),
+            );
+            if let Some(serde_json::Value::Object(llama)) = fields.get_mut("llamaCpp") {
+                llama.insert(
+                    "authHeaderValueSet".into(),
+                    flagged.llama_cpp.auth_header_value_set.into(),
+                );
+            }
+        }
+    }
     match value {
         serde_json::Value::Object(fields) => Ok(fields.into_iter().collect()),
         _ => Err(ApiError::from(AppError::InvalidData(
@@ -372,7 +451,7 @@ pub async fn update_settings(
         tracing::warn!(error = %e, "failed to refresh file-access allowed roots after settings update");
     }
 
-    Ok(updated)
+    with_secret_flags(&container, updated).await
 }
 
 #[tauri::command]
@@ -384,7 +463,7 @@ pub async fn reset_settings(container: State<'_, Container>) -> Result<SettingsD
         .await
         .map_err(ApiError::from)?;
 
-    Ok(reset)
+    with_secret_flags(&container, reset).await
 }
 
 #[tauri::command]
@@ -442,7 +521,7 @@ pub async fn import_settings(
 
     let _ = tokio::fs::remove_file(&import_path).await;
 
-    Ok(imported.settings)
+    with_secret_flags(&container, imported.settings).await
 }
 
 /// Shows the platform's save dialog, offering `suggested_name`, and writes
@@ -656,6 +735,7 @@ pub fn init<R: Runtime>() -> TauriPlugin<R> {
             get_system_theme,
             validate_folder_path,
             test_ollama_connection,
+            save_remote_auth_header_value,
             crate::interfaces::commands::model_setup::test_llama_cpp_connection,
             test_custom_tool,
             add_watch_folder,

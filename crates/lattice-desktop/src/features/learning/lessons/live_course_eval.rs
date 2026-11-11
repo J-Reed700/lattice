@@ -190,13 +190,16 @@ impl CourseRecipe {
                 url: url.to_owned(),
                 model: self.server.model.clone(),
                 auth_header_name: header,
-                auth_header_value: value,
+                auth_header_value: value.clone(),
+                ..Default::default()
             },
             ..defaults
         };
         let mut merged = serde_json::to_value(&wired)?;
         merge(&mut merged, &patch);
-        let settings: LLMSettingsDto = serde_json::from_value(merged)?;
+        let mut settings: LLMSettingsDto = serde_json::from_value(merged)?;
+        // The header value is a credential and does not survive serialization.
+        settings.llama_cpp.auth_header_value = value;
         let mut missing = Vec::new();
         unknown_paths(&patch, &serde_json::to_value(&settings)?, "", &mut missing);
         if !missing.is_empty() {

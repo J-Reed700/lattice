@@ -124,6 +124,7 @@ impl ConfiguredModel {
                 model: model.into(),
                 auth_header_name,
                 auth_header_value,
+                ..Default::default()
             },
             ..Default::default()
         };

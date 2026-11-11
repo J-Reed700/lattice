@@ -58,7 +58,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
     },
     llm: {
       provider: 'auto',
-      llamaCpp: { url: 'http://localhost:8080', model: '', authHeaderName: '', authHeaderValue: '' },
+      llamaCpp: { url: 'http://localhost:8080', model: '', authHeaderName: '', authHeaderValueSet: false },
       model: 'gpt-oss:20b',
       temperature: 0.7,
       topP: 0.8,
@@ -79,7 +79,7 @@ export function makeAppSettings(overrides: Partial<AppSettings> = {}): AppSettin
       ollamaConfigured: false,
       ollamaUtilityModel: '',
       ollamaAuthHeaderName: '',
-      ollamaAuthHeaderValue: '',
+      ollamaAuthHeaderValueSet: false,
       timeoutSeconds: 30,
       streamResponses: true,
       prompts: {

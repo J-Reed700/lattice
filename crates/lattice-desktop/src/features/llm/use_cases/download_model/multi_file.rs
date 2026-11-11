@@ -4,6 +4,7 @@ use chrono::Utc;
 use tracing::{info, warn};
 use uuid::Uuid;
 
+use crate::features::credentials::keys::CredentialKey;
 use crate::features::llm::dto::DownloadModelResponseDto;
 use crate::infrastructure::adapters::fs::model_paths::ModelPaths;
 use lattice_core::domain::download::DownloadOperationState;
@@ -37,7 +38,11 @@ impl DownloadModelUseCase {
         );
 
         let auth_token = if curated.requires_auth {
-            match self.credentials.get_api_key("huggingface_token").await {
+            match self
+                .credentials
+                .get_api_key(CredentialKey::HuggingFaceToken.as_str())
+                .await
+            {
                 Ok(Some(token)) => {
                     info!(model_id = %model_id, "Model requires authentication, using HuggingFace token for all files");
                     Some(token)

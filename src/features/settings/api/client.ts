@@ -152,11 +152,22 @@ export const settingsApi = {
 
   /** Checks llama.cpp model discovery and a small chat completion. */
   testLlamaCppConnection: async (
-    request: Wire.LlamaCppSettingsDto,
+    request: Wire.TestLlamaCppConnectionRequest,
   ): Promise<ApiResult<TestOllamaConnectionResponse>> =>
     apiCall<Wire.TestOllamaConnectionResponse>('test_llama_cpp_connection', {
       request,
     }),
+
+  /**
+   * Stores (or, with null, deletes) a remote server's auth header value in the
+   * OS keyring. The value is never read back; settings report only whether
+   * one is set.
+   */
+  saveRemoteAuthHeaderValue: async (
+    server: Wire.RemoteServer,
+    value: string | null,
+  ): Promise<ApiResult<void>> =>
+    apiCall<void>('save_remote_auth_header_value', { server, value }),
 
   /** Lists models through the native Ollama API. */
   testOllamaConnection: async (

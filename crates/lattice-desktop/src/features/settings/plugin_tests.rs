@@ -107,14 +107,14 @@ async fn ollama_probe_lists_unique_trimmed_model_names_with_the_auth_header() {
         .await;
 
     let response =
-        test_ollama_connection(ollama(&format!("{}/", server.uri()), "X-Api-Key", "secret"))
+        probe_ollama_connection(ollama(&format!("{}/", server.uri()), "X-Api-Key", "secret"))
             .await
             .unwrap();
     assert_eq!(response.endpoint, "/api/tags");
     assert_eq!(response.models, vec!["llama3", "phi3"]);
 
     // Without the header the mock does not match and wiremock answers 404.
-    let refused = test_ollama_connection(ollama(&server.uri(), "", "")).await;
+    let refused = probe_ollama_connection(ollama(&server.uri(), "", "")).await;
     let error = refused.expect_err("unauthenticated probe fails");
     assert!(matches!(error.code, ErrorCode::NetworkError), "{error:?}");
 }
@@ -127,18 +127,18 @@ async fn ollama_probe_refuses_an_empty_model_list_and_bad_input() {
         .respond_with(ResponseTemplate::new(200).set_body_json(serde_json::json!({"models": []})))
         .mount(&server)
         .await;
-    assert!(test_ollama_connection(ollama(&server.uri(), "", ""))
+    assert!(probe_ollama_connection(ollama(&server.uri(), "", ""))
         .await
         .is_err());
 
-    let bad_url = test_ollama_connection(ollama("ftp://example.org", "", ""))
+    let bad_url = probe_ollama_connection(ollama("ftp://example.org", "", ""))
         .await
         .expect_err("ftp is refused");
     assert!(
         matches!(bad_url.code, ErrorCode::InvalidInput),
         "{bad_url:?}"
     );
-    let half_header = test_ollama_connection(ollama(&server.uri(), "X-Api-Key", ""))
+    let half_header = probe_ollama_connection(ollama(&server.uri(), "X-Api-Key", ""))
         .await
         .expect_err("a header name needs a value");
     assert!(

@@ -33,6 +33,7 @@ async fn role_models(settings: LLMSettingsDto, utility: Option<DownloadedModel>)
             models,
             None,
             LlmRuntime::default(),
+            Arc::new(crate::features::credentials::memory::InMemoryCredentials::default()),
         )),
         budget: Arc::new(SidecarBudget::new(
             None,

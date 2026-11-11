@@ -60,8 +60,7 @@ impl SettingsRepository {
     /// fails to parse on the next read.
     pub(super) async fn write_settings_file(&self, settings_file: &SettingsFile) -> Result<()> {
         // Serialize to JSON with pretty printing
-        let json = serde_json::to_string_pretty(settings_file)
-            .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
+        let json = Self::serialize_keeping_unmoved_secrets(settings_file)?;
 
         let temp_path = self.unique_temp_path();
 
@@ -92,6 +91,32 @@ impl SettingsRepository {
         }
 
         Ok(())
+    }
+
+    /// Serialize `settings_file`, adding back an auth header value that is
+    /// still in memory because the keyring has not taken it yet. Those fields
+    /// are never serialized, so without this the file would lose the value.
+    fn serialize_keeping_unmoved_secrets(settings_file: &SettingsFile) -> Result<String> {
+        let mut value = serde_json::to_value(settings_file)
+            .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
+        let llm = &settings_file.settings.llm;
+        for (pointer, secret) in [
+            ("/settings/llm", &llm.ollama_auth_header_value),
+            ("/settings/llm/llamaCpp", &llm.llama_cpp.auth_header_value),
+        ] {
+            let field = if pointer.ends_with("llamaCpp") {
+                "authHeaderValue"
+            } else {
+                "ollamaAuthHeaderValue"
+            };
+            if let (false, Some(serde_json::Value::Object(target))) =
+                (secret.is_empty(), value.pointer_mut(pointer))
+            {
+                target.insert(field.to_string(), serde_json::Value::String(secret.clone()));
+            }
+        }
+        serde_json::to_string_pretty(&value)
+            .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))
     }
 
     /// A temp path unique to this write, alongside the real settings file so

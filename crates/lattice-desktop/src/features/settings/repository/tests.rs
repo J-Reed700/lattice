@@ -12,6 +12,19 @@ async fn create_test_repository() -> (SettingsRepository, TempDir) {
     (repo, temp_dir)
 }
 
+async fn create_keyring_repository() -> (
+    SettingsRepository,
+    Arc<crate::features::credentials::memory::InMemoryCredentials>,
+    TempDir,
+) {
+    let temp_dir = TempDir::new().unwrap();
+    let keyring = Arc::new(crate::features::credentials::memory::InMemoryCredentials::default());
+    let repo = SettingsRepository::with_credentials(temp_dir.path().to_path_buf(), keyring.clone())
+        .await
+        .unwrap();
+    (repo, keyring, temp_dir)
+}
+
 #[tokio::test]
 async fn ollama_connection_registration_survives_provider_changes_and_reopening() {
     let (repo, dir) = create_test_repository().await;
@@ -119,8 +132,9 @@ async fn concurrent_updates_to_distinct_categories_do_not_lose_writes() {
 }
 
 #[tokio::test]
-async fn import_merges_and_restores_secrets_after_the_previous_writer_finishes() {
-    let (repo, _dir) = create_test_repository().await;
+async fn import_merges_and_keeps_stored_secrets_after_the_previous_writer_finishes() {
+    use crate::features::credentials::keys::CredentialKey;
+    let (repo, keyring, _dir) = create_keyring_repository().await;
     let mut imported = repo.get_all().await.unwrap();
     imported.llm.ollama_auth_header_name = "Authorization".into();
     imported.llm.ollama_auth_header_value.clear();
@@ -145,16 +159,14 @@ async fn import_merges_and_restores_secrets_after_the_previous_writer_finishes()
         !result.vault_just_enabled,
         "transition must use the state under the lock"
     );
-    assert_eq!(
-        result.settings.llm.ollama_auth_header_value,
-        "Bearer newly-rotated-token"
-    );
+    assert_eq!(result.settings.llm.ollama_auth_header_name, "Authorization");
     let saved = repo.get_all().await.unwrap();
     assert_eq!(saved.search.max_results, 42);
     assert!(saved.vault.enabled);
+    assert_eq!(saved.llm.ollama_auth_header_name, "Authorization");
     assert_eq!(
-        saved.llm.ollama_auth_header_value,
-        "Bearer newly-rotated-token"
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some("Bearer newly-rotated-token".to_string())
     );
 }
 
@@ -349,8 +361,9 @@ async fn test_export_and_import() {
 }
 
 #[tokio::test]
-async fn export_leaves_out_auth_tokens_and_import_restores_them() {
-    let (repo, temp_dir) = create_test_repository().await;
+async fn export_leaves_out_auth_tokens_and_import_keeps_the_stored_ones() {
+    use crate::features::credentials::keys::CredentialKey;
+    let (repo, keyring, temp_dir) = create_keyring_repository().await;
     let mut settings = repo.get_all().await.unwrap();
     settings.llm.ollama_auth_header_name = "Authorization".to_string();
     settings.llm.ollama_auth_header_value = "Bearer ollama-secret".to_string();
@@ -370,11 +383,16 @@ async fn export_leaves_out_auth_tokens_and_import_restores_them() {
         .await
         .unwrap()
         .settings;
+    assert_eq!(imported.llm.ollama_auth_header_name, "Authorization");
+    assert_eq!(imported.llm.llama_cpp.auth_header_name, "X-Api-Key");
     assert_eq!(
-        imported.llm.ollama_auth_header_value,
-        "Bearer ollama-secret"
+        keyring.stored(CredentialKey::OllamaAuthHeader.as_str()),
+        Some("Bearer ollama-secret".to_string())
     );
-    assert_eq!(imported.llm.llama_cpp.auth_header_value, "llama-secret");
+    assert_eq!(
+        keyring.stored(CredentialKey::LlamaCppAuthHeader.as_str()),
+        Some("llama-secret".to_string())
+    );
 }
 
 #[test]
@@ -383,7 +401,7 @@ fn a_header_whose_token_is_not_here_is_dropped_on_import() {
     imported.llm.ollama_auth_header_name = "Authorization".to_string();
     let existing = SettingsDto::default();
 
-    restore_redacted_secrets(&mut imported, &existing);
+    drop_unbacked_header_names(&mut imported, &existing, false, false);
 
     assert!(imported.llm.ollama_auth_header_name.is_empty());
     assert!(imported.llm.ollama_auth_header_value.is_empty());

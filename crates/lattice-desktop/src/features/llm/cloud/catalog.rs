@@ -29,17 +29,19 @@ pub struct CloudModelCatalogDto {
 }
 
 /// The key saved for `provider`, if one is.
-pub(crate) async fn saved_key(provider: CloudProvider) -> Result<Option<String>> {
-    tokio::task::spawn_blocking(move || {
-        crate::infrastructure::security::keyring_storage::SecureStorage::new()
-            .cloud_api_key(cloud_provider_id(provider))
-    })
-    .await
-    .map_err(|_| AppError::Security("Could not read the cloud API key".into()))?
+pub(crate) async fn saved_key(
+    credentials: &dyn CredentialsPort,
+    provider: CloudProvider,
+) -> Result<Option<String>> {
+    crate::features::credentials::keys::cloud_api_key(credentials, cloud_provider_id(provider))
+        .await
 }
 
-pub async fn list_models(provider: CloudProvider) -> Result<CloudModelCatalogDto> {
-    let key = saved_key(provider).await?;
+pub async fn list_models(
+    credentials: &dyn CredentialsPort,
+    provider: CloudProvider,
+) -> Result<CloudModelCatalogDto> {
+    let key = saved_key(credentials, provider).await?;
     catalog(
         provider,
         key.as_deref(),

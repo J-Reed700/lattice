@@ -5,6 +5,7 @@ use lattice_core::{
 };
 use tauri::State;
 
+use crate::features::credentials::remote_auth::ollama_auth_header;
 use crate::features::llm::cloud::catalog::{self, CloudModelCatalogDto};
 use crate::features::llm::cloud::limits;
 use crate::features::llm::engine::factory::reported_ollama_window;
@@ -13,8 +14,13 @@ use crate::interfaces::di::Container;
 /// Models available to a saved cloud credential. Never returns the key.
 #[tauri::command]
 #[specta::specta]
-pub async fn list_cloud_models(provider: CloudProvider) -> Result<CloudModelCatalogDto, ApiError> {
-    catalog::list_models(provider).await.map_err(ApiError::from)
+pub async fn list_cloud_models(
+    container: State<'_, Container>,
+    provider: CloudProvider,
+) -> Result<CloudModelCatalogDto, ApiError> {
+    catalog::list_models(container.credentials().as_ref(), provider)
+        .await
+        .map_err(ApiError::from)
 }
 
 /// What `model`'s provider reports it can take: the top of its window and
@@ -27,7 +33,8 @@ pub async fn get_model_limits(
 ) -> Result<ModelWindowDto, ApiError> {
     match model {
         ModelRef::Cloud { provider, model } => {
-            let Some(key) = catalog::saved_key(provider).await? else {
+            let Some(key) = catalog::saved_key(container.credentials().as_ref(), provider).await?
+            else {
                 return Ok(ModelWindowDto::default());
             };
             limits::report(provider, &model, &key)
@@ -36,7 +43,9 @@ pub async fn get_model_limits(
         }
         ModelRef::Ollama { model } => {
             let settings = container.get_settings_use_case().execute().await?;
-            reported_ollama_window(&settings.llm, &model)
+            let auth_header =
+                ollama_auth_header(container.credentials().as_ref(), &settings.llm).await?;
+            reported_ollama_window(&settings.llm, auth_header, &model)
                 .await
                 .map_err(ApiError::from)
         }

@@ -56,7 +56,13 @@ async fn loader_with(rows: &[lattice_core::domain::DownloadedModel]) -> ModelLoa
     for row in rows {
         models.save(row).await.unwrap();
     }
-    ModelLoader::new(models.clone(), models, None, LlmRuntime::default())
+    ModelLoader::new(
+        models.clone(),
+        models,
+        None,
+        LlmRuntime::default(),
+        Arc::new(crate::features::credentials::memory::InMemoryCredentials::default()),
+    )
 }
 
 /// A loader whose database must never be asked anything.
@@ -65,7 +71,13 @@ fn loader_without_database() -> ModelLoader {
         .connect_lazy("sqlite::memory:")
         .unwrap();
     let models = Arc::new(DownloadedModelRepository::new(pool));
-    ModelLoader::new(models.clone(), models, None, LlmRuntime::default())
+    ModelLoader::new(
+        models.clone(),
+        models,
+        None,
+        LlmRuntime::default(),
+        Arc::new(crate::features::credentials::memory::InMemoryCredentials::default()),
+    )
 }
 
 fn downloaded(model_id: &str, path: std::path::PathBuf) -> lattice_core::domain::DownloadedModel {
@@ -317,6 +329,7 @@ async fn a_llama_cpp_model_uses_the_llama_cpp_connection_whatever_else_settings_
                 model: "stale-llama-cpp-model".into(),
                 auth_header_name: "Authorization".into(),
                 auth_header_value: "Basic test-credential".into(),
+                ..Default::default()
             },
             ..Default::default()
         };

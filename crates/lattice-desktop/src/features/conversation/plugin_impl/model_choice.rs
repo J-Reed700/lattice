@@ -5,9 +5,11 @@
 use crate::features::conversation::dto::ConversationDto;
 use crate::features::conversation::model_availability::check_available;
 use crate::features::conversation::repository::ConversationRepository;
-use crate::infrastructure::security::keyring_storage::SecureStorage;
+use crate::features::credentials::keys::cloud_api_key;
 use crate::interfaces::di::Container;
+use lattice_core::application::services::chat_model_resolution::cloud_provider_id;
 use lattice_core::domain::conversation::ChatModelChoice;
+use lattice_core::domain::models::model_ref::ModelRef;
 use lattice_core::shared::error::AppError;
 use lattice_core::shared::ipc::ApiError;
 
@@ -18,12 +20,20 @@ pub async fn set_conversation_model_choice_impl(
 ) -> Result<ConversationDto, ApiError> {
     if let ChatModelChoice::Explicit { model } = &choice {
         let settings = container.get_settings_use_case().execute().await?;
-        let keys = SecureStorage::new();
+        let cloud_key_saved = match model {
+            ModelRef::Cloud { provider, .. } => cloud_api_key(
+                container.credentials().as_ref(),
+                cloud_provider_id(*provider),
+            )
+            .await
+            .map(|key| key.is_some()),
+            _ => Ok(false),
+        };
         check_available(
             model,
             &settings.llm,
             container.downloaded_models().as_ref(),
-            |provider| Ok(keys.cloud_api_key(provider)?.is_some()),
+            |_| cloud_key_saved,
         )
         .await?;
     }

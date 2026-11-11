@@ -29,7 +29,12 @@ pub enum LLMProvider {
 }
 
 /// LLM settings.
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+///
+/// The Ollama auth header's value is a credential and is never serialized: it
+/// lives in the keyring. `ollama_auth_header_value` only carries a value read
+/// from a settings file written before the move (deserialize-only), and the
+/// renderer learns whether one is held from `ollama_auth_header_value_set`.
+#[derive(Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase")]
 pub struct LLMSettingsDto {
     /// Provider selection (auto/local/ollama)
@@ -136,9 +141,15 @@ pub struct LLMSettingsDto {
     #[serde(default)]
     pub ollama_auth_header_name: String,
 
-    /// Optional Ollama auth header value (e.g., "Bearer ...")
-    #[serde(default)]
+    /// A legacy plaintext header value awaiting its move to the keyring;
+    /// never serialized.
+    #[serde(default, skip_serializing)]
     pub ollama_auth_header_value: String,
+
+    /// Whether a header value is held for Ollama. Filled in when settings are
+    /// read for the renderer; not a stored fact.
+    #[serde(default)]
+    pub ollama_auth_header_value_set: bool,
 
     /// Independent remote llama.cpp connection; switching providers retains both.
     #[serde(default)]
@@ -253,13 +264,41 @@ impl LLMSettingsDto {
     }
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, specta::Type)]
+/// A remote llama.cpp connection. The auth header's value is a credential kept
+/// in the keyring: `auth_header_value` is never serialized and is filled in
+/// only from a legacy settings file or for a connection about to be made.
+#[derive(Clone, Serialize, Deserialize, specta::Type)]
 #[serde(rename_all = "camelCase", default)]
 pub struct LlamaCppSettingsDto {
     pub url: String,
     pub model: String,
     pub auth_header_name: String,
+    #[serde(skip_serializing)]
     pub auth_header_value: String,
+    /// Whether a header value is held. Filled in when settings are read for
+    /// the renderer; not a stored fact.
+    pub auth_header_value_set: bool,
+}
+
+impl std::fmt::Debug for LlamaCppSettingsDto {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("LlamaCppSettingsDto")
+            .field("url", &self.url)
+            .field("model", &self.model)
+            .field("auth_header_name", &self.auth_header_name)
+            .field("auth_header_value_set", &self.auth_header_value_set)
+            .finish_non_exhaustive()
+    }
+}
+
+impl std::fmt::Debug for LLMSettingsDto {
+    /// Through the serialized form, which leaves out every credential.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match serde_json::to_value(self) {
+            Ok(value) => write!(f, "LLMSettingsDto {value}"),
+            Err(_) => f.write_str("LLMSettingsDto { .. }"),
+        }
+    }
 }
 
 impl Default for LlamaCppSettingsDto {
@@ -269,6 +308,7 @@ impl Default for LlamaCppSettingsDto {
             model: String::new(),
             auth_header_name: String::new(),
             auth_header_value: String::new(),
+            auth_header_value_set: false,
         }
     }
 }
@@ -277,8 +317,21 @@ impl LlamaCppSettingsDto {
     /// The OpenAI-compatible base URL, ending in `/v1`, these settings point
     /// at, or why they can't be used to reach a server: the URL must be plain
     /// HTTP(S) without credentials, query or fragment, and the authentication
-    /// header fields must be set together or not at all.
+    /// header fields must be set together or not at all. Call it on a
+    /// connection whose header value has been filled in.
     pub fn validated_base_url(&self) -> Result<String> {
+        let base = self.validated_url()?;
+        if self.auth_header_name.trim().is_empty() ^ self.auth_header_value.trim().is_empty() {
+            return Err(AppError::InvalidConfig(
+                "Set both authentication header fields, or clear both".into(),
+            ));
+        }
+        Ok(base)
+    }
+
+    /// The same base URL, checking only the URL: for settings read where the
+    /// header value is not at hand.
+    pub fn validated_url(&self) -> Result<String> {
         let raw = self.url.trim().trim_end_matches('/');
         let parsed = url::Url::parse(raw)
             .map_err(|_| AppError::InvalidConfig("Invalid llama.cpp server URL".into()))?;
@@ -290,11 +343,6 @@ impl LlamaCppSettingsDto {
             || parsed.fragment().is_some()
         {
             return Err(AppError::InvalidConfig("Use an HTTP(S) server URL without credentials, query, or fragment; configure authentication in the header fields".into()));
-        }
-        if self.auth_header_name.trim().is_empty() ^ self.auth_header_value.trim().is_empty() {
-            return Err(AppError::InvalidConfig(
-                "Set both authentication header fields, or clear both".into(),
-            ));
         }
         Ok(if raw.ends_with("/v1") {
             raw.to_owned()
@@ -570,6 +618,7 @@ impl Default for LLMSettingsDto {
             ollama_utility_model: String::new(),
             ollama_auth_header_name: String::new(),
             ollama_auth_header_value: String::new(),
+            ollama_auth_header_value_set: false,
             llama_cpp: LlamaCppSettingsDto::default(),
             timeout_seconds: DEFAULT_LLM_STALL_TIMEOUT_SECONDS,
             stream_responses: true,

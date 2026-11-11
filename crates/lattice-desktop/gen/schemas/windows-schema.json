@@ -4317,12 +4317,6 @@
           "markdownDescription": "Enables the delete_huggingface_token command without any pre-configured scope."
         },
         {
-          "description": "Enables the get_huggingface_token command without any pre-configured scope.",
-          "type": "string",
-          "const": "huggingface:allow-get-huggingface-token",
-          "markdownDescription": "Enables the get_huggingface_token command without any pre-configured scope."
-        },
-        {
           "description": "Enables the get_huggingface_token_status command without any pre-configured scope.",
           "type": "string",
           "const": "huggingface:allow-get-huggingface-token-status",
@@ -4339,12 +4333,6 @@
           "type": "string",
           "const": "huggingface:deny-delete-huggingface-token",
           "markdownDescription": "Denies the delete_huggingface_token command without any pre-configured scope."
-        },
-        {
-          "description": "Denies the get_huggingface_token command without any pre-configured scope.",
-          "type": "string",
-          "const": "huggingface:deny-get-huggingface-token",
-          "markdownDescription": "Denies the get_huggingface_token command without any pre-configured scope."
         },
         {
           "description": "Denies the get_huggingface_token_status command without any pre-configured scope.",
@@ -5091,6 +5079,12 @@
           "markdownDescription": "Enables the reset_settings command without any pre-configured scope."
         },
         {
+          "description": "Enables the save_remote_auth_header_value command without any pre-configured scope.",
+          "type": "string",
+          "const": "settings:allow-save-remote-auth-header-value",
+          "markdownDescription": "Enables the save_remote_auth_header_value command without any pre-configured scope."
+        },
+        {
           "description": "Enables the set_cloud_api_key command without any pre-configured scope.",
           "type": "string",
           "const": "settings:allow-set-cloud-api-key",
@@ -5173,6 +5167,12 @@
           "type": "string",
           "const": "settings:deny-reset-settings",
           "markdownDescription": "Denies the reset_settings command without any pre-configured scope."
+        },
+        {
+          "description": "Denies the save_remote_auth_header_value command without any pre-configured scope.",
+          "type": "string",
+          "const": "settings:deny-save-remote-auth-header-value",
+          "markdownDescription": "Denies the save_remote_auth_header_value command without any pre-configured scope."
         },
         {
           "description": "Denies the set_cloud_api_key command without any pre-configured scope.",

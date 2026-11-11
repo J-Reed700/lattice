@@ -1053,7 +1053,7 @@ test('Downloaded switches chat between llama.cpp and local while keeping the uti
     settings.llm.provider = 'llamacpp';
     settings.llm.llamaCpp = {
       url: 'https://llama.example.com', model: 'remote-model.gguf',
-      authHeaderName: '', authHeaderValue: '',
+      authHeaderName: '', authHeaderValueSet: false,
     };
     const model = {
       id: 'local-model', model_id: 'local-model', model_name: 'Local model',

@@ -168,12 +168,44 @@ pub async fn download_model_impl(
     Ok(response)
 }
 
+/// A llama.cpp connection to try. The header value may be left blank to try
+/// the one already stored under the same header name.
+#[derive(serde::Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub struct TestLlamaCppConnectionRequest {
+    pub url: String,
+    #[serde(default)]
+    pub model: String,
+    #[serde(default)]
+    pub auth_header_name: String,
+    #[serde(default)]
+    pub auth_header_value: String,
+}
+
 #[tauri::command]
 #[specta::specta]
 pub async fn test_llama_cpp_connection(
-    request: lattice_core::application::contracts::settings::LlamaCppSettingsDto,
+    container: tauri::State<'_, Container>,
+    request: TestLlamaCppConnectionRequest,
 ) -> Result<TestOllamaConnectionResponse, ApiError> {
-    let models = LlamaCppLlm::test_connection(&request)
+    let mut connection = lattice_core::application::contracts::settings::LlamaCppSettingsDto {
+        url: request.url,
+        model: request.model,
+        auth_header_name: request.auth_header_name,
+        auth_header_value: request.auth_header_value,
+        ..Default::default()
+    };
+    if connection.auth_header_value.trim().is_empty() {
+        let saved = container.get_settings_use_case().execute().await?;
+        connection.auth_header_value =
+            crate::features::credentials::remote_auth::saved_llama_cpp_value_for(
+                container.credentials().as_ref(),
+                &saved.llm.llama_cpp,
+                &connection.auth_header_name,
+            )
+            .await?;
+    }
+    let models = LlamaCppLlm::test_connection(&connection)
         .await
         .map_err(ApiError::from)?;
     Ok(TestOllamaConnectionResponse {

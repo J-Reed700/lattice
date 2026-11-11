@@ -5,6 +5,8 @@
 use std::path::PathBuf;
 use std::sync::Arc;
 
+use crate::features::credentials::keys::cloud_api_key;
+use crate::features::credentials::remote_auth::{ollama_auth_header, resolved_llama_cpp};
 use crate::features::llm::cloud::limits::{ceiling_to_send, ReportedLimits};
 use crate::features::llm::engine::factory::{CreatedLlm, LLMConfig, LocalServerOptions};
 use crate::features::llm::engine::system::BackendDevices;
@@ -15,6 +17,7 @@ use crate::features::llm::instances::{LaunchProfile, Tuning};
 use crate::features::llm::scheduler::SchedulerRegistry;
 use lattice_core::application::contracts::settings::{LLMProvider, LLMSettingsDto, ModelWindowDto};
 use lattice_core::application::ports::active_models::ActiveModels;
+use lattice_core::application::ports::credentials_port::CredentialsPort;
 use lattice_core::application::ports::LLMPort;
 use lattice_core::application::services::chat_model_resolution::{
     cloud_provider_id, cloud_provider_name,
@@ -120,6 +123,7 @@ pub(crate) struct ModelLoader {
     active_models: Arc<dyn ActiveModels>,
     app_handle: Option<tauri::AppHandle>,
     runtime: LlmRuntime,
+    credentials: Arc<dyn CredentialsPort>,
 }
 
 /// A downloaded model ready to start: a chat model whose file is on disk.
@@ -151,13 +155,39 @@ impl ModelLoader {
         active_models: Arc<dyn ActiveModels>,
         app_handle: Option<tauri::AppHandle>,
         runtime: LlmRuntime,
+        credentials: Arc<dyn CredentialsPort>,
     ) -> Self {
         Self {
             downloaded_models,
             active_models,
             app_handle,
             runtime,
+            credentials,
         }
+    }
+
+    /// Whether `provider` has an API key, looked up as [`Self::cloud_api_key`]
+    /// reads it. The key itself is not returned.
+    pub(crate) async fn cloud_key_saved(&self, provider: CloudProvider) -> Result<bool> {
+        match self.cloud_api_key(provider).await {
+            Ok(_) => Ok(true),
+            Err(AppError::InvalidConfig(_)) => Ok(false),
+            Err(error) => Err(error),
+        }
+    }
+
+    /// The API key for `provider`, read as everywhere else: its environment
+    /// variable, else the keyring.
+    async fn cloud_api_key(&self, provider: CloudProvider) -> Result<String> {
+        let name = cloud_provider_id(provider);
+        let label = cloud_provider_name(provider);
+        cloud_api_key(self.credentials.as_ref(), name)
+            .await?
+            .ok_or_else(|| {
+                AppError::InvalidConfig(format!(
+                    "No {label} API key is saved. Add it in Settings → Chat."
+                ))
+            })
     }
 
     /// The `model_id` of the row active for chat, when it is a downloaded
@@ -229,6 +259,8 @@ impl ModelLoader {
             ModelRef::LlamaCpp { model: name } => {
                 let mut connection = with_generation(settings, &generation);
                 connection.llama_cpp.model = name.clone();
+                connection.llama_cpp =
+                    resolved_llama_cpp(self.credentials.as_ref(), &connection.llama_cpp).await?;
                 Ok(remote(
                     crate::features::llm::llama_cpp::LlamaCppLlm::new(&connection)?
                         .with_vision(declared_vision(settings, model))
@@ -237,7 +269,7 @@ impl ModelLoader {
                 ))
             }
             ModelRef::Cloud { provider, .. } => {
-                let key = cloud_api_key(*provider)?;
+                let key = self.cloud_api_key(*provider).await?;
                 load_cloud(
                     settings,
                     model,
@@ -349,10 +381,7 @@ impl ModelLoader {
                 "The Ollama model is not configured. Choose one in Settings → Chat.".into(),
             ));
         }
-        let auth_header_name = settings.ollama_auth_header_name.trim();
-        let auth_header_value = settings.ollama_auth_header_value.trim();
-        let auth_header = (!auth_header_name.is_empty() && !auth_header_value.is_empty())
-            .then(|| (auth_header_name.to_string(), auth_header_value.to_string()));
+        let auth_header = ollama_auth_header(self.credentials.as_ref(), settings).await?;
 
         tracing::info!(endpoint, model, "Connecting to Ollama");
         let model_ref = ModelRef::Ollama {
@@ -502,30 +531,6 @@ fn llm_provider(provider: CloudProvider) -> LLMProvider {
         CloudProvider::Anthropic => LLMProvider::Anthropic,
         CloudProvider::Google => LLMProvider::Google,
     }
-}
-
-/// Whether `provider` has an API key, looked up as [`cloud_api_key`] reads
-/// it. The key itself is not returned.
-pub(crate) fn cloud_key_saved(provider: CloudProvider) -> Result<bool> {
-    match cloud_api_key(provider) {
-        Ok(_) => Ok(true),
-        Err(AppError::InvalidConfig(_)) => Ok(false),
-        Err(error) => Err(error),
-    }
-}
-
-/// The API key for `provider`, read as everywhere else: its environment
-/// variable, else the keyring.
-fn cloud_api_key(provider: CloudProvider) -> Result<String> {
-    let name = cloud_provider_id(provider);
-    let label = cloud_provider_name(provider);
-    crate::infrastructure::security::keyring_storage::SecureStorage::new()
-        .cloud_api_key(name)?
-        .ok_or_else(|| {
-            AppError::InvalidConfig(format!(
-                "No {label} API key is saved. Add it in Settings → Chat."
-            ))
-        })
 }
 
 #[cfg(test)]

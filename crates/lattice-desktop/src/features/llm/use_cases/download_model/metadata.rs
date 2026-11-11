@@ -1,5 +1,6 @@
 //! Resolving what to download: curated or Hugging Face metadata and embedding file lists.
 
+use crate::features::credentials::keys::CredentialKey;
 use lattice_core::application::ports::model_catalog::ExternalModelMetadata;
 use lattice_core::domain::models::curated::get_all_curated_models;
 use lattice_core::shared::error::AppError;
@@ -143,7 +144,7 @@ impl DownloadModelUseCase {
                 // user's token.
                 let auth_token: Option<String> = if resolved.requires_auth {
                     self.credentials
-                        .get_api_key("huggingface_token")
+                        .get_api_key(CredentialKey::HuggingFaceToken.as_str())
                         .await
                         .ok()
                         .flatten()

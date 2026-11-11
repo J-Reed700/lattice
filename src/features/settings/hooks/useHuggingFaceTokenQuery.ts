@@ -11,7 +11,7 @@ export const HF_TOKEN_QUERY_KEY = ['huggingface', 'token-status'] as const;
  *
  * Only `{ isSet }` ever enters the cache. The token itself lives in the input
  * the user is typing into and is never read back from the backend: the
- * `get_huggingface_token` command exists but must not be called from the UI.
+ * backend has no command that returns it.
  */
 export function useHuggingFaceTokenStatusQuery() {
   const api = useApi();

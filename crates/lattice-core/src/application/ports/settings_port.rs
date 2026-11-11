@@ -559,16 +559,6 @@ impl SettingsRepositoryPort for MockSettingsRepository {
                     .to_string(),
             );
         }
-        let auth_name = settings.llm.ollama_auth_header_name.trim();
-        let auth_value = settings.llm.ollama_auth_header_value.trim();
-        if (!auth_name.is_empty() && auth_value.is_empty())
-            || (auth_name.is_empty() && !auth_value.is_empty())
-        {
-            result.add_error(
-                "llm",
-                "ollama_auth_header_name and ollama_auth_header_value must both be set".to_string(),
-            );
-        }
 
         if settings.ui.font_size < 8 || settings.ui.font_size > 72 {
             result.add_error("ui", "font_size must be between 8 and 72".to_string());

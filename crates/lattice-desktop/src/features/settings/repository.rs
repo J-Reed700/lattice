@@ -14,18 +14,21 @@
 //! - **Import/Export**: Support for settings backup and transfer
 //! - **Thread Safety**: Read-modify-write operations are serialized by a mutex
 
+use crate::features::credentials::keys::CredentialKey;
 use crate::features::settings::dto::{
     LLMProvider, SettingsCategory, SettingsDto, ValidationResult,
     DEFAULT_LLM_STALL_TIMEOUT_SECONDS, MAX_LLM_STALL_TIMEOUT_SECONDS,
     MIN_LLM_STALL_TIMEOUT_SECONDS,
 };
 use async_trait::async_trait;
+use lattice_core::application::ports::credentials_port::CredentialsPort;
 use lattice_core::application::ports::settings_port::SettingsImportOutcome;
 use lattice_core::application::ports::{merge_json_update, SettingsRepositoryPort};
 use lattice_core::shared::error::{AppError, Result};
 use serde_json;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tokio::fs;
 
 mod file_store;
@@ -103,6 +106,9 @@ pub struct SettingsRepository {
     /// behind an `Arc`, so a single mutex here is enough to make the whole
     /// cycle atomic.
     write_lock: tokio::sync::Mutex<()>,
+    /// Where auth header values are kept. Without one, a value read from the
+    /// file stays in it.
+    credentials: Option<Arc<dyn CredentialsPort>>,
 }
 
 impl SettingsRepository {
@@ -115,6 +121,28 @@ impl SettingsRepository {
     /// - Cannot read or write settings file
     /// - Settings file is corrupted
     pub async fn new(app_data_dir: PathBuf) -> Result<Self> {
+        Self::open(app_data_dir, None).await
+    }
+
+    /// A repository that keeps auth header values in `credentials`, moving any
+    /// a settings file written before that still holds. The move is retried
+    /// at every start until the keyring accepts the value; the file keeps it
+    /// until then.
+    pub async fn with_credentials(
+        app_data_dir: PathBuf,
+        credentials: Arc<dyn CredentialsPort>,
+    ) -> Result<Self> {
+        let repository = Self::open(app_data_dir, Some(credentials)).await?;
+        if let Err(error) = repository.migrate_legacy_secrets().await {
+            tracing::warn!(%error, "Could not move auth header values to the keyring; will retry at the next start");
+        }
+        Ok(repository)
+    }
+
+    async fn open(
+        app_data_dir: PathBuf,
+        credentials: Option<Arc<dyn CredentialsPort>>,
+    ) -> Result<Self> {
         // repository-barrier-allow: this repository's resource is the settings file and its containing directory.
         // Ensure app data directory exists
         if !app_data_dir.exists() {
@@ -128,6 +156,7 @@ impl SettingsRepository {
         let repository = Self {
             settings_path,
             write_lock: tokio::sync::Mutex::new(()),
+            credentials,
         };
 
         // repository-barrier-allow: the settings repository owns existence of its file resource.
@@ -143,7 +172,9 @@ impl SettingsRepository {
 
     /// Validate and atomically replace the file. The caller holds `write_lock`.
     async fn persist(&self, settings: &SettingsDto) -> Result<()> {
-        let validation = self.validate_settings(settings);
+        let mut settings = settings.clone();
+        self.move_secrets_to_keyring(&mut settings).await;
+        let validation = self.validate_settings(&settings);
         if validation.has_errors() {
             return Err(AppError::ValidationFailed(format!(
                 "Settings validation failed: {:?}",
@@ -153,10 +184,139 @@ impl SettingsRepository {
 
         let settings_file = SettingsFile {
             version: SETTINGS_VERSION,
-            settings: settings.clone(),
+            settings,
         };
 
         self.write_settings_file(&settings_file).await
+    }
+
+    /// Store any auth header value `settings` carries in the keyring and drop
+    /// it from `settings`. A value the keyring refuses stays, so the file
+    /// still holds it and nothing is lost.
+    async fn move_secrets_to_keyring(&self, settings: &mut SettingsDto) {
+        let Some(credentials) = &self.credentials else {
+            return;
+        };
+        let llm = &mut settings.llm;
+        llm.ollama_auth_header_value_set = false;
+        llm.llama_cpp.auth_header_value_set = false;
+        for (key, value) in [
+            (
+                CredentialKey::OllamaAuthHeader,
+                &mut llm.ollama_auth_header_value,
+            ),
+            (
+                CredentialKey::LlamaCppAuthHeader,
+                &mut llm.llama_cpp.auth_header_value,
+            ),
+        ] {
+            let trimmed = value.trim();
+            if trimmed.is_empty() {
+                value.clear();
+                continue;
+            }
+            match credentials.set_api_key(key.as_str(), trimmed).await {
+                Ok(()) => value.clear(),
+                Err(error) => tracing::warn!(
+                    credential = key.as_str(),
+                    %error,
+                    "Could not move an auth header value to the keyring; keeping it in the settings file until it can"
+                ),
+            }
+        }
+    }
+
+    /// Move the auth header values a settings file written before they lived
+    /// in the keyring still holds.
+    async fn migrate_legacy_secrets(&self) -> Result<()> {
+        let _guard = self.write_lock.lock().await;
+        let mut settings_file = self.read_settings_file().await?;
+        let held = |settings: &SettingsDto| {
+            [
+                &settings.llm.ollama_auth_header_value,
+                &settings.llm.llama_cpp.auth_header_value,
+            ]
+            .iter()
+            .filter(|value| !value.trim().is_empty())
+            .count()
+        };
+        let before = held(&settings_file.settings);
+        if before == 0 {
+            return Ok(());
+        }
+        self.move_secrets_to_keyring(&mut settings_file.settings)
+            .await;
+        if held(&settings_file.settings) == before {
+            return Ok(());
+        }
+        self.write_settings_file(&settings_file).await
+    }
+
+    /// Refuse a header name saved with no value to go with it, in the update
+    /// itself or already in the keyring. Names `updates` leaves alone are not
+    /// checked, so a keyring that lost a value does not stop unrelated
+    /// settings from saving.
+    async fn require_header_values(
+        &self,
+        llm: &crate::features::settings::dto::LLMSettingsDto,
+        updates: &HashMap<String, serde_json::Value>,
+    ) -> Result<()> {
+        let Some(credentials) = &self.credentials else {
+            return Ok(());
+        };
+        let ollama_edited = updates.contains_key("ollamaAuthHeaderName");
+        let llama_edited = updates
+            .get("llamaCpp")
+            .is_some_and(|connection| connection.get("authHeaderName").is_some());
+        if ollama_edited
+            && !llm.ollama_auth_header_name.trim().is_empty()
+            && llm.ollama_auth_header_value.trim().is_empty()
+            && !credentials
+                .has_api_key(CredentialKey::OllamaAuthHeader.as_str())
+                .await?
+        {
+            return Err(AppError::ValidationFailed(
+                "ollama_auth_header_name and ollama_auth_header_value must both be set".to_string(),
+            ));
+        }
+        if llama_edited
+            && !llm.llama_cpp.auth_header_name.trim().is_empty()
+            && llm.llama_cpp.auth_header_value.trim().is_empty()
+            && !credentials
+                .has_api_key(CredentialKey::LlamaCppAuthHeader.as_str())
+                .await?
+        {
+            return Err(AppError::ValidationFailed(
+                "Set both authentication header fields, or clear both".to_string(),
+            ));
+        }
+        Ok(())
+    }
+
+    /// Delete the stored auth header values.
+    async fn forget_header_secrets(&self) {
+        let Some(credentials) = &self.credentials else {
+            return;
+        };
+        for key in [
+            CredentialKey::OllamaAuthHeader,
+            CredentialKey::LlamaCppAuthHeader,
+        ] {
+            if let Err(error) = credentials.delete_api_key(key.as_str()).await {
+                tracing::warn!(credential = key.as_str(), %error, "Could not delete a stored auth header value");
+            }
+        }
+    }
+
+    /// Whether a value is held for `key`, in the keyring or still in settings.
+    async fn header_value_held(&self, key: CredentialKey, in_settings: &str) -> bool {
+        if !in_settings.trim().is_empty() {
+            return true;
+        }
+        match &self.credentials {
+            Some(credentials) => credentials.has_api_key(key.as_str()).await.unwrap_or(false),
+            None => false,
+        }
     }
 
     async fn import_settings(
@@ -171,7 +331,19 @@ impl SettingsRepository {
         let _guard = self.write_lock.lock().await;
         let existing = self.get_all().await?;
         let previous_vault_enabled = existing.vault.enabled;
-        restore_redacted_secrets(&mut imported_settings, &existing);
+        let ollama_held = self
+            .header_value_held(
+                CredentialKey::OllamaAuthHeader,
+                &existing.llm.ollama_auth_header_value,
+            )
+            .await;
+        let llama_held = self
+            .header_value_held(
+                CredentialKey::LlamaCppAuthHeader,
+                &existing.llm.llama_cpp.auth_header_value,
+            )
+            .await;
+        drop_unbacked_header_names(&mut imported_settings, &existing, ollama_held, llama_held);
 
         let validation = self.validate_settings(&imported_settings);
         if validation.has_errors() {
@@ -298,7 +470,16 @@ impl SettingsRepositoryPort for SettingsRepository {
                     }
                     SettingsCategory::Llm => {
                         let previously_selected = settings.llm.provider == LLMProvider::Ollama;
+                        let held_ollama = settings.llm.ollama_auth_header_value.clone();
+                        let held_llama = settings.llm.llama_cpp.auth_header_value.clone();
                         settings.llm = serde_json::from_value(merged)?;
+                        if settings.llm.ollama_auth_header_value.is_empty() {
+                            settings.llm.ollama_auth_header_value = held_ollama;
+                        }
+                        if settings.llm.llama_cpp.auth_header_value.is_empty() {
+                            settings.llm.llama_cpp.auth_header_value = held_llama;
+                        }
+                        self.require_header_values(&settings.llm, &updates).await?;
                         // Keep an explicitly configured connection discoverable after
                         // switching providers. The shared `model` field also stores
                         // cloud model names, so it cannot establish this on its own.
@@ -370,6 +551,10 @@ impl SettingsRepositoryPort for SettingsRepository {
 
         let mut settings = self.get_all().await?;
 
+        if matches!(category, None | Some(SettingsCategory::Llm)) {
+            self.forget_header_secrets().await;
+        }
+
         match category {
             Some(cat) => match cat {
                 SettingsCategory::Indexing => settings.indexing = Default::default(),
@@ -394,13 +579,11 @@ impl SettingsRepositoryPort for SettingsRepository {
     }
 
     async fn export(&self, path: &str) -> Result<()> {
-        let mut settings = self.get_all().await?;
-        // The remote servers' auth headers are bearer tokens. An export is a
-        // file the user moves around and shares; it carries the header names
-        // and the import puts back this machine's tokens (see
-        // `restore_redacted_secrets`).
-        settings.llm.ollama_auth_header_value.clear();
-        settings.llm.llama_cpp.auth_header_value.clear();
+        // The remote servers' auth header values are bearer tokens in the
+        // keyring and are never serialized, so an export carries the header
+        // names only; an import keeps this machine's values (see
+        // `drop_unbacked_header_names`).
+        let settings = self.get_all().await?;
 
         let json = serde_json::to_string_pretty(&settings)
             .map_err(|e| AppError::Serialization(format!("Failed to serialize settings: {}", e)))?;
@@ -435,33 +618,37 @@ impl SettingsRepositoryPort for SettingsRepository {
     }
 }
 
-/// Put this machine's auth tokens back into an imported export, which never
-/// carries them. A header whose token is not here (another machine, or a
-/// different header) loses its name too: a name without a token is refused by
-/// validation and useless to a request, and the user re-enters both.
-fn restore_redacted_secrets(imported: &mut SettingsDto, existing: &SettingsDto) {
-    fn restore(name: &mut String, value: &mut String, existing_name: &str, existing_value: &str) {
+/// Keep an imported header name only when this machine holds the value for
+/// that very header, since an export never carries values. A header whose
+/// value is not here (another machine, or a different header) loses its name
+/// too: a name without a value is useless to a request, and the user
+/// re-enters both.
+fn drop_unbacked_header_names(
+    imported: &mut SettingsDto,
+    existing: &SettingsDto,
+    ollama_held: bool,
+    llama_held: bool,
+) {
+    fn keep(name: &mut String, value: &str, existing_name: &str, held: bool) {
         if !value.trim().is_empty() || name.trim().is_empty() {
             return;
         }
-        if name.trim() == existing_name.trim() && !existing_value.trim().is_empty() {
-            *value = existing_value.to_string();
-        } else {
+        if !(held && name.trim() == existing_name.trim()) {
             name.clear();
         }
     }
     let llm = &mut imported.llm;
-    restore(
+    keep(
         &mut llm.ollama_auth_header_name,
-        &mut llm.ollama_auth_header_value,
+        &llm.ollama_auth_header_value,
         &existing.llm.ollama_auth_header_name,
-        &existing.llm.ollama_auth_header_value,
+        ollama_held,
     );
-    restore(
+    keep(
         &mut llm.llama_cpp.auth_header_name,
-        &mut llm.llama_cpp.auth_header_value,
+        &llm.llama_cpp.auth_header_value,
         &existing.llm.llama_cpp.auth_header_name,
-        &existing.llm.llama_cpp.auth_header_value,
+        llama_held,
     );
 }
 

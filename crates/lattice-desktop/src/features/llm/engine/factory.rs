@@ -505,16 +505,14 @@ fn with_memory_hint(
     }
 }
 
-/// What the Ollama server in `settings` reports for `model`. It reports a
-/// window only: an output ceiling is not something it limits.
+/// What the Ollama server in `settings` reports for `model`, reached with
+/// `auth_header` (see `ollama_auth_header`). It reports a window only: an
+/// output ceiling is not something it limits.
 pub(crate) async fn reported_ollama_window(
     settings: &LLMSettingsDto,
+    auth_header: Option<(String, String)>,
     model: &str,
 ) -> lattice_core::shared::error::Result<ModelWindowDto> {
-    let name = settings.ollama_auth_header_name.trim();
-    let value = settings.ollama_auth_header_value.trim();
-    let auth_header =
-        (!name.is_empty() && !value.is_empty()).then(|| (name.to_owned(), value.to_owned()));
     let client = OllamaClient::with_model_and_timeouts_and_header(
         settings.ollama_url.trim(),
         model,

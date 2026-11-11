@@ -61,6 +61,26 @@ ORPHAN_HEADER = """\
 ALLOWED_WITHOUT_CAPABILITY: dict[tuple[str, str], str] = {}
 
 
+# A command that hands a stored secret to the renderer. Secrets live in the OS
+# keyring and the renderer only learns whether one is set, so no registered
+# command may be shaped like a reader of one: `get_`, `read_`, `reveal_` or
+# `export_` a token, key, secret, password or credential. A `_status` or
+# `_set` command reports presence and is fine.
+SECRET_READER = re.compile(
+    r"^(get|read|reveal|export|load|fetch)_\w*(token|api_key|secret|password|credential)s?$"
+)
+
+
+def secret_command_problems(handlers: dict[str, set[str]]) -> list[str]:
+    return [
+        f"{plugin}:{command} looks like it returns a stored secret; report whether "
+        f"one is set (`{command}_status`) and keep the value in the keyring"
+        for plugin, commands in sorted(handlers.items())
+        for command in sorted(commands)
+        if SECRET_READER.match(command)
+    ]
+
+
 def strip_comments(text: str) -> str:
     """Remove // and /* */ so a commented-out command is not counted as present."""
     text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
@@ -315,7 +335,7 @@ def main(argv: list[str]) -> int:
     declared = build_rs_commands()
     permissions = capability_permissions()
 
-    problems: list[str] = []
+    problems: list[str] = secret_command_problems(handlers)
     checked = 0
 
     for plugin, commands in sorted(handlers.items()):

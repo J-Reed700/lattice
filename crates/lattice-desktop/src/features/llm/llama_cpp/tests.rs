@@ -13,6 +13,7 @@ fn settings(url: String) -> LLMSettingsDto {
             model: "test-model".into(),
             auth_header_name: "Authorization".into(),
             auth_header_value: "Basic test-credential".into(),
+            ..Default::default()
         },
         ..Default::default()
     }
@@ -487,7 +488,7 @@ async fn ollama_test_does_not_accept_a_llama_cpp_model_list() {
         .expect(0)
         .mount(&server)
         .await;
-    let error = crate::features::settings::plugin::test_ollama_connection(
+    let error = crate::features::settings::plugin::probe_ollama_connection(
         crate::features::settings::plugin::TestOllamaConnectionRequest {
             ollama_url: server.uri(),
             auth_header_name: String::new(),
@@ -513,7 +514,7 @@ async fn ollama_test_keeps_native_model_discovery() {
         .expect(1)
         .mount(&server)
         .await;
-    let response = crate::features::settings::plugin::test_ollama_connection(
+    let response = crate::features::settings::plugin::probe_ollama_connection(
         crate::features::settings::plugin::TestOllamaConnectionRequest {
             ollama_url: server.uri(),
             auth_header_name: "Authorization".into(),

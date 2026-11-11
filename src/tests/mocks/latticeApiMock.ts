@@ -72,7 +72,7 @@ export function createVaultAPIMock() {
       contextWindow: 131072,
       ollamaUrl: 'http://localhost:11434',
       ollamaAuthHeaderName: '',
-      ollamaAuthHeaderValue: '',
+      ollamaAuthHeaderValueSet: false,
       timeoutSeconds: 30,
       streamResponses: true,
       prompts: {
@@ -192,6 +192,7 @@ export function createVaultAPIMock() {
         downloadBytes: 639_153_184,
       },
     }),
+    saveRemoteAuthHeaderValue: vi.fn().mockResolvedValue({ ok: true, data: undefined }),
     testLlamaCppConnection: vi.fn().mockResolvedValue({ ok: true, data: { endpoint: '/v1/chat/completions', models: ['test-model'] } }),
   testOllamaConnection: vi.fn().mockResolvedValue({
       ok: true,

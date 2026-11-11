@@ -771,6 +771,17 @@ pub enum InvalidationCause {
     },
     /// A cloud provider's API key was saved.
     CredentialsChanged { provider: CloudProvider },
+    /// A remote server's authentication header value was saved or cleared.
+    /// The value lives in the keyring, so no settings comparison sees it.
+    RemoteAuthChanged { server: RemoteServer },
+}
+
+/// A model server the user runs and connects to over the network.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize, specta::Type)]
+#[serde(rename_all = "camelCase")]
+pub enum RemoteServer {
+    Ollama,
+    LlamaCpp,
 }
 
 /// A loaded model held for one turn or job. The holder keeps `llm` until the
