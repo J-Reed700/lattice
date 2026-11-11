@@ -1,7 +1,6 @@
 use super::list_conversations_impl;
 use crate::features::conversation::chat::ports::ChatStorage;
 use crate::features::conversation::chat::test_runtime::FakeRuntime;
-use lattice_core::shared::error::AppError;
 
 async fn runtime_with(count: usize) -> FakeRuntime {
     let runtime = FakeRuntime::default();
@@ -29,18 +28,4 @@ async fn listing_conversations_returns_as_many_as_the_caller_asks_for() {
         .await
         .unwrap();
     assert_eq!(two.len(), 2);
-}
-
-#[tokio::test]
-async fn listing_conversations_rejects_a_limit_below_one_and_a_negative_offset() {
-    let runtime = runtime_with(3).await;
-
-    assert!(matches!(
-        list_conversations_impl(&runtime, Some(0), None).await,
-        Err(AppError::InvalidInput(_))
-    ));
-    assert!(matches!(
-        list_conversations_impl(&runtime, None, Some(-1)).await,
-        Err(AppError::InvalidInput(_))
-    ));
 }

@@ -12,6 +12,7 @@ use sqlx::SqlitePool;
 use super::commands::build_create_record;
 use super::dto::CreatePassageReferenceRequestDto;
 use super::repository::PassageReferenceRepository;
+use crate::infrastructure::persistence::Page;
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::AppError;
 
@@ -96,7 +97,7 @@ async fn list_returns_newest_first() {
         .await
         .unwrap();
 
-    let listed = repo.list(10).await.unwrap();
+    let listed = repo.list(Page::new(Some(10), None).unwrap()).await.unwrap();
     let ids: Vec<&str> = listed.iter().map(|r| r.id.as_str()).collect();
     assert_eq!(ids, vec!["pref_c", "pref_b", "pref_a"]);
 }

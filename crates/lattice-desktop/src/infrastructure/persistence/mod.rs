@@ -22,6 +22,8 @@
 pub mod database;
 pub mod helpers;
 pub mod mappers;
+pub mod page;
 pub mod repositories;
 
 pub use helpers::query_indexed_directories;
+pub use page::Page;

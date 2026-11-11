@@ -442,13 +442,12 @@ impl ConversationRepository {
             ));
         }
 
-        let (limit, offset) = ConversationListing::page(query.limit, query.offset)?;
+        let page = Page::new(query.limit, query.offset)?;
         let mut qb = ConversationListing {
             journal_space_id: Some(journal_space_id),
             include_archived: query.include_archived.unwrap_or(false),
             search: query.query.as_deref(),
-            limit,
-            offset,
+            page,
             ..Default::default()
         }
         .query();

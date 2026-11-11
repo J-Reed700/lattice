@@ -7,6 +7,7 @@ use crate::features::conversation::repository::mapper::{
     ConversationModel, ConversationRowMapper, ConversationSummaryMapper, ConversationSummaryModel,
     ModelChoiceColumn,
 };
+use crate::infrastructure::persistence::Page;
 use crate::infrastructure::storage::file_intents::{record_releases_sql, run_id, FileStore};
 use chrono::Utc;
 use lattice_core::domain::conversation::{
@@ -150,7 +151,7 @@ impl ConversationRepository {
         limit: Option<i64>,
         offset: Option<i64>,
     ) -> Result<Vec<Conversation>> {
-        let (limit, offset) = crate::features::conversation::paging::validate_page(limit, offset)?;
+        let page = Page::new(limit, offset)?;
 
         let db_models = sqlx::query_as::<_, ConversationModel>(
             r#"
@@ -162,8 +163,8 @@ impl ConversationRepository {
             LIMIT ? OFFSET ?
             "#,
         )
-        .bind(limit.unwrap_or(-1))
-        .bind(offset)
+        .bind(page.sql_limit())
+        .bind(page.offset())
         .fetch_all(&self.pool)
         .await
         .map_err(|e| AppError::Database(format!("Failed to list conversations: {}", e)))?;

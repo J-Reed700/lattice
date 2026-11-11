@@ -40,7 +40,7 @@ export function useWeeklySynthesisCandidatesQuery() {
       const cutoff = Date.now() - WEEK_MS;
       const [conversationsResult, referencesResult, notesResult] = await Promise.all([
         api.listConversations(),
-        api.listPassageReferences(200),
+        api.listPassageReferences(),
         api.listWorkspaceNotes(),
       ]);
 

@@ -19,7 +19,6 @@ pub mod memory_details;
 pub mod memory_dto;
 pub mod message_bookmark_dto;
 mod model_availability;
-mod paging;
 pub mod plugin;
 pub mod plugin_impl;
 pub mod space_dto;

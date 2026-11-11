@@ -5,7 +5,7 @@ impl ConversationRepository {
         &self,
         query: ListConversationsExplorerQueryDto,
     ) -> Result<ListConversationsResponseDto, AppError> {
-        let (limit, offset) = ConversationListing::page(query.limit, query.offset)?;
+        let page = Page::new(query.limit, query.offset)?;
 
         if let Some(space_id) = &query.space_id {
             let mut connection = self
@@ -25,8 +25,7 @@ impl ConversationRepository {
             has_message_bookmarks: query.has_message_bookmarks.unwrap_or(false),
             include_archived: query.include_archived.unwrap_or(false),
             search: query.query.as_deref(),
-            limit,
-            offset,
+            page,
             ..Default::default()
         }
         .query();

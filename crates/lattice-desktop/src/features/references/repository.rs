@@ -3,6 +3,7 @@
 //! Runtime-checked `sqlx` only — no `query!` macros, so the offline `.sqlx`
 //! cache stays valid.
 
+use crate::infrastructure::persistence::Page;
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::driver::DriverPool;
@@ -82,14 +83,15 @@ impl PassageReferenceRepository {
             .ok_or_else(|| AppError::NotFound(format!("Passage reference not found: {id}")))
     }
 
-    /// Newest first. `limit` is clamped by the caller.
-    pub async fn list(&self, limit: i64) -> Result<Vec<PassageReferenceRecord>> {
+    /// Newest first, one page of them.
+    pub async fn list(&self, page: Page) -> Result<Vec<PassageReferenceRecord>> {
         let query = format!(
             "SELECT {REFERENCE_COLUMNS} FROM passage_references \
-             ORDER BY created_at DESC LIMIT ?"
+             ORDER BY created_at DESC LIMIT ? OFFSET ?"
         );
         sqlx::query(&query)
-            .bind(limit)
+            .bind(page.sql_limit())
+            .bind(page.offset())
             .try_map(reference_from_row)
             .fetch_all(&self.pool)
             .await

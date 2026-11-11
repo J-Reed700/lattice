@@ -69,10 +69,8 @@ pub async fn list_conversations_impl(
     limit: Option<i64>,
     offset: Option<i64>,
 ) -> Result<Vec<Conversation>> {
-    let (limit, offset) = crate::features::conversation::paging::validate_page(limit, offset)?;
-
     let service = runtime.conversation_service();
-    service.list_conversations(limit, Some(offset)).await
+    service.list_conversations(limit, offset).await
 }
 
 /// Tauri command wrapper

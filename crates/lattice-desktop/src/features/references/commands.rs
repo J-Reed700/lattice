@@ -8,14 +8,13 @@ use super::dto::{
     CreatePassageReferenceRequestDto, PassageReferenceDto, UpdatePassageReferenceRequestDto,
 };
 use super::repository::PassageReferenceRepository;
+use crate::infrastructure::persistence::Page;
 use crate::interfaces::di::Container;
 use lattice_core::application::contracts::references::PassageReferenceRecord;
 use lattice_core::shared::error::{AppError, Result};
 use lattice_core::shared::persistence::timestamps::now_db_timestamp;
 use uuid::Uuid;
 
-const DEFAULT_LIST_LIMIT: i64 = 200;
-const MAX_LIST_LIMIT: i64 = 1000;
 /// Chunk ids are uuid-shaped; a longer one is not an id, and is refused
 /// rather than shortened into a different one.
 const MAX_ID_CHARS: usize = 200;
@@ -119,8 +118,8 @@ pub async fn list_passage_references_impl(
     container: &Container,
     limit: Option<i64>,
 ) -> Result<Vec<PassageReferenceDto>> {
-    let limit = limit.unwrap_or(DEFAULT_LIST_LIMIT).clamp(1, MAX_LIST_LIMIT);
-    let records = repository(container).list(limit).await?;
+    let page = Page::new(limit, None)?;
+    let records = repository(container).list(page).await?;
     Ok(records.into_iter().map(record_to_dto).collect())
 }
 
