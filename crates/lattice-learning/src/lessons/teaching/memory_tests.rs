@@ -241,13 +241,13 @@ async fn teaching_state_follows_the_job_input_not_the_exact_draft() -> Result<()
             lesson_drafts::record_pending_repair(one, "a repair".into()).await?;
             lesson_drafts::save(two).await?;
             assert_eq!(
-                lesson_drafts::teaching_passes(two).await?.as_deref(),
+                lesson_drafts::teaching_passes().await?.as_deref(),
                 Some("kept state")
             );
             assert_eq!(lesson_drafts::pending_repair(two).await?, None);
             lesson_drafts::resume("another-input".into()).await?;
             lesson_drafts::save(three).await?;
-            assert_eq!(lesson_drafts::teaching_passes(three).await?, None);
+            assert_eq!(lesson_drafts::teaching_passes().await?, None);
             Ok(())
         },
     )
